@@ -1,3 +1,4 @@
+import { workState, nativeHistory } from "./work-fixture.mjs";
 // Closing takes one layer at a time. A reader with a file open inside a
 // snapshot, a chat beside it and a details rail on the far right means
 // "put this away" long before they mean "close the window", so the
@@ -28,7 +29,7 @@ await page.route("**/*", async (route) => {
     const input = req.method() === "GET" ? null : (req.headers()["content-type"] || "").includes("application/json") ? req.postDataJSON() : null;
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "test-hub", version: "test" }, nodes: [], agents: [], projects: [{ id: "p", node: "test-hub", path: "/work/p", repo: "inplace", level: "public", agents: [], workspaces: [] }], tasks: [{ id: "11", channel: A, project_id: "p", goal: "Code task", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, turns: 1, max_turns: 10, updated_at: at }], plans: [], attempts: [], landings: [], conflicts: [], inbox: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "test-hub", version: "test" }, nodes: [], agents: [], projects: [{ id: "p", node: "test-hub", path: "/work/p", repo: "inplace", level: "public", agents: [], workspaces: [] }], tasks: [{ id: "11", channel: A, project_id: "p", goal: "Code task", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, turns: 1, max_turns: 10, updated_at: at }], plans: [], attempts: [], landings: [], conflicts: [], inbox: [] }) });
     const initialization = p.match(/^\/console\/conversations\/([^/]+)\/initialize$/);
     if (initialization && req.method() === "PUT") { const conversation = decodeURIComponent(initialization[1]); sideContexts.set(conversation, { ...sideContexts.get(conversation), project: input.project }); return route.fulfill({ json: { ok: true } }); }
     if (p === "/console/send") { const current = sideContexts.get(input.conversation) || {}; if (input.input.startsWith("/use ")) sideContexts.set(input.conversation, { ...current, agent: "local-agent" }); return route.fulfill({ json: { reply: { id: "binding", conversation: input.conversation, text: "bound", at, kind: "reply" } } }); }
@@ -46,7 +47,7 @@ await page.route("**/*", async (route) => {
     if (p === "/console/materials") return route.fulfill({ json: { materials: [] } });
     if (p === "/console/annotations") return route.fulfill({ json: { annotations: [] } });
     if (p === "/console/questions") return route.fulfill({ json: { questions: [] } });
-    if (p === "/console/tasks/11/attempts") return route.fulfill({ json: [{ id: "attempt1", kind: "task", state: "done", base, artifact: after, started_at: at, files: 2 }] });
+    if (p === "/console/attempts") return route.fulfill({ json: nativeHistory([{ id: "attempt1", kind: "task", state: "done", base, artifact: after, started_at: at, files: 2 }]) });
     if (p === "/console/attempts/attempt1/changes") return route.fulfill({ json: { attempt: "attempt1", project: "p", base, artifact: after, changes: [{ path: "app.ts", status: "M", added: 2, deleted: 1 }, { path: "docs/notes.md", status: "M", added: 1, deleted: 0 }] } });
     if (p === "/console/attempts/attempt1/tree") return route.fulfill({ json: { attempt: "attempt1", commit: after, which: "result", dir: "", entries: [{ name: "app.ts", path: "app.ts", kind: "file", size: 20 }] } });
     if (p === "/console/attempts/attempt1/file") return route.fulfill({ json: { attempt: "attempt1", commit: after, path: u.searchParams.get("path") || "app.ts", text: "first\nsecond\nthird\n", size: 20 } });

@@ -1,5 +1,5 @@
 import { useI18n } from "@/providers/locale-provider";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Navigate, useSearchParams } from "react-router";
 import { ClipboardCheck, Clock } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
@@ -19,6 +19,8 @@ import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 import { unavailableSource } from "@/lib/source-health";
 import { useUsage } from "@/hooks/use-usage";
+import { useWorkPage } from "@/hooks/use-work-page";
+import { fetchTasks } from "@/lib/api/work";
 
 type TabKey = "active" | "all" | "scheduled";
 
@@ -32,7 +34,7 @@ const lanes: { key: string; title: string; hint: string }[] = [
     { key: "running", title: tr("status.running"), hint: tr("board.runningHint") },
     { key: "needs_you", title: tr("board.attention"), hint: tr("board.attentionHint") },
     { key: "unknown", title: tr("board.unknown"), hint: tr("board.unknownHint") },
-    { key: "ended", title: tr("board.ended"), hint: tr("board.endedHint") },
+    { key: "ended", title: tr("workHistory.recent"), hint: tr("board.endedHint") },
 ];
     const { snap } = useFleet();
     const { fill } = useIntent();
@@ -44,7 +46,8 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const movedToDashboard = selectedTab === "usage";
     const usage = useUsage(!movedToDashboard);
     const [showArchived, setShowArchived] = useState(false);
-    const byID = useMemo(() => new Map(snap.tasks.map((t) => [t.id, t])), [snap.tasks]);
+    const conversation = params.get("history_conversation") || "";
+    const history = useWorkPage(`board:${conversation}:${showArchived}`, (cursor, signal) => fetchTasks({ ...(conversation ? { scope: "conversation", scope_id: conversation } as const : {}), archived: showArchived ? "all" : "hide" }, cursor, signal), tab === "all");
     const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
     const visibleIDs = new Set(visibleTasks.map((t) => t.id));
     const roots = visibleTasks.filter((t) => !t.parent || !visibleIDs.has(t.parent));
@@ -57,7 +60,9 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const usageUnavailable = !!usage.error || !usageSource?.wired || !!usageSource.error;
     const todayTokens = `${fmtTokens(todayUsage?.tokens.total || 0, locale)} tok`;
     const setAside = roots.filter((t) => t.lane === "set_aside");
-    const current = selected ? byID.get(selected) : undefined;
+    const counts = snap.task_coverage;
+    const taskSource = snap.sources.find((source) => source.name === "tasks");
+    const taskUnavailable = !taskSource?.wired || !!taskSource.error || !!counts.missing?.length;
 
     if (movedToDashboard) return <Navigate to={`/dashboard?tab=overview${params.get("range") ? `&range=${params.get("range")}` : ""}`} replace />;
     return (
@@ -74,11 +79,11 @@ const lanes: { key: string; title: string; hint: string }[] = [
                         {(item) => <Tab {...item} />}
                     </TabList>
                 </Tabs>
-                <div role="region" aria-label={tr("board.rootSummary")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <Stat label={tr("board.totalRoots")} value={roots.length} tone="gray" />
-                    <Stat label={tr("board.completed")} value={roots.filter((t) => t.lifecycle === "done").length} tone="gray" />
-                    <Stat label={tr("board.cancelled")} value={roots.filter((t) => t.lifecycle === "cancelled").length} tone="gray" />
-                    <Stat label={tr("board.paused")} value={roots.filter((t) => t.lifecycle === "paused").length} tone="gray" />
+                <div role="region" title={tr("workHistory.allCounts")} aria-label={tr("board.rootSummary")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <Stat label={tr("board.totalRoots")} value={taskUnavailable ? tr("common.unknown") : counts.roots} tone="gray" />
+                    <Stat label={tr("board.completed")} value={taskUnavailable ? tr("common.unknown") : counts.completed_roots} tone="gray" />
+                    <Stat label={tr("board.cancelled")} value={taskUnavailable ? tr("common.unknown") : counts.cancelled_roots} tone="gray" />
+                    <Stat label={tr("board.paused")} value={taskUnavailable ? tr("common.unknown") : counts.paused_roots} tone="gray" />
                     <Stat label={tr("status.running")} value={activityUnavailable ? (running ? `${running}+` : tr("common.unknown")) : running} tone={running ? "blue" : "gray"} />
                     <Stat label={tr("board.attention")} value={attentionUnavailable ? (needsYou ? `${needsYou}+` : tr("common.unknown")) : needsYou} tone={needsYou ? "warning" : "gray"} />
                     <Stat label={tr("board.today")} value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds, locale)}` : usage.loading ? tr("usage.loading") : tr("common.unknown")} tone="gray" />
@@ -88,6 +93,7 @@ const lanes: { key: string; title: string; hint: string }[] = [
             <div className="workbench-page-body min-h-0 min-w-0 flex-1 overflow-auto px-4 py-5 sm:px-6 lg:px-8">
                 {(usage.error || usageSource?.error) && <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 text-sm text-error-primary"><span className="min-w-0 break-words">{tr("usage.unavailable", { error: usage.error || usageSource?.error || "" })}</span><Button size="sm" color="link-gray" isDisabled={usage.loading} onClick={usage.refresh}>{tr("common.retry")}</Button></div>}
                 {usageSource?.wired === false && <p role="status" className="mb-4 text-sm text-tertiary">{tr("usage.unwired")}</p>}
+                <p role={taskUnavailable ? "status" : undefined} className="mb-4 text-xs text-tertiary">{taskUnavailable ? tr("workHistory.unavailable", { error: taskSource?.error || tr("common.unknown") }) : tr("workHistory.coverage", { count: counts.recent_closed })}</p>
                 {tab === "active" && (
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
                         {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {
@@ -100,6 +106,7 @@ const lanes: { key: string; title: string; hint: string }[] = [
                                         <span className="text-xs text-quaternary">{items.length}</span>
                                     </div>
                                     {shown.map((t) => <Card key={t.id} t={t} plan={snap.plans.find((p) => p.task_id === t.id)} onOpen={() => setSelected(t.id)} selected={selected === t.id} />)}
+                                    {lane.key === "ended" && <Button size="sm" color="link-gray" onClick={() => setTab("all")}>{tr("workHistory.history")}</Button>}
                                     {shown.length === 0 && <div className="rounded-lg bg-secondary/50 px-3 py-8 text-center text-xs text-tertiary">{tr("board.emptyLane")}</div>}
                                 </div>
                             );
@@ -109,10 +116,20 @@ const lanes: { key: string; title: string; hint: string }[] = [
                         )}
                     </div>
                 )}
-                {tab === "all" && <AllTasks tasks={visibleTasks} onOpen={setSelected} />}
+                {tab === "all" && <>
+                    {conversation && <p className="mb-2 text-sm text-secondary">{tr("workHistory.scope")}</p>}
+                    <div className="mb-3 flex flex-wrap items-center gap-3">
+                        <Button size="sm" color="secondary" isDisabled={history.loading} onClick={history.refresh}>{tr("workHistory.refresh")}</Button>
+                        {history.total !== undefined && <span className="text-xs text-tertiary">{tr("workHistory.loaded", { count: history.items.length, total: history.total })}</span>}
+                    </div>
+                    {history.loading && <p role="status" className="mb-2 text-sm text-tertiary">{tr("workHistory.loading")}</p>}
+                    {history.error && <div role="alert" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-error-primary">{history.stale ? tr("workHistory.stale") : history.error}<Button size="sm" color="link-gray" isDisabled={history.loading} onClick={history.stale ? history.refresh : history.retry}>{tr(history.stale ? "workHistory.refresh" : "common.retry")}</Button></div>}
+                    {(!history.loading && !history.error || history.items.length > 0) && <AllTasks tasks={history.items} total={history.total} onOpen={setSelected} />}
+                    {history.hasMore && <Button className="mt-3" size="sm" color="secondary" isDisabled={history.loading || history.stale} onClick={history.more}>{tr("workHistory.more")}</Button>}
+                </>}
                 {tab === "scheduled" && <Scheduled />}
             </div>
-            {current && <TaskDrawer t={current} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === current.id)} onClose={() => setSelected(null)} />}
+            {selected && <TaskDrawer t={{ id: selected }} tasks={snap.tasks} onClose={() => setSelected(null)} />}
         </div>
     );
 }
@@ -174,16 +191,12 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
     );
 }
 
-function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => void }) {
+function AllTasks({ tasks, total, onOpen }: { tasks: Task[]; total?: number; onOpen: (id: string) => void }) {
     const { t: tr, locale } = useI18n();
-    const byID = new Map(tasks.map((t) => [t.id, t]));
-    const rows: (Task & { depth: number })[] = [];
-    const walk = (t: Task, depth: number) => { rows.push({ ...t, depth }); tasks.filter((c) => c.parent === t.id).forEach((c) => walk(c, depth + 1)); };
-    tasks.filter((t) => !t.parent || !byID.has(t.parent)).forEach((t) => walk(t, 0));
     return (
         <TableCard.Root size="sm" className="workbench-table min-w-0">
-            <TableCard.Header title={tr("board.allTasks")} badge={`${tasks.length}`} />
-            {rows.length === 0 ? <Nothing icon={ClipboardCheck} title={tr("board.empty")} /> : (
+            <TableCard.Header title={tr("board.allTasks")} badge={total === undefined ? undefined : `${tasks.length} / ${total}`} />
+            {tasks.length === 0 ? <Nothing icon={ClipboardCheck} title={tr("board.empty")} /> : (
                 <Table aria-label={tr("board.allTasks")} size="sm">
                     <Table.Header>
                         <Table.Head id="task" label={tr("board.title")} isRowHeader />
@@ -196,10 +209,10 @@ function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => vo
                         <Table.Head id="cost" label={tr("board.usage")} />
                         <Table.Head id="updated" label={tr("board.updated")} />
                     </Table.Header>
-                    <Table.Body items={rows}>
+                    <Table.Body items={tasks}>
                         {(t) => (
                             <Table.Row id={t.id} onAction={() => onOpen(t.id)}>
-                                <Table.Cell><span style={{ paddingLeft: t.depth * 16 }} className="font-medium text-primary">{t.depth ? "└ " : ""}#{t.id}</span></Table.Cell>
+                                <Table.Cell><span className="font-medium text-primary">#{t.id}</span>{t.parent && <span className="ml-2 text-xs text-tertiary">↳ #{t.parent}</span>}</Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{label(labelsFor(locale).status, t.lane)}</span></Table.Cell>
                                 <Table.Cell><StateBadge state={taskState(t)} /></Table.Cell>
                                 <Table.Cell><span className="line-clamp-2 max-w-sm text-primary">{t.title || t.goal}</span></Table.Cell>

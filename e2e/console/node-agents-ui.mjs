@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Source preview with isolated node-agent discovery and registration fixtures.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -25,7 +26,7 @@ await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "my-desktop", version: "test" }, nodes: [{ name: "build-node", up: true, role: "worker", version: "test", os: "linux", arch: "arm64", addr: "10.0.0.9:7701" }], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "my-desktop", version: "test" }, nodes: [{ name: "build-node", up: true, role: "worker", version: "test", os: "linux", arch: "arm64", addr: "10.0.0.9:7701" }], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0 } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
     if (p === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });

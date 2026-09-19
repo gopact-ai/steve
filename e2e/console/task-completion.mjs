@@ -1,3 +1,4 @@
+import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
@@ -40,7 +41,8 @@ try {
             const requestURL = new URL(request.url());
             if (requestURL.origin !== new URL(url).origin) { fixture.errors.push(`external ${requestURL.origin}`); return route.abort(); }
             const pathname = requestURL.pathname;
-            if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "local", version: "test" }, tasks: [fixture.task], nodes: [], agents: [], projects: [], plans: [], attempts: [], landings: [] } });
+            if (pathname === `/console/tasks/${fixture.task.id}`) return route.fulfill({ json: workDetail(fixture.task) });
+            if (pathname === "/state") return route.fulfill({ json: workState({ at, hub: { node: "local", version: "test" }, tasks: [fixture.task], nodes: [], agents: [], projects: [], plans: [], attempts: [], landings: [] }) });
             if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 1 } });
             if (pathname === "/console/queue") return route.fulfill({ json: { submission_keys: true, queue: [] } });
             if (pathname === "/console/send") {
@@ -99,13 +101,23 @@ try {
             await complete.evaluate((element) => { element.click(); element.click(); });
             await held;
             assert.equal(fixture.calls.length, before + 1);
+            // Detail and Board summary are independent resources. Observe
+            // each post-mutation image without requiring either to win.
+            const ownerUpdated = page.waitForResponse(async (response) =>
+                new URL(response.url()).pathname === "/console/tasks/148" && response.status() === 200 &&
+                (await response.json()).task.lifecycle === "done");
+            const summaryUpdated = page.waitForResponse(async (response) =>
+                new URL(response.url()).pathname === "/state" && response.status() === 200 &&
+                (await response.json()).task_coverage.completed_roots === 1);
             fixture.release();
+            await Promise.all([ownerUpdated, summaryUpdated]);
             await dialog.getByRole("status").filter({ hasText: locale === "en" ? "completed" : "已完成" }).waitFor();
             await complete.waitFor({ state: "hidden" });
             assert.equal(await dialog.getByRole("alert").count(), 0);
             await page.screenshot({ path: path.join(artifacts, `completed-${locale}-${width}.png`) });
             await page.keyboard.press("Escape");
             const summary = page.getByRole("region", { name: locale === "en" ? "Root task summary" : "主任务统计" });
+            await summary.filter({ hasText: locale === "en" ? /Completed\s*1/ : /已完成\s*1/ }).waitFor();
             assert.match(await summary.innerText(), locale === "en" ? /Completed\s*1/ : /已完成\s*1/);
         }
         // A failed task is usually already dealt with by the time anyone

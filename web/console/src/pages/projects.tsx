@@ -105,7 +105,7 @@ export function ProjectsPage() {
                                         </Table.Cell>
                                         <Table.Cell><RepoChips repos={p.repos} /></Table.Cell>
                                         <Table.Cell><div className="flex flex-col gap-1 text-xs"><span className="truncate text-secondary" title={labelsFor(locale).repo[p.repo] || p.repo}>{p.repo === "inplace" ? tr("projects.editInPlace") : p.repo === "isolated" ? tr("projects.isolated") : p.repo}</span><span className="text-tertiary" title={tr("projects.levelHint")}>{levelName(p.level, locale)}</span></div></Table.Cell>
-                                        <Table.Cell><span className="text-sm tabular-nums text-secondary" title={tasks.map((t) => `#${t.id} ${t.title || t.goal}`).join("\n")}>{tasks.length || "—"}</span></Table.Cell>
+                                        <Table.Cell><span className="text-sm tabular-nums text-secondary" title={tasks.map((t) => `#${t.id} ${t.title || t.goal}`).join("\n")}>{p.task_counts?.live ?? tr("common.unknown")}</span></Table.Cell>
                                         <Table.Cell className="sticky right-0 bg-inherit">
                                             <div className="flex items-center justify-end gap-1">
                                                 <Button size="sm" color="link-color" onClick={() => newSession(p.id)}>{tr("projects.newConversation")}</Button>
@@ -140,10 +140,10 @@ export function ProjectsPage() {
             {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} onRemove={() => void ask(current)} />}
             {removing && <ConfirmDialog title={tr("projects.removeTitle", { project: removing.id })} confirmLabel={tr("projects.removeProject")}
                 body={threads === null
-                    ? tr("projects.removeConfirmCounting", { tasks: snap.tasks.filter((t) => t.project_id === removing.id).length, path: removing.path })
+                    ? tr("projects.removeConfirmCounting", { tasks: removing.task_counts?.total ?? tr("common.unknown"), path: removing.path })
                     : tr("projects.removeConfirm", {
                         threads: threads.filter((c) => c.project === removing.id).length,
-                        tasks: snap.tasks.filter((t) => t.project_id === removing.id).length,
+                        tasks: removing.task_counts?.total ?? tr("common.unknown"),
                         path: removing.path,
                     })}
                 onConfirm={() => remove(removing)} onClose={() => setRemoving(null)} />}

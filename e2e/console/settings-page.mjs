@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,7 +80,7 @@ if (process.env.PURE_ONLY !== "1") {
             if (url.origin !== origin) { external.push(url.href); return route.abort(); }
             if (url.pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
             if (url.pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-            if (url.pathname === "/state") return route.fulfill({ json: { at: "2026-09-07T00:00:00Z", hub: { node: "hub-fixture", version: "v1", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+            if (url.pathname === "/state") return route.fulfill({ json: workState({ at: "2026-09-07T00:00:00Z", hub: { node: "hub-fixture", version: "v1", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
             if (url.pathname === "/console/queue" && request.method() === "GET") return route.fulfill({ json: { queue: [], submission_keys: true, material_refs: true, interactive_requests: true } });
             if (url.pathname === "/console/settings") {
                 if (request.method() === "GET") { settingsReads++; return route.fulfill({ json: { ...state, revision: configRevision } }); }

@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Exercises role management through isolated state and command fixtures only.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -21,7 +22,7 @@ await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "laptop", version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "laptop", version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
     if (p === "/console/queue" && req.method() === "GET") return route.fulfill({ json: { queue: [], submission_keys: true } });
     if (p === "/console/coordination") return f.readError ? route.fulfill({ status: 503, json: { error: "Current coordination state cannot be read" } }) : route.fulfill({ json: response() });

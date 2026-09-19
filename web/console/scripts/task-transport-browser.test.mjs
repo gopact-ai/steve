@@ -1,3 +1,4 @@
+import { workState, workDetail, nativeHistory } from "../../../e2e/console/work-fixture.mjs";
 // Real task controls in an isolated browser. Every API call is intercepted.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
@@ -45,7 +46,8 @@ const base = { id: "transport-task", goal: "Transport fixture", member: "fixture
 await context.route("**/*", async (route) => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname;
     if (url.origin !== origin) { errors.push(`External request: ${url.origin}`); return route.abort(); }
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "fixture", started: at }, nodes: [], agents: [], tasks: [task], projects: [], plans: [], attempts: [], landings: [] } });
+    if (p === `/console/tasks/${task.id}`) return route.fulfill({ json: workDetail(task) });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "fixture", started: at }, nodes: [], agents: [], tasks: [task], projects: [], plans: [], attempts: [], landings: [] }) });
     if (!p.startsWith("/console/") && !["/events", "/history"].includes(p)) return route.continue();
     if (p === "/console/send" && req.method() === "POST") {
         requests.push(req.postDataJSON());

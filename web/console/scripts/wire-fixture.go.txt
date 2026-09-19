@@ -15,6 +15,12 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+"github.com/gopact-ai/steve/internal/admin"
+"github.com/gopact-ai/steve/internal/attempt"
+"github.com/gopact-ai/steve/internal/ledger"
+"github.com/gopact-ai/steve/internal/nodewire"
+"github.com/gopact-ai/steve/internal/plan"
+"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -120,6 +126,7 @@ func TestConsoleWireFixture(t *testing.T) {
 		writeEvent(nano, event)
 	}
 	out["nano_sse"] = nano.Body.String()
+ out["work"] = workWireFixture(t, at)
 	raw, err := json.Marshal(out)
 	if err != nil {
 		t.Fatal(err)
@@ -127,4 +134,23 @@ func TestConsoleWireFixture(t *testing.T) {
 	if err := os.WriteFile(destination, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func workWireFixture(t *testing.T, at time.Time) map[string]wireResponse {
+ book,err:=ledger.Open(t.TempDir(),ledger.Options{});if err!=nil{t.Fatal(err)};t.Cleanup(func(){book.Close()})
+ in:=task.ProjectTransfer{Project:"p",Tasks:map[string]*task.Task{"root":{ID:"root",ProjectID:"p",State:task.StateRunning,Transport:"console",Channel:"opaque",Attempts:[]task.Attempt{{Member:"fixture",StartedAt:at,EndedAt:at.Add(time.Second)},{Member:"fixture",StartedAt:at,EndedAt:at.Add(time.Second)}}},"child":{ID:"child",Parent:"root",ProjectID:"p",State:task.StateDone,Transport:"console",Channel:"delegate:root"}}}
+ if err:=book.Update(t.Context(),func(tx *ledger.Tx)error{return task.ImportProjectTx(tx,in)});err!=nil{t.Fatal(err)}
+ tasks,err:=task.OpenLedger(book,"");if err!=nil{t.Fatal(err)}
+ plans,err:=plan.OpenLedger(book,"");if err!=nil{t.Fatal(err)}
+ if _,err:=plans.Create(plan.Plan{TaskID:"root",ProjectID:"p",Goal:"Wire plan",Steps:[]plan.Step{{ID:"step",Goal:"fixture",Agent:"fixture",State:plan.StepDone,Verify:&plan.Verify{Kind:plan.VerifyNone,Why:"fixture"}}}});err!=nil{t.Fatal(err)}
+ native:=attempt.New(book)
+ for _,id:=range []string{"native-1","native-2"}{if _,err:=native.Open(t.Context(),attempt.Spec{ID:id,TaskID:"root",Scope:attempt.ScopeNone});err!=nil{t.Fatal(err)};if _,err:=native.Advance(t.Context(),id,attempt.Failed,"fixture",nil);err!=nil{t.Fatal(err)}}
+ server:=serve(t,readmodel.New(readmodel.Sources{Tasks:tasks,Plans:plans,Hub:readmodel.Hub{Advert:nodewire.Advert{Harnesses:[]nodewire.Harness{}}}}),ServerConfig{Token:"wire"})
+ server.SetAdmin(&admin.Service{Tasks:tasks,Attempts:attempt.New(book)})
+ out:=map[string]wireResponse{}
+ for name,path:=range map[string]string{"state":"/state","tasks":"/console/tasks?limit=1","detail":"/console/tasks/root","accounting":"/console/tasks/root/accounting?limit=1","plans":"/console/plans?task_id=root&limit=1","attempts":"/console/attempts?conversation=opaque&limit=1","invalid":"/console/tasks?cursor=legacy"}{
+ code,headers,body:=taskMetaRequest(t,server,"GET",path,"wire","");out[name]=wireResponse{Status:code,Body:string(body),Cache:headers.Get("Cache-Control")}
+ if name!="invalid"&&code!=200{t.Fatalf("work fixture %s: %d %s",name,code,body)}
+ }
+ return out
 }

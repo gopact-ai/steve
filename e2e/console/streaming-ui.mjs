@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Isolated browser regression against the real React source. Every API is
 // intercepted; this test never starts an agent or contacts an existing node.
 import assert from "node:assert/strict";
@@ -85,7 +86,7 @@ async function fixture() {
         if (req.method() !== "GET") { f.errors.push(`Unexpected write: ${pathname}`); return route.abort(); }
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-        if (pathname === "/state") { f.stateReads++; return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [project], attempts: [], landings: [] } }); }
+        if (pathname === "/state") { f.stateReads++; return route.fulfill({ json: workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [project], attempts: [], landings: [] }) }); }
         if (pathname === "/console/replies") { f.replyReads++; return route.fulfill({ json: { enabled: true, replies: f.replies.filter((item) => item.conversation === url.searchParams.get("conversation")) } }); }
         if (pathname === "/console/queue") {
             f.queueReads++;

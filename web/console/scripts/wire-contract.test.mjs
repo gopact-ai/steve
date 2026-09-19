@@ -30,7 +30,8 @@ try {
     const queue = JSON.parse(fixture.queue.body), ack = JSON.parse(fixture.ack.body);
     const contract = (value, type) => `(${JSON.stringify(value)} satisfies ${type});`;
     const parseSSE = (stream) => stream.trim().split("\n\n").map((frame) => JSON.parse(frame.replace(/^data: /, "")));
-    await writeFile(compile, `import type { Exchange, Event, Reply } from ${JSON.stringify(types)};\n` +
+    await writeFile(compile, `import type { Exchange, Event, Reply, Snapshot, WorkPage, Task, TaskDetail, AccountingItem, NativeAttempt, Plan } from ${JSON.stringify(types)};\n` +
+        Object.entries({ state: "Snapshot", tasks: "WorkPage<Task>", detail: "TaskDetail", accounting: "WorkPage<AccountingItem>", plans: "WorkPage<Plan>", attempts: "WorkPage<NativeAttempt>" }).map(([name,type]) => contract(JSON.parse(fixture.work[name].body), type)).join("\n") +
         contract(queue.queue, "Exchange[]") + contract(ack, "Exchange") + contract(fixture.events, "Event[]")
         + contract(fixture.retry_replies, "Reply[]") + contract(parseSSE(fixture.nano_sse), "Event[]")
         + Object.values(fixture.retry).map((r) => contract(JSON.parse(r.body).queue, "Exchange[]")).join("\n"));
@@ -39,15 +40,16 @@ try {
     assert.equal(diagnostics.length, 0, ts.formatDiagnosticsWithColorAndContext(diagnostics, {
         getCurrentDirectory: () => temp, getCanonicalFileName: (file) => file, getNewLine: () => "\n",
     }));
-    for (const [name, source] of [["http", "src/lib/http.ts"], ["console", "src/lib/api/console.ts"]]) {
+    for (const [name, source] of [["http", "src/lib/http.ts"], ["console", "src/lib/api/console.ts"], ["work", "src/lib/api/work.ts"]]) {
         let code = ts.transpileModule(await readFile(path.join(web, source), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
-        if (name === "console") code = code.replace('from "../http"', 'from "./http.mjs"');
+        if (name !== "http") code = code.replace('from "../http"', 'from "./http.mjs"');
         await writeFile(path.join(temp, `${name}.mjs`), code);
     }
     globalThis.window = { location: { search: "" } };
     globalThis.sessionStorage = { getItem: () => "" };
     const http = await import(pathToFileURL(path.join(temp, "http.mjs")));
     const api = await import(pathToFileURL(path.join(temp, "console.mjs")));
+    const work = await import(pathToFileURL(path.join(temp, "work.mjs")));
     let response = fixture.queue;
     const reads = [];
     globalThis.fetch = async (url, options) => {
@@ -80,6 +82,21 @@ try {
             return true;
         });
     }
+    for (const [name, read] of Object.entries({ tasks: () => work.fetchTasks({}, ""), detail: () => work.fetchTask("root"), accounting: () => work.fetchTaskAccounting("root"), plans: () => work.fetchPlans("root"), attempts: () => work.fetchAttempts({ conversation: "opaque" }) })) {
+        response = fixture.work[name];
+        assert.equal(response.status, 200, name);
+        assert.equal(response.cache, "no-store", name);
+        assert.deepEqual(await read(), JSON.parse(response.body), name);
+        assert.equal(reads.at(-1).options.cache, "no-store", name);
+    }
+    const detail = JSON.parse(fixture.work.detail.body);
+    assert.equal(detail.task.attempt_count, 2);
+    assert.equal(detail.accounting.total, 2);
+    assert.equal(detail.children.total, 1);
+    assert.ok(JSON.parse(fixture.work.tasks.body).next_cursor);
+    assert.ok(JSON.parse(fixture.work.attempts.body).next_cursor);
+    response = fixture.work.invalid;
+    await assert.rejects(work.fetchTasks({}, "legacy"), (err) => err.status === 400);
     response = fixture.queue;
     const controller = new ConversationController("console:wire", {
         fetchQueue: api.fetchQueue, fetchReplies: async () => ({ enabled: true, replies: [] }), reconcileSubmission: async () => {},

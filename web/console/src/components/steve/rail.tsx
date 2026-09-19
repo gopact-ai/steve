@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { memo, useEffect, useState, useSyncExternalStore } from "react";
 import { GitBranch01, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
@@ -31,7 +32,7 @@ export type RailTab = "context" | "trace" | "graph" | "artifacts" | "materials";
 // Rail is the console's right column: the session's facts, the trace of
 // the line in flight or the one picked, and the call graph of who is
 // working for this session.
-export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTab, roots, onClose }: { context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[]; onClose: () => void }) {
+export const Rail = memo(function Rail({ conversation, context, live, plans, reply, tab, setTab, roots, onClose }: { conversation: string; context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[]; onClose: () => void }) {
     const [picked, setPicked] = useState<Task | null>(null);
     const { snap } = useFleet();
     const { t, locale } = useI18n();
@@ -107,11 +108,12 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
                     ) : <Nothing icon={MessageChatSquare} title={t("console.noTrace")} >{t("console.noTraceHint")}</Nothing>
                 )}
                 {tab === "materials" && support.material_refs && context?.project && <MaterialShelf key={context.project.id} project={context.project.id} />}
-                {tab === "artifacts" && <ArtifactsTab roots={roots} all={snap.tasks} />}
+                {tab === "artifacts" && <ArtifactsTab scope={{ conversation }} all={snap.tasks} />}
+                {tab === "graph" && <p className="py-2 text-xs text-tertiary">{t("workHistory.coverage", { count: snap.task_coverage.recent_closed })} <Link className="rounded underline outline-focus-ring focus-visible:outline-2" to={`/console?view=board&tab=all&history_conversation=${encodeURIComponent(conversation)}`}>{t("workHistory.history")}</Link></p>}
                 {tab === "graph" && (
                     roots.length ? (
                         <Panel title={t("console.workingFor")}  badge={<span className="text-xs text-tertiary">{t("console.treeHint")}</span>}>
-                            <CallGraph roots={roots.slice(0, 8)} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
+                            <CallGraph roots={roots} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
                         </Panel>
                     ) : <Nothing icon={GitBranch01} title={t("console.noTasks")} >{t("console.noTasksHint")}</Nothing>
                 )}

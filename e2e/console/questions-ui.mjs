@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Source preview with isolated API fixtures; no live coordinator or dist build.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -27,7 +28,7 @@ await page.route("**/*", async (route) => {
     const input = req.method() === "GET" ? null : req.postDataJSON();
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "dev-box", version: "test" }, nodes: [{ name: "node-one", display_name: "Build box", up: true }], agents: [], projects: [{ id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", agents: [], workspaces: [] }], tasks: [], plans: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "dev-box", version: "test" }, nodes: [{ name: "node-one", display_name: "Build box", up: true }], agents: [], projects: [{ id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", agents: [], workspaces: [] }], tasks: [], plans: [], attempts: [], landings: [] }) });
     if (p === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, project: { id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", bound: true }, agents: [] } } });
     if (p === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [{ id: "r1", conversation, kind: "reply", at, text: "Configuration checks and unit tests are complete.", project_id: "p", revision: "r1" }] } });
     if (p === "/console/conversations") {
@@ -65,7 +66,14 @@ await page.addInitScript((id) => {
     localStorage.setItem("steve.ui.locale", "en");
     window.sources = [];
     window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((source) => source !== this); } };
-    window.emit = (event) => window.sources.forEach((source) => source.onmessage?.({ data: JSON.stringify(event) }));
+    let sequence = 0;
+    window.emit = (event) => {
+        // Different owner changes are not SSE replays. The arrival cursor n
+        // alone is deliberately not a domain revision in the real consumer.
+        const n = ++sequence;
+        const data = JSON.stringify({ ...event, at: new Date(Date.parse(event.at) + n).toISOString(), n });
+        window.sources.forEach((source) => source.onmessage?.({ data }));
+    };
 }, conversation);
 async function waitFor(test, label) { for (let i = 0; i < 100; i++) { if (await test()) return; await new Promise((resolve) => setTimeout(resolve, 30)); } assert.fail(label); }
 async function show(q) { f.questions = [q]; await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, text: q.id, at }); await page.getByRole("heading", { name: q.title, exact: true }).waitFor(); }

@@ -1,3 +1,4 @@
+import { workState, nativeHistory } from "./work-fixture.mjs";
 // Source preview only; every API is intercepted, no live hub and no dist build.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -26,7 +27,7 @@ await page.route("**/*",async route=>{
  const input=req.method()==="GET"?null:(req.headers()['content-type']||'').includes('application/json')?req.postDataJSON():null;
  if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
  if(p==="/console/desktop")return route.fulfill({json:{enabled:false,setup_required:false,agent_count:0}});
- if(p==="/state")return route.fulfill({json:{at,hub:{node:"test-hub",version:f.version},nodes:[],agents:[],projects:[{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",agents:[],workspaces:[]}],tasks:[{id:"11",channel:A,project_id:"p",goal:"Code task",state:"running",lifecycle:"running",execution:"idle",lane:"pending",attention:0,turns:1,max_turns:10,updated_at:at}],plans:[],attempts:[],landings:[]}});
+ if(p==="/state")return route.fulfill({json:workState({at,hub:{node:"test-hub",version:f.version},nodes:[],agents:[],projects:[{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",agents:[],workspaces:[]}],tasks:[{id:"11",channel:A,project_id:"p",goal:"Code task",state:"running",lifecycle:"running",execution:"idle",lane:"pending",attention:0,turns:1,max_turns:10,updated_at:at}],plans:[],attempts:[],landings:[]})});
  const initialization=p.match(/^\/console\/conversations\/([^/]+)\/initialize$/);
  if(initialization&&req.method()==="PUT"){
   const conversation=decodeURIComponent(initialization[1]);
@@ -63,7 +64,7 @@ await page.route("**/*",async route=>{
  if(p.startsWith('/console/annotations/')){const id=p.split('/')[3],old=f.notes.find(n=>n.id===id);if((old?.revision||0)!==input.expected_revision)return route.fulfill({status:409,json:{error:'Annotation changed'}});const note={...input,id,author:'owner',revision:(old?.revision||0)+1,created_at:at,updated_at:at};f.notes=f.notes.filter(n=>n.id!==id);f.notes.push(note);return route.fulfill({json:note});}
  if(p==="/console/questions")return route.fulfill({json:{questions:f.questions}});
  if(p.match(/^\/console\/questions\/[^/]+\/answer$/)){f.answers.push(input);if(input.decision!=='accept'&&input.choice)return route.fulfill({status:400,json:{error:'Non-accept decision must not include choice'}});await new Promise(r=>setTimeout(r,150));const q=f.questions.find(q=>q.id===p.split('/')[3]);q.state=input.decision==='accept'?'answered':input.decision==='decline'?'declined':'cancelled';q.answer=input;return route.fulfill({json:{question:q}});}
- if(p==="/console/tasks/11/attempts")return route.fulfill({json:[{id:'attempt1',kind:'task',state:'done',base,artifact:after,started_at:at,files:1}]});
+ if(p==="/console/attempts")return route.fulfill({json:nativeHistory([{id:'attempt1',kind:'task',state:'done',base,artifact:after,started_at:at,files:1}])});
  if(p==="/console/attempts/attempt1/changes")return route.fulfill({json:{attempt:'attempt1',project:'p',base,artifact:after,changes:[{path:'app.ts',status:'M',added:2,deleted:1}]}});
  if(p==="/console/attempts/attempt1/tree")return route.fulfill({json:{attempt:'attempt1',commit:after,which:'result',dir:'',entries:[{name:'app.ts',path:'app.ts',kind:'file',size:20}]}});
  if(p==="/console/attempts/attempt1/file")return route.fulfill({json:{attempt:'attempt1',commit:after,path:'app.ts',text:'first\nsecond\nthird\n',size:20}});

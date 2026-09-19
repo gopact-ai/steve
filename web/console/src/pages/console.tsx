@@ -390,7 +390,7 @@ function ConsoleWorkbench() {
     // is not itself one of them.
     const { runningPlans, roots } = useMemo(() => {
         const settled = ["done", "failed", "skipped", "cancelled"];
-        const mine = snap.tasks.filter((t) => t.channel === conversation);
+        const mine = snap.tasks.filter((t) => t.transport === "console" && t.channel === conversation);
         const plans = snap.plans.filter((p) => {
             const task = mine.find((t) => t.id === p.task_id);
             return task && (p.steps || []).some((s) => !settled.includes(s.state));
@@ -530,7 +530,7 @@ function ConsoleWorkbench() {
                 onDelete={dropConversation}
                 collapsed={collapsed} onToggle={toggleSessions}
                 tasks={snap.tasks} onTask={openTask} />;
-    const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={closeInspector} />;
+    const inspector = <Rail key={conversation} conversation={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={closeInspector} />;
     const splitLabel = (tab: SplitTab) => tab.kind === "chat" ? t("sideChat.title") : t("consoleChrome.delegation", { id: "#" + tab.task });
     const closeSplitTab = (tab: SplitTab) => { if (tab.kind === "chat") side.close(); else split.close(tab.id); };
     const renderSplitTab = (tab: SplitTab) => tab.kind === "chat"

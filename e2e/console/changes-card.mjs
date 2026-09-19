@@ -1,3 +1,4 @@
+import { workState, nativeHistory } from "./work-fixture.mjs";
 // Source preview only. All APIs are intercepted; no live Hub or embedded dist.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
@@ -45,7 +46,7 @@ async function fixture(replies, options = {}) {
         if (request.method() !== "GET") { writes.push(name); return route.fulfill({ status: 500, json: { error: "Unexpected mutation" } }); }
         if (name === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (name === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-        if (name === "/state") return route.fulfill({ json: { at, hub: { node: "fixture-hub", version: "test" }, nodes: [], agents: [], projects: [{ id: "p", node: "fixture-hub", path: "/work/p", level: "public", repo: "inplace", agents: [], workspaces: [] }], tasks: [{ id: "active-task", channel: conversation, project_id: "p", goal: "Unrelated current task", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, turns: 1, updated_at: at }], plans: [], attempts: [], landings: [] } });
+        if (name === "/state") return route.fulfill({ json: workState({ at, hub: { node: "fixture-hub", version: "test" }, nodes: [], agents: [], projects: [{ id: "p", node: "fixture-hub", path: "/work/p", level: "public", repo: "inplace", agents: [], workspaces: [] }], tasks: [{ id: "active-task", channel: conversation, project_id: "p", goal: "Unrelated current task", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, turns: 1, updated_at: at }], plans: [], attempts: [], landings: [] }) });
         if (name === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, project: { id: "p", node: "fixture-hub", path: "/work/p", level: "public", repo: "inplace", bound: true }, agents: [] } } });
         if (name === "/console/replies") return route.fulfill({ json: { enabled: true, replies } });
         if (name === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [{ id: conversation, title: "Changes conversation", project: "p", count: replies.length, last_at: at, running: false }] } });
@@ -53,7 +54,7 @@ async function fixture(replies, options = {}) {
         if (name === "/console/questions") return route.fulfill({ json: { questions: [] } });
         if (name === "/console/verbs") return route.fulfill({ json: { verbs: [] } });
         if (name === "/console/suggest") return route.fulfill({ json: { suggestions: [] } });
-        if (name === "/console/tasks/active-task/attempts") return route.fulfill({ json: [{ id: "active-current", kind: "task", state: "running", base, artifact, started_at: at }] });
+        if (name === "/console/attempts") return route.fulfill({ json: nativeHistory([{ id: "active-current", kind: "task", state: "running", base, artifact, started_at: at }]) });
         const match = name.match(/^\/console\/attempts\/([^/]+)\/(changes|diff|tree|file)$/);
         if (match) {
             const [, attempt, type] = match;

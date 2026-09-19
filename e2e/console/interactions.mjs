@@ -1,3 +1,4 @@
+import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
 // Build web/console first. Uses an existing Playwright installation;
 // PLAYWRIGHT_MODULE accepts its absolute module path. CHECK selects comma-
 // separated scenarios. Every API is mocked; no request reaches a real hub.
@@ -57,9 +58,17 @@ async function fixture({ history = false, running = false } = {}) {
         const conversation = initialization ? decodeURIComponent(initialization[1]) : input?.conversation || url.searchParams.get("conversation") || A;
         let current = conversations.find((c) => c.id === conversation);
         if (pathname === "/usage") return route.fulfill({ json: usageResponse() });
+        if (/^\/console\/tasks\/[^/]+$/.test(pathname)) {
+            const id = decodeURIComponent(pathname.split("/")[3]);
+            const task = f.snapshot?.tasks.find((task) => task.id === id);
+            return task ? route.fulfill({ json: workDetail(task, f.snapshot.tasks, f.snapshot.plans) }) : route.fulfill({ status:404,body:"task not found" });
+        }
+        if (pathname === "/console/tasks") return route.fulfill({ json: { items: f.snapshot?.tasks || [], total: f.snapshot?.tasks.length || 0 } });
+        if (pathname === "/console/plans") return route.fulfill({ json: { items: [], total: 0 } });
+
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-        if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] } });
+        if (pathname === "/state") return route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] }) });
         if (initialization && req.method() === "PUT") {
             if (f.binding) await f.binding;
             if (f.failBinding) return route.fulfill({ status: 503, json: { error: "Project binding unavailable" } });
@@ -790,7 +799,7 @@ checks["design-mobile-current-session"] = async (f) => {
 
 checks["design-mobile-child"] = async (f) => {
     const tasks = [task("11", A, "scratch"), { ...task("33", A, "scratch"), parent: "11" }];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.route("**/console/replies?*", (route) => route.fulfill({ json: { enabled: true, replies: [{ id: "parent-reply", kind: "reply", conversation: A, at, text: "Parent reply", process: { steps: [{ id: "#33", kind: "delegate", goal: "Delegated work", state: "done", answer: "Child answer" }] } }] } }));
     await f.page.reload();
     await f.box.waitFor();
@@ -849,7 +858,7 @@ checks["relationship-execution-state"] = async (f) => {
         { ...task("14", A, "scratch"), lifecycle: "done", execution: "idle" },
         { ...task("15", A, "scratch"), parent: "12", origin: "delegate", execution: "idle" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload(); await f.box.waitFor();
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await f.page.getByRole("tab", { name: "关系", exact: true }).click();
@@ -876,7 +885,7 @@ checks["narrow-relationships-layout"] = async (f) => {
     const node = "node-0123456789abcdef0123456789abcdef";
     const tasks = ["11", "12", "13"].map((id) => ({ ...task(id, A, "scratch"), member: "reviewer", node, lifecycle: "done", execution: "done" }));
     tasks.push({ ...task("14", A, "scratch"), member: "helper", node, parent: "11", origin: "delegate", lifecycle: "done", execution: "done" });
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     await f.box.waitFor();
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
@@ -976,9 +985,9 @@ checks["session-setup-view"] = async (f) => {
         platform: [{ name: "steve", description: "Session tools", tools: [{ name: "steve_context", description: "Read the current workspace." }] }],
         deployments: [], machines: [],
     } }));
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" },
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" },
         nodes: [{ name: "test-node", up: true, snapshot: { schema: "v1", node: "test-node", generation: 1, sequence: 1, generated_at: at, coverage: {}, offers: [{ kind: "tool", id: "ripgrep", availability: "available" }, { kind: "harness", id: "test", availability: "available" }, { kind: "skill", id: "skill-creator", scope: "test", availability: "available" }, { kind: "skill", id: "other-harness-skill", scope: "elsewhere", availability: "available" }] } }],
-        agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+        agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, agents: [], project: { ...project("scratch"), bound: true }, agent: { id: "test-agent", node: "test-node", harness: "test", model: "model-one", ready: true, usable: true } } } }));
     await f.page.reload();
     await f.box.waitFor();
@@ -1209,7 +1218,7 @@ async function reviewFixture(f, { open = true } = {}) {
         { path: "script.sh", status: "M", added: 0, deleted: 0 },
     ];
     const state = { reads: [], hold: null, holdIndex: null, holdFile: null, failDiff: false, failIndex: false };
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => route.fulfill({ json: [{ id: "review-attempt", kind: "turn", state: "done", agent: "test-agent", node: "test-node", base: "before", artifact: "after", started_at: at, files: 5 }, { id: "review-other", kind: "turn", state: "done", agent: "other-agent", node: "test-node", base: "older-before", artifact: "older-after", started_at: "2026-09-05T10:00:00Z", files: 1 }] }));
+    await f.page.route(/\/console\/attempts\?/, (route) => route.fulfill({ json: nativeHistory([{ id: "review-attempt", kind: "turn", state: "done", agent: "test-agent", node: "test-node", base: "before", artifact: "after", started_at: at, files: 5 }, { id: "review-other", kind: "turn", state: "done", agent: "other-agent", node: "test-node", base: "older-before", artifact: "older-after", started_at: "2026-09-05T10:00:00Z", files: 1 }]) }));
     await f.page.route(/\/console\/attempts\/review-other\//, (route) => {
         const url = new URL(route.request().url());
         const body = url.pathname.endsWith("/changes") ? { attempt: "review-other", base: "older-before", artifact: "older-after", changes: [{ path: "other.txt", status: "A", added: 1, deleted: 0 }] }
@@ -1256,31 +1265,31 @@ async function reviewFixture(f, { open = true } = {}) {
 checks["code-all-conversation-tasks"] = async (f) => {
     const tasks = Array.from({ length: 9 }, (_, i) => ({ ...task(String(i + 1), A, "scratch"), updated_at: `2026-09-06T10:00:0${8 - i}Z` }));
     for (let i = 10; i < 16; i++) tasks.push({ ...task(String(i), "child-channel", "scratch"), parent: String(i - 1) });
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch")], attempts: [], landings: [] }) }));
     const readTasks = [];
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => {
-        const id = new URL(route.request().url()).pathname.split("/")[3]; readTasks.push(id);
-        return route.fulfill({ json: id === "15" ? [{ id: "old-output", kind: "turn", state: "bound", agent: "older-agent", base: "old-base", artifact: "old-result", started_at: at }] : [] });
+    await f.page.route(/\/console\/attempts\?/, (route) => {
+        const id = new URL(route.request().url()).searchParams.get("conversation"); readTasks.push(id);
+        return route.fulfill({ json: nativeHistory(id === A ? [{ task_id: "15", id: "old-output", kind: "turn", state: "bound", agent: "older-agent", base: "old-base", artifact: "old-result", started_at: at }] : []) });
     });
     await f.page.reload(); await f.box.waitFor();
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await f.page.getByRole("tab", { name: "产物", exact: true }).click();
     await f.page.getByRole("button", { name: "浏览文件", exact: true }).waitFor();
-    assert.equal(new Set(readTasks).size, 15, "Unified files include older roots and deep delegated results");
+    assert.ok(readTasks.length > 0 && readTasks.every((id) => id === A), "Unified files use one conversation query, including hidden deep descendants");
     await f.page.getByText(/older-agent/).first().waitFor();
 };
 
 checks["code-latest-result"] = async (f) => {
     const waiting = gate(); f.releases.push(waiting.release);
     let readOnlyResult = false;
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, async (route) => {
-        if (route.request().url().includes("/22/")) { await waiting.promise; return route.fulfill({ json: [] }); }
-        return route.fulfill({ json: [
+    await f.page.route(/\/console\/attempts\?/, async (route) => {
+        if (new URL(route.request().url()).searchParams.get("conversation") === B) { await waiting.promise; return route.fulfill({ json: nativeHistory([]) }); }
+        return route.fulfill({ json: nativeHistory([
             ...(readOnlyResult ? [{ id: "latest-read-only", agent: "reader", kind: "turn", state: "bound", base: "latest", started_at: "2026-09-06T10:02:00Z", ended_at: "2026-09-06T10:02:30Z" }] : []),
             { id: "new-base", agent: "new-agent", kind: "turn", state: "running", base: "new-start", started_at: "2026-09-06T10:03:00Z", ended_at: "0001-01-01T00:00:00Z" },
             { id: "newer-start", agent: "early-finish", kind: "turn", state: "done", base: "before", artifact: "early", started_at: "2026-09-06T10:01:00Z", ended_at: "2026-09-06T10:01:30Z" },
             { id: "latest-result", agent: "late-finish", kind: "turn", state: "done", base: "before", artifact: "latest", started_at: at, ended_at: "2026-09-06T10:02:00Z" },
-        ] });
+        ]) });
     });
     const reads = [];
     await f.page.route(/\/console\/attempts\/[^/]+\//, (route) => {
@@ -1480,10 +1489,10 @@ checks["code-workspace-files"] = async (f) => {
 
 checks["code-snapshot-states"] = async (f) => {
     const state = { commit: "snapshot", failIndex: false, fileReads: 0 };
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => route.fulfill({ json: [
+    await f.page.route(/\/console\/attempts\?/, (route) => route.fulfill({ json: nativeHistory([
         { id: "unchanged", kind: "turn", state: "done", base: "snapshot", artifact: "snapshot", started_at: at },
         { id: "base-only", kind: "turn", state: "running", agent: "base-agent", base: "start", started_at: "2026-09-05T10:00:00Z" },
-    ] }));
+    ]) }));
     await f.page.route(/\/console\/attempts\/(unchanged|base-only)\//, (route) => {
         const url = new URL(route.request().url()), base = url.pathname.includes("base-only"), commit = base ? "start" : state.commit;
         assert.equal(route.request().method(), "GET");
@@ -1739,7 +1748,7 @@ checks["readmodel-unknown"] = async (f) => {
         { name: "ledger-live", wired: true, error: "activity unavailable" },
         { name: "ledger-attention", wired: true, error: "attention unavailable" },
     ] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     await f.page.getByText("Task 11", { exact: true }).waitFor();
     await f.page.getByText("状态未知", { exact: true }).first().waitFor();
@@ -1955,7 +1964,7 @@ checks["fleet-live-activity"] = async (f) => {
     // snapshot floor, and without re-reading /state per chunk.
     const state = { ...usageState(), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
     let stateReads = 0;
-    await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: state }); });
+    await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: f.snapshot = workState(state) }); });
     await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
     await f.page.getByText("test-agent", { exact: true }).first().waitFor();
     await f.page.getByText("空闲", { exact: true }).first().waitFor();
@@ -1978,7 +1987,7 @@ checks["fleet-display-name"] = async (f) => {
     const state = { ...usageState(), hub: { node: nodes[0].name, version: "test", started: at }, nodes };
     const view = { enabled: true, cluster_id: "cluster-one", node_id: nodes[0].name, coordinator_id: nodes[0].name, epoch: 1, revision: 4, authoritative: true, observed_at: at, auto_failover: false, ready: true, nodes: [{ id: nodes[0].name, name: "Steve's MacBook", local: true, online: true, voter: true, auto_eligible: true, ready: true }], events: [] };
     const renames = [];
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.route("**/console/coordination", (route) => route.fulfill({ json: view }));
     await f.page.route("**/console/coordination/name", (route) => {
         const body = route.request().postDataJSON(); renames.push({ method: route.request().method(), body });
@@ -2296,7 +2305,7 @@ checks["design-delegation-stream"] = async (f) => {
         { id: "sent-2", kind: "sent", conversation: A, at: minute(54), input: "继续下一轮。" },
         { id: "reply-2", kind: "reply", conversation: A, at: minute(58), text: "第二轮结果已汇总。" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const recorded = f.page.locator('[data-task-id="#41"]');
     await recorded.waitFor();
@@ -2409,7 +2418,7 @@ checks["process-content"] = async (f) => {
     f.replies[A] = [{ id: "trace", kind: "reply", conversation: A, at, text: "Checked answer", process }];
     // People know a machine by the name they gave it. Every attribution
     // shows that name; the node ID is only the tooltip.
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const message = f.page.locator(".message-assistant");
     await message.getByText("Checked answer", { exact: true }).waitFor();
@@ -2447,18 +2456,21 @@ checks["board-overview"] = async (f) => {
         { ...root("16", "paused", "set_aside"), parent: "15" },
     ];
     const state = { ...usageState(), tasks: rows, projects: [project("scratch")] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     const summary = f.page.getByRole("region", { name: "主任务统计" });
     await summary.getByText("主任务", { exact: true }).waitFor();
     assert.match(await summary.innerText(), /主任务\s+5/);
-    assert.match(await summary.innerText(), /已完成\s+1/);
+    // Owner summary counts all roots, including archived roots. A paused
+    // child of an archived root is not a new root when that root is hidden.
+    assert.match(await summary.innerText(), /已完成\s+2/);
     assert.match(await summary.innerText(), /已取消\s+1/);
-    assert.match(await summary.innerText(), /已暂停\s+2/);
+    assert.match(await summary.innerText(), /已暂停\s+1/);
     await f.page.getByText("2 个结果待交接 · 1 个交接待确认", { exact: true }).waitFor();
     await f.page.getByRole("switch", { name: "显示已归档" }).press("Space");
     assert.match(await summary.innerText(), /主任务\s+5/);
     assert.match(await summary.innerText(), /已完成\s+2/);
+    assert.match(await summary.innerText(), /已暂停\s+1/);
     await f.page.screenshot({ path: path.join(output, "board-overview-wide.png"), fullPage: true });
     const open = f.page.getByRole("button", { name: "打开任务 #11 Task 11", exact: true });
     await open.focus(); await open.press("Enter");
@@ -2491,7 +2503,7 @@ checks["board-overview"] = async (f) => {
 checks["child-handoff"] = async (f) => {
     const child = { ...task("22", A, "scratch"), state: "done", lifecycle: "done", execution: "idle", lane: "needs_you", parent: "11", result_delivery: { state: "uncertain", error: "Child receipt was lost", attempts: 2, at } };
     const state = { ...usageState(), tasks: [task("11", A, "scratch"), child] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board&tab=all`); await f.page.reload();
     await f.page.getByRole("row").filter({ hasText: "Task 22" }).click();
     const dialog = f.page.getByRole("dialog");
@@ -2509,7 +2521,7 @@ checks["fleet-version-drift"] = async (f) => {
         { name: "worker-offline", role: "node", up: false, version: "old", harnesses: [] },
     ];
     const state = { ...usageState(), hub: { node: "hub", version: "abc1234", started: at }, nodes };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
     await f.page.getByText(/1 台机器与协调节点版本不同/).waitFor();
     assert.equal(await f.page.getByText("版本不同", { exact: true }).count(), 1);
@@ -2529,7 +2541,7 @@ async function checkNativeHistoryImport(f, autoProject = false) {
     ];
     const state = { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [node], agents: [{ id: "test-agent", node: "test-node", harness: "codex", eligible: true }], tasks: [], plans: [], projects: [{ ...project("scratch"), workspaces: [{ id: "scratch-work", node: "test-node", path: "/test//scratch/./", kind: "canonical", agents: ["test-agent"] }] }], attempts: [], landings: [] };
     const pendingState = gate();
-    await f.page.route("**/state", async (route) => { await pendingState.promise; return route.fulfill({ json: state }); });
+    await f.page.route("**/state", async (route) => { await pendingState.promise; return route.fulfill({ json: f.snapshot = workState(state) }); });
     const posts = []; let failRead = true, loseReceipt = true;
     await f.page.route("**/console/nodes/test-node/native-history**", async (route) => {
         if (route.request().method() === "GET") {
@@ -2604,7 +2616,7 @@ checks["sessions-arrangement"] = async (f) => {
     ];
     const nodes = [{ name: "node-one", display_name: "树莓派" }, { name: "node-two", display_name: "工作站" }];
     await f.page.route("**/console/conversations", (route) => route.fulfill({ json: { enabled: true, conversations: threads } }));
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "node-one" }, nodes, agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "node-one" }, nodes, agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
     const titles = () => sidebar.locator(".conversation-row .u-title").allInnerTexts();
@@ -2658,7 +2670,7 @@ checks["conversation-work-disclosure"] = async (f) => {
         { ...task("12", A, "scratch"), parent: "11", execution: "idle" },
         { ...task("22", B, "home"), execution: "idle", plan_id: "plan" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.addInitScript((id) => localStorage.setItem("steve.work.open." + id, "1"), A);
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
@@ -2697,7 +2709,7 @@ checks["thread-work-rows-align"] = async (f) => {
         { ...task("9", A, "scratch"), parent: "7", origin: "delegate", member: "gpu-claude", lifecycle: "failed", execution: "idle" },
         { ...task("12", A, "scratch"), parent: "7", origin: "delegate", member: "reviewer", node: other, execution: "running" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [{ name: other, display_name: "另一台", online: true }], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node" }, nodes: [{ name: other, display_name: "另一台", online: true }], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
     await sidebar.getByRole("button", { name: "展开 Conversation A 的任务", exact: true }).click();
@@ -2788,7 +2800,7 @@ checks["preferences-during-a-turn"] = async (f) => {
 // same move, and the default order can always be had back.
 checks["project-drag-reorder"] = async (f) => {
     const projects = [project("alpha"), project("beta"), project("gamma"), project("home")];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [], agents: [], tasks: [], plans: [], projects, attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node" }, nodes: [], agents: [], tasks: [], plans: [], projects, attempts: [], landings: [] }) }));
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
     const rows = sidebar.locator('.conversation-project[draggable="true"]');

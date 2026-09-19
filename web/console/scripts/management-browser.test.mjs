@@ -1,3 +1,4 @@
+import { workState } from "../../../e2e/console/work-fixture.mjs";
 // Exercise the real management pages and route imports without a running hub.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
@@ -37,11 +38,11 @@ await context.route("**/*", async (route) => {
         return route.fulfill({ json: { ok: true } });
     }
     if (request.method() !== "GET") { errors.push(`Unexpected write: ${p}`); return route.abort(); }
-    if (p === "/state") return route.fulfill({ json: {
+    if (p === "/state") return route.fulfill({ json: workState({
         at: at(observation), hub: { node: "fixture", started: at(0) },
         nodes: [{ name: "fixture", up: online, health: { at: at(observation), load1: observation } }],
         agents: [], tasks: [], projects: [], plans: [], attempts: [], landings: [],
-    } });
+    }) });
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [] } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false } });
     if (p === "/console/queue") return route.fulfill({ json: { submission_keys: true, queue: [] } });

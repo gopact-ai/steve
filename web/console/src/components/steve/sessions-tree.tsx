@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
@@ -210,7 +211,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     };
     const known = new Set(projects.map((p) => p.id));
     const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
-    const workOf = (c: Conversation) => tasks.filter((t) => t.channel === c.id && !t.parent && notable(t, tasks));
+    const workOf = (c: Conversation) => tasks.filter((t) => t.transport === "console" && t.channel === c.id && !t.parent && notable(t, tasks));
     const row = (c: Conversation, norm?: { agent: string; place: string }, note?: string, grouped?: boolean) => (
         <Thread key={c.id} c={c} current={c.id === current} unseen={unseen.has(c.id)} onPick={onPick} norm={norm} note={note} inMachine={grouped}
             renaming={renaming === c.id} onRename={() => setRenaming(c.id)} onRenamed={(title) => { setRenaming(null); if (title !== null) onUpdate(c.id, { title }); }}
@@ -501,16 +502,16 @@ function Thread({ c, current, unseen, onPick, norm, note, inMachine, renaming, o
                     </Dropdown.Popover>
                 </Dropdown.Root>
             )}
-            {work.length > 0 && <div id={workID} hidden={!workOpen}>{workOpen && <ThreadWork work={work} childrenOf={childrenOf} onTask={onTask} />}</div>}
+            {work.length > 0 && <div id={workID} hidden={!workOpen}>{workOpen && <ThreadWork conversation={c.id} work={work} childrenOf={childrenOf} onTask={onTask} />}</div>}
             {confirming && <ConfirmDialog title={tr("consoleChrome.deleteTitle")} confirmLabel={tr("common.delete")}
-                body={tr("consoleChrome.deleteHint", { title: c.title || tr("console.newConversation"), tasks: number(work.length, locale) })}
+                body={tr("workHistory.deleteConversation", { title: c.title || tr("console.newConversation") })}
                 onConfirm={onDelete} onClose={() => setConfirming(false)} />}
         </li>
     );
 }
 
 // Work is revealed from the conversation row, including its summary counts.
-function ThreadWork({ work, childrenOf, onTask }: { work: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+function ThreadWork({ conversation, work, childrenOf, onTask }: { conversation: string; work: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const all = work.flatMap((t) => [t, ...(childrenOf?.(t.id) || [])]);
     const running = all.filter((t) => t.execution === "running").length;
@@ -519,6 +520,7 @@ function ThreadWork({ work, childrenOf, onTask }: { work: Task[]; childrenOf?: (
     const kids = all.length - work.length;
     return (
         <div className="ml-3 border-l border-secondary pl-2">
+            <p className="px-1.5 py-1 u-meta text-quaternary">{tr("workHistory.loadedWork")} <Link className="rounded underline outline-focus-ring focus-visible:outline-2" to={`/console?view=board&tab=all&history_conversation=${encodeURIComponent(conversation)}`}>{tr("workHistory.history")}</Link></p>
             <div className="flex flex-wrap items-center gap-1.5 px-1.5 py-0.5 u-meta text-quaternary">
                 {/* Active work and attention take precedence over quiet task counts. */}
                 {running > 0 && <span className="flex items-center gap-1 text-fg-brand-primary"><Loading01 className="size-3 animate-spin" />{tr("consoleChrome.runningCount", { count: number(running, locale) })}</span>}

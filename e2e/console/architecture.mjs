@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Pure request lifecycle checks; browser scenarios below use only mocked APIs.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -160,7 +161,7 @@ if (process.env.PURE_ONLY !== "1") {
             const channel = url.searchParams.get("conversation") || A;
             if (url.pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
             if (url.pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-            if (url.pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", version: "test", started: at }, nodes: [{ name: "test-node", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [project], inbox: f.inbox, attempts: [], landings: [] } });
+            if (url.pathname === "/state") return route.fulfill({ json: workState({ at, hub: { node: "test-node", version: "test", started: at }, nodes: [{ name: "test-node", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [project], inbox: f.inbox, attempts: [], landings: [] }) });
             if (url.pathname === "/console/context") {
                 const agent = channel === B ? "agent-b" : f.agent;
                 f.contextReads.push(channel);

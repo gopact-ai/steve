@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Isolated Vite + mocked APIs only: never connects to a hub or runs an agent.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
@@ -33,7 +34,7 @@ try {
         if (url.origin !== origin) { f.errors.push(`Unexpected external request: ${url.origin}`); return route.abort(); }
         if (!["/state", "/events", "/history"].includes(pathname) && !pathname.startsWith("/console/")) return route.continue();
         assert.equal(request.method(), "GET", "History tests must not write to any service");
-        if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "fixture", version: "test", started: at }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+        if (pathname === "/state") return route.fulfill({ json: workState({ at, hub: { node: "fixture", version: "test", started: at }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
         if (pathname === "/console/queue") return route.fulfill({ json: { submission_keys: true, queue: [] } });

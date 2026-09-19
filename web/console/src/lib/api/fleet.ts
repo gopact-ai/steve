@@ -2,6 +2,8 @@ import type { Snapshot } from "../types";
 import { request } from "../http";
 import { LocalizedError, translate } from "../i18n";
 export const emptySnapshot: Snapshot = {
+    task_coverage: { total: 0, live: 0, closed: 0, roots: 0, completed_roots: 0, cancelled_roots: 0, paused_roots: 0, included: 0, recent_limit: 20, recent_closed: 0, has_more_closed: false },
+    plan_coverage: { total: 0, included: 0, has_more: false },
     at: "", hub: { node: "", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [], conflicts: [],
     facts: { reservations: [], attestations: [], replicas: [], disclosures: [], effects: [], grants: [] },
     inbox: [], schedules: [], sources: [],

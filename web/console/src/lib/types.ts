@@ -1,6 +1,6 @@
 // Mirrors internal/readmodel: the snapshot the hub serves at /state and the
 // events it streams at /events. Every list is present, empty or not.
-export interface Advert { node?: string; build_version?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
+export interface Advert { version?: number; node?: string; build_version?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
 export interface Hub { node: string; started: string; capabilities?: string[]; level?: string; version?: string; advert?: Advert }
 export interface Harness { id: string; command?: string; version?: string; model?: string; models?: string[]; missing?: string; slots?: number }
 export interface Evidence { kind: "declared" | "observed" | "derived"; method?: string; result?: string; ok: boolean; at?: string }
@@ -33,7 +33,11 @@ export interface Selector { id: string; name: string; category?: string; current
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
 export interface ResultDelivery { state: "pending" | "queued" | "delivered" | "suppressed" | "uncertain"; key?: string; at: string; attempts?: number; error?: string; next_attempt_at?: string }
+export interface WorkPage<T> { items: T[]; total?: number; next_cursor?: string }
+export interface TaskCounts { total: number; live: number; closed: number; roots: number; completed_roots: number; cancelled_roots: number; paused_roots: number }
+export interface TaskCoverage extends TaskCounts { included: number; recent_limit: number; recent_closed: number; has_more_closed: boolean; missing?: string[] }
 export interface Task {
+    children_count: number; children_complete: boolean; attempt_count: number;
     result_delivery?: ResultDelivery; pending_results?: number; uncertain_results?: number;
     can_complete?: boolean;
     id: string; goal: string; state: string; lifecycle: string; execution: string; attention: number; lane: string;
@@ -102,6 +106,7 @@ export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: Usa
 export interface UsageResponse { at: string; usage?: Usage; sources: SourceHealth[] }
 export interface Repo { path: string; branch?: string; head?: string; subject?: string; at?: string; dirty: boolean; remote?: string; agents_md: boolean; missing?: boolean }
 export interface Project {
+    task_counts: TaskCounts | null;
     id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[];
     repos?: Repo[]; home?: boolean; default?: boolean;
     // Where the project is: its home first, then its copies.
@@ -143,7 +148,9 @@ export interface AttemptView { id: string; kind: string; state: string; agent?: 
 export interface TreeEntry { name: string; path: string; kind: "file" | "dir" | "link" | "repo"; size?: number; mode?: string }
 export interface TreeView { attempt: string; commit: string; which: "result" | "base"; dir: string; entries: TreeEntry[]; truncated?: boolean }
 export interface FileView { attempt: string; commit: string; path: string; text: string; size: number; binary?: boolean; truncated?: boolean }
-export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempts: AttemptView[] }
+export interface AccountingItem extends AttemptRow { index: number; execution_id?: string }
+export interface NativeAttempt extends AttemptView { task_id: string; project?: string; files_known: boolean; files_truncated?: boolean; files_error?: string }
+export interface TaskDetail { task: Task; plan?: Plan; children: WorkPage<Task>; accounting: WorkPage<AccountingItem> }
 // QuoteRef points at a line of some thread to carry along with a message;
 // the server reads the text, the page only keeps a preview.
 export interface Exchange {
@@ -191,6 +198,7 @@ export interface Reply {
     relayed?: boolean;
 }
 export interface Snapshot {
+    task_coverage: TaskCoverage; plan_coverage: { total: number; included: number; has_more: boolean };
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
     attempts: Attempt[]; landings: Landing[]; conflicts: Conflict[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[];
 }

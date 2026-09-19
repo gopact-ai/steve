@@ -1,3 +1,4 @@
+import { workHistoryZh, workHistoryEn } from "./work-history.ts";
 import { pluginsZh, pluginsEn } from "./plugins.ts";
 import { nodeAgentsZh, nodeAgentsEn } from "./node-agents.ts";
 import { coordinationZh, coordinationEn } from "./coordination.ts";
@@ -26,6 +27,6 @@ import { usageEn, usageZh } from "./usage.ts";
 import { setupEn, setupZh } from "./setup.ts";
 
 export const catalogs = {
-    zh: { ...pluginsZh, ...nodeAgentsZh, ...coordinationZh, ...sshZh, ...desktopZh, ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...conflictsZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh, ...setupZh },
-    en: { ...pluginsEn, ...nodeAgentsEn, ...coordinationEn, ...sshEn, ...desktopEn, ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...conflictsEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn, ...setupEn },
+    zh: { ...workHistoryZh, ...pluginsZh, ...nodeAgentsZh, ...coordinationZh, ...sshZh, ...desktopZh, ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...conflictsZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh, ...setupZh },
+    en: { ...workHistoryEn, ...pluginsEn, ...nodeAgentsEn, ...coordinationEn, ...sshEn, ...desktopEn, ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...conflictsEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn, ...setupEn },
 } as const;

@@ -1,3 +1,4 @@
+import { workState } from "../../../e2e/console/work-fixture.mjs";
 // Real Console + SideChat, isolated Chromium profile and GET-only API fixture.
 // The test controls open existing fixture conversations; no agent is started.
 import assert from "node:assert/strict";
@@ -74,10 +75,10 @@ await context.route("**/*", async (route) => {
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
     if (p === "/state") {
         f.stateReads++;
-        return route.fulfill({ json: { at: at(f.observed), hub: { node: "test", started: at(0), version: "fixture" },
+        return route.fulfill({ json: workState({ at: at(f.observed), hub: { node: "test", started: at(0), version: "fixture" },
             nodes: [{ name: "test", up: true, health: { at: at(f.observed), load1: f.observed } }],
             agents: [{ id: "agent", node: "test", harness: "fixture", eligible: f.eligible, activities: [{ at: at(f.observed) }] }],
-            projects: [project("p"), project("q")], tasks: [], plans: [], attempts: [], landings: [] } });
+            projects: [project("p"), project("q")], tasks: [], plans: [], attempts: [], landings: [] }) });
     }
     if (p === "/console/replies" || p === "/console/queue") {
         const resource = p.slice("/console/".length);
