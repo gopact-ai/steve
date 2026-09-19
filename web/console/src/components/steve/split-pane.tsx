@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, X } from "@untitledui/icons";
+import { ChevronRight, GitBranch01, MessageChatSquare, X } from "@untitledui/icons";
 import { useI18n } from "@/providers/locale-provider";
 import { PaneResizer } from "./pane-resizer";
 import "@/styles/split-pane.css";
@@ -124,8 +124,12 @@ export function SplitPane({ tabs, active, label, onFocus, onClose, onHide, rende
                 <div role="tablist" aria-label={t("split.region")} className="split-pane-tabs">
                     {tabs.map((tab) => {
                         const name = label(tab);
+                        const Icon = tab.kind === "chat" ? MessageChatSquare : GitBranch01;
                         return <span key={tab.id} className="split-tab" data-active={tab.id === current.id || undefined}>
-                            <button type="button" role="tab" id={`split-tab-${tab.id}`} aria-selected={tab.id === current.id} aria-controls={`split-panel-${tab.id}`} tabIndex={tab.id === current.id ? 0 : -1} className="split-tab-label" title={name} onClick={() => onFocus(tab.id)}>{name}</button>
+                            <button type="button" role="tab" id={`split-tab-${tab.id}`} aria-selected={tab.id === current.id} aria-controls={`split-panel-${tab.id}`} tabIndex={tab.id === current.id ? 0 : -1} className="split-tab-label" title={name} onClick={() => onFocus(tab.id)}>
+                                <Icon className="split-tab-icon" aria-hidden="true" />
+                                <span className="split-tab-name">{name}</span>
+                            </button>
                             <button type="button" className="split-tab-close" aria-label={t("split.closeTab", { title: name })} onClick={() => onClose(tab)}><X aria-hidden="true" /></button>
                         </span>;
                     })}

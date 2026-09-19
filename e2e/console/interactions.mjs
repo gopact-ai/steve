@@ -2337,6 +2337,27 @@ checks["workbench-split"] = async (f) => {
     await pane.waitFor();
     await pane.getByText("盘点完成，仓库共 3 个。").waitFor();
     assert.equal(await pane.getByRole("tab", { name: "委派 #41", exact: true }).getAttribute("aria-selected"), "true", "The delegation opens as the pane's own tab");
+    // The strip reads like an editor's page tabs: the tab in front fills
+    // the strip's height, carries the panel's own background, and shows
+    // what kind of thing it holds.
+    const tabLook = await f.page.evaluate(() => {
+        const bar = document.querySelector(".split-pane-bar");
+        const tab = document.querySelector(".split-tab[data-active]");
+        const style = getComputedStyle(tab);
+        return {
+            gap: bar.getBoundingClientRect().height - tab.getBoundingClientRect().height,
+            radius: style.borderTopLeftRadius,
+            background: style.backgroundColor,
+            panel: getComputedStyle(document.querySelector(".split-pane")).backgroundColor,
+            icon: !!tab.querySelector(".split-tab-icon"),
+            divider: getComputedStyle(tab).borderRightWidth,
+        };
+    });
+    assert.ok(tabLook.gap <= 2, `The tab fills the strip instead of floating in it (${tabLook.gap}px left over)`);
+    assert.equal(tabLook.radius, "0px", "A page tab has square shoulders, not a chip's rounding");
+    assert.equal(tabLook.background, tabLook.panel, "The tab in front shares the panel's background");
+    assert.ok(tabLook.icon, "A tab says what kind of thing it holds");
+    assert.notEqual(tabLook.divider, "0px", "Tabs are told apart by a hairline between them");
     await noHorizontalOverflow(f.page);
     // The pane takes its room from the conversation, which keeps enough
     // of its own to read and compose in.

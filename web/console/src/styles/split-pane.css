@@ -2,16 +2,32 @@
    strip of tabs, and one panel. It is a column of the workbench, not a
    sheet over it, so the conversation keeps its own width. */
 .split-pane { position: relative; display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; min-height: 0; height: 100%; border-left: 1px solid var(--color-border-secondary); background: var(--color-bg-primary); }
-.split-pane-bar { display: flex; align-items: center; gap: 4px; min-height: 42px; padding: 5px 8px 5px 10px; border-bottom: 1px solid var(--color-border-secondary); background: var(--toolbar-surface); }
-.split-pane-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
+/* The tab strip reads like an editor's: page tabs sit flush against
+   each other and against the panel below, separated by hairlines. The
+   one in front wears the panel's own background with an accent along
+   its top edge, so the eye follows the tab straight into its content. */
+.split-pane-bar { display: flex; align-items: stretch; min-height: 36px; border-bottom: 1px solid var(--color-border-secondary); background: var(--toolbar-surface); }
+.split-pane-tabs { display: flex; align-items: stretch; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .split-pane-tabs::-webkit-scrollbar { height: 0; }
-.split-tab { display: inline-flex; align-items: center; gap: 2px; max-width: 220px; flex: 0 0 auto; padding: 2px 4px 2px 6px; border-radius: 7px; color: var(--color-text-tertiary); transition: background-color 120ms, color 120ms; }
-.split-tab:hover { background: var(--color-bg-tertiary); }
-.split-tab[data-active] { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
-.split-tab-label { min-width: 0; padding: 4px 2px; font-size: 12px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.split-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 5px; color: var(--color-fg-quaternary); }
+.split-pane-bar > .workbench-icon-button { align-self: center; margin: 0 6px 0 4px; }
+.split-tab { position: relative; display: inline-flex; align-items: center; gap: 4px; max-width: 220px; flex: 0 0 auto; padding: 0 6px 0 10px; border-right: 1px solid var(--color-border-secondary); color: var(--color-text-tertiary); transition: background-color 120ms, color 120ms; }
+.split-tab:hover { color: var(--color-text-secondary); background: var(--color-bg-primary_hover); }
+.split-tab[data-active] { color: var(--color-text-primary); background: var(--color-bg-primary); }
+/* The accent above the tab in front, and a hairline that erases the
+   strip's own border underneath it. */
+.split-tab[data-active]::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--color-bg-brand-solid); }
+.split-tab[data-active]::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 1px; background: var(--color-bg-primary); }
+.split-tab-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 100%; padding: 0; font-size: 12px; font-weight: 500; }
+.split-tab-icon { width: 14px; height: 14px; flex-shrink: 0; color: var(--color-fg-quaternary); }
+.split-tab[data-active] .split-tab-icon { color: var(--color-fg-brand-primary); }
+.split-tab-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The close button keeps its room at every state, so a tab never jumps
+   a few pixels wide when the pointer arrives. */
+.split-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; border-radius: 4px; color: var(--color-fg-quaternary); opacity: 0; transition: opacity 120ms, background-color 120ms, color 120ms; }
+.split-tab:hover .split-tab-close, .split-tab[data-active] .split-tab-close, .split-tab-close:focus-visible { opacity: 1; }
 .split-tab-close svg { width: 12px; height: 12px; }
-.split-tab-close:hover { background: var(--color-bg-primary_hover); color: var(--color-text-secondary); }
+.split-tab-close:hover { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
+@media (hover: none) { .split-tab-close { opacity: 1; } }
 .split-pane-body { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }
 /* A tab's content owns the whole panel: the side chat drops the border
    and width it needs when it stands alone. */
