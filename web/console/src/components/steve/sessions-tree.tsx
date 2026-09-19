@@ -1,7 +1,7 @@
 import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { type FC, memo, useEffect, useId, useRef, useState } from "react";
+import { type DragEvent, type FC, memo, useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, MessageQuestionCircle, Plus, Server01, SwitchVertical01, Trash01, Users01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -10,6 +10,7 @@ import type { Conversation, Project, Task } from "@/lib/types";
 import { taskState } from "./ui";
 import { kindWord, placeLabel } from "@/lib/workspaces";
 import { useNodeLabel } from "@/lib/node-name";
+import { PROJECT_ORDER, arrangeProjects, movedProjects, storedProjectOrder } from "@/lib/project-order";
 import { ConfirmDialog } from "./confirm";
 import { PaneResizer } from "./pane-resizer";
 import { usePaneWidth } from "@/hooks/use-pane-width";
@@ -135,6 +136,16 @@ function useArrangement(): [Arrangement, (next: Arrangement) => void] {
     return [arrangement, keep];
 }
 
+function useProjectOrder(): [string[], (next: string[]) => void] {
+    const [order, setOrder] = useState<string[]>(storedProjectOrder);
+    const keep = (next: string[]) => {
+        setOrder(next);
+        try { if (next.length) localStorage.setItem(PROJECT_ORDER, JSON.stringify(next)); else localStorage.removeItem(PROJECT_ORDER); }
+        catch { /* An order is a convenience, not state worth failing over. */ }
+    };
+    return [order, keep];
+}
+
 const spoke = (c: Conversation) => (c.last_at ? Date.parse(c.last_at) : 0);
 
 // A thread that owes the owner an answer outranks one that is merely
@@ -167,6 +178,9 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     const matches = (c: Conversation) => !query || `${c.title} ${c.project || ""} ${c.agent || ""}`.toLocaleLowerCase().includes(query);
     const [renaming, setRenaming] = useState<string | null>(null);
     const [arrangement, setArrangement] = useArrangement();
+    const [projectOrder, setProjectOrder] = useProjectOrder();
+    const [dragged, setDragged] = useState<string | null>(null);
+    const [dropMark, setDropMark] = useState<{ id: string; after: boolean } | null>(null);
     const unseen = useUnseen(list, current);
     const sorted = (items: Conversation[]) => ordered(items, arrangement.sort, locale);
     // An archived thread stays under 已归档 even while it is open: moving
@@ -180,7 +194,20 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
         byProject.set(key, [...(byProject.get(key) || []), c]);
     }
     const home = projects.find((p) => p.home);
-    const work = projects.filter((p) => !p.home).sort((a, b) => (a.default ? -1 : b.default ? 1 : a.id.localeCompare(b.id)));
+    const work = arrangeProjects(projects.filter((p) => !p.home), projectOrder);
+    const placeProject = (id: string, onto: string, after: boolean) => {
+        setDropMark(null);
+        setDragged(null);
+        const ids = work.map((p) => p.id);
+        if (id === onto || !ids.includes(id) || !ids.includes(onto)) return;
+        const rest = ids.filter((other) => other !== id);
+        rest.splice(rest.indexOf(onto) + (after ? 1 : 0), 0, id);
+        setProjectOrder(rest);
+    };
+    const nudgeProject = (id: string, step: number) => {
+        const ids = work.map((p) => p.id);
+        setProjectOrder(movedProjects(ids, id, ids.indexOf(id) + step));
+    };
     const known = new Set(projects.map((p) => p.id));
     const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
     const workOf = (c: Conversation) => tasks.filter((t) => t.channel === c.id && !t.parent && notable(t, tasks));
@@ -190,21 +217,36 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
             onArchive={(archived) => onUpdate(c.id, { archived })} onDelete={() => onDelete(c.id)}
             work={workOf(c)} childrenOf={(id) => tasks.filter((t) => t.parent === id)} onTask={onTask} />
     );
-    const node = (p: Project, title: string, hint?: string) => {
+    const node = (p: Project, title: string, hint?: string, sortable = false) => {
         const threads = sorted(byProject.get(p.id) || []);
         const norm = usual(threads, locale, nodeLabelOf);
         const open = !!query || !folded[p.id];
         if (query && !threads.length) return null;
         const holdsCurrent = threads.some((c) => c.id === current);
         const places = p.workspaces.map((w) => `${kindWord(w.kind, locale)} ${nodeLabelOf(w.node)}`).join(" · ");
+        // Dropping is decided by which half of the row the pointer is over,
+        // so a project can be put last as easily as first.
+        const below = (event: DragEvent<HTMLElement>) => { const box = event.currentTarget.getBoundingClientRect(); return event.clientY > box.top + box.height / 2; };
+        const drag = sortable ? {
+            draggable: true,
+            onDragStart: (event: DragEvent<HTMLElement>) => { setDragged(p.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", p.id); },
+            onDragEnd: () => { setDragged(null); setDropMark(null); },
+            onDragOver: (event: DragEvent<HTMLElement>) => { if (!dragged || dragged === p.id) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropMark({ id: p.id, after: below(event) }); },
+            onDragLeave: () => setDropMark((mark) => (mark?.id === p.id ? null : mark)),
+            onDrop: (event: DragEvent<HTMLElement>) => { event.preventDefault(); placeProject(dragged || event.dataTransfer.getData("text/plain"), p.id, below(event)); },
+        } : {};
+        const reorderHint = sortable ? tr("consoleChrome.reorderProjects") : "";
         return (
             <li key={p.id} className="flex flex-col">
-                <div className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
+                <div {...drag} data-drop={dropMark?.id === p.id ? (dropMark.after ? "after" : "before") : undefined} data-dragging={dragged === p.id || undefined}
+                    className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
                     <button type="button" onClick={() => toggle(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}>
                         <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
                     </button>
                     <Folder className="size-4 shrink-0 text-fg-quaternary" />
-                    <button type="button" onClick={() => toggle(p.id)} className="flex min-h-6 min-w-0 flex-1 flex-col justify-center text-left" title={hint || places}>
+                    <button type="button" onClick={() => toggle(p.id)} className="flex min-h-6 min-w-0 flex-1 flex-col justify-center text-left" title={[hint || places, reorderHint].filter(Boolean).join(" · ")}
+                        aria-keyshortcuts={sortable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
+                        onKeyDown={(event) => { if (!sortable || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return; event.preventDefault(); nudgeProject(p.id, event.key === "ArrowUp" ? -1 : 1); }}>
                         <span className="truncate u-title">{title}</span>
                     </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
@@ -274,7 +316,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
         agent: tr("consoleChrome.byAgent"),
         none: tr("console.conversation"),
     };
-    const arrange = <ArrangeMenu value={arrangement} onChange={setArrangement} />;
+    const arrange = <ArrangeMenu value={arrangement} onChange={setArrangement} arranged={projectOrder.length > 0} onResetOrder={() => setProjectOrder([])} />;
 
     if (collapsed) {
         return (
@@ -301,7 +343,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
                 {query && !live.length && !archived.length && <p className="px-3 py-4 text-sm text-tertiary">{tr("consoleChrome.noMatches")}</p>}
                 {arrangement.group === "project" ? (
                     <>
-                        <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id))}</ul>
+                        <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id, undefined, true))}</ul>
                         {orphans.length > 0 && (
                             <>
                                 <TreeHeading>{tr("consoleChrome.unassigned")}</TreeHeading>
@@ -349,7 +391,7 @@ function TreeHeading({ children, action }: { children: string; action?: React.Re
 // ArrangeMenu is the list's own control: what it groups by, and what it
 // orders by inside a group. It sits on the heading it changes, not in
 // the search field, because it arranges the list rather than filters it.
-function ArrangeMenu({ value, onChange }: { value: Arrangement; onChange: (next: Arrangement) => void }) {
+function ArrangeMenu({ value, onChange, arranged, onResetOrder }: { value: Arrangement; onChange: (next: Arrangement) => void; arranged?: boolean; onResetOrder?: () => void }) {
     const { t: tr } = useI18n();
     const groups: Record<Grouping, string> = {
         project: tr("consoleChrome.byProject"),
@@ -368,7 +410,7 @@ function ArrangeMenu({ value, onChange }: { value: Arrangement; onChange: (next:
                 <SwitchVertical01 className="size-3.5" />
             </AriaButton>
             <Dropdown.Popover placement="bottom end" className="w-48">
-                <Dropdown.Menu aria-label={tr("consoleChrome.arrange")}>
+                <Dropdown.Menu aria-label={tr("consoleChrome.arrange")} onAction={(key) => { if (key === "reset-order") onResetOrder?.(); }}>
                     {/* Grouping and order are two choices, and a reader who
                         opens this usually changes both, so the menu holds. */}
                     <Dropdown.Section selectionMode="single" disallowEmptySelection shouldCloseOnSelect={false} selectedKeys={[value.group]}
@@ -382,6 +424,9 @@ function ArrangeMenu({ value, onChange }: { value: Arrangement; onChange: (next:
                         <Dropdown.SectionHeader className="conversation-arrange-label">{tr("consoleChrome.sortBy")}</Dropdown.SectionHeader>
                         {ORDERINGS.map((o) => <Dropdown.Item key={o} id={o} label={sorts[o]} />)}
                     </Dropdown.Section>
+                    {/* The reader's own project order is only worth a menu
+                        entry once there is one to undo. */}
+                    {arranged && value.group === "project" && <><Dropdown.Separator /><Dropdown.Item id="reset-order" label={tr("consoleChrome.resetProjectOrder")} /></>}
                 </Dropdown.Menu>
             </Dropdown.Popover>
         </Dropdown.Root>
