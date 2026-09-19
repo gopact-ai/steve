@@ -5,19 +5,29 @@
 @interface TestApplication : SteveApplication
 @property(nonatomic, assign) NSUInteger failures;
 @property(nonatomic, assign) NSUInteger connections;
+@property(nonatomic, assign) NSUInteger windowCloses;
 @end
 
 @implementation TestApplication
 - (void)showConnectionFailure:(NSString *)detail { self.failures++; }
 - (void)showWindow {}
 - (void)connectService { self.connections++; }
+- (void)closeWindow { self.windowCloses++; }
 @end
 
 @interface TestWebView : NSObject
 @property(nonatomic, assign) BOOL ready;
+/** What the page reports when asked to close its frontmost panel. */
+@property(nonatomic, assign) BOOL layerClosed;
+@property(nonatomic, assign) NSUInteger closeRequests;
 @end
 @implementation TestWebView
 - (void)evaluateJavaScript:(NSString *)script completionHandler:(void (^)(id, NSError *))completion {
+    if ([script containsString:@"steveCloseLayer"]) {
+        self.closeRequests++;
+        completion(@(self.layerClosed), nil);
+        return;
+    }
     completion(@(self.ready), nil);
 }
 @end
@@ -75,6 +85,22 @@ int main(void) {
         check(app.connections == 0, @"Reopening hid the recovery instructions");
         [app retryWorkspace:nil];
         check(app.connections == 1, @"Explicit retry did not reconnect the workspace");
+        // ⌘W walks the workspace before it reaches the window.
+        app.viewLoaded = NO;
+        app.windowCloses = 0;
+        content.closeRequests = 0;
+        [app closeLayer:nil];
+        check(app.windowCloses == 1 && content.closeRequests == 0, @"Closing without a loaded workspace did not close the window");
+
+        app.viewLoaded = YES;
+        content.layerClosed = YES;
+        [app closeLayer:nil];
+        check(content.closeRequests == 1 && app.windowCloses == 1, @"A panel the workspace closed still took the window with it");
+
+        content.layerClosed = NO;
+        [app closeLayer:nil];
+        check(content.closeRequests == 2 && app.windowCloses == 2, @"An empty workspace did not let the window close");
+
         puts("Desktop navigation recovery passed");
     }
     return 0;

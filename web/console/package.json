@@ -25,7 +25,8 @@
     "test:plugins": "node ../../e2e/console/plugins-ui.mjs",
     "test:projects": "node ../../e2e/console/projects-directory-ui.mjs",
     "test:delete": "node ../../e2e/console/delete-ui.mjs",
-    "test:conflicts": "node ../../e2e/console/conflicts-ui.mjs"
+    "test:conflicts": "node ../../e2e/console/conflicts-ui.mjs",
+    "test:close-layers": "node ../../e2e/console/close-layers-ui.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

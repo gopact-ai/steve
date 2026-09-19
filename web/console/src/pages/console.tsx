@@ -11,6 +11,7 @@ import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
 import { ResizableInspector } from "@/components/steve/resizable-inspector";
 import { useReviewActive } from "@/components/steve/review-context";
+import { closeOrder, useCloseLayer } from "@/providers/close-stack";
 import { NativeSessionImport } from "@/components/steve/native-session-import";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { TaskDrawer } from "@/components/steve/task-drawer";
@@ -643,6 +644,11 @@ function ConsoleWorkbench() {
         ? <SideChatPanel embedded />
         : <DelegationPanel id={"#" + tab.task} info={stepOf(tab.task!)} progress={stepOf(tab.task!)} />;
     const splitOpen = !reviewing && split.tabs.length > 0 && !split.hidden;
+    // Right to left: the details rail stands furthest right, then the
+    // pane beside the conversation. The session list on the far left is
+    // navigation rather than something opened, so it stays put.
+    useCloseLayer(closeOrder.inspector, () => setInspectorOpen(false), inspectorOpen && dockInspector && !reviewing);
+    useCloseLayer(closeOrder.splitTab, () => { const tab = split.tabs.find((item) => item.id === split.active) || split.tabs.at(-1); if (tab) closeSplitTab(tab); }, splitOpen);
     return (
         <div className="console-workbench">
             {replacingDraft !== null && <ConfirmDialog title={t("console.replaceDraftTitle")} body={t("console.replaceDraftBody")} confirmLabel={t("console.replaceDraft")}
