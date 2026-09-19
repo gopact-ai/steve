@@ -25,8 +25,8 @@ const goalLimit = 120
 
 // beginTask opens or continues the member's task on this channel and charges a
 // turn to it. It returns an empty id when task tracking is disabled, and a
-// UserError when the budget is spent — that error is the brake, so it has to
-// reach the user rather than be swallowed.
+// UserError when the budget is spent. When tracking is configured, admission
+// must be durable before any native execution can start.
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
 	if c.tasks == nil {
 		if req.ExpectedTask != "" {
@@ -60,7 +60,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		// project, and this turn opens its own.
 		slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID), "task", tracked.ID, "conversation", req.ConversationID, "project", binding.ProjectID)
 		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
+			return "", fmt.Errorf("close previous project task %s: %w", tracked.ID, err)
 		}
 		ok = false
 	}
@@ -76,9 +76,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Workspace: workspace,
 		})
 		if err != nil {
-			// Losing the task record must not cost the user their turn.
-			slog.Error(fmt.Sprintf("turn: create task: %v", err), "conversation", req.ConversationID, "agent", selected.ID, "node", executionNode)
-			return "", nil
+			return "", fmt.Errorf("create task for conversation %s: %w", req.ConversationID, err)
 		}
 		tracked = created
 	}
@@ -95,8 +93,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		if text, spent := c.budgetStop(tracked); spent {
 			return "", UserError{Text: text}
 		}
-		slog.Error(fmt.Sprintf("turn: begin task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID, "node", executionNode)
-		return "", nil
+		return "", fmt.Errorf("admit turn for task %s: %w", tracked.ID, err)
 	}
 	// The anchor is what a restarted gateway replies to when it resumes
 	// this task; refresh it every turn so delivery lands by the newest
