@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/card"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -26,10 +27,11 @@ type cardPoster interface {
 var cardMinInterval = 3 * time.Second
 
 type turnUI struct {
-	g      *Gateway
-	msg    feishu.InboundMessage
-	listen bool
-	copy   card.Copy
+	g          *Gateway
+	msg        feishu.InboundMessage
+	listen     bool
+	resultOnly bool
+	copy       card.Copy
 
 	mu        sync.Mutex
 	state     card.Turn
@@ -111,6 +113,25 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 		ui.fallback = true
 	}
 	return ui
+}
+
+// A retained result has no new live turn. Render only its final delivery,
+// without an opener, reaction or native-progress worker.
+func (g *Gateway) newResultUI(msg feishu.InboundMessage) *turnUI {
+	ui := g.newTurnUI(msg, true)
+	ui.listen, ui.resultOnly = silentListen(msg), true
+	return ui
+}
+
+func (u *turnUI) closeProgress() {
+	u.mu.Lock()
+	u.closed = true
+	if u.timer != nil {
+		u.timer.Stop()
+		u.timer = nil
+	}
+	u.mu.Unlock()
+	u.wg.Wait()
 }
 
 func (u *turnUI) setPhase(p card.Phase) {
@@ -265,7 +286,7 @@ func (u *turnUI) flush() {
 	}
 }
 
-func (u *turnUI) finish(result turn.Result, err error) {
+func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 	if u.listen && (err != nil || result.Text == "") {
 		u.mu.Lock()
 		u.closed = true
@@ -274,7 +295,7 @@ func (u *turnUI) finish(result turn.Result, err error) {
 			u.timer = nil
 		}
 		u.mu.Unlock()
-		return
+		return "silent-listen", nil
 	}
 	text, status := u.finalText(result, err)
 	u.mu.Lock()
@@ -308,6 +329,7 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	fallback := u.fallback || cardID == ""
 	u.mu.Unlock()
 	u.wg.Wait()
+	defer u.g.unack(u.msg.MessageID, u.reaction)
 	// Retry needs the card to keep its button, so a failed turn stays live.
 	retryable := status == card.StatusFailed || status == card.StatusCancelled
 	if !retryable {
@@ -320,33 +342,67 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	// it. Post the final card at the bottom instead and drop the opener:
 	// the chat then reads in the order things actually happened.
 	if !fallback && u.g.gate != nil && u.g.gate.Interim(conversationID(u.msg)) {
-		if newID := u.repostFinal(); newID != "" {
+		if newID, repostErr := u.repostFinal(); repostErr == nil && newID != "" {
 			u.g.setTurnCard(u.turnID, newID)
 			u.g.finishTurn(u.turnID, retryable)
 			u.g.recall(cardID)
-			u.g.unack(u.msg.MessageID, u.reaction)
-			return
+			return newID, nil
+		} else if errors.Is(repostErr, channel.ErrOutcomeUnknown) {
+			return "", repostErr
 		}
 	}
 	u.g.finishTurn(u.turnID, retryable)
+	if u.resultOnly && !u.listen {
+		if _, ok := u.g.ch.(cardPoster); ok {
+			if id, err := u.repostFinal(); err == nil {
+				return id, nil
+			} else if errors.Is(err, channel.ErrOutcomeUnknown) {
+				return "", err
+			}
+		}
+	}
 
-	if !fallback && u.patchFinal() {
-		u.g.unack(u.msg.MessageID, u.reaction)
-		return
+	if !fallback {
+		if patchErr := u.patchFinal(); patchErr == nil {
+			return cardID, nil
+		} else if errors.Is(patchErr, channel.ErrOutcomeUnknown) {
+			return "", patchErr
+		}
 	}
 	if text != "" {
-		u.g.reply(u.msg.MessageID, text)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if sender, ok := u.g.ch.(textReplier); ok && (u.g.recoveryLedger != nil || u.resultOnly) {
+			id, err := sender.ReplyText(ctx, u.msg.MessageID, text)
+			if err != nil {
+				return "", noticeError(err)
+			}
+			if id != "" {
+				return id, nil
+			}
+			return "", channel.ErrOutcomeUnknown
+		}
+		if u.g.ch == nil {
+			return "", errors.New("gateway reply channel is not available")
+		}
+		if u.g.recoveryLedger != nil || u.resultOnly {
+			return "", errors.New("gateway durable reply requires a channel message receipt")
+		}
+		if err := u.g.ch.Reply(ctx, u.msg.MessageID, text); err != nil {
+			return "", noticeError(err)
+		}
+		return "reply:" + u.msg.MessageID, nil
 	}
-	u.g.unack(u.msg.MessageID, u.reaction)
+	return "", errors.New("gateway final reply has no content")
 }
 
 // repostFinal sends the finished card as a new message and returns its id,
 // or "" when the channel refused it — the caller then patches in place,
 // which is worse-ordered but never loses the answer.
-func (u *turnUI) repostFinal() string {
+func (u *turnUI) repostFinal() (string, error) {
 	poster, ok := u.g.ch.(cardPoster)
 	if !ok || u.msg.MessageID == "" {
-		return ""
+		return "", errors.New("gateway card repost is unavailable")
 	}
 	u.mu.Lock()
 	payload := card.Render(u.state, u.copy)
@@ -357,18 +413,21 @@ func (u *turnUI) repostFinal() string {
 	id, err := poster.ReplyCard(ctx, u.msg.MessageID, payload)
 	if err != nil || id == "" {
 		slog.Error(fmt.Sprintf("gateway: final card repost failed: %v", err), "conversation", conversationID(u.msg), "message", u.msg.MessageID)
-		return ""
+		if err == nil {
+			err = channel.ErrOutcomeUnknown
+		}
+		return "", noticeError(err)
 	}
 	u.mu.Lock()
 	u.cardID = id
 	u.mu.Unlock()
-	return id
+	return id, nil
 }
 
-func (u *turnUI) patchFinal() bool {
+func (u *turnUI) patchFinal() error {
 	poster, ok := u.g.ch.(cardPoster)
 	if !ok || u.cardID == "" {
-		return false
+		return errors.New("gateway card patch is unavailable")
 	}
 	u.mu.Lock()
 	payload := card.Render(u.state, u.copy)
@@ -379,9 +438,9 @@ func (u *turnUI) patchFinal() bool {
 	defer cancel()
 	if err := poster.PatchCard(ctx, id, payload); err != nil {
 		slog.Error(fmt.Sprintf("gateway: card finish failed: %v", err), "conversation", conversationID(u.msg), "card", id)
-		return false
+		return noticeError(err)
 	}
-	return true
+	return nil
 }
 
 func (u *turnUI) finalText(result turn.Result, err error) (string, card.Status) {

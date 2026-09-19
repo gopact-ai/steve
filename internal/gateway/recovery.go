@@ -33,9 +33,37 @@ type RecoveryDriver interface {
 }
 
 type recoveredOutput struct {
-	Result  turn.Result `json:"result"`
-	Error   string      `json:"error,omitempty"`
-	Recover bool        `json:"recover,omitempty"`
+	Result    turn.Result `json:"result"`
+	Error     string      `json:"error,omitempty"`
+	UserError string      `json:"user_error,omitempty"`
+	Canceled  bool        `json:"canceled,omitempty"`
+	Recover   bool        `json:"recover,omitempty"`
+}
+
+func recoveredResult(result turn.Result, err error) recoveredOutput {
+	output := recoveredOutput{Result: result}
+	if err != nil {
+		output.Error = err.Error()
+		output.Canceled = errors.Is(err, context.Canceled)
+		var userErr turn.UserError
+		if errors.As(err, &userErr) {
+			output.UserError = userErr.Text
+		}
+	}
+	return output
+}
+
+func (output recoveredOutput) runError() error {
+	if output.Canceled {
+		return context.Canceled
+	}
+	if output.UserError != "" {
+		return turn.UserError{Text: output.UserError}
+	}
+	if output.Error != "" {
+		return errors.New(output.Error)
+	}
+	return nil
 }
 
 // QueueRecovery accepts either a continuation or delivery of an already
@@ -68,7 +96,7 @@ func (g *Gateway) QueueRecovery(ctx context.Context, book *ledger.Ledger, key st
 // by Command; unknown dispatch can only recover the matching persisted attempt.
 // The running reconciler schedules the same work without waiting below.
 func (g *Gateway) RecoverQueued(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error) error {
-	inputs, err := book.PendingCommands(ctx, recoveryInputKind)
+	inputs, err := pendingGatewayInputs(ctx, book)
 	if err != nil {
 		return err
 	}
@@ -107,7 +135,13 @@ func recoveryBatches(inputs []ledger.CommandRecord) [][]ledger.CommandRecord {
 	conversations := map[string]int{}
 	for _, receipt := range inputs {
 		var input recoveryInput
-		if json.Unmarshal(receipt.Result, &input) != nil || input.ConversationID == "" {
+		if receipt.Kind == gatewayInputKind {
+			ordinary, _ := decodeGatewayInput(receipt)
+			input.ConversationID = conversationID(ordinary.Message)
+		} else {
+			_ = json.Unmarshal(receipt.Result, &input)
+		}
+		if input.ConversationID == "" {
 			batches = append(batches, []ledger.CommandRecord{receipt})
 			continue
 		}
@@ -132,7 +166,7 @@ type RecoveryWorkers interface {
 // without waiting for native turns or retained observers. Execution and error
 // semantics are shared with the synchronous RecoverQueued/DispatchResume path.
 func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error, workers RecoveryWorkers) error {
-	inputs, err := book.PendingCommands(ctx, recoveryInputKind)
+	inputs, err := pendingGatewayInputs(ctx, book)
 	if err != nil {
 		return err
 	}
@@ -151,7 +185,7 @@ func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driv
 	scheduled := 0
 	for i := range inputs {
 		receipt := inputs[(start+i)%len(inputs)]
-		release, err := g.claimRecovery(ctx, receipt, false)
+		run, release, err := g.claimQueued(ctx, book, receipt, driver, revive, false)
 		if errors.Is(err, channel.ErrDeliveryQueued) {
 			continue
 		}
@@ -160,7 +194,7 @@ func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driv
 		}
 		if !workers.Go(func() {
 			defer release()
-			if err := g.recoverAcceptedInput(ctx, book, receipt, driver, revive); err != nil && ctx.Err() == nil {
+			if err := run(); err != nil && ctx.Err() == nil {
 				slog.Error("gateway recovery remains pending", "input", receipt.ID, "error", err)
 			}
 		}) {
@@ -179,12 +213,12 @@ func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driv
 }
 
 func (g *Gateway) recoverQueuedInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error) error {
-	release, err := g.claimRecovery(ctx, receipt, true)
+	run, release, err := g.claimQueued(ctx, book, receipt, driver, revive, true)
 	if err != nil {
 		return err
 	}
 	defer release()
-	return g.recoverAcceptedInput(ctx, book, receipt, driver, revive)
+	return run()
 }
 
 func (g *Gateway) recoverAcceptedInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error) error {
@@ -228,10 +262,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 		if result.Attempt != input.Attempt {
 			return fmt.Errorf("%w: retained result belongs to another attempt", channel.ErrOutcomeUnknown)
 		}
-		output.Result = result
-		if err != nil {
-			output.Error = err.Error()
-		}
+		output = recoveredResult(result, err)
 	} else {
 		receipt, dispatched, err := book.CommandReceipt(ctx, key+"/dispatch")
 		if err != nil {
@@ -267,10 +298,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 			}
 			result, runErr := g.processor.Handle(ctx, request)
 			runErr = errors.Join(runErr, acceptanceErr)
-			output := recoveredOutput{Result: result}
-			if runErr != nil {
-				output.Error = runErr.Error()
-			}
+			output := recoveredResult(result, runErr)
 			var blocked *turn.RecoveryBlocked
 			output.Recover = errors.As(runErr, &blocked) || errors.Is(runErr, harness.ErrStopUnconfirmed) ||
 				admitted != "" && result.Attempt != admitted

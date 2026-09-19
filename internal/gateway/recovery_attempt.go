@@ -18,6 +18,7 @@ const gatewayInputKind = "gateway-input"
 type gatewayInput struct {
 	Message      feishu.InboundMessage `json:"message"`
 	ExpectedTask string                `json:"expected_task,omitempty"`
+	Action       *feishu.CardAction    `json:"action,omitempty"`
 }
 
 const attemptInputQuery = `SELECT id FROM commands
@@ -92,14 +93,37 @@ func (g *Gateway) OwnsAttempt(ctx context.Context, book *ledger.Ledger, attemptI
 }
 
 func verifyAttemptInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, proof recoveryAttempt) error {
+	return book.Read(ctx, func(tx *ledger.ReadTx) error { return verifyAttemptInputTx(tx, receipt, proof) })
+}
+
+func verifyAttemptInputTx(tx ledger.Reader, receipt ledger.CommandRecord, proof recoveryAttempt) error {
 	if receipt.Kind == gatewayInputKind {
 		var input gatewayInput
-		if json.Unmarshal(receipt.Result, &input) != nil || input.Message.MessageID != proof.MessageID ||
-			conversationID(input.Message) != proof.Conversation || input.Message.SenderOpenID != receipt.Actor ||
+		if json.Unmarshal(receipt.Result, &input) != nil || input.Message.SenderOpenID != receipt.Actor ||
 			input.ExpectedTask != "" && input.ExpectedTask != proof.TaskID {
 			return errors.New("gateway attempt is not linked to its accepted message")
 		}
+		msg := input.Message
+		if _, topic := topicTask(msg); topic {
+			route, found, err := ledger.CommandReceiptTx(tx, receipt.ID+"/topic")
+			if err != nil {
+				return err
+			}
+			if !found {
+				return errors.New("gateway topic attempt has no route receipt")
+			}
+			msg, err = topicMessage(input, route, receipt.ID)
+			if err != nil {
+				return err
+			}
+		}
+		if msg.MessageID != proof.MessageID || conversationID(msg) != proof.Conversation {
+			return errors.New("gateway attempt address does not match its accepted route")
+		}
 		return nil
+	}
+	if receipt.Kind != recoveryInputKind {
+		return errors.New("gateway attempt input kind is unsupported")
 	}
 	var input recoveryInput
 	if json.Unmarshal(receipt.Result, &input) != nil || input.Attempt != "" || input.TaskID != proof.TaskID ||
@@ -108,7 +132,7 @@ func verifyAttemptInput(ctx context.Context, book *ledger.Ledger, receipt ledger
 	}
 	// Recovery changes the reply anchor through its successful notice. The
 	// original input anchor alone cannot prove which attempt it dispatched.
-	notice, exists, err := book.CommandReceipt(ctx, receipt.ID+"/notice")
+	notice, exists, err := ledger.CommandReceiptTx(tx, receipt.ID+"/notice")
 	if err != nil {
 		return err
 	}

@@ -84,7 +84,7 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 	c.disclosures[id] = h
 	disclosuresMu.Unlock()
 	slog.Info(fmt.Sprintf("turn: sealed answer for %s held as disclosure %s (%d chars)", req.ConversationID, id, len(result.Text)), "conversation", req.ConversationID, "project", p.ID, "attempt", result.Attempt)
-	return Result{AgentID: result.AgentID, Title: c.text.T(i18n.CardDisclosure),
+	return Result{AgentID: result.AgentID, Attempt: result.Attempt, Title: c.text.T(i18n.CardDisclosure),
 		Text: c.text.T(i18n.DisclosurePending, len([]rune(result.Text)), p.ID, protocol.CommandApprove, id)}, nil
 }
 

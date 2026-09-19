@@ -104,9 +104,5 @@ func recoverDispatchedAttempt(ctx context.Context, book *ledger.Ledger, key, act
 	if result.Attempt != admitted.AttemptID {
 		return recoveredOutput{}, fmt.Errorf("%w: dispatch recovery returned another attempt", channel.ErrOutcomeUnknown)
 	}
-	output := recoveredOutput{Result: result}
-	if runErr != nil {
-		output.Error = runErr.Error()
-	}
-	return output, nil
+	return recoveredResult(result, runErr), nil
 }

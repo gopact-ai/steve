@@ -20,7 +20,7 @@ import (
 )
 
 type Gateway interface {
-	HandleMessage(feishu.InboundMessage)
+	HandleMessage(feishu.InboundMessage) error
 	HandleCardAction(feishu.CardAction) feishu.CardToast
 	LiveTurns() []gateway.TurnInfo
 	LastCard() []byte
@@ -82,7 +82,10 @@ func Handler(gw Gateway, def Defaults) http.Handler {
 			}
 			msg.MessageID, msg.ChatID = sent.MessageID, sent.ChatID
 		}
-		go gw.HandleMessage(msg)
+		if err := gw.HandleMessage(msg); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error(), "message_id": msg.MessageID})
+			return
+		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"message_id": msg.MessageID})
 	})
 	mux.HandleFunc("GET /turns", func(w http.ResponseWriter, _ *http.Request) {
@@ -134,6 +137,7 @@ func (r messageRequest) inbound(def Defaults) feishu.InboundMessage {
 }
 
 type cardRequest struct {
+	ChatID    string `json:"chat_id"`
 	Action    string `json:"action"`
 	RequestID string `json:"request_id"`
 	Decision  string `json:"decision"`
@@ -148,6 +152,7 @@ func (r cardRequest) action(def Defaults) feishu.CardAction {
 		Decision:  r.Decision,
 		OpenID:    or(r.OpenID, def.SenderOpenID),
 		MessageID: r.MessageID,
+		ChatID:    or(r.ChatID, def.ChatID),
 	}
 }
 

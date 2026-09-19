@@ -38,54 +38,105 @@ func (g *Gateway) claimRecovery(ctx context.Context, receipt ledger.CommandRecor
 	if json.Unmarshal(receipt.Result, &input) != nil || input.ConversationID == "" {
 		return nil, errors.New("gateway recovery has no accepted conversation")
 	}
-	release, claimed := g.claimInput(receipt.ID)
+	claim, err := g.claimOrdinary(ctx, receipt.ID, input.ConversationID, wait, false)
+	if err != nil {
+		return nil, err
+	}
+	return claim.close, nil
+}
+
+type inputClaim struct {
+	g            *Gateway
+	conversation string
+	releaseInput func()
+}
+
+func (g *Gateway) claimOrdinary(ctx context.Context, key, conversation string, wait, join bool) (*inputClaim, error) {
+	release, claimed := g.claimInput(key)
 	if !claimed {
 		return nil, channel.ErrDeliveryQueued
 	}
-	g.mu.Lock()
-	busy := g.serving[input.ConversationID] != 0
-	g.mu.Unlock()
-	if busy {
+	if err := g.acquireConversation(ctx, conversation, wait, join); err != nil {
 		release()
-		return nil, channel.ErrDeliveryQueued
+		return nil, err
 	}
+	return &inputClaim{g: g, conversation: conversation, releaseInput: release}, nil
+}
+
+func (c *inputClaim) close() {
+	if c.conversation != "" {
+		c.g.releaseConversation(c.conversation)
+	}
+	c.releaseInput()
+}
+
+// A topic receipt changes the route, not the accepted input. Release the old
+// conversation reference before nonblocking admission to the proven thread.
+// Never wait while retaining a slot needed by the thread's control message.
+func (c *inputClaim) move(ctx context.Context, conversation string) error {
+	if conversation == c.conversation {
+		return nil
+	}
+	c.g.releaseConversation(c.conversation)
+	c.conversation = ""
+	if err := c.g.acquireConversation(ctx, conversation, false, false); err != nil {
+		return err
+	}
+	c.conversation = conversation
+	return nil
+}
+
+func (g *Gateway) acquireConversation(ctx context.Context, conversation string, wait, join bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	if g.serving[conversation] != 0 {
+		if join {
+			g.serving[conversation]++
+			g.mu.Unlock()
+			return nil
+		}
+		g.mu.Unlock()
+		return channel.ErrDeliveryQueued
+	}
+	g.mu.Unlock()
 	if wait {
 		select {
 		case g.slots <- struct{}{}:
 		case <-ctx.Done():
-			release()
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
 	} else {
 		select {
 		case g.slots <- struct{}{}:
 		default:
-			release()
-			return nil, channel.ErrDeliveryQueued
+			return channel.ErrDeliveryQueued
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		<-g.slots
-		release()
-		return nil, err
+		return err
 	}
 	// Recovery reserves the existing conversation slot owner too. Ordinary
 	// stop/interrupt input must share that slot, not wait for the very turn
 	// it needs to stop. Other recovery inputs stay pending rather than spend
 	// all capacity waiting behind the same conversation's native observer.
 	g.mu.Lock()
-	if g.serving[input.ConversationID] != 0 {
+	if g.serving[conversation] != 0 {
+		if join {
+			g.serving[conversation]++
+			g.mu.Unlock()
+			<-g.slots
+			return nil
+		}
 		g.mu.Unlock()
 		<-g.slots
-		release()
-		return nil, channel.ErrDeliveryQueued
+		return channel.ErrDeliveryQueued
 	}
-	g.serving[input.ConversationID]++
+	g.serving[conversation]++
 	g.mu.Unlock()
-	return func() {
-		g.releaseConversation(input.ConversationID)
-		release()
-	}, nil
+	return nil
 }
 
 func (g *Gateway) releaseConversation(conversation string) {

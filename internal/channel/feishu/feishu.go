@@ -24,6 +24,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
+	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/text"
@@ -79,8 +80,8 @@ type CardToast struct {
 	Content string
 }
 
-// Handler consumes inbound messages; it must not block the event loop.
-type Handler func(msg InboundMessage)
+// Handler durably accepts inbound input. It must return before native execution.
+type Handler func(msg InboundMessage) error
 
 type Options struct {
 	AppID            string
@@ -141,27 +142,7 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 	}
 	channel := &Channel{api: api, access: opts.Access}
 	eventHandler := dispatcher.NewEventDispatcher("", "").
-		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-			msg, ok := normalize(event, identity.OpenID, opts.AllowUnmentioned)
-			if !ok {
-				return nil
-			}
-			if decide(msg, channel.access) != actionAllow {
-				return nil
-			}
-			dlCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			channel.attachImages(dlCtx, &msg)
-			channel.attachQuoted(dlCtx, &msg)
-			cancel()
-			// Hand off rather than run the turn here. This callback is the
-			// connection's event loop: blocking it for the length of a turn
-			// means the next message cannot arrive until the current one
-			// finishes — which is exactly the message that was meant to
-			// interrupt it. Returning immediately also acks the event before
-			// Feishu's redelivery window instead of after the agent is done.
-			go handler(msg)
-			return nil
-		}).
+		OnP2MessageReceiveV1(channel.messageHandler(identity.OpenID, opts.AllowUnmentioned, handler)).
 		OnP2MessageReactionCreatedV1(func(context.Context, *larkim.P2MessageReactionCreatedV1) error {
 			// The gateway's own thinking-emoji ack comes straight back as an
 			// event; there is nothing to do with it, and leaving it without
@@ -194,6 +175,33 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
 	)
 	return channel, nil
+}
+
+func (channel *Channel) messageHandler(botOpenID string, allowUnmentioned bool, handler Handler) func(context.Context, *larkim.P2MessageReceiveV1) error {
+	return func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+		msg, ok := normalize(event, botOpenID, allowUnmentioned)
+		if !ok {
+			return nil
+		}
+		if decide(msg, channel.access) != actionAllow {
+			return nil
+		}
+		// The SDK maps a returned error to a non-success WS response. Wait
+		// only for durable acceptance, never for the native turn; remote
+		// redelivery is not guaranteed by this client.
+		return handler(msg)
+	}
+}
+
+// EnrichInput reads optional image/quote context after durable acceptance.
+// It runs under the gateway's bounded worker, never on the WS acknowledgement
+// path. These reads do not change the original input or dispatch identity.
+func (c *Channel) EnrichInput(ctx context.Context, msg InboundMessage) InboundMessage {
+	dlCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	c.attachImages(dlCtx, &msg)
+	c.attachQuoted(dlCtx, &msg)
+	return msg
 }
 
 // Start blocks and maintains the long connection until ctx is done.
@@ -447,13 +455,13 @@ func (c *Channel) ReplyCard(ctx context.Context, messageID string, payload []byt
 	_, confirm := c.effect("reply-card", messageID, payload)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("feishu card reply: %w", err)
+		return "", fmt.Errorf("%w: feishu card reply: %w", messagechannel.ErrOutcomeUnknown, err)
 	}
 	if !resp.Success() {
 		return "", fmt.Errorf("feishu card reply: code=%d msg=%s", resp.Code, resp.Msg)
 	}
 	if resp.Data == nil || deref(resp.Data.MessageId) == "" {
-		return "", fmt.Errorf("feishu card reply: empty message id")
+		return "", fmt.Errorf("%w: feishu card reply: empty message id", messagechannel.ErrOutcomeUnknown)
 	}
 	confirm(map[string]string{"message_id": deref(resp.Data.MessageId)})
 	return deref(resp.Data.MessageId), nil
@@ -472,7 +480,7 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 		Build()
 	resp, err := c.api.Im.V1.Message.Patch(ctx, patch)
 	if err != nil {
-		return fmt.Errorf("feishu card patch: %w", err)
+		return fmt.Errorf("%w: feishu card patch: %w", messagechannel.ErrOutcomeUnknown, err)
 	}
 	if resp.Success() {
 		return nil
@@ -486,7 +494,7 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 		Build()
 	updated, updErr := c.api.Im.V1.Message.Update(ctx, upd)
 	if updErr != nil {
-		return fmt.Errorf("feishu card update: %w", updErr)
+		return fmt.Errorf("%w: feishu card update: %w", messagechannel.ErrOutcomeUnknown, updErr)
 	}
 	if !updated.Success() {
 		return fmt.Errorf("feishu card update: code=%d msg=%s", updated.Code, updated.Msg)
@@ -534,7 +542,7 @@ func (c *Channel) ReplyText(ctx context.Context, messageID, text string) (string
 	_, confirm := c.effect("reply", messageID, content)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("feishu reply: %w", err)
+		return "", fmt.Errorf("%w: feishu reply: %w", messagechannel.ErrOutcomeUnknown, err)
 	}
 	if !resp.Success() {
 		return "", fmt.Errorf("feishu reply: code=%d msg=%s", resp.Code, resp.Msg)
@@ -567,7 +575,7 @@ func (c *Channel) ReplyThread(ctx context.Context, messageID, text string) (stri
 	_, confirm := c.effect("reply-thread", messageID, content)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", "", fmt.Errorf("feishu thread reply: %w", err)
+		return "", "", fmt.Errorf("%w: feishu thread reply: %w", messagechannel.ErrOutcomeUnknown, err)
 	}
 	if !resp.Success() {
 		return "", "", fmt.Errorf("feishu thread reply: code=%d msg=%s", resp.Code, resp.Msg)
