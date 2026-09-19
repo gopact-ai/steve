@@ -158,7 +158,7 @@ export interface Selectors { model?: string; models?: SelectorChoice[]; options?
 export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }
 export interface Event {
-    at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
+    at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string; rev?: number;
     state?: string; conversation?: string; text?: string; format?: "markdown" | "text"; title?: string; detail?: string; data?: Record<string, string>; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string; silent?: boolean;
     // n is the page's own arrival counter, so a reader can keep a cursor
     // over a buffer that is trimmed from the front.
