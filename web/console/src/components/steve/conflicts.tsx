@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { closeOrder, useCloseLayer } from "@/providers/close-stack";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { GitBranch01 } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
@@ -147,6 +148,7 @@ function ConflictEditor({ conflict, onClose }: { conflict: Conflict; onClose: ()
             onClose();
         } catch (e) { setError(String(e).replace(/^Error: /, "")); setBusy(false); }
     }
+    useCloseLayer(closeOrder.dialog, () => { if (!busy) onClose(); });
     return <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open && !busy) onClose(); }} className="fixed inset-0 z-[140] flex items-center justify-center bg-overlay/50 p-3">
         <Modal className="flex max-h-[95dvh] w-full max-w-5xl flex-col rounded-xl bg-primary p-5 shadow-xl">
             <Dialog aria-label={t("conflicts.editTitle", { artifact: short(conflict.artifact) })} className="flex min-h-0 min-w-0 flex-col gap-3 outline-none">

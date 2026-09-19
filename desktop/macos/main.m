@@ -55,11 +55,31 @@
     NSMenuItem *show = [windowMenu addItemWithTitle:@"打开工作台" action:@selector(openWorkspace:) keyEquivalent:@"0"];
     show.target = self;
     [windowMenu addItemWithTitle:@"最小化" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
-    [windowMenu addItemWithTitle:@"关闭窗口" action:@selector(performClose:) keyEquivalent:@"w"];
+    NSMenuItem *close = [windowMenu addItemWithTitle:@"关闭" action:@selector(closeLayer:) keyEquivalent:@"w"];
+    close.target = self;
     windowItem.submenu = windowMenu;
     NSApp.windowsMenu = windowMenu;
     NSApp.mainMenu = bar;
 }
+
+// ⌘W is a window-menu key equivalent, so the page never sees the key at
+// all. Someone reading a file inside a snapshot, beside a side chat,
+// means "put this away" long before they mean "close the window", so the
+// shell asks the workspace to close its frontmost panel and closes the
+// window only once the workspace says nothing is left on screen.
+- (void)closeLayer:(id)sender {
+    WKWebView *web = self.webView;
+    if (!web || !self.viewLoaded || self.window.contentView != self.workspaceView) { [self closeWindow]; return; }
+    __weak SteveApplication *weakSelf = self;
+    [web evaluateJavaScript:@"Boolean(window.steveCloseLayer && window.steveCloseLayer())" completionHandler:^(id closed, NSError *error) {
+        SteveApplication *owner = weakSelf;
+        if (!owner) return;
+        if (!error && [closed isKindOfClass:NSNumber.class] && [(NSNumber *)closed boolValue]) return;
+        [owner closeWindow];
+    }];
+}
+
+- (void)closeWindow { [self.window performClose:nil]; }
 
 - (void)showWindow {
     if (!self.window) {

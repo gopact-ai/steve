@@ -1,10 +1,15 @@
 import type { DialogProps as AriaDialogProps, ModalOverlayProps as AriaModalOverlayProps } from "react-aria-components";
 import { Dialog as AriaDialog, DialogTrigger as AriaDialogTrigger, Modal as AriaModal, ModalOverlay as AriaModalOverlay } from "react-aria-components";
 import { cx } from "@/utils/cx";
+import { closeOrder, useCloseLayer } from "@/providers/close-stack";
 
 export const DialogTrigger = AriaDialogTrigger;
 
 export const ModalOverlay = (props: AriaModalOverlayProps) => {
+    // An open dialog is the frontmost thing on screen, so the close
+    // shortcut stops here. One that refuses to be dismissed still stops
+    // it, the same way it refuses a click on the page behind it.
+    useCloseLayer(closeOrder.dialog, () => { if (props.isDismissable !== false) props.onOpenChange?.(false); }, props.isOpen === true);
     return (
         <AriaModalOverlay
             {...props}

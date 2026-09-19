@@ -2,8 +2,10 @@ import type { ReactNode } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import { ModalOverlay, Modal, Dialog } from "react-aria-components";
 import { X } from "@untitledui/icons";
+import { closeOrder, useCloseLayer } from "@/providers/close-stack";
 
 export function Sheet({ label, side = "right", width = 480, onClose, children }: { label: string; side?: "left" | "right"; width?: number | "max-content"; onClose: () => void; children: ReactNode }) {
+    useCloseLayer(closeOrder.sheet, onClose);
     return <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) onClose(); }} className={`workbench-overlay from-${side}`}>
         <Modal style={{ width }} className="workbench-sheet">
             <Dialog aria-label={label} className="workbench-sheet-content">{children}</Dialog>

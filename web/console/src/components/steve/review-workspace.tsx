@@ -1,5 +1,7 @@
 import { SideChatPanel } from "./side-chat";
 import { useI18n } from "@/providers/locale-provider";
+import { closeOrder, useCloseLayer } from "@/providers/close-stack";
+import { useSideChat } from "@/providers/side-chat-provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, Code02, File02, Folder, SearchSm, X } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
@@ -31,8 +33,13 @@ type Mode = "source" | "diff" | "preview";
 
 export function ReviewWorkspace({ request, onClose }: { request: ReviewRequest; onClose: () => void }) {
     const { t } = useI18n();
+    const side = useSideChat();
     const [attempt, setAttempt] = useState(request.attempt);
     const [revision, setRevision] = useState(0);
+    // The chat sits to the right of what is being read, so it goes before
+    // the workspace holding both of them.
+    useCloseLayer(closeOrder.reviewSide, side.close, !!side.session);
+    useCloseLayer(closeOrder.review, onClose);
     const options = request.attempts?.length ? request.attempts : [{ id: request.attempt, label: request.label || t("console.attemptLabel", { id: request.attempt.slice(0, 12) }), base: request.index?.base, artifact: request.index?.artifact }];
     return <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} className="review-overlay">
         <Modal className="review-modal"><Dialog aria-label={t("console.review")}  className="review-dialog">
@@ -146,6 +153,8 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
         if (activePath) { setPath(activePath); setModes((all) => ({ ...all, [activePath]: mode })); }
         setScope(next);
     }
+    // An open file closes before the workspace that lists it.
+    useCloseLayer(closeOrder.reviewFile, () => closeFile(activePath), tabs.length > 0 && !!activePath);
     function closeFile(closed: string) {
         const remaining = tabs.filter((item) => item !== closed);
         setOpened(remaining); setAutoSelect(false);

@@ -2,6 +2,7 @@ import { CoordinationProvider, useCoordination } from "@/lib/coordination";
 import { DesktopOnboarding } from "@/components/steve/desktop-onboarding";
 import { SelectionProvider } from "@/providers/selection-provider";
 import { SideChatProvider } from "@/providers/side-chat-provider";
+import { CloseStackProvider } from "@/providers/close-stack";
 import { lazy, Suspense, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { BarChartSquare02, BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
@@ -36,7 +37,7 @@ const PluginsPage = lazy(() => import("@/pages/plugins").then((module) => ({ def
 
 export function App() {
     const navigate = useNavigate();
-    return <FleetProvider><CoordinationProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /><DesktopOnboarding /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></CoordinationProvider></FleetProvider>;
+    return <CloseStackProvider><FleetProvider><CoordinationProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /><DesktopOnboarding /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></CoordinationProvider></FleetProvider></CloseStackProvider>;
 }
 
 function Shell() {
