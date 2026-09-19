@@ -2047,6 +2047,53 @@ checks["audit-space-by-machine"] = async (f) => {
     assert.equal(f.calls.length, 0);
 };
 
+// Forty replicas is a wall of rows the reader has to scroll past to
+// reach anything under it. The audit lists are read a page at a time,
+// the page size is the reader's and is remembered, and a list short
+// enough to read whole is left alone.
+checks["audit-table-paging"] = async (f) => {
+    const replicas = Array.from({ length: 40 }, (_, i) => ({ artifact: `artifact-${String(i + 1).padStart(2, "0")}`, node: "node-4bbf207fa8525645ba6935bd07d227a7", generation: 1, state: "verified", at }));
+    const nodes = [{ name: "node-4bbf207fa8525645ba6935bd07d227a7", display_name: "Steve's MacBook", role: "hub", up: true, version: "test", harnesses: [] }];
+    const facts = { reservations: [], attestations: [], replicas, disclosures: [], effects: [], grants: [] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes, facts } }));
+    await f.page.goto(`${app.url}/#/dashboard?tab=audit`);
+    await f.page.reload();
+    const table = f.page.getByRole("grid", { name: "副本", exact: true });
+    await table.waitFor();
+    const rows = () => table.getByRole("row").filter({ hasText: "artifact-" }).count();
+    const card = f.page.locator(".workbench-table").filter({ has: table });
+    const pager = card.locator(".table-pager");
+    await pager.getByText("第 1–20 条，共 40 条", { exact: true }).waitFor();
+    assert.equal(await rows(), 20, "A long list opens twenty rows deep");
+    await pager.getByText("第 1 / 2 页", { exact: true }).waitFor();
+    assert.equal(await table.getByText("artifact-40", { exact: true }).count(), 0);
+
+    const next = pager.getByRole("button", { name: "下一页", exact: true });
+    const previous = pager.getByRole("button", { name: "上一页", exact: true });
+    assert.equal(await previous.isDisabled(), true, "There is nothing before the first page");
+    await next.click();
+    await pager.getByText("第 21–40 条，共 40 条", { exact: true }).waitFor();
+    await table.getByText("artifact-40", { exact: true }).waitFor();
+    assert.equal(await next.isDisabled(), true, "There is nothing after the last page");
+    await previous.click();
+    await pager.getByText("第 1–20 条，共 40 条", { exact: true }).waitFor();
+
+    // The page size is a reading preference, not a property of one table.
+    await pager.getByRole("button", { name: /每页/ }).click();
+    await f.page.getByRole("option", { name: "每页 50 条", exact: true }).click();
+    await pager.getByText("第 1–40 条，共 40 条", { exact: true }).waitFor();
+    assert.equal(await rows(), 40, "Choosing fifty rows shows the whole list");
+    assert.equal(await f.page.evaluate(() => localStorage.getItem("steve.table.pageSize")), "50");
+    await f.page.reload();
+    await f.page.locator(".table-pager").first().getByText("第 1–40 条，共 40 条", { exact: true }).waitFor();
+
+    // One machine is not a wall, so its table keeps its rows and no footer.
+    const machines = f.page.locator(".workbench-table").filter({ has: f.page.getByRole("grid", { name: "各节点占用", exact: true }) });
+    await machines.waitFor();
+    assert.equal(await machines.locator(".table-pager").count(), 0, "A list short enough to read whole needs no pager");
+    assert.equal(f.calls.length, 0, "Paging a table must not submit work");
+};
+
 checks["usage-dashboard-ranges"] = async (f) => {
     const usage = usageFixture();
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));

@@ -310,6 +310,13 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .workbench-panel { border-color: var(--color-border-secondary); box-shadow: none; }
 .workbench-panel-header { background: transparent; }
 .workbench-table { border-radius: 10px; box-shadow: none; }
+/* The footer that pages a long table: the count on the left, the page
+   size and the two steps on the right, quiet enough to stay furniture. */
+.table-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 16px; border-top: 1px solid var(--color-border-secondary); }
+.table-pager-count { font-size: 12px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.table-pager-controls { display: flex; align-items: center; gap: 8px; }
+.table-pager-controls > button { padding: 6px; }
+.table-pager-page { font-size: 12px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .skill-source-install { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px 12px; width: 100%; max-width: 800px; }
 .skill-source-hint { grid-column: 1 / -1; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.6; }
 .skill-source-list { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; }
