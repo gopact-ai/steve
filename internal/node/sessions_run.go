@@ -210,17 +210,38 @@ func (one *ownedSession) prompt(req nodewire.SessionRequest) (nodewire.SessionSt
 		Text     string
 		Media    []nodewire.SessionMedia
 	}{req.Binding, req.InputSequence, req.Text, req.Media})
-	if old, ok := one.record.CommandHashes[req.CommandID]; ok {
-		if old != hash {
+	store, err := one.service.recordsStore()
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	previous, _, err := store.read(req.ID, req.CommandID)
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	if old, ok := previous.CommandHashes[req.CommandID]; ok {
+		if old != hash || previous.State.Binding != req.Binding {
 			return nodewire.SessionState{}, sessionError("conflict", "input command already used with different prompt")
 		}
-		return one.stateLocked(req.CommandID), nil
+		return (&ownedSession{record: previous}).stateLocked(req.CommandID), nil
+	}
+	if req.InputSequence <= one.record.State.InputAccepted {
+		return nodewire.SessionState{}, sessionError("receipt_expired", "input sequence was already consumed; its receipt is no longer retained")
+	}
+	if one.record.State.InputAccepted != one.record.BindingInputStart {
+		return nodewire.SessionState{}, sessionError("conflict", "this execution binding already accepted its input")
 	}
 	if one.host == nil || one.record.State.State != nodewire.SessionIdle || one.runningLocked() {
 		return nodewire.SessionState{}, sessionError("busy", "original execution is running or cannot be reattached")
 	}
-	if req.InputSequence != one.record.State.InputAccepted+1 || len(one.record.Commands) >= 512 {
-		return nodewire.SessionState{}, sessionError("conflict", "input sequence is stale or session retention limit reached")
+	if req.InputSequence != one.record.State.InputAccepted+1 {
+		return nodewire.SessionState{}, sessionError("conflict", "input sequence is not the next admitted input")
+	}
+	retained, err := store.pending(req.ID)
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	if retained >= 512 {
+		return nodewire.SessionState{}, sessionError("unavailable", "unacknowledged node receipts reached the retention limit")
 	}
 	one.service.mu.Lock()
 	defer one.service.mu.Unlock()

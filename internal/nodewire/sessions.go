@@ -150,24 +150,27 @@ type SessionCommand struct {
 }
 
 type SessionState struct {
-	NativeImport    *nativehistory.Reference `json:"native_import,omitempty"`
-	Plugin          *plugins.RuntimeRef      `json:"plugin,omitempty"`
-	OpenReceipt     *SessionOpenReceipt      `json:"open_receipt,omitempty"`
-	ID              string                   `json:"id"`
-	ContextID       string                   `json:"context_id,omitempty"`
-	Binding         SessionBinding           `json:"binding"`
-	Harness         string                   `json:"harness"`
-	State           SessionStatus            `json:"state"`
-	Sequence        uint64                   `json:"sequence"`
-	InputAccepted   uint64                   `json:"input_accepted"`
-	Settings        view.Settings            `json:"settings"`
-	ModelOption     string                   `json:"model_option,omitempty"`
-	ModelChoices    []view.Choice            `json:"model_choices,omitempty"`
-	SupportsHTTPMCP bool                     `json:"supports_http_mcp"`
-	Progress        view.Progress            `json:"progress"`
-	Command         *SessionCommand          `json:"command,omitempty"`
-	Questions       []SessionQuestion        `json:"questions"`
-	ProcessStopped  bool                     `json:"process_stopped"`
+	NativeImport  *nativehistory.Reference `json:"native_import,omitempty"`
+	Plugin        *plugins.RuntimeRef      `json:"plugin,omitempty"`
+	OpenReceipt   *SessionOpenReceipt      `json:"open_receipt,omitempty"`
+	ID            string                   `json:"id"`
+	ContextID     string                   `json:"context_id,omitempty"`
+	Binding       SessionBinding           `json:"binding"`
+	Harness       string                   `json:"harness"`
+	State         SessionStatus            `json:"state"`
+	Sequence      uint64                   `json:"sequence"`
+	InputAccepted uint64                   `json:"input_accepted"`
+	// NextInputSequence is a node hint for the requested, not-yet-accepted
+	// command under Binding. It is neither execution authority nor an ack proof.
+	NextInputSequence uint64            `json:"next_input_sequence,omitempty"`
+	Settings          view.Settings     `json:"settings"`
+	ModelOption       string            `json:"model_option,omitempty"`
+	ModelChoices      []view.Choice     `json:"model_choices,omitempty"`
+	SupportsHTTPMCP   bool              `json:"supports_http_mcp"`
+	Progress          view.Progress     `json:"progress"`
+	Command           *SessionCommand   `json:"command,omitempty"`
+	Questions         []SessionQuestion `json:"questions"`
+	ProcessStopped    bool              `json:"process_stopped"`
 }
 
 // SessionOpenReceipt binds a fresh inspect/cancel result to the original open.

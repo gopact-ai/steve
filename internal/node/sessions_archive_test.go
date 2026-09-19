@@ -1,9 +1,7 @@
 package node
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,13 +11,14 @@ import (
 func TestNodeSessionClosedArchiveDoesNotConsumeLiveCapacity(t *testing.T) {
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority}
-	dir := filepath.Join(cfg.StateDir, "node-sessions")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
 	req := nodeSessionRequest("open")
 	req.Harness = "mock"
 	req.Workdir = t.TempDir()
+	store, err := openSessionRecords(filepath.Join(cfg.StateDir, "node-sessions", "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
 	var archivedID string
 	for i := 0; i < 1024; i++ {
 		req.CommandID = fmt.Sprintf("retired-open-%d", i)
@@ -31,10 +30,10 @@ func TestNodeSessionClosedArchiveDoesNotConsumeLiveCapacity(t *testing.T) {
 			Servers                      any
 		}{req.Binding, req.Harness, req.Workdir, "read", nil})
 		record := sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: sessionConfigHash(req), State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: "mock", State: "closed", ProcessStopped: true, Sequence: 5}, Commands: map[string]nodewire.SessionCommand{"completed-input": {ID: "completed-input", InputSequence: 1, State: "completed", Output: "original result", Settled: true, ProcessStopped: true}}, CommandHashes: map[string]string{}, CurrentCommand: "completed-input"}
-		raw, _ := json.Marshal(record)
-		if err := os.WriteFile(filepath.Join(dir, id+".json"), raw, 0600); err != nil {
-			t.Fatal(err)
-		}
+		saveSessionRecordsFixture(t, store, record)
+	}
+	if err := store.close(); err != nil {
+		t.Fatal(err)
 	}
 	s := NewServer(cfg)
 	if err := s.startSessions(t.Context()); err != nil {
@@ -70,14 +69,7 @@ func TestNodeSessionColdInterruptedRecordDoesNotProveOldProcessStopped(t *testin
 	req.ID = "ns_" + sessionHash("unknown-native")
 	req.CommandID = "old-input"
 	record := sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, State: nodewire.SessionState{ID: req.ID, Binding: req.Binding, State: "running"}, Commands: map[string]nodewire.SessionCommand{"old-input": {ID: "old-input", InputSequence: 1, State: "running"}}, CommandHashes: map[string]string{}, CurrentCommand: "old-input"}
-	dir := filepath.Join(cfg.StateDir, "node-sessions")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(record)
-	if err := os.WriteFile(filepath.Join(dir, req.ID+".json"), raw, 0600); err != nil {
-		t.Fatal(err)
-	}
+	saveResumeFixture(t, cfg, record)
 	s := NewServer(cfg)
 	if err := s.startSessions(t.Context()); err != nil {
 		t.Fatal(err)
@@ -107,14 +99,7 @@ func TestNodeSessionRestartPreservesDispatchEvidenceWithoutInventingIt(t *testin
 			req.ID = "ns_" + sessionHash(dispatch)
 			req.CommandID = "original-input"
 			record := sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, State: nodewire.SessionState{ID: req.ID, Binding: req.Binding, State: "running"}, Commands: map[string]nodewire.SessionCommand{"original-input": {ID: "original-input", InputSequence: 1, State: "accepted", DispatchState: dispatch}}, CommandHashes: map[string]string{}, CurrentCommand: "original-input"}
-			dir := filepath.Join(cfg.StateDir, "node-sessions")
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				t.Fatal(err)
-			}
-			raw, _ := json.Marshal(record)
-			if err := os.WriteFile(filepath.Join(dir, req.ID+".json"), raw, 0600); err != nil {
-				t.Fatal(err)
-			}
+			saveResumeFixture(t, cfg, record)
 			s := NewServer(cfg)
 			if err := s.startSessions(t.Context()); err != nil {
 				t.Fatal(err)

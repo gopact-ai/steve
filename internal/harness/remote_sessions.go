@@ -281,10 +281,15 @@ func (s *managedSession) PromptTurn(ctx context.Context, text string, media []Me
 		if err != nil {
 			return "", nil, fmt.Errorf("%w: %w", ErrStopUnconfirmed, err)
 		}
-		if attached.Command != nil && attached.Command.ID == request.CommandID {
+		if attached.ID != request.ID || attached.Binding != request.Binding {
+			return "", nil, fmt.Errorf("%w: node input hint belongs to another execution", ErrStopUnconfirmed)
+		}
+		if attached.Command != nil && attached.Command.ID == request.CommandID && attached.Command.InputSequence > 0 {
 			request.InputSequence = attached.Command.InputSequence
+		} else if attached.Command == nil && attached.NextInputSequence != 0 && attached.NextInputSequence == attached.InputAccepted+1 {
+			request.InputSequence = attached.NextInputSequence
 		} else {
-			request.InputSequence = attached.InputAccepted + 1
+			return "", nil, fmt.Errorf("%w: original input receipt is unavailable; no fresh input was admitted", ErrStopUnconfirmed)
 		}
 	}
 	state, err := s.call(ctx, request)

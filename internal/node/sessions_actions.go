@@ -42,15 +42,15 @@ func (s *SessionService) probeCapabilities(ctx context.Context, req nodewire.Ses
 }
 
 func (one *ownedSession) open(req nodewire.SessionRequest) (nodewire.SessionState, error) {
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) attach(req nodewire.SessionRequest) (nodewire.SessionState, error) {
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) settings(req nodewire.SessionRequest) (nodewire.SessionState, error) {
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) poll(ctx context.Context, principal string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
@@ -75,7 +75,7 @@ func (one *ownedSession) poll(ctx context.Context, principal string, req nodewir
 	if err := one.service.authorize(ctx, principal, req); err != nil {
 		return nodewire.SessionState{}, err
 	}
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest) (nodewire.SessionState, error) {

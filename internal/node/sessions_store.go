@@ -1,13 +1,8 @@
 package node
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
-	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -27,12 +22,9 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 		one.progressTimer = nil
 	}
 	next.State.Sequence = one.record.State.Sequence + 1
-	raw, err := json.Marshal(next)
-	if err == nil && len(raw) > nodewire.NodeSessionMaxBytes {
-		err = sessionError("unavailable", "node session durable state exceeded its bound")
-	}
+	store, err := one.service.recordsStore()
 	if err == nil {
-		err = (&ledger.FileDocument{Path: filepath.Join(one.service.directory(), next.State.ID+".json")}).Save(raw)
+		err = store.save(one.record, next)
 	}
 	if err != nil {
 		one.failure = fmt.Errorf("node session persistence failed: %w", err)
@@ -40,7 +32,7 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 		one.changed = make(chan struct{})
 		return one.failure
 	}
-	one.record = next
+	one.record = liveSessionRecord(next)
 	close(one.changed)
 	one.changed = make(chan struct{})
 	return nil
@@ -67,73 +59,115 @@ func (one *ownedSession) state(commandID string) nodewire.SessionState {
 	return one.stateLocked(commandID)
 }
 
-func (s *SessionService) load() error {
-	if err := os.MkdirAll(s.directory(), 0700); err != nil {
-		return err
+// stateForRequest reads at most one command and its questions. It may observe
+// an earlier binding without rebinding the still-live native conversation.
+func (one *ownedSession) stateForRequest(req nodewire.SessionRequest) (nodewire.SessionState, error) {
+	one.mu.Lock()
+	defer one.mu.Unlock()
+	if err := one.admitLocked(req); err != nil {
+		return nodewire.SessionState{}, err
 	}
-	entries, err := os.ReadDir(s.directory())
+	store, err := one.service.recordsStore()
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	record, exists, err := store.read(one.record.State.ID, req.CommandID)
+	if err != nil {
+		return nodewire.SessionState{}, fmt.Errorf("read node session receipt: %w", err)
+	}
+	if !exists {
+		return nodewire.SessionState{}, sessionError("unavailable", "node session receipt cannot be read")
+	}
+	if err := checkSessionReceipt(req, record); err != nil {
+		return nodewire.SessionState{}, err
+	}
+	state := (&ownedSession{record: record}).stateLocked(req.CommandID)
+	if req.Action == nodewire.SessionActionAttach && state.Command == nil && sessionNameValid(req.CommandID) &&
+		req.InputSequence == 0 && req.Binding == record.State.Binding && one.host != nil &&
+		state.State == nodewire.SessionIdle && record.BindingInputStart == state.InputAccepted {
+		state.NextInputSequence = state.InputAccepted + 1
+	}
+	return state, nil
+}
+
+func checkSessionReceipt(req nodewire.SessionRequest, record sessionRecord) error {
+	if command, exists := record.Commands[req.CommandID]; exists {
+		if req.InputSequence != 0 && req.InputSequence != command.InputSequence {
+			return sessionError("conflict", "receipt input sequence differs")
+		}
+		return nil
+	}
+	if req.Action == nodewire.SessionActionOpen || req.CommandID == "" {
+		return nil
+	}
+	if req.InputSequence > 0 && req.InputSequence <= record.State.InputAccepted ||
+		req.InputSequence == 0 && record.State.InputAccepted > record.BindingInputStart {
+		return sessionError("receipt_expired", "input was already consumed; its receipt is no longer retained")
+	}
+	return nil
+}
+
+func (s *SessionService) load() error {
+	store, err := s.recordsStore()
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		id := strings.TrimSuffix(entry.Name(), ".json")
-		if !sessionIDValid(id) || entry.Name() != id+".json" || !entry.Type().IsRegular() {
-			return sessionError("unavailable", "invalid node session state entry")
-		}
-		info, err := entry.Info()
+	for after := ""; ; {
+		ids, err := store.ids(after)
 		if err != nil {
 			return err
 		}
-		if info.Size() > nodewire.NodeSessionMaxBytes {
-			return sessionError("unavailable", "node session state is too large")
+		if len(ids) == 0 {
+			break
 		}
-		raw, err := os.ReadFile(filepath.Join(s.directory(), entry.Name()))
-		if err != nil {
-			return err
-		}
-		var record sessionRecord
-		if err := json.Unmarshal(raw, &record); err != nil {
-			return fmt.Errorf("decode node session state: %w", err)
-		}
-		if record.Format != 1 || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name || record.Commands == nil || record.CommandHashes == nil {
-			return sessionError("unavailable", "node session state identity differs")
-		}
-		one := &ownedSession{service: s, record: record, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
-		if record.State.State != nodewire.SessionClosed {
-			record.State.State = nodewire.SessionInterrupted
-			for id, command := range record.Commands {
-				if command.State.Active() {
-					command.State = nodewire.SessionCommandUncertain
-					command.Error = "node service restarted without a live ACP callback"
-					command.Settled = false
-					record.Commands[id] = command
-				}
-			}
-			for i := range record.State.Questions {
-				if record.State.Questions[i].State == nodewire.SessionQuestionPending {
-					record.State.Questions[i].State = nodewire.SessionQuestionInterrupted
-				}
-			}
-			if err := one.commitLocked(record); err != nil {
+		for _, id := range ids {
+			if err := s.loadRecord(store, id); err != nil {
 				return err
 			}
 		}
-		// After node restart no old native callback is resumable. Keep its
-		// receipt on disk and load it on demand rather than consuming a live slot.
-		if !record.State.ProcessStopped {
-			s.unverifiedProcesses = true
+		after = ids[len(ids)-1]
+	}
+	return nil
+}
+
+func (s *SessionService) loadRecord(store *sessionRecords, id string) error {
+	record, _, err := store.read(id, "")
+	if err != nil {
+		return err
+	}
+	if record.Format != 1 || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name || record.Commands == nil || record.CommandHashes == nil {
+		return sessionError("unavailable", "node session state identity differs")
+	}
+	one := &ownedSession{service: s, record: record, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
+	if record.State.State != nodewire.SessionClosed {
+		next := one.copyLocked()
+		next.State.State = nodewire.SessionInterrupted
+		for id, command := range next.Commands {
+			if command.State.Active() {
+				command.State = nodewire.SessionCommandUncertain
+				command.Error = "node service restarted without a live ACP callback"
+				command.Settled = false
+				next.Commands[id] = command
+			}
 		}
-		if err := s.endStoppedRuntime(record); err != nil {
+		for i := range next.State.Questions {
+			if next.State.Questions[i].State == nodewire.SessionQuestionPending {
+				next.State.Questions[i].State = nodewire.SessionQuestionInterrupted
+			}
+		}
+		if err := one.commitLocked(next); err != nil {
 			return err
 		}
+	}
+	// After node restart no old native callback is resumable. Keep its
+	// receipt on disk and load it on demand rather than consuming a live slot.
+	if !record.State.ProcessStopped {
+		s.unverifiedProcesses = true
+	}
+	if err := s.endStoppedRuntime(record); err != nil {
+		return err
+	}
 
-	}
-	if len(s.sessions) > 1024 {
-		return sessionError("unavailable", "node session retention limit reached")
-	}
 	return nil
 }
 
@@ -141,24 +175,13 @@ func (s *SessionService) readRecord(id string) (sessionRecord, bool, error) {
 	if !sessionIDValid(id) {
 		return sessionRecord{}, false, sessionError("invalid", "invalid session record identity")
 	}
-	name := filepath.Join(s.directory(), id+".json")
-	info, err := os.Lstat(name)
-	if os.IsNotExist(err) {
-		return sessionRecord{}, false, nil
-	}
+	store, err := s.recordsStore()
 	if err != nil {
 		return sessionRecord{}, false, err
 	}
-	if !info.Mode().IsRegular() || info.Size() > nodewire.NodeSessionMaxBytes {
-		return sessionRecord{}, false, sessionError("unavailable", "invalid archived session record")
-	}
-	raw, err := os.ReadFile(name)
-	if err != nil {
-		return sessionRecord{}, false, err
-	}
-	var record sessionRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return sessionRecord{}, false, err
+	record, exists, err := store.read(id, "")
+	if err != nil || !exists {
+		return record, exists, err
 	}
 	if record.Format != 1 || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name {
 		return sessionRecord{}, false, sessionError("unavailable", "archived session identity differs")
@@ -169,7 +192,11 @@ func (s *SessionService) readRecord(id string) (sessionRecord, bool, error) {
 // Closed records remain durable but do not consume active session slots or
 // retain a Host in memory. Their original command receipts are never replayed.
 func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.SessionState, error) {
-	record, exists, err := s.readRecord(req.ID)
+	store, err := s.recordsStore()
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	record, exists, err := store.read(req.ID, req.CommandID)
 	if err != nil {
 		return nodewire.SessionState{}, err
 	}
@@ -178,6 +205,9 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 	}
 	if record.ClusterID != req.Authority.ClusterID || record.State.Binding != req.Binding {
 		return nodewire.SessionState{}, sessionError("forbidden", "archived session belongs to another execution")
+	}
+	if err := checkSessionReceipt(req, record); err != nil {
+		return nodewire.SessionState{}, err
 	}
 	state := record.State
 	id := req.CommandID

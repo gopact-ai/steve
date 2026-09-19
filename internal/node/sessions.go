@@ -43,6 +43,9 @@ type SessionService struct {
 	wg                  sync.WaitGroup
 	capMu               sync.Mutex
 	capabilities        map[string]harnessCapabilities
+	recordsMu           sync.Mutex
+	records             *sessionRecords
+	recordsErr          error
 }
 
 // harnessCapabilities is what starting a harness once said about the agent
@@ -129,6 +132,9 @@ type sessionRecord struct {
 	CommandHashes  map[string]string                  `json:"command_hashes"`
 	Commands       map[string]nodewire.SessionCommand `json:"commands"`
 	CurrentCommand string                             `json:"current_command,omitempty"`
+	// Rebinding fixes the consumed-input floor for the new execution. Missing
+	// receipts after that execution accepted input cannot become new inputs.
+	BindingInputStart uint64 `json:"binding_input_start,omitempty"`
 }
 
 func sessionHash(value any) string {
@@ -158,6 +164,7 @@ func (s *Server) startSessions(ctx context.Context) error {
 	service := &SessionService{server: s, ctx: ctx, cancel: cancel, sessions: map[string]*ownedSession{}}
 	if err := service.load(); err != nil {
 		cancel()
+		service.closeRecords()
 		return err
 	}
 	s.sessions = service
@@ -208,6 +215,7 @@ func (s *SessionService) Close() {
 		_ = one.commitLocked(next)
 		one.mu.Unlock()
 	}
+	s.closeRecords()
 }
 
 func (s *SessionService) authorize(ctx context.Context, principal string, req nodewire.SessionRequest) error {
@@ -327,10 +335,25 @@ func (one *ownedSession) admitLocked(req nodewire.SessionRequest) error {
 	}
 	if req.Binding != next.State.Binding {
 		before, after := next.State.Binding, req.Binding
-		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || one.host == nil || next.State.State != nodewire.SessionIdle {
+		observation := req.Action == nodewire.SessionActionPoll || req.Action == nodewire.SessionActionAttach || req.Action == nodewire.SessionActionSettings
+		if observation && req.CommandID != "" {
+			store, err := one.service.recordsStore()
+			if err != nil {
+				return err
+			}
+			original, _, err := store.read(one.record.State.ID, req.CommandID)
+			if err != nil {
+				return err
+			}
+			if _, exists := original.Commands[req.CommandID]; !exists || original.State.Binding != req.Binding {
+				return sessionError("conflict", "receipt belongs to another execution")
+			}
+		} else if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || one.host == nil || next.State.State != nodewire.SessionIdle {
 			return sessionError("conflict", "session belongs to another execution")
+		} else {
+			next.State.Binding = req.Binding
+			next.BindingInputStart = next.State.InputAccepted
 		}
-		next.State.Binding = req.Binding
 	}
 	if next.Authority != a || next.State.Binding != one.record.State.Binding {
 		next.Authority = a
