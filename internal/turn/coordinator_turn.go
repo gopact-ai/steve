@@ -161,6 +161,7 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 	if perr != nil || !ok {
 		return nil, nil
 	}
+	req.stage(view.StageSnapshot)
 	before, _, serr := c.snapshot(ctx, p, workspace, "", e.Record.ID, "before turn "+req.MessageID)
 	if serr != nil {
 		return nil, fmt.Errorf("before-snapshot: %w", serr)
@@ -173,6 +174,13 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 // once and waiting for the user to send again.
 func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Runner, error) {
 	c, selected := t.c, t.selected
+	// Reopening a session the conversation already has and starting a
+	// cold one are minutes apart on a bad day; the reader is told which.
+	if t.saved.UpstreamID != "" {
+		t.req.stage(view.StageResume)
+	} else {
+		t.req.stage(view.StageSession)
+	}
 	runner, err := c.open(ctx, t.saved, selected, t.workspace.Path, e.Servers)
 	if err != nil && t.saved.NativeImport == nil && t.saved.UpstreamID != "" && !strings.HasPrefix(t.saved.UpstreamID, "ns_") && !errors.Is(err, harness.ErrNodeSessionUnavailable) {
 		if stateErr := c.store.DeleteSession(t.req.ConversationID, selected.ID); stateErr != nil {

@@ -127,6 +127,9 @@ export interface PlanLine { text: string; status: string }
 export interface Span { kind: "text" | "thought" | "tool"; text?: string; tool?: string; at: string }
 export interface Progress {
     phase?: string;
+    // stage is the preparation step inside the waking phase, as a code
+    // the page writes in the reader's language.
+    stage?: string;
     agent?: string; node?: string; model?: string; reasoning?: string; answer?: string; tools?: ToolCall[]; plan?: PlanLine[];
     timeline?: Span[];
 }

@@ -70,12 +70,21 @@ type Request struct {
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool
 	OnPhase func(view.Phase)
+	// OnStage reports which preparation step is running while the turn is
+	// still waking, so a long start says what it is waiting on.
+	OnStage func(view.Stage)
 	OnAsk   permission.AskFunc
 }
 
 func (r Request) phase(p view.Phase) {
 	if r.OnPhase != nil {
 		r.OnPhase(p)
+	}
+}
+
+func (r Request) stage(s view.Stage) {
+	if r.OnStage != nil {
+		r.OnStage(s)
 	}
 }
 

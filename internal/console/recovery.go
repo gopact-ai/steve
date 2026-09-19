@@ -386,6 +386,7 @@ func (r *exchangeRecovery) request(requester string, identity *questionIdentity)
 		OnTurnReady: identity.set,
 		OnProgress:  r.stream.Update,
 		OnPhase:     r.stream.Phase,
+		OnStage:     r.stream.Stage,
 		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			return r.s.askPermission(ctx, identity.binding(), ask)
 		},

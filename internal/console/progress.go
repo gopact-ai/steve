@@ -55,7 +55,7 @@ func (s *progressStream) Update(p view.Progress) {
 	if s.closed {
 		return
 	}
-	cut.Phase = s.latest.Phase
+	cut.Phase, cut.Stage = s.latest.Phase, s.latest.Stage
 	s.latest = cut
 	s.work.turn(cut)
 	s.pending = true
@@ -85,6 +85,24 @@ func (s *progressStream) Phase(phase view.Phase) {
 		return
 	}
 	s.latest.Phase = string(phase)
+	// Preparation is over the moment the phase moves on; a stale stage
+	// would leave "starting the agent" under "processing".
+	if phase != view.PhaseWaking {
+		s.latest.Stage = ""
+	}
+	s.pending = true
+	s.flush()
+}
+
+// Stage reports which preparation step the turn is on, so a long start
+// says whether it is syncing a directory or waiting for a cold agent.
+func (s *progressStream) Stage(stage view.Stage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.latest.Stage == string(stage) {
+		return
+	}
+	s.latest.Stage = string(stage)
 	s.pending = true
 	s.flush()
 }
