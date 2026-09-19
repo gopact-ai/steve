@@ -100,7 +100,7 @@ export function InlineProcess({ process }: { process: Process }) {
         <div className="flex min-w-0 flex-col gap-1">
             {hasProcessContent({ ...process, steps: steps.filter((s) => s.kind !== "delegate") }, true) && (
                 <details className="group/process min-w-0">
-                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-tertiary hover:text-primary">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary">
                         {t("console.trace")} <ChevronDown aria-hidden="true" className="size-3.5 transition group-open/process:rotate-180" />
                     </summary>
                     <div className="mt-2"><ProcessBody process={process} omitFinalText omitDelegations /></div>

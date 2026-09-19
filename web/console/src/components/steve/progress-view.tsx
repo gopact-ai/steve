@@ -42,8 +42,10 @@ function Activity({ tools }: { tools: ToolCall[] }) {
     const summary = activity(tools, locale);
     return (
         <details data-span-kind="tool" className="group/activity min-w-0">
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs text-tertiary hover:text-primary">
-                {summary.kinds.map((kind) => { const Icon = activityIcons[kind]; return <Icon key={kind} className="size-3.5 shrink-0" />; })}
+            <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary">
+                <span className="flex shrink-0 items-center gap-1">
+                    {summary.kinds.map((kind) => { const Icon = activityIcons[kind]; return <Icon key={kind} className="size-3.5 shrink-0" />; })}
+                </span>
                 <span className="min-w-0 truncate" title={summary.text}>{summary.text}</span>
                 {summary.failed && <span className="shrink-0 text-quaternary">{t("consoleChrome.hasFailure")}</span>}
                 {summary.running && <Loading01 className="size-3 shrink-0 animate-spin" />}
@@ -94,7 +96,7 @@ function timelineEntries(p: Progress, omitText?: number) {
 
 function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText?: number }) {
     const entries = timelineEntries(p, omitText);
-    return <div data-timeline className="flex min-w-0 flex-col gap-2">{entries.map(({ index, span, tools }) => tools
+    return <div data-timeline className="flex min-w-0 flex-col gap-2.5">{entries.map(({ index, span, tools }) => tools
         ? <Activity key={index} tools={tools} />
         : span.kind === "thought"
             ? <ThoughtSpan key={index} text={span.text || ""} live={live && index === (p.timeline?.length || 0) - 1} />
