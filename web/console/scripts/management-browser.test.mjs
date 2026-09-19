@@ -100,10 +100,17 @@ try {
         }
         if (domain === "skills") {
             before = counts.skills;
-            await page.getByRole("switch", { name: /review/ }).focus();
-            await page.keyboard.press("Space");
-            await waitReads(domain, before);
-            assert.equal(mutations, 1, "mutation explicitly reloads its own resource");
+            const responses = Promise.all([
+                page.waitForResponse((response) => new URL(response.url()).pathname === "/console/skills/review" && response.request().method() === "PUT"),
+                page.waitForResponse((response) => new URL(response.url()).pathname === "/console/skills" && response.request().method() === "GET" && mutations === 1),
+            ]);
+            await page.getByRole("switch", { name: /review/ }).press("Space");
+            const [mutation, refreshed] = await responses;
+            assert.equal(mutation.status(), 200);
+            assert.equal(refreshed.status(), 200);
+            await settle();
+            assert.equal(mutations, 1, "keyboard input must issue exactly one mutation");
+            assert.equal(counts.skills, before + 1, "the completed mutation explicitly reloads its own resource");
         }
         before = counts[domain];
         readError = true;
