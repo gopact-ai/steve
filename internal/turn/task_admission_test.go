@@ -51,7 +51,7 @@ func TestTaskPersistenceFailureRefusesExecutionAndCanRetry(t *testing.T) {
 			}
 			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
 				_, err := tx.Exec(`CREATE TRIGGER reject_task_admission BEFORE INSERT ON bindings
-					WHEN NEW.kind = 'document' AND NEW.id = 'tasks'
+					WHEN NEW.kind = 'task-store' AND NEW.id = 'state'
 					BEGIN SELECT RAISE(ABORT, 'task admission unavailable'); END`)
 				return err
 			}); err != nil {
@@ -229,7 +229,7 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 					}
 					if refuseWrite {
 						if _, err := book.DB().Exec(`CREATE TRIGGER refuse_old_task_release BEFORE INSERT ON bindings
-							WHEN NEW.kind = 'document' AND NEW.id = 'tasks'
+							WHEN NEW.kind = 'task-store' AND NEW.id = 'state'
 							BEGIN SELECT RAISE(ABORT, 'task release unavailable'); END`); err != nil {
 							t.Fatal(err)
 						}

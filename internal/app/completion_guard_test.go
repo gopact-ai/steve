@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -91,7 +90,7 @@ func assembledCompletion(t *testing.T) completionFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := tasks.Create(task.Task{Channel: "chat", Member: "codex", Goal: "accepted work"})
+	root, err := tasks.Create(task.Task{Transport: "console", Channel: "chat", Member: "codex", Goal: "accepted work"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,9 +106,13 @@ func assembledCompletion(t *testing.T) completionFixture {
 
 func (f completionFixture) complete(t *testing.T, exchange string, want bool) {
 	t.Helper()
-	durableBefore, _, err := f.book.Document("tasks").Load()
+	beforeStore, err := task.OpenLedger(f.book, "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	durableBefore, found := beforeStore.Get(f.root.ID)
+	if !found || len(durableBefore.Attempts) == 0 {
+		t.Fatal("completion fixture lacks durable task accounting")
 	}
 	result, err := f.coordinator.Handle(t.Context(), turn.Request{
 		ConversationID: f.root.Channel, Channel: "console", ExchangeID: exchange, Locale: "en",
@@ -123,17 +126,16 @@ func (f completionFixture) complete(t *testing.T, exchange string, want bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, _ := reopened.Get(f.root.ID)
+	stored, found := reopened.Get(f.root.ID)
+	if !found {
+		t.Fatal("completion lost durable task")
+	}
 	if want {
 		if stored.State != task.StateDone || !stored.CompletedByUser || stored.ExecutionEpoch != f.root.ExecutionEpoch+1 {
 			t.Fatalf("completion not durable or did not revoke epoch: %+v", stored)
 		}
 	} else {
-		durableAfter, _, err := f.book.Document("tasks").Load()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(f.root, after) || !bytes.Equal(durableBefore, durableAfter) {
+		if !reflect.DeepEqual(f.root, after) || !reflect.DeepEqual(durableBefore, stored) {
 			t.Fatal("refusal changed state, accounting or epoch")
 		}
 	}
@@ -232,7 +234,7 @@ func TestCompletionOwnerGuardSharesTaskWriteTransaction(t *testing.T) {
 			}
 			if stage == "task-write-failure" {
 				if _, err := f.book.DB().Exec(`CREATE TRIGGER reject_completion BEFORE UPDATE ON bindings
-					WHEN NEW.kind = 'document' AND NEW.id = 'tasks'
+					WHEN NEW.kind = 'task-store' AND NEW.id = 'state'
 					BEGIN SELECT RAISE(ABORT, 'completion write unavailable'); END`); err != nil {
 					t.Fatal(err)
 				}

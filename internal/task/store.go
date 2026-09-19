@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -12,16 +13,15 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-// Store persists tasks with the same durable-replace discipline as the session
-// state file. It stays JSON on purpose: the gateway is the only writer, and the
-// data that would outgrow a single file — transcripts and tree snapshots — is
-// meant to land in a sharded archive on disk, not in here.
+// Store serves tasks from memory. Production writes changed ledger records;
+// the file backend preserves whole-document replacement for isolated tests.
 type Store struct {
-	book *ledger.Ledger
-	doc  ledger.Doc
-	mu   sync.Mutex
-	data data
-	now  func() time.Time
+	book     *ledger.Ledger
+	revision uint64
+	doc      ledger.Doc
+	mu       sync.Mutex
+	data     data
+	now      func() time.Time
 	// Default budgets for new tasks; configurable so long-running work is
 	// a deployment decision, not a code change.
 	maxTurns   int
@@ -48,20 +48,6 @@ type data struct {
 // pre-ledger deployment wrote; the gateway itself opens the ledger.
 func Open(path string) (*Store, error) {
 	return openWith(&ledger.FileDocument{Path: path})
-}
-
-// OpenLedger keeps the store in the ledger. legacy names the JSON file an
-// earlier deployment used; it is imported once and retired.
-func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
-	doc := l.Document("tasks")
-	if _, err := doc.Import(legacy); err != nil {
-		return nil, err
-	}
-	s, err := openWith(doc)
-	if err == nil {
-		s.book = l
-	}
-	return s, err
 }
 
 func openWith(doc ledger.Doc) (*Store, error) {
@@ -570,6 +556,9 @@ func (s *Store) clone() data {
 }
 
 func (s *Store) replaceLocked(next data) error {
+	if s.book != nil {
+		return s.replaceRecordsLocked(context.Background(), next, nil)
+	}
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tasks: %w", err)

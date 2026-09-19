@@ -139,19 +139,9 @@ func nativeTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 	if r.State == Superseded || r.Execution == nil || r.Execution.TaskID != r.TaskID || (!strings.HasPrefix(r.Session, "ns_") && !PendingSessionOpen(r)) {
 		return task.Task{}, errors.New("task stop requires an original node-owned execution")
 	}
-	raw, ok, err := tx.LoadDocument("tasks")
+	tracked, ok, err := task.GetTx(tx, r.TaskID)
 	if err != nil || !ok {
 		return task.Task{}, errors.Join(errors.New("task stop requires the original task record"), err)
-	}
-	var data struct {
-		Tasks map[string]task.Task `json:"tasks"`
-	}
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return task.Task{}, err
-	}
-	tracked, ok := data.Tasks[r.TaskID]
-	if !ok {
-		return task.Task{}, errors.New("task stop source is missing")
 	}
 	return tracked, nil
 }

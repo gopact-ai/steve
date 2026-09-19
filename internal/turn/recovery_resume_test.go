@@ -293,7 +293,7 @@ func TestRetainedChatSettlementMarkerFailureStaysUnresolved(t *testing.T) {
 
 func TestRetainedTaskAccountingFailureRemainsRetryableWithoutPromptReplay(t *testing.T) {
 	c, runner, book, old, req := retainedChatFixture(t)
-	if _, err := book.DB().Exec(`CREATE TRIGGER fail_accounting BEFORE INSERT ON bindings WHEN NEW.kind = 'document' AND NEW.id = 'tasks' BEGIN SELECT RAISE(ABORT, 'accounting unavailable'); END`); err != nil {
+	if _, err := book.DB().Exec(`CREATE TRIGGER fail_accounting BEFORE INSERT ON bindings WHEN NEW.kind = 'task-store' AND NEW.id = 'state' BEGIN SELECT RAISE(ABORT, 'accounting unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
 	result, err := c.ResumeRetainedChat(t.Context(), old.ID, req)

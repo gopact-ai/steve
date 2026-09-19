@@ -1,9 +1,10 @@
 package turn
 
 import (
-	"bytes"
 	"reflect"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 func TestTaskCompletionWithoutConsoleGuardRejectsExistingDocument(t *testing.T) {
@@ -14,9 +15,13 @@ func TestTaskCompletionWithoutConsoleGuardRejectsExistingDocument(t *testing.T) 
 				t.Fatal(err)
 			}
 			before, _ := c.tasks.Get("1")
-			durableBefore, _, err := book.Document("tasks").Load()
+			beforeStore, err := task.OpenLedger(book, "")
 			if err != nil {
 				t.Fatal(err)
+			}
+			durableBefore, found := beforeStore.Get("1")
+			if !found || len(durableBefore.Attempts) == 0 {
+				t.Fatal("completion fixture lacks durable task accounting")
 			}
 			if err := book.Document("console").Save([]byte(raw)); err != nil {
 				t.Fatal(err)
@@ -27,11 +32,12 @@ func TestTaskCompletionWithoutConsoleGuardRejectsExistingDocument(t *testing.T) 
 			if after, _ := c.tasks.Get("1"); !reflect.DeepEqual(before, after) {
 				t.Fatal("refused completion changed the in-memory task")
 			}
-			durableAfter, _, err := book.Document("tasks").Load()
+			afterStore, err := task.OpenLedger(book, "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Equal(durableBefore, durableAfter) {
+			durableAfter, found := afterStore.Get("1")
+			if !found || !reflect.DeepEqual(durableBefore, durableAfter) {
 				t.Fatal("refused completion changed the durable task or epoch")
 			}
 		})

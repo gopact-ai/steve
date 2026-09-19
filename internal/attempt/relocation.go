@@ -341,24 +341,17 @@ func relocationRecordsTx(tx *ledger.Tx, p RelocationIntent) (source Record, repl
 // relocationTaskTx is the task the source attempt runs for, which must
 // still hold work and, when it names a requester, be the plan owner's.
 func relocationTaskTx(tx *ledger.Tx, old Record, owner string) (*task.Task, error) {
-	taskRaw, ok, err := tx.LoadDocument("tasks")
+	tracked, ok, err := task.GetTx(tx, old.TaskID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, errors.New("task record missing")
 	}
-	var taskDocument struct {
-		Tasks map[string]*task.Task `json:"tasks"`
-	}
-	if err := json.Unmarshal(taskRaw, &taskDocument); err != nil {
-		return nil, err
-	}
-	tracked := taskDocument.Tasks[old.TaskID]
-	if tracked == nil || !tracked.State.Holds() || (tracked.Requester != "" && tracked.Requester != owner) {
+	if !tracked.State.Holds() || (tracked.Requester != "" && tracked.Requester != owner) {
 		return nil, errors.New("relocation task is no longer active or belongs to another requester")
 	}
-	return tracked, nil
+	return &tracked, nil
 }
 
 // checkReplacementSpec is the shape a replacement must have: the

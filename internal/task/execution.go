@@ -1,7 +1,6 @@
 package task
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -65,24 +64,29 @@ func checkExecution(tasks map[string]*Task, token ExecutionToken) error {
 	return nil
 }
 
-// CheckExecutionTx checks the task document in the same ledger transaction as
-// an execution's result binding or landing admission.
+// CheckExecutionTx reads the task and ancestor headers in the caller's
+// transaction. No task histories or shared JSON documents are decoded.
 func CheckExecutionTx(tx *ledger.Tx, token *ExecutionToken) error {
 	if token == nil {
 		return nil
-	} // operations with no task owner
-	raw, ok, err := tx.LoadDocument("tasks")
-	if err != nil {
-		return err
 	}
-	if !ok {
-		return fmt.Errorf("%w: task document missing", ErrExecutionStopped)
+	tasks := map[string]*Task{}
+	id := token.TaskID
+	for id != "" {
+		if _, seen := tasks[id]; seen {
+			return fmt.Errorf("task %s has cyclic ancestry", id)
+		}
+		tracked, found, err := GetTx(tx, id)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("%w: task %s missing", ErrExecutionStopped, id)
+		}
+		tasks[id] = &tracked
+		id = tracked.Parent
 	}
-	var current data
-	if err := json.Unmarshal(raw, &current); err != nil {
-		return fmt.Errorf("read task execution: %w", err)
-	}
-	return checkExecution(current.Tasks, *token)
+	return checkExecution(tasks, *token)
 }
 
 // SetAside revokes the task's execution and its descendants atomically with

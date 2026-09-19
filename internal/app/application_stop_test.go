@@ -223,7 +223,7 @@ func TestApplicationStopsRecoverDurableRevocationWithoutReplayingNativeInput(t *
 			link := &applicationStopConnection{manager: next, offline: mode == "offline-then-returned"}
 			consumer := newApplicationStops(attempts, tasks, link)
 			if mode == "accounting-retry" {
-				if _, err := book.DB().Exec(`CREATE TRIGGER reject_stop_accounting BEFORE UPDATE OF data ON bindings WHEN NEW.kind = 'document' AND NEW.id = 'tasks' BEGIN SELECT RAISE(FAIL, 'task accounting unavailable'); END`); err != nil {
+				if _, err := book.DB().Exec(`CREATE TRIGGER reject_stop_accounting BEFORE UPDATE OF data ON bindings WHEN NEW.kind = 'task-store' AND NEW.id = 'state' BEGIN SELECT RAISE(FAIL, 'task accounting unavailable'); END`); err != nil {
 					t.Fatal(err)
 				}
 			}
