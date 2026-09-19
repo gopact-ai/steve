@@ -213,6 +213,8 @@ func (s *Server) serveStream(ctx context.Context, mux *nodewire.Mux, principal s
 		s.pluginStream(ctx, principal, stream)
 	case nodewire.StreamNodeSessions:
 		s.sessionStream(ctx, principal, stream)
+	case nodewire.StreamNodeReceipts:
+		s.receiptStream(ctx, principal, stream)
 	case nodewire.StreamExec:
 		s.runCommand(ctx, stream)
 	case nodewire.StreamArtifact:

@@ -69,6 +69,7 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 	environment.ConfigurationRevision = stateConfig.Revision
 	environment.SessionBinder = newApplicationSessionBinder(activation)
 	environment.SessionAuthorizer = p.ApplicationSessionAuthorizer(activation)
+	environment.ReceiptAuthorizer = p.ApplicationReceiptAuthorizer(activation)
 	environment.PluginAuthorizer = p.ApplicationPluginAuthorizer(activation)
 	environment.PluginAuthority = nodewire.SessionAuthority{ClusterID: p.ApplicationClusterID(), CoordinatorNodeID: activation.NodeID, CoordinatorEpoch: activation.Assignment.Epoch, WriterGeneration: activation.WriterGeneration}
 	environment.Content = content

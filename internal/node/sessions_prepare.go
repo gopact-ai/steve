@@ -73,7 +73,7 @@ func (s *SessionService) prepareOwnedSession(ctx context.Context, id, hash strin
 	}
 	host := acphost.New(hostCfg)
 	one := &ownedSession{pluginInstructions: pluginInstructions, service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
-	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
+	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, ContextID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
 	if source != nil {
 		one.record.UpstreamID, one.record.ResumedFrom, one.record.RuntimeSession = source.UpstreamID, source.State.ID, runtimeID
 		one.record.State.ContextID = runtimeID

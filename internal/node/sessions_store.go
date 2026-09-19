@@ -25,6 +25,9 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 		next.State.Progress = *one.pendingProgress
 		next.State.Settings = one.pendingProgress.Settings
 	}
+	if err := freezeTerminalReceipt(one.record, &next); err != nil {
+		return err
+	}
 	one.pendingProgress = nil
 	if one.progressTimer != nil {
 		one.progressTimer.Stop()

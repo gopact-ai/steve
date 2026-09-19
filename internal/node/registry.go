@@ -71,6 +71,7 @@ type Registry struct {
 	// the hub's loopback agentmcp listener. Nil disables the reverse channel.
 	mcpDial          func(ctx context.Context) (net.Conn, error)
 	sessionAuthority func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
+	receiptAuthority func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error
 	pluginAuthority  func(context.Context, string, nodewire.PluginRequest) error
 
 	eventMu   sync.Mutex

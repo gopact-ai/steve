@@ -28,6 +28,7 @@ type ApplicationHost interface {
 	ConfigureNodes(map[string]node.Config) error
 	ContentReplicator(Activation) (contentreplica.Replicator, error)
 	ApplicationSessionAuthorizer(Activation) func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
+	ApplicationReceiptAuthorizer(Activation) func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error
 	ApplicationPluginAuthorizer(Activation) func(context.Context, string, nodewire.PluginRequest) error
 	ApplicationStoreFailure(Activation, error)
 	StartContentRepair(Activation, ContentRepairObservation) func()

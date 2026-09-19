@@ -697,8 +697,11 @@ type ConversationPatch struct {
 type Reply struct {
 	// ID names the line for good: a quote of it, a comment on it, a
 	// process fetched for it later all point here rather than at a time.
-	ID           string    `json:"id,omitempty"`
-	ExchangeID   string    `json:"exchange_id,omitempty"`
+	ID         string `json:"id,omitempty"`
+	ExchangeID string `json:"exchange_id,omitempty"`
+	// AttemptID is assigned from the server's execution result, never from a
+	// submitted command. Durable delivery proofs use it independently of UI history.
+	AttemptID    string    `json:"attempt_id,omitempty"`
 	At           time.Time `json:"at"`
 	Conversation string    `json:"conversation"`
 	ProjectID    string    `json:"project_id,omitempty"`

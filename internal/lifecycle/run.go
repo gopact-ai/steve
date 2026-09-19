@@ -942,7 +942,8 @@ func (e *Execution) failure(ctx context.Context, cause error) (attempt.Record, e
 		}
 	}
 	e.stopBeat()
-	if result == nil {
+	receipt := e.nodeReceipt(ctx)
+	if result == nil && receipt == nil {
 		return o.Attempts.FailWith(ctx, e.Record.ID, o.Actor, cause.Error(), e.Usage)
 	}
 	usage := e.Usage
@@ -952,6 +953,7 @@ func (e *Execution) failure(ctx context.Context, cause error) (attempt.Record, e
 			r.Usage = usage
 		}
 		r.Result = result
+		r.NodeReceipt = receipt
 	})
 }
 
@@ -1018,6 +1020,7 @@ func (e *Execution) finish(ctx context.Context) error {
 // commit writes the completion: prepared by FinishCompletion, or as the
 // caller gave it.
 func (e *Execution) commit(ctx context.Context, completion attempt.Completion) (attempt.Record, error) {
+	completion.NodeReceipt = e.nodeReceipt(ctx)
 	if e.o.Settlement.CommitAsGiven {
 		return e.o.Attempts.Complete(ctx, e.Record.ID, e.o.Actor, completion)
 	}
@@ -1031,6 +1034,7 @@ func (e *Execution) reject(ctx context.Context, completion attempt.Completion, c
 	cleanup, stop := Cleanup(ctx)
 	defer stop()
 	e.stopBeat()
+	completion.NodeReceipt = e.nodeReceipt(cleanup)
 	err := e.o.Attempts.RejectCompletion(cleanup, e.Record.ID, e.o.Actor, completion, cause)
 	e.refresh(cleanup)
 	return e.step(StepFinish, err)

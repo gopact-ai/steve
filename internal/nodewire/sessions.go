@@ -133,6 +133,8 @@ type SessionQuestion struct {
 }
 
 type SessionCommand struct {
+	// Receipt freezes terminal evidence before later rebind/process cleanup.
+	Receipt         SessionReceipt      `json:"receipt,omitzero"`
 	ID              string              `json:"id"`
 	InputSequence   uint64              `json:"input_sequence"`
 	State           SessionCommandState `json:"state"`

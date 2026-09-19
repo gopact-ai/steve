@@ -785,7 +785,7 @@ func (s *Service) detachRecoveryLocked(e *queuedExchange, err error) {
 }
 
 func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *process, result turn.Result, err error) consoleapi.Reply {
-	reply := consoleapi.Reply{At: time.Now().UTC(), Conversation: exchange.Conversation, ProjectID: exchange.ExpectedProject, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary(), Refs: exchange.Refs, Materials: exchange.Materials}
+	reply := consoleapi.Reply{At: time.Now().UTC(), Conversation: exchange.Conversation, ProjectID: exchange.ExpectedProject, AttemptID: result.Attempt, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary(), Refs: exchange.Refs, Materials: exchange.Materials}
 	if result.Attempt != "" && s.inspector != nil {
 		if changes, cerr := s.inspector.Changes(ctx, result.Attempt); cerr != nil {
 			slog.Error(fmt.Sprintf("console: changes of attempt %s: %v", result.Attempt, cerr), "attempt", result.Attempt, "conversation", exchange.Conversation, "exchange", exchange.ID)

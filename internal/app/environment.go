@@ -26,6 +26,7 @@ type Environment struct {
 	ConfigureNodes        func(map[string]node.Config) error
 	SessionBinder         func(context.Context, harness.Placement, string, string) (context.Context, error)
 	SessionAuthorizer     func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
+	ReceiptAuthorizer     func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error
 	Fail                  func(error)
 	ConfigurationRevision func() string
 	Configure             func(*config.Config) error

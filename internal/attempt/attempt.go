@@ -31,6 +31,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -184,6 +185,9 @@ type Usage struct {
 // Record is the attempt as the ledger holds it.
 type Record struct {
 	Spec
+	// NodeReceipt is authenticated original native evidence, recorded with the
+	// terminal result. Its pending retry index is separate from closed history.
+	NodeReceipt *nodewire.SessionReceipt `json:"node_receipt,omitempty"`
 	// SessionSettled is nil for records without durable execution evidence.
 	// Running arms it false before Prompt; confirmed settlement writes true.
 	SessionSettled *bool          `json:"session_settled,omitempty"`
@@ -468,6 +472,9 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 					return err
 				}
 			}
+			if err := recordNodeReceiptTx(tx, current, next); err != nil {
+				return err
+			}
 			return setRecordDataTx(tx, op, next)
 		})
 	if err != nil {
@@ -523,9 +530,10 @@ type NameBinding struct {
 // Completion is the result and spend to record together with a result name.
 // A nil Binding completes an attempt without publishing a name.
 type Completion struct {
-	Result  Result
-	Usage   *Usage
-	Binding *NameBinding
+	Result      Result
+	Usage       *Usage
+	Binding     *NameBinding
+	NodeReceipt *nodewire.SessionReceipt
 }
 
 // Complete commits a prepared result from BindReady to Bound. A stale lease
@@ -539,6 +547,7 @@ func (s *Service) Complete(ctx context.Context, id, actor string, completion Com
 		if completion.Usage != nil {
 			r.Usage = completion.Usage
 		}
+		r.NodeReceipt = completion.NodeReceipt
 	}, completion.Binding)
 }
 
@@ -569,6 +578,7 @@ func (s *Service) RejectCompletion(parent context.Context, id, actor string, com
 		if completion.Usage != nil {
 			r.Usage = completion.Usage
 		}
+		r.NodeReceipt = completion.NodeReceipt
 	})
 	if err != nil {
 		return errors.Join(cause, fmt.Errorf("close rejected completion %s: %w", id, err))

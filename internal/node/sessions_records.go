@@ -403,8 +403,8 @@ func writeSessionCommands(tx *sql.Tx, before, next sessionRecord) error {
 			if old.InputSequence != command.InputSequence || before.CommandHashes[id] != next.CommandHashes[id] {
 				return errors.New("node session command admission changed")
 			}
-			result, err := tx.Exec(`UPDATE session_commands SET settled=?,command=?,progress=? WHERE session_id=? AND id=? AND input_sequence=?`,
-				settled, raw, progress, next.State.ID, id, command.InputSequence)
+			result, err := tx.Exec(`UPDATE session_commands SET settled=?,command=?,progress=CASE WHEN ? THEN progress ELSE ? END WHERE session_id=? AND id=? AND input_sequence=?`,
+				settled, raw, old.Receipt.Version != 0, progress, next.State.ID, id, command.InputSequence)
 			if err != nil {
 				return err
 			}

@@ -555,7 +555,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	}
 	e.ContinuationRejected = e.ExpectedTask != "" && errors.Is(err, task.ErrContinuationUnavailable)
 	e.outcome = outcome{reply: reply, err: err}
-	if e.Key != "" {
+	if e.Key != "" || reply.AttemptID != "" {
 		e.Receipt = &reply
 	}
 	s.trimExchangesLocked(e.Conversation)
@@ -599,7 +599,7 @@ func (s *Service) trimExchangesLocked(conversation string) {
 	out := make([]*queuedExchange, 0, len(list))
 	for i := len(list) - 1; i >= 0; i-- {
 		e := list[i]
-		if e.State.Terminal() && e.Key == "" {
+		if e.State.Terminal() && e.Key == "" && (e.Receipt == nil || e.Receipt.AttemptID == "") {
 			if remaining == 0 {
 				continue
 			}
