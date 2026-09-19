@@ -29,6 +29,8 @@ const server = await createServer({
                     </div>;
                 }`;
             if (id.endsWith("/src/lib/conversation-controller.ts")) {
+                source = source.replace("this.state = createConversationProjection(conversation);",
+                    "this.state = createConversationProjection(conversation); (globalThis.__testControllers ||= []).push(this);");
                 for (const resource of ["Queue", "Replies"]) {
                     const lower = resource.toLowerCase();
                     const marker = `load${resource} = async () => { await this.read("${lower}"); };`;
@@ -238,8 +240,80 @@ try {
             await page.screenshot({ path: path.join(process.env.CONVERSATION_SCREENSHOTS, `conversation-${width}.png`) });
         }
     }
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    const projections = () => page.evaluate(() => globalThis.__testControllers
+        .filter((c) => c.active && c.listeners.size > 0).map((c) => {
+            const s = c.getSnapshot();
+            return { conversation: c.conversation, entries: s.entries.length, exchanges: s.exchanges,
+                completed: s.completed.size, recalled: s.recalled.size, versions: s.versions.size,
+                pendingProgress: s.pendingProgress.size, live: s.live };
+        }));
+    f.queue = [{ id: "nano", conversation: A, input: "nano", state: "running", enqueued_at: at(30), started_at: at(30) }];
+    await emit("queue", 30);
+    await eventually(async () => (await projections()).every((s) => s.live?.exchangeID === "nano"), "both consumers restore nano turn");
+    await emit("progress", 31, { at: "2026-09-19T00:00:31.123900001Z", exchange_id: "nano", progress: { answer: "Nano newer" } });
+    await main().getByText("Nano newer", { exact: true }).waitFor();
+    await side().getByText("Nano newer", { exact: true }).waitFor();
+    await emit("progress", 32, { at: "2026-09-19T08:00:31.123900000+08:00", exchange_id: "nano", progress: { answer: "Nano older" } });
+    assert.equal(await page.getByText("Nano older", { exact: true }).count(), 0);
+    assert.equal(await main().getByText("Nano newer", { exact: true }).count(), 1);
+    assert.equal(await side().getByText("Nano newer", { exact: true }).count(), 1);
+
+    const oldReceipt = { id: "failed-stop", exchange_id: "retry-stop", conversation: A, kind: "reply", at: at(39), text: "Stop failed" };
+    f.queue = [{ id: "retry-stop", conversation: A, input: "/cancel", key: "client:stop", reply_id: oldReceipt.id,
+        state: "failed", enqueued_at: at(37), started_at: at(38) }];
+    f.replies = [oldReceipt];
+    await emit("queue", 40);
+    await page.clock.runFor(10100); await delay(100);
+    await eventually(async () => (await projections()).every((s) => s.exchanges[0]?.state === "failed"), "terminal receipt installed");
+    f.queue[0].state = "running";
+    await emit("queue", 41);
+    await eventually(async () => (await projections()).every((s) => s.live?.exchangeID === "retry-stop"), "both consumers restore same-ID retry");
+    await side().getByRole("button", { name: "Stop", exact: true }).waitFor();
+    await page.evaluate((event) => window.emit(event), { ...oldReceipt, kind: "console.reply", reply_id: oldReceipt.id });
+    await page.clock.runFor(10100); await delay(100);
+    assert.ok((await projections()).every((s) => s.live?.exchangeID === "retry-stop" && s.exchanges[0]?.state === "running"),
+        "late SSE and HTTP containing old receipt do not close retry");
+    f.queue[0].reply_id = "retry-done";
+    await emit("reply", 44, { exchange_id: "retry-stop", reply_id: "retry-done", text: "Retry completed" });
+    await eventually(async () => (await projections()).every((s) => !s.live && s.exchanges[0]?.state === "done"), "new owner terminal observation closes retry");
+
+    f.replies = [];
+    const stamp = (n) => new Date(Date.UTC(2026, 8, 19, 0, 1) + n).toISOString();
+    for (let batch = 0; batch < 50; batch++) {
+        const events = []; f.queue = [];
+        for (let j = 0; j < 20; j++) {
+            const i = batch * 20 + j, at = stamp(i);
+            events.push({ kind: "console.reply", at, conversation: A, exchange_id: `growth-${i}`, reply_id: `g-r-${i}`, text: "done" },
+                { kind: "console.notice", at, conversation: A, reply_id: `g-m-${i}`, text: "temporary" },
+                { kind: "console.recalled", at, conversation: A, reply_id: `g-m-${i}` },
+                { kind: "console.progress", at, conversation: A, exchange_id: `missing-${i}`, progress: { answer: "x".repeat(1024) } });
+            f.queue.push({ id: `missing-${i}`, conversation: A, input: "", state: "done", enqueued_at: at });
+        }
+        await page.evaluate((events) => events.forEach((event) => window.emit(event)), events);
+        await page.clock.runFor(120); await delay(30);
+    }
+    await page.clock.runFor(10100); await delay(150);
+    const retained = await projections();
+    assert.equal(retained.length, 2, "inspect subscribed Main and Side controllers, not abandoned StrictMode renders");
+    for (const s of retained) {
+        assert.equal(s.entries, 0); assert.equal(s.exchanges.length, 20);
+        assert.ok(s.completed <= 420 && s.recalled <= 400 && s.versions <= 400);
+        assert.equal(s.pendingProgress, 0, "HTTP-only completions discard pending progress");
+    }
+    console.log("Bounded Main + Side after 1000 turns", retained.map(({ live, exchanges, ...s }) => ({ ...s, exchanges: exchanges.length })));
+    f.replies = [{ id: "owner-current", conversation: A, kind: "notice", at: stamp(1001), text: "Authoritative history after retired replay" }];
+    await page.evaluate((events) => events.forEach((event) => window.emit(event)), [
+        { kind: "console.notice", at: stamp(0), conversation: A, reply_id: "g-m-0", text: "Recalled must not return" },
+        { kind: "console.sent", at: stamp(0), conversation: A, exchange_id: "growth-0", text: "Completed must not reopen" },
+    ]);
+    await page.clock.runFor(120);
+    await main().getByText("Authoritative history after retired replay", { exact: true }).waitFor();
+    await side().getByText("Authoritative history after retired replay", { exact: true }).waitFor();
+    assert.equal(await page.getByText("Recalled must not return", { exact: true }).count(), 0);
+    assert.ok((await projections()).every((s) => !s.live));
     assert.deepEqual(errors, []);
-    console.log("PASS real Console + SideChat: shared projection, HTTP/lock race, duplicate/late SSE, A→B→A, context revision, read-error recovery, keyboard and narrow windows");
+    console.log("PASS real Console + SideChat: HTTP/lock race, duplicates/recall, A→B→A, retry, nanoseconds, bounded retention, owner repair, errors, keyboard/narrow windows");
 } finally {
     for (const h of f.holds) h.release.resolve();
     await context.close();

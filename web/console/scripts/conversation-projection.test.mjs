@@ -151,3 +151,154 @@ test("context revision follows eligibility and project placement, not snapshot t
     assert.notEqual(conversationContextRevision({ ...snapshot, agents: [{ ...snapshot.agents[0], eligible: false }] }), revision);
     assert.notEqual(conversationContextRevision({ ...snapshot, projects: [{ ...snapshot.projects[0], workspaces: [{ id: "w", node: "other", kind: "copy" }] }] }), revision);
 });
+
+function observe(state, resource, value) {
+    let token;
+    [state, token] = read(state, resource, state.requests[resource] + 1);
+    return reduceConversation(state, { type: resource, token, ...value });
+}
+
+test("an owner-authorized same-ID retry stays live despite its retained old terminal receipt", () => {
+    const failed = { ...exchange("stop", "failed"), input: "/cancel", key: "client:stop", reply_id: "failed-stop" };
+    const receipt = reply("failed-stop", "stop", 3);
+    let state = observe(createConversationProjection(A), "queue", { exchanges: [failed] });
+    state = observe(state, "replies", { entries: [receipt], enabled: true });
+    state = observe(state, "queue", { exchanges: [{ ...failed, state: "running" }] });
+    assert.equal(state.exchanges[0].state, "running");
+    assert.equal(state.live?.exchangeID, "stop");
+    // A retry retains the old reply_id and started_at on the actual Go owner.
+    // Neither a replayed receipt nor polling that history closes the new work.
+    state = events(state, event("reply", 3, { exchange_id: "stop", reply_id: receipt.id, text: receipt.text }));
+    state = observe(state, "replies", { entries: [receipt], enabled: true });
+    assert.equal(state.exchanges[0].state, "running");
+    assert.equal(state.live?.exchangeID, "stop");
+    state = observe(state, "queue", { exchanges: [{ ...failed, state: "done", reply_id: "retry-done" }] });
+    assert.equal(state.live, null);
+    assert.equal(state.exchanges[0].state, "done");
+});
+
+test("RFC3339 fractional seconds and offsets order events without millisecond truncation", () => {
+    let state = events(createConversationProjection(A), event("sent", 1, { exchange_id: "nano" }),
+        event("progress", 2, { at: "2026-09-19T00:00:02.123900001Z", exchange_id: "nano", progress: { answer: "newer" } }));
+    state = events(state, event("progress", 3, { at: "2026-09-19T08:00:02.123900000+08:00", exchange_id: "nano", progress: { answer: "older" } }));
+    assert.equal(state.live.turn.answer, "newer");
+    state = events(state, event("sent", 4, { at: "2026-09-19T00:00:02.123900002Z", exchange_id: "next" }),
+        event("sent", 5, { at: "2026-09-19T00:00:02.123900001Z", exchange_id: "late" }));
+    assert.equal(state.live.exchangeID, "next");
+});
+
+test("long sessions retire bookkeeping without reviving recalled lines or completed turns", () => {
+    let state = createConversationProjection(A);
+    const stamp = (n) => new Date(Date.UTC(2026, 8, 19) + n).toISOString();
+    let firstLine, firstSent, firstDone;
+    for (let i = 0; i < 5000; i++) {
+        const line = event("notice", i * 4 + 1, { at: stamp(i * 4), reply_id: `n-${i}`, text: "notice" });
+        const sent = event("sent", i * 4 + 2, { at: stamp(i * 4 + 1), exchange_id: `e-${i}`, reply_id: `s-${i}` });
+        const done = event("reply", i * 4 + 3, { at: stamp(i * 4 + 2), exchange_id: `e-${i}`, reply_id: `r-${i}`, text: "done" });
+        firstLine ??= line; firstSent ??= sent; firstDone ??= done;
+        state = events(state, line, sent, done,
+            event("recalled", i * 4 + 4, { at: stamp(i * 4 + 3), reply_id: line.reply_id }));
+        state = observe(state, "queue", { exchanges: [] });
+        state = observe(state, "replies", { entries: [], enabled: true });
+        if (i % 250 === 249) {
+            for (const key of ["completed", "recalled", "versions", "pendingProgress"]) {
+                assert.ok(state[key].size <= 400, `${key} grew with history: ${state[key].size} at ${i + 1} turns`);
+            }
+        }
+    }
+    const counts = ["completed", "recalled", "versions", "pendingProgress"].map((key) => state[key].size);
+    state = events(state, { ...firstLine, n: 30000 }, { ...firstSent, n: 30001 }, { ...firstDone, n: 30002 });
+    assert.equal(state.entries.length, 0, "retired/recalled history must not reappear with a new arrival cursor");
+    assert.equal(state.live, null, "retired terminal exchange must not reopen");
+    assert.deepEqual(["completed", "recalled", "versions", "pendingProgress"].map((key) => state[key].size), counts);
+    // A delayed event for an independent retained entity must still fold.
+    state = events(state, event("sent", 30003, { at: stamp(30000), exchange_id: "active" }),
+        event("progress", 30004, { at: stamp(30002), exchange_id: "active", progress: { answer: "current" } }),
+        { ...event("step", 30005), at: stamp(30001), task_id: "independent", step: { state: "running" } });
+    assert.equal(state.live.turn.answer, "current");
+    assert.equal(state.delegations["#independent"].step.state, "running");
+});
+
+test("HTTP-only completion releases orphan progress retained before its sent event", () => {
+    let state = events(createConversationProjection(A),
+        event("progress", 1, { exchange_id: "missed", progress: { answer: "before sent" } }));
+    assert.equal(state.pendingProgress.size, 1);
+    state = observe(state, "queue", { exchanges: [exchange("missed", "done")] });
+    assert.equal(state.pendingProgress.size, 0);
+    assert.equal(state.versions.has("console.progress:missed"), false);
+    state = events(createConversationProjection(A), event("progress", 1, { exchange_id: "missed", progress: { answer: "before sent" } }));
+    state = observe(state, "replies", { entries: [reply("missed-done", "missed", 2)], enabled: true });
+    assert.equal(state.pendingProgress.size, 0);
+    assert.equal(state.versions.has("console.progress:missed"), false);
+});
+
+test("orphan overflow requests owner repair while preserving the current active progress", () => {
+    let state = events(createConversationProjection(A), event("sent", 1, { exchange_id: "active" }),
+        event("progress", 2, { exchange_id: "active", progress: { answer: "still current" } }));
+    for (let n = 3; n < 1003; n++) state = events(state, event("progress", n, {
+        at: new Date(Date.UTC(2026, 8, 19) + n * 1000).toISOString(), exchange_id: `orphan-${n}`, progress: { answer: "orphan" },
+    }));
+    assert.ok(state.repairs > 0, "eviction must be reconciled, not silently forgotten");
+    assert.ok(state.pendingProgress.size <= 400);
+    assert.equal(state.live.turn.answer, "still current");
+});
+
+test("SSE-only operation keeps bounded terminal bookkeeping even while owner reads fail", () => {
+    let state = createConversationProjection(A);
+    const stamp = (n) => new Date(Date.UTC(2026, 8, 19) + n).toISOString();
+    for (let i = 0; i < 1000; i++) {
+        state = events(state,
+            event("sent", 2 * i + 1, { at: stamp(i * 2), exchange_id: `offline-${i}`, reply_id: `sent-${i}` }),
+            event("reply", 2 * i + 2, { at: stamp(i * 2 + 1), exchange_id: `offline-${i}`, reply_id: `done-${i}`, text: `done ${i}` }));
+    }
+    let token;
+    [state, token] = read(state, "queue");
+    const entries = state.entries;
+    state = reduceConversation(state, { type: "read-failed", token, error: new Error("owner offline") });
+    assert.equal(state.entries, entries, "read error preserves the visible transcript");
+    assert.equal(state.entries.length, 200);
+    assert.equal(state.exchanges.length, 200, "match the owner's 200 terminal receipts; never trim queued/running rows");
+    assert.ok(state.completed.size <= 400);
+    assert.ok(state.versions.size <= 400);
+    state = events(state, event("sent", 2001, { at: stamp(0), exchange_id: "offline-0", reply_id: "sent-0" }));
+    assert.equal(state.live, null);
+});
+
+test("retiring HTTP-only transcript evidence cannot reopen the completed turn via old SSE", () => {
+    let state = observe(createConversationProjection(A), "replies", { entries: [reply("http-done", "http-turn", 5)], enabled: true });
+    state = observe(state, "replies", { entries: [], enabled: true });
+    state = events(state, event("sent", 10, { at: at(2), exchange_id: "http-turn", reply_id: "http-sent" }));
+    assert.equal(state.live, null);
+    assert.equal(state.entries.length, 0);
+    assert.ok(state.repairs > 0);
+});
+
+test("an active exchange does not authorize replay of its retired recalled lines", () => {
+    const line = event("notice", 2, { exchange_id: "active", reply_id: "removed", text: "must stay removed" });
+    let state = events(createConversationProjection(A), event("sent", 1, { exchange_id: "active" }),
+        line, event("recalled", 3, { reply_id: line.reply_id }));
+    for (let i = 0; i < 500; i++) state = events(state, event("notice", i + 4, {
+        at: new Date(Date.UTC(2026, 8, 19, 0, 1) + i).toISOString(), reply_id: `other-${i}`, text: "other",
+    }));
+    state = observe(state, "replies", { entries: [], enabled: true });
+    state = events(state, { ...line, n: 1000 });
+    assert.equal(state.entries.some((r) => r.id === line.reply_id), false);
+    assert.equal(state.live.exchangeID, "active");
+});
+
+test("HTTP retirement also retires version keys of old milestone payloads", () => {
+    const latest = event("milestone", 1, { reply_id: "milestone", text: "last payload" });
+    let state = events(createConversationProjection(A), latest);
+    state = observe(state, "replies", { entries: [], enabled: true });
+    state = events(state, { ...latest, n: 10, text: "older payload, same original timestamp" });
+    assert.equal(state.entries.length, 0);
+    assert.ok(state.repairs > 0);
+});
+
+test("streaming progress preserves unrelated projection identities", () => {
+    const previous = events(createConversationProjection(A), event("sent", 1, { exchange_id: "a" }));
+    const next = events(previous, event("progress", 2, { exchange_id: "a", progress: { answer: "stream" } }));
+    assert.equal(next.entries, previous.entries);
+    assert.equal(next.exchanges, previous.exchanges, "composer queue memo must not be invalidated per fragment");
+    assert.equal(next.delegations, previous.delegations);
+});

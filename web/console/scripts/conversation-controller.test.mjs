@@ -90,3 +90,50 @@ test("only domain-changing events request HTTP; progress does not cause polling 
     assert.deepEqual([queues, replies], reads);
     controller.dispose();
 });
+
+test("retired replay repairs from the owner instead of resurrecting or hiding independent late state", async () => {
+    let queues = 0, replies = 0;
+    const owner = { enabled: true, replies: [] };
+    const controller = fixture({
+        fetchQueue: async () => { queues++; return { queue: [] }; },
+        fetchReplies: async () => { replies++; return owner; },
+    });
+    const initial = { kind: "console.notice", conversation: A, reply_id: "recalled", text: "gone", at };
+    controller.receive([initial, { ...initial, kind: "console.recalled" }]);
+    for (let i = 1; i <= 1000; i++) controller.receive([{
+        ...initial, reply_id: `n${i}`, at: new Date(Date.UTC(2026, 8, 19) + i).toISOString(),
+    }]);
+    await controller.reload();
+    const before = [queues, replies];
+    owner.replies = [{ id: "current", conversation: A, kind: "reply", at, text: "owner current",
+        process: { steps: [{ id: "#independent", kind: "delegate", state: "done", answer: "late independent result" }] } }];
+    controller.receive([{ ...initial, n: 2000 }, {
+        kind: "console.step", conversation: A, at, n: 2001, task_id: "independent", step: { state: "done" },
+    }]);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(queues > before[0] && replies > before[1], "outside retained evidence must reread both owner resources");
+    assert.equal(controller.getSnapshot().entries.some((r) => r.id === "recalled"), false);
+    assert.equal(controller.getSnapshot().entries[0].text, "owner current");
+    assert.equal(controller.getSnapshot().delegations["#independent"].step.answer, "late independent result");
+    controller.dispose();
+});
+
+test("retry completion comes from a new owner queue observation, not an old reply SSE or HTTP", async () => {
+    const old = { id: "failed-stop", kind: "reply", conversation: A, exchange_id: "stop", at, text: "failed" };
+    let row = { ...queue("stop", "failed").queue[0], reply_id: old.id, key: "client:stop", input: "/cancel" };
+    const controller = fixture({
+        fetchQueue: async () => ({ queue: [row] }),
+        fetchReplies: async () => ({ enabled: true, replies: [old] }),
+    });
+    await controller.reload();
+    row = { ...row, state: "running" };
+    await controller.reload();
+    controller.receive([{ ...old, kind: "console.reply" }]);
+    await controller.reload();
+    assert.equal(controller.getSnapshot().live?.exchangeID, "stop");
+    row = { ...row, state: "done", reply_id: "new-receipt" };
+    controller.receive([{ kind: "console.reply", conversation: A, at, exchange_id: "stop", reply_id: row.reply_id }]);
+    await controller.reload();
+    assert.equal(controller.getSnapshot().live, null);
+    controller.dispose();
+});

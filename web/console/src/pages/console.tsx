@@ -181,7 +181,7 @@ function ConsoleWorkbench() {
 
     useEffect(() => {
         const id = new URLSearchParams(location.search).get("conversation");
-        if (!id?.startsWith("console:")) return;
+        if (!id) return;
         selectConversation(id);
         navigate("/console", { replace: true });
         // eslint-disable-next-line react-hooks/exhaustive-deps

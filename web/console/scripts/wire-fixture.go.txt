@@ -95,6 +95,31 @@ func TestConsoleWireFixture(t *testing.T) {
 		"queue": queue, "empty": empty, "ack": ack, "errors": errorResponses,
 		"events": events, "sse": stream.Body.String(),
 	}
+	// The owner keeps the old receipt when a keyed recovery-stop is retried.
+	// Exercise its actual wire identity, not an invented frontend attempt ID.
+	owner.exchanges = []consoleapi.Exchange{{
+		ID: "stop", Conversation: conversation, Input: "/cancel", Key: "client:stop",
+		State: consoleapi.ExchangeFailed, EnqueuedAt: at, StartedAt: at, ReplyID: "failed-stop",
+	}}
+	retry := map[string]wireResponse{}
+	for _, state := range []consoleapi.ExchangeState{consoleapi.ExchangeFailed, consoleapi.ExchangeRunning, consoleapi.ExchangeDone} {
+		owner.exchanges[0].State = state
+		if state == consoleapi.ExchangeDone {
+			owner.exchanges[0].ReplyID = "retry-done"
+		}
+		retry[string(state)] = capture("GET", "/console/queue?conversation="+conversation, "", server.consoleQueue)
+	}
+	out["retry"] = retry
+	out["retry_replies"] = []consoleapi.Reply{{ID: "failed-stop", ExchangeID: "stop", Conversation: conversation, Kind: "reply", At: at, Text: "old stop failure"}}
+	nano := httptest.NewRecorder()
+	for _, event := range []readmodel.Event{
+		{At: at, Kind: "console.sent", Conversation: conversation, ExchangeID: "nano"},
+		{At: at.Add(123900001 * time.Nanosecond), Kind: "console.progress", Conversation: conversation, ExchangeID: "nano", Progress: &consoleapi.Progress{Answer: "newer"}},
+		{At: at.Add(123900000 * time.Nanosecond).In(time.FixedZone("offset", 8*60*60)), Kind: "console.progress", Conversation: conversation, ExchangeID: "nano", Progress: &consoleapi.Progress{Answer: "older"}},
+	} {
+		writeEvent(nano, event)
+	}
+	out["nano_sse"] = nano.Body.String()
 	raw, err := json.Marshal(out)
 	if err != nil {
 		t.Fatal(err)

@@ -55,7 +55,7 @@ export class ConversationController {
         this.dispatch({ type: "events", events });
         if (this.state.revisions.queue !== before.revisions.queue) void this.loadQueue();
         if (this.state.revisions.replies !== before.revisions.replies
-            && events.some((ev) => ev.conversation === this.conversation && (ev.kind === "console.sent" || ev.kind === "console.reply"))) void this.loadReplies();
+            && (this.state.repairs !== before.repairs || events.some((ev) => ev.conversation === this.conversation && (ev.kind === "console.sent" || ev.kind === "console.reply")))) void this.loadReplies();
     };
 
     invalidateReplies = () => {

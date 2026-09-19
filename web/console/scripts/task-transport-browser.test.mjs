@@ -53,6 +53,11 @@ await context.route("**/*", async (route) => {
     }
     if (req.method() !== "GET") { errors.push(`Unexpected write: ${p}`); return route.abort(); }
     if (p === "/console/queue") return route.fulfill({ json: { submission_keys: true, queue: [] } });
+    if (p === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [
+        { id: task.channel, title: "Opaque task conversation", count: 1, last_at: at },
+    ] } });
+    if (p === "/console/replies") return route.fulfill({ json: { enabled: true, replies: url.searchParams.get("conversation") === task.channel
+        ? [{ id: "opaque-history", conversation: task.channel, kind: "notice", text: "Actual opaque conversation history", at }] : [] } });
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [] } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false } });
     return route.fulfill({ json: { enabled: true, conversations: [], replies: [], verbs: [], suggestions: [], questions: [], attempts: [] } });
@@ -85,7 +90,13 @@ try {
             await mkdir(process.env.PHASE4_SCREENSHOTS, { recursive: true });
             await page.screenshot({ path: path.join(process.env.PHASE4_SCREENSHOTS, `task-transport-${visit}.png`) });
         }
-        await page.keyboard.press("Escape");
+        if (allowed) {
+            await drawer.getByRole("button", { name: "Open in workbench", exact: true }).click();
+            await page.waitForFunction((id) => sessionStorage.getItem("steve.conversation") === id, address.channel);
+            await page.locator(".transcript-messages").getByText("Actual opaque conversation history", { exact: true }).waitFor();
+            await page.locator("main header").getByText("Opaque task conversation", { exact: true }).waitFor();
+            assert.equal(new URL(await page.evaluate(() => location.href)).hash, "#/console");
+        } else await page.keyboard.press("Escape");
         assert.equal(await page.getByRole("button", { name: "Fixture close", exact: true }).count(), Number(allowed));
         // Exercise the dialog guard even if a stale caller retained a close action.
         await page.getByRole("button", { name: "Fixture stale confirmation", exact: true }).click();

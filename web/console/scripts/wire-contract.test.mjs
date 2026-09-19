@@ -2,7 +2,7 @@
 // TS API and public conversation projection. No saved synthetic JSON contract.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,7 +11,8 @@ import { createConversationProjection, reduceConversation } from "../src/lib/con
 import { ConversationController } from "../src/lib/conversation-controller.ts";
 
 const web = fileURLToPath(new URL("..", import.meta.url));
-const repo = process.env.CONSOLE_GO_ROOT || path.resolve(web, "../..");
+// Go resolves cwd symlinks before matching overlay paths (/tmp on macOS).
+const repo = await realpath(process.env.CONSOLE_GO_ROOT || path.resolve(web, "../.."));
 const temp = await mkdtemp(path.join(tmpdir(), "console-wire-"));
 try {
     const output = path.join(temp, "wire.json"), overlay = path.join(temp, "overlay.json");
@@ -28,8 +29,11 @@ try {
     const compile = path.join(temp, "wire.ts");
     const queue = JSON.parse(fixture.queue.body), ack = JSON.parse(fixture.ack.body);
     const contract = (value, type) => `(${JSON.stringify(value)} satisfies ${type});`;
-    await writeFile(compile, `import type { Exchange, Event } from ${JSON.stringify(types)};\n` +
-        contract(queue.queue, "Exchange[]") + contract(ack, "Exchange") + contract(fixture.events, "Event[]"));
+    const parseSSE = (stream) => stream.trim().split("\n\n").map((frame) => JSON.parse(frame.replace(/^data: /, "")));
+    await writeFile(compile, `import type { Exchange, Event, Reply } from ${JSON.stringify(types)};\n` +
+        contract(queue.queue, "Exchange[]") + contract(ack, "Exchange") + contract(fixture.events, "Event[]")
+        + contract(fixture.retry_replies, "Reply[]") + contract(parseSSE(fixture.nano_sse), "Event[]")
+        + Object.values(fixture.retry).map((r) => contract(JSON.parse(r.body).queue, "Exchange[]")).join("\n"));
     const program = ts.createProgram([compile], { noEmit: true, strict: true, skipLibCheck: true, allowImportingTsExtensions: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler });
     const diagnostics = ts.getPreEmitDiagnostics(program);
     assert.equal(diagnostics.length, 0, ts.formatDiagnosticsWithColorAndContext(diagnostics, {
@@ -83,7 +87,23 @@ try {
     await controller.loadQueue();
     assert.deepEqual(controller.getSnapshot().exchanges.map((e) => e.state), queue.queue.map((e) => e.state));
     controller.dispose();
-    const events = fixture.sse.trim().split("\n\n").map((frame) => JSON.parse(frame.replace(/^data: /, "")));
+    const retry = new ConversationController("console:wire", {
+        fetchQueue: api.fetchQueue, fetchReplies: async () => ({ enabled: true, replies: fixture.retry_replies }), reconcileSubmission: async () => {},
+    });
+    response = fixture.retry.failed;
+    await retry.reload();
+    response = fixture.retry.running;
+    await retry.reload();
+    await retry.loadReplies();
+    assert.equal(retry.getSnapshot().live?.exchangeID, "stop", "old production receipt does not close authorized retry");
+    assert.equal(retry.getSnapshot().exchanges[0].state, "running");
+    response = fixture.retry.done;
+    await retry.loadQueue();
+    assert.equal(retry.getSnapshot().live, null);
+    retry.dispose();
+    const nano = reduceConversation(createConversationProjection("console:wire"), { type: "events", events: parseSSE(fixture.nano_sse) });
+    assert.equal(nano.live.turn.answer, "newer", "real Go SSE nanoseconds and zone offsets survive ordering");
+    const events = parseSSE(fixture.sse);
     assert.deepEqual(events, fixture.events, "real SSE frame encoder preserves event identities and payloads");
     let state = createConversationProjection("console:wire");
     for (const event of events) state = reduceConversation(state, { type: "events", events: [event] });
