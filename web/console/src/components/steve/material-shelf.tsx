@@ -78,8 +78,3 @@ export function MaterialPreview({ project, anchor, onClose }: { project: string;
         {material && <p className="break-all text-xs text-tertiary">{t("materials.captured")} · {material.digest} · {material.source.path || material.source.reply_id || material.source.kind}</p>}
     </Dialog></Modal></ModalOverlay>;
 }
-
-export function MaterialReferences({ items }: { items: import("@/lib/types").FrozenMaterial[] }) {
-    const { t } = useI18n(); const [opened, setOpened] = useState<(typeof items)[number] | null>(null);
-    return <div className="flex flex-wrap gap-2" aria-label={t("materials.referenced")}>{items.map((item) => <button type="button" key={refKey(item.ref)} className="rounded-md border border-secondary bg-secondary px-2 py-1 text-xs text-secondary" onClick={() => setOpened(item)}>{item.material.title}{item.ref.selector?.kind === "lines" ? ` · L${item.ref.selector.start}–L${item.ref.selector.end}` : ""}</button>)}{opened && <MaterialPreview project={opened.material.project} anchor={opened.ref} onClose={() => setOpened(null)} />}</div>;
-}

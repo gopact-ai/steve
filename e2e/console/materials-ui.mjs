@@ -16,7 +16,13 @@ const context=await browser.newContext({viewport:{width:1600,height:1000},servic
 const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[]};
 page.on("pageerror",e=>f.errors.push(String(e)));
 function material(id,title,source,kind="text",mime="text/plain",data=Buffer.from("first\nsecond\nthird\n")) {const value={id,project:"p",title,source,kind,mime,size:data.length,digest:"d".repeat(64),created_at:at,...(kind==="image"?{width:1,height:1}:{})};f.materials.set(id,{value,data});return value;}
-material("m-seed-1","Design note",{kind:'upload'});material("m-seed-2","Trace log",{kind:'upload'});
+const note=material("m-seed-1","Design note",{kind:'upload'});material("m-seed-2","Trace log",{kind:'upload'});
+// What a line carried has to be drawn on the line: a picture as the
+// picture, a file as a named file, a cut of text as the text.
+const shot=material("m-shot","screenshot.png",{kind:'upload'},"image","image/png",png);
+const report=material("m-report","report.pdf",{kind:'upload'},"binary","application/pdf",Buffer.from("%PDF-1.4 report"));
+const frozen=(m,selector,text)=>({ref:{id:m.id,...(selector?{selector}:{})},material:m,...(text?{text}:{})});
+const carried={refs:[{id:shot.id},{id:report.id},{id:note.id,selector:{kind:"lines",start:1,end:2}},{id:"m-gone"}],materials:[frozen(shot),frozen(report),frozen(note,{kind:"lines",start:1,end:2},"first\nsecond")]};
 await page.route("**/*",async route=>{
  const req=route.request(),u=new URL(req.url()),p=u.pathname;
  if(u.origin!==new URL(url).origin){f.errors.push("external "+u.origin);return route.abort();}
@@ -26,7 +32,7 @@ await page.route("**/*",async route=>{
  if(p==="/console/desktop")return route.fulfill({json:{enabled:false,setup_required:false,agent_count:0}});
  if(p==="/state")return route.fulfill({json:{at,hub:{node:"test-hub",version:f.version},nodes:[],agents:[],projects:[{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",agents:[],workspaces:[]}],tasks:[{id:"11",channel:A,project_id:"p",goal:"Code task",state:"running",lifecycle:"running",execution:"idle",lane:"pending",attention:0,turns:1,max_turns:10,updated_at:at}],plans:[],attempts:[],landings:[]}});
  if(p==="/console/context")return route.fulfill({json:{enabled:true,context:{conversation:A,project:{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",bound:true},agents:[]}}});
- if(p==="/console/replies")return route.fulfill({json:{enabled:true,replies:[{id:"r1",conversation:A,kind:"reply",at,text:"Reference reply",project_id:"p",revision:"reply-version-1"}]}});
+ if(p==="/console/replies")return route.fulfill({json:{enabled:true,replies:[{id:"r0",conversation:A,kind:"sent",at,input:"Look at these",project_id:"p",...carried},{id:"r1",conversation:A,kind:"reply",at,text:"Reference reply",project_id:"p",revision:"reply-version-1"}]}});
  if(p==="/console/conversations")return route.fulfill({json:{conversations:[{id:A,title:"Material conversation",project:"p",count:1,last_at:at,running:false}]}});
  if(p==="/console/verbs")return route.fulfill({json:{verbs:[]}});
  if(p==="/console/suggest")return route.fulfill({json:{suggestions:[]}});
@@ -54,11 +60,21 @@ await page.addInitScript((conversation)=>{sessionStorage.setItem('steve.conversa
 async function waitFor(test,label){for(let i=0;i<100;i++){if(await test())return;await new Promise(r=>setTimeout(r,30));}assert.fail(label);}
 try{
  await page.goto(url+'#/console');await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
+ // The sent line shows what it carried, each kind in its own shape, and
+ // says so rather than going quiet when a reference cannot be resolved.
+ const sent=page.locator('.message-user').first();
+ await sent.getByRole('img',{name:'screenshot.png',exact:true}).waitFor();
+ await sent.getByRole('button',{name:'Open report.pdf',exact:true}).waitFor();
+ await sent.getByText('Design note · L1–L2',{exact:true}).waitFor();
+ await sent.getByText('Material unavailable',{exact:true}).waitFor();
+ assert.ok((await sent.innerText()).includes('second'),'A cut of a file brings its lines into the transcript');
+ await sent.getByRole('button',{name:'Open screenshot.png',exact:true}).click();const carriedDialog=page.getByRole('dialog',{name:'Preview',exact:true});await carriedDialog.getByRole('img').waitFor();await carriedDialog.getByRole('button',{name:'Close',exact:true}).click();await carriedDialog.waitFor({state:'hidden'});
+ console.log('PASS a sent line draws its image, names its file, quotes its cut and admits a lost reference');
  await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Add to Material conversation',exact:true}).click();await page.getByRole('list',{name:'Attached materials'}).getByText('Reference reply').waitFor();assert.equal(f.posts.length,0);
  await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Pin in materials',exact:true}).click();const shelfTab=page.getByRole('tab',{name:/^Materials/});await shelfTab.waitFor();assert.equal(f.posts.length,0);
  // The shelf is the project's materials, not the local pin list: the two
  // nobody pinned are listed, and the tab carries the count.
- await shelfTab.click();const shelf=page.getByRole('complementary',{name:'Details'});await shelf.getByRole('button',{name:'Design note',exact:true}).waitFor();await shelf.getByRole('button',{name:'Trace log',exact:true}).waitFor();await shelf.getByRole('button',{name:'Reference reply',exact:true}).first().waitFor();await shelfTab.getByText('4',{exact:true}).waitFor();console.log('PASS materials shelf lists the project, not just local pins');
+ await shelfTab.click();const shelf=page.getByRole('complementary',{name:'Details'});await shelf.getByRole('button',{name:'Design note',exact:true}).waitFor();await shelf.getByRole('button',{name:'Trace log',exact:true}).waitFor();await shelf.getByRole('button',{name:'Reference reply',exact:true}).first().waitFor();await shelfTab.getByText('6',{exact:true}).waitFor();console.log('PASS materials shelf lists the project, not just local pins');
  await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Annotate',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Annotate material'});await dialog.getByRole('textbox',{name:'Annotation',exact:true}).fill('Verify the result');await dialog.getByRole('button',{name:'Save',exact:true}).click();await waitFor(()=>f.notes.length===1,'annotation persisted');await dialog.waitFor({state:'hidden'});await page.getByText('Verify the result',{exact:true}).waitFor();assert.equal(f.notes.length,1);assert.equal(f.posts.length,0);console.log('PASS reply capture, explicit draft target, local pin and durable annotation');
  // Source and deleted-side line ranges use different immutable commits.
  await page.getByRole('tab',{name:'Artifacts',exact:true}).click();await page.getByRole('button',{name:/^(浏览文件|Browse files)$/}).click();await page.getByRole('button',{name:'app.ts',exact:true}).first().click();

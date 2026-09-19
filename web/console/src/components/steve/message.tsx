@@ -12,7 +12,7 @@ import { Md } from "./markdown";
 import { ToolCalls, headingOf } from "./tool-calls";
 import { ProcessBody } from "./trace";
 import { hasProcessContent } from "./progress-view";
-import { MaterialReferences } from "./material-shelf";
+import { MaterialAttachments } from "./material-attachments";
 import { MaterialActions } from "./material-actions";
 import { ThinkingFold } from "./thinking-fold";
 
@@ -46,6 +46,7 @@ export const UserMessage = memo(function UserMessage({ r, onEdit }: { r: Reply; 
         <div className="message-user">
             <div className="message-user-stack">
                 <div className="message-user-body"><Md text={text} /></div>
+                {(!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} label={t("materials.attached")} align="end" />}
                 <div className="message-user-meta">
                     <span>{when(r.at, locale)}</span>
                     <CopyLine text={text} />
@@ -71,7 +72,7 @@ export const AssistantMessage = memo(function AssistantMessage({ r, selected, on
                 ? <div className={`whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere] ${r.error && state !== t("console.stopped") ? "text-error-primary" : ""}`}>{state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text}</div>
                 : <Md text={state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text} className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""} />}</SelectionSurface>}
             {r.changes && <ChangesFold summary={r.changes} label={t("console.netChanges")} />}
-            {!!r.materials?.length && <MaterialReferences items={r.materials} />}
+            {(!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} />}
             <div className="message-meta">
                 <span>{when(r.at, locale)}</span>
                 {state && <span className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""}>{state}</span>}
