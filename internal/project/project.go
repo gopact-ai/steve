@@ -598,6 +598,7 @@ func (s *Store) Get(ctx context.Context, id string) (Project, bool, error) {
 }
 
 // List returns every project, sorted by id.
+// Unreadable records are reported with their binding IDs alongside the valid results.
 func (s *Store) List(ctx context.Context) ([]Project, error) {
 	if err := s.checkDeclaration(ctx); err != nil {
 		return nil, err
@@ -607,17 +608,19 @@ func (s *Store) List(ctx context.Context) ([]Project, error) {
 		return nil, err
 	}
 	out := make([]Project, 0, len(raw))
+	var failures []error
 	for id := range raw {
 		p, ok, err := s.Lookup(ctx, id)
 		if err != nil {
-			return nil, err
+			failures = append(failures, fmt.Errorf("read project %s: %w", id, err))
+			continue
 		}
 		if ok {
 			out = append(out, p)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return out, errors.Join(failures...)
 }
 
 // Binding reads a conversation's current project binding.
@@ -849,6 +852,7 @@ func (s *Store) Grant(ctx context.Context, projectID, principal string, role Rol
 }
 
 // Grants lists a project's grants.
+// Corrupt records are reported with their binding kind and ID alongside the valid results.
 func (s *Store) Grants(ctx context.Context, projectID string) ([]Grant, error) {
 	raw, err := s.l.Bindings(ctx, kindGrant)
 	if err != nil {
@@ -858,18 +862,32 @@ func (s *Store) Grants(ctx context.Context, projectID string) ([]Grant, error) {
 	if err != nil {
 		return nil, err
 	}
-	for id, data := range configured {
-		raw[id] = data
-	}
 	var out []Grant
-	for _, data := range raw {
-		var g Grant
-		if err := json.Unmarshal(data, &g); err == nil && (projectID == "" || g.Project == projectID) {
-			out = append(out, g)
+	var failures []error
+	for _, source := range []struct {
+		kind string
+		rows map[string]json.RawMessage
+	}{{kindGrant, raw}, {kindConfigGrant, configured}} {
+		for id, data := range source.rows {
+			var g Grant
+			if err := json.Unmarshal(data, &g); err != nil {
+				failures = append(failures, fmt.Errorf("read %s %s: %w", source.kind, id, err))
+				continue
+			}
+			// A configured record wins even when corrupt; never fall back
+			// to a manual grant that the configuration overrides.
+			if source.kind == kindGrant {
+				if _, overridden := configured[id]; overridden {
+					continue
+				}
+			}
+			if projectID == "" || g.Project == projectID {
+				out = append(out, g)
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Principal < out[j].Principal })
-	return out, nil
+	return out, errors.Join(failures...)
 }
 
 // Access is the role a principal has in a project: the owner is admin
@@ -959,18 +977,22 @@ func (s *Store) ResolveDisclosure(ctx context.Context, id string, approved bool,
 }
 
 // PendingDisclosures lists disclosure requests awaiting the owner.
+// Corrupt records are reported with their operation IDs alongside the valid results.
 func (s *Store) PendingDisclosures(ctx context.Context) ([]DisclosureRequest, error) {
 	ops, err := s.l.Operations(ctx, kindDisclosureOp, DisclosureProposed)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]DisclosureRequest, 0, len(ops))
+	var failures []error
 	for _, op := range ops {
 		var req DisclosureRequest
-		if err := json.Unmarshal(op.Data, &req); err == nil {
-			out = append(out, req)
+		if err := json.Unmarshal(op.Data, &req); err != nil {
+			failures = append(failures, fmt.Errorf("read disclosure-request %s: %w", op.ID, err))
+			continue
 		}
+		out = append(out, req)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ProposedAt.Before(out[j].ProposedAt) })
-	return out, nil
+	return out, errors.Join(failures...)
 }

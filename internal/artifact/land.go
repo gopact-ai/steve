@@ -582,15 +582,18 @@ func (s *Store) canonicalAncestor(ctx context.Context, m Manifest) (string, erro
 }
 
 // Landings lists landings of a project, newest first.
+// Corrupt records are reported with their IDs alongside the valid results.
 func (s *Store) Landings(ctx context.Context, projectID string) ([]Landing, error) {
 	ops, err := s.ledger.Operations(ctx, landKind, "")
 	if err != nil {
 		return nil, err
 	}
 	var out []Landing
+	var failures []error
 	for _, op := range ops {
 		var l Landing
 		if err := json.Unmarshal(op.Data, &l); err != nil {
+			failures = append(failures, fmt.Errorf("read landing %s: %w", op.ID, err))
 			continue
 		}
 		if l.Project == projectID {
@@ -598,5 +601,5 @@ func (s *Store) Landings(ctx context.Context, projectID string) ([]Landing, erro
 			out = append(out, l)
 		}
 	}
-	return out, nil
+	return out, errors.Join(failures...)
 }
