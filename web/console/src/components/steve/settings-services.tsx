@@ -4,6 +4,7 @@ import { Button } from "@/components/base/buttons/button";
 import { cancelRestart, fetchRestart, fetchServices, fetchVersions, restartService, type ManagedService, type RestartMode, type RestartOperation, type Versions } from "@/lib/api/settings";
 import { fetchConversations } from "@/lib/api/console";
 import { useI18n } from "@/providers/locale-provider";
+import { useNodeLabel } from "@/lib/node-name";
 import { HTTPError } from "@/lib/http";
 
 interface TrackedRestart { id: string; operation?: RestartOperation; error?: string }
@@ -46,6 +47,11 @@ function subscribe(listener: () => void) { restartListeners.add(listener); retur
 
 export function SettingsServices({ onRestarted }: { onRestarted?: (service: string) => void }) {
     const { t } = useI18n();
+    // A service is a machine to the reader, so it is named the way the fleet
+    // names that machine. The node ID stays in the line underneath, where it
+    // identifies without having to be remembered.
+    const nodeLabel = useNodeLabel();
+    const machine = (service: ManagedService) => nodeLabel(service.label || service.name);
     const [services, setServices] = useState<ManagedService[] | null>(null);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(true);
@@ -137,7 +143,7 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
             const reason = waiting ? waitReasons[(operation?.waiting_on ?? "") as keyof typeof waitReasons] ?? "settingsPage.waitingOn.unknown" : null;
             const headline = operation?.state === "restarted" ? "settingsPage.restartConfirmed" : operation?.state === "failed" ? "settingsPage.restartFailed" : operation?.state === "cancelled" ? "settingsPage.restartCancelled" : waiting ? "settingsPage.restartWaiting" : operation?.state === "accepted" ? "settingsPage.restartAccepted" : "settingsPage.restartUnknown";
             return <li key={service.name}>
-                <div className="settings-service-heading"><div><h3>{service.label || service.name}</h3><p>{service.kind === "hub" ? "Hub" : t("settingsPage.node")} · {t(service.online ? "settingsPage.online" : "settingsPage.offline")} {service.version ? `· ${service.version}` : ""}</p></div><Button size="sm" color="secondary" isDisabled={!service.supported || !service.online || unresolved || scheduled || !!busy[service.name]} onClick={() => setConfirm(service)}>{t("settingsPage.restartService")}</Button></div>
+                <div className="settings-service-heading"><div><h3>{machine(service)}</h3><p>{service.kind === "hub" ? "Hub" : t("settingsPage.node")} · {t(service.online ? "settingsPage.online" : "settingsPage.offline")} {service.version ? `· ${service.version}` : ""}{service.label && service.label !== machine(service) ? <> · <code>{service.label}</code></> : null}</p></div><Button size="sm" color="secondary" isDisabled={!service.supported || !service.online || unresolved || scheduled || !!busy[service.name]} onClick={() => setConfirm(service)}>{t("settingsPage.restartService")}</Button></div>
                 {!service.supported && <p className="settings-note">{t("settingsPage.restartUnsupported")}</p>}
                 {(operation && operation.state !== "idle" || unresolved) && <div className="settings-operation" role="status"><strong>{t(headline)}</strong>{reason && <p>{t(reason)}</p>}{waiting && !!operation?.waiting_conversations?.length && <p className="settings-note">{operation.waiting_conversations.map(nameOf).join(" · ")}</p>}{(mine?.error || operation?.error) && <p>{mine?.error || operation?.error}</p>}{operation?.state === "restarted" && <p>{t("settingsPage.newIncarnation")}: <code>{operation.incarnation}</code></p>}{unresolved && (waiting
                     ? <div className="settings-actions"><Button size="sm" color="link-gray" isDisabled={!!busy[service.name]} onClick={() => void withdraw(service.name, mine.id)}>{t("settingsPage.cancelRestart")}</Button><Button size="sm" color="link-color" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id, true)}>{t("settingsPage.restartNowInstead")}</Button></div>
@@ -145,7 +151,7 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
             </li>;
         })}</ul>}
         <details className="settings-advanced" onToggle={(event) => setAdvanced(event.currentTarget.open)}><summary>{t("settingsPage.identityDetails")} · {t("settingsPage.protocol")}</summary>{advanced && <ServiceDetails />}</details>
-        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirm(null); }}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.restartTitle", { service: confirm.label || confirm.name })}><div className="settings-dialog"><h2>{t("settingsPage.restartTitle", { service: confirm.label || confirm.name })}</h2><p>{t("settingsPage.restartConfirmHint")}</p><code>{confirm.name}</code><div className="settings-actions"><Button size="sm" color="secondary" onClick={() => setConfirm(null)}>{t("common.cancel")}</Button><Button size="sm" color="tertiary" onClick={() => start(confirm, "now")}>{t("settingsPage.confirmRestart")}</Button><Button size="sm" color="primary" onClick={() => start(confirm, "when-idle")}>{t("settingsPage.restartWhenIdle")}</Button></div></div></Dialog></Modal></ModalOverlay>}
+        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirm(null); }}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.restartTitle", { service: machine(confirm) })}><div className="settings-dialog"><h2>{t("settingsPage.restartTitle", { service: machine(confirm) })}</h2><p>{t("settingsPage.restartConfirmHint")}</p><code>{confirm.name}</code><div className="settings-actions"><Button size="sm" color="secondary" onClick={() => setConfirm(null)}>{t("common.cancel")}</Button><Button size="sm" color="tertiary" onClick={() => start(confirm, "now")}>{t("settingsPage.confirmRestart")}</Button><Button size="sm" color="primary" onClick={() => start(confirm, "when-idle")}>{t("settingsPage.restartWhenIdle")}</Button></div></div></Dialog></Modal></ModalOverlay>}
     </section>;
 }
 

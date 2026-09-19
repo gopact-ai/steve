@@ -16,11 +16,15 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     const [preference, setPreference] = useState(savedPreference);
     const [languages, setLanguages] = useState(() => [...navigator.languages]);
     const locale = resolveLocale(preference, languages);
+    // Children read and write during their own effects, which React runs
+    // before this provider's. The language a request asks for is therefore
+    // settled here, in render, so the first read of a page already carries
+    // the language the page is about to be drawn in.
+    setRequestLocale(locale);
 
     useLayoutEffect(() => {
         document.documentElement.lang = intlLocale(locale);
         document.title = translate(locale, "app.title");
-        setRequestLocale(locale);
     }, [locale]);
 
     useEffect(() => {

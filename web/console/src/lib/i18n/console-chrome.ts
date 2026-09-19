@@ -136,7 +136,7 @@ export const domainZh = {
     "consoleChrome.showMoreFiles": "展开其余 {count} 个文件",
     "consoleChrome.showFewerFiles": "收起文件列表",
     "consoleChrome.snapshotChanged": "这次执行的快照已变化，请重新读取后再审阅。",
-    "consoleChrome.reviewFile": "Review {path}",
+    "consoleChrome.reviewFile": "查看 {path}",
     "consoleChrome.loadingChanges": "读取改动…",
     "consoleChrome.changeAdded": "新增",
     "consoleChrome.changeModified": "修改",
