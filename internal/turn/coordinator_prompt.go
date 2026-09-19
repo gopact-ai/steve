@@ -14,7 +14,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -65,25 +64,18 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, context.Canceled
 	}
 	t := &chatTurn{c: c, req: req, selected: selected, clock: clock, prompt: prompt}
-	if c.executions != nil {
-		taskID := ""
-		if c.tasks != nil {
-			if previous, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin); ok {
-				taskID = previous.ID
-			}
-		}
-		scope, scopeErr := c.executions.Begin(ctx, execution.Key{TaskID: taskID, InstanceID: req.MessageID})
-		if scopeErr != nil {
-			return Result{}, scopeErr
-		}
+	binding, scope, scopeErr := c.beginTurnScope(ctx, req, selected.ID)
+	if scopeErr != nil {
+		return Result{}, scopeErr
+	}
+	if scope != nil {
 		t.scope = scope
 		defer func() { scope.Finish(t.unresolved(err)) }()
 		ctx = scope.Context()
 	}
 	// The directory is settled before the task opens: a turn that has
 	// nowhere to run has not started and spends nothing.
-	req.stage(view.StageWorkspace)
-	binding, workspace, err := c.resolveWorkspace(ctx, req, selected)
+	workspace, err := c.workspaceFor(ctx, req, selected, binding)
 	if err != nil {
 		return Result{}, err
 	}

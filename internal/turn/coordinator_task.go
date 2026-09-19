@@ -23,6 +23,36 @@ import (
 // belongs to the archive, which records every turn verbatim.
 const goalLimit = 120
 
+// beginTurnScope inherits authority only from work on the current project.
+// A leftover task from another project is retired during admission; its
+// revocation must stop the old work without cancelling this new turn. Capture
+// the candidate before callbacks or I/O so a concurrent pause/resume cannot
+// replace its original authorization with an empty or newer one.
+func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID string) (project.Binding, *execution.Scope, error) {
+	var previous task.Task
+	if c.tasks != nil {
+		previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
+	}
+	req.stage(view.StageWorkspace)
+	binding, err := c.bindingFor(ctx, req)
+	if err != nil || c.executions == nil {
+		return binding, nil, err
+	}
+	taskID := ""
+	if previous.ProjectID == "" || previous.ProjectID == binding.ProjectID {
+		taskID = previous.ID
+	}
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: taskID, InstanceID: req.MessageID})
+	if err != nil {
+		return binding, nil, err
+	}
+	if taskID != "" && scope.Token().Epoch != previous.ExecutionEpoch {
+		scope.Finish(nil)
+		return binding, nil, fmt.Errorf("%w: task %s changed during workspace preparation", task.ErrExecutionStopped, taskID)
+	}
+	return binding, scope, nil
+}
+
 // beginTask opens or continues the member's task on this channel and charges a
 // turn to it. It returns an empty id when task tracking is disabled, and a
 // UserError when the budget is spent. When tracking is configured, admission
@@ -59,7 +89,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		// switch, a crash between the two): the task stays with its
 		// project, and this turn opens its own.
 		slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID), "task", tracked.ID, "conversation", req.ConversationID, "project", binding.ProjectID)
-		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
+		if err := c.releaseConversationTask(tracked); err != nil {
 			return "", fmt.Errorf("close previous project task %s: %w", tracked.ID, err)
 		}
 		ok = false
@@ -117,20 +147,37 @@ func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, m
 	}
 }
 
-// closeTask ends the member's tasks on a session reset. /new means "start
-// over", and a task that survived the session it was attempted through would
-// silently keep charging turns against work nobody is doing any more. Every
-// lineage goes, unattended ones included: they all ran through the session
-// that has just been archived.
+// closeTask releases the member's tasks when their session is archived.
+// Ordinary work closes; failed or blocked work is set aside for a deliberate
+// resume, not reported as completed. Every lineage leaves the conversation
+// slot, including unattended work, so new inputs cannot charge old work.
 func (c *Coordinator) closeTask(conversationID, agentID string) {
 	if c.tasks == nil {
 		return
 	}
 	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
-		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
+		if err := c.releaseConversationTask(tracked); err != nil {
 			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
 		}
 	}
+}
+
+func (c *Coordinator) releaseConversationTask(tracked task.Task) error {
+	// Resetting or switching projects cannot turn blocked or failed work into a
+	// success. Keep it available to resume, with its original history,
+	// but revoke its old execution and release the conversation slot.
+	if tracked.State == task.StateBlocked || tracked.State == task.StateFailed {
+		ids, err := c.tasks.SetAside(tracked.ID, task.StatePaused)
+		if err != nil {
+			return err
+		}
+		if c.executions != nil {
+			c.executions.Stop(ids, task.ErrExecutionStopped)
+		}
+		return nil
+	}
+	_, err := c.tasks.Advance(tracked.ID, task.StateDone)
+	return err
 }
 
 func outcome(err error) task.Outcome {
