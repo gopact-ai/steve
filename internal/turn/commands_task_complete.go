@@ -2,15 +2,14 @@ package turn
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -75,79 +74,14 @@ func (c commands) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conv
 	if err := artifact.CheckTaskLandingsTx(tx, ids); err != nil {
 		return err
 	}
-	var operations []ledger.Operation
-	for _, kind := range []string{"intent", "disclosure-request"} {
-		current, err := tx.Operations(kind, "")
-		if err != nil {
-			return err
-		}
-		operations = append(operations, current...)
-	}
-	for _, operation := range operations {
-		switch operation.Kind {
-		case "intent":
-			var effect intent.Intent
-			if err := json.Unmarshal(operation.Data, &effect); err != nil {
-				return err
-			}
-			if ids[effect.TaskID] && operation.State != string(intent.Succeeded) && operation.State != string(intent.Failed) {
-				return task.ErrCompleteAttention
-			}
-		case "disclosure-request":
-			var disclosure project.DisclosureRequest
-			if err := json.Unmarshal(operation.Data, &disclosure); err != nil {
-				return err
-			}
-			if ids[disclosure.TaskID] && operation.State == project.DisclosureProposed {
-				return task.ErrCompleteAttention
-			}
-		}
-	}
-	var plans struct {
-		ByTask map[string]string `json:"by_task"`
-	}
-	if raw, _, err := tx.LoadDocument("plans"); err != nil {
+	if err := intent.CheckTaskCompletionTx(tx, ids); err != nil {
 		return err
-	} else if len(raw) != 0 {
-		if err := json.Unmarshal(raw, &plans); err != nil {
-			return err
-		}
-		for id := range ids {
-			if plans.ByTask[id] != "" {
-				return task.ErrCompleteRoot
-			}
-		}
 	}
-	var console struct {
-		Questions map[string]consoleapi.PendingQuestion `json:"questions"`
-		Exchanges map[string][]consoleapi.Exchange      `json:"exchanges"`
-	}
-	if raw, _, err := tx.LoadDocument("console"); err != nil {
+	if err := project.CheckTaskCompletionTx(tx, ids); err != nil {
 		return err
-	} else if len(raw) != 0 {
-		if err := json.Unmarshal(raw, &console); err != nil {
-			return err
-		}
-		for _, question := range console.Questions {
-			if question.State == "pending" && (ids[question.TaskID] || question.Conversation == conversation) {
-				return task.ErrCompleteAttention
-			}
-		}
-		for _, exchanges := range console.Exchanges {
-			for _, exchange := range exchanges {
-				if ids[exchange.ExpectedTask] && !exchange.State.Terminal() {
-					return task.ErrCompleteDelivery
-				}
-				if exchange.Conversation == conversation && (exchange.State == consoleapi.ExchangeAwaitingUser || exchange.State == consoleapi.ExchangeRecovering) {
-					return task.ErrCompleteAttention
-				}
-				if exchange.Conversation == conversation && !exchange.State.Terminal() {
-					if currentExchange == "" || exchange.ID != currentExchange {
-						return task.ErrCompleteDelivery
-					}
-				}
-			}
-		}
 	}
-	return nil
+	if err := plan.CheckTaskCompletionTx(tx, ids); err != nil {
+		return err
+	}
+	return c.checkConsoleCompletionTx(tx, ids, conversation, currentExchange)
 }

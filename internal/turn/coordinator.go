@@ -179,6 +179,9 @@ type coordinatorState struct {
 	endpoints     NodeEndpoints
 	RegisterIdle  idle.Registrar
 	tasks         *task.Store
+
+	consoleCompletionGuard ConsoleCompletionGuard
+
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
 	modes map[string]home.Mode
