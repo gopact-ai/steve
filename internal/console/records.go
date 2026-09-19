@@ -366,11 +366,9 @@ func consoleChanges(before consoleRecords, next transcript) ([]consoleChange, er
 		if err != nil {
 			return nil, err
 		}
-		// Freeze the comparison image before starting the transaction.
-		changes[i].value, err = decodeConsoleRecord(changes[i].key.kind, changes[i].raw)
-		if err != nil {
-			return nil, err
-		}
+		// Freeze the typed comparison image, not the JSON representation:
+		// omitempty and custom time encoding discard valid in-memory details.
+		changes[i].value = copyConsoleRecord(changes[i].value)
 	}
 	return changes, nil
 }
