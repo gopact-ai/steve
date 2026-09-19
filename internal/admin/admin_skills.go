@@ -93,7 +93,14 @@ func (a *Service) Skills(ctx context.Context) (consoleapi.SkillsView, error) {
 		}
 	}
 	want := a.Shipper.hash()
+	// The hub runs a node of its own, and it is the source skills are
+	// shipped from; listing it again among the machines shipped to would
+	// say the same machine twice.
+	self := nodewire.Place("")
 	for _, name := range a.Nodes.Names() {
+		if name == self {
+			continue
+		}
 		item := consoleapi.SkillNode{Name: name}
 		if adv, err := a.Nodes.Advert(ctx, name); err == nil {
 			item.Up = true
@@ -151,8 +158,14 @@ func (a *Service) MachineSkills(ctx context.Context) []consoleapi.MachineSkills 
 		}
 		return item
 	}
+	self := nodewire.Place("")
 	out := []consoleapi.MachineSkills{found("", true, node.OwnSkills(5*time.Minute), nil)}
 	for _, name := range a.Nodes.Names() {
+		// The hub's own scan is the entry above; its node advert would
+		// be the same machine over again.
+		if name == self {
+			continue
+		}
 		adv, err := a.Nodes.Advert(ctx, name)
 		out = append(out, found(name, false, adv.OwnSkills, err))
 	}
