@@ -10,6 +10,15 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 	if one.failure != nil {
 		return one.failure
 	}
+	previousQuestions := one.record.State.Questions
+	if one.record.State.Sequence == 0 {
+		previousQuestions = nil
+	}
+	questions, err := normalizeSessionQuestions(previousQuestions, next.State.Questions)
+	if err != nil {
+		return err
+	}
+	next.State.Questions = questions
 	// Every semantic transition includes the latest coalesced progress. The
 	// receipt and its final text therefore cross the durable boundary together.
 	if one.pendingProgress != nil {

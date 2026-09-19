@@ -290,7 +290,7 @@ func (s *sessionRecords) read(id, commandID string) (sessionRecord, bool, error)
 		if err := rows.Scan(&raw); err != nil {
 			return record, true, err
 		}
-		if err := json.Unmarshal(raw, &question); err != nil {
+		if err := decodeSessionQuestionJSON(raw, &question); err != nil {
 			return record, true, fmt.Errorf("decode node question: %w", err)
 		}
 		if question.CommandID != selected {

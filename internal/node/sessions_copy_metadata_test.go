@@ -89,7 +89,8 @@ func TestSessionPermissionMetadataSnapshotsOwnContainers(t *testing.T) {
 				} else {
 					state = one.copyLocked().State
 				}
-				mutatePermissionMetadata(reflect.ValueOf(state.Questions[0].Permission.Options[0].Meta["payload"]))
+				meta := state.Questions[0].Permission.Options[0].Meta
+				meta["payload"] = mutatePermissionMetadata(meta["payload"])
 				after, err := json.Marshal(one.record)
 				if err != nil {
 					t.Fatal(err)
@@ -105,35 +106,22 @@ func TestSessionPermissionMetadataSnapshotsOwnContainers(t *testing.T) {
 	}
 }
 
-// Mutate a leaf without depending on whether its Go container is named.
-func mutatePermissionMetadata(value reflect.Value) {
-	switch value.Kind() {
-	case reflect.Interface:
-		if value.Elem().Kind() == reflect.String {
-			value.Set(reflect.ValueOf("mutated"))
-		} else {
-			mutatePermissionMetadata(value.Elem())
+// Mutate canonical JSON values, not the programmatic ingress representation.
+func mutatePermissionMetadata(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, item := range value {
+			value[key] = mutatePermissionMetadata(item)
+			break
 		}
-	case reflect.Pointer:
-		mutatePermissionMetadata(value.Elem())
-	case reflect.Struct:
-		mutatePermissionMetadata(value.Field(0))
-	case reflect.Map:
-		key := reflect.ValueOf("key")
-		item := value.MapIndex(key)
-		if item.Kind() == reflect.String || item.Kind() == reflect.Interface && item.Elem().Kind() == reflect.String {
-			value.SetMapIndex(key, reflect.ValueOf("mutated"))
-		} else {
-			mutatePermissionMetadata(item)
+		return value
+	case []any:
+		if len(value) > 0 {
+			value[0] = mutatePermissionMetadata(value[0])
 		}
-	case reflect.Slice, reflect.Array:
-		if value.Type().Elem().Kind() == reflect.Uint8 {
-			value.Index(0).SetUint('X')
-		} else {
-			mutatePermissionMetadata(value.Index(0))
-		}
-	case reflect.String:
-		value.SetString("mutated")
+		return value
+	case string:
+		return "mutated"
 	default:
 		panic("test fixture has no mutable leaf")
 	}
@@ -149,19 +137,27 @@ func TestSessionPermissionMetadataCopyPreservesValues(t *testing.T) {
 			hidden string
 		}{Items: []string{"value"}, hidden: "preserved"},
 	}
-	if copied := copySessionJSON(input); !reflect.DeepEqual(input, copied) {
-		t.Fatalf("metadata copy changed types or values: %#v", copied)
+	canonical, err := canonicalSessionMetadata(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied := copySessionJSON(canonical); !bytes.Equal(metadataJSON(t, input), metadataJSON(t, copied)) {
+		t.Fatalf("metadata copy changed JSON-visible values: %#v", copied)
 	}
 }
 
-func TestSessionPermissionMetadataIgnoredCycleOwnsGraph(t *testing.T) {
+func TestSessionPermissionMetadataIgnoredCycleIsNotRetained(t *testing.T) {
 	input := &permissionMetadataIgnoredCycle{Items: []string{"original"}}
 	input.Self = input
-	copied := copySessionJSON(input).(*permissionMetadataIgnoredCycle)
-	if copied == input || copied.Self != copied {
-		t.Fatal("metadata copy did not preserve its own ignored cycle")
+	canonical, err := canonicalSessionMetadata(acp.Meta{"payload": input})
+	if err != nil {
+		t.Fatal(err)
 	}
-	copied.Self.Items[0] = "mutated"
+	copied := copySessionJSON(canonical).(acp.Meta)["payload"].(map[string]any)
+	if _, ok := copied["Self"]; ok {
+		t.Fatal("JSON-ignored cycle entered owner state")
+	}
+	copied["Items"].([]any)[0] = "mutated"
 	if input.Items[0] != "original" {
 		t.Fatal("ignored cycle reaches the original metadata")
 	}
