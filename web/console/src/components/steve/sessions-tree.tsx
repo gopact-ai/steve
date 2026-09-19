@@ -482,10 +482,10 @@ function ThreadWork({ work, childrenOf, onTask }: { work: Task[]; childrenOf?: (
                 {running + waiting + failed === 0 && <span>{tr("consoleChrome.taskCount", { count: number(work.length, locale) })}{kids ? ` · ${tr("consoleChrome.delegationCount", { count: number(kids, locale) })}` : ""}</span>}
             </div>
             <ul className="mb-1 flex flex-col">
-                {work.map((t) => (
+                {newestFirst(work).map((t) => (
                     <li key={t.id}>
                         <TaskLine t={t} onTask={onTask} />
-                        {(childrenOf?.(t.id) || []).map((k) => <TaskLine key={k.id} t={k} onTask={onTask} child />)}
+                        {newestFirst(childrenOf?.(t.id) || []).map((k) => <TaskLine key={k.id} t={k} onTask={onTask} child sameNode={!!k.node && k.node === t.node} />)}
                     </li>
                 ))}
             </ul>
@@ -493,19 +493,36 @@ function ThreadWork({ work, childrenOf, onTask }: { work: Task[]; childrenOf?: (
     );
 }
 
+// newestFirst puts the highest task number on top, so a thread's work
+// reads in one direction however the snapshot happened to arrive.
+function newestFirst(tasks: Task[]): Task[] {
+    return [...tasks].sort((a, b) => {
+        const x = Number(a.id), y = Number(b.id);
+        if (Number.isFinite(x) && Number.isFinite(y) && x !== y) return y - x;
+        return b.id.localeCompare(a.id);
+    });
+}
+
 // TaskLine is one piece of work on one line: number, who, where it
-// stands; the goal is the tooltip. A delegation is the same line,
-// indented, marked as handed on.
-function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; child?: boolean }) {
+// stands; the goal is the tooltip. A delegation is the same line, one
+// indent further in — the indent already says it was handed on, so the
+// line does not repeat it, nor the machine its parent already named.
+// The three leading columns are fixed width: a state mark of one size
+// whatever it says, then the number right-aligned, so every name in the
+// list starts on the same pixel.
+function TaskLine({ t, onTask, child, sameNode }: { t: Task; onTask?: (t: Task) => void; child?: boolean; sameNode?: boolean }) {
     const nodeLabelOf = useNodeLabel();
     const running = t.execution === "running";
     const state = taskState(t);
+    const who = `${t.member || "steve"}${t.node && !sameNode ? `@${nodeLabelOf(t.node)}` : ""}`;
     return (
         <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-left u-meta ${child ? "pl-5" : "pl-1.5"} ${onTask ? "hover:bg-primary/50" : ""}`} title={plain(t.title || t.goal || "") || undefined}>
-            {running ? <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" /> : state === "done" ? <CheckCircle className="size-3 shrink-0 text-fg-success-primary" /> : state === "failed" ? <span className="size-2 shrink-0 rounded-full bg-error-solid" /> : <span className="size-2 shrink-0 rounded-full bg-quaternary" />}
-            <span className="shrink-0 font-mono text-quaternary">#{t.id}</span>
-            <span className="min-w-0 shrink-0 truncate text-tertiary">{child ? "→ " : ""}{t.member || "steve"}{t.node ? `@${nodeLabelOf(t.node)}` : ""}</span>
-            <span className="min-w-0 truncate text-secondary">{t.title || t.goal}</span>
+            <span className="flex size-3 shrink-0 items-center justify-center">
+                {running ? <Loading01 className="size-3 animate-spin text-fg-brand-primary" /> : state === "done" ? <CheckCircle className="size-3 text-fg-success-primary" /> : state === "failed" ? <span className="size-2 rounded-full bg-error-solid" /> : <span className="size-2 rounded-full bg-quaternary" />}
+            </span>
+            <span className="min-w-7 shrink-0 text-right font-mono tabular-nums text-quaternary">#{t.id}</span>
+            <span className="min-w-0 shrink truncate text-tertiary">{who}</span>
+            <span className="min-w-0 flex-1 truncate text-secondary">{t.title || t.goal}</span>
         </button>
     );
 }
