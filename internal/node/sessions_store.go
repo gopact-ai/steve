@@ -11,15 +11,6 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
-func (one *ownedSession) copyLocked() sessionRecord {
-	// The record is plain data that round-trips through JSON by
-	// construction: this is a deep copy, not a parse.
-	raw, _ := json.Marshal(one.record)
-	var next sessionRecord
-	_ = json.Unmarshal(raw, &next)
-	return next
-}
-
 func (one *ownedSession) commitLocked(next sessionRecord) error {
 	if one.failure != nil {
 		return one.failure
@@ -56,7 +47,7 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 }
 
 func (one *ownedSession) stateLocked(commandID string) nodewire.SessionState {
-	state := one.copyLocked().State
+	state := copySessionState(one.record.State)
 	if commandID == "" {
 		commandID = one.record.CurrentCommand
 	}
