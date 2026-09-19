@@ -17,6 +17,7 @@ import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { nodeLabelIn } from "@/lib/node-name";
 import { useResourceRead } from "@/hooks/use-resource-read";
+import { useManagementRefresh } from "@/hooks/use-management-refresh";
 import type { MachineSkills, SkillDoc, SkillView, SkillsView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
@@ -43,7 +44,7 @@ export function SkillsPage() {
     const loadMachines = useResourceRead("machine-skills", fetchMachineSkills, (next) => { setMachines(next.machines); setMachinesError(""); }, (error) => setMachinesError(fail(error)));
     const [rescanning, setRescanning] = useState(false);
     const rescan = () => { setRescanning(true); void refreshMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))).finally(() => setRescanning(false)); };
-    useEffect(() => { load(); }, [load, snap.at]);
+    useManagementRefresh("skills", load);
     useEffect(() => { loadMachines(); }, [loadMachines]);
     async function run(key: string, op: () => Promise<unknown>) {
         if (pending.current) return;

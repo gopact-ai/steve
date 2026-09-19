@@ -16,14 +16,9 @@ import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { ConsolePage } from "@/pages/console";
-import { FleetPage } from "@/pages/fleet";
-import { DashboardPage } from "@/pages/dashboard";
 import { InboxPage } from "@/pages/inbox";
 import { ProjectsPage } from "@/pages/projects";
-import { SkillsPage } from "@/pages/skills";
-import { MCPPage } from "@/pages/mcp";
 import { HomePage } from "@/pages/home";
-import { SettingsPage } from "@/pages/settings";
 import { MaterialProvider } from "@/providers/material-provider";
 import { ReviewProvider } from "@/components/steve/review-context";
 
@@ -34,6 +29,11 @@ const NAV_MIN = 168;
 const NAV_MAX = 360;
 
 const PluginsPage = lazy(() => import("@/pages/plugins").then((module) => ({ default: module.PluginsPage })));
+const FleetPage = lazy(() => import("@/pages/fleet").then((module) => ({ default: module.FleetPage })));
+const DashboardPage = lazy(() => import("@/pages/dashboard").then((module) => ({ default: module.DashboardPage })));
+const SkillsPage = lazy(() => import("@/pages/skills").then((module) => ({ default: module.SkillsPage })));
+const MCPPage = lazy(() => import("@/pages/mcp").then((module) => ({ default: module.MCPPage })));
+const SettingsPage = lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })));
 
 export function App() {
     const navigate = useNavigate();
@@ -120,7 +120,7 @@ function Shell() {
         {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
         {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("nav.close")} onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
-            <Routes>
+            <Suspense fallback={<div role="status" className="p-6 text-sm text-tertiary">{t("common.loading")}</div>}><Routes>
                 <Route path="/" element={<Navigate to="/console" replace />} />
                 <Route path="/console" element={<ConsolePage />} />
                 <Route path="/tasks" element={<Navigate to="/console?view=board" replace />} />
@@ -129,7 +129,7 @@ function Shell() {
                 <Route path="/fleet" element={<FleetPage />} />
                 <Route path="/skills" element={<SkillsPage />} />
                 <Route path="/mcp" element={<MCPPage />} />
-                <Route path="/plugins" element={<Suspense fallback={<div role="status" className="p-6 text-sm text-tertiary">{t("common.loading")}</div>}><PluginsPage /></Suspense>} />
+                <Route path="/plugins" element={<PluginsPage />} />
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/inbox" element={<InboxPage />} />
@@ -137,7 +137,7 @@ function Shell() {
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/history" element={<Navigate to="/dashboard?tab=timeline" replace />} />
                 <Route path="/activity" element={<Navigate to="/dashboard" replace />} />
-            </Routes>
+            </Routes></Suspense>
         </main>
     </div>;
 }

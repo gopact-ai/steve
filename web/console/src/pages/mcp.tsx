@@ -1,7 +1,7 @@
 import { PluginResources } from "@/components/steve/plugins/resources";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Download01, Dataflow03, RefreshCw01, SearchSm, Server01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
@@ -19,6 +19,7 @@ import { useFleet } from "@/lib/fleet";
 import { useNodeLabel } from "@/lib/node-name";
 import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { useResourceRead } from "@/hooks/use-resource-read";
+import { useManagementRefresh } from "@/hooks/use-management-refresh";
 import type { MCPDeployment, MCPRegistryEntry, MCPView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
@@ -52,14 +53,13 @@ const steveToolSummaries: Record<string, string> = {
     steve_recall: tr("mcp.recallTool"),
     steve_forget: tr("mcp.forgetTool"),
 };
-    const { snap } = useFleet();
     const [view, setView] = useState<MCPView | null>(null);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState("");
     const [opened, setOpened] = useState<string | null>(null);
     const [readError, setReadError] = useState("");
     const load = useResourceRead("mcp", fetchMCP, (next) => { setView(next); setReadError(""); }, (error) => setReadError(fail(error)));
-    useEffect(() => { load(); }, [load, snap.at]);
+    useManagementRefresh("mcp", load);
     async function run(key: string, op: () => Promise<unknown>) {
         setBusy(key); setError("");
         try { await op(); await load(); } catch (e) { setError(fail(e)); } finally { setBusy(""); }
