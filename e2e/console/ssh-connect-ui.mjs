@@ -112,7 +112,8 @@ try {
     assert.deepEqual(f.plans, []); assert.deepEqual(f.installs, []);
     await dialog.getByRole("button", { name: "View machines in this workspace", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
-    assert.equal(await page.locator("#fleet-machines").evaluate((el) => el === document.activeElement), true);
+    // The page moves focus in a frame after the dialog closes, so wait for it rather than sample it.
+    await page.waitForFunction(() => document.activeElement?.id === "fleet-machines");
     await page.getByRole("button", { name: "Connect with SSH", exact: true }).click();
     await dialog.getByRole("heading", { name: "Existing Steve configuration found", exact: true }).waitFor();
     await dialog.getByText("dev-box", { exact: true }).waitFor();
