@@ -11,7 +11,6 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/task"
 )
 
 func validateSessionPlacement(record attempt.Record, place harness.Placement, upstream, workdir string) error {
@@ -55,26 +54,9 @@ func newApplicationSessionBinder(active cluster.Activation) func(context.Context
 		if err := active.Context.Err(); err != nil {
 			return nil, err
 		}
-		record, err := attempt.New(active.Ledger).Get(ctx, key.AttemptID)
+		record, tracked, err := readSessionBinding(ctx, active.Ledger, key, place, upstream, workdir)
 		if err != nil {
 			return nil, err
-		}
-		if record.TaskID != key.TaskID {
-			return nil, errors.New("node session does not match its admitted execution")
-		}
-		if err := validateSessionPlacement(record, place, upstream, workdir); err != nil {
-			return nil, err
-		}
-		if record.Execution == nil || record.Execution.TaskID != record.TaskID {
-			return nil, errors.New("node session requires a task execution token")
-		}
-		tasks, err := task.OpenLedger(active.Ledger, "")
-		if err != nil {
-			return nil, err
-		}
-		tracked, ok := tasks.Get(record.TaskID)
-		if !ok {
-			return nil, errors.New("node session task is missing")
 		}
 		command := attempt.InputCommandID(record)
 		ctx = harness.WithPluginProfile(ctx, record.PluginRuntime)

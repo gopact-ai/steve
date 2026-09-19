@@ -3,16 +3,13 @@ package cluster
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/coordination"
-	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/plugins"
-	"github.com/gopact-ai/steve/internal/task"
 )
 
 func LogicalAgentSession(channel, taskID, agentID string) string {
@@ -49,15 +46,9 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 	if authority.ClusterID != p.Config.ClusterID || binding.NodeID != node {
 		return errors.New("node session belongs to another cluster or machine")
 	}
-	var observation, stopping bool
-	switch action {
-	case nodewire.SessionActionOpen, nodewire.SessionActionAttach, nodewire.SessionActionPoll, nodewire.SessionActionSettings, nodewire.SessionActionInspectOpen:
-		observation = true
-	case nodewire.SessionActionCancel, nodewire.SessionActionAbort, nodewire.SessionActionClose, nodewire.SessionActionCancelOpen:
-		stopping = true
-	case nodewire.SessionActionStart, nodewire.SessionActionPrompt, nodewire.SessionActionAnswer, nodewire.SessionActionOption, nodewire.SessionActionCapabilities:
-	default:
-		return errors.New("unsupported node session action")
+	_, _, err := sessionActionMode(action)
+	if err != nil {
+		return err
 	}
 	runtime := p.Runtime.Load()
 	if runtime == nil {
@@ -89,22 +80,10 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 		case <-poll.C:
 		}
 	}
-	record, err := attempt.New(runtime.Ledger()).Get(ctx, binding.AttemptID)
-	if err != nil {
-		return err
-	}
-	if record.NativeImportID() != binding.NativeImportID || record.PluginRuntimeID() != binding.PluginRuntimeID || record.TaskID != binding.TaskID || record.Project != binding.ProjectID || record.Node != binding.NodeID || attempt.SessionExecutionEpoch(record) != binding.ExecutionEpoch || record.Execution == nil || record.Execution.Epoch != binding.TaskEpoch {
-		return errors.New("node session differs from the committed execution")
-	}
-	tasks, err := task.OpenLedger(runtime.Ledger(), "")
-	if err != nil {
-		return err
-	}
-	tracked, ok := tasks.Get(record.TaskID)
-	if !ok || binding.SessionID != LogicalAgentSession(tracked.Channel, tracked.ID, record.Agent) {
-		return errors.New("node session conversation differs")
-	}
-	if !stopping && record.PluginRuntime != nil {
+	return authorizeSessionRead(ctx, runtime.Ledger(), binding, action, func(record attempt.Record) error {
+		if record.PluginRuntime == nil {
+			return nil
+		}
 		declared, found, err := platformconfig.New(runtime.Ledger()).Load()
 		if err != nil {
 			return err
@@ -112,32 +91,6 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 		if !found {
 			return coordination.ErrNotReady
 		}
-		if err := (&plugins.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declared.Plugins, *record.PluginRuntime); err != nil {
-			return err
-		}
-	}
-	if !stopping && !observation {
-		if record.State.Terminal() || record.Unsettled {
-			return fmt.Errorf("execution %s cannot start more work", record.ID)
-		}
-		if action == nodewire.SessionActionPrompt && record.State != attempt.Running {
-			return errors.New("native input requires a committed running attempt")
-		}
-		if action == nodewire.SessionActionStart && record.State != attempt.Leased && record.State != attempt.Prepared && record.State != attempt.Running {
-			return errors.New("native session creation is outside the execution preparation phase")
-		}
-		if err := tasks.CheckExecution(*record.Execution); err != nil {
-			return err
-		}
-		for _, granted := range record.Leases {
-			current, exists, err := runtime.Ledger().LeaseOf(ctx, granted.Key)
-			if err != nil {
-				return err
-			}
-			if !exists || current.Incarnation != granted.Incarnation || current.Epoch != granted.Epoch || current.Holder != granted.Holder || !current.ExpiresAt.After(time.Now()) {
-				return ledger.ErrStale
-			}
-		}
-	}
-	return nil
+		return (&plugins.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declared.Plugins, *record.PluginRuntime)
+	})
 }
