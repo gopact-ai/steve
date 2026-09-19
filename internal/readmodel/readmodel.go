@@ -46,6 +46,10 @@ type Snapshot struct {
 	Agents []Agent `json:"agents"`
 	Tasks  []Task  `json:"tasks"`
 	Plans  []Plan  `json:"plans"`
+	// Base state is live work plus ancestor closure and recent closed work,
+	// not a complete historical inventory. Query/detail APIs expose the rest.
+	TaskCoverage task.Coverage `json:"task_coverage"`
+	PlanCoverage PlanCoverage  `json:"plan_coverage"`
 	// Attempts are the executions in flight right now: what holds which
 	// lease, where.
 	Attempts []Attempt `json:"attempts"`
@@ -340,13 +344,15 @@ type Task struct {
 	Parent     string     `json:"parent,omitempty"`
 	// Children makes the tree explicit so a renderer does not have to build
 	// it — the tree is the whole debugging story for delegated work.
-	Children  []string  `json:"children,omitempty"`
-	Turns     int       `json:"turns"`
-	MaxTurns  int       `json:"max_turns"`
-	Elapsed   string    `json:"elapsed"`
-	MaxElapse string    `json:"max_elapsed"`
-	UpdatedAt time.Time `json:"updated_at"`
-	PlanID    string    `json:"plan_id,omitempty"`
+	Children         []string  `json:"children,omitempty"`
+	ChildrenCount    int       `json:"children_count"`
+	ChildrenComplete bool      `json:"children_complete"`
+	Turns            int       `json:"turns"`
+	MaxTurns         int       `json:"max_turns"`
+	Elapsed          string    `json:"elapsed"`
+	MaxElapse        string    `json:"max_elapsed"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	PlanID           string    `json:"plan_id,omitempty"`
 	// Tokens and Seconds are what the task has spent across attempts.
 	Tokens  Tokens `json:"tokens"`
 	Seconds int64  `json:"seconds"`
@@ -362,7 +368,9 @@ type Task struct {
 	Requester string `json:"requester,omitempty"`
 	// AttemptRows are the task's turns as the task store caches them; the
 	// ledger's attempt records are the authority for what they cost.
-	AttemptRows []AttemptRow `json:"attempt_rows,omitempty"`
+	AttemptRows  []AttemptRow `json:"attempt_rows,omitempty"`
+	AttemptCount int          `json:"attempt_count"`
+	planInTree   bool
 	// Four axes, decided here and rolled up from every descendant task:
 	// Lifecycle is the task's own state; Execution says whether an
 	// attempt is live (idle|running|unknown); Attention counts known requests
@@ -486,7 +494,12 @@ type NodeSource interface {
 }
 
 type PlanSource interface {
-	List() []plan.Plan
+	Live() []plan.Plan
+	ForTasks([]string) []plan.Plan
+	Latest(string) (plan.Plan, bool)
+	Count() int
+	Query(plan.Query) (plan.Page, error)
+	SetTaskProjection(func([]string))
 }
 
 // Model serves snapshots and a change stream.
@@ -552,6 +565,9 @@ type Event struct {
 const recentKept = 200
 
 func New(src Sources) *Model {
+	if src.Plans != nil && src.Tasks != nil {
+		src.Plans.SetTaskProjection(src.Tasks.SetPlanBindings)
+	}
 	return &Model{src: src, subs: map[int]chan Event{}}
 }
 
@@ -781,13 +797,14 @@ type Observation struct {
 // level and a repo mode, and the agents that could work it right now —
 // judged by the same rule a turn is judged by.
 type Project struct {
-	ID          string   `json:"id"`
-	Node        string   `json:"node"`
-	Path        string   `json:"path"`
-	Level       string   `json:"level"`
-	Repo        string   `json:"repo"`
-	DefaultRole string   `json:"default_role,omitempty"`
-	Agents      []string `json:"agents"`
+	TaskCounts  *task.Counts `json:"task_counts"`
+	ID          string       `json:"id"`
+	Node        string       `json:"node"`
+	Path        string       `json:"path"`
+	Level       string       `json:"level"`
+	Repo        string       `json:"repo"`
+	DefaultRole string       `json:"default_role,omitempty"`
+	Agents      []string     `json:"agents"`
 	// Repos are the git repositories inside the project's home directory,
 	// as its machine last reported them; Node, Path and Repos describe the
 	// home, Agents is the union over every workspace. Home marks Steve's
@@ -1045,7 +1062,7 @@ func (m *Model) conversationOf(taskID string) string {
 	if taskID == "" || m.src.Tasks == nil {
 		return ""
 	}
-	if t, ok := m.src.Tasks.Get(taskID); ok {
+	if t, ok := m.src.Tasks.Header(taskID); ok {
 		return t.Channel
 	}
 	return ""
@@ -1056,10 +1073,8 @@ func (m *Model) taskOfPlan(planID string) string {
 	if planID == "" || m.src.Plans == nil {
 		return ""
 	}
-	for _, p := range m.src.Plans.List() {
-		if p.ID == planID {
-			return p.TaskID
-		}
+	if p, ok := m.src.Plans.Latest(planID); ok {
+		return p.TaskID
 	}
 	return ""
 }

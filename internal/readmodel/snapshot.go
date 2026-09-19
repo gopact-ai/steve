@@ -28,13 +28,13 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	b := &snapshotBuilder{m: m, snap: Snapshot{At: time.Now(), Hub: m.src.Hub}}
 	b.fleet()
 	b.agents(ctx)
-	b.plansAndTasks()
 	b.sources()
 	b.schedules()
 	b.liveAttempts(ctx)
 	b.projects(ctx)
 	b.ledgerFacts(ctx)
 	b.inbox()
+	b.plansAndTasks(nil)
 	b.activities()
 	b.taskAxes()
 	return b.snap
@@ -125,34 +125,62 @@ func (b *snapshotBuilder) agents(ctx context.Context) {
 
 // plansAndTasks lists the plans, then the tasks with their plan and
 // their metadata.
-func (b *snapshotBuilder) plansAndTasks() {
+func (b *snapshotBuilder) plansAndTasks(references []string) {
 	m, snap := b.m, &b.snap
 	b.planByTask = map[string]plan.Plan{}
+	livePlans := []plan.Plan{}
 	if m.src.Plans != nil {
-		for _, p := range m.src.Plans.List() {
-			snap.Plans = append(snap.Plans, convertPlan(p))
-			if p.TaskID != "" {
-				b.planByTask[p.TaskID] = p
-			}
+		livePlans = m.src.Plans.Live()
+		for _, p := range livePlans {
+			references = append(references, p.TaskID)
 		}
 	}
+	for _, a := range snap.Attempts {
+		references = append(references, a.TaskID)
+	}
+	for _, request := range snap.Inbox {
+		references = append(references, request.TaskID)
+	}
+	var headers []task.Header
 	if m.src.Tasks != nil {
-		snap.Tasks = tasks(m.src.Tasks.List(""), b.planByTask)
-		for i := range snap.Tasks {
-			t := &snap.Tasks[i]
-			meta := m.src.Tasks.MetaOf(t.ID)
-			t.Title, t.Priority, t.Labels = meta.Title, meta.Priority, meta.Labels
-			if meta.ArchivedAt != nil {
-				t.ArchivedAt = meta.ArchivedAt.Format(time.RFC3339)
-			}
+		work := m.src.Tasks.Workset(references)
+		headers, snap.TaskCoverage = work.Items, work.Coverage
+		if len(work.Coverage.Missing) != 0 {
+			m.markSource(snap, "tasks", fmt.Errorf("missing referenced tasks or ancestors: %v", work.Coverage.Missing))
+			b.activityKnown, b.attentionKnown = false, false
 		}
 	}
-	if snap.Tasks == nil {
-		snap.Tasks = []Task{}
+	ids := make([]string, 0, len(headers))
+	for _, head := range headers {
+		ids = append(ids, head.ID)
 	}
-	if snap.Plans == nil {
-		snap.Plans = []Plan{}
+	selected := map[string]plan.Plan{}
+	for _, p := range livePlans {
+		selected[p.ID] = p
 	}
+	if m.src.Plans != nil {
+		for _, p := range m.src.Plans.ForTasks(ids) {
+			selected[p.ID] = p
+			b.planByTask[p.TaskID] = p
+		}
+		snap.PlanCoverage = PlanCoverage{Total: m.src.Plans.Count(), Included: len(selected)}
+		snap.PlanCoverage.HasMore = snap.PlanCoverage.Included < snap.PlanCoverage.Total
+	}
+	ordered := make([]plan.Plan, 0, len(selected))
+	for _, p := range selected {
+		ordered = append(ordered, p)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].CreatedAt.Equal(ordered[j].CreatedAt) {
+			return ordered[i].ID > ordered[j].ID
+		}
+		return ordered[i].CreatedAt.After(ordered[j].CreatedAt)
+	})
+	snap.Plans = make([]Plan, 0, len(ordered))
+	for _, p := range ordered {
+		snap.Plans = append(snap.Plans, convertPlan(p))
+	}
+	snap.Tasks = projectTasks(headers, b.planByTask)
 }
 
 // sources declares which sources are wired; the ledger sections below
@@ -215,6 +243,10 @@ func (b *snapshotBuilder) projects(ctx context.Context) {
 			ID: p.ID, Node: m.place(p.Home.Node), Path: p.Home.Path,
 			Level: string(p.Level.OrDefault()), Repo: string(p.Repo), DefaultRole: string(p.DefaultRole), Agents: []string{},
 			Home: p.ID == m.src.HomeProject, Default: p.ID == m.src.DefaultProject,
+		}
+		if m.src.Tasks != nil {
+			counts := m.src.Tasks.Counts(task.Scope{Kind: "project", ID: p.ID})
+			item.TaskCounts = &counts
 		}
 		item.Workspaces = []Workspace{}
 		for _, ws := range p.Workspaces() {
@@ -358,16 +390,26 @@ func (b *snapshotBuilder) taskAxes() {
 	rolledPending, rolledUncertain := map[string]int{}, map[string]int{}
 	rolledPlan := map[string]bool{}
 	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
-	for _, t := range snap.Tasks {
-		waiting := attention[t.ID]
-		if p, ok := b.planByTask[t.ID]; ok {
-			for _, s := range p.Steps {
-				if s.State == plan.StepAwaitingHuman {
-					waiting++
-				}
+	planAttention := map[string]int{}
+	for _, p := range snap.Plans {
+		for _, step := range p.Steps {
+			if step.State == string(plan.StepAwaitingHuman) {
+				planAttention[p.TaskID]++
 			}
 		}
+	}
+	for _, t := range snap.Tasks {
+		waiting := attention[t.ID] + planAttention[t.ID]
+		seen := map[string]bool{}
 		for id := t.ID; id != ""; id = parent[id] {
+			if seen[id] {
+				b.activityKnown, b.attentionKnown = false, false
+				if b.m != nil {
+					b.m.markSource(snap, "tasks", fmt.Errorf("cyclic task ancestry at %s", id))
+				}
+				break
+			}
+			seen[id] = true
 			if t.PlanID != "" {
 				rolledPlan[id] = true
 			}
@@ -400,7 +442,7 @@ func (b *snapshotBuilder) taskAxes() {
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.PendingResults, t.UncertainResults = rolledPending[t.ID], rolledUncertain[t.ID]
-		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && !rolledPlan[t.ID]
+		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && !rolledPlan[t.ID] && !t.planInTree
 		t.Lane = lane(*t)
 		if t.Lane == "pending" && !b.attentionKnown {
 			t.Lane = "unknown"
@@ -624,8 +666,7 @@ func nodes(statuses []node.Status) []Node {
 
 // tasks converts the task list and links parents to children, so a renderer
 // can draw the tree without walking the list twice.
-func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
-	completable := task.CompletionEligibility(list)
+func projectTasks(list []task.Header, plans map[string]plan.Plan) []Task {
 	children := map[string][]string{}
 	for _, t := range list {
 		if t.Parent != "" {
@@ -639,10 +680,20 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 			NodeID: t.Node, Parent: t.Parent, Children: children[t.ID],
 			Transport: t.Transport, Channel: t.Channel, ProjectID: t.ProjectID, Origin: t.Origin, Requester: t.Requester,
 			Turns: t.Budget.Turns, MaxTurns: t.Budget.MaxTurns,
-			Elapsed:     t.Budget.Elapsed.Round(time.Second).String(),
-			MaxElapse:   t.Budget.MaxElapsed.Round(time.Minute).String(),
-			UpdatedAt:   t.UpdatedAt,
-			CanComplete: completable[t.ID],
+			Elapsed:          t.Budget.Elapsed.Round(time.Second).String(),
+			MaxElapse:        t.Budget.MaxElapsed.Round(time.Minute).String(),
+			UpdatedAt:        t.UpdatedAt,
+			CanComplete:      t.Summary.CanComplete,
+			planInTree:       t.Summary.PlanInTree,
+			ChildrenCount:    t.Summary.Children,
+			ChildrenComplete: t.Summary.Children == len(children[t.ID]),
+			AttemptCount:     t.Summary.Attempts,
+			Seconds:          t.Summary.Seconds, Model: t.Summary.Model,
+			Tokens: Tokens{Input: t.Summary.Tokens.Input, Output: t.Summary.Tokens.Output, CachedRead: t.Summary.Tokens.CachedRead, CachedWrite: t.Summary.Tokens.CachedWrite, Total: t.Summary.Tokens.Total},
+			Title:  t.Meta.Title, Priority: t.Meta.Priority, Labels: t.Meta.Labels,
+		}
+		if t.Meta.ArchivedAt != nil {
+			item.ArchivedAt = t.Meta.ArchivedAt.Format(time.RFC3339)
 		}
 		if t.Delegated() && t.Finished() && t.Result != nil && t.Parent != "" {
 			item.ResultDelivery = &task.Delivery{State: task.DeliveryPending, At: t.UpdatedAt}
@@ -653,22 +704,6 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 		}
 		if p, ok := plans[t.ID]; ok {
 			item.PlanID = p.ID
-		}
-		for _, a := range t.Attempts {
-			row := AttemptRow{
-				Day: a.StartedAt.UTC().Format("2006-01-02"), Agent: a.Member, Node: a.Node, Model: a.Model, Outcome: string(a.Outcome), Started: a.StartedAt,
-				Tokens:   Tokens{Input: a.Tokens.Input, Output: a.Tokens.Output, CachedRead: a.Tokens.CachedRead, CachedWrite: a.Tokens.CachedWrite, Total: a.Tokens.Total},
-				Reported: a.Tokens.Input+a.Tokens.Output+a.Tokens.CachedRead > 0,
-			}
-			if !a.EndedAt.IsZero() {
-				row.Seconds = int64(a.EndedAt.Sub(a.StartedAt).Seconds())
-			}
-			item.AttemptRows = append(item.AttemptRows, row)
-			item.Tokens = item.Tokens.add(row.Tokens)
-			item.Seconds += row.Seconds
-			if a.Model != "" {
-				item.Model = a.Model
-			}
 		}
 		out = append(out, item)
 	}

@@ -20,7 +20,9 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -31,6 +33,10 @@ type Model interface {
 	Subscribe(context.Context) (<-chan readmodel.Event, func())
 	Recent() []readmodel.Event
 	History(context.Context, string, int) ([]readmodel.HistoryEntry, string, error)
+	TaskHistory(context.Context, task.Query) (readmodel.TaskPage, error)
+	TaskDetail(context.Context, string) (readmodel.TaskDetail, error)
+	TaskAccounting(string, string, int) (readmodel.AccountingPage, error)
+	PlanHistory(plan.Query) (readmodel.PlanPage, error)
 }
 
 // ServerConfig is where the read model is served and who may read it.
@@ -155,6 +161,10 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/selectors", s.guard(s.consoleSelectors))
 	mux.HandleFunc("PUT /console/preferences", s.guard(s.consoleSetPreferences))
 	mux.HandleFunc("GET /console/tasks/{task}", s.guard(s.consoleTask))
+	mux.HandleFunc("GET /console/tasks", s.guard(s.consoleTasks))
+	mux.HandleFunc("GET /console/plans", s.guard(s.consolePlans))
+	mux.HandleFunc("GET /console/tasks/{task}/accounting", s.guard(s.consoleTaskAccounting))
+	mux.HandleFunc("GET /console/attempts", s.guard(s.consoleNativeAttempts))
 	mux.HandleFunc("PATCH /console/tasks/{task}/meta", s.guard(s.consoleTaskMeta))
 	mux.HandleFunc("GET /console/tasks/{task}/attempts", s.guard(s.consoleTaskAttempts))
 	mux.HandleFunc("GET /console/attempts/{attempt}/tree", s.guard(s.consoleAttemptTree))
@@ -902,52 +912,16 @@ func (s *Server) consoleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	id := r.PathValue("task")
-	snap := s.model.Snapshot(r.Context())
-	var found *readmodel.Task
-	for i := range snap.Tasks {
-		if snap.Tasks[i].ID == id {
-			found = &snap.Tasks[i]
-			break
-		}
-	}
-	if found == nil {
-		http.Error(w, "no task "+id, http.StatusNotFound)
+	detail, err := s.model.TaskDetail(r.Context(), r.PathValue("task"))
+	if err != nil {
+		writeWorkQueryError(w, err)
 		return
-	}
-	detail := TaskDetail{Task: *found, Children: []readmodel.Task{}, Attempts: []consoleapi.AttemptView{}}
-	for _, t := range snap.Tasks {
-		if t.Parent == id {
-			detail.Children = append(detail.Children, t)
-		}
-	}
-	for i := range snap.Plans {
-		if snap.Plans[i].TaskID == id {
-			p := snap.Plans[i]
-			detail.Plan = &p
-			break
-		}
-	}
-	if attempts, err := s.admin.TaskAttempts(r.Context(), id); err == nil && attempts != nil {
-		detail.Attempts = attempts
 	}
 	writeJSON(w, detail)
 }
 
 func (s *Server) consoleTaskAttempts(w http.ResponseWriter, r *http.Request) {
-	if !s.adminOr(w) {
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	attempts, err := s.admin.TaskAttempts(r.Context(), r.PathValue("task"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if attempts == nil {
-		attempts = []consoleapi.AttemptView{}
-	}
-	writeJSON(w, attempts)
+	s.nativeAttempts(w, r, r.PathValue("task"))
 }
 
 func (s *Server) consoleAttemptTree(w http.ResponseWriter, r *http.Request) {
