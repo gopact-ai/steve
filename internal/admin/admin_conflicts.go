@@ -54,7 +54,6 @@ func (a *Service) ResolveConflicts(ctx context.Context, projectID string) (conso
 	return out, nil
 }
 
-
 // ResolveAllConflicts hands every stuck result, in every project, to an
 // agent. The console lists conflicts across the whole workspace, so the
 // action offered beside that list has to cover the whole workspace too.
