@@ -18,14 +18,28 @@ const LockSupported = true
 // traffic silently lands on the other process — so this must be refused
 // structurally, not by operator discipline. The returned release func
 // unlocks; the lock also dies with the process, which is the point.
+// Existing lock files must be private, single-link regular files.
 func AcquireLock(stateDir string) (func(), error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create state directory: %w", err)
 	}
 	path := filepath.Join(stateDir, "gateway.lock")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open gateway lock: %w", err)
+	}
+	// Inspect the descriptor we will lock and write, not a path that could
+	// name a different inode by then. Nonblocking open lets special files
+	// reach this check without waiting for a FIFO peer.
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("stat gateway lock: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || !ok || stat.Nlink != 1 {
+		file.Close()
+		return nil, fmt.Errorf("gateway lock %s must be a private regular file with a single link", path)
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		file.Close()

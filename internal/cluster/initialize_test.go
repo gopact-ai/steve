@@ -305,6 +305,52 @@ func TestInitializePeerRefusesConcurrentApplication(t *testing.T) {
 	}
 }
 
+func TestInitializePeerRejectsHardLinkedLocksWithoutChangingTarget(t *testing.T) {
+	for _, scope := range []string{"application", "peer-process"} {
+		t.Run(scope, func(t *testing.T) {
+			base := t.TempDir()
+			root := filepath.Join(base, "state")
+			lockDir := root
+			var before map[string][]byte
+			if scope == "peer-process" {
+				result, err := InitializePeer(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before = peerIdentityFiles(t, result)
+				lockDir = filepath.Join(root, "cluster", "peer-process")
+			}
+			if err := os.MkdirAll(lockDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(base, "unrelated")
+			if err := os.WriteFile(target, []byte("keep unchanged"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Link(target, filepath.Join(lockDir, "gateway.lock")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := InitializePeer(root); err == nil {
+				t.Error("accepted hard-linked lock")
+			}
+			if data, err := os.ReadFile(target); err != nil || string(data) != "keep unchanged" {
+				t.Fatalf("initialization changed the lock target: %q, %v", data, err)
+			}
+			for name, data := range before {
+				after, err := os.ReadFile(name)
+				if err != nil || !bytes.Equal(data, after) {
+					t.Fatalf("initialization replaced %s", name)
+				}
+			}
+			if scope == "application" {
+				if _, err := os.Lstat(filepath.Join(root, "config.json")); !os.IsNotExist(err) {
+					t.Fatal("published configuration before validating the lock")
+				}
+			}
+		})
+	}
+}
+
 func peerIdentityFiles(t *testing.T, result PeerInitialization) map[string][]byte {
 	t.Helper()
 	files := []string{result.Config, result.ClusterConfig, result.TokenFile}

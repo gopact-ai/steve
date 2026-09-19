@@ -101,9 +101,6 @@ func lockExistingPeer(root string) (func(), error) {
 		if err := checkPrivateDirectory(process, info); err != nil {
 			return nil, err
 		}
-		if _, err := ReadClusterPrivate(filepath.Join(process, "gateway.lock")); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -143,7 +140,11 @@ func preparePeerDirectory(root string) error {
 	}
 	managed := desktop.IsManagedConfig(filepath.Join(root, "config.json"))
 	for _, entry := range entries {
-		if entry.Name() == "gateway.lock" || entry.Name() == ".desktop-init.lock" {
+		if entry.Name() == "gateway.lock" {
+			// AcquireLock validates the opened descriptor before writing it.
+			continue
+		}
+		if entry.Name() == ".desktop-init.lock" {
 			if _, err := ReadClusterPrivate(filepath.Join(root, entry.Name())); err != nil {
 				return err
 			}
