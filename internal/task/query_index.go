@@ -99,18 +99,20 @@ func (r *readIndex) addTree(tasks map[string]*Task, id string, delta treeSummary
 		id = t.Parent
 	}
 }
-func (r *readIndex) refreshTree(tasks map[string]*Task, id string) {
+func (r *readIndex) refreshTree(tasks map[string]*Task, id string) bool {
 	t := tasks[id]
 	if t == nil {
-		return
+		return false
 	}
 	summary := r.summaries[id]
+	before := summary
 	tree := r.trees[id]
 	summary.CanComplete = t.Parent == "" && t.Origin == "" && t.PreparedPlan == nil &&
 		(t.State == StateRunning || t.State == StateReview) && tree.open == 0 && tree.blockers-localBlocker(t) == 0
 	summary.PlanInTree = tree.plans > 0
 	summary.Children = len(r.ordered[queryKey{Scope: Scope{Kind: "children", ID: id}}])
 	r.summaries[id] = summary
+	return before != summary
 }
 func rowSummary(sum *ReadSummary, row Attempt, sign int) {
 	sum.Tokens = sum.Tokens.Add(Tokens{Input: int64(sign) * row.Tokens.Input, Output: int64(sign) * row.Tokens.Output,
@@ -136,12 +138,10 @@ func rowMembership(rows []int, index int, present bool) []int {
 // incrementally; no read and no ordinary mutation sorts the entire history.
 func (s *Store) rebuildReadIndexLocked() {
 	old := s.readIndex
-	r := readIndex{nonce: old.nonce, revision: old.revision + 1, planTasks: old.planTasks,
+	r := readIndex{nonce: rand.Text(), revision: old.revision + 1, planTasks: old.planTasks,
 		ordered: map[queryKey][]string{}, summaries: map[string]ReadSummary{}, counts: map[Scope]Counts{},
-		trees: map[string]treeSummary{}, models: map[string][]int{}, primary: map[string][]int{}, primaryRows: map[string][]int{}}
-	if r.nonce == "" {
-		r.nonce = rand.Text()
-	}
+		versions: map[queryKey]uint64{},
+		trees:    map[string]treeSummary{}, models: map[string][]int{}, primary: map[string][]int{}, primaryRows: map[string][]int{}}
 	ids := make([]string, 0, len(s.data.Tasks))
 	for id, t := range s.data.Tasks {
 		ids = append(ids, id)
@@ -157,6 +157,9 @@ func (s *Store) rebuildReadIndexLocked() {
 			}
 		}
 		r.summaries[id] = summary
+		if len(t.Attempts) != 0 {
+			r.versions[accountingQueryKey(id)] = r.revision
+		}
 		r.updatePrimary(t)
 		plans := 0
 		if r.planTasks[id] {
@@ -170,6 +173,7 @@ func (s *Store) rebuildReadIndexLocked() {
 		summary := r.summaries[id]
 		for _, key := range keysOf(t, s.data.Meta[id], summary) {
 			r.ordered[key] = append(r.ordered[key], id)
+			r.versions[key] = r.revision
 		}
 		r.count(t, summary, 1)
 	}
@@ -191,8 +195,10 @@ func (r *readIndex) remove(t *Task, meta Meta, summary ReadSummary, tasks map[st
 		}
 		if len(ids) == 0 {
 			delete(r.ordered, key)
+			delete(r.versions, key)
 		} else {
 			r.ordered[key] = ids
+			r.versions[key] = r.revision
 		}
 	}
 	r.count(t, summary, -1)
@@ -202,6 +208,7 @@ func (r *readIndex) insert(t *Task, meta Meta, summary ReadSummary, tasks map[st
 		ids := r.ordered[key]
 		at := orderedPosition(ids, t, tasks)
 		r.ordered[key] = slices.Insert(ids, at, t.ID)
+		r.versions[key] = r.revision
 	}
 	r.count(t, summary, 1)
 }
@@ -213,6 +220,7 @@ func (s *Store) updateReadIndexLocked(next data, changes []recordChange) {
 		return
 	}
 	r := &s.readIndex
+	r.revision++
 	changed := map[string][]int{}
 	for _, change := range changes {
 		switch change.kind {
@@ -263,7 +271,11 @@ func (s *Store) updateReadIndexLocked(next data, changes []recordChange) {
 			delete(r.models, id)
 			delete(r.primary, id)
 			delete(r.primaryRows, id)
+			delete(r.versions, accountingQueryKey(id))
 			continue
+		}
+		if len(rows) != 0 {
+			r.versions[accountingQueryKey(id)] = r.revision
 		}
 		sum := r.summaries[id]
 		sum.Attempts = len(t.Attempts)
@@ -295,9 +307,25 @@ func (s *Store) updateReadIndexLocked(next data, changes []recordChange) {
 		}
 	}
 	for id := range affected {
-		r.refreshTree(next.Tasks, id)
+		if r.refreshTree(next.Tasks, id) {
+			r.touchHeader(next, id)
+		}
 	}
-	r.revision++
+}
+
+func accountingQueryKey(id string) queryKey {
+	return queryKey{Scope: Scope{Kind: "accounting", ID: id}}
+}
+
+// Summary changes affect a header's pages, not its unchanged accounting rows.
+// Versions exist only for populated indexes; the monotonic owner revision
+// prevents an emptied then recreated scope from accepting an earlier cursor.
+func (r *readIndex) touchHeader(d data, id string) {
+	if t := d.Tasks[id]; t != nil {
+		for _, key := range keysOf(t, d.Meta[id], r.summaries[id]) {
+			r.versions[key] = r.revision
+		}
+	}
 }
 
 // SetPlanBindings is a derived owner projection, not storage authority. Only
@@ -324,11 +352,13 @@ func (s *Store) SetPlanBindings(taskIDs []string) {
 		}
 	}
 	r.planTasks = next
-	for id := range affected {
-		r.refreshTree(s.data.Tasks, id)
-	}
 	if len(affected) > 0 {
 		r.revision++
+	}
+	for id := range affected {
+		if r.refreshTree(s.data.Tasks, id) {
+			r.touchHeader(s.data, id)
+		}
 	}
 }
 

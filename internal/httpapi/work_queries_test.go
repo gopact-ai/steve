@@ -99,7 +99,7 @@ func TestWorkPagesAndHistoricalDetailHTTPContract(t *testing.T) {
 		}
 	}
 	title := "changed"
-	if _, err := tasks.SetMeta("root", task.MetaPatch{Title: &title}); err != nil {
+	if _, err := tasks.SetMeta("closed-00", task.MetaPatch{Title: &title}); err != nil {
 		t.Fatal(err)
 	}
 	if code, _, raw := taskMetaRequest(t, s, http.MethodGet, "/console/tasks?scope=children&scope_id=root&cursor="+url.QueryEscape(taskCursor), "owner", ""); code != http.StatusConflict {

@@ -34,7 +34,8 @@ type queryCursor struct {
 }
 
 // Query holds one owner read boundary for scope selection, order, payload and
-// cursor. A successful mutation expires the cursor rather than skipping keys.
+// cursor. A successful mutation in the selected scope expires the cursor
+// rather than skipping keys; unrelated plans do not interrupt pagination.
 func (s *Store) Query(q Query) (Page, error) {
 	if q.Limit < 0 || q.Limit > MaxQueryLimit || len(q.Cursor) > 4096 {
 		return Page{}, ErrInvalidQuery
@@ -44,7 +45,8 @@ func (s *Store) Query(q Query) (Page, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ids := s.readIndex.ordered[planScope{TaskID: q.TaskID, ProjectID: q.ProjectID}]
+	scope := planScope{TaskID: q.TaskID, ProjectID: q.ProjectID}
+	ids := s.readIndex.ordered[scope]
 	start := 0
 	if q.Cursor != "" {
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(q.Cursor)
@@ -63,7 +65,7 @@ func (s *Store) Query(q Query) (Page, error) {
 		if c.Version != 1 || c.Owner == "" || c.Revision == 0 || c.TaskID != q.TaskID || c.ProjectID != q.ProjectID || c.Offset <= 0 {
 			return Page{}, ErrInvalidQuery
 		}
-		if c.Owner != s.readIndex.nonce || c.Revision != s.readIndex.revision {
+		if c.Owner != s.readIndex.nonce || c.Revision != s.readIndex.versions[scope] {
 			return Page{}, ErrStaleCursor
 		}
 		if c.Offset >= len(ids) {
@@ -78,7 +80,7 @@ func (s *Store) Query(q Query) (Page, error) {
 		page.Items = append(page.Items, clonePlan(p))
 	}
 	if end < len(ids) {
-		raw, _ := json.Marshal(queryCursor{Version: 1, Owner: s.readIndex.nonce, Revision: s.readIndex.revision, TaskID: q.TaskID, ProjectID: q.ProjectID, Offset: end})
+		raw, _ := json.Marshal(queryCursor{Version: 1, Owner: s.readIndex.nonce, Revision: s.readIndex.versions[scope], TaskID: q.TaskID, ProjectID: q.ProjectID, Offset: end})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil

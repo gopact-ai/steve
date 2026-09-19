@@ -92,6 +92,7 @@ type queryKey struct {
 type readIndex struct {
 	nonce       string
 	revision    uint64
+	versions    map[queryKey]uint64
 	ordered     map[queryKey][]string
 	summaries   map[string]ReadSummary
 	counts      map[Scope]Counts
@@ -192,7 +193,7 @@ func (s *Store) Workset(references []string) Workset {
 	return out
 }
 
-// The opaque cursor is bound to this owner instance, committed revision and
+// The opaque cursor is bound to this owner instance, selected query revision and
 // exact scope/filter. Mutations explicitly invalidate pages instead of silently
 // skipping or repeating records whose sort keys changed.
 type queryCursor struct {
@@ -267,7 +268,7 @@ func (s *Store) cursorOffset(raw string, key queryKey, total int) (int, error) {
 	if cursor.Version != 1 || cursor.Owner == "" || cursor.Revision == 0 || cursor.Scope != key.Scope || cursor.Status != key.Status || cursor.Archived != key.Archived || cursor.Offset <= 0 {
 		return 0, ErrInvalidQuery
 	}
-	if cursor.Owner != s.readIndex.nonce || cursor.Revision != s.readIndex.revision {
+	if cursor.Owner != s.readIndex.nonce || cursor.Revision != s.readIndex.versions[key] {
 		return 0, ErrStaleCursor
 	}
 	if cursor.Offset >= total {
@@ -279,7 +280,7 @@ func (s *Store) nextCursor(key queryKey, offset, total int) string {
 	if offset >= total {
 		return ""
 	}
-	raw, _ := json.Marshal(queryCursor{Version: 1, Owner: s.readIndex.nonce, Revision: s.readIndex.revision, Scope: key.Scope, Status: key.Status, Archived: key.Archived, Offset: offset})
+	raw, _ := json.Marshal(queryCursor{Version: 1, Owner: s.readIndex.nonce, Revision: s.readIndex.versions[key], Scope: key.Scope, Status: key.Status, Archived: key.Archived, Offset: offset})
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 func (s *Store) Query(q Query) (Page, error) {
@@ -314,7 +315,7 @@ func (s *Store) QueryAttempts(id, cursor string, limit int) (AccountingPage, err
 	if !ok {
 		return AccountingPage{}, fmt.Errorf("%w: %s", ErrTaskNotFound, id)
 	}
-	key := queryKey{Scope: Scope{Kind: "accounting", ID: id}}
+	key := accountingQueryKey(id)
 	start, err := s.cursorOffset(cursor, key, len(t.Attempts))
 	if err != nil {
 		return AccountingPage{}, err

@@ -33,6 +33,7 @@ type planScope struct{ TaskID, ProjectID string }
 type readIndex struct {
 	nonce    string
 	revision uint64
+	versions map[planScope]uint64
 	ordered  map[planScope][]string
 	live     map[string]bool
 }
@@ -67,7 +68,7 @@ func planPosition(ids []string, p Plan, data data) int {
 	return sort.Search(len(ids), func(i int) bool { item, _ := latest(data, ids[i]); return !planBefore(item, p) })
 }
 func (s *Store) rebuildReadIndexLocked() {
-	r := readIndex{nonce: rand.Text(), revision: 1, ordered: map[planScope][]string{}, live: map[string]bool{}}
+	r := readIndex{nonce: rand.Text(), revision: 1, ordered: map[planScope][]string{}, versions: map[planScope]uint64{}, live: map[string]bool{}}
 	ids := make([]string, 0, len(s.data.Plans))
 	for id := range s.data.Plans {
 		if _, ok := latest(s.data, id); ok {
@@ -86,6 +87,7 @@ func (s *Store) rebuildReadIndexLocked() {
 		}
 		for _, scope := range planScopes(p) {
 			r.ordered[scope] = append(r.ordered[scope], id)
+			r.versions[scope] = r.revision
 		}
 	}
 	s.readIndex = r
@@ -95,11 +97,17 @@ func (s *Store) rebuildReadIndexLocked() {
 // rebuilds historical indexes or republishes the unchanged task binding set.
 func (s *Store) updateReadIndexLocked(next data, ids []string) {
 	r := &s.readIndex
+	r.revision++
 	bindings := map[string]bool{}
 	changedOrder := map[string]bool{}
 	for _, id := range ids {
 		old, had := latest(s.data, id)
 		p, has := latest(next, id)
+		if had {
+			for _, scope := range planScopes(old) {
+				r.versions[scope] = r.revision
+			}
+		}
 		if had && old.TaskID != "" {
 			bindings[old.TaskID] = len(r.ordered[planScope{TaskID: old.TaskID}]) > 0
 		}
@@ -119,6 +127,7 @@ func (s *Store) updateReadIndexLocked(next data, ids []string) {
 				}
 				if len(items) == 0 {
 					delete(r.ordered, scope)
+					delete(r.versions, scope)
 				} else {
 					r.ordered[scope] = items
 				}
@@ -148,9 +157,9 @@ func (s *Store) updateReadIndexLocked(next data, ids []string) {
 			items := r.ordered[scope]
 			at := planPosition(items, p, next)
 			r.ordered[scope] = slices.Insert(items, at, id)
+			r.versions[scope] = r.revision
 		}
 	}
-	r.revision++
 	membershipChanged := false
 	for id, existed := range bindings {
 		membershipChanged = membershipChanged || existed != (len(r.ordered[planScope{TaskID: id}]) > 0)
