@@ -35,6 +35,7 @@ func executionWorld(t *testing.T) (*world, *execution.Registry) {
 	art := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	att := attempt.New(book)
 	r := execution.New(t.Context(), tasks)
+	w.book = book
 	w.tasks = tasks
 	w.service.tasks = tasks
 	w.service.workspaces = art

@@ -47,10 +47,13 @@ func TestRawUnknownWriterIsNeverIgnoredDuringShutdown(t *testing.T) {
 }
 
 func TestAdoptRetainedReplacesEndedObserverButKeepsCurrentOwnership(t *testing.T) {
-	r := New(t.Context(), nil)
-	old, _ := r.Begin(t.Context(), Key{AttemptID: "same"})
+	r, _, tracked := retainedSQLiteRegistry(t)
+	old, err := r.Begin(t.Context(), Key{TaskID: tracked.ID, AttemptID: "same"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	old.Finish(errors.New("detached"))
-	current, err := r.Begin(t.Context(), Key{AttemptID: "same"})
+	current, err := r.BeginAccepted(t.Context(), Key{TaskID: tracked.ID, AttemptID: "same"}, old.Token())
 	if err != nil {
 		t.Fatal(err)
 	}

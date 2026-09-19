@@ -493,6 +493,9 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 				unresolved = runErr
 			}
 			entry.scope.Finish(unresolved)
+			if current, ok := s.tasks.Get(spawned.ID); ok {
+				s.resolveRecovered(retainedRecord, current)
+			}
 		}()
 	}
 	current, _ := s.tasks.Get(spawned.ID)

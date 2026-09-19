@@ -127,6 +127,9 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 		}
 		seen[record.ID] = true
 		tracked, ok := s.tasks.Get(record.TaskID)
+		if ok {
+			s.resolveRecovered(record, tracked)
+		}
 		if !ok || !tracked.Delegated() || tracked.Parent == "" || (tracked.Result != nil && tracked.Finished() && len(tracked.Attempts) > 0 && !tracked.Attempts[len(tracked.Attempts)-1].Open()) {
 			continue
 		}
@@ -377,15 +380,11 @@ func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task
 }
 
 func (s *Service) finishFromRecord(record attempt.Record, outcome task.Outcome) error {
-	id, usage := record.TaskID, record.Usage
+	id := record.TaskID
 	if tracked, ok := s.tasks.Get(id); ok {
 		for _, row := range tracked.Attempts {
 			if row.ExecutionID == record.ID {
-				var spent task.RecoveryUsage
-				if usage != nil {
-					spent = task.RecoveryUsage{Tokens: task.FromUsage(uint64(max(usage.Input, 0)), uint64(max(usage.Output, 0)), uint64(max(usage.CachedRead, 0)), uint64(max(usage.CachedWrite, 0))), Model: usage.Model, Reported: usage.Reported}
-				}
-				return s.tasks.SettleAttempt(id, record.ID, record.TurnID, record.EndedAt, outcome, spent)
+				return s.tasks.SettleAttempt(id, record.ID, record.TurnID, record.EndedAt, outcome, recoveredUsage(record))
 			}
 		}
 	}
