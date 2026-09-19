@@ -667,6 +667,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		},
 		OnProgress: stream.Update,
 		OnPhase:    stream.Phase,
+		OnStage:    stream.Stage,
 	})
 	stream.Phase(view.PhaseSaving)
 	stream.Close()

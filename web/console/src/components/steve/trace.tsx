@@ -10,7 +10,7 @@ import type { Live } from "@/lib/live";
 import { Md } from "./markdown";
 import { Chips, KeyValue, Panel } from "./page";
 import { Composition, Fold, Prose } from "./setup-panel";
-import { Trace, hasTraceContent, finalTextIndex } from "./progress-view";
+import { StageLine, Trace, hasTraceContent, finalTextIndex } from "./progress-view";
 import { ToolCalls, headingOf } from "./tool-calls";
 import { Mono, StateBadge, Where } from "./ui";
 import { useNodeLabel, whoIs } from "@/lib/node-name";
@@ -63,6 +63,7 @@ export function Working({ live, plans, compact, delegated, recovery }: { live: L
                     {agentLabel && <span className="min-w-0 break-all">{agentLabel}</span>}
                     <span className="shrink-0 tabular-nums">· {fmtSeconds(elapsed, locale)}</span>
                 </div>
+                {!recovery && phase === "waking" && <StageLine stage={latest?.stage} />}
                 {steps.map((s) => group(s.id))}
                 {extra.map(group)}
                 {live.turn?.timeline?.length && hasTraceContent(live.turn, finalText) ? (
@@ -84,6 +85,7 @@ export function Working({ live, plans, compact, delegated, recovery }: { live: L
     return (
         <Panel title={phaseLabel} badge={<span className="flex items-center gap-1 text-xs text-tertiary"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{fmtSeconds(elapsed, locale)}</span>}>
             <div className="flex min-w-0 flex-col gap-3">
+                {!recovery && phase === "waking" && <StageLine stage={latest?.stage} />}
                 {steps.length > 0 && (
                     <div className="flex flex-col gap-2">
                         {steps.map((s) => (

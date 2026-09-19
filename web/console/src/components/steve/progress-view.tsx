@@ -118,3 +118,23 @@ export function hasProcessContent(process: Process, omitFinalText = false): bool
     return hasTraceContent(process, omitFinalText ? finalTextIndex(process) : undefined)
         || !!process.steps?.some((step) => step.kind === "delegate" || hasTraceContent(step));
 }
+
+// A turn that is still waking has nothing to show yet, and "preparing"
+// for twenty seconds reads like a hang. The step the platform is on —
+// the directory, the skills, the cold agent — goes under that line,
+// breathing, so the wait is legible while it lasts.
+const stages = {
+    workspace: "consoleChrome.stage.workspace",
+    capabilities: "consoleChrome.stage.capabilities",
+    placement: "consoleChrome.stage.placement",
+    snapshot: "consoleChrome.stage.snapshot",
+    session: "consoleChrome.stage.session",
+    resume: "consoleChrome.stage.resume",
+} as const;
+
+export function StageLine({ stage }: { stage?: string }) {
+    const { t } = useI18n();
+    const key = stage ? stages[stage as keyof typeof stages] : undefined;
+    if (!key) return null;
+    return <p className="steve-stage">{t(key)}</p>;
+}

@@ -12,7 +12,7 @@ import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { refKey } from "@/lib/material-ref";
 import type { Exchange, Reply } from "@/lib/types";
 import { Md } from "./markdown";
-import { Trace, finalTextIndex, hasTraceContent } from "./progress-view";
+import { StageLine, Trace, finalTextIndex, hasTraceContent } from "./progress-view";
 import { applyLive, type Live } from "@/lib/live";
 import { QuestionPanel } from "./question-panel";
 import "@/styles/side-chat.css";
@@ -30,6 +30,7 @@ function SideLive({ live }: { live: Live }) {
     const answer = finalText === undefined ? turn?.answer : turn?.timeline?.[finalText].text;
     return <article className="side-chat-answer flex min-w-0 flex-col gap-2">
         <p role="status" className="flex items-center gap-2 text-xs text-tertiary"><Loading01 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none text-fg-brand-primary" />{label}{turn?.agent ? ` · ${turn.agent}` : ""}</p>
+        {phase === "waking" && <StageLine stage={turn?.stage} />}
         {turn && hasTraceContent(turn, finalText) && <details className="text-xs text-tertiary"><summary className="cursor-pointer">{t("console.trace")}</summary><Trace p={turn} live omitText={finalText} /></details>}
         {answer && <Md text={answer} />}
     </article>;

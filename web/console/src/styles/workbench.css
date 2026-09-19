@@ -277,6 +277,10 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .composer-running { display: flex; align-items: center; justify-content: center; gap: 7px; padding-top: 9px; font-size: 11px; color: var(--color-text-tertiary); }
 .composer-running::before { content: ""; width: 6px; height: 6px; border-radius: 9999px; background: var(--color-fg-brand-primary); animation: steve-breathe 1.7s ease-in-out infinite; }
 .composer-running > span { animation: steve-breathe 1.7s ease-in-out infinite; }
+/* The preparation step under a waking turn: quiet, and breathing so it
+   reads as something in flight rather than a line that stopped there. */
+.steve-stage { padding-left: 20px; font-size: 11px; color: var(--color-text-quaternary); animation: steve-breathe 1.7s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .steve-stage { animation: none; opacity: .8; } }
 .conversation-running { font-size: 10px; white-space: nowrap; color: var(--color-text-brand-secondary); animation: steve-breathe 1.7s ease-in-out infinite; }
 .conversation-waiting { font-size: 10px; white-space: nowrap; color: var(--color-text-warning-primary); }
 .conversation-unseen { width: 6px; height: 6px; flex-shrink: 0; align-self: center; border-radius: 9999px; background: var(--color-fg-brand-primary); }

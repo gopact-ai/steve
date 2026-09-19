@@ -8,7 +8,10 @@ import (
 )
 
 type Progress struct {
-	Phase     string     `json:"phase,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// Stage is the preparation step running inside the waking phase, as a
+	// code the reader's surface writes in their own language.
+	Stage     string     `json:"stage,omitempty"`
 	Agent     string     `json:"agent,omitempty"`
 	Node      string     `json:"node,omitempty"`
 	Model     string     `json:"model,omitempty"`

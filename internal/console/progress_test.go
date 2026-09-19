@@ -153,6 +153,35 @@ func TestProgressFinishingFlushesLatestContentBeforeSlowSave(t *testing.T) {
 	}
 }
 
+// Preparation is the part of a turn with nothing to show: the reader is
+// told which step it is on, and told nothing stale once work begins.
+func TestProgressStageRidesWakingAndClearsWhenWorkBegins(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{})
+	events, stop := model.Subscribe(context.Background())
+	defer stop()
+	stream := New(nil, "owner", model).progress("console:test", "exchange", newProcess())
+	defer stream.Close()
+	stream.Phase(view.PhaseWaking)
+	requireProgress(t, events, 30*time.Millisecond)
+	stream.Stage(view.StageWorkspace)
+	if ev := requireProgress(t, events, 30*time.Millisecond); ev.Progress.Stage != "workspace" || ev.Progress.Phase != "waking" {
+		t.Fatalf("workspace stage = %+v", ev.Progress)
+	}
+	stream.Stage(view.StageSession)
+	if ev := requireProgress(t, events, 30*time.Millisecond); ev.Progress.Stage != "session" {
+		t.Fatalf("session stage = %+v", ev.Progress)
+	}
+	// Content arriving mid-preparation must not drop the step it is on.
+	stream.Update(view.Progress{Answer: "first words"})
+	if ev := requireProgress(t, events, 30*time.Millisecond); ev.Progress.Stage != "session" || ev.Progress.Answer != "first words" {
+		t.Fatalf("stage across an update = %+v", ev.Progress)
+	}
+	stream.Phase(view.PhaseRunning)
+	if ev := requireProgress(t, events, 30*time.Millisecond); ev.Progress.Stage != "" || ev.Progress.Phase != "running" {
+		t.Fatalf("running must not keep a preparation step: %+v", ev.Progress)
+	}
+}
+
 func TestProgressConcurrentCloseIsPublicationBarrier(t *testing.T) {
 	var afterClose atomic.Bool
 	var late atomic.Int32

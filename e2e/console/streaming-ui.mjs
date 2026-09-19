@@ -249,10 +249,22 @@ try {
     }
     if (process.env.BASELINE !== "1") {
         await f.emit({ kind: "console.sent", exchange_id: "phase-turn", text: "Phase feedback test" });
+        // Preparation has nothing to show, so the step it is on is said
+        // under the phase line, breathing, and only while it is waking.
+        await f.emit({ kind: "console.progress", exchange_id: "phase-turn", progress: { phase: "waking", stage: "workspace" } });
+        const stage = page.locator(".steve-stage");
+        await stage.getByText("正在准备工作目录", { exact: true }).waitFor();
+        assert.equal(await stage.evaluate((el) => getComputedStyle(el).animationName), "steve-breathe", "The preparation step must breathe");
+        await f.emit({ kind: "console.progress", exchange_id: "phase-turn", progress: { phase: "waking", stage: "session" } });
+        await stage.getByText("正在启动 Agent 会话", { exact: true }).waitFor();
+        assert.equal(await stage.count(), 1, "One turn says one step at a time");
+        await f.emit({ kind: "console.progress", exchange_id: "phase-turn", progress: { phase: "waking", stage: "a-stage-this-page-does-not-know" } });
+        await eventually(async () => (await page.locator(".steve-stage").count()) === 0, "A step this page cannot name says nothing rather than a code");
         for (const [phase, text] of [["waking", "正在准备会话…"], ["running", "正在处理…"], ["finishing", "正在整理结果…"], ["saving", "正在保存结果…"]]) {
             await f.emit({ kind: "console.progress", exchange_id: "phase-turn", progress: { phase, agent: "test-agent", answer: "Generated reply before durable completion" } });
             await page.getByText(text, { exact: true }).waitFor();
             await page.getByText("Generated reply before durable completion", { exact: true }).waitFor();
+            await eventually(async () => (await page.locator(".steve-stage").count()) === 0, "A turn past preparation must not keep a preparation step");
             assert.equal(await page.locator(".message-assistant").filter({ hasText: "Generated reply before durable completion" }).count(), 0, "Saving progress must not claim durable completion");
         }
         const final = { id: "phase-reply", conversation: A, at, kind: "reply", exchange_id: "phase-turn", text: "Result could not be saved. Retry after restoring storage." };

@@ -82,6 +82,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	// The directory is settled before the task opens: a turn that has
 	// nowhere to run has not started and spends nothing.
+	req.stage(view.StageWorkspace)
 	binding, workspace, err := c.resolveWorkspace(ctx, req, selected)
 	if err != nil {
 		return Result{}, err
@@ -120,6 +121,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			return Result{}, bindErr
 		}
 	}
+	req.stage(view.StageCapabilities)
 	if err := t.prepareSession(ctx); err != nil {
 		return Result{}, err
 	}
@@ -129,6 +131,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if err != nil {
 		return Result{}, err
 	}
+	req.stage(view.StagePlacement)
 	run, runErr := lifecycle.Run(ctx, t.options(spec, candidate))
 	result, err = t.settle(parent, run, runErr)
 	// Disclosure must remain inside the active turn, but its persistence
