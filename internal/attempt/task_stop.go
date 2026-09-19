@@ -95,7 +95,7 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		if spend := stoppedUsage(st); spend != nil {
 			next.Usage = spend
 		}
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if errors.Is(err, errTaskStopRecorded) {
 		return s.Get(ctx, id)
@@ -195,7 +195,7 @@ func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation st
 			return fmt.Errorf("record pending native stop: %w", err)
 		}
 		next.Unsettled, next.Error, next.Revision = true, explanation, op.Revision+1
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if errors.Is(err, errTaskStopRecorded) {
 		return nil

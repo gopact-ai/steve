@@ -41,9 +41,7 @@ type HistoryPage struct {
 
 type nativeHistoryRevision struct {
 	Incarnation string `json:"incarnation"`
-	Events      int64  `json:"events"`
-	Operations  int64  `json:"operations"`
-	Replica     int64  `json:"replica"`
+	Scopes      string `json:"scopes"`
 }
 
 type nativeHistoryCursor struct {
@@ -159,16 +157,13 @@ func QueryHistoryTx(tx *ledger.ReadTx, q HistoryQuery) (HistoryPage, error) {
 			return HistoryPage{}, ErrInvalidHistoryQuery
 		}
 		at, err := time.Parse(time.RFC3339Nano, before.At)
-		if err != nil || before.At != nativeHistoryTime(at) || before.Version != 1 || before.ID == "" || before.Scope == "" ||
+		if err != nil || before.At != nativeHistoryTime(at) || before.Version != 2 || before.ID == "" || before.Scope == "" ||
 			before.TaskID != q.TaskID || before.Conversation != q.Conversation {
 			return HistoryPage{}, ErrInvalidHistoryQuery
 		}
 	}
 	var revision nativeHistoryRevision
-	if err := tx.QueryRow(`SELECT (SELECT value FROM meta WHERE key='incarnation'),
-		(SELECT coalesce(max(seq),0) FROM events), (SELECT coalesce(max(rowid),0) FROM operations),
-		(SELECT version FROM replica_state WHERE singleton=1)`).
-		Scan(&revision.Incarnation, &revision.Events, &revision.Operations, &revision.Replica); err != nil {
+	if err := tx.QueryRow(`SELECT value FROM meta WHERE key='incarnation'`).Scan(&revision.Incarnation); err != nil {
 		return HistoryPage{}, err
 	}
 	if err := ledger.CheckOperationEnvelopesTx(tx, "attempt"); err != nil {
@@ -188,6 +183,19 @@ func QueryHistoryTx(tx *ledger.ReadTx, q HistoryQuery) (HistoryPage, error) {
 	rawScope, _ := json.Marshal(ids)
 	digest := sha256.Sum256(rawScope)
 	scope := hex.EncodeToString(digest[:])
+	// Only point-read one small owner revision per scoped task. Neither
+	// payload history nor unrelated ledger writes enter this fingerprint.
+	revisions := make([]string, 0, len(ids))
+	for _, id := range ids {
+		token, err := historyRevisionTx(tx, id)
+		if err != nil {
+			return HistoryPage{}, err
+		}
+		revisions = append(revisions, token)
+	}
+	rawRevisions, _ := json.Marshal(revisions)
+	digest = sha256.Sum256(rawRevisions)
+	revision.Scopes = hex.EncodeToString(digest[:])
 	if q.Cursor != "" {
 		if before.Revision != revision || before.Scope != scope {
 			return HistoryPage{}, ErrHistoryChanged
@@ -209,7 +217,7 @@ func QueryHistoryTx(tx *ledger.ReadTx, q HistoryQuery) (HistoryPage, error) {
 	if len(top) > q.Limit {
 		page.Items = top[:q.Limit]
 		last := page.Items[len(page.Items)-1]
-		raw, _ := json.Marshal(nativeHistoryCursor{Version: 1, TaskID: q.TaskID, Conversation: q.Conversation, Scope: scope, Revision: revision, At: nativeHistoryAt(last), ID: last.ID})
+		raw, _ := json.Marshal(nativeHistoryCursor{Version: 2, TaskID: q.TaskID, Conversation: q.Conversation, Scope: scope, Revision: revision, At: nativeHistoryAt(last), ID: last.ID})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil

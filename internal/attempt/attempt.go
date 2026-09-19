@@ -411,7 +411,7 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 	settled := true
 	record := Record{SessionSettled: &settled, Spec: spec, State: Leased, Revision: 1, Leases: held, StartedAt: s.now().UTC()}
 	if _, err := s.l.BeginGuarded(ctx, spec.ID, kind, string(Leased), spec.By, record, func(tx *ledger.Tx) error {
-		return task.CheckExecutionTx(tx, spec.Execution)
+		return guardRecordOpenTx(tx, spec)
 	}); err != nil {
 		release()
 		return Record{}, err
@@ -468,7 +468,7 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 					return err
 				}
 			}
-			return tx.SetData(op, next)
+			return setRecordDataTx(tx, op, next)
 		})
 	if err != nil {
 		if errors.Is(err, ledger.ErrStale) {
@@ -765,7 +765,7 @@ func (s *Service) Supersede(ctx context.Context, oldID string, spec Spec, actor 
 			r.State = Superseded
 			r.SupersededBy = spec.ID
 			r.Revision = op.Revision + 1
-			return tx.SetData(op, r)
+			return setRecordDataTx(tx, op, r)
 		}); err != nil {
 		return Record{}, err
 	}
@@ -867,7 +867,7 @@ func (s *Service) expireWith(ctx context.Context, r Record, actor, cause string,
 			next.Error = cause
 			next.Revision = op.Revision + 1
 			next.EndedAt = s.now().UTC()
-			return tx.SetData(op, next)
+			return setRecordDataTx(tx, op, next)
 		})
 	return err
 }
@@ -1157,7 +1157,7 @@ func (s *Service) MarkUnsettled(ctx context.Context, id, actor string, cause err
 		if usage != nil {
 			next.Usage = usage
 		}
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	return err
 }
@@ -1194,7 +1194,7 @@ func (s *Service) ConfirmStopped(ctx context.Context, id, actor, evidence string
 		next.StopEvidence = evidence
 		next.State = to
 		next.EndedAt = s.now().UTC()
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if err != nil {
 		return Record{}, err
@@ -1235,7 +1235,7 @@ func (s *Service) ReleaseEndpointAfterSessionClosed(ctx context.Context, id, act
 		next.Leases = held
 		settled := true
 		next.SessionSettled = &settled
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if err != nil {
 		return err

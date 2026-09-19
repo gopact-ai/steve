@@ -60,7 +60,7 @@ func (s *Service) RecoverRelocationPreparation(ctx context.Context, id string) (
 			return err
 		}
 		next.Leases, next.Unsettled, next.Error, next.Revision = leases, false, "", op.Revision+1
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	return next, err
 }
@@ -423,6 +423,9 @@ func (s *Service) supersedeSourceTx(tx *ledger.Tx, old *Record, replacement, evi
 	if err != nil {
 		return err
 	}
+	if err := touchHistoryRevisionTx(tx, old.TaskID); err != nil {
+		return err
+	}
 	_, err = tx.Exec(`UPDATE operations SET state = ?, revision = ?, data = ?, updated_at = ? WHERE id = ?`, string(Superseded), old.Revision, string(data), old.EndedAt.Format(time.RFC3339Nano), old.ID)
 	return err
 }
@@ -469,6 +472,9 @@ func (s *Service) leaseReplacementTx(tx *ledger.Tx, spec Spec) ([]ledger.Lease, 
 func (s *Service) recordRelocationTx(tx *ledger.Tx, p RelocationIntent, approval RelocationApproval, old Record, oldPhase State, created Record) error {
 	data, err := json.Marshal(created)
 	if err != nil {
+		return err
+	}
+	if err := touchHistoryRevisionTx(tx, created.TaskID); err != nil {
 		return err
 	}
 	stamp := created.StartedAt.Format(time.RFC3339Nano)

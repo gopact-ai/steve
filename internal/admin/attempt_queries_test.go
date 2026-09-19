@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,7 +50,10 @@ func TestAttemptHistoryPagesOpenTheExactNativeFileSnapshot(t *testing.T) {
 		{Spec: attempt.Spec{ID: "old-execution", TaskID: "new-task", Project: p.ID, Base: base}, StartedAt: time.Unix(8, 0), EndedAt: time.Unix(9, 0), Result: &attempt.Result{Artifact: old}},
 		{Spec: attempt.Spec{ID: "new-execution", TaskID: "old-task", Project: p.ID, Base: old}, StartedAt: time.Unix(1, 0), EndedAt: time.Unix(10, 0), Result: &attempt.Result{Artifact: newest}},
 	} {
-		if _, err := book.Begin(t.Context(), r.ID, "attempt", string(attempt.Bound), "test", r); err != nil {
+		if _, err := book.BeginGuarded(t.Context(), r.ID, "attempt", string(attempt.Bound), "test", r, func(tx *ledger.Tx) error {
+			raw, _ := json.Marshal(r)
+			return attempt.ImportHistoryTx(tx, []ledger.Operation{{ID: r.ID, Kind: "attempt", State: string(attempt.Bound), Data: raw}}, false)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}

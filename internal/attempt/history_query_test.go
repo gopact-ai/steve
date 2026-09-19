@@ -20,6 +20,9 @@ func putHistoryAttempt(t testing.TB, book *ledger.Ledger, r Record) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return touchHistoryRevisionTx(tx, r.TaskID) }); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := book.DB().Exec(`INSERT INTO operations VALUES(?,'attempt',?,1,1,?,'2026-09-19T00:00:00Z','2026-09-19T00:00:00Z')`, r.ID, string(r.State), string(raw)); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +133,9 @@ func TestNativeTaskHistoryUsesIndexedBoundedSeeks(t *testing.T) {
 	}
 	defer diagnostic.Close()
 	for _, scope := range []string{"selected", "unrelated"} {
+		if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return touchHistoryRevisionTx(tx, scope) }); err != nil {
+			t.Fatal(err)
+		}
 		_, err := s.l.DB().Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < 10000)
 			INSERT INTO operations SELECT ?||n,'attempt','bound',1,1,json_object('id',?||n,'task_id',?,'started_at','2026-09-19T00:00:00Z'),'2026-09-19T00:00:00Z','2026-09-19T00:00:00Z' FROM seq`, scope, scope, scope)
 		if err != nil {

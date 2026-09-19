@@ -128,7 +128,7 @@ func (s *Service) sessionEvidence(ctx context.Context, id, actor string, settled
 			}
 		}
 		next.SessionSettled = &settled
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	return err
 }

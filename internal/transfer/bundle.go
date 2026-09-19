@@ -637,6 +637,9 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 func importOwners(b Bundle) []ledger.TransferOwner {
 	return []ledger.TransferOwner{
 		func(tx *ledger.Tx, validateOnly bool) error {
+			return attempt.ImportHistoryTx(tx, b.Facts.Operations, validateOnly)
+		},
+		func(tx *ledger.Tx, validateOnly bool) error {
 			if validateOnly {
 				return task.ValidateProjectImportTx(tx, b.Tasks)
 			}

@@ -37,7 +37,10 @@ func TestWorkPagesAndHistoricalDetailHTTPContract(t *testing.T) {
 	}
 	for i := range 2 {
 		r := attempt.Record{Spec: attempt.Spec{ID: fmt.Sprint("native-", i), TaskID: "root"}, StartedAt: time.Unix(int64(i), 0)}
-		if _, err := book.Begin(t.Context(), r.ID, "attempt", string(attempt.Bound), "test", r); err != nil {
+		if _, err := book.BeginGuarded(t.Context(), r.ID, "attempt", string(attempt.Bound), "test", r, func(tx *ledger.Tx) error {
+			raw, _ := json.Marshal(r)
+			return attempt.ImportHistoryTx(tx, []ledger.Operation{{ID: r.ID, Kind: "attempt", State: string(attempt.Bound), Data: raw}}, false)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
