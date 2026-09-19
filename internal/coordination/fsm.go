@@ -598,68 +598,72 @@ type snapshotData struct {
 	State          State              `json:"state"`
 	Receipts       map[string]receipt `json:"receipts"`
 	HasApplication bool               `json:"has_application"`
-	Application    []byte             `json:"application,omitempty"`
 }
 
 func (m *machine) Snapshot() (raft.FSMSnapshot, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.failure != nil {
-		return nil, fmt.Errorf("%w: replica stopped", ErrApplication)
-	}
-	data := snapshotData{Format: 1, State: m.state, Receipts: m.receipts, HasApplication: m.app != nil}
-	if m.app != nil {
-		var err error
-		data.Application, err = m.app.Snapshot()
-		if err != nil {
-			return nil, fmt.Errorf("snapshot application: %w", err)
-		}
-	}
-	encoded, err := json.Marshal(data)
+	data, application, err := m.captureSnapshot()
 	if err != nil {
 		return nil, err
 	}
-	return &encodedSnapshot{data: encoded}, nil
+	// Metadata is an owned copy. JSON work no longer blocks Apply, and the
+	// application's binary snapshot never passes through the JSON encoder.
+	metadata, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return &encodedSnapshot{metadata: metadata, application: application}, nil
+}
+
+func (m *machine) captureSnapshot() (snapshotData, []byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.failure != nil {
+		return snapshotData{}, nil, fmt.Errorf("%w: replica stopped", ErrApplication)
+	}
+	data := snapshotData{Format: 2, State: cloneState(m.state), Receipts: maps.Clone(m.receipts), HasApplication: m.app != nil}
+	// Result bytes may be owned by an application implementation. Do not
+	// retain aliases while snapshot persistence runs concurrently with Apply.
+	for id, receipt := range data.Receipts {
+		receipt.Result.Data = bytes.Clone(receipt.Result.Data)
+		data.Receipts[id] = receipt
+	}
+	var application []byte
+	if m.app != nil {
+		var err error
+		application, err = m.app.Snapshot()
+		if err != nil {
+			return snapshotData{}, nil, fmt.Errorf("snapshot application: %w", err)
+		}
+	}
+	return data, application, nil
 }
 
 func (m *machine) Restore(reader io.ReadCloser) error {
 	defer reader.Close()
+	metadata, application, err := decodeSnapshot(reader)
+	if err != nil {
+		return err
+	}
 	var data snapshotData
-	if err := json.NewDecoder(reader).Decode(&data); err != nil {
+	if err := json.Unmarshal(metadata, &data); err != nil {
 		return fmt.Errorf("decode snapshot: %w", err)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if data.Format != 1 || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
+	if data.Format != 2 || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
 		return fmt.Errorf("%w: snapshot identity or format differs", ErrInvalid)
 	}
-	if data.HasApplication != (m.app != nil) {
+	if data.HasApplication != (m.app != nil) || (!data.HasApplication && len(application) != 0) {
 		return fmt.Errorf("%w: snapshot application configuration differs", ErrInvalid)
 	}
 	if m.app != nil {
-		if err := m.app.Restore(data.Application); err != nil {
+		if err := m.app.Restore(application); err != nil {
 			m.fail(fmt.Errorf("restore application: %w", err))
 			return fmt.Errorf("restore application: %w", err)
 		}
-	}
-	if data.State.Replicas == nil {
-		// Snapshots written before non-voting members existed record only
-		// voters, and back then every member was one.
-		data.State.Replicas = maps.Clone(data.State.Voters)
 	}
 	m.state = data.State
 	m.receipts = data.Receipts
 	m.notifyMembership()
 	return nil
 }
-
-type encodedSnapshot struct{ data []byte }
-
-func (s *encodedSnapshot) Persist(sink raft.SnapshotSink) error {
-	if _, err := sink.Write(s.data); err != nil {
-		sink.Cancel()
-		return err
-	}
-	return sink.Close()
-}
-func (s *encodedSnapshot) Release() {}

@@ -33,7 +33,8 @@ var (
 // Raft entries can be replayed after a process restart. Returning an error is a
 // fatal local storage failure and stops the replica. Business rejections belong
 // in the returned bytes. Snapshot and Restore include that durable deduplication
-// state. No callback may call back into Service.
+// state. Snapshot returns owned bytes that remain immutable after Apply resumes.
+// No callback may call back into Service.
 type Application interface {
 	Apply(AppliedCommand) ([]byte, error)
 	Snapshot() ([]byte, error)
