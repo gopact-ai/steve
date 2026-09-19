@@ -353,7 +353,7 @@ func (s *Store) Interrupted() []Task {
 // ancestor in the same durable write. Concurrent siblings share the same
 // ancestor budget; a task may have only one open attempt of its own.
 func (s *Store) Begin(id, member, node, session string) (Task, error) {
-	return s.begin(id, member, node, session, "")
+	return s.begin(id, member, node, session, "", nil)
 }
 
 // BeginContinuation cannot reopen a paused/failed parent or charge a different
@@ -362,10 +362,10 @@ func (s *Store) BeginContinuation(id, channel, member, node string) (Task, error
 	if channel == "" {
 		return Task{}, fmt.Errorf("continuation requires a conversation")
 	}
-	return s.begin(id, member, node, "", channel)
+	return s.begin(id, member, node, "", channel, nil)
 }
 
-func (s *Store) begin(id, member, node, session, channel string) (Task, error) {
+func (s *Store) begin(id, member, node, session, conversation string, input *TurnInput) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.clone()
@@ -373,8 +373,15 @@ func (s *Store) begin(id, member, node, session, channel string) (Task, error) {
 	if !ok {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
-	if channel != "" && (stored.Channel != channel || stored.Member != member || stored.State != StateRunning) {
+	if conversation != "" && (stored.Channel != conversation || stored.Member != member || stored.State != StateRunning) {
 		return Task{}, fmt.Errorf("%w: task %s is no longer available", ErrContinuationUnavailable, id)
+	}
+	if input != nil {
+		if input.Address.Channel != stored.Transport || input.Address.Conversation != stored.Channel {
+			return Task{}, fmt.Errorf("task %s destination cannot be rebound", id)
+		}
+		stored.ChatID, stored.AnchorMessage, stored.ChatType = input.ChatID, input.Address.Message, input.ChatType
+		stored.OpenCard, stored.Interim = input.CardID, nil
 	}
 	if row := stored.primaryAttempt(); row != nil && row.Open() {
 		return Task{}, fmt.Errorf("task %s already has an open attempt", id)

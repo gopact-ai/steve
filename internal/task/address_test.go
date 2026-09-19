@@ -57,3 +57,43 @@ func TestTaskAddressSurvivesReloadAndCannotRebind(t *testing.T) {
 		})
 	}
 }
+
+func TestTurnAdmissionPersistsAnchorWithItsCharge(t *testing.T) {
+	store, _ := newStore(t)
+	root, err := store.Create(Task{Transport: "console", Channel: "chat", AnchorMessage: "old", Member: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := store.Get(root.ID)
+	input := TurnInput{Address: channel.Address{Channel: "feishu", Conversation: "chat", Message: "wrong"}}
+	if _, err := store.BeginTurn(root.ID, "worker", "node", input); err == nil {
+		t.Fatal("cross-transport turn admitted")
+	}
+	after, _ := store.Get(root.ID)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("refused anchor charged a turn")
+	}
+	input.Address.Channel = "console"
+	input.Address.Message = "new"
+	doc := &metaDocument{Doc: store.doc, fail: true}
+	store.doc = doc
+	if _, err := store.BeginTurn(root.ID, "worker", "node", input); err == nil {
+		t.Fatal("failed persistence admitted a turn")
+	}
+	after, _ = store.Get(root.ID)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("failed save partially charged or reanchored")
+	}
+	doc.fail = false
+	if _, err := store.BeginTurn(root.ID, "worker", "node", input); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := openWith(store.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ = reloaded.Get(root.ID)
+	if after.AnchorMessage != "new" || after.Budget.Turns != 1 || len(after.Attempts) != 1 {
+		t.Fatalf("admitted turn=%+v", after)
+	}
+}

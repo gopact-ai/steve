@@ -115,12 +115,9 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	if tracked.Transport != req.Channel {
 		return "", fmt.Errorf("task %s transport changed", tracked.ID)
 	}
-	var beginErr error
-	if req.ExpectedTask != "" {
-		_, beginErr = c.tasks.BeginContinuation(tracked.ID, req.ConversationID, selected.ID, executionNode)
-	} else {
-		_, beginErr = c.tasks.Begin(tracked.ID, selected.ID, executionNode, "")
-	}
+	_, beginErr := c.tasks.BeginTurn(tracked.ID, selected.ID, executionNode, task.TurnInput{
+		Address: req.Address(), ChatID: req.ChatID, ChatType: string(req.ChatType), CardID: req.CardID, Continuation: req.ExpectedTask != "",
+	})
 	if err := beginErr; err != nil {
 		if req.ExpectedTask != "" {
 			return "", err
@@ -129,14 +126,6 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			return "", UserError{Text: text}
 		}
 		return "", fmt.Errorf("admit turn for task %s: %w", tracked.ID, err)
-	}
-	// The anchor is what a restarted gateway replies to when it resumes
-	// this task; refresh it every turn so delivery lands by the newest
-	// exchange (and inside the right topic).
-	if req.MessageID != "" {
-		if err := c.tasks.SetAnchor(tracked.ID, req.Address(), req.ChatID, string(req.ChatType), req.CardID); err != nil {
-			slog.Error(fmt.Sprintf("turn: anchor task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
-		}
 	}
 	return tracked.ID, nil
 }
