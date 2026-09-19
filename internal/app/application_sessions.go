@@ -73,41 +73,11 @@ func sessionCleanupRecord(ctx context.Context, active cluster.Activation, place 
 	if err := active.Context.Err(); err != nil {
 		return attempt.Record{}, err
 	}
-	service := attempt.New(active.Ledger)
-	live, err := service.Live(ctx)
+	latest, found, err := attempt.New(active.Ledger).LatestForSession(ctx, place.Node, place.Harness, upstream)
 	if err != nil {
 		return attempt.Record{}, err
 	}
-	closed, err := service.Closed(ctx)
-	if err != nil {
-		return attempt.Record{}, err
-	}
-	var latest attempt.Record
-	var latestSequence int64
-	for _, record := range append(live, closed...) {
-		if record.Session != upstream || record.Node != place.Node || record.Harness != place.Harness {
-			continue
-		}
-		// Event sequence is shared ledger order. Wall clocks on successive
-		// coordinators cannot identify the newest native-session binding.
-		events, err := active.Ledger.Events(ctx, record.ID)
-		if err != nil {
-			return attempt.Record{}, err
-		}
-		if len(events) == 0 || events[0].From != "" {
-			return attempt.Record{}, errors.New("native session lacks its committed creation order")
-		}
-		sequence := events[0].Seq
-		if latest.ID == "" || sequence > latestSequence {
-			latest = record
-			latestSequence = sequence
-			continue
-		}
-		if latest.ID != record.ID && sequence == latestSequence {
-			return attempt.Record{}, errors.New("native session has ambiguous execution history")
-		}
-	}
-	if latest.ID == "" {
+	if !found {
 		return attempt.Record{}, errors.New("native session has no committed execution history")
 	}
 	return latest, nil

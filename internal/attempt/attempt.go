@@ -912,45 +912,19 @@ func (s *Service) Closed(ctx context.Context) ([]Record, error) {
 
 // ForTask lists a task's attempts, oldest first.
 func (s *Service) ForTask(ctx context.Context, taskID string) ([]Record, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
-	if err != nil {
-		return nil, err
-	}
-	var out []Record
-	for _, op := range ops {
-		r, err := decode(op)
-		if err != nil {
-			return nil, err
-		}
-		if r.TaskID == taskID {
-			out = append(out, r)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })
-	return out, nil
+	return s.identityRecords(ctx, taskIdentitySQL, taskID)
 }
 
 // LatestForTurn is the most recent attempt of a logical turn, if any.
 func (s *Service) LatestForTurn(ctx context.Context, turnID string) (Record, bool, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
+	records, err := s.identityRecords(ctx, turnIdentitySQL, turnID)
 	if err != nil {
 		return Record{}, false, err
 	}
-	var latest Record
-	found := false
-	for _, op := range ops {
-		r, err := decode(op)
-		if err != nil {
-			return Record{}, false, err
-		}
-		if r.TurnID != turnID {
-			continue
-		}
-		if !found || r.StartedAt.After(latest.StartedAt) {
-			latest, found = r, true
-		}
+	if len(records) == 0 {
+		return Record{}, false, nil
 	}
-	return latest, found, nil
+	return records[0], true, nil
 }
 
 // TakeoverAllowed says whether a previous attempt of the turn leaves work
@@ -1003,16 +977,11 @@ func Describe(r Record) string {
 // LiveAttemptOf is the id of the task's attempt in flight, if any: what a
 // side effect made on the task's behalf is claimed by.
 func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, bool) {
-	records, err := s.ForTask(ctx, taskID)
-	if err != nil {
+	records, err := s.identityRecords(ctx, liveTaskIdentitySQL, taskID)
+	if err != nil || len(records) == 0 {
 		return "", false
 	}
-	for i := len(records) - 1; i >= 0; i-- {
-		if !records[i].State.Terminal() || records[i].Unsettled {
-			return records[i].ID, true
-		}
-	}
-	return "", false
+	return records[0].ID, true
 }
 
 // Reservation is capacity held ahead of an attempt: one endpoint slot,
