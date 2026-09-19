@@ -297,10 +297,18 @@ func TestRemoveConsensusLeaderAfterCoordinatorTransferRoutesAndCommits(t *testin
 		return true
 	})
 	request := RemoveRequest{ID: "remove-old-node", Actor: "owner", NodeID: "node-1"}
-	_, err := client.Remove(context.Background(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Dropping the old coordinator waits on the same catch-up as the
+	// transfer above, so a slow machine may answer ErrNotReady once more.
+	eventually(t, 5*time.Second, func() bool {
+		_, err := client.Remove(context.Background(), request)
+		if errors.Is(err, ErrNotReady) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return true
+	})
 	state, err := client.ReadState(context.Background())
 	if err != nil {
 		t.Fatal(err)
