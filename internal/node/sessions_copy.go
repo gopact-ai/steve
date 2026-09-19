@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/json"
 	"maps"
+	"reflect"
 	"slices"
 
 	"github.com/gopact-ai/acp"
@@ -91,8 +92,9 @@ func copySessionTools(tools []view.Tool) []view.Tool {
 	return tools
 }
 
-// ACP metadata is wire JSON: maps, arrays and scalar values. Keep it opaque to
-// the session domain while severing mutable containers received from a client.
+// Wire ACP metadata takes the canonical map/array fast path. Programmatic
+// metadata may also contain typed containers or structs with exported fields.
+// JSON validation happens at commit, before metadata becomes copyable state.
 func copySessionJSON(value any) any {
 	switch v := value.(type) {
 	case acp.Meta:
@@ -117,6 +119,82 @@ func copySessionJSON(value any) any {
 		return slices.Clone(v)
 	case []byte:
 		return slices.Clone(v)
+	default:
+		if value == nil {
+			return nil
+		}
+		return copySessionMetadataValue(reflect.ValueOf(value), make(map[sessionMetadataVisit]reflect.Value)).Interface()
+	}
+}
+
+type sessionMetadataVisit struct {
+	typ     reflect.Type
+	pointer uintptr
+	length  int
+}
+
+// Programmatic ACP metadata can contain named or typed JSON containers, not
+// just the map[string]any/[]any produced by wire decoding. Keep reflection
+// confined to this metadata fallback; live state and receipts stay typed.
+// Private fields stay unchanged: this is not a clone of opaque custom
+// MarshalJSON implementations. Memoization also bounds traversal of cycles
+// that JSON legitimately ignores (for example, an exported json:"-" field).
+func copySessionMetadataValue(value reflect.Value, seen map[sessionMetadataVisit]reflect.Value) reflect.Value {
+	var visit sessionMetadataVisit
+	switch value.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice:
+		if value.IsNil() {
+			return value
+		}
+		visit = sessionMetadataVisit{typ: value.Type(), pointer: value.Pointer()}
+		if value.Kind() == reflect.Slice {
+			visit.length = value.Len()
+		}
+		if out, ok := seen[visit]; ok {
+			return out
+		}
+	}
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return value
+		}
+		out := reflect.New(value.Type()).Elem()
+		out.Set(copySessionMetadataValue(value.Elem(), seen))
+		return out
+	case reflect.Pointer:
+		out := reflect.New(value.Type().Elem()).Convert(value.Type())
+		seen[visit] = out
+		out.Elem().Set(copySessionMetadataValue(value.Elem(), seen))
+		return out
+	case reflect.Map:
+		out := reflect.MakeMapWithSize(value.Type(), value.Len())
+		seen[visit] = out
+		for entries := value.MapRange(); entries.Next(); {
+			out.SetMapIndex(entries.Key(), copySessionMetadataValue(entries.Value(), seen))
+		}
+		return out
+	case reflect.Slice, reflect.Array:
+		var out reflect.Value
+		if value.Kind() == reflect.Slice {
+			out = reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+			seen[visit] = out
+		} else {
+			out = reflect.New(value.Type()).Elem()
+		}
+		for i := 0; i < value.Len(); i++ {
+			out.Index(i).Set(copySessionMetadataValue(value.Index(i), seen))
+		}
+		return out
+	case reflect.Struct:
+		out := reflect.New(value.Type()).Elem()
+		out.Set(value)
+		for i := 0; i < value.NumField(); i++ {
+			if value.Type().Field(i).IsExported() {
+				out.Field(i).Set(copySessionMetadataValue(value.Field(i), seen))
+			}
+		}
+		return out
 	default:
 		return value
 	}
