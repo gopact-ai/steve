@@ -24,6 +24,8 @@ test-console:
 	npm --prefix web/console run test:settings
 	npm --prefix web/console run test:materials
 	npm --prefix web/console run test:questions
+	npm --prefix web/console run test:durable-drafts
+	npm --prefix web/console run test:streaming
 	npm --prefix web/console run test:desktop
 	npm --prefix web/console run test:ssh
 	npm --prefix web/console run test:coordination

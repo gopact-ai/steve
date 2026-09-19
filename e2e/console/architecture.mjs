@@ -196,7 +196,7 @@ if (process.env.PURE_ONLY !== "1") {
                 if (req.method() === "PUT") { f.settings = req.postDataJSON(); f.writes.push(f.settings); }
                 return route.fulfill({ json: { settings: f.settings } });
             }
-            if (url.pathname === "/history") { f.historyReads++; return route.fulfill({ json: { entries: [], next: 0 } }); }
+            if (url.pathname === "/history") { f.historyReads++; return route.fulfill({ json: { entries: [], next: "" } }); }
             f.errors.push(`Unmocked API ${url.pathname}`);
             return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
         });
