@@ -95,6 +95,9 @@ func scanIdentityRecord(row interface{ Scan(...any) error }) (Record, error) {
 }
 
 func checkIdentityRows(tx *ledger.ReadTx) error {
+	if err := ledger.CheckOperationEnvelopesTx(tx, kind); err != nil {
+		return err
+	}
 	r, err := scanIdentityRecord(tx.QueryRow(invalidIdentitySQL))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil

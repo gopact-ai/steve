@@ -76,3 +76,29 @@ func TestSessionCleanupRefusesAbsentOrInactiveIdentity(t *testing.T) {
 		t.Fatalf("inactive coordinator not rejected: %v", err)
 	}
 }
+
+func TestSessionCleanupRejectsCorruptSelectedLedgerEnvelope(t *testing.T) {
+	for _, field := range []string{"revision", "incarnation", "created_at", "updated_at"} {
+		t.Run(field, func(t *testing.T) {
+			book, err := ledger.Open(t.TempDir(), ledger.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer book.Close()
+			record := attempt.Record{Spec: attempt.Spec{ID: "selected", TaskID: "task", Node: "worker", Harness: "mock"}, Session: "ns_original"}
+			if _, err := book.Begin(t.Context(), record.ID, "attempt", "bound", "test", record); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := book.DB().Exec(`UPDATE operations SET ` + field + `='not-valid' WHERE id='selected'`); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := book.Operation(t.Context(), record.ID); err == nil {
+				t.Fatal("ledger owner accepted invalid test envelope")
+			}
+			active := cluster.Activation{Context: t.Context(), Ledger: book}
+			if got, err := sessionCleanupRecord(t.Context(), active, harness.Placement{Node: "worker", Harness: "mock"}, "ns_original"); err == nil {
+				t.Fatalf("cleanup accepted corrupt %s: %+v", field, got)
+			}
+		})
+	}
+}
