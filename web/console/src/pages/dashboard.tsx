@@ -17,6 +17,7 @@ import type { HistoryEntry } from "@/lib/types";
 import type { Locale, MessageKey, Translator } from "@/lib/i18n";
 import { PageBody, PageHeader } from "@/components/steve/page";
 import { RunningExecutions } from "@/components/steve/running-executions";
+import { usePaged } from "@/components/steve/table-paging";
 import { Mono, Nothing, StateBadge, Where, useStateWord } from "@/components/steve/ui";
 
 const UsageDashboard = lazy(() => import("./usage-dashboard"));
@@ -65,6 +66,14 @@ export function DashboardPage() {
         && (!query || `${line.title} ${line.facts.join(" ")} ${line.note || ""} ${entry.subject || ""} ${entry.text} ${entry.actor || ""}`.toLowerCase().includes(query)));
     const families = historyFamilies.filter((name) => counts.get(name));
     const f = snap.facts;
+    // The audit lists grow without bound — forty replicas, a machine's
+    // worth of observations — so each is read a page at a time.
+    const reservations = usePaged(f.reservations);
+    const grants = usePaged(f.grants);
+    const attestations = usePaged(f.attestations);
+    const replicas = usePaged(f.replicas);
+    const space = usePaged(snap.nodes);
+    const observed = usePaged(events);
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("dashboard.title")} description={tr(tab === "overview" ? "dashboard.description" : "history.description")}>
@@ -117,43 +126,47 @@ export function DashboardPage() {
                         {f.reservations.length === 0 ? <Nothing icon={Zap} title={tr("history.none")} /> : (
                             <Table aria-label={tr("history.reserved")} size="sm">
                                 <Table.Header><Table.Head id="key" label={tr("history.key")} isRowHeader /><Table.Head id="where" label={tr("history.machineTool")} /><Table.Head id="slots" label={tr("history.slots")} /><Table.Head id="for" label={tr("history.for")} /><Table.Head id="exp" label={tr("history.expires")} /></Table.Header>
-                                <Table.Body items={f.reservations}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{r.key}</Mono></Table.Cell><Table.Cell><Where node={r.node} /> · {r.harness}</Table.Cell><Table.Cell>{r.slots}</Table.Cell><Table.Cell>{r.for}</Table.Cell><Table.Cell><span className="text-tertiary">{when(r.expires_at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
+                                <Table.Body items={reservations.items}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{r.key}</Mono></Table.Cell><Table.Cell><Where node={r.node} /> · {r.harness}</Table.Cell><Table.Cell>{r.slots}</Table.Cell><Table.Cell>{r.for}</Table.Cell><Table.Cell><span className="text-tertiary">{when(r.expires_at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
                             </Table>
                         )}
+                        {reservations.footer}
                     </TableCard.Root>
                     <TableCard.Root size="sm" className="workbench-table min-w-0">
                         <TableCard.Header title={tr("history.grants")} badge={`${f.grants.length}`} description={tr("history.grantsHint")} />
                         {f.grants.length === 0 ? <Nothing icon={Users01} title={tr("history.none")} /> : (
                             <Table aria-label={tr("history.grants")} size="sm">
                                 <Table.Header><Table.Head id="project" label={tr("nav.projects")} isRowHeader /><Table.Head id="who" label={tr("history.who")} /><Table.Head id="role" label={tr("history.role")} /><Table.Head id="by" label={tr("history.grantedBy")} /></Table.Header>
-                                <Table.Body items={f.grants.map((g, i) => ({ ...g, id: `${g.project}-${g.principal}-${i}` }))}>{(g) => <Table.Row id={g.id}><Table.Cell>{g.project}</Table.Cell><Table.Cell><Mono>{g.principal}</Mono></Table.Cell><Table.Cell>{g.role}</Table.Cell><Table.Cell><span className="text-tertiary">{g.by}</span></Table.Cell></Table.Row>}</Table.Body>
+                                <Table.Body items={grants.items.map((g, i) => ({ ...g, id: `${g.project}-${g.principal}-${i}` }))}>{(g) => <Table.Row id={g.id}><Table.Cell>{g.project}</Table.Cell><Table.Cell><Mono>{g.principal}</Mono></Table.Cell><Table.Cell>{g.role}</Table.Cell><Table.Cell><span className="text-tertiary">{g.by}</span></Table.Cell></Table.Row>}</Table.Body>
                             </Table>
                         )}
+                        {grants.footer}
                     </TableCard.Root>
                     <TableCard.Root size="sm" className="workbench-table min-w-0">
                         <TableCard.Header title={tr("history.attestations")} badge={`${f.attestations.length}`} description={tr("history.attestationsHint")} />
                         {f.attestations.length === 0 ? <Nothing icon={ShieldTick} title={tr("history.none")} /> : (
                             <Table aria-label={tr("history.attestations")} size="sm">
                                 <Table.Header><Table.Head id="artifact" label={tr("history.artifact")} isRowHeader /><Table.Head id="verdict" label={tr("history.verdict")} /><Table.Head id="by" label={tr("history.who")} /><Table.Head id="at" label={tr("history.time")} /></Table.Header>
-                                <Table.Body items={f.attestations.map((a, i) => ({ ...a, id: `${a.artifact}-${i}` }))}>{(a) => <Table.Row id={a.id}><Table.Cell><Mono>{short(a.artifact)}</Mono></Table.Cell><Table.Cell><StateBadge state={a.verdict} /></Table.Cell><Table.Cell>{a.by}</Table.Cell><Table.Cell><span className="text-tertiary">{when(a.at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
+                                <Table.Body items={attestations.items.map((a, i) => ({ ...a, id: `${a.artifact}-${i}` }))}>{(a) => <Table.Row id={a.id}><Table.Cell><Mono>{short(a.artifact)}</Mono></Table.Cell><Table.Cell><StateBadge state={a.verdict} /></Table.Cell><Table.Cell>{a.by}</Table.Cell><Table.Cell><span className="text-tertiary">{when(a.at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
                             </Table>
                         )}
+                        {attestations.footer}
                     </TableCard.Root>
                     <TableCard.Root size="sm" className="workbench-table min-w-0">
                         <TableCard.Header title={tr("history.replicas")} badge={`${f.replicas.length}`} description={tr("history.replicasHint")} />
                         {f.replicas.length === 0 ? <Nothing icon={Database01} title={tr("history.none")} /> : (
                             <Table aria-label={tr("history.replicas")} size="sm">
                                 <Table.Header><Table.Head id="artifact" label={tr("history.artifact")} isRowHeader /><Table.Head id="node" label={tr("history.machine")} /><Table.Head id="gen" label={tr("history.generation")} /><Table.Head id="state" label={tr("history.state")} /><Table.Head id="at" label={tr("history.time")} /></Table.Header>
-                                <Table.Body items={f.replicas.map((r, i) => ({ ...r, id: `${r.artifact}-${r.node}-${i}` }))}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{short(r.artifact)}</Mono></Table.Cell><Table.Cell><Where node={r.node} /></Table.Cell><Table.Cell>{r.generation}</Table.Cell><Table.Cell><StateBadge state={r.state} /></Table.Cell><Table.Cell><span className="text-tertiary">{when(r.at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
+                                <Table.Body items={replicas.items.map((r, i) => ({ ...r, id: `${r.artifact}-${r.node}-${i}` }))}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{short(r.artifact)}</Mono></Table.Cell><Table.Cell><Where node={r.node} /></Table.Cell><Table.Cell>{r.generation}</Table.Cell><Table.Cell><StateBadge state={r.state} /></Table.Cell><Table.Cell><span className="text-tertiary">{when(r.at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
                             </Table>
                         )}
+                        {replicas.footer}
                     </TableCard.Root>
                     <TableCard.Root size="sm" className="workbench-table min-w-0 xl:col-span-2">
                         <TableCard.Header title={tr("history.space")} badge={`${snap.nodes.length}`} description={tr("history.spaceHint")} />
                         {snap.nodes.length === 0 ? <Nothing icon={HardDrive} title={tr("history.none")} /> : (
                             <Table aria-label={tr("history.space")} size="sm">
                                 <Table.Header><Table.Head id="node" label={tr("history.machine")} isRowHeader /><Table.Head id="used" label={tr("history.spaceUsed")} /><Table.Head id="state" label={tr("history.spaceState")} /><Table.Head id="free" label={tr("history.spaceFree")} /><Table.Head id="at" label={tr("history.spaceMeasured")} /></Table.Header>
-                                <Table.Body items={snap.nodes.map((n) => ({ ...n, id: n.name }))}>{(n) => <Table.Row id={n.id}>
+                                <Table.Body items={space.items.map((n) => ({ ...n, id: n.name }))}>{(n) => <Table.Row id={n.id}>
                                     <Table.Cell><div className="min-w-0"><Where node={n.name} />{n.health?.root && <p className="truncate u-meta text-quaternary" title={n.health.root}>{n.health.root}</p>}</div></Table.Cell>
                                     <Table.Cell>{!n.health ? <span className="text-quaternary">{tr("history.spaceUnreported")}</span>
                                         : !n.health.space_at ? <span className="text-tertiary">{tr("history.spaceMeasuring")}</span>
@@ -164,12 +177,13 @@ export function DashboardPage() {
                                 </Table.Row>}</Table.Body>
                             </Table>
                         )}
+                        {space.footer}
                     </TableCard.Root>
                     <TableCard.Root size="sm" className="workbench-table min-w-0 xl:col-span-2">
                         <TableCard.Header title={tr("history.events")} badge={`${events.length}`} description={tr("history.eventsHint")} />
                         {events.length === 0 ? <Nothing icon={BookOpen01} title={tr("history.noEvents")} /> : (
-                            <ul className="max-h-96 divide-y divide-secondary overflow-y-auto text-xs">
-                                {events.slice(0, 200).map((e, i) => {
+                            <ul className="divide-y divide-secondary text-xs">
+                                {observed.items.map((e, i) => {
                                     // An observation carries its facts apart, so it can be read
                                     // here in the same words the timeline uses.
                                     const line = e.kind.startsWith("observe.")
@@ -186,6 +200,7 @@ export function DashboardPage() {
                                 })}
                             </ul>
                         )}
+                        {observed.footer}
                     </TableCard.Root>
                 </div>
             )}
