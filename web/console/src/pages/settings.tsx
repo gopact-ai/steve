@@ -14,6 +14,7 @@ import { channelInputs, channelPatch, changedInputs, type ChannelDraft } from "@
 import { number } from "@/lib/format";
 import { HTTPError } from "@/lib/http";
 import { errorText, type LocalePreference } from "@/lib/i18n";
+import { registerBackNavigationGuard } from "@/lib/navigation-guard";
 import { settingGroups, settingValue, settingsInputs, settingsPatch, type SettingPath } from "@/lib/settings-values";
 import { useI18n } from "@/providers/locale-provider";
 import { PALETTES, type ThemeId } from "@/lib/themes";
@@ -24,10 +25,6 @@ type Section = "general" | "channels" | "policies" | "services";
 const sections = ["general", "channels", "policies", "services"] as const;
 const servicesHref = "#/settings?section=services";
 const icons = { general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
-// HashRouter's listener can unmount the form synchronously. Register this
-// listener before the router mounts so a declined back navigation keeps drafts.
-let guardBack: ((event: PopStateEvent) => void) | undefined;
-window.addEventListener("popstate", (event) => guardBack?.(event), true);
 
 export function SettingsPage() {
     const { t, locale, preference, setLocale } = useI18n();
@@ -71,9 +68,9 @@ export function SettingsPage() {
             event.stopImmediatePropagation();
             window.history.pushState(historyState, "", href);
         };
-        guardBack = pop;
+        const releaseBackGuard = registerBackNavigationGuard(pop);
         window.addEventListener("beforeunload", beforeUnload); document.addEventListener("click", click, true);
-        return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", click, true); if (guardBack === pop) guardBack = undefined; };
+        return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", click, true); releaseBackGuard(); };
     }, [location.key, t]);
 
     async function read(group: Group, keep = false) {
