@@ -2612,6 +2612,42 @@ checks["conversation-work-disclosure"] = async (f) => {
     assert.equal(f.calls.length, 0, "Disclosure and selection must not submit work");
 };
 
+checks["thread-work-rows-align"] = async (f) => {
+    // A thread's work is read down the left edge: the state mark, the
+    // number, then who has it. Marks differ in shape and numbers in
+    // width, so the columns are fixed — otherwise every other row sits a
+    // few pixels off and the list looks broken.
+    const other = "node-other";
+    const tasks = [
+        { ...task("7", A, "scratch"), execution: "idle", lifecycle: "idle" },
+        { ...task("41", A, "scratch"), parent: "7", origin: "delegate", member: "gpu-codex", lifecycle: "done", execution: "done" },
+        { ...task("9", A, "scratch"), parent: "7", origin: "delegate", member: "gpu-claude", lifecycle: "failed", execution: "idle" },
+        { ...task("12", A, "scratch"), parent: "7", origin: "delegate", member: "reviewer", node: other, execution: "running" },
+    ];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [{ name: other, display_name: "另一台", online: true }], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.reload();
+    const sidebar = f.page.locator(".conversation-sidebar");
+    await sidebar.getByRole("button", { name: "展开 Conversation A 的任务", exact: true }).click();
+    const rows = sidebar.locator("button").filter({ hasText: /^#/ });
+    await rows.first().waitFor();
+    const read = await rows.evaluateAll((list) => list.map((row) => {
+        const cells = [...row.children].map((cell) => ({ text: cell.textContent.trim(), x: cell.getBoundingClientRect().x, right: cell.getBoundingClientRect().right }));
+        return { indent: cells[0].x, cells };
+    }));
+    assert.equal(read.length, 4, "Every task and delegation keeps its own row");
+    assert.deepEqual(read.map((row) => row.cells[1].text), ["#7", "#41", "#12", "#9"], "Work reads newest first, parents before what they handed on");
+    const kids = read.slice(1);
+    for (const row of kids) {
+        assert.ok(row.indent > read[0].indent, "A delegation is set in from the task that made it");
+        assert.equal(row.cells[1].right.toFixed(1), kids[0].cells[1].right.toFixed(1), "Numbers of any width end on one column");
+        assert.equal(row.cells[2].x.toFixed(1), kids[0].cells[2].x.toFixed(1), "Names start on one column whatever the state mark is");
+        assert.ok(!row.cells[2].text.includes("→"), "The indent already says it was handed on");
+    }
+    assert.equal(kids[0].cells[2].text, "gpu-codex", "A delegation on its parent's machine does not repeat the machine");
+    assert.equal(kids[1].cells[2].text, "reviewer@另一台", "A delegation that moved machines says so by name");
+    assert.equal(f.calls.length, 0, "Reading a thread's work must not submit work");
+};
+
 checks["sent-line-actions"] = async (f) => {
     // Stopping a turn is an act on the turn: the control and its receipt are
     // kept by the server and drawn by no one. What the person said keeps its
