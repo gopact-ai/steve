@@ -10,6 +10,7 @@ import { Md } from "@/components/steve/markdown";
 import { PageBody, PageHeader } from "@/components/steve/page";
 import { Nothing } from "@/components/steve/ui";
 import { unavailableSource } from "@/lib/source-health";
+import { ConflictsPanel } from "@/components/steve/conflicts";
 
 // InboxPage answers "what exactly do I have to decide right now". Only
 // requests with actions and quarantined writers appear. Writer confirmation
@@ -22,13 +23,19 @@ export function InboxPage() {
     const { snap } = useFleet();
     const { act } = useIntent();
     const unavailable = unavailableSource(snap.sources, "ledger-attention");
+    // Conflicts block work until somebody settles them, which is what this
+    // page is for. They are kept above the requests because nothing else
+    // here stops a result from reaching the project.
+    const conflictSource = unavailableSource(snap.sources, "ledger-landings");
+    const conflicts = snap.conflicts || [];
     const groups = ["writer", "disclosure", "effect", "question", "pairing"].map((type) => ({ type, items: snap.inbox.filter((r) => r.type === type && (r.resolvable || r.type === "writer")) })).filter((g) => g.items.length);
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("inbox.title")} description={tr("inbox.description")} />
             <PageBody>
             {unavailable && <div role="status" className="rounded-lg bg-secondary p-4 text-sm text-secondary">{tr("inbox.incomplete")}{unavailable.error}</div>}
-            {!unavailable && groups.length === 0 && <div className="workbench-panel rounded-lg bg-primary ring-1 ring-secondary"><Nothing icon={Inbox01} title={tr("inbox.empty")}>{tr("inbox.emptyHint")}</Nothing></div>}
+            {(conflicts.length > 0 || conflictSource) && <ConflictsPanel conflicts={conflicts} nodes={snap.nodes} incomplete={conflictSource?.error} />}
+            {!unavailable && groups.length === 0 && conflicts.length === 0 && <div className="workbench-panel rounded-lg bg-primary ring-1 ring-secondary"><Nothing icon={Inbox01} title={tr("inbox.empty")}>{tr("inbox.emptyHint")}</Nothing></div>}
             {groups.map((g) => (
                 <section key={g.type} className="workbench-panel min-w-0 rounded-lg bg-primary ring-1 ring-secondary">
                     <div className="flex items-center gap-2 border-b border-secondary px-5 py-3">

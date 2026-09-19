@@ -2,7 +2,7 @@ import type { Snapshot, Usage } from "../types";
 import { request } from "../http";
 import { LocalizedError, translate } from "../i18n";
 export const emptySnapshot: Snapshot = {
-    at: "", hub: { node: "", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [],
+    at: "", hub: { node: "", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [], conflicts: [],
     facts: { reservations: [], attestations: [], replicas: [], disclosures: [], effects: [], grants: [] },
     inbox: [], schedules: [], sources: [], usage: emptyUsage(),
 };

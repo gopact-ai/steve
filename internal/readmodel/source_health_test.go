@@ -68,6 +68,10 @@ func (s *sourceFixture) Landings(_ context.Context, id string) ([]artifact.Landi
 	return []artifact.Landing{{ID: "land-" + id, Project: id, State: artifact.LandCommitted}}, s.fail["landings/"+id]
 }
 
+func (s *sourceFixture) AllStuck(_ context.Context) ([]artifact.Stuck, error) {
+	return nil, s.fail["conflicts"]
+}
+
 func sourceHealth(t *testing.T, snap Snapshot, name string) SourceHealth {
 	t.Helper()
 	for _, source := range snap.Sources {

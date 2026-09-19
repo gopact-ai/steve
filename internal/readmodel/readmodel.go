@@ -53,6 +53,11 @@ type Snapshot struct {
 	// Landings are the most recent results brought into a canonical
 	// workspace, conflicts included.
 	Landings []Landing `json:"landings"`
+	// Conflicts is every result, in any project, that is stopped on a
+	// merge conflict right now. Landings are recent history and are
+	// capped; this is the standing list, so a conflict cannot fall off
+	// the end of it by waiting.
+	Conflicts []Conflict `json:"conflicts"`
 	// Facts are the rest of what the ledger holds and a person may want
 	// to see at a glance: capacity reservations, attestations, replicas,
 	// disclosures awaiting the owner, side effects with an unknown
@@ -157,6 +162,27 @@ type Condition struct {
 	Met    bool   `json:"met"`
 	Code   string `json:"code,omitempty"`
 	Detail string `json:"detail,omitempty"`
+}
+
+// Conflict is a result waiting on a merge conflict: which project it
+// wants into, which files disagreed, and what can be done about it.
+type Conflict struct {
+	Project  string `json:"project"`
+	Artifact string `json:"artifact"`
+	Landing  string `json:"landing"`
+	// Node is the machine the project's canonical copy lives on, named so
+	// a reader sees where the disagreement is rather than an id.
+	Node  string   `json:"node,omitempty"`
+	Files []string `json:"files,omitempty"`
+	// Resolvable says git kept the half-merged tree, which is what both
+	// an agent and a person need to work from.
+	Resolvable bool `json:"resolvable,omitempty"`
+	// Editable says the conflict can be resolved in the console. A sealed
+	// project's data never leaves its home machine, so it cannot be.
+	Editable bool `json:"editable,omitempty"`
+	// Attempt is the task of a resolution already running, if one is.
+	Attempt string    `json:"attempt,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 type Landing struct {
@@ -443,6 +469,8 @@ type Sources struct {
 type LedgerSource interface {
 	LiveAttempts(ctx context.Context) ([]Attempt, error)
 	RecentLandings(ctx context.Context) ([]Landing, error)
+	// Conflicts is every project's standing merge conflict.
+	Conflicts(ctx context.Context) ([]Conflict, error)
 	Facts(ctx context.Context) (Facts, error)
 	// ProjectList lists every project, for the page and the context bar.
 	ProjectList(ctx context.Context) ([]project.Project, error)

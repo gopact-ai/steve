@@ -12,6 +12,7 @@ import { settingsPageEn, settingsPageZh } from "./settings-page.ts";
 import { mcpToolsEn, mcpToolsZh } from "./mcpTools.ts";
 import { tasksEn, tasksZh } from "./tasks.ts";
 import { settingsEditorEn, settingsEditorZh } from "./settingsEditor.ts";
+import { conflictsEn, conflictsZh } from "./conflicts.ts";
 import { inboxEn, inboxZh } from "./inbox.ts";
 import { historyEn, historyZh } from "./history.ts";
 import { boardEn, boardZh } from "./board.ts";
@@ -25,6 +26,6 @@ import { usageEn, usageZh } from "./usage.ts";
 import { setupEn, setupZh } from "./setup.ts";
 
 export const catalogs = {
-    zh: { ...pluginsZh, ...nodeAgentsZh, ...coordinationZh, ...sshZh, ...desktopZh, ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh, ...setupZh },
-    en: { ...pluginsEn, ...nodeAgentsEn, ...coordinationEn, ...sshEn, ...desktopEn, ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn, ...setupEn },
+    zh: { ...pluginsZh, ...nodeAgentsZh, ...coordinationZh, ...sshZh, ...desktopZh, ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...conflictsZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh, ...setupZh },
+    en: { ...pluginsEn, ...nodeAgentsEn, ...coordinationEn, ...sshEn, ...desktopEn, ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...conflictsEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn, ...setupEn },
 } as const;

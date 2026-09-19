@@ -109,6 +109,30 @@ func (c *Coordinator) ResolveConflicts(ctx context.Context, p project.Project) [
 	return c.resolveAll(ctx, p, stuck, Request{Locale: string(c.text.Locale())}, true)
 }
 
+// ResolveOneConflict hands a single stuck result to an agent, wherever it
+// is queued. The console lists conflicts across every project, so an
+// action taken on one of them names the artifact rather than the project
+// it happens to belong to.
+func (c *Coordinator) ResolveOneConflict(ctx context.Context, p project.Project, artifactID string) []Resolution {
+	if c.supervisor == nil || c.plans == nil || c.artifacts == nil {
+		return nil
+	}
+	stuck, err := c.artifacts.Stuck(ctx, p.ID)
+	if err != nil {
+		return nil
+	}
+	var picked []artifact.Stuck
+	for _, s := range stuck {
+		if s.Artifact == artifactID {
+			picked = append(picked, s)
+		}
+	}
+	if len(picked) == 0 {
+		return nil
+	}
+	return c.resolveAll(ctx, p, picked, Request{Locale: string(c.text.Locale())}, false)
+}
+
 // resolveAll takes the conflicts one at a time. Each resolution moves the
 // canonical name, so a later one in the same pass merges onto what the
 // earlier one produced rather than onto a snapshot that is already stale.

@@ -70,6 +70,12 @@ export interface Attempt {
     scope?: string; workspace?: string; leases?: string[]; started_at: string; requires?: string[]; admission?: Admission; unsettled?: boolean; error?: string;
 }
 export interface Landing { id: string; project: string; state: string; artifact: string; paths?: string; error?: string; at: string; files?: string[]; resolvable?: boolean }
+// Conflict is a result that cannot land because two sides changed the
+// same files. Landings are recent history; this is the standing list.
+export interface Conflict {
+    project: string; artifact: string; landing: string; node?: string; files?: string[];
+    resolvable?: boolean; editable?: boolean; attempt?: string; at: string;
+}
 export interface Reservation { id: string; key: string; node: string; harness: string; slots: number; for: string; by: string; expires_at: string }
 export interface Attestation { artifact: string; verdict: string; by: string; note?: string; at: string }
 export interface Replica { artifact: string; node: string; generation: number; state: string; note?: string; at: string }
@@ -182,7 +188,7 @@ export interface Reply {
 }
 export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
-    attempts: Attempt[]; landings: Landing[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[]; usage: Usage;
+    attempts: Attempt[]; landings: Landing[]; conflicts: Conflict[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[]; usage: Usage;
 }
 
 // Skills: what the hub can hand its agents, and what it does.

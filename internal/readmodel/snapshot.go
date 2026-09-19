@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -268,7 +269,7 @@ func (b *snapshotBuilder) workspace(p project.Project, ws project.Workspace) Wor
 // completely.
 func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 	m, snap := b.m, &b.snap
-	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
+	snap.Attempts, snap.Landings, snap.Conflicts = []Attempt{}, []Landing{}, []Conflict{}
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
 	if m.src.Ledger == nil {
 		return
@@ -277,9 +278,16 @@ func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 		snap.Attempts = b.live
 	}
 	recent, err := m.src.Ledger.RecentLandings(ctx)
-	m.markLedgerSource(snap, "landings", err)
+	// Landings and conflicts are both read from the artifact store, and a
+	// half-read view of what is blocked is what the one health mark is
+	// for: either both are trustworthy or neither is.
+	conflicts, conflictErr := m.src.Ledger.Conflicts(ctx)
+	m.markLedgerSource(snap, "landings", errors.Join(err, conflictErr))
 	if recent != nil {
 		snap.Landings = recent
+	}
+	if conflicts != nil {
+		snap.Conflicts = conflicts
 	}
 	snap.Facts, err = m.src.Ledger.Facts(ctx)
 	factsAttentionKnown := err == nil || snap.Facts.attentionKnown

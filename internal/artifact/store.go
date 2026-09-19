@@ -935,6 +935,36 @@ func (s *Store) Attempting(ctx context.Context, projectID, artifactID, taskID st
 // Stuck lists the project's queued results that are held up by a merge
 // conflict, oldest first.
 func (s *Store) Stuck(ctx context.Context, projectID string) ([]Stuck, error) {
+	return s.blocked(ctx, projectID)
+}
+
+// AllStuck is every project's blocked result, oldest first. A console
+// showing "is anything in conflict anywhere" has to ask once rather than
+// once per project, and must not miss a project it did not think to ask
+// about.
+func (s *Store) AllStuck(ctx context.Context) ([]Stuck, error) {
+	return s.blocked(ctx, "")
+}
+
+// StuckOne finds one blocked result by artifact id, whichever project it
+// belongs to, so an action aimed at a single conflict does not need the
+// caller to already know where it lives.
+func (s *Store) StuckOne(ctx context.Context, artifactID string) (Stuck, bool, error) {
+	all, err := s.blocked(ctx, "")
+	if err != nil {
+		return Stuck{}, false, err
+	}
+	for _, item := range all {
+		if item.Artifact == artifactID {
+			return item, true, nil
+		}
+	}
+	return Stuck{}, false, nil
+}
+
+// blocked reads the pending queue for entries stopped on a conflict. An
+// empty projectID means every project.
+func (s *Store) blocked(ctx context.Context, projectID string) ([]Stuck, error) {
 	raw, err := s.ledger.Bindings(ctx, pendingKind)
 	if err != nil {
 		return nil, err
@@ -942,7 +972,10 @@ func (s *Store) Stuck(ctx context.Context, projectID string) ([]Stuck, error) {
 	var out []Stuck
 	for _, data := range raw {
 		var item Pending
-		if err := json.Unmarshal(data, &item); err != nil || item.Project != projectID || item.Blocked == nil {
+		if err := json.Unmarshal(data, &item); err != nil || item.Blocked == nil {
+			continue
+		}
+		if projectID != "" && item.Project != projectID {
 			continue
 		}
 		out = append(out, Stuck{
@@ -951,7 +984,12 @@ func (s *Store) Stuck(ctx context.Context, projectID string) ([]Stuck, error) {
 			Marked: item.Blocked.Marked, Paths: item.Blocked.Paths, At: item.Blocked.At, Attempt: item.Blocked.Attempt,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].Artifact < out[j].Artifact
+		}
+		return out[i].At.Before(out[j].At)
+	})
 	return out, nil
 }
 

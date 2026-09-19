@@ -3,4 +3,8 @@ export const addProject = (body: { id: string; node?: string; path: string; repo
 export const addWorkspace = (project: string, body: { node?: string; origin: "adopt" | "clone" }) => request<{ ok: boolean }>(`/console/projects/${encodeURIComponent(project)}/workspaces`, { method: "POST", body });
 export const removeWorkspace = (project: string, node: string) => request<{ ok: boolean }>(`/console/projects/${encodeURIComponent(project)}/workspaces/${encodeURIComponent(node)}`, { method: "DELETE" });
 export const resolveConflicts = (project: string) => request<{ started: number; skipped?: string[] }>(`/console/projects/${encodeURIComponent(project)}/conflicts`, { method: "POST" });
+export const resolveAllConflicts = () => request<{ started: number; skipped?: string[] }>("/console/conflicts", { method: "POST" });
+export const resolveConflictWithAgent = (artifact: string) => request<{ started: number; skipped?: string[] }>(`/console/conflicts/${encodeURIComponent(artifact)}/agent`, { method: "POST" });
+export const conflictFile = (artifact: string, path: string) => request<{ path: string; text: string; size: number; binary?: boolean; truncated?: boolean }>(`/console/conflicts/${encodeURIComponent(artifact)}/file?path=${encodeURIComponent(path)}`);
+export const resolveConflictByHand = (artifact: string, files: { path: string; text: string }[]) => request<{ ok: boolean }>(`/console/conflicts/${encodeURIComponent(artifact)}/manual`, { method: "POST", body: { files } });
 export const removeProject = (id: string) => request<{ ok: boolean }>(`/console/projects/${encodeURIComponent(id)}`, { method: "DELETE" });

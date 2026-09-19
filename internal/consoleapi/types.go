@@ -195,6 +195,19 @@ type ResolveConflictsResult struct {
 	Skipped []string `json:"skipped,omitempty"`
 }
 
+// ConflictFileView is one file of a merge conflict as git left it: both
+// sides with the markers between them, which is the text a person edits
+// to resolve it.
+type ConflictFileView struct {
+	Artifact  string `json:"artifact"`
+	Project   string `json:"project"`
+	Path      string `json:"path"`
+	Text      string `json:"text"`
+	Size      int64  `json:"size"`
+	Binary    bool   `json:"binary,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
 // ApprovalSync is what syncing the fleet to the default approval stance
 // did: which agents were let go of their own pinned mode, which already
 // followed the default, and which run an AI tool that offers no mode at
@@ -261,6 +274,14 @@ type Admin interface {
 	// ResolveConflicts hands the project's landings that stopped at a merge
 	// conflict to an agent, in the background.
 	ResolveConflicts(ctx context.Context, projectID string) (ResolveConflictsResult, error)
+	// ResolveAllConflicts covers every project at once, and
+	// ResolveConflictWithAgent one conflict named by the artifact behind
+	// it. ConflictFile reads a conflicted file as git left it, and
+	// ResolveConflictByHand lands a person's own resolution of it.
+	ResolveAllConflicts(ctx context.Context) (ResolveConflictsResult, error)
+	ResolveConflictWithAgent(ctx context.Context, artifactID string) (ResolveConflictsResult, error)
+	ConflictFile(ctx context.Context, artifactID, path string) (ConflictFileView, error)
+	ResolveConflictByHand(ctx context.Context, artifactID string, edits []artifact.Edit) error
 	// NodeSettings reads what a machine offers; SetNodeSettings rewrites
 	// it and answers what is in force. The hub machine is one of them.
 	NodeSettings(ctx context.Context, name string) (nodewire.Settings, error)

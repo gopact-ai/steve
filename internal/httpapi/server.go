@@ -161,6 +161,10 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
 	mux.HandleFunc("DELETE /console/projects/{id}/workspaces/{node}", s.guard(s.consoleRemoveWorkspace))
 	mux.HandleFunc("POST /console/projects/{id}/conflicts", s.guard(s.consoleResolveConflicts))
+	mux.HandleFunc("POST /console/conflicts", s.guard(s.consoleResolveAllConflicts))
+	mux.HandleFunc("POST /console/conflicts/{artifact}/agent", s.guard(s.consoleResolveConflictWithAgent))
+	mux.HandleFunc("GET /console/conflicts/{artifact}/file", s.guard(s.consoleConflictFile))
+	mux.HandleFunc("POST /console/conflicts/{artifact}/manual", s.guard(s.consoleResolveConflictByHand))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("PUT /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
@@ -456,6 +460,61 @@ func (s *Server) consoleAddWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) consoleResolveAllConflicts(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	result, err := s.admin.ResolveAllConflicts(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) consoleResolveConflictWithAgent(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	result, err := s.admin.ResolveConflictWithAgent(r.Context(), r.PathValue("artifact"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) consoleConflictFile(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	file, err := s.admin.ConflictFile(r.Context(), r.PathValue("artifact"), r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, file)
+}
+
+func (s *Server) consoleResolveConflictByHand(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Files []artifact.Edit `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.ResolveConflictByHand(r.Context(), r.PathValue("artifact"), req.Files); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) consoleResolveConflicts(w http.ResponseWriter, r *http.Request) {
