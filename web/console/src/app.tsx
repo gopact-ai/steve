@@ -57,7 +57,7 @@ function Shell() {
         { id: "work", title: t("nav.work"), items: [
             { href: "/console", label: t("nav.console"), icon: Terminal, badge: 0 },
             { href: "/console?view=board", label: t("nav.tasks"), icon: ClipboardCheck, badge: running },
-            { href: "/inbox", label: t("nav.inbox"), icon: Inbox01, badge: snap.inbox.length },
+            { href: "/inbox", label: t("nav.inbox"), icon: Inbox01, badge: snap.inbox.length + (snap.conflicts?.length || 0) },
         ] },
         { id: "manage", title: t("nav.manage"), items: [
             { href: "/projects", label: t("nav.projects"), icon: Folder, badge: 0 },

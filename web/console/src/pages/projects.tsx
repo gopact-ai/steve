@@ -12,11 +12,12 @@ import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { fetchConversations } from "@/lib/api/console";
-import { addProject, addWorkspace, removeProject, removeWorkspace, resolveConflicts } from "@/lib/api/projects";
+import { addProject, addWorkspace, removeProject, removeWorkspace } from "@/lib/api/projects";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { ConflictsPanel } from "@/components/steve/conflicts";
 import { nodeLabelIn, useNodeLabel } from "@/lib/node-name";
-import type { Conversation, Landing, Project, Repo, Workspace } from "@/lib/types";
+import type { Conversation, Project, Repo, Workspace } from "@/lib/types";
 import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/lib/workspaces";
 import { LegendMark, Topology, type TopologyTone } from "@/components/steve/topology";
 import { ConfirmDialog } from "@/components/steve/confirm";
@@ -250,6 +251,7 @@ function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onC
     const [addingWorkspace, setAddingWorkspace] = useState(false);
     const tasks = snap.tasks.filter((t) => t.project_id === p.id && t.lane !== "ended");
     const landings = snap.landings.filter((l) => l.project === p.id).slice(0, 5);
+    const conflicts = (snap.conflicts || []).filter((c) => c.project === p.id);
     const grants = snap.facts.grants.filter((g) => g.project === p.id);
     const stepAgents = snap.agents.filter((a) => a.eligible && (p.repo === "isolated" || a.node === p.node)).map((a) => a.id);
     return (
@@ -280,7 +282,8 @@ function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onC
                         <Button size="sm" color="secondary-destructive" isDisabled={!!p.default} onClick={onRemove}>{tr("projects.removeProject")}</Button>
                     </div>
                 </section>
-                <DrawerSection title={tr("projects.recentMerges")} aside={<ResolveConflicts p={p} landings={landings} />}>
+                {conflicts.length > 0 && <ConflictsPanel conflicts={conflicts} nodes={snap.nodes} />}
+                <DrawerSection title={tr("projects.recentMerges")}>
                     {landings.length === 0 ? <div className="text-xs text-quaternary">{tr("projects.none")}</div> : (
                         <ul className="flex flex-col gap-1.5 text-xs">{landings.map((l) => (
                             <li key={l.id} className="flex flex-col gap-0.5">
@@ -291,33 +294,6 @@ function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onC
                     )}
                 </DrawerSection>
         </Drawer>
-    );
-}
-
-// ResolveConflicts hands the project's stuck landings to an agent. The
-// work is a plan that runs for minutes, so the button reports that it
-// started and the plan reports itself from there.
-function ResolveConflicts({ p, landings }: { p: Project; landings: Landing[] }) {
-    const { t: tr } = useI18n();
-    const [busy, setBusy] = useState(false);
-    const [note, setNote] = useState("");
-    const conflicted = landings.filter((l) => !!l.files?.length);
-    if (conflicted.length === 0) return null;
-    const resolvable = conflicted.some((l) => l.resolvable);
-    async function submit() {
-        setBusy(true); setNote("");
-        try {
-            const r = await resolveConflicts(p.id);
-            setNote(r.started > 0 ? tr("projects.resolveStarted", { count: r.started }) : tr("projects.resolveNothing"));
-        } catch (e) { setNote(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
-    }
-    return (
-        <div className="flex items-center gap-2">
-            {note && <span className="u-meta text-tertiary">{note}</span>}
-            {resolvable
-                ? <Button size="sm" color="link-color" isDisabled={busy} onClick={submit}>{tr("projects.resolveWithAgent")}</Button>
-                : <span className="u-meta text-quaternary">{tr("projects.resolveManualOnly")}</span>}
-        </div>
     );
 }
 

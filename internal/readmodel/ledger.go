@@ -26,6 +26,7 @@ type Ledger struct {
 		Attestations(context.Context, string) ([]artifact.Attestation, error)
 		Replicas(context.Context, string) ([]artifact.Replica, error)
 		Landings(context.Context, string) ([]artifact.Landing, error)
+		AllStuck(context.Context) ([]artifact.Stuck, error)
 	}
 	Projects interface {
 		List(context.Context) ([]project.Project, error)
@@ -189,4 +190,45 @@ func (l Ledger) RecentLandings(ctx context.Context) ([]Landing, error) {
 		out = out[:20]
 	}
 	return out, errors.Join(failures...)
+}
+
+// Conflicts is what is stopped on a merge conflict across every project,
+// oldest first. It is read from the pending queue rather than from recent
+// landings, so a conflict that has been waiting a long time is still
+// reported: a list of blockers that quietly drops the oldest one is worse
+// than no list.
+func (l Ledger) Conflicts(ctx context.Context) ([]Conflict, error) {
+	if l.Artifacts == nil {
+		return nil, errors.New("artifact source is not configured")
+	}
+	stuck, err := l.Artifacts.AllStuck(ctx)
+	if err != nil {
+		return nil, err
+	}
+	homes := map[string]project.Project{}
+	if l.Projects != nil {
+		projects, listErr := l.Projects.List(ctx)
+		if listErr != nil {
+			err = errors.Join(err, fmt.Errorf("projects: %w", listErr))
+		}
+		for _, p := range projects {
+			homes[p.ID] = p
+		}
+	}
+	out := make([]Conflict, 0, len(stuck))
+	for _, item := range stuck {
+		p, known := homes[item.Project]
+		entry := Conflict{
+			Project: item.Project, Artifact: item.Artifact, Landing: item.Landing,
+			Files: item.Paths, Resolvable: item.Resolvable(), Attempt: item.Attempt, At: item.At,
+		}
+		if known {
+			entry.Node = p.Home.Node
+			// A sealed project keeps its data at home, so the hub cannot
+			// check the half-merged tree out for a person to edit.
+			entry.Editable = item.Resolvable() && !(p.Level == project.LevelSealed && p.Home.Node != "")
+		}
+		out = append(out, entry)
+	}
+	return out, err
 }
