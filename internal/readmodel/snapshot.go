@@ -637,7 +637,7 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 		item := Task{
 			ID: t.ID, Goal: t.Goal, State: t.State, Settlement: t.Settlement, Member: t.Member,
 			NodeID: t.Node, Parent: t.Parent, Children: children[t.ID],
-			Channel: t.Channel, ProjectID: t.ProjectID, Origin: t.Origin, Requester: t.Requester,
+			Transport: t.Transport, Channel: t.Channel, ProjectID: t.ProjectID, Origin: t.Origin, Requester: t.Requester,
 			Turns: t.Budget.Turns, MaxTurns: t.Budget.MaxTurns,
 			Elapsed:     t.Budget.Elapsed.Round(time.Second).String(),
 			MaxElapse:   t.Budget.MaxElapsed.Round(time.Minute).String(),

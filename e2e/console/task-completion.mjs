@@ -21,7 +21,7 @@ const eventually = async (predicate, message) => {
     assert.fail(message);
 };
 const conversation = "console:completion-test";
-const root = () => ({ id: "148", goal: "Accepted root task with a long title 验收完成的主任务，保留会话与原生上下文 ".repeat(3), channel: conversation, member: "worker", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, pending_results: 0, uncertain_results: 0, can_complete: true, turns: 2, max_turns: 0, updated_at: at });
+const root = () => ({ id: "148", goal: "Accepted root task with a long title 验收完成的主任务，保留会话与原生上下文 ".repeat(3), transport: "console", channel: conversation, member: "worker", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, pending_results: 0, uncertain_results: 0, can_complete: true, turns: 2, max_turns: 0, updated_at: at });
 const fixture = { task: root(), calls: [], errors: [], mode: "success", release: null, onHold: null, expect: "/tasks complete 148" };
 
 try {

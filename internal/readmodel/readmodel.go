@@ -351,6 +351,9 @@ type Task struct {
 	Tokens  Tokens `json:"tokens"`
 	Seconds int64  `json:"seconds"`
 	Model   string `json:"model,omitempty"`
+	// Transport owns the opaque conversation in Channel; its prefix does
+	// not identify the transport or authorize a control request.
+	Transport string `json:"transport,omitempty"`
 	// Channel, ProjectID and Origin say where the task was asked, in
 	// which project, and by what (chat, plan, schedule, delegate).
 	Channel   string `json:"channel,omitempty"`

@@ -18,7 +18,7 @@ const browser = await chromium.launch({ headless: process.env.HEADED !== "1", ch
 const at = "2026-09-06T10:00:00Z";
 const A = "console:interaction-a", B = "console:interaction-b";
 const project = (id) => ({ id, node: "test-node", path: `/test/${id}`, repo: "inplace", level: "public", home: id === "home", agents: [], workspaces: [] });
-const task = (id, channel, projectID) => ({ id, channel, project_id: projectID, goal: `Task ${id}`, state: "running", lifecycle: "running", execution: "running", lane: "running", attention: 0, turns: 1, max_turns: 10, member: "test-agent", node: "test-node", updated_at: at });
+const task = (id, channel, projectID) => ({ id, transport: "console", channel, project_id: projectID, goal: `Task ${id}`, state: "running", lifecycle: "running", execution: "running", lane: "running", attention: 0, turns: 1, max_turns: 10, member: "test-agent", node: "test-node", updated_at: at });
 const gate = () => { let release; const promise = new Promise((resolve) => { release = resolve; }); return { promise, release }; };
 async function eventually(predicate, message) {
     for (let i = 0; i < 80; i++) { if (await predicate()) return; await delay(25); }

@@ -41,7 +41,7 @@ export interface Task {
     // not matter. The task still reads as failed; this says nobody waits on it.
     settlement?: "handled" | "ignored";
     title?: string; priority?: "high" | "normal" | "low" | ""; labels?: string[]; archived_at?: string;
-    member?: string; node?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
+    member?: string; node?: string; transport?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
     turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; updated_at?: string; plan_id?: string;
     tokens?: Tokens; seconds?: number; model?: string; attempt_rows?: AttemptRow[];
 }
