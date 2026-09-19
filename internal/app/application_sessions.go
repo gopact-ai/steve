@@ -80,7 +80,7 @@ func newApplicationSessionBinder(active cluster.Activation) func(context.Context
 		ctx = harness.WithPluginProfile(ctx, record.PluginRuntime)
 		return harness.WithNodeSession(ctx, harness.NodeSessionContext{
 			Authority:    nodewire.SessionAuthority{ClusterID: active.Runtime.Status().ClusterID, CoordinatorNodeID: active.NodeID, CoordinatorEpoch: active.Assignment.Epoch, WriterGeneration: active.WriterGeneration},
-			Binding:      nodewire.SessionBinding{NativeImportID: record.NativeImportID(), PluginRuntimeID: record.PluginRuntimeID(), ProjectID: record.Project, SessionID: cluster.LogicalAgentSession(tracked.Channel, tracked.ID, record.Agent), TaskID: record.TaskID, AttemptID: record.ID, NodeID: record.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(record), TaskEpoch: record.Execution.Epoch},
+			Binding:      sessionBinding(record, tracked),
 			NativeImport: record.NativeImport.Clone(),
 			CommandID:    command,
 		}), nil
