@@ -74,7 +74,8 @@ try {
         assert.equal(modules.has(`/src/pages/${route}.tsx`), false, `${route} not requested on Console`);
     }
     for (const domain of ["skills", "mcp", "plugins"]) {
-        await page.evaluate((domain) => { location.hash = `/${domain}`; }, domain);
+        const name = { skills: "Skills", mcp: "MCP", plugins: "Plugins" }[domain];
+        await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name, exact: true }).press("Enter");
         await waitReads(domain, 0);
         assert.ok(modules.has(`/src/pages/${domain}.tsx`), `${domain} imported on navigation`);
         let before = counts[domain];
@@ -100,12 +101,23 @@ try {
             assert.equal(counts[domain], before, "duplicate domain observations are not new revisions");
         }
         if (domain === "skills") {
+            // Enter through the grid's row/cell keyboard model. Directly
+            // focusing its switch can race the collection restoring row focus.
+            const toggle = page.getByRole("switch", { name: "Enable review", exact: true });
+            const row = page.getByRole("row").filter({ has: toggle });
+            await row.focus();
+            await row.and(page.locator(":focus")).waitFor({ state: "attached" });
+            for (const target of [row.getByRole("rowheader"), row.getByRole("gridcell").nth(0), row.getByRole("gridcell").nth(1), toggle]) {
+                await page.keyboard.press("ArrowRight");
+                await target.and(page.locator(":focus")).waitFor({ state: "attached" });
+            }
+            assert.equal(await toggle.evaluate((element) => element.matches(":focus-visible")), true, "the switch has keyboard focus before activation");
             before = counts.skills;
             const responses = Promise.all([
                 page.waitForResponse((response) => new URL(response.url()).pathname === "/console/skills/review" && response.request().method() === "PUT"),
                 page.waitForResponse((response) => new URL(response.url()).pathname === "/console/skills" && response.request().method() === "GET" && mutations === 1),
             ]);
-            await page.getByRole("switch", { name: /review/ }).press("Space");
+            await page.keyboard.press("Space");
             const [mutation, refreshed] = await responses;
             assert.equal(mutation.status(), 200);
             assert.equal(refreshed.status(), 200);
