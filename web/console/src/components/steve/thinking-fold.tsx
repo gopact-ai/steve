@@ -10,7 +10,7 @@ export function ThinkingFold({ text, open, live }: { text: string; open?: boolea
     const { followTail, ...scroll } = useFollowTail(text, live);
     return (
         <details open={open} className="group/think min-w-0" onToggle={followTail}>
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs text-tertiary hover:text-primary" title={t("consoleChrome.thinkingHint")}>
+            <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary" title={t("consoleChrome.thinkingHint")}>
                 <span>{t("consoleChrome.thinking")}</span>
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/think:rotate-180" />
             </summary>

@@ -86,7 +86,7 @@ export function ToolCalls({ tools, title, defaultOpen = true }: { tools: ToolCal
     const running = tools.some((t) => t.status !== "completed" && t.status !== "failed");
     return (
         <details open={defaultOpen} className="group/calls min-w-0">
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs text-tertiary hover:text-primary">
+            <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary">
                 {running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
                 <span>{title ?? headingOf(tools, locale)}</span>
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/calls:rotate-180" />
