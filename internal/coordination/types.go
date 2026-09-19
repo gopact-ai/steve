@@ -26,10 +26,11 @@ var (
 	ErrInvalid         = errors.New("coordination: invalid request")
 	ErrCommandConflict = errors.New("coordination: command ID reused with different input")
 	ErrApplication     = errors.New("coordination: application replica failed")
+	ErrReceiptExpired  = errors.New("coordination: application replay receipt expired")
 )
 
 // Application applies deterministic atomic changes. A durable implementation
-// must store ID and its result in the same transaction as the change: committed
+// must store (Version, ID) and its result in the same transaction as the change: committed
 // Raft entries can be replayed after a process restart. Returning an error is a
 // fatal local storage failure and stops the replica. Business rejections belong
 // in the returned bytes. Snapshot and Restore include that durable deduplication
@@ -39,6 +40,15 @@ type Application interface {
 	Apply(AppliedCommand) ([]byte, error)
 	Snapshot() ([]byte, error)
 	Restore([]byte) error
+}
+
+// CheckpointApplication can compact physical replay evidence in a private
+// snapshot. The returned callback runs only after the consensus snapshot is
+// durably persisted, and never after another Restore. It must not call Service.
+// Failing that optional cleanup must leave live application facts unchanged.
+type CheckpointApplication interface {
+	Application
+	SnapshotCheckpoint(replayFloor uint64) ([]byte, func() error, error)
 }
 
 type AppliedCommand struct {
@@ -52,6 +62,10 @@ type AppCommand struct {
 	ID               string `json:"id"`
 	CallerNodeID     string `json:"caller_node_id"`
 	CoordinatorEpoch uint64 `json:"coordinator_epoch"`
+	// Retries retain this version and the original ID. Once it precedes
+	// AppReplayFloor the caller must reconcile business facts, not submit
+	// the old mutation with a newer version. Application command identity is
+	// (ExpectedVersion, ID); administrative command identities are separate.
 	ExpectedVersion  uint64 `json:"expected_version"`
 	WriterGeneration uint64 `json:"writer_generation"`
 	Payload          []byte `json:"payload"`
@@ -136,6 +150,7 @@ type State struct {
 	Coordinator      Assignment                      `json:"coordinator"`
 	AutoFailover     bool                            `json:"auto_failover"`
 	AppVersion       uint64                          `json:"app_version"`
+	AppReplayFloor   uint64                          `json:"app_replay_floor"`
 	WriterGeneration uint64                          `json:"writer_generation"`
 	Audit            []AuditRecord                   `json:"audit"`
 }

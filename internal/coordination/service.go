@@ -333,7 +333,7 @@ func (s *Service) submit(ctx context.Context, c command) (Result, error) {
 	if err := s.barrier(ctx); err != nil {
 		return Result{}, err
 	}
-	if r, ok := s.fsm.lookup(c.ID, c.Fingerprint); ok {
+	if r, ok := s.fsm.lookupCommand(c); ok {
 		return r.Result, r.err()
 	}
 	c.ClusterID = s.config.ClusterID

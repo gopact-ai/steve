@@ -36,10 +36,11 @@ type command struct {
 }
 
 type receipt struct {
-	Fingerprint string `json:"fingerprint"`
-	Result      Result `json:"result"`
-	Code        string `json:"code,omitempty"`
-	Message     string `json:"message,omitempty"`
+	Fingerprint        string  `json:"fingerprint"`
+	Result             Result  `json:"result"`
+	Code               string  `json:"code,omitempty"`
+	Message            string  `json:"message,omitempty"`
+	ApplicationVersion *uint64 `json:"application_version,omitempty"`
 }
 
 func (r receipt) err() error {
@@ -59,6 +60,8 @@ func (r receipt) err() error {
 		kind = ErrCommandConflict
 	case "application":
 		kind = ErrApplication
+	case "expired":
+		kind = ErrReceiptExpired
 	default:
 		kind = ErrInvalid
 	}
@@ -66,13 +69,14 @@ func (r receipt) err() error {
 }
 
 type machine struct {
-	mu                sync.RWMutex
-	state             State
-	receipts          map[string]receipt
-	app               Application
-	failure           error
-	failed            chan struct{}
-	membershipChanged chan struct{}
+	mu                 sync.RWMutex
+	state              State
+	receipts           map[string]receipt
+	app                Application
+	failure            error
+	failed             chan struct{}
+	membershipChanged  chan struct{}
+	snapshotGeneration uint64
 }
 
 func newMachine(clusterID string, app Application) *machine {
@@ -112,7 +116,7 @@ func cloneState(s State) State {
 func (m *machine) lookup(id, fingerprint string) (receipt, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	r, ok := m.receipts[id]
+	r, ok := m.receipts["control/"+id]
 	if ok && r.Fingerprint != fingerprint {
 		return receipt{Code: "command", Message: "command ID belongs to different input"}, true
 	}
@@ -153,7 +157,10 @@ func (m *machine) Apply(log *raft.Log) interface{} {
 		return m.fail(fmt.Errorf("committed command belongs to another cluster"))
 	}
 	m.state.AppliedIndex = log.Index
-	if old, ok := m.receipts[c.ID]; ok {
+	if c.Kind == "app" && c.App.ExpectedVersion < m.state.AppReplayFloor {
+		return expiredReceipt()
+	}
+	if old, ok := m.receipts[receiptKey(c)]; ok {
 		if old.Fingerprint != c.Fingerprint {
 			return receipt{Code: "command", Message: "command ID belongs to different input"}
 		}
@@ -215,6 +222,10 @@ func (m *machine) applyCommand(c command, index uint64, r *receipt) (*AuditRecor
 // the next entry that reuses the command ID.
 func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord) receipt {
 	s := &m.state
+	if c.Kind == "app" {
+		version := c.App.ExpectedVersion
+		r.ApplicationVersion = &version
+	}
 	if r.Code == "" {
 		if bumpsRevision(c.Kind) {
 			s.Revision++
@@ -235,7 +246,8 @@ func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord)
 	r.Result.Coordinator = s.Coordinator
 	r.Result.AppVersion = s.AppVersion
 	r.Result.WriterGeneration = s.WriterGeneration
-	m.receipts[c.ID] = r
+	m.receipts[receiptKey(c)] = r
+	m.advanceReplayFloor()
 	r.Result.Data = bytes.Clone(r.Result.Data)
 	return r
 }
@@ -600,8 +612,10 @@ type snapshotData struct {
 	HasApplication bool               `json:"has_application"`
 }
 
+const snapshotFormat = 3
+
 func (m *machine) Snapshot() (raft.FSMSnapshot, error) {
-	data, application, err := m.captureSnapshot()
+	data, application, persisted, err := m.captureSnapshot()
 	if err != nil {
 		return nil, err
 	}
@@ -611,16 +625,16 @@ func (m *machine) Snapshot() (raft.FSMSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &encodedSnapshot{metadata: metadata, application: application}, nil
+	return &encodedSnapshot{metadata: metadata, application: application, persisted: persisted}, nil
 }
 
-func (m *machine) captureSnapshot() (snapshotData, []byte, error) {
+func (m *machine) captureSnapshot() (snapshotData, []byte, func() error, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.failure != nil {
-		return snapshotData{}, nil, fmt.Errorf("%w: replica stopped", ErrApplication)
+		return snapshotData{}, nil, nil, fmt.Errorf("%w: replica stopped", ErrApplication)
 	}
-	data := snapshotData{Format: 2, State: cloneState(m.state), Receipts: maps.Clone(m.receipts), HasApplication: m.app != nil}
+	data := snapshotData{Format: snapshotFormat, State: cloneState(m.state), Receipts: maps.Clone(m.receipts), HasApplication: m.app != nil}
 	// Result bytes may be owned by an application implementation. Do not
 	// retain aliases while snapshot persistence runs concurrently with Apply.
 	for id, receipt := range data.Receipts {
@@ -628,14 +642,30 @@ func (m *machine) captureSnapshot() (snapshotData, []byte, error) {
 		data.Receipts[id] = receipt
 	}
 	var application []byte
+	var persisted func() error
 	if m.app != nil {
 		var err error
-		application, err = m.app.Snapshot()
+		if owner, ok := m.app.(CheckpointApplication); ok {
+			application, persisted, err = owner.SnapshotCheckpoint(data.State.AppReplayFloor)
+		} else {
+			application, err = m.app.Snapshot()
+		}
 		if err != nil {
-			return snapshotData{}, nil, fmt.Errorf("snapshot application: %w", err)
+			return snapshotData{}, nil, nil, fmt.Errorf("snapshot application: %w", err)
 		}
 	}
-	return data, application, nil
+	if persisted != nil {
+		prune, generation := persisted, m.snapshotGeneration
+		persisted = func() error {
+			m.mu.RLock()
+			defer m.mu.RUnlock()
+			if generation != m.snapshotGeneration {
+				return nil
+			}
+			return prune()
+		}
+	}
+	return data, application, persisted, nil
 }
 
 func (m *machine) Restore(reader io.ReadCloser) error {
@@ -650,12 +680,16 @@ func (m *machine) Restore(reader io.ReadCloser) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if data.Format != 2 || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
+	if data.Format != snapshotFormat || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
 		return fmt.Errorf("%w: snapshot identity or format differs", ErrInvalid)
 	}
 	if data.HasApplication != (m.app != nil) || (!data.HasApplication && len(application) != 0) {
 		return fmt.Errorf("%w: snapshot application configuration differs", ErrInvalid)
 	}
+	if data.State.AppReplayFloor != applicationReplayFloor(data.State.AppVersion) {
+		return fmt.Errorf("%w: snapshot replay window differs", ErrInvalid)
+	}
+	m.snapshotGeneration++
 	if m.app != nil {
 		if err := m.app.Restore(application); err != nil {
 			m.fail(fmt.Errorf("restore application: %w", err))

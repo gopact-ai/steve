@@ -2934,7 +2934,8 @@
           "writer_generation": 1
         },
         "code": "epoch",
-        "message": "coordinator assignment changed"
+        "message": "coordinator assignment changed",
+        "application_version": 0
       }
     },
     {
@@ -3029,7 +3030,8 @@
           "writer_generation": 1
         },
         "code": "coordinator",
-        "message": "caller does not hold the coordinator role"
+        "message": "caller does not hold the coordinator role",
+        "application_version": 0
       }
     },
     {
@@ -3124,7 +3126,8 @@
           "writer_generation": 1
         },
         "code": "writer",
-        "message": "writer generation changed"
+        "message": "writer generation changed",
+        "application_version": 0
       }
     },
     {
@@ -3219,7 +3222,8 @@
           "writer_generation": 1
         },
         "code": "conflict",
-        "message": "application version changed"
+        "message": "application version changed",
+        "application_version": 4
       }
     },
     {
@@ -3313,7 +3317,8 @@
           "app_version": 1,
           "writer_generation": 1,
           "data": "Mw=="
-        }
+        },
+        "application_version": 0
       }
     },
     {
@@ -3407,7 +3412,8 @@
           "app_version": 2,
           "writer_generation": 1,
           "data": "Ng=="
-        }
+        },
+        "application_version": 1
       }
     },
     {
@@ -3501,7 +3507,8 @@
           "app_version": 1,
           "writer_generation": 1,
           "data": "Mw=="
-        }
+        },
+        "application_version": 0
       }
     },
     {
@@ -3572,7 +3579,7 @@
           "id": "app-1",
           "caller_node_id": "n1",
           "coordinator_epoch": 1,
-          "expected_version": 2,
+          "expected_version": 0,
           "writer_generation": 1,
           "payload": "Mw=="
         },
@@ -5881,7 +5888,8 @@
           "writer_generation": 1
         },
         "code": "coordinator",
-        "message": "caller does not hold the coordinator role"
+        "message": "caller does not hold the coordinator role",
+        "application_version": 2
       }
     },
     {
@@ -6118,6 +6126,7 @@
     },
     "auto_failover": false,
     "app_version": 2,
+    "app_replay_floor": 0,
     "writer_generation": 1,
     "audit": [
       {

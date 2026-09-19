@@ -33,7 +33,7 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 	if l.replicaWriter {
 		return nil, ErrReplicaWriteBypass
 	}
-	path, incarnation, cleanup, err := l.captureReplicaDatabase()
+	path, incarnation, _, cleanup, err := l.captureReplicaDatabase()
 	if err != nil {
 		return nil, err
 	}
@@ -43,15 +43,15 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 	return encodeReplicaSnapshot(path, incarnation)
 }
 
-func (l *Ledger) captureReplicaDatabase() (string, uint64, func(), error) {
+func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error) {
 	l.applyMu.Lock()
 	defer l.applyMu.Unlock()
 	if _, err := l.replicationState(); err != nil {
-		return "", 0, nil, err
+		return "", 0, 0, nil, err
 	}
 	path, cleanup, err := l.replicaTemp(nil)
 	if err != nil {
-		return "", 0, nil, err
+		return "", 0, 0, nil, err
 	}
 	complete := false
 	defer func() {
@@ -61,12 +61,12 @@ func (l *Ledger) captureReplicaDatabase() (string, uint64, func(), error) {
 	}()
 	conn, err := l.db.Conn(context.Background())
 	if err != nil {
-		return "", 0, nil, err
+		return "", 0, 0, nil, err
 	}
 	defer conn.Close()
 	var incarnation uint64
 	if err := conn.QueryRowContext(context.Background(), `SELECT value FROM meta WHERE key = 'incarnation'`).Scan(&incarnation); err != nil {
-		return "", 0, nil, err
+		return "", 0, 0, nil, err
 	}
 	if err := conn.Raw(func(raw any) error {
 		provider, ok := raw.(backupSource)
@@ -80,10 +80,10 @@ func (l *Ledger) captureReplicaDatabase() (string, uint64, func(), error) {
 		_, stepErr := backup.Step(-1)
 		return errors.Join(stepErr, backup.Finish())
 	}); err != nil {
-		return "", 0, nil, fmt.Errorf("snapshot ledger: %w", err)
+		return "", 0, 0, nil, fmt.Errorf("snapshot ledger: %w", err)
 	}
 	complete = true
-	return path, incarnation, cleanup, nil
+	return path, incarnation, l.snapshotGeneration, cleanup, nil
 }
 
 // RestoreReplica durably replaces application state through SQLite's atomic
@@ -107,6 +107,9 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 	}
 	l.applyMu.Lock()
 	defer l.applyMu.Unlock()
+	// A captured checkpoint can finish persisting concurrently with Restore.
+	// Invalidate its physical-pruning callback before replacing any live facts.
+	l.snapshotGeneration++
 	if incarnation < l.Incarnation() {
 		return fmt.Errorf("ledger: snapshot incarnation %d predates local %d", incarnation, l.Incarnation())
 	}
@@ -246,16 +249,8 @@ func validateReplicaSnapshot(path string, incarnation uint64) error {
 	if err != nil || schema != schemaVersion {
 		return errors.New("ledger: snapshot schema mismatch")
 	}
-	version, err := replicaVersion(db)
-	if err != nil {
+	if err := validateReplicaReceipts(db); err != nil {
 		return err
-	}
-	var first, latest, count uint64
-	if err := db.QueryRow(`SELECT COALESCE(MIN(version), 0), COALESCE(MAX(version), 0), COUNT(*) FROM replica_commands`).Scan(&first, &latest, &count); err != nil {
-		return err
-	}
-	if latest != version || count != version || (version > 0 && first != 1) {
-		return errors.New("ledger: snapshot replay receipts do not match application version")
 	}
 	var effects int64
 	return db.QueryRow(`SELECT COUNT(*) FROM effect_entries`).Scan(&effects)

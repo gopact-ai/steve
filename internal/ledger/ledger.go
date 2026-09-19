@@ -62,7 +62,7 @@ const (
 	incarnationFile = "incarnation"
 	databaseFile    = "ledger.db"
 	journalFile     = "effects.log"
-	schemaVersion   = 1
+	schemaVersion   = 2
 )
 
 // Ledger is one open authority.
@@ -77,6 +77,7 @@ type Ledger struct {
 	recovery            bool
 	writerMu            sync.Mutex
 	applyMu             sync.Mutex
+	snapshotGeneration  uint64
 	replication         Replicator
 	replicaFailure      error
 	replicationRequired bool
@@ -283,9 +284,9 @@ func migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS bindings (
 			kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
 			updated_at TEXT NOT NULL, PRIMARY KEY (kind, id))`,
-		`CREATE TABLE IF NOT EXISTS replica_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), version INTEGER NOT NULL)`,
-		`INSERT OR IGNORE INTO replica_state(singleton, version) VALUES (1, 0)`,
-		`CREATE TABLE IF NOT EXISTS replica_commands (id TEXT PRIMARY KEY, version INTEGER NOT NULL UNIQUE, fingerprint TEXT NOT NULL, result BLOB NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS replica_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), version INTEGER NOT NULL, replay_floor INTEGER NOT NULL)`,
+		`INSERT OR IGNORE INTO replica_state(singleton, version, replay_floor) VALUES (1, 0, 0)`,
+		`CREATE TABLE IF NOT EXISTS replica_commands (id TEXT NOT NULL, version INTEGER NOT NULL UNIQUE, fingerprint TEXT NOT NULL, result BLOB NOT NULL, PRIMARY KEY(id, version))`,
 		`CREATE TABLE IF NOT EXISTS effect_entries (seq INTEGER PRIMARY KEY, data TEXT NOT NULL)`,
 	}
 	for _, stmt := range stmts {

@@ -29,6 +29,9 @@ func (a application) Apply(command coordination.AppliedCommand) ([]byte, error) 
 	return result, err
 }
 func (a application) Snapshot() ([]byte, error) { return a.runtime.book.SnapshotReplica() }
+func (a application) SnapshotCheckpoint(floor uint64) ([]byte, func() error, error) {
+	return a.runtime.book.SnapshotReplicaCheckpoint(floor)
+}
 func (a application) Restore(data []byte) error {
 	// Do not call Service here: Raft holds its FSM mutex during Restore.
 	a.runtime.mu.Lock()

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/hashicorp/raft"
 )
@@ -14,7 +15,10 @@ import (
 const snapshotMagic = "STVFSM02"
 const snapshotHeaderSize = 24 + sha256.Size
 
-type encodedSnapshot struct{ metadata, application []byte }
+type encodedSnapshot struct {
+	metadata, application []byte
+	persisted             func() error
+}
 
 func (s *encodedSnapshot) Persist(sink raft.SnapshotSink) error {
 	header := make([]byte, snapshotHeaderSize)
@@ -36,12 +40,20 @@ func (s *encodedSnapshot) Persist(sink raft.SnapshotSink) error {
 		_ = sink.Cancel()
 		return err
 	}
+	// The snapshot is durable already. A cleanup failure leaves excess live
+	// replay evidence, and must not cancel or invalidate that snapshot.
+	if s.persisted != nil {
+		if err := s.persisted(); err != nil {
+			slog.Warn("snapshot persisted; replay cleanup deferred", "error", err)
+		}
+	}
 	return nil
 }
 
 func (s *encodedSnapshot) Release() {
 	s.metadata = nil
 	s.application = nil
+	s.persisted = nil
 }
 
 func decodeSnapshot(reader io.Reader) ([]byte, []byte, error) {
