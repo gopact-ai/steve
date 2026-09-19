@@ -86,6 +86,14 @@ func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) (
 				r := reply(*e.Receipt)
 				e.Receipt = &r
 			}
+			if e.RecoveryStopTarget != nil {
+				e.RecoveryStopTarget.Conversation = apply(conversation, e.RecoveryStopTarget.Conversation)
+				e.RecoveryStopTarget.TaskID = apply(taskID, e.RecoveryStopTarget.TaskID)
+			}
+			if e.RecoveryStop != nil {
+				r := reply(*e.RecoveryStop)
+				e.RecoveryStop = &r
+			}
 			mapped := apply(conversation, id)
 			out.Exchanges[mapped] = append(out.Exchanges[mapped], e)
 		}

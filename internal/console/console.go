@@ -104,9 +104,10 @@ type Service struct {
 	// Processes stay attached until finish records the reply, closing the
 	// gap between the handler returning and the last child snapshot arriving.
 	processes map[string]*process
-	// doc keeps the transcript across restarts. A console whose history
-	// vanishes with the process would make every restart look like the
-	// owner had never said anything.
+	// Ledger records are the production authority. doc is an explicitly
+	// selected file/test adapter, never a ledger compatibility fallback.
+	book            *ledger.Ledger
+	records         consoleRecords
 	doc             ledger.Doc
 	questions       map[string]consoleapi.PendingQuestion
 	questionWaiters map[string]chan struct{}
@@ -237,51 +238,81 @@ func (s *Service) SetInspector(i Inspector) { s.inspector = i }
 // SetAnchorer wires the messaging server's anchor registration.
 func (s *Service) SetAnchorer(fn func(conversation, chatID, messageID string)) { s.anchor = fn }
 
-// Persist loads the durable transcript and records what a restart cut
-// short; Drain then starts what waits. Call both after wiring the
-// handler, inspector and other turn dependencies.
+// Persist selects a whole-document file/test adapter. Production callers use
+// PersistLedger; a ledger Document is deliberately rejected, not migrated.
 func (s *Service) Persist(doc ledger.Doc) error {
-	raw, ok, err := doc.Load()
+	if _, ok := doc.(*ledger.Document); ok {
+		return errors.New("console: use PersistLedger for ledger records")
+	}
+	saved, err := loadTranscript(doc)
 	if err != nil {
-		return fmt.Errorf("console: load transcript: %w", err)
+		return fmt.Errorf("console: load transcript adapter: %w", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if ok && len(raw) > 0 {
-		var saved transcript
-		if err := json.Unmarshal(raw, &saved); err != nil || saved.Replies == nil {
-			// The earlier shape: just the lines, by conversation.
-			var legacy map[string][]consoleapi.Reply
-			if err := json.Unmarshal(raw, &legacy); err != nil {
-				return fmt.Errorf("console: transcript is not readable: %w", err)
-			}
-			saved = transcript{Replies: legacy}
+	if s.book != nil || s.doc != nil {
+		return errors.New("console: persistence is already configured")
+	}
+	previous := transcript{Replies: s.replies, Meta: s.meta, Exchanges: s.exchanges, Questions: s.questions}
+	previousRunning := s.running
+	s.installTranscript(saved)
+	s.doc = doc
+	if err := s.restoreQueueLocked(); err != nil {
+		s.replies, s.meta, s.exchanges, s.questions = previous.Replies, previous.Meta, previous.Exchanges, previous.Questions
+		s.running, s.doc = previousRunning, nil
+		return err
+	}
+	return nil
+}
+
+func (s *Service) installTranscript(saved transcript) {
+	// Keep replies recorded before persistence was attached, as the file
+	// adapter did. Build fresh collections so a failed recovery projection
+	// cannot mutate the previous in-memory state.
+	for conversation, list := range s.replies {
+		merged := append([]consoleapi.Reply{}, saved.Replies[conversation]...)
+		saved.Replies[conversation] = append(merged, list...)
+	}
+	for conversation, meta := range s.meta {
+		if _, exists := saved.Meta[conversation]; !exists {
+			saved.Meta[conversation] = meta
 		}
-		for conversation, list := range saved.Replies {
-			s.replies[conversation] = append(list, s.replies[conversation]...)
+	}
+	for conversation, list := range s.exchanges {
+		if _, exists := saved.Exchanges[conversation]; exists {
+			continue
 		}
-		for conversation, list := range saved.Exchanges {
-			s.exchanges[conversation] = list
+		saved.Exchanges[conversation] = []*queuedExchange{}
+		for _, e := range list {
+			cloned := *e
+			saved.Exchanges[conversation] = append(saved.Exchanges[conversation], &cloned)
 		}
-		for conversation, m := range saved.Meta {
-			s.meta[conversation] = m
+	}
+	for id, question := range s.questions {
+		if _, exists := saved.Questions[id]; !exists {
+			saved.Questions[id] = question
 		}
-		for id, question := range saved.Questions {
-			if question.State == "pending" {
-				question.State = "interrupted"
-				question.UpdatedAt = time.Now().UTC()
-			}
+	}
+	s.replies, s.meta, s.exchanges, s.questions = saved.Replies, saved.Meta, saved.Exchanges, saved.Questions
+	s.running = map[string]int{}
+	for id, question := range s.questions {
+		if question.State == "pending" {
+			question.State = "interrupted"
+			question.UpdatedAt = time.Now().UTC()
 			s.questions[id] = question
 		}
 	}
-	s.doc = doc
-	return s.restoreQueueLocked()
 }
 
-// save writes one durable document; the caller holds the lock. Transcript
-// projections are bounded, but keyed exchanges are retained as business
-// records. Large histories will need an explicit storage/retention contract.
+// save persists only changed ledger records, or the explicitly selected
+// document adapter. The caller holds the lock and owns mutation rollback.
 func (s *Service) save() error {
+	if s.book != nil {
+		if err := s.saveRecords(); err != nil {
+			return fmt.Errorf("console: save records: %w", err)
+		}
+		return nil
+	}
 	if s.doc == nil {
 		return nil
 	}
@@ -309,7 +340,8 @@ func (s *Service) Update(_ context.Context, conversation string, patch consoleap
 			return fmt.Errorf("no conversation %q", conversation)
 		}
 	}
-	m := s.meta[conversation]
+	previous, hadMeta := s.meta[conversation]
+	m := previous
 	if patch.Title != nil {
 		if title := strings.TrimSpace(*patch.Title); title != "" {
 			m.Title, m.TitleBy = clipTitle(title), "user"
@@ -322,7 +354,15 @@ func (s *Service) Update(_ context.Context, conversation string, patch consoleap
 	}
 	m.UpdatedAt = time.Now().UTC()
 	s.meta[conversation] = m
-	s.save()
+	if err := s.save(); err != nil {
+		if hadMeta {
+			s.meta[conversation] = previous
+		} else {
+			delete(s.meta, conversation)
+		}
+		s.mu.Unlock()
+		return err
+	}
 	s.mu.Unlock()
 	if s.model != nil {
 		s.model.Publish(readmodel.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: m.Title})
@@ -376,9 +416,19 @@ func (s *Service) autoTitle(conversation, prompt, reply string) {
 		s.mu.Unlock()
 		return
 	}
+	previous, hadMeta := s.meta[conversation]
 	m.Title, m.TitleBy, m.UpdatedAt = title, "agent", time.Now().UTC()
 	s.meta[conversation] = m
-	s.save()
+	if err := s.save(); err != nil {
+		if hadMeta {
+			s.meta[conversation] = previous
+		} else {
+			delete(s.meta, conversation)
+		}
+		s.mu.Unlock()
+		slog.Error("console: save title", "error", err)
+		return
+	}
 	s.mu.Unlock()
 	if s.model != nil {
 		s.model.Publish(readmodel.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: title})
@@ -757,7 +807,10 @@ func (s *Service) UpdateStep(conversation, taskID string, step consoleapi.StepPr
 			updated.Steps = append([]consoleapi.StepProcess(nil), updated.Steps...)
 			updated.Steps[j] = step
 			s.replies[conversation][i].Process = &updated
-			if s.save() == nil && s.model != nil {
+			if err := s.save(); err != nil {
+				s.replies[conversation][i] = reply
+				slog.Error("console: save step", "error", err)
+			} else if s.model != nil {
 				s.model.Publish(readmodel.Event{Kind: "console.step", Conversation: conversation,
 					TaskID: taskID, StepID: step.ID, ReplyID: reply.ID, Step: &step})
 			}
@@ -849,15 +902,25 @@ func newReplyID() string {
 
 func (s *Service) record(r consoleapi.Reply) consoleapi.Reply {
 	s.mu.Lock()
+	previous, existed := s.replies[r.Conversation]
 	r = s.recordLocked(r)
-	s.save()
-	s.publishReply(r)
+	if err := s.save(); err != nil {
+		if existed {
+			s.replies[r.Conversation] = previous
+		} else {
+			delete(s.replies, r.Conversation)
+		}
+		slog.Error("console: save notice", "error", err)
+		r = consoleapi.Reply{Error: err.Error()}
+	} else {
+		s.publishReply(r)
+	}
 	s.mu.Unlock()
 	return r
 }
 
 // recordLocked appends without saving so an exchange transition and its
-// line can be committed in the same document replace.
+// line can be committed in the same owner transaction.
 func (s *Service) recordLocked(r consoleapi.Reply) consoleapi.Reply {
 	if r.ProjectID == "" && r.ExchangeID != "" {
 		for _, e := range s.exchanges[r.Conversation] {

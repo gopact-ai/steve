@@ -19,7 +19,7 @@ func milestoneFixture(t *testing.T) (*Service, *ledger.Ledger, channel.Address) 
 	}
 	t.Cleanup(func() { l.Close() })
 	s := New(&echo{}, "owner", readmodel.New(readmodel.Sources{}))
-	if err := s.Persist(l.Document("console")); err != nil {
+	if err := s.PersistLedger(l); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Send(context.Background(), "side", "do some work")
@@ -32,7 +32,7 @@ func milestoneFixture(t *testing.T) (*Service, *ledger.Ledger, channel.Address) 
 func assertMilestonePersisted(t *testing.T, s *Service, l *ledger.Ledger) {
 	t.Helper()
 	reloaded := New(&echo{}, "owner", nil)
-	if err := reloaded.Persist(l.Document("console")); err != nil {
+	if err := reloaded.PersistLedger(l); err != nil {
 		t.Fatal(err)
 	}
 	for _, conversation := range []string{"side", "main"} {

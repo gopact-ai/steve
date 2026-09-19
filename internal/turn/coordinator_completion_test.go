@@ -7,7 +7,7 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-func TestTaskCompletionWithoutConsoleGuardRejectsExistingDocument(t *testing.T) {
+func TestTaskCompletionWithoutConsoleGuardRejectsExistingRecords(t *testing.T) {
 	for _, raw := range []string{"", "{}", "null", "invalid"} {
 		t.Run(raw, func(t *testing.T) {
 			c, book := completionCoordinator(t, &fakeRunner{reply: "accepted"})
@@ -23,7 +23,10 @@ func TestTaskCompletionWithoutConsoleGuardRejectsExistingDocument(t *testing.T) 
 			if !found || len(durableBefore.Attempts) == 0 {
 				t.Fatal("completion fixture lacks durable task accounting")
 			}
-			if err := book.Document("console").Save([]byte(raw)); err != nil {
+			if err := func() error {
+				_, err := book.DB().Exec(`INSERT INTO bindings(kind,id,data,updated_at) VALUES('console-store','state',?,'now')`, raw)
+				return err
+			}(); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := handle(c, t.Context(), "/tasks complete 1"); err == nil {

@@ -172,7 +172,7 @@ func exportProject(ctx context.Context, o Options, syncFile func(*os.File) error
 	if err != nil {
 		return b, err
 	}
-	if err := releaseSource(ctx, projects, o, p.ID, frozen, b.Tasks); err != nil {
+	if err := releaseSource(ctx, projects, o, p.ID, frozen, b.Tasks, b.Console); err != nil {
 		// The source still owns the project, so the partial bundle has no
 		// reader; one that resists removal is only worth a warning.
 		if removeErr := os.Remove(temp); removeErr != nil {
@@ -262,7 +262,7 @@ func exportDocuments(ctx context.Context, book *ledger.Ledger, id string, b *Bun
 	if err != nil {
 		return err
 	}
-	b.Console, err = console.ExportProject(book.Document("console"), id, consoleIDs)
+	b.Console, err = console.ExportProject(book, id, consoleIDs)
 	return err
 }
 
@@ -408,7 +408,7 @@ func writeBundle(o Options, b Bundle, syncFile func(*os.File) error) (string, er
 // with this project's rows frozen, ready to store in the release.
 func frozenDocuments(book *ledger.Ledger, id string) (map[string]json.RawMessage, error) {
 	frozen := map[string]json.RawMessage{}
-	for _, kind := range []string{"schedules", "console"} {
+	for _, kind := range []string{"schedules"} {
 		raw, exists, err := book.Document(kind).Load()
 		if err != nil {
 			return nil, err
@@ -420,8 +420,6 @@ func frozenDocuments(book *ledger.Ledger, id string) (map[string]json.RawMessage
 		switch kind {
 		case "schedules":
 			err = schedule.FreezeProject(doc, id)
-		case "console":
-			err = console.FreezeProject(doc, id)
 		}
 		if err != nil {
 			return nil, err
@@ -434,12 +432,15 @@ func frozenDocuments(book *ledger.Ledger, id string) (map[string]json.RawMessage
 // releaseSource hands the project over in one transaction: the guard is
 // checked again under the lock, the frozen documents and runs are stored,
 // and ownership moves to the target.
-func releaseSource(ctx context.Context, projects *project.Store, o Options, id string, frozen map[string]json.RawMessage, exportedTasks task.ProjectTransfer) error {
+func releaseSource(ctx context.Context, projects *project.Store, o Options, id string, frozen map[string]json.RawMessage, exportedTasks task.ProjectTransfer, exportedConsole console.ProjectTransfer) error {
 	guard := func(tx *ledger.Tx, id string) error {
 		if err := releaseGuard(tx, id); err != nil {
 			return err
 		}
 		if err := task.FreezeProjectTx(tx, exportedTasks); err != nil {
+			return err
+		}
+		if err := console.FreezeProjectTx(tx, exportedConsole); err != nil {
 			return err
 		}
 		for kind, raw := range frozen {
@@ -597,13 +598,7 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 	for kind, doc := range staged {
 		docs[kind] = doc.Raw
 	}
-	taskOwner := func(tx *ledger.Tx, validateOnly bool) error {
-		if validateOnly {
-			return task.ValidateProjectImportTx(tx, b.Tasks)
-		}
-		return task.ImportProjectTx(tx, b.Tasks)
-	}
-	if err := book.ValidateImport(ctx, facts, docs, expected, taskOwner); err != nil {
+	if err := book.ValidateImport(ctx, facts, docs, expected, importOwners(b)...); err != nil {
 		return empty, err
 	}
 	marker, retry, err := run.claimInstall()
@@ -623,7 +618,7 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 			return empty, fmt.Errorf("migration files not durable; project remains inactive: %w", err)
 		}
 	}
-	if err := book.ImportFacts(ctx, facts, docs, expected, taskOwner); err != nil {
+	if err := book.ImportFacts(ctx, facts, docs, expected, importOwners(b)...); err != nil {
 		return empty, err
 	}
 	if o.Finalize != nil {
@@ -635,6 +630,25 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 		return p, err
 	}
 	return p, nil
+}
+
+// importOwners keeps record owners in the same validation/apply transaction.
+// Each apply rechecks its own collisions after the filesystem install phase.
+func importOwners(b Bundle) []ledger.TransferOwner {
+	return []ledger.TransferOwner{
+		func(tx *ledger.Tx, validateOnly bool) error {
+			if validateOnly {
+				return task.ValidateProjectImportTx(tx, b.Tasks)
+			}
+			return task.ImportProjectTx(tx, b.Tasks)
+		},
+		func(tx *ledger.Tx, validateOnly bool) error {
+			if validateOnly {
+				return console.ValidateProjectImportTx(tx, b.Console)
+			}
+			return console.ImportProjectTx(tx, b.Console)
+		},
+	}
 }
 
 // readImportBundle reads the bundle and names its content: the digest of
@@ -723,7 +737,7 @@ func resumeAcceptedImport(ctx context.Context, book *ledger.Ledger, projects *pr
 func stageDocuments(book *ledger.Ledger, b Bundle) (map[string]*ledger.StagedDocument, map[string]json.RawMessage, error) {
 	staged := map[string]*ledger.StagedDocument{}
 	expected := map[string]json.RawMessage{}
-	for _, kind := range []string{"plans", "state", "schedules", "console"} {
+	for _, kind := range []string{"plans", "state", "schedules"} {
 		raw, exists, err := book.Document(kind).Load()
 		if err != nil {
 			return nil, nil, err
@@ -731,7 +745,7 @@ func stageDocuments(book *ledger.Ledger, b Bundle) (map[string]*ledger.StagedDoc
 		expected[kind] = raw
 		staged[kind] = &ledger.StagedDocument{Raw: raw, Exists: exists}
 	}
-	for _, merge := range []func() error{func() error { return plan.ImportProject(staged["plans"], b.Plans) }, func() error { return state.ImportProject(staged["state"], b.State) }, func() error { return schedule.ImportProject(staged["schedules"], b.Schedules) }, func() error { return console.ImportProject(staged["console"], b.Console) }} {
+	for _, merge := range []func() error{func() error { return plan.ImportProject(staged["plans"], b.Plans) }, func() error { return state.ImportProject(staged["state"], b.State) }, func() error { return schedule.ImportProject(staged["schedules"], b.Schedules) }} {
 		if err := merge(); err != nil {
 			return nil, nil, err
 		}

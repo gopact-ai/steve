@@ -100,7 +100,7 @@ func assembleRecovery(input inputAssembly, boot runtimeAssembly, storage ledgerA
 	}
 
 	// Restored queues may run immediately, so wire their dependencies first.
-	if err := cons.Persist(book.Document("console")); err != nil {
+	if err := cons.PersistLedger(book); err != nil {
 		return err
 	}
 	if environment != nil {

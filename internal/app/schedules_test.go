@@ -65,7 +65,7 @@ func TestConsoleScheduleCrashGapReplaysOnlyItsDurableExchange(t *testing.T) {
 	h := &firingHandler{}
 	page := console.New(h, "owner", nil)
 	page.SetInspector(firingInspector{})
-	if err := page.Persist(book.Document("console")); err != nil {
+	if err := page.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.BeginFiring(due[0].Key); err != nil {

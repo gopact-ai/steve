@@ -31,7 +31,7 @@ func TestProjectRemapPreservesProseAndOriginalCommandIdentity(t *testing.T) {
 		t.Fatalf("question remap %+v", q)
 	}
 	doc := &memDoc{}
-	if err := ImportProject(doc, out); err != nil {
+	if err := ImportProjectDocument(doc, out); err != nil {
 		t.Fatal(err)
 	}
 	s := New(&echo{}, "owner", nil)

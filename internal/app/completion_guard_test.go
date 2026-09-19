@@ -147,7 +147,15 @@ func (f completionFixture) saveConsole(t *testing.T, value any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.book.Document("console").Save(raw); err != nil {
+	var state console.DurableState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	for id, q := range state.Questions {
+		q.ID = id
+		state.Questions[id] = q
+	}
+	if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, state) }); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -200,9 +208,12 @@ func TestTaskCompletionDurableGuardRefusesConsoleFacts(t *testing.T) {
 			case "corrupt", "corrupt-owner-field":
 				raw := "invalid"
 				if scenario == "corrupt-owner-field" {
-					raw = `{"replies":1}`
+					raw = `{"revision":0}`
 				}
-				if err := f.book.Document("console").Save([]byte(raw)); err != nil {
+				if err := func() error {
+					_, err := f.book.DB().Exec(`INSERT INTO bindings(kind,id,data,updated_at) VALUES('console-store','state',?,'now') ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data`, raw)
+					return err
+				}(); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -247,9 +258,9 @@ func TestCompletionOwnerGuardSharesTaskWriteTransaction(t *testing.T) {
 				}
 				questions := map[string]consoleapi.PendingQuestion{}
 				if stage == "guard-refusal" {
-					questions["child"] = consoleapi.PendingQuestion{TaskID: child.ID, State: "pending"}
+					questions["child"] = consoleapi.PendingQuestion{ID: "child", TaskID: child.ID, State: "pending"}
 				}
-				if err := tx.PutBinding("document", "console", map[string]any{"questions": questions}); err != nil {
+				if err := console.StoreStateTx(tx, console.DurableState{Questions: questions}); err != nil {
 					return err
 				}
 				// This is the real owner, reading a fact visible only in tx.
@@ -259,8 +270,8 @@ func TestCompletionOwnerGuardSharesTaskWriteTransaction(t *testing.T) {
 			if !called {
 				t.Fatal("task completion did not call the injected owner")
 			}
-			if _, exists, err := f.book.Document("console").Load(); err != nil || exists {
-				t.Fatalf("failed completion committed owner facts: exists=%v err=%v", exists, err)
+			if state, err := console.LoadState(f.book); err != nil || len(state.Questions) > 0 {
+				t.Fatalf("failed completion committed owner facts: %+v err=%v", state, err)
 			}
 			if after, _ := f.tasks.Get(child.ID); after.ExecutionEpoch != child.ExecutionEpoch+1 {
 				t.Fatalf("failed completion changed child's cancellation epoch: %+v", after)

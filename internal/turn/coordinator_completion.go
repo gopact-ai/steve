@@ -22,8 +22,8 @@ func (c *Coordinator) checkConsoleCompletionTx(tx *ledger.Tx, ids map[string]boo
 	}
 	// A standalone turn coordinator needs no console. Existing console
 	// facts, however, must never be silently ignored by an unwired owner.
-	_, exists, err := tx.LoadDocument("console")
-	if err != nil {
+	var exists bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM bindings WHERE kind IN ('console-store','console-head','console-reply','console-exchange','console-question'))`).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {

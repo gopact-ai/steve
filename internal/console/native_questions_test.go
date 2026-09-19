@@ -85,7 +85,7 @@ func TestNativeDelegateQuestionsKeepOriginalChildBindingAndParentConversation(t 
 			}
 			defer book.Close()
 			service := New(&echo{}, "owner", nil)
-			if err := service.Persist(book.Document("console")); err != nil {
+			if err := service.PersistLedger(book); err != nil {
 				t.Fatal(err)
 			}
 			transport := &nativeQuestionTransport{permission: isPermission, changed: make(chan struct{})}

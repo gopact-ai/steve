@@ -12,11 +12,11 @@ func TestFreezeSourceProjectKeepsOtherQueueAndStableReceipts(t *testing.T) {
 	saved := transcript{Replies: map[string][]consoleapi.Reply{}, Exchanges: map[string][]*queuedExchange{"console:c": {{Exchange: Exchange{ID: "p-queue", Conversation: "console:c", ExpectedProject: "p", State: "queued", Key: "stable"}, PayloadHash: "hash"}, {Exchange: Exchange{ID: "q-queue", Conversation: "console:c", ExpectedProject: "q", State: "queued"}}}}, Questions: map[string]consoleapi.PendingQuestion{"question": {ID: "question", Project: "p", State: "pending"}}}
 	raw, _ := json.Marshal(saved)
 	doc := &ledger.StagedDocument{Raw: raw, Exists: true}
-	if err := FreezeProject(doc, "p"); err != nil {
+	if err := FreezeProjectDocument(doc, "p"); err != nil {
 		t.Fatal(err)
 	}
 	first := string(doc.Raw)
-	if err := FreezeProject(doc, "p"); err != nil {
+	if err := FreezeProjectDocument(doc, "p"); err != nil {
 		t.Fatal(err)
 	}
 	if string(doc.Raw) != first {

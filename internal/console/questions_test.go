@@ -38,7 +38,7 @@ func TestQuestionTextAnswerResumesOriginalRequestAndSurvivesRestart(t *testing.T
 			}
 			t.Cleanup(func() { book.Close() })
 			s := New(&echo{}, "owner", nil)
-			if err := s.Persist(book.Document("console")); err != nil {
+			if err := s.PersistLedger(book); err != nil {
 				t.Fatal(err)
 			}
 			question := view.Question{Title: "How should I continue?", Message: "The service is unavailable. I tried reconnecting. You can restore it or choose another machine.", SessionID: "session-1", Generation: 3, AllowFreeText: true}
@@ -101,7 +101,7 @@ func TestQuestionTextAnswerResumesOriginalRequestAndSurvivesRestart(t *testing.T
 				t.Fatal(err)
 			}
 			restored := New(&echo{}, "owner", nil)
-			if err := restored.Persist(book.Document("console")); err != nil {
+			if err := restored.PersistLedger(book); err != nil {
 				t.Fatal(err)
 			}
 			if got, err := restored.AnswerQuestion(t.Context(), q.ID, answer); err != nil || got.Answer == nil || *got.Answer != answer {
@@ -221,7 +221,7 @@ func TestNodeOwnedQuestionReplaysDurableAnswerInsteadOfAskingAgain(t *testing.T)
 	}
 	defer book.Close()
 	s := New(&echo{}, "owner", nil)
-	if err := s.Persist(book.Document("console")); err != nil {
+	if err := s.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	base := consoleapi.PendingQuestion{Conversation: "console:original", ExchangeID: "e1", Project: "p", TaskID: "task-1", AttemptID: "attempt-1"}
@@ -239,7 +239,7 @@ func TestNodeOwnedQuestionReplaysDurableAnswerInsteadOfAskingAgain(t *testing.T)
 		t.Fatal(answer)
 	}
 	restored := New(&echo{}, "owner", nil)
-	if err := restored.Persist(book.Document("console")); err != nil {
+	if err := restored.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)

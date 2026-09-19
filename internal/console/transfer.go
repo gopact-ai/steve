@@ -12,12 +12,12 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-type TransferExchange struct {
-	Exchange
-	PayloadHash          string            `json:"payload_hash,omitempty"`
-	QuoteAliases         map[string]string `json:"quote_aliases,omitempty"`
-	Receipt              *consoleapi.Reply `json:"receipt,omitempty"`
-	ContinuationRejected bool              `json:"continuation_rejected,omitempty"`
+type TransferExchange = DurableExchange
+
+func transferExchange(e *queuedExchange) TransferExchange {
+	out := durableExchange(e)
+	out.Exchange = copyExchange(out.Exchange)
+	return out
 }
 
 // ProjectTransfer is a durable domain snapshot, without process contexts or
@@ -59,14 +59,27 @@ func loadTranscript(doc ledger.Doc) (transcript, error) {
 	return out, nil
 }
 
-func ExportProject(doc ledger.Doc, project string, conversations []string) (ProjectTransfer, error) {
+func ExportProject(book *ledger.Ledger, project string, conversations []string) (ProjectTransfer, error) {
+	state, err := LoadState(book)
+	if err != nil {
+		return ProjectTransfer{}, err
+	}
+	return exportProject(state.transcript(), project, conversations)
+}
+
+// ExportProjectDocument is an explicit file/test adapter, not ledger authority.
+func ExportProjectDocument(doc ledger.Doc, project string, conversations []string) (ProjectTransfer, error) {
+	saved, err := loadTranscript(doc)
+	if err != nil {
+		return ProjectTransfer{}, err
+	}
+	return exportProject(saved, project, conversations)
+}
+
+func exportProject(saved transcript, project string, conversations []string) (ProjectTransfer, error) {
 	out := ProjectTransfer{Schema: 1, Project: project, Replies: map[string][]consoleapi.Reply{}, Meta: map[string]Meta{}, Exchanges: map[string][]TransferExchange{}, Questions: map[string]consoleapi.PendingQuestion{}}
 	if project == "" {
 		return out, errors.New("project is required")
-	}
-	saved, err := loadTranscript(doc)
-	if err != nil {
-		return out, err
 	}
 	selected := map[string]bool{}
 	for _, id := range conversations {
@@ -103,7 +116,7 @@ func ExportProject(doc ledger.Doc, project string, conversations []string) (Proj
 				foreign = true
 				continue
 			}
-			out.Exchanges[id] = append(out.Exchanges[id], TransferExchange{Exchange: copyExchange(e.Exchange), PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases, Receipt: e.Receipt, ContinuationRejected: e.ContinuationRejected})
+			out.Exchanges[id] = append(out.Exchanges[id], transferExchange(e))
 		}
 		for _, r := range saved.Replies[id] {
 			if r.ProjectID == "" {
@@ -145,13 +158,25 @@ func ExportProject(doc ledger.Doc, project string, conversations []string) (Proj
 	return out, nil
 }
 
-func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
-	if in.Schema != 1 || in.Project == "" {
-		return errors.New("unsupported console project transfer")
-	}
+// ImportProjectDocument is the explicit file/test counterpart of ImportProjectTx.
+func ImportProjectDocument(doc ledger.Doc, in ProjectTransfer) error {
 	saved, err := loadTranscript(doc)
 	if err != nil {
 		return err
+	}
+	if err := mergeProject(&saved, in); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		return err
+	}
+	return doc.Save(raw)
+}
+
+func mergeProject(saved *transcript, in ProjectTransfer) error {
+	if in.Schema != 1 || in.Project == "" {
+		return errors.New("unsupported console project transfer")
 	}
 	allowed := map[string]bool{}
 	for _, id := range in.Conversations {
@@ -214,7 +239,7 @@ func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
 				}
 			}
 			if old, ok := existingExchanges[e.ID]; ok {
-				got := TransferExchange{Exchange: copyExchange(old.Exchange), PayloadHash: old.PayloadHash, QuoteAliases: old.QuoteAliases, Receipt: old.Receipt, ContinuationRejected: old.ContinuationRejected}
+				got := transferExchange(old)
 				if !reflect.DeepEqual(got, e) {
 					return fmt.Errorf("exchange %s conflicts", e.ID)
 				}
@@ -225,7 +250,7 @@ func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
 					return fmt.Errorf("command key %s conflicts", e.Key)
 				}
 			}
-			q := &queuedExchange{Exchange: e.Exchange, PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases, Receipt: e.Receipt, ContinuationRejected: e.ContinuationRejected}
+			q := e.queued()
 			saved.Exchanges[conversation] = append(saved.Exchanges[conversation], q)
 			existingExchanges[e.ID] = q
 		}
@@ -255,9 +280,38 @@ func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
 		sort.SliceStable(list, func(i, j int) bool { return list[i].At.Before(list[j].At) })
 		saved.Replies[id] = list
 	}
-	raw, err := json.Marshal(saved)
+	return nil
+}
+
+// Validation and application share the caller's transaction with every other
+// transfer owner. Recompute collision checks at commit, never import a stale
+// pre-merged full console document.
+func ValidateProjectImportTx(tx *ledger.Tx, in ProjectTransfer) error {
+	_, _, err := projectConsoleChangesTx(tx, in)
+	return err
+}
+
+func ImportProjectTx(tx *ledger.Tx, in ProjectTransfer) error {
+	before, changes, err := projectConsoleChangesTx(tx, in)
 	if err != nil {
 		return err
 	}
-	return doc.Save(raw)
+	return writeConsoleChangesTx(tx, before.revision, changes)
+}
+
+func projectConsoleChangesTx(tx *ledger.Tx, in ProjectTransfer) (consoleRecords, []consoleChange, error) {
+	before, err := loadConsoleRecordsTx(tx)
+	if err != nil {
+		return before, nil, err
+	}
+	state, err := before.state()
+	if err != nil {
+		return before, nil, err
+	}
+	next := state.transcript()
+	if err := mergeProject(&next, in); err != nil {
+		return before, nil, err
+	}
+	changes, err := consoleChanges(before, next)
+	return before, changes, err
 }

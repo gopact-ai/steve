@@ -31,6 +31,7 @@ type queuedExchange struct {
 	RecoveryStopTarget   *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
 	RecoveryStop         *consoleapi.Reply   `json:"recovery_stop,omitempty"`
 	RecoveryStopPending  string              `json:"recovery_stop_pending,omitempty"`
+	RecoveryPending      bool                `json:"recovery_pending,omitempty"`
 	ContinuationRejected bool                `json:"continuation_rejected,omitempty"`
 	recoveryStopping     chan struct{}
 	ctx                  context.Context

@@ -14,7 +14,7 @@ func TestEnsureRecoveryConversationIsVisibleDurableAndDoesNotSubmitWork(t *testi
 	}
 	defer book.Close()
 	s := impatient(New(&echo{}, "owner", nil))
-	if err := s.Persist(book.Document("console")); err != nil {
+	if err := s.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	source := RecoveryConversation{ParentTaskID: "parent-1", SourceChannel: "feishu", SourceConversation: "oc_original", Project: "p"}
@@ -40,7 +40,7 @@ func TestEnsureRecoveryConversationIsVisibleDurableAndDoesNotSubmitWork(t *testi
 		t.Fatal("creating a visible recovery page started work")
 	}
 	restored := impatient(New(&echo{}, "owner", nil))
-	if err := restored.Persist(book.Document("console")); err != nil {
+	if err := restored.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	if id, err := restored.EnsureRecoveryConversation(t.Context(), source); err != nil || id != first || len(restored.Replies(id)) != 1 {
@@ -59,7 +59,7 @@ func TestEnsureRecoveryConversationRetriesStorageFailureWithoutPhantomPage(t *te
 	}
 	defer book.Close()
 	s := impatient(New(&echo{}, "owner", nil))
-	if err := s.Persist(book.Document("console")); err != nil {
+	if err := s.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	source := RecoveryConversation{ParentTaskID: "parent-2", SourceChannel: "feishu", SourceConversation: "oc_original", Project: "p"}

@@ -43,7 +43,7 @@ func TestReleaseOwnershipAndTaskRecordFreezeRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := Options{TargetHub: "target", TransferID: "task-transfer", Evidence: "stopped"}
-	if err := releaseSource(t.Context(), projects, options, "p", nil, b.Tasks); err == nil || !strings.Contains(err.Error(), "owner release rejected") {
+	if err := releaseSource(t.Context(), projects, options, "p", nil, b.Tasks, b.Console); err == nil || !strings.Contains(err.Error(), "owner release rejected") {
 		t.Fatalf("ownership failure: %v", err)
 	}
 	loaded, err := task.OpenLedger(book, "")
@@ -61,7 +61,7 @@ func TestReleaseOwnershipAndTaskRecordFreezeRollbackTogether(t *testing.T) {
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_owner_release`); err != nil {
 		t.Fatal(err)
 	}
-	if err := releaseSource(t.Context(), projects, options, "p", nil, b.Tasks); err != nil {
+	if err := releaseSource(t.Context(), projects, options, "p", nil, b.Tasks, b.Console); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err = task.OpenLedger(book, "")

@@ -1,7 +1,6 @@
 package console
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -12,27 +11,21 @@ import (
 // CheckTaskCompletionTx checks durable questions and delivery in the caller's
 // transaction. Only the completion command's own exchange can be exempted.
 func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
-	raw, _, err := tx.LoadDocument("console")
+	records, err := loadConsoleRecordsTx(tx)
 	if err != nil {
 		return fmt.Errorf("read completion console: %w", err)
 	}
-	if len(raw) == 0 {
-		return nil
+	state, err := records.state()
+	if err != nil {
+		return fmt.Errorf("read completion console: %w", err)
 	}
-	var saved transcript
-	if err := json.Unmarshal(raw, &saved); err != nil {
-		return fmt.Errorf("decode completion console: %w", err)
-	}
-	for _, question := range saved.Questions {
+	for _, question := range state.Questions {
 		if question.State == "pending" && (ids[question.TaskID] || question.Conversation == conversation) {
 			return task.ErrCompleteAttention
 		}
 	}
-	for _, exchanges := range saved.Exchanges {
-		for _, exchange := range exchanges {
-			if exchange == nil {
-				return fmt.Errorf("completion console contains a null exchange")
-			}
+	for _, list := range state.Exchanges {
+		for _, exchange := range list {
 			if ids[exchange.ExpectedTask] && !exchange.State.Terminal() {
 				return task.ErrCompleteDelivery
 			}

@@ -1,7 +1,6 @@
 package console
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -45,16 +44,20 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 		{name: "unrelated exchange", exchange: Exchange{ExpectedTask: "other", Conversation: "elsewhere", State: consoleapi.ExchangeRunning}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			saved := transcript{}
+			saved := DurableState{}
 			if tc.question.State != "" {
+				tc.question.ID = "q"
 				saved.Questions = map[string]consoleapi.PendingQuestion{"q": tc.question}
 			}
 			if tc.exchange.State != "" {
-				saved.Exchanges = map[string][]*queuedExchange{"bucket": {{Exchange: tc.exchange}}}
+				if tc.exchange.ID == "" {
+					tc.exchange.ID = "exchange"
+				}
+				saved.Exchanges = map[string][]DurableExchange{tc.exchange.Conversation: {{Exchange: tc.exchange}}}
 			}
 			rollback := errors.New("rollback test transcript")
 			err := book.Update(t.Context(), func(tx *ledger.Tx) error {
-				if err := tx.PutBinding("document", "console", saved); err != nil {
+				if err := StoreStateTx(tx, saved); err != nil {
 					return err
 				}
 				err := CheckTaskCompletionTx(tx, map[string]bool{"root": true, "child": true}, "chat", tc.current)
@@ -66,47 +69,44 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 			if !errors.Is(err, rollback) {
 				t.Fatal(err)
 			}
-			if _, exists, err := book.Document("console").Load(); err != nil || exists {
-				t.Fatalf("guard committed caller's transaction: exists=%v err=%v", exists, err)
+			if records, err := loadConsoleRecords(book); err != nil || records.revision != 0 {
+				t.Fatalf("guard committed caller's transaction: revision=%v err=%v", records.revision, err)
 			}
 		})
 	}
 }
 
-func TestCompletionGuardRejectsUnreadableTranscript(t *testing.T) {
-	for _, raw := range []string{`{`, `{"questions":[]}`, `{"exchanges":1}`, `{"replies":1}`, `{"exchanges":{"chat":[null]}}`} {
+func TestCompletionGuardRejectsUnreadableRecords(t *testing.T) {
+	for _, raw := range []string{`{`, `[]`, `null`, `{"revision":0}`} {
 		t.Run(raw, func(t *testing.T) {
 			book, err := ledger.Open(t.TempDir(), ledger.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { book.Close() })
-			if err := book.Document("console").Save([]byte(raw)); err != nil {
+			defer book.Close()
+			if _, err := book.DB().Exec(`INSERT INTO bindings(kind,id,data,updated_at) VALUES('console-store','state',?,'now')`, raw); err != nil {
 				t.Fatal(err)
 			}
-			err = book.Update(t.Context(), func(tx *ledger.Tx) error {
-				return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "")
-			})
-			if err == nil {
-				t.Fatal("unreadable owner document admitted completion")
+			if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "") }); err == nil {
+				t.Fatal("unreadable owner records admitted completion")
 			}
 		})
 	}
 }
 
-func TestCompletionGuardAllowsMissingOrEmptyTranscript(t *testing.T) {
-	for _, raw := range []json.RawMessage{nil, []byte(""), []byte("{}"), []byte("null")} {
-		book, err := ledger.Open(t.TempDir(), ledger.Options{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { book.Close() })
-		if raw != nil {
-			if err := book.Document("console").Save(raw); err != nil {
-				t.Fatal(err)
-			}
-		}
+func TestCompletionGuardAllowsMissingOrEmptyRecords(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	for _, initialize := range []bool{false, true} {
 		if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+			if initialize {
+				if err := StoreStateTx(tx, DurableState{}); err != nil {
+					return err
+				}
+			}
 			return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "")
 		}); err != nil {
 			t.Fatal(err)
