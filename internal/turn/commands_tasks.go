@@ -234,7 +234,7 @@ func (c commands) taskPickUp(title string, tracked task.Task) Result {
 		return Result{Title: title, Text: c.text.T(i18n.TaskResumed, moved.ID)}
 	}
 	c.resumer(TaskResume{
-		TaskID: moved.ID, Goal: moved.Goal, Member: moved.Member,
+		Transport: moved.Transport, TaskID: moved.ID, Goal: moved.Goal, Member: moved.Member,
 		ConversationID: moved.Channel, ChatID: moved.ChatID,
 		MessageID: moved.AnchorMessage, Requester: moved.Requester,
 		ChatType: moved.ChatType,

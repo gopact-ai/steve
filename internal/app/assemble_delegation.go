@@ -97,20 +97,20 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		// message — the page's queue or the chat — instead of the parent
 		// polling for it; a turn's end delivers what ended meanwhile.
 		delegation.SetReplaySafeDelivery(func(parent task.Task) bool {
-			return parent.ChatID == console.ChatID || console.IsConsole(parent.Channel)
+			return parent.Transport == "console"
 		})
 		delegation.SetDeliveryReceipt(func(parent task.Task, key string) (bool, error) {
-			if parent.ChatID == console.ChatID || console.IsConsole(parent.Channel) {
+			if parent.Transport == "console" {
 				return cons.ContinuationReceipt(parent.Channel, parent.ID, key)
 			}
 			return false, nil
 		})
 		delegation.SetDeliverer(func(ctx context.Context, d delegate.Delivery) error {
-			if d.ChatID == console.ChatID || console.IsConsole(d.Conversation) {
+			return routeTask(d.Transport, func() error {
 				return cons.ContinueTask(ctx, d.Conversation, d.ParentTask, d.Key, d.Member, d.Notice(), d.Prompt())
-			}
-			return gw.DeliverConfirmed(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation,
-				ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt(), func(err error) { delegation.ConfirmDelivery(d, err) })
+			}, func() error {
+				return gw.DeliverConfirmed(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation, ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt(), func(err error) { delegation.ConfirmDelivery(d, err) })
+			})
 		})
 		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
 		reconcileDeliveries = delegation.ReconcileDeliveries
@@ -191,7 +191,7 @@ func delegateObserver(ctx context.Context, admin *adminsvc.Service, view *readmo
 			}
 		}
 		view.DelegateProgress(c.Task, c.Agent, where, info, p)
-		if console.IsConsole(c.Conversation) {
+		if c.Transport == "console" {
 			progress := readmodel.FromProgress(p)
 			progress.Agent, progress.Node = c.Agent, where
 			cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))

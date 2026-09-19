@@ -25,6 +25,7 @@ import (
 // child that ended since the parent last heard: what each was asked,
 // what it said, what it left, and whether that has landed.
 type Delivery struct {
+	Transport    string
 	Conversation string
 	ParentTask   string
 	Member       string
@@ -226,7 +227,7 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 }
 
 func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context, Delivery) error, parent task.Task, waiting []task.Task, landing func(task.Task) string, replaySafe bool) {
-	d := Delivery{Conversation: parent.Channel, ParentTask: parent.ID, Member: parent.Member, ChatID: parent.ChatID,
+	d := Delivery{Transport: parent.Transport, Conversation: parent.Channel, ParentTask: parent.ID, Member: parent.Member, ChatID: parent.ChatID,
 		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType, Key: waiting[0].Delivery.Key}
 	ids := make([]string, 0, len(waiting))
 	for _, c := range waiting {

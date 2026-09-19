@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -256,10 +257,7 @@ func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {
 
 // SetAnchor records where the task's latest turn is anchored in the chat,
 // so a restarted gateway can deliver into the right conversation.
-func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error {
-	if messageID == "" {
-		return nil
-	}
+func (s *Store) SetAnchor(id string, address channel.Address, chatID, chatType, cardID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.clone()
@@ -267,8 +265,11 @@ func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error 
 	if !ok {
 		return fmt.Errorf("task %s not found", id)
 	}
+	if address.Channel != stored.Transport || address.Conversation != stored.Channel {
+		return fmt.Errorf("task %s destination cannot be rebound", id)
+	}
 	stored.ChatID = chatID
-	stored.AnchorMessage = messageID
+	stored.AnchorMessage = address.Message
 	stored.ChatType = chatType
 	// A new turn starts a clean leftover slate.
 	stored.OpenCard = cardID

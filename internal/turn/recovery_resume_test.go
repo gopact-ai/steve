@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/gopact-ai/steve/internal/channel"
 	"strings"
 	"testing"
 	"time"
@@ -92,14 +93,14 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 		t.Fatal(err)
 	}
 	c.SetProjects(projects, "p", "")
-	tracked, err := tasks.Create(task.Task{Goal: "original task", Channel: "console:main", Member: "worker", Requester: "owner", ProjectID: "p", Workspace: workspace.Path})
+	tracked, err := tasks.Create(task.Task{Transport: "console", Goal: "original task", Channel: "console:main", Member: "worker", Requester: "owner", ProjectID: "p", Workspace: workspace.Path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tasks.Begin(tracked.ID, "worker", "node-a", runner.id); err != nil {
 		t.Fatal(err)
 	}
-	if err := tasks.SetAnchor(tracked.ID, "console", "web-e1", "p2p", ""); err != nil {
+	if err := tasks.SetAnchor(tracked.ID, channel.Address{Channel: "console", Conversation: tracked.Channel, Message: "web-e1"}, "console", "p2p", ""); err != nil {
 		t.Fatal(err)
 	}
 	token, err := tasks.ExecutionToken(tracked.ID)

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/task"
@@ -48,18 +47,22 @@ func assembleRecovery(input inputAssembly, boot runtimeAssembly, storage ledgerA
 			slog.Info(fmt.Sprintf("steve: task #%s is paused; leaving it set aside", interrupted.ID), "task", interrupted.ID)
 			continue
 		}
-		if console.IsConsole(interrupted.Channel) || interrupted.ChatID == console.ChatID {
+		if interrupted.Transport == "console" {
 			// A task the page was running continues on the page, once its
 			// queue is loaded: the gateway cannot reply at a web anchor,
 			// and a follow-up that waited must not run ahead of the
 			// continuation.
 			if time.Since(interrupted.UpdatedAt) > staleTask {
 				slog.Warn(fmt.Sprintf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID), "task", interrupted.ID)
-				cons.Notice(turn.TaskNotice{TaskID: interrupted.ID, ChatID: interrupted.ChatID, MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester, Conversation: interrupted.Channel,
+				cons.Notice(turn.TaskNotice{Transport: interrupted.Transport, TaskID: interrupted.ID, ChatID: interrupted.ChatID, MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester, Conversation: interrupted.Channel,
 					Text: catalogText.T(i18n.TaskDropped, interrupted.ID, time.Since(interrupted.UpdatedAt).Round(time.Hour))})
 				continue
 			}
 			pageResumes = append(pageResumes, interrupted)
+			continue
+		}
+		if interrupted.Transport != "feishu" {
+			slog.Error("interrupted task has unsupported transport", "task", interrupted.ID, "transport", interrupted.Transport)
 			continue
 		}
 		if interrupted.AnchorMessage == "" {

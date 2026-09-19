@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
@@ -409,4 +410,8 @@ func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, st
 		return agent.Agent{}, "", false, err
 	}
 	return selected, strings.TrimSpace(input), false, nil
+}
+
+func (r Request) Address() channel.Address {
+	return channel.Address{Channel: r.Channel, Conversation: r.ConversationID, Message: r.MessageID}
 }

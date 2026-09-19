@@ -257,7 +257,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 	s.mu.Unlock()
 	// Register the child before Start can return: opening its session may
 	// take longer than the parent's remaining turn, even without progress.
-	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID,
+	s.report(Child{Transport: parent.Transport, Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID,
 		Agent: candidate.Agent.ID, Node: candidate.Node, Goal: req.Goal, State: task.StateRunning, Since: entry.started}, view.Progress{})
 
 	// Detached on purpose: the request that asked for this may be gone
@@ -445,7 +445,7 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	var last view.Progress
 	result, runErr := s.run(ctx, conversationID, agentID, parent, spawned, candidate, req, func(p view.Progress) {
 		last = p
-		s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
+		s.report(Child{Transport: parent.Transport, Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
 			Goal: req.Goal, State: task.StateRunning, Since: since, Elapsed: time.Since(since)}, p)
 	})
 
@@ -542,7 +542,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	close(entry.done)
 	slog.Info(fmt.Sprintf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(spawned.Node)),
 		"task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "agent", spawned.Member, "node", spawned.Node)
-	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: spawned.Member, Node: spawned.Node,
+	s.report(Child{Transport: parent.Transport, Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: spawned.Member, Node: spawned.Node,
 		Goal: description, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}, last)
 
 	// The parent is told now if no turn of it is running; a running turn
@@ -562,6 +562,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 
 // Child is a delegated task as an observer sees it.
 type Child struct {
+	Transport                      string
 	Conversation, ParentTask, Task string
 	Agent, Node, Goal              string
 	State                          task.State // running | done | failed, or a paused/cancelled task

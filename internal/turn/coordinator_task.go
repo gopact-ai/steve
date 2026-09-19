@@ -99,6 +99,8 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Goal:      goal(prompt),
 			Requester: req.SenderOpenID,
 			Channel:   req.ConversationID,
+			Transport: req.Channel,
+			ChatID:    req.ChatID, AnchorMessage: req.MessageID, ChatType: string(req.ChatType), OpenCard: req.CardID,
 			Member:    selected.ID,
 			Node:      executionNode,
 			Origin:    req.Origin,
@@ -109,6 +111,9 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			return "", fmt.Errorf("create task for conversation %s: %w", req.ConversationID, err)
 		}
 		tracked = created
+	}
+	if tracked.Transport != req.Channel {
+		return "", fmt.Errorf("task %s transport changed", tracked.ID)
 	}
 	var beginErr error
 	if req.ExpectedTask != "" {
@@ -129,7 +134,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	// this task; refresh it every turn so delivery lands by the newest
 	// exchange (and inside the right topic).
 	if req.MessageID != "" {
-		if err := c.tasks.SetAnchor(tracked.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
+		if err := c.tasks.SetAnchor(tracked.ID, req.Address(), req.ChatID, string(req.ChatType), req.CardID); err != nil {
 			slog.Error(fmt.Sprintf("turn: anchor task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
 		}
 	}
@@ -253,6 +258,7 @@ func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
 // whoever owns the chat: post a notice at the task's anchor and replay it as
 // a real message, and the resumed turn renders a card like any other turn.
 type TaskResume struct {
+	Transport      string
 	TaskID         string
 	Goal           string
 	Member         string
@@ -272,6 +278,7 @@ func (c *Coordinator) SetResumer(fn func(TaskResume)) { c.resumer = fn }
 // that ran for an hour and then ended must say so, whether or not the person
 // who asked is still watching.
 type TaskNotice struct {
+	Transport string
 	TaskID    string
 	ChatID    string
 	MessageID string
@@ -333,7 +340,7 @@ func (c *Coordinator) offlineReminder(req Request, id string, started time.Time,
 		return
 	}
 	c.notifier(TaskNotice{
-		TaskID: id, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID, Conversation: req.ConversationID,
+		TaskID: id, Transport: req.Channel, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID, Conversation: req.ConversationID,
 		Text: c.text.T(i18n.TaskOfflineDone, id, elapsed.Round(time.Minute)),
 	})
 }

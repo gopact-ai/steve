@@ -76,9 +76,12 @@ func (s *Store) spawnLocked(parentID string, child Task, replace func(data) erro
 	child.ExecutionEpoch = 1
 	child.CreatedAt = now
 	child.UpdatedAt = now
-	if child.Channel == "" {
-		child.Channel = parent.Channel
-	}
+	// A delegated result belongs to its parent, never a caller-selected destination.
+	child.Transport = parent.Transport
+	child.Channel = parent.Channel
+	child.AnchorMessage = parent.AnchorMessage
+	child.ChatID = parent.ChatID
+	child.ChatType = parent.ChatType
 	if child.Requester == "" {
 		child.Requester = parent.Requester
 	}

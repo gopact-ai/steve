@@ -204,7 +204,7 @@ func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, r
 		Attempts: s.attempts, Roster: s.roster, Sessions: s.sessions, Workspaces: s.artifacts, Actor: "delegate-recovery",
 		Spec: record.Spec, At: d.at, Resume: true, Ask: ask, AskUser: askUser,
 		Observe: func(progress view.Progress) {
-			s.report(Child{Conversation: parent.Channel, ParentTask: parent.ID, Task: tracked.ID, Agent: record.Agent, Node: record.Node, Goal: tracked.Goal, State: task.StateRunning, Since: record.StartedAt, Elapsed: time.Since(record.StartedAt), Attempt: record.ID}, progress)
+			s.report(Child{Transport: parent.Transport, Conversation: parent.Channel, ParentTask: parent.ID, Task: tracked.ID, Agent: record.Agent, Node: record.Node, Goal: tracked.Goal, State: task.StateRunning, Since: record.StartedAt, Elapsed: time.Since(record.StartedAt), Attempt: record.ID}, progress)
 		},
 		Finish: d.finish, Failed: d.failed,
 		// The node keeps the session. An observer that cannot vouch for

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -75,29 +74,24 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	// arrives as an ordinary message.
 	coordinator.SetOfflineReminder(time.Duration(cfg.Gateway.OfflineReminderAfter))
 	coordinator.SetNotifier(func(n turn.TaskNotice) {
-		if n.ChatID == console.ChatID || console.IsConsole(n.MessageID) {
-			cons.Notice(n)
-			return
-		}
-		gw.Notify(gateway.Notice{
-			TaskID: n.TaskID, MessageID: n.MessageID,
-			Requester: n.Requester, Text: n.Text,
+		err := routeTask(n.Transport, func() error { cons.Notice(n); return nil }, func() error {
+			gw.Notify(gateway.Notice{TaskID: n.TaskID, MessageID: n.MessageID, Requester: n.Requester, Text: n.Text})
+			return nil
 		})
+		if err != nil {
+			slog.Error("task notice not routed", "task", n.TaskID, "error", err)
+		}
 	})
 	coordinator.SetResumer(func(r turn.TaskResume) {
-		if r.ChatID == console.ChatID || console.IsConsole(r.ConversationID) {
-			if err := cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member,
-				catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession); err != nil {
-				slog.Error(fmt.Sprintf("console: resume task #%s: %v", r.TaskID, err), "task", r.TaskID, "conversation", r.ConversationID)
-			}
-			return
+		err := routeTask(r.Transport, func() error {
+			return cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member, catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession)
+		}, func() error {
+			go gw.ResumeTask(gateway.Revival{TaskID: r.TaskID, Goal: r.Goal, Member: r.Member, ConversationID: r.ConversationID, ChatID: r.ChatID, MessageID: r.MessageID, Requester: r.Requester, ChatType: r.ChatType, Manual: true}, coordinator.ReviveSession)
+			return nil
+		})
+		if err != nil {
+			slog.Error("task resume not routed", "task", r.TaskID, "error", err)
 		}
-		go gw.ResumeTask(gateway.Revival{
-			TaskID: r.TaskID, Goal: r.Goal, Member: r.Member,
-			ConversationID: r.ConversationID, ChatID: r.ChatID,
-			MessageID: r.MessageID, Requester: r.Requester,
-			ChatType: r.ChatType, Manual: true,
-		}, coordinator.ReviveSession)
 	})
 	return &channelsValues{channel: channel}, nil
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/gopact-ai/gopact/workflow"
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agentexec"
-	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -83,7 +82,7 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	supervisor.SetLedger(book, adminsvc.NodeName())
 	supervisor.SetTasks(tasks)
 	coordinator.SetSupervisor(supervisor, plans, fleet)
-	coordinator.SetPlanRecoveryOwner(func(tracked task.Task) bool { return environment != nil && console.IsConsole(tracked.Channel) })
+	coordinator.SetPlanRecoveryOwner(func(tracked task.Task) bool { return environment != nil && tracked.Transport == "console" })
 	coordinator.SetRepair(nodes, nodes)
 	coordinator.SetProber(func(ctx context.Context, node, harnessID string) error {
 		dir := probeDir(node)

@@ -6,6 +6,8 @@ package task
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/channel"
 )
 
 type State string
@@ -213,6 +215,7 @@ type Task struct {
 	ID                string             `json:"id"`
 	Goal              string             `json:"goal"`
 	Requester         string             `json:"requester,omitempty"`
+	Transport         string             `json:"transport"`
 	Channel           string             `json:"channel"`
 	Member            string             `json:"member,omitempty"`
 	Node              string             `json:"node,omitempty"`
@@ -251,4 +254,9 @@ type Task struct {
 	Attempts   []Attempt  `json:"attempts,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// Address projects the task's one persisted destination. Channel remains the conversation ID.
+func (t Task) Address() channel.Address {
+	return channel.Address{Channel: t.Transport, Conversation: t.Channel, Message: t.AnchorMessage}
 }
