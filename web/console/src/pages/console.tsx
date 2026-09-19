@@ -1,6 +1,6 @@
 import { useSideChat } from "@/providers/side-chat-provider";
 import { SideChatPanel } from "@/components/steve/side-chat";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Columns03, LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
@@ -20,18 +20,19 @@ import { SplitPane, SplitPaneProvider, useSplitPane, type SplitTab } from "@/com
 import { RAIL_WIDTH } from "@/components/steve/rail";
 import { BoardPage } from "./board";
 import { Working } from "@/components/steve/trace";
-import { applyLive, type Live } from "@/lib/live";
+import { conversationContextRevision } from "@/lib/conversation-context-revision";
 import { Nothing } from "@/components/steve/ui";
-import { enqueue, fetchQueue, deleteConversation, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { enqueue, deleteConversation, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
 import { ConfirmDialog } from "@/components/steve/confirm";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { useResourceRead } from "@/hooks/use-resource-read";
+import { useConversationController } from "@/hooks/use-conversation-controller";
 import { placeLabel } from "@/lib/workspaces";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
-import { applyDelegation, childrenOfTurn, restoreDelegations, streamWithChildren, withDelegations, type Delegations } from "@/lib/delegations";
-import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
+import { childrenOfTurn, streamWithChildren, withDelegations } from "@/lib/delegations";
+import { beginSubmission, retrySubmission, failSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
 import { uploadMaterial, refKey } from "@/lib/api/material";
@@ -40,11 +41,11 @@ import { QuestionPanel } from "@/components/steve/question-panel";
 import type { MaterialRef } from "@/lib/types";
 import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { useNodeLabel } from "@/lib/node-name";
-import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess, Exchange } from "@/lib/types";
+import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess } from "@/lib/types";
 
-// ConsolePage is composition: it owns the conversation, the transcript,
-// the line in flight and the composer's text, and lays out the three
-// columns from components/steve. Nothing here draws.
+// ConsolePage composes the conversation controller, draft commands and the
+// three workbench columns. Public transcript/live state is shared with the
+// side conversation; layout and user actions stay local to this surface.
 // Browsers hand over every pasted screenshot as "image.png", so a stamped
 // name keeps one paste apart from the next in the draft row.
 function stamped(file: File): File {
@@ -72,9 +73,7 @@ function ConsoleWorkbench() {
     const { intent, consume } = useIntent();
     const [conversation, setConversation] = useState(() => sessionStorage.getItem("steve.conversation") || "console:main");
     const [conversations, setConversations] = useState<Conversation[]>([]);
-    const [entries, setEntries] = useState<Reply[]>([]);
-    const [loadingReplies, setLoadingReplies] = useState(true);
-    const [enabled, setEnabled] = useState(true);
+    const { entries, loadingReplies, enabled, live, delegations, exchanges, busy, queueError, replyError, loadQueue, invalidateReplies } = useConversationController(conversation);
     const text = useDraft(conversation);
     const rewind = useRewind(conversation);
     const draftIssue = useDraftIssue(conversation);
@@ -92,14 +91,10 @@ function ConsoleWorkbench() {
     const [importing, setImporting] = useState(false);
     const creatingRequest = useRef(false);
     const [status, setStatus] = useState("");
-    const [queueReadError, setQueueReadError] = useState<{ conversation: string; error: unknown } | null>(null);
-    const [replyReadError, setReplyReadError] = useState<{ conversation: string; error: unknown } | null>(null);
     const readErrorText = (error: unknown) => error instanceof TypeError && /^(?:Load failed|Failed to fetch|NetworkError.*)$/i.test(error.message)
         ? t("connection.partial") : String(error).replace(/^(?:Error|TypeError): /, "");
     const [contextError, setContextError] = useState("");
     const [conversationsError, setConversationsError] = useState("");
-    const [live, setLive] = useState<Live | null>(null);
-    const [delegations, setDelegations] = useState<Delegations>({});
     // Stopping a turn is an act on that turn: the control and its receipt
     // stay in the ledger, the transcript stays what was said and answered.
     const transcript = entries.filter((r) => !r.silent).map((r) => withDelegations(r, delegations));
@@ -145,16 +140,10 @@ function ConsoleWorkbench() {
     };
     useEffect(() => { closeSplitKind("delegation"); }, [conversation, closeSplitKind]);
     // The server owns execution; every tab projects the same durable queue.
-    const [exchanges, setExchanges] = useState<Exchange[]>([]);
     const queue = useMemo(() => exchanges.filter((e) => e.conversation === conversation && e.state === "queued"), [exchanges, conversation]);
     const recoveryState = exchanges.find((entry) => entry.conversation === conversation && ["recovering", "awaiting-user"].includes(entry.state))?.state;
-    const busy = !!live || exchanges.some((e) => e.conversation === conversation && ["running", "recovering", "awaiting-user"].includes(e.state));
     const activeConversation = useRef(conversation);
     activeConversation.current = conversation;
-    const queueRequest = useRef(0);
-    const queueRevision = useRef(0);
-    const transcriptRequest = useRef(0);
-    const transcriptRevision = useRef(0);
     // Quotes ride with the next message wherever it is sent from; they
     // survive switching threads on purpose — that is how a line from one
     // thread reaches another.
@@ -168,7 +157,6 @@ function ConsoleWorkbench() {
     const box = useRef<DraftBox | null>(null);
     const transcriptBox = useRef<HTMLDivElement>(null);
     const followTranscript = useRef(true);
-    const seen = useRef(0);
     const handled = useRef(0);
 
     useEffect(() => { sessionStorage.setItem("steve.conversation", conversation); }, [conversation]);
@@ -204,122 +192,31 @@ function ConsoleWorkbench() {
     const loadConversations = useResourceRead("conversations", fetchConversations,
         (data) => { setConversations(data.conversations || []); setConversationsError(""); }, (error) => setConversationsError(readErrorText(error)));
 
-    const loadQueue = useCallback(async () => {
-        if (activeConversation.current !== conversation) return;
-        const request = ++queueRequest.current;
-        try {
-            // Lifecycle events can overtake HTTP and draft-lock reconciliation.
-            // Retry once; continuous traffic converges through the regular poll.
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const revision = queueRevision.current;
-                const data = await fetchQueue(conversation);
-                if (activeConversation.current !== conversation || request !== queueRequest.current) return;
-                if (revision !== queueRevision.current) continue;
-                await reconcileSubmission(conversation, data.queue || []);
-                if (activeConversation.current !== conversation || request !== queueRequest.current) return;
-                if (revision !== queueRevision.current) continue;
-                setQueueReadError(null);
-                setExchanges(data.queue || []);
-                const running = [...(data.queue || [])].filter((e) => ["running", "recovering", "awaiting-user"].includes(e.state)).sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
-                setLive((cur) => running ? (cur?.exchangeID === running.id ? cur : { since: running.started_at || running.enqueued_at, exchangeID: running.id, steps: {}, order: [] }) : null);
-                return;
-            }
-        } catch (e) {
-            if (activeConversation.current === conversation && request === queueRequest.current) setQueueReadError({ conversation, error: e });
-        }
-    }, [conversation]);
-    const loadReplies = useCallback(async () => {
-        if (activeConversation.current !== conversation) return;
-        const request = ++transcriptRequest.current;
-        try {
-            // An SSE mutation may be newer than an in-flight HTTP snapshot.
-            // Retry once; continuous traffic settles through the regular poll.
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const revision = transcriptRevision.current;
-                const cursor = seen.current;
-                const data = await fetchReplies(conversation);
-                if (activeConversation.current !== conversation || request !== transcriptRequest.current) return;
-                if (revision !== transcriptRevision.current) continue;
-                setReplyReadError(null);
-                setEnabled(data.enabled);
-                setEntries(data.replies || []);
-                setLoadingReplies(false);
-                setDelegations((cur) => restoreDelegations(cur, data.replies || [], cursor));
-                return;
-            }
-        } catch (e) {
-            if (activeConversation.current === conversation && request === transcriptRequest.current) { setReplyReadError({ conversation, error: e }); setLoadingReplies(false); }
-        }
-    }, [conversation]);
-
     useEffect(() => {
-        setEntries([]);
-        setDelegations({});
-        setExchanges([]);
-        void loadReplies();
-        void loadQueue();
         loadContext();
         loadConversations();
         setSelectedReply(null);
-        setLive(null);
         setChild(null);
-    }, [conversation, loadContext, loadConversations, loadQueue, loadReplies]);
+    }, [conversation, loadContext, loadConversations]);
 
-    // Completion can arrive in an old route instance; the current subscriber
-    // refreshes its own projection when the shared stop operation settles.
     useEffect(() => {
-        if (stopState && !stopState.active) { void loadQueue(); void loadReplies(); }
-    }, [stopState, loadQueue, loadReplies]);
-
-    // Recover after reconnecting or missing an SSE event, including a turn
-    // completed while this tab was asleep. Fetches never submit work.
-    useEffect(() => {
-        if (connection === "live") { void loadQueue(); void loadReplies(); loadConversations(); }
-        const timer = window.setInterval(() => { void loadQueue(); void loadReplies(); loadConversations(); }, 10000);
+        if (connection === "live") { loadConversations(); loadContext(); }
+        // Recover conversation binding/agent changes whose meta event was
+        // missed, without coupling this resource to fleet observation time.
+        const timer = window.setInterval(() => { loadConversations(); loadContext(); }, 10000);
         return () => window.clearInterval(timer);
-    }, [connection, loadQueue, loadReplies, loadConversations]);
+    }, [connection, loadConversations, loadContext]);
 
-    // The context depends on the fleet: an agent coming up changes who can work here.
-    useEffect(() => { loadContext(); }, [snap.at, loadContext]);
+    const contextRevision = useMemo(() => conversationContextRevision(snap), [snap.agents, snap.projects]);
+    useEffect(() => { loadContext(); }, [contextRevision, loadContext]);
 
-    // Events arrive in the batch that a frame's worth of streaming made,
-    // so a turn writing quickly costs one pass here, not one per fragment.
-    // The transcript read is cursored on the last arrival number handled.
+    // Global list and fleet effects belong to this workbench, not to the
+    // conversation projection shared with the independently mounted side chat.
     useConsoleEvents((fresh) => {
-        seen.current = fresh[fresh.length - 1].n ?? seen.current;
-        // A raised or answered question changes what the sessions list says
-        // about a conversation — whether it is running or waiting on the
-        // owner — so it belongs in the same refresh as the rest. Left out,
-        // the row keeps the previous state until the next poll, and the
-        // reader sees "running" next to a question they are being asked.
-        if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta" || ev.kind === "console.queue" || ev.kind === "console.question")) loadConversations();
+        if (fresh.some((ev) => ["console.sent", "console.reply", "console.meta", "console.queue", "console.question"].includes(ev.kind))) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
-        if (!mine.length) return;
-        if (mine.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.queue")) queueRevision.current++;
-        const lines = mine.filter((ev) => ["console.sent", "console.reply", "console.notice", "console.milestone", "console.recalled"].includes(ev.kind));
-        if (lines.length) transcriptRevision.current++;
-        setLive((cur) => mine.reduce(applyLive, cur));
-        setDelegations((cur) => mine.reduce(applyDelegation, cur));
-        if (mine.some((ev) => ev.kind === "console.queue")) void loadQueue();
-        if (mine.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply")) void loadReplies();
-        if (mine.some((ev) => ev.kind === "console.reply")) { loadContext(); refresh(); }
-        if (!lines.length) return;
-        setEntries((list) => {
-            const next = [...list];
-            for (const ev of lines) {
-                if (ev.kind === "console.recalled") {
-                    const index = next.findIndex((r) => ev.reply_id && r.id === ev.reply_id);
-                    if (index >= 0) next.splice(index, 1);
-                    continue;
-                }
-                const kind = ev.kind.slice("console.".length);
-                const r: Reply = { id: ev.reply_id, exchange_id: ev.exchange_id, at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", format: ev.format, input: kind === "sent" ? ev.text : undefined, silent: ev.silent };
-                const index = next.findIndex((x) => r.id ? x.id === r.id : r.exchange_id ? x.exchange_id === r.exchange_id && x.kind === r.kind : x.at === r.at && x.kind === r.kind);
-                if (index < 0) next.push(r);
-                else next[index] = { ...next[index], ...r };
-            }
-            return next.slice(-200);
-        });
+        if (mine.some((ev) => ev.kind === "console.reply" || ev.kind === "console.meta")) loadContext();
+        if (mine.some((ev) => ev.kind === "console.reply")) refresh();
     });
 
     useLayoutEffect(() => {
@@ -344,12 +241,8 @@ function ConsoleWorkbench() {
         activeConversation.current = id;
         followTranscript.current = true;
         setConversation(id);
-        setEntries([]);
-        setLoadingReplies(true);
-        setExchanges([]);
         setContext(nextContext);
         setContextError("");
-        setLive(null);
         setChild(null);
         setPickedTask(null);
         setSelectedReply(null);
@@ -437,7 +330,7 @@ function ConsoleWorkbench() {
             await enqueue(conversation, pending.input, pending.quotes.length ? pending.quotes : undefined, pending.id, submissionRefs(pending), pending.locale, pending.rewind);
             // The thread is back at the edited line and the lines after it
             // are gone, so what is drawn is refetched rather than patched.
-            if (pending.rewind) { await endRewind(conversation); transcriptRevision.current++; void loadReplies(); }
+            if (pending.rewind) { await endRewind(conversation); void invalidateReplies(); }
             const recorded = await finishSubmission(conversation, pending.id);
             if (!recorded && activeConversation.current === conversation) setStatus(t("console.receiptStorage"));
             if (activeConversation.current === conversation) setSelectedReply(null);
@@ -564,7 +457,7 @@ function ConsoleWorkbench() {
         catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
         finally { setUploading(false); }
     }
-    const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueReadError?.conversation === conversation ? readErrorText(queueReadError.error) : "") || (replyReadError?.conversation === conversation ? readErrorText(replyReadError.error) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
+    const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueError ? readErrorText(queueError) : "") || (replyError ? readErrorText(replyError) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
     const listed = useMemo(() => conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations], [conversations, conversation, t, context?.project?.id, context?.agent?.id]);
     const agents = useMemo(() => context?.agents ?? [], [context?.agents]);
 

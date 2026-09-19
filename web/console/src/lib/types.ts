@@ -85,10 +85,10 @@ export interface Grant { project: string; principal: string; role: string; by: s
 export interface Facts {
     reservations: Reservation[]; attestations: Attestation[]; replicas: Replica[]; disclosures: Disclosure[]; effects: Effect[]; grants: Grant[];
 }
-export interface Choice { label: string; command: string; danger?: boolean }
+export interface HumanRequestChoice { label: string; command: string; danger?: boolean }
 export interface HumanRequest {
     conversation?: string;
-    id: string; type: string; source: string; project_id?: string; task_id?: string; attempt_id?: string; node?: string; workspace?: string; summary: string; choices: Choice[]; created_at: string; resolvable: boolean;
+    id: string; type: string; source: string; project_id?: string; task_id?: string; attempt_id?: string; node?: string; workspace?: string; summary: string; choices: HumanRequestChoice[]; created_at: string; resolvable: boolean;
 }
 export interface Schedule { id: string; conversation: string; agent?: string; prompt: string; spec: string; next_at: string; last_at?: string; runs: number; state?: string; error?: string; pending_key?: string }
 export interface SourceHealth { name: string; wired: boolean; error?: string }
@@ -152,9 +152,9 @@ export interface Exchange {
     enqueued_at: string; started_at?: string; reply_id?: string;
 }
 export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }
-export interface Choice { Value: string; Label: string; Detail?: string }
-export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices?: Choice[] | null }
-export interface Selectors { model?: string; models?: Choice[]; options?: SelectorOption[]; preferred?: Record<string, string> }
+export interface SelectorChoice { Value: string; Label: string; Detail?: string }
+export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices?: SelectorChoice[] | null }
+export interface Selectors { model?: string; models?: SelectorChoice[]; options?: SelectorOption[]; preferred?: Record<string, string> }
 export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }
 export interface Event {

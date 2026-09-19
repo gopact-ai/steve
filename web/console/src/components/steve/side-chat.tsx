@@ -1,19 +1,17 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Loading01, X } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { useSideChat, type SideSession } from "@/providers/side-chat-provider";
 import { useI18n } from "@/providers/locale-provider";
-import { isStreamingProgress, useConsoleEvents, useFleet } from "@/lib/fleet";
-import { useResourceRead } from "@/hooks/use-resource-read";
-import { fetchQueue, fetchReplies, enqueue, send, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
-import { useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useMaterials, useSubmission, updateDraft, removeDraftMaterial, beginSubmission, retrySubmission, finishSubmission, failSubmission, reconcileSubmission, restoreSubmission, submissionRefs, useStops, beginStop, finishStop, isStopPending, type Submission } from "@/lib/drafts";
+import { useConversationController } from "@/hooks/use-conversation-controller";
+import { enqueue, send, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useMaterials, useSubmission, updateDraft, removeDraftMaterial, beginSubmission, retrySubmission, finishSubmission, failSubmission, restoreSubmission, submissionRefs, useStops, beginStop, finishStop, isStopPending, type Submission } from "@/lib/drafts";
 import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { refKey } from "@/lib/material-ref";
-import type { Exchange, Reply } from "@/lib/types";
 import { Md } from "./markdown";
 import { StageLine, Trace, finalTextIndex, hasTraceContent } from "./progress-view";
-import { applyLive, type Live } from "@/lib/live";
+import type { Live } from "@/lib/live";
 import { QuestionPanel } from "./question-panel";
 import "@/styles/side-chat.css";
 
@@ -40,28 +38,17 @@ function SideLive({ live }: { live: Live }) {
 // holds it, so it keeps only the line saying which thread it came from.
 export function SideChatPanel({ onOpenMain, embedded }: { onOpenMain?: () => void; embedded?: boolean } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} embedded={embedded} /> : null; }
 function SideConversation({ session, onOpenMain, embedded }: { session: SideSession; onOpenMain?: () => void; embedded?: boolean }) {
-    const { t, locale } = useI18n(); const side = useSideChat(); const { live } = useFleet();
+    const { t, locale } = useI18n(); const side = useSideChat();
     const draftIssue = useDraftIssue(session.id);
     const savedDraft = useSavedDraft(session.id);
     const text = useDraft(session.id), refs = useMaterials(session.id), pending = useSubmission(session.id), stops = useStops(), stop = stops[session.id];
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
-    const [replies, setReplies] = useState<Reply[]>([]), [queue, setQueue] = useState<Exchange[]>([]), [readError, setReadError] = useState(""), [loaded, setLoaded] = useState(false);
-    const [turn, setTurn] = useState<Live | null>(null);
+    const { entries: replies, exchanges: queue, live: turn, loadingReplies, replyError, queueError, busy, reload: load } = useConversationController(session.id, 3000);
+    const error = replyError || queueError;
+    const readError = error ? error instanceof Error ? error.message : String(error) : "";
+    const loaded = !loadingReplies;
     const input = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), follow = useRef(true);
-    const load = useResourceRead(`side:${session.id}`, async (signal) => Promise.all([fetchReplies(session.id, signal), fetchQueue(session.id, signal)]), ([history, exchanges]) => { setReplies(history.replies || []); setQueue(exchanges.queue || []); reconcileSubmission(session.id, exchanges.queue || []); setReadError(""); setLoaded(true); }, (error) => { setReadError(error instanceof Error ? error.message : String(error)); setLoaded(true); });
-    useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 3000); return () => window.clearInterval(timer); }, [load, live]);
-    // The side conversation streams like the main one: its progress events
-    // fold into a live view that the reply replaces. The buffer is trimmed
-    // from the front, so the cursor is an arrival number, not an index.
-    useConsoleEvents((fresh) => {
-        const mine = fresh.filter((entry) => entry.conversation === session.id);
-        if (!mine.length) return;
-        setTurn((current) => mine.reduce(applyLive, current));
-        if (mine.some((entry) => !isStreamingProgress(entry))) void load();
-    });
     useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [replies, queue, turn]);
-    useEffect(() => { if (stop && !stop.active) void load(); }, [stop, load]);
-    const busy = queue.some((entry) => ["running", "recovering", "awaiting-user"].includes(entry.state));
     const blocked = support.state !== "supported" || (refs.length > 0 && !support.material_refs);
     const focused = useRef(false);
     // Enter sends here too, so the same guard against an input method's

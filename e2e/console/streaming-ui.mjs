@@ -26,13 +26,12 @@ const server = await createServer({
             assert.ok(source.includes(open), "Session list instrumentation must wrap the real list");
             return source.replace(open, "globalThis.__sessionRenders = (globalThis.__sessionRenders || 0) + 1;\n    " + open);
         }
-        if (id.endsWith("/src/pages/console.tsx")) {
+        if (id.endsWith("/src/lib/conversation-controller.ts")) {
             // A completion barrier for held HTTP/lock races, including rejected
             // snapshots. No wall-clock delay can establish this boundary.
-            const start = "const loadQueue = useCallback(async () => {";
-            const end = "}, [conversation]);\n    const loadReplies";
-            assert.ok(source.includes(start) && source.includes(end), "Queue completion instrumentation must wrap the real loadQueue");
-            return source.replace(start, `${start} try {`).replace(end, "} finally { globalThis.__queueReadsSettled = (globalThis.__queueReadsSettled || 0) + 1; }\n    " + end);
+            const start = 'loadQueue = async () => { await this.read("queue"); };';
+            assert.ok(source.includes(start), "Queue completion instrumentation must wrap the real loadQueue");
+            return source.replace(start, 'loadQueue = async () => { try { await this.read("queue"); } finally { globalThis.__queueReadsSettled = (globalThis.__queueReadsSettled || 0) + 1; } };');
         }
     } }], server: { host: "127.0.0.1", port: 0 },
 });
