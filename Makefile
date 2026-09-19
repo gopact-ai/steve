@@ -32,6 +32,10 @@ test-console:
 	npm --prefix web/console run test:node-agents
 	npm --prefix web/console run test:plugins
 	npm --prefix web/console run test:selection
+	npm --prefix web/console run test:projects
+	npm --prefix web/console run test:delete
+	npm --prefix web/console run test:conflicts
+	npm --prefix web/console run test:close-layers
 
 .PHONY: desktop test-desktop
 desktop:
