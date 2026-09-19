@@ -46,11 +46,15 @@ func (tr *nativeQuestionTransport) NodeSession(ctx context.Context, _ string, re
 	defer tr.mu.Unlock()
 	switch req.Action {
 	case "open":
-		tr.state = nodewire.SessionState{ID: "ns_" + strings.Repeat("a", 64), Binding: req.Binding, State: "idle", Sequence: 1}
+		tr.state = nodewire.SessionState{ID: "ns_" + strings.Repeat("a", 64), Binding: req.Binding, State: "idle", Sequence: 1, NextInputSequence: 1}
 	case "prompt":
+		if req.InputSequence != tr.state.NextInputSequence || req.InputSequence != 1 {
+			return nodewire.SessionState{}, errors.New("native question fixture: prompt did not use the first-input hint")
+		}
 		tr.state.State = "running"
-		tr.state.InputAccepted = 1
-		tr.state.Command = &nodewire.SessionCommand{ID: req.CommandID, InputSequence: 1, State: "running"}
+		tr.state.InputAccepted = req.InputSequence
+		tr.state.NextInputSequence = 0
+		tr.state.Command = &nodewire.SessionCommand{ID: req.CommandID, InputSequence: req.InputSequence, State: "running"}
 		tr.state.Sequence++
 		q := nodewire.SessionQuestion{ID: "nq_" + strings.Repeat("b", 64), CommandID: req.CommandID, State: "pending", Question: view.Question{SessionID: "native-session", RequestID: "nq_" + strings.Repeat("b", 64), Message: "I checked the network and could not connect. How should I continue?", AllowFreeText: true}}
 		if tr.permission {
@@ -93,7 +97,7 @@ func TestNativeDelegateQuestionsKeepOriginalChildBindingAndParentConversation(t 
 			manager.SetTransports(transport)
 			defer manager.Stop()
 			binding := nodewire.SessionBinding{ProjectID: "p", SessionID: "parent-child-agent", TaskID: "child-task", AttemptID: "child-attempt", NodeID: "worker", ExecutionEpoch: 1, TaskEpoch: 1}
-			ctx, cancel := context.WithTimeout(harness.WithNodeSession(t.Context(), harness.NodeSessionContext{Authority: nodewire.SessionAuthority{ClusterID: "cluster", CoordinatorNodeID: "coordinator", CoordinatorEpoch: 1, WriterGeneration: 1}, Binding: binding, CommandID: "child-input"}), 2*time.Second)
+			ctx, cancel := context.WithTimeout(harness.WithNodeSession(t.Context(), harness.NodeSessionContext{Authority: nodewire.SessionAuthority{ClusterID: "cluster", CoordinatorNodeID: "coordinator", CoordinatorEpoch: 1, WriterGeneration: 1}, Binding: binding, CommandID: "child-input"}), 10*time.Second)
 			defer cancel()
 			runner, err := manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, "", t.TempDir(), nil)
 			if err != nil {
@@ -128,7 +132,7 @@ func TestNativeDelegateQuestionsKeepOriginalChildBindingAndParentConversation(t 
 					}, nil)
 				done <- err
 			}()
-			q := pendingForTest(t, service)
+			q := pendingNativeQuestionForTest(t, ctx, service, done)
 			if q.Conversation != base.Conversation || q.TaskID != binding.TaskID || q.AttemptID != binding.AttemptID || q.RequestID != base.RequestID || q.Principal != "owner" || !q.Deadline.IsZero() {
 				t.Fatalf("native parent question lost scope: %+v", q)
 			}
@@ -159,5 +163,25 @@ func TestNativeDelegateQuestionsKeepOriginalChildBindingAndParentConversation(t 
 				t.Fatal("native question created another task submission")
 			}
 		})
+	}
+}
+
+func pendingNativeQuestionForTest(t *testing.T, ctx context.Context, s *Service, done <-chan error) consoleapi.PendingQuestion {
+	t.Helper()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		for _, q := range s.Questions("") {
+			if q.State == "pending" {
+				return q
+			}
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("native prompt returned before its question became pending: %v", err)
+		case <-ctx.Done():
+			t.Fatalf("native question did not become pending: %v", ctx.Err())
+		case <-tick.C:
+		}
 	}
 }
