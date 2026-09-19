@@ -84,7 +84,7 @@ func sourceHealth(t *testing.T, snap Snapshot, name string) SourceHealth {
 }
 
 func TestLedgerQueriesReportErrorsAndKeepPartialContributions(t *testing.T) {
-	for _, query := range []string{"live", "projects", "landings", "usage"} {
+	for _, query := range []string{"live", "projects", "landings"} {
 		t.Run(query, func(t *testing.T) {
 			s := newSourceFixture()
 			s.live = []attempt.Record{{Spec: attempt.Spec{ID: "live", Agent: "local", TaskID: "2", Workspace: project.Workspace{Path: "/work/p"}}, State: attempt.Running}}
@@ -99,10 +99,10 @@ func TestLedgerQueriesReportErrorsAndKeepPartialContributions(t *testing.T) {
 			if h := sourceHealth(t, snap, "ledger"); !strings.Contains(h.Error, group) {
 				t.Fatalf("aggregate health lost query: %+v", h)
 			}
-			if len(snap.Attempts) != 1 || len(snap.Projects) != 2 || len(snap.Landings) != 2 || snap.Usage.Total.Tokens.Total != 100 || len(snap.Inbox) != 2 {
-				t.Fatalf("partial result discarded: attempts=%d projects=%d landings=%d usage=%+v inbox=%d", len(snap.Attempts), len(snap.Projects), len(snap.Landings), snap.Usage, len(snap.Inbox))
+			if len(snap.Attempts) != 1 || len(snap.Projects) != 2 || len(snap.Landings) != 2 || len(snap.Inbox) != 2 {
+				t.Fatalf("partial result discarded: attempts=%d projects=%d landings=%d inbox=%d", len(snap.Attempts), len(snap.Projects), len(snap.Landings), len(snap.Inbox))
 			}
-			if group != "usage" && sourceHealth(t, snap, "ledger-usage").Error != "" {
+			if m.UsageSummary(t.Context()).Sources[0].Error != "" {
 				t.Fatal("unrelated failure marked usage unreadable")
 			}
 			if group != "live" && sourceHealth(t, snap, "ledger-live").Error != "" {
@@ -219,7 +219,7 @@ func TestUnreadAttentionDoesNotBecomeNoPendingWork(t *testing.T) {
 
 func TestAllQueryFailuresAreAggregatedWithoutOverwriting(t *testing.T) {
 	s := newSourceFixture()
-	queries := []string{"live", "projects", "landings", "usage", "reservations", "attestations", "replicas", "disclosures", "grants", "effects"}
+	queries := []string{"live", "projects", "landings", "reservations", "attestations", "replicas", "disclosures", "grants", "effects"}
 	for _, query := range queries {
 		s.fail[query] = errors.New("injected " + query)
 	}
@@ -271,10 +271,13 @@ func TestClosedLedgerCannotProduceAHealthyIdleSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := m.Snapshot(t.Context())
-	for _, name := range []string{"ledger", "ledger-live", "ledger-projects", "ledger-landings", "ledger-facts", "ledger-attention", "ledger-usage"} {
+	for _, name := range []string{"ledger", "ledger-live", "ledger-projects", "ledger-landings", "ledger-facts", "ledger-attention"} {
 		if sourceHealth(t, snap, name).Error == "" {
 			t.Fatalf("closed database reported %s healthy", name)
 		}
+	}
+	if usage := m.UsageSummary(t.Context()); usage.Usage != nil || usage.Sources[0].Error == "" {
+		t.Fatalf("closed database reported known usage: %+v", usage)
 	}
 	for _, task := range snap.Tasks {
 		if task.Execution != "unknown" || task.Lane != "unknown" {

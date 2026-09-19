@@ -63,7 +63,6 @@ type Snapshot struct {
 	// outcome, and grants.
 	Facts     Facts          `json:"facts"`
 	Projects  []Project      `json:"projects"`
-	Usage     Usage          `json:"usage"`
 	Inbox     []HumanRequest `json:"inbox"`
 	Schedules []Schedule     `json:"schedules"`
 	Sources   []SourceHealth `json:"sources"`

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -55,8 +54,6 @@ type snapshotBuilder struct {
 	// says the same for everything the inbox is made of.
 	activityKnown  bool
 	attentionKnown bool
-	// closed are the finished attempts usage is computed from.
-	closed []attempt.Record
 }
 
 // fleet lists the hub's machine first, then the workers, and fills each
@@ -167,7 +164,7 @@ func (b *snapshotBuilder) sources() {
 		{Name: "tasks", Wired: m.src.Tasks != nil}, {Name: "plans", Wired: m.src.Plans != nil},
 		{Name: "ledger", Wired: m.src.Ledger != nil}, {Name: "schedules", Wired: m.src.Schedules != nil},
 	}
-	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-facts", "ledger-attention", "ledger-usage"} {
+	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-facts", "ledger-attention"} {
 		snap.Sources = append(snap.Sources, SourceHealth{Name: name, Wired: m.src.Ledger != nil})
 	}
 }
@@ -264,9 +261,8 @@ func (b *snapshotBuilder) workspace(p project.Project, ws project.Workspace) Wor
 
 // ledgerFacts reads the rest of the ledger: the attempts in flight become
 // the snapshot's, then the recent landings, the facts a person may want
-// at a glance, and the closed attempts usage is computed from. Attention
-// is known only when both the facts and the live attempts were read
-// completely.
+// at a glance. Attention is known only when both the facts and the live
+// attempts were read completely. UsageSummary reads historical usage separately.
 func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 	m, snap := b.m, &b.snap
 	snap.Attempts, snap.Landings, snap.Conflicts = []Attempt{}, []Landing{}, []Conflict{}
@@ -296,8 +292,6 @@ func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 	if !factsAttentionKnown {
 		m.markSource(snap, "ledger-attention", err)
 	}
-	b.closed, err = m.src.Ledger.ClosedAttempts(ctx)
-	m.markLedgerSource(snap, "usage", err)
 }
 
 // inbox is what only a person can settle: the ledger's disclosures,
@@ -305,7 +299,6 @@ func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 func (b *snapshotBuilder) inbox() {
 	snap := &b.snap
 	normalizeFacts(&snap.Facts)
-	snap.Usage = usage(b.closed, snap.At, snap.Tasks)
 	snap.Inbox = inbox(snap.Facts, snap.Attempts)
 	snap.Inbox = append(snap.Inbox, b.m.pendingInteractions()...)
 }

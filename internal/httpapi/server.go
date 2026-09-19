@@ -27,6 +27,7 @@ import (
 // Model supplies system projections to the transport; it owns no HTTP state.
 type Model interface {
 	Snapshot(context.Context) readmodel.Snapshot
+	UsageSummary(context.Context) readmodel.UsageSnapshot
 	Subscribe(context.Context) (<-chan readmodel.Event, func())
 	Recent() []readmodel.Event
 	History(context.Context, string, int) ([]readmodel.HistoryEntry, string, error)
@@ -101,6 +102,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("PUT /console/settings", s.guard(s.consoleSettings))
 	mux.HandleFunc("PATCH /console/settings", s.guard(s.consoleSettings))
 	mux.HandleFunc("GET /state", s.guard(s.state))
+	mux.HandleFunc("GET /usage", s.guard(s.usage))
 	mux.HandleFunc("GET /events", s.guard(s.events))
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("POST /console/queue", s.guard(s.consoleEnqueue))

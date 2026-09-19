@@ -33,7 +33,7 @@ var timestamps = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?
 // and a workspace repository, and compares the whole snapshot with the
 // checked-in copy. The order of every list and the value of every field
 // is what the console renders; a refactoring of Snapshot must leave both
-// untouched. Usage is left out: its period keys follow today's date.
+// untouched. Usage is a separate on-demand projection, not a snapshot field.
 func TestSnapshotMatchesGolden(t *testing.T) {
 	m := fixture(t)
 	s := newSourceFixture()
@@ -51,7 +51,6 @@ func TestSnapshotMatchesGolden(t *testing.T) {
 	m.Publish(Event{At: time.Now(), Kind: "console.progress", TaskID: "2", Conversation: "chat:1", Progress: &consoleapi.Progress{Agent: "local", Tools: []consoleapi.ToolCall{{Kind: "bash", Name: "go test ./...", Status: view.ToolRunning}}}})
 
 	snap := m.Snapshot(t.Context())
-	snap.Usage = Usage{}
 	raw, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		t.Fatal(err)

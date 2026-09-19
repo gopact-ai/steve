@@ -202,6 +202,17 @@ type attemptRow struct {
 	Reported bool   `json:"reported"`
 }
 
+type usageRow struct {
+	Key        string `json:"key"`
+	Attempts   int    `json:"attempts"`
+	Unreported int    `json:"unreported"`
+	Tokens     tokens `json:"tokens"`
+}
+
+type usageSummary struct {
+	ByAgent []usageRow `json:"by_agent"`
+}
+
 type task struct {
 	ID             string       `json:"id"`
 	Parent         string       `json:"parent"`
@@ -459,12 +470,15 @@ func (g *gate) run(ctx context.Context) error {
 		return fmt.Errorf("attempt %s: changes index must contain A %s in project %s; got %+v", g.attemptID, g.filename, g.project, index)
 	}
 	g.log("PASS changes attempt=%s status=A path=%s", g.attemptID, g.filename)
-	var current state
-	if err := g.request(ctx, http.MethodGet, "/state", nil, &current); err != nil {
+	usage, err := g.usage(detail.Task)
+	if err != nil {
 		return err
 	}
-	usage, err := g.usage(current)
+	summary, err := g.readUsage(ctx)
 	if err != nil {
+		return err
+	}
+	if err := summary.checkReported(g.targetAgent, usage); err != nil {
 		return err
 	}
 	g.log("PASS usage task=#%s agent=%s node=%s reported=true input=%d output=%d cached_read=%d cached_write=%d total=%d", g.taskID, g.targetAgent, g.targetNode, usage.Input, usage.Output, usage.CachedRead, usage.CachedWrite, usage.Total)
@@ -544,22 +558,59 @@ func (g *gate) checkTask(t task) error {
 	return nil
 }
 
-func (g *gate) usage(s state) (tokens, error) {
-	for _, t := range s.Tasks {
-		if t.ID != g.taskID {
+func (g *gate) usage(t task) (tokens, error) {
+	if err := g.checkTask(t); err != nil {
+		return tokens{}, err
+	}
+	for _, row := range t.AttemptRows {
+		if row.Agent == g.targetAgent && row.Node == g.targetNode && row.Outcome == "ok" && row.Reported && row.Tokens.present() {
+			return row.Tokens, nil
+		}
+	}
+	return tokens{}, fmt.Errorf("/console/tasks/%s attempt=%s: expected successful attempt_rows with tokens and reported=true on %s/%s; got %+v", g.taskID, g.attemptID, g.targetNode, g.targetAgent, t.AttemptRows)
+}
+
+// /usage aggregates root task trees, not individual child attempts. Validate
+// its source and agent totals separately from child evidence in task detail.
+func (g *gate) readUsage(ctx context.Context) (usageSummary, error) {
+	var response struct {
+		Usage   *usageSummary `json:"usage"`
+		Sources []struct {
+			Name  string `json:"name"`
+			Wired bool   `json:"wired"`
+			Error string `json:"error"`
+		} `json:"sources"`
+	}
+	if err := g.request(ctx, http.MethodGet, "/usage", nil, &response); err != nil {
+		return usageSummary{}, err
+	}
+	for _, source := range response.Sources {
+		if source.Name != "ledger-usage" {
 			continue
 		}
-		if err := g.checkTask(t); err != nil {
-			return tokens{}, err
+		if source.Error != "" {
+			return usageSummary{}, fmt.Errorf("/usage: %s", source.Error)
 		}
-		for _, row := range t.AttemptRows {
-			if row.Agent == g.targetAgent && row.Node == g.targetNode && row.Outcome == "ok" && row.Reported && row.Tokens.present() {
-				return row.Tokens, nil
-			}
+		if !source.Wired {
+			return usageSummary{}, errors.New("/usage: ledger-usage is not wired")
 		}
-		return tokens{}, fmt.Errorf("/state task #%s attempt=%s: expected successful attempt_rows with tokens and reported=true on %s/%s; got %+v", g.taskID, g.attemptID, g.targetNode, g.targetAgent, t.AttemptRows)
+		if response.Usage == nil {
+			return usageSummary{}, errors.New("/usage: missing usage")
+		}
+		return *response.Usage, nil
 	}
-	return tokens{}, fmt.Errorf("/state: task #%s attempt=%s is missing", g.taskID, g.attemptID)
+	return usageSummary{}, errors.New("/usage: missing ledger-usage source")
+}
+
+func (u usageSummary) checkReported(agent string, child tokens) error {
+	for _, row := range u.ByAgent {
+		if row.Key == agent && row.Attempts > row.Unreported && row.Tokens.present() &&
+			row.Tokens.Input >= child.Input && row.Tokens.Output >= child.Output &&
+			row.Tokens.CachedRead >= child.CachedRead && row.Tokens.CachedWrite >= child.CachedWrite && row.Tokens.Total >= child.Total {
+			return nil
+		}
+	}
+	return fmt.Errorf("/usage: missing reported tokens for agent %s (child evidence: %+v)", agent, child)
 }
 
 // A failed send can still have created a task. Report only this run's IDs,

@@ -99,6 +99,7 @@ export interface UsageThroughput { window_tpm: number; active_tpm: number; peak_
 export type UsageRange = "1d" | "7d" | "30d";
 export interface UsagePeriod { from: string; to: string; interval: "hour" | "day"; series: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; by_harness?: UsageRow[]; by_trigger?: UsageRow[]; by_project?: UsageRow[]; tasks?: TaskDurationStats; by_task?: TaskUsageRow[]; throughput?: UsageThroughput; total: UsageRow }
 export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow; timezone?: string; periods?: Partial<Record<UsageRange, UsagePeriod>> }
+export interface UsageResponse { at: string; usage?: Usage; sources: SourceHealth[] }
 export interface Repo { path: string; branch?: string; head?: string; subject?: string; at?: string; dirty: boolean; remote?: string; agents_md: boolean; missing?: boolean }
 export interface Project {
     id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[];
@@ -191,7 +192,7 @@ export interface Reply {
 }
 export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
-    attempts: Attempt[]; landings: Landing[]; conflicts: Conflict[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[]; usage: Usage;
+    attempts: Attempt[]; landings: Landing[]; conflicts: Conflict[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[];
 }
 
 // Skills: what the hub can hand its agents, and what it does.

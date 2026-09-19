@@ -18,6 +18,7 @@ import { TaskCloseDialog, useTaskClose } from "@/components/steve/task-close";
 import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 import { unavailableSource } from "@/lib/source-health";
+import { useUsage } from "@/hooks/use-usage";
 
 type TabKey = "active" | "all" | "scheduled";
 
@@ -41,6 +42,7 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const setTab = (value: TabKey) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
     const [selected, setSelected] = useState<string | null>(null);
     const movedToDashboard = selectedTab === "usage";
+    const usage = useUsage(!movedToDashboard);
     const [showArchived, setShowArchived] = useState(false);
     const byID = useMemo(() => new Map(snap.tasks.map((t) => [t.id, t])), [snap.tasks]);
     const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
@@ -50,9 +52,9 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const needsYou = roots.filter((t) => t.lane === "needs_you").length;
     const activityUnavailable = !!unavailableSource(snap.sources, "ledger-live");
     const attentionUnavailable = !!unavailableSource(snap.sources, "ledger-attention");
-    const today = new Date().toISOString().slice(0, 10);
-    const todayUsage = snap.usage.periods?.["1d"]?.total ?? snap.usage.by_day.find((r) => r.key === today);
-    const usageUnavailable = !!unavailableSource(snap.sources, "ledger-usage");
+    const todayUsage = usage.response?.usage?.periods?.["1d"]?.total;
+    const usageSource = usage.response?.sources.find((source) => source.name === "ledger-usage");
+    const usageUnavailable = !!usage.error || !usageSource?.wired || !!usageSource.error;
     const todayTokens = `${fmtTokens(todayUsage?.tokens.total || 0, locale)} tok`;
     const setAside = roots.filter((t) => t.lane === "set_aside");
     const current = selected ? byID.get(selected) : undefined;
@@ -79,11 +81,13 @@ const lanes: { key: string; title: string; hint: string }[] = [
                     <Stat label={tr("board.paused")} value={roots.filter((t) => t.lifecycle === "paused").length} tone="gray" />
                     <Stat label={tr("status.running")} value={activityUnavailable ? (running ? `${running}+` : tr("common.unknown")) : running} tone={running ? "blue" : "gray"} />
                     <Stat label={tr("board.attention")} value={attentionUnavailable ? (needsYou ? `${needsYou}+` : tr("common.unknown")) : needsYou} tone={needsYou ? "warning" : "gray"} />
-                    <Stat label={tr("board.today")} value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds, locale)}` : "—"} tone="gray" />
+                    <Stat label={tr("board.today")} value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds, locale)}` : usage.loading ? tr("usage.loading") : tr("common.unknown")} tone="gray" />
                 </div>
                 </div>
             </PageHeader>
             <div className="workbench-page-body min-h-0 min-w-0 flex-1 overflow-auto px-4 py-5 sm:px-6 lg:px-8">
+                {(usage.error || usageSource?.error) && <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 text-sm text-error-primary"><span className="min-w-0 break-words">{tr("usage.unavailable", { error: usage.error || usageSource?.error || "" })}</span><Button size="sm" color="link-gray" isDisabled={usage.loading} onClick={usage.refresh}>{tr("common.retry")}</Button></div>}
+                {usageSource?.wired === false && <p role="status" className="mb-4 text-sm text-tertiary">{tr("usage.unwired")}</p>}
                 {tab === "active" && (
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
                         {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {

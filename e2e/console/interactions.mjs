@@ -8,7 +8,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { draftOf } from "./composer.mjs";
 import { preview } from "../childcard/preview.mjs";
-import { usageDurationFixture, usageFixture, usageState } from "./usage-fixture.mjs";
+import { usageDurationFixture, usageFixture, usageState, usageResponse } from "./usage-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || new URL("../../web/console/node_modules/playwright/index.mjs", import.meta.url).href);
 const output = process.env.OUTPUT_DIR || path.join(os.tmpdir(), "steve-console-interactions");
@@ -49,13 +49,14 @@ async function fixture({ history = false, running = false } = {}) {
     await page.route("**/*", async (route) => {
         const req = route.request(), url = new URL(req.url()), pathname = url.pathname;
         if (url.origin !== app.url) { f.errors.push(`Unexpected external request: ${url.origin}`); return route.abort(); }
-        if (!["/state", "/events", "/history"].includes(pathname) && !pathname.startsWith("/console/")) return route.continue();
+        if (!["/state", "/usage", "/events", "/history"].includes(pathname) && !pathname.startsWith("/console/")) return route.continue();
         const input = req.postDataJSON();
         const call = { method: req.method(), path: pathname, ...input };
         if (req.method() !== "GET") f.calls.push(call);
         const initialization = pathname.match(/^\/console\/conversations\/([^/]+)\/initialize$/);
         const conversation = initialization ? decodeURIComponent(initialization[1]) : input?.conversation || url.searchParams.get("conversation") || A;
         let current = conversations.find((c) => c.id === conversation);
+        if (pathname === "/usage") return route.fulfill({ json: usageResponse() });
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
         if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] } });
@@ -1733,12 +1734,10 @@ checks["skill-toggle-layout"] = async (f) => {
 };
 
 checks["readmodel-unknown"] = async (f) => {
-    const usage = usageFixture();
-    const state = { ...usageState(usage), tasks: [{ ...task("11", A, "scratch"), execution: "unknown", lane: "unknown" }], agents: [{ id: "test-agent", harness: "mock", eligible: true, activity_known: false, busy: 0, activities: [] }], sources: [
+    const state = { ...usageState(), tasks: [{ ...task("11", A, "scratch"), execution: "unknown", lane: "unknown" }], agents: [{ id: "test-agent", harness: "mock", eligible: true, activity_known: false, busy: 0, activities: [] }], sources: [
         { name: "ledger", wired: true, error: "partial ledger read" },
         { name: "ledger-live", wired: true, error: "activity unavailable" },
         { name: "ledger-attention", wired: true, error: "attention unavailable" },
-        { name: "ledger-usage", wired: true },
     ] };
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
@@ -1954,7 +1953,7 @@ checks["composer-columns"] = async (f) => {
 checks["fleet-live-activity"] = async (f) => {
     // The activity column follows streamed progress, ahead of the 10 s
     // snapshot floor, and without re-reading /state per chunk.
-    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
+    const state = { ...usageState(), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
     let stateReads = 0;
     await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: state }); });
     await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
@@ -1976,7 +1975,7 @@ checks["fleet-display-name"] = async (f) => {
         { name: "node-4bbf207fa8525645ba6935bd07d227a7", display_name: "Steve's MacBook", role: "hub", up: true, version: "test", capabilities: ["gpu", "office"], harnesses: [] },
         { name: "node-77aa11bb22cc33dd44ee55ff66aa77bb", role: "node", up: true, version: "test", harnesses: [] },
     ];
-    const state = { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes };
+    const state = { ...usageState(), hub: { node: nodes[0].name, version: "test", started: at }, nodes };
     const view = { enabled: true, cluster_id: "cluster-one", node_id: nodes[0].name, coordinator_id: nodes[0].name, epoch: 1, revision: 4, authoritative: true, observed_at: at, auto_failover: false, ready: true, nodes: [{ id: nodes[0].name, name: "Steve's MacBook", local: true, online: true, voter: true, auto_eligible: true, ready: true }], events: [] };
     const renames = [];
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
@@ -2026,7 +2025,7 @@ checks["audit-space-by-machine"] = async (f) => {
         { name: "node-99cc88dd77ee66ff55aa44bb33cc22dd", role: "node", up: true, version: "test", harnesses: [], health: { disk_free: 5 * (1 << 30), disk_total: 50 * (1 << 30), load1: 0, worktrees: 0, at, root: "/opt/steve" } },
         { name: "node-11223344556677889900aabbccddeeff", role: "node", up: false, version: "test", harnesses: [] },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(), hub: { node: nodes[0].name, version: "test", started: at }, nodes } }));
     await f.page.goto(`${app.url}/#/dashboard?tab=audit`);
     await f.page.reload();
     const table = f.page.getByRole("grid", { name: "各节点占用", exact: true });
@@ -2055,7 +2054,7 @@ checks["audit-table-paging"] = async (f) => {
     const replicas = Array.from({ length: 40 }, (_, i) => ({ artifact: `artifact-${String(i + 1).padStart(2, "0")}`, node: "node-4bbf207fa8525645ba6935bd07d227a7", generation: 1, state: "verified", at }));
     const nodes = [{ name: "node-4bbf207fa8525645ba6935bd07d227a7", display_name: "Steve's MacBook", role: "hub", up: true, version: "test", harnesses: [] }];
     const facts = { reservations: [], attestations: [], replicas, disclosures: [], effects: [], grants: [] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes, facts } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(), hub: { node: nodes[0].name, version: "test", started: at }, nodes, facts } }));
     await f.page.goto(`${app.url}/#/dashboard?tab=audit`);
     await f.page.reload();
     const table = f.page.getByRole("grid", { name: "副本", exact: true });
@@ -2096,7 +2095,8 @@ checks["audit-table-paging"] = async (f) => {
 
 checks["usage-dashboard-ranges"] = async (f) => {
     const usage = usageFixture();
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview`);
     await f.page.reload();
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
@@ -2128,7 +2128,8 @@ checks["usage-dashboard-unreported"] = async (f) => {
     const period = usage.periods["1d"];
     period.series = [{ key: period.from, tokens: { context: 65000 }, seconds: 120, attempts: 2, unreported: 2 }];
     period.total = { ...period.series[0], key: "total" }; period.by_agent = []; period.by_model = [];
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     await f.page.getByText("未上报 Token 按 0 绘制。", { exact: false }).waitFor();
     assert.equal(await f.page.getByRole("region", { name: "区间用量汇总", exact: true }).getByText("0", { exact: true }).count(), 1, "Unreported token usage is rendered as zero");
@@ -2147,7 +2148,8 @@ checks["usage-dashboard-gaps"] = async (f) => {
     ];
     period.total = { key: "total", tokens: { input: 100, output: 20, total: 120 }, seconds: 360, attempts: 3, unreported: 2 };
     period.by_agent = []; period.by_model = [];
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     await f.page.locator(".recharts-line-dot").first().waitFor();
     assert.equal(await f.page.locator(".recharts-line-dot").count(), 3, "Unreported buckets must be zero-valued points on the continuous line");
@@ -2161,7 +2163,8 @@ checks["usage-dashboard-gaps"] = async (f) => {
 
 checks["usage-dashboard-dimensions"] = async (f) => {
     const usage = usageFixture();
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=7d`); await f.page.reload();
     await f.page.getByRole("heading", { name: "任务平均耗时", exact: true }).waitFor();
     for (const [name, row] of [["按模型", "Demo Model"], ["按 Harness", "codex-acp"], ["按触发来源", "定时任务"], ["按项目", "scratch"]]) {
@@ -2185,7 +2188,8 @@ checks["usage-dashboard-dimensions"] = async (f) => {
 
 checks["usage-dashboard-duration-coverage"] = async (f) => {
     let usage = usageDurationFixture("missing");
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     const cardValue = (label) => f.page.locator(".usage-metric").filter({ has: f.page.getByRole("heading", { name: label, exact: true }) }).locator("strong");
     await f.page.getByRole("heading", { name: "任务平均耗时", exact: true }).waitFor();
@@ -2249,7 +2253,8 @@ checks["usage-dashboard-task-details-lazy"] = async (f) => {
     const sample = period.by_task[0];
     period.by_task = Array.from({ length: 1000 }, (_, i) => ({ ...sample, key: String(i), task_id: String(i), title: `Task detail ${i}` }));
     period.tasks.count = period.by_task.length;
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=7d`); await f.page.reload();
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
     const taskRows = f.page.locator('table[aria-label="任务消耗明细"] tbody tr');
@@ -2441,7 +2446,7 @@ checks["board-overview"] = async (f) => {
         { ...root("22", "done", "needs_you"), parent: "11", origin: "delegate:11", result_delivery: { state: "uncertain", attempts: 1, error: "Receipt lost: " + "long-unbroken-detail".repeat(20), at } },
         { ...root("16", "paused", "set_aside"), parent: "15" },
     ];
-    const state = { ...usageState(usageFixture()), tasks: rows, projects: [project("scratch")] };
+    const state = { ...usageState(), tasks: rows, projects: [project("scratch")] };
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     const summary = f.page.getByRole("region", { name: "主任务统计" });
@@ -2485,7 +2490,7 @@ checks["board-overview"] = async (f) => {
 
 checks["child-handoff"] = async (f) => {
     const child = { ...task("22", A, "scratch"), state: "done", lifecycle: "done", execution: "idle", lane: "needs_you", parent: "11", result_delivery: { state: "uncertain", error: "Child receipt was lost", attempts: 2, at } };
-    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch"), child] };
+    const state = { ...usageState(), tasks: [task("11", A, "scratch"), child] };
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
     await f.page.goto(`${app.url}/#/console?view=board&tab=all`); await f.page.reload();
     await f.page.getByRole("row").filter({ hasText: "Task 22" }).click();
@@ -2503,7 +2508,7 @@ checks["fleet-version-drift"] = async (f) => {
         { name: "worker-unknown", role: "node", up: true, harnesses: [] },
         { name: "worker-offline", role: "node", up: false, version: "old", harnesses: [] },
     ];
-    const state = { ...usageState(usageFixture()), hub: { node: "hub", version: "abc1234", started: at }, nodes };
+    const state = { ...usageState(), hub: { node: "hub", version: "abc1234", started: at }, nodes };
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
     await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
     await f.page.getByText(/1 台机器与协调节点版本不同/).waitFor();

@@ -33,6 +33,16 @@ func TestGate(t *testing.T) {
 		{"unreported", "expected successful attempt_rows"},
 		{"empty_tokens", "expected successful attempt_rows"},
 		{"parent_tokens_only", "expected successful attempt_rows"},
+		{"usage_failed", "/usage: ledger offline"},
+		{"usage_partial", "/usage: incomplete history"},
+		{"usage_unwired", "/usage: ledger-usage is not wired"},
+		{"usage_missing_source", "/usage: missing ledger-usage source"},
+		{"usage_missing", "/usage: missing usage"},
+		{"usage_zero", "/usage: missing reported tokens for agent shipper"},
+		{"usage_other_agent", "/usage: missing reported tokens for agent shipper"},
+		{"usage_unreported", "/usage: missing reported tokens for agent shipper"},
+		{"usage_incomplete_tokens", "/usage: missing reported tokens for agent shipper"},
+		{"usage_http_error", "GET /usage: HTTP 503"},
 		{"missing_file", "landing: stat"},
 		{"wrong_content", "has wrong content"},
 		{"symlink", "must be a regular file"},
@@ -42,6 +52,7 @@ func TestGate(t *testing.T) {
 			var output bytes.Buffer
 			g := newGate(options{token: "secret-token", project: "scratch", agent: "claude", targetNode: "node-b", targetAgent: "shipper", timeout: time.Second}, &output)
 			var sent int
+			var usageReads int
 			var stored reply
 			used := make(map[string]bool)
 			child := func() task {
@@ -68,8 +79,47 @@ func TestGate(t *testing.T) {
 				case "GET /state":
 					s := state{Agents: []agent{{ID: "claude", Node: "hub", Eligible: true}, {ID: "shipper", Node: "node-b", Eligible: true}}, Projects: []project{{ID: "scratch", Node: "hub", Path: home}}}
 					s.Hub.Node, s.Hub.Version = "hub", "test-version"
-					s.Tasks = []task{{ID: "parent", AttemptRows: []attemptRow{{Agent: "shipper", Node: "node-b", Outcome: "ok", Reported: true, Tokens: tokens{Total: 999}}}}, child()}
+					// Base state is not the usage contract. Child evidence must
+					// come from task detail, aggregates from /usage.
+					s.Tasks = []task{{ID: "parent"}, {ID: "child"}}
 					response = s
+				case "GET /usage":
+					usageReads++
+					if tc.name == "usage_http_error" {
+						http.Error(w, "usage unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					health := map[string]any{"name": "ledger-usage", "wired": tc.name != "usage_unwired"}
+					sources := []any{health}
+					if tc.name == "usage_failed" {
+						health["error"] = "ledger offline"
+					}
+					if tc.name == "usage_partial" {
+						health["error"] = "incomplete history"
+					}
+					if tc.name == "usage_missing_source" {
+						sources = nil
+					}
+					total := tokens{Input: 100, Output: 20, Total: 120}
+					if tc.name == "usage_zero" {
+						total = tokens{}
+					}
+					row := map[string]any{"key": "shipper", "attempts": 1, "tokens": total}
+					switch tc.name {
+					case "usage_other_agent":
+						row["key"] = "coordinator"
+					case "usage_unreported":
+						row["unreported"] = 1
+					case "usage_incomplete_tokens":
+						row["tokens"] = tokens{Input: 9, Output: 2, Total: 11}
+					}
+					response = map[string]any{"at": time.Now(), "sources": sources, "usage": map[string]any{
+						"total":    map[string]any{"attempts": 2, "tokens": total},
+						"by_agent": []any{row},
+					}}
+					if tc.name == "usage_missing" || tc.name == "usage_failed" {
+						delete(response.(map[string]any), "usage")
+					}
 				case "POST /console/send":
 					var req struct {
 						Conversation string `json:"conversation"`
@@ -179,6 +229,9 @@ func TestGate(t *testing.T) {
 			if tc.want == "" {
 				if err != nil || !strings.Contains(output.String(), "FLEET PASS") {
 					t.Fatalf("run: %v\n%s", err, &output)
+				}
+				if usageReads != 1 {
+					t.Fatalf("usage must be read independently once, got %d reads", usageReads)
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(output.String(), "FLEET PASS") {
 				t.Fatalf("want failure containing %q, got %v\n%s", tc.want, err, &output)

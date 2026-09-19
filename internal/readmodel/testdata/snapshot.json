@@ -689,40 +689,6 @@
       ]
     }
   ],
-  "usage": {
-    "by_day": null,
-    "by_agent": null,
-    "by_model": null,
-    "total": {
-      "key": "",
-      "tokens": {},
-      "seconds": 0,
-      "attempts": 0
-    },
-    "timezone": "",
-    "periods": null,
-    "by_harness": null,
-    "by_trigger": null,
-    "by_project": null,
-    "tasks": {
-      "count": 0,
-      "measured": 0,
-      "min_seconds": 0,
-      "max_seconds": 0,
-      "average_seconds": 0,
-      "total_seconds": 0
-    },
-    "by_task": null,
-    "throughput": {
-      "window_tpm": 0,
-      "active_tpm": 0,
-      "peak_tpm": 0,
-      "estimated": false,
-      "measured_tokens": 0,
-      "unmeasured_tokens": 0,
-      "active_seconds": 0
-    }
-  },
   "inbox": [
     {
       "id": "disclosure",
@@ -846,10 +812,6 @@
     },
     {
       "name": "ledger-attention",
-      "wired": true
-    },
-    {
-      "name": "ledger-usage",
       "wired": true
     }
   ]

@@ -6,7 +6,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const dist = path.resolve(fileURLToPath(new URL("../../internal/readmodel/web/dist/", import.meta.url)));
+const dist = path.resolve(process.env.CONSOLE_DIST || fileURLToPath(new URL("../../internal/readmodel/web/dist/", import.meta.url)));
 const mime = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2" };
 
 export async function preview(port = 0) {
@@ -14,7 +14,7 @@ export async function preview(port = 0) {
     const server = http.createServer(async (req, res) => {
         if (!["GET", "HEAD"].includes(req.method)) { res.writeHead(405).end("Read-only preview"); return; }
         const url = new URL(req.url, "http://localhost");
-        if (/^\/(state|events|history|console)(\/|$)/.test(url.pathname)) {
+        if (/^\/(state|usage|events|history|console)(\/|$)/.test(url.pathname)) {
             const upstream = http.request(new URL(req.url, hub), { method: req.method, headers: req.headers }, (reply) => {
                 res.writeHead(reply.statusCode, reply.headers);
                 reply.pipe(res);

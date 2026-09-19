@@ -3,7 +3,8 @@ import { useSearchParams } from "react-router";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ChevronDown } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
-import { useFleet } from "@/lib/fleet";
+import { useUsage } from "@/hooks/use-usage";
+import { Button } from "@/components/base/buttons/button";
 import { fmtSeconds, fmtTokens } from "@/lib/labels";
 import { intlLocale, type Translator } from "@/lib/i18n";
 import { useI18n } from "@/providers/locale-provider";
@@ -34,22 +35,23 @@ const triggerKeys = { chat: "usage.trigger.chat", schedule: "usage.trigger.sched
 const triggerName = (key: string | undefined, t: Translator) => key && key in triggerKeys ? t(triggerKeys[key as keyof typeof triggerKeys]) : key || t("usage.unknown");
 
 export default function UsageDashboard() {
-    const { snap } = useFleet();
+    const { response, error, loading, refresh } = useUsage();
     const { t } = useI18n();
     const [params, setParams] = useSearchParams();
     const selected = params.get("range") as UsageRange;
     const range = ranges.includes(selected) ? selected : "7d";
     const [metric, setMetric] = useState<Metric>("tokens");
-    const period = snap.usage.periods?.[range];
-    const source = snap.sources.find((item) => item.name === "ledger-usage") ?? snap.sources.find((item) => item.name === "ledger");
-    const zone = snap.usage.timezone && snap.usage.timezone !== "Local" ? snap.usage.timezone : "local-offset";
+    const period = response?.usage?.periods?.[range];
+    const source = response?.sources.find((item) => item.name === "ledger-usage");
+    const failure = error || source?.error;
+    const zone = response?.usage?.timezone && response.usage.timezone !== "Local" ? response.usage.timezone : "local-offset";
     const zoneLabel = zone === "local-offset" ? `UTC${period?.to.endsWith("Z") ? "" : period?.to.slice(-6) || ""}` : zone;
     return <div className="usage-dashboard">
         <header className="usage-heading">
             <div><h2 className="text-xl font-semibold tracking-tight text-primary">{t("usage.title")}</h2><p className="mt-1 text-sm text-tertiary">{t(rangeKeys[range])} · {t(range === "1d" ? "usage.hourly" : "usage.daily")} · {zoneLabel}</p></div>
             <div className="workbench-segmented usage-ranges" role="group" aria-label={t("usage.range")}>{ranges.map((value) => <button key={value} type="button" aria-pressed={range === value} title={t(rangeKeys[value])} onClick={() => { const next = new URLSearchParams(params); next.set("range", value); setParams(next, { replace: true }); }}>{value}</button>)}</div>
         </header>
-        {source?.error ? <div role="alert" className="usage-data-state">{t("usage.unavailable", { error: source.error })}</div> : source?.wired === false ? <div role="status" className="usage-data-state">{t("usage.unwired")}</div> : !period ? <div role="status" className="usage-data-state">{t(snap.at ? "usage.upgrade" : "usage.loading")}</div> : <PeriodDashboard period={period} metric={metric} setMetric={setMetric} zone={zone} />}
+        {failure ? <div role="alert" className="usage-data-state flex-wrap gap-2"><span className="min-w-0 break-words">{t("usage.unavailable", { error: failure })}</span><Button size="sm" color="link-gray" isDisabled={loading} onClick={refresh}>{t("common.retry")}</Button></div> : source?.wired === false ? <div role="status" className="usage-data-state">{t("usage.unwired")}</div> : !period ? <div role="status" className="usage-data-state">{t("usage.loading")}</div> : <PeriodDashboard period={period} metric={metric} setMetric={setMetric} zone={zone} />}
     </div>;
 }
 

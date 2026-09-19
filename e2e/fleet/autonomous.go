@@ -293,20 +293,22 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 	// today) is the harness's gap, recorded honestly as reported=false;
 	// the coordinator picks whichever idle agent it likes, so that gap
 	// is a warning here, not a failure of the platform under test.
-	var current fleetState
-	if err := g.request(ctx, http.MethodGet, "/state", nil, &current); err != nil {
+	summary, err := g.readUsage(ctx)
+	if err != nil {
 		return err
 	}
 	reportedChildren := 0
 	for _, r := range runs {
+		var current taskDetail
+		if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(r.task), nil, &current); err != nil {
+			return err
+		}
 		var row *attemptRow
-		for _, t := range current.Tasks {
-			if t.ID != r.task {
-				continue
-			}
-			for i := range t.AttemptRows {
-				if t.AttemptRows[i].Outcome == "ok" {
-					row = &t.AttemptRows[i]
+		if current.Task.ID == r.task {
+			for i := range current.Task.AttemptRows {
+				candidate := &current.Task.AttemptRows[i]
+				if candidate.Outcome == "ok" && candidate.Agent == r.agent && candidate.Node == r.node {
+					row = candidate
 				}
 			}
 		}
@@ -314,6 +316,9 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 			return fmt.Errorf("task #%s: no successful attempt row", r.task)
 		}
 		if row.Reported && row.Tokens.present() {
+			if err := summary.checkReported(r.agent, row.Tokens); err != nil {
+				return err
+			}
 			reportedChildren++
 		} else {
 			g.log("WARN usage unreported task=#%s agent=%s node=%s (the harness reports no usage)", r.task, r.agent, r.node)
