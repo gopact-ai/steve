@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import { Globe01, Settings01, Server01, Sliders04 } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
@@ -22,6 +22,7 @@ import { useTheme } from "@/providers/theme-provider";
 type Group = "hub" | "channels";
 type Section = "general" | "channels" | "policies" | "services";
 const sections = ["general", "channels", "policies", "services"] as const;
+const servicesHref = "#/settings?section=services";
 const icons = { general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
 // HashRouter's listener can unmount the form synchronously. Register this
 // listener before the router mounts so a declined back navigation keeps drafts.
@@ -124,17 +125,23 @@ export function SettingsPage() {
     const group: Group = section === "channels" ? "channels" : "hub";
     const dirtyGroup = group === "hub" ? dirtyHub : dirtyChannels;
     const requestRead = (keep = false) => dirtyGroup ? setConfirmRead({ group, keep }) : void read(group, keep);
+    // A saved server setting does nothing until the coordinator service
+    // restarts, and quitting the app is not that restart. Everywhere the
+    // page says so, it also links to the page that can do it.
+    const openServices = (event: ReactMouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setParams({ section: "services" }); };
+    const restartLink = <a className="settings-restart-link" href={servicesHref} onClick={openServices}>{t("settingsPage.goRestart")}</a>;
+    const pendingGroup = group === "hub" ? !!hub?.pending_restart : !!channels?.pending_restart;
     const update = (path: string, value: string) => { setInputs((all) => ({ ...all, [path]: value })); setNotices((all) => ({ ...all, hub: undefined })); setErrors((all) => ({ ...all, hub: null })); };
-    const rows = (paths: readonly SettingPath[]) => hub && paths.filter((path) => fields.has(path)).map((path) => <SettingRow key={path} path={path} field={fields.get(path)!} view={hub} value={inputs[path] ?? ""} disabled={blocked} onChange={(value) => update(path, value)} />);
+    const rows = (paths: readonly SettingPath[]) => hub && paths.filter((path) => fields.has(path)).map((path) => <SettingRow key={path} path={path} field={fields.get(path)!} view={hub} value={inputs[path] ?? ""} disabled={blocked} restart={restartLink} onChange={(value) => update(path, value)} />);
     const groupStatus = section !== "services" && <>
         {!!errors[group] && <p role="alert" className="settings-alert">{errorText(errors[group], locale)}</p>}
         {stale[group] && <div role="alert" className="settings-conflict"><p>{t("settingsPage.sharedRevision")}</p><div className="settings-actions"><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead(true)}>{t("settingsPage.reviewLatest")}</Button><Button size="sm" color="link-gray" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.discardReload")}</Button></div></div>}
-        {notices[group] && <p role="status" className="settings-note">{t(notices[group] === "saved" ? "settingsPage.savedNotice" : "settingsPage.reviewedNotice")}</p>}
+        {notices[group] && <p role="status" className="settings-note">{t(notices[group] === "saved" ? "settingsPage.savedNotice" : "settingsPage.reviewedNotice")}{notices[group] === "saved" && <> {restartLink}</>}</p>}
         {(group === "hub" ? hub?.warning : channels?.warning) && <p role="status" className="settings-conflict">{group === "hub" ? hub?.warning : channels?.warning}</p>}
     </>;
-    const saveBar = (hub || channels) && <div className="settings-savebar"><span>{t(dirtyGroup ? "settingsPage.unsaved" : "settingsPage.serverSettingsHint")}</span><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.reload")}</Button><Button size="sm" color="primary" isLoading={saving === group} isDisabled={!dirtyGroup || blocked || stale[group]} onClick={() => void save(group)}>{t(group === "hub" ? "settingsPage.saveHub" : "settingsPage.saveChannels")}</Button></div>;
+    const saveBar = (hub || channels) && <div className="settings-savebar"><span>{t(dirtyGroup ? "settingsPage.unsaved" : "settingsPage.serverSettingsHint")}{!dirtyGroup && pendingGroup && section !== "services" && <> · {restartLink}</>}</span><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.reload")}</Button><Button size="sm" color="primary" isLoading={saving === group} isDisabled={!dirtyGroup || blocked || stale[group]} onClick={() => void save(group)}>{t(group === "hub" ? "settingsPage.saveHub" : "settingsPage.saveChannels")}</Button></div>;
     return <div className="workbench-page settings-page">
-        <header className="settings-header"><h1>{t("settingsPage.centerTitle")}</h1><div role="status">{dirty && <span>{t("settingsPage.unsaved")}</span>}{(hub?.pending_restart || channels?.pending_restart) && <Badge size="sm" color="warning">{t("settingsPage.pendingRestart")}</Badge>}</div></header>
+        <header className="settings-header"><h1>{t("settingsPage.centerTitle")}</h1><div role="status">{dirty && <span>{t("settingsPage.unsaved")}</span>}{(hub?.pending_restart || channels?.pending_restart) && <a className="settings-pending-link" href={servicesHref} aria-label={t("settingsPage.pendingRestartAction")} title={t("settingsPage.pendingRestartAction")} onClick={openServices}><Badge size="sm" color="warning">{t("settingsPage.pendingRestart")}</Badge></a>}</div></header>
         <div className="settings-layout"><nav aria-label={t("settingsPage.categories")} className="settings-nav">{sections.map((item) => { const Icon = icons[item]; return <a key={item} aria-label={t(`settingsPage.section.${item}`)} href={`#/settings?section=${item}`} aria-current={item === section ? "page" : undefined} onClick={(event) => { event.preventDefault(); setParams({ section: item }); }}><Icon aria-hidden="true" /><span className="settings-nav-label">{t(`settingsPage.section.${item}`)}</span>{(item === "channels" ? dirtyChannels : item === "policies" || item === "general" ? dirtyHub : false) && <span className="settings-dirty-dot" aria-label={t("settingsPage.unsaved")} />}</a>; })}</nav>
         <main className="settings-content" aria-label={t(`settingsPage.section.${section}`)}>
             {groupStatus}
@@ -159,14 +166,14 @@ export function SettingsPage() {
 // the settings file stores.
 const approvalKeys = { "": "settingsPage.approval.none", ask: "settingsPage.approval.ask", auto: "settingsPage.approval.auto", full: "settingsPage.approval.full" } as const;
 
-function SettingRow({ path, field, view, value, disabled, onChange }: { path: SettingPath; field: SettingsField; view: HubSettings; value: string; disabled: boolean; onChange: (value: string) => void }) {
+function SettingRow({ path, field, view, value, disabled, restart, onChange }: { path: SettingPath; field: SettingsField; view: HubSettings; value: string; disabled: boolean; restart: ReactNode; onChange: (value: string) => void }) {
     const { t, locale } = useI18n();
     const id = "setting-" + path.replaceAll(".", "-"), label = t(`settingsPage.${path}`);
     const saved = settingValue(view.desired, path), effective = settingValue(view.effective, path), edited = value !== String(saved ?? "");
     const choiceLabel = (option: string) => path === "gateway.default_approval" ? t(approvalKeys[option as keyof typeof approvalKeys] ?? "settingsPage.approval.none") : option === "" ? t("settingsPage.automaticLocale") : option === "zh" ? "简体中文" : option === "en" ? "English" : option;
     const format = (item: string | number | undefined) => typeof item === "number" ? number(item, locale) : field.enum ? choiceLabel(String(item ?? "")) : item ?? "—";
     return <div className="settings-field" data-setting={path}>
-        <div><label htmlFor={id}>{label}</label>{path.startsWith("gateway.") && <p>{t(`settingsPage.${path as Extract<SettingPath, `gateway.${string}`>}.hint`)}</p>}{(saved !== effective || edited) && <p className="settings-difference">{t("settingsPage.saved")}: <span data-desired>{format(saved)}</span>{saved !== effective && <> · {t("settingsPage.effective")}: <span data-effective>{format(effective)}</span></>}</p>}</div>
+        <div><label htmlFor={id}>{label}</label>{path.startsWith("gateway.") && <p>{t(`settingsPage.${path as Extract<SettingPath, `gateway.${string}`>}.hint`)}</p>}{(saved !== effective || edited) && <p className="settings-difference">{t("settingsPage.saved")}: <span data-desired>{format(saved)}</span>{saved !== effective && <> · {t("settingsPage.effective")}: <span data-effective>{format(effective)}</span> · {restart}</>}</p>}</div>
         <div>{field.enum ? <Select size="sm" id={id} aria-label={label} selectedKey={value || "__default"} isDisabled={disabled} onSelectionChange={(key) => { if (key) onChange(key === "__default" ? "" : String(key)); }} items={field.enum.map((option) => ({ id: option || "__default", label: choiceLabel(option) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select> : <Input size="sm" id={id} aria-label={label} type="text" inputMode={field.type === "integer" ? "numeric" : "text"} autoComplete="off" spellCheck="false" value={value} isDisabled={disabled} onChange={onChange} />}
         <details className="settings-field-help"><summary>{t("settingsPage.fieldHelp")}</summary><p>{field.type === "duration" ? t(field.minimum === 0 ? "settingsPage.nonnegativeDuration" : "settingsPage.positiveDuration") : field.type === "integer" ? t("settingsPage.range", { minimum: number(field.minimum ?? 0, locale), maximum: field.maximum === undefined ? "—" : number(field.maximum, locale) }) : ""}{field.unit === "bytes" ? " · " + t("settingsPage.bytes") : ""}</p>{field.default !== undefined && <p>{t("settingsPage.default", { value: format(field.default) })}</p>}</details></div>
     </div>;

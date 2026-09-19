@@ -142,15 +142,15 @@ if (process.env.PURE_ONLY !== "1") {
         await page.evaluate(() => window.history.go(-2));
         await page.waitForTimeout(600);
         assert.match(page.url(), /settings/); assert.equal(await turns.inputValue(), "7", "Cancelling browser back preserves the draft");
-        await nav.getByRole("link", { name: "Channel", exact: true }).click();
+        await nav.getByRole("link", { name: "接入渠道", exact: true }).click();
         await page.getByRole("switch", { name: "启用 Feishu / Lark", exact: true }).focus();
         await page.getByRole("switch", { name: "启用 Feishu / Lark", exact: true }).press("Space");
         await page.getByRole("textbox", { name: "App ID", exact: true }).fill("app-fixture");
-        await page.getByRole("button", { name: "保存 Channel 设置", exact: true }).click();
+        await page.getByRole("button", { name: "保存渠道设置", exact: true }).click();
         await page.getByRole("alert").filter({ hasText: "有效的 App Secret" }).waitFor(); assert.equal(writes.length, 0);
         const beforeChannelSaveReads = settingsReads;
         await page.getByRole("textbox", { name: "App Secret", exact: true }).fill("secret-fixture");
-        await page.getByRole("button", { name: "保存 Channel 设置", exact: true }).click();
+        await page.getByRole("button", { name: "保存渠道设置", exact: true }).click();
         await page.getByText("已配置 App Secret", { exact: true }).waitFor();
         assert.equal(await page.getByRole("textbox", { name: "App Secret", exact: true }).inputValue(), "");
         assert.equal(writes[0].channels.feishu.app_secret.action, "replace");
@@ -165,6 +165,17 @@ if (process.env.PURE_ONLY !== "1") {
         await page.locator('[data-setting="gateway.task_max_turns"] [data-desired]').filter({ hasText: "7" }).waitFor();
         assert.equal(writes[1].base_revision, "revision-1");
         assert.equal(await page.locator('[data-setting="gateway.task_max_turns"] [data-effective]').innerText(), "0");
+        // A saved value that is not running yet has to say where it is made
+        // to run. The badge and the row both lead to Nodes & services, which
+        // is the restart the reader needs; closing the app is not one.
+        const pendingBadge = page.getByRole("link", { name: "去「节点与服务」重启协调节点", exact: true });
+        await pendingBadge.waitFor();
+        await page.locator('[data-setting="gateway.task_max_turns"]').getByRole("link", { name: "去重启服务", exact: true }).waitFor();
+        await pendingBadge.click();
+        await page.getByRole("heading", { name: "节点与服务", exact: true }).waitFor();
+        assert.match(page.url(), /section=services/, "The pending badge opens the page that restarts the service");
+        await nav.getByRole("link", { name: "执行与资源", exact: true }).click();
+        await turns.waitFor();
         await turns.fill("8"); conflict = true;
         await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
         await page.getByRole("alert").filter({ hasText: "配置版本已变化" }).waitFor();
