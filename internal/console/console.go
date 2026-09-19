@@ -24,6 +24,7 @@ import (
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
@@ -704,7 +705,8 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		ExchangeID:   exchange.ID,
 		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
 		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject, ExpectedTask: exchange.ExpectedTask,
-		Locale: exchange.Locale, Images: media,
+		ResumeAdmission: exchange.ResumeAdmission,
+		Locale:          exchange.Locale, Images: media,
 		OnTurnReady: func(taskID, attemptID string) {
 			identity.set(taskID, attemptID)
 			stream.Bind(taskID)
@@ -964,16 +966,38 @@ func (s *Service) publishReply(r consoleapi.Reply) {
 // line of its own and the continuation is an exchange put ahead of
 // whatever else waits, addressed to the task's member, answered like any
 // other line.
-func (s *Service) Resume(ctx context.Context, conversation, taskID, member, notice, prompt string, revive func(conversationID, member string) error) error {
+func (s *Service) Resume(ctx context.Context, conversation, taskID, member, notice, prompt string, admission task.ResumeAdmission, revive func(conversationID, member string) error) error {
 	conversation = ConversationID(conversation)
-	if member == "" {
+	if member == "" || !admission.Valid() || admission.TaskID != taskID {
 		return fmt.Errorf("task #%s not resumable: no member", taskID)
 	}
+	s.mu.Lock()
+	existing := s.continuationLocked(conversation, admission.ID)
+	if existing != nil {
+		defer s.mu.Unlock()
+		if existing.ExpectedTask != taskID || existing.ResumeAdmission != admission {
+			return consoleapi.ErrCommandConflict
+		}
+		return nil
+	}
+	if s.book == nil {
+		s.mu.Unlock()
+		return errors.New("manual resume requires durable console records")
+	}
+	s.mu.Unlock()
 	if err := revive(conversation, member); err != nil {
 		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
 	}
 	slog.Info(fmt.Sprintf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member), "task", taskID, "conversation", conversation, "member", member)
-	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, ExpectedTask: taskID})
+	e, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, Deferred: true,
+		Key: admission.ID, ExpectedTask: taskID, ResumeAdmission: admission})
+	if err == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if e.ExpectedTask != taskID || e.ResumeAdmission != admission {
+			return consoleapi.ErrCommandConflict
+		}
+	}
 	return err
 }
 

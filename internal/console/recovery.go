@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -67,12 +68,20 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 	if driver == nil {
 		return errors.New("retained recovery driver is required")
 	}
-	if _, err := driver.RetainedChats(ctx); err != nil {
-		return err
-	}
-	if plans, ok := driver.(retainedPlanDriver); ok {
-		if _, err := plans.RetainedPlans(ctx); err != nil {
+	s.mu.Lock()
+	initialized := reflect.ValueOf(driver).Comparable() && s.recoveryDriver == driver
+	s.mu.Unlock()
+	// Initialization can restore all retained history once. Runtime passes
+	// still restart detached workers, but must not repeat that idle scan.
+	// Non-comparable driver values conservatively repeat initialization.
+	if !initialized {
+		if _, err := driver.RetainedChats(ctx); err != nil {
 			return err
+		}
+		if plans, ok := driver.(retainedPlanDriver); ok {
+			if _, err := plans.RetainedPlans(ctx); err != nil {
+				return err
+			}
 		}
 	}
 	s.mu.Lock()
@@ -88,6 +97,14 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 		for _, e := range list {
 			if (e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) || e.cancel != nil {
 				continue
+			}
+			select {
+			case <-e.done:
+				// Detachment released this worker's reservation and waiters.
+				// Restored startup exchanges already hold an open reservation.
+				e.done = make(chan struct{})
+				s.running[e.Conversation]++
+			default:
 			}
 			ctx, cancel := context.WithCancel(s.exchangeContext(ctx))
 			e.ctx, e.cancel = ctx, cancel
@@ -382,7 +399,7 @@ func (r *exchangeRecovery) identity(candidate retainedExchange, found bool) *que
 // request is the turn request a resumed or relocated execution answers,
 // with its progress and questions routed to this exchange.
 func (r *exchangeRecovery) request(requester string, identity *questionIdentity) turn.Request {
-	return turn.Request{Channel: "console", ConversationID: r.exchange.Conversation, MessageID: AnchorMark + r.exchange.ID, ChatID: ChatID, SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true, Origin: r.exchange.Origin, ExpectedProject: r.exchange.ExpectedProject, ExpectedTask: r.exchange.ExpectedTask, Locale: r.exchange.Locale,
+	return turn.Request{Channel: "console", ConversationID: r.exchange.Conversation, MessageID: AnchorMark + r.exchange.ID, ChatID: ChatID, SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true, Origin: r.exchange.Origin, ExpectedProject: r.exchange.ExpectedProject, ExpectedTask: r.exchange.ExpectedTask, ResumeAdmission: r.exchange.ResumeAdmission, Locale: r.exchange.Locale,
 		OnTurnReady: identity.set,
 		OnProgress:  r.stream.Update,
 		OnPhase:     r.stream.Phase,

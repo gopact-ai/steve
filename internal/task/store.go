@@ -362,6 +362,21 @@ func (s *Store) begin(id, member, node, session, conversation string, input *Tur
 	if !ok {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
+	if input != nil && input.ResumeAdmission != (ResumeAdmission{}) {
+		if err := checkResumeAdmission(*stored, input.ResumeAdmission); err != nil {
+			return Task{}, err
+		}
+		if err := checkExecution(next.Tasks, ExecutionToken{TaskID: id, Epoch: input.ResumeAdmission.Epoch}); err != nil {
+			return Task{}, err
+		}
+		if !input.Continuation || input.TurnID == "" || stored.Member != member {
+			return Task{}, fmt.Errorf("%w: resume input binding changed", ErrExecutionStopped)
+		}
+		stored.ResumeGrant.Consumed, stored.ResumeGrant.TurnID = true, input.TurnID
+	} else if stored.ResumeGrant.Admission.Valid() && !stored.ResumeGrant.Consumed &&
+		stored.ResumeGrant.Admission.Epoch == stored.ExecutionEpoch {
+		return Task{}, fmt.Errorf("%w: task %s requires its accepted resume input", ErrExecutionStopped, id)
+	}
 	if conversation != "" && (stored.Channel != conversation || stored.Member != member || stored.State != StateRunning) {
 		return Task{}, fmt.Errorf("%w: task %s is no longer available", ErrContinuationUnavailable, id)
 	}
@@ -388,6 +403,9 @@ func (s *Store) begin(id, member, node, session, conversation string, input *Tur
 	stored.Attempts = append(stored.Attempts, Attempt{
 		Member: member, Node: node, Session: session, StartedAt: now, ExecutionEpoch: stored.ExecutionEpoch,
 	})
+	if input != nil && input.ResumeAdmission.Valid() {
+		stored.Attempts[len(stored.Attempts)-1].TurnID = input.TurnID
+	}
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err
 	}

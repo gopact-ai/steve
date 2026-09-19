@@ -2,22 +2,23 @@ package turn
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-// TestTaskSurvivesAGatewayRestartE2E drives real turns against a real agent
-// process and asserts the task file on disk, because the point of a task is
+// TestTaskSurvivesAGatewayRestartE2E drives turns against the mockagent
+// process and reads task records from SQLite, because the point of a task is
 // that it is still there after the process that opened it is gone.
 func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "mockagent")
@@ -28,7 +29,8 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	taskPath := filepath.Join(stateDir, "tasks.json")
+	workspace := t.TempDir()
+	nodeDir := t.TempDir()
 	configs := map[string]harness.Config{"codex": {Command: bin, Permission: "auto"}}
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
@@ -36,31 +38,32 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.Open(filepath.Join(stateDir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Each boot is a gateway process; the ledger and its projects persist
-	// across them like the state and task files do.
-	var previous *Coordinator
+	// Each boot reopens every owner on the same durable ledger.
+	var book *ledger.Ledger
 	boot := func() (*Coordinator, *harness.Manager, *task.Store) {
+		var err error
+		book, err = ledger.Open(stateDir, ledger.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
 		manager, err := harness.NewManager(configs)
 		if err != nil {
 			t.Fatal(err)
 		}
-		tasks, err := task.Open(taskPath)
+		tasks, err := task.OpenLedger(book, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		var coordinator *Coordinator
-		if previous == nil {
-			coordinator = newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
-		} else {
-			coordinator = restartCoordinator(t, previous, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
+		store, err := state.OpenLedger(book, "")
+		if err != nil {
+			t.Fatal(err)
 		}
-		previous = coordinator
+		coordinator := newCoordinatorIn(t, map[string]string{"codex": workspace}, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second, book)
+		coordinator.SetArtifacts(artifact.New(filepath.Join(stateDir, "artifacts"), book, coordinator.projects, artifact.LocalNodes{Dir: nodeDir}))
 		coordinator.SetTasks(tasks, "e2e-node")
+		registry := execution.New(t.Context(), tasks)
+		coordinator.SetExecution(registry)
+		coordinator.artifacts.SetExecution(registry)
 		return coordinator, manager, tasks
 	}
 
@@ -73,22 +76,18 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 	}
 	manager.Stop()
 
-	// Read the file rather than the store: durability is the claim under test.
-	raw, err := os.ReadFile(taskPath)
+	// Reload rather than inspecting the old owner's cache.
+	onDisk, err := task.OpenLedger(book, "")
 	if err != nil {
-		t.Fatalf("tasks file was never written: %v", err)
+		t.Fatal(err)
 	}
-	var onDisk struct {
-		NextID int                  `json:"next_id"`
-		Tasks  map[string]task.Task `json:"tasks"`
+	if len(onDisk.List("")) != 1 {
+		t.Fatalf("tasks on disk = %d; want one task across both turns", len(onDisk.List("")))
 	}
-	if err := json.Unmarshal(raw, &onDisk); err != nil {
-		t.Fatalf("tasks file is not readable JSON: %v\n%s", err, raw)
+	stored, found := onDisk.Get("1")
+	if !found {
+		t.Fatal("original task was not persisted")
 	}
-	if len(onDisk.Tasks) != 1 {
-		t.Fatalf("tasks on disk = %d; want one task across both turns", len(onDisk.Tasks))
-	}
-	stored := onDisk.Tasks["1"]
 	if stored.Goal != "wire the node link" || stored.Node != "e2e-node" || stored.Member != "codex" {
 		t.Fatalf("stored task = %+v", stored)
 	}
@@ -98,10 +97,14 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 	if stored.Budget.Elapsed <= 0 {
 		t.Fatalf("elapsed was never accumulated: %v", stored.Budget.Elapsed)
 	}
+	if err := book.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Restart everything the way a gateway restart would.
 	coordinator, manager, tasks := boot()
 	t.Cleanup(manager.Stop)
+	t.Cleanup(func() { book.Close() })
 	if result, err := handle(coordinator, context.Background(), "after restart"); err != nil || result.Text != "echo: after restart" {
 		t.Fatalf("resumed turn = %#v, %v", result, err)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -80,10 +81,13 @@ type agentAnchor interface {
 const thinkingEmoji = "THINKING"
 
 type Gateway struct {
-	processor processor
-	ch        replier
-	text      i18n.Catalog
-	gate      agentAnchor
+	durableRunning map[string]bool
+	recoveryAfter  string
+	recoveryLedger *ledger.Ledger
+	processor      processor
+	ch             replier
+	text           i18n.Catalog
+	gate           agentAnchor
 
 	// slots bounds how many conversations are served at once. A turn spends
 	// almost all of its time waiting on an agent subprocess rather than on
@@ -171,18 +175,7 @@ func (g *Gateway) serveTask(msg feishu.InboundMessage, conversation, expectedTas
 	if first {
 		g.slots <- struct{}{}
 	}
-	defer func() {
-		g.mu.Lock()
-		g.serving[conversation]--
-		last := g.serving[conversation] == 0
-		if last {
-			delete(g.serving, conversation)
-		}
-		g.mu.Unlock()
-		if last {
-			<-g.slots
-		}
-	}()
+	defer g.releaseConversation(conversation)
 	return g.processTask(msg, expectedTask)
 }
 

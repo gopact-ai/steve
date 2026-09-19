@@ -31,8 +31,8 @@ type queuedExchange struct {
 	RecoveryStopTarget   *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
 	RecoveryStop         *consoleapi.Reply   `json:"recovery_stop,omitempty"`
 	RecoveryStopPending  string              `json:"recovery_stop_pending,omitempty"`
-	RecoveryPending      bool                `json:"recovery_pending,omitempty"`
 	ContinuationRejected bool                `json:"continuation_rejected,omitempty"`
+	RecoveryPending      bool                `json:"recovery_pending,omitempty"`
 	recoveryStopping     chan struct{}
 	ctx                  context.Context
 	cancel               context.CancelFunc
@@ -110,8 +110,12 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
 type enqueueOptions struct {
-	Prompt, Key string
-	Front       bool
+	ResumeAdmission task.ResumeAdmission
+	Prompt, Key     string
+	Front           bool
+	// Deferred accepts recovery input durably without starting it before
+	// the caller has reconciled the original execution's accounting.
+	Deferred bool
 	// RewindTo names a line already sent that this one replaces: the
 	// thread goes back to just before it and carries what was said
 	// earlier into the prompt. See rewind.go.
@@ -215,9 +219,11 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	e := &queuedExchange{
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
-			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
+			ResumeAdmission: options.ResumeAdmission,
+			Refs:            copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),
+		RecoveryPending: options.Deferred && options.ResumeAdmission == (task.ResumeAdmission{}),
 	}
 	if !strings.HasPrefix(key, "client:") {
 		e.PayloadHash = ""
@@ -225,7 +231,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if options.RewindTo != "" {
 		return s.acceptRewoundLocked(e, options.RewindTo, options.Front)
 	}
-	return s.acceptExchangeLocked(e, options.Front)
+	return s.acceptExchange(e, options.Front, options.Deferred)
 }
 
 // resumeLocked replays a submission this conversation has already
@@ -240,6 +246,10 @@ func (s *Service) resumeLocked(existing *queuedExchange) (*queuedExchange, Excha
 }
 
 func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedExchange, Exchange, error) {
+	return s.acceptExchange(e, front, false)
+}
+
+func (s *Service) acceptExchange(e *queuedExchange, front, deferred bool) (*queuedExchange, Exchange, error) {
 	conversation := e.Conversation
 	if s.sealed[conversation] {
 		return nil, Exchange{}, fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
@@ -259,7 +269,12 @@ func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedEx
 	copy(list[at+1:], list[at:])
 	list[at] = e
 	s.exchanges[conversation] = list
-	if s.immediate(e.Input) {
+	if deferred {
+		err = s.save()
+		if err == nil {
+			s.publishQueue(conversation)
+		}
+	} else if s.immediate(e.Input) {
 		err = s.startLocked(e)
 	} else if s.running[conversation] == 0 {
 		err = s.startNextLocked(conversation)
@@ -396,6 +411,14 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		return consoleapi.ErrConsoleClosing
 	}
+	if e.RecoveryPending {
+		return fmt.Errorf("%w: original task accounting is pending", consoleapi.ErrBusy)
+	}
+	if e.ResumeAdmission != (task.ResumeAdmission{}) {
+		if err := s.checkResumeLocked(e); err != nil {
+			return err
+		}
+	}
 	s.bindRecoveryStopTargetLocked(e)
 	conversation := e.Conversation
 	previous := s.replies[conversation]
@@ -443,7 +466,7 @@ func (s *Service) startNextLocked(conversation string) error {
 		return nil
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser {
+		if e.RecoveryPending || e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser {
 			err := s.save()
 			if err == nil {
 				s.publishQueue(conversation)
@@ -453,6 +476,20 @@ func (s *Service) startNextLocked(conversation string) error {
 	}
 	for _, e := range s.exchanges[conversation] {
 		if e.State == consoleapi.ExchangeQueued {
+			if e.ResumeAdmission != (task.ResumeAdmission{}) {
+				if err := s.checkResumeLocked(e); err != nil {
+					if errors.Is(err, task.ErrResumePending) {
+						continue
+					}
+					if errors.Is(err, task.ErrExecutionStopped) || errors.Is(err, task.ErrResumeConsumed) {
+						if err := s.rejectResumeLocked(e, err); err != nil {
+							return err
+						}
+						continue
+					}
+					return err
+				}
+			}
 			return s.startLocked(e)
 		}
 	}
@@ -629,6 +666,23 @@ func (s *Service) restoreQueueLocked() error {
 func (s *Service) Drain() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var pending []*queuedExchange
+	for _, list := range s.exchanges {
+		for _, e := range list {
+			if e.RecoveryPending {
+				pending = append(pending, e)
+				e.RecoveryPending = false
+			}
+		}
+	}
+	if len(pending) > 0 {
+		if err := s.save(); err != nil {
+			for _, e := range pending {
+				e.RecoveryPending = true
+			}
+			return err
+		}
+	}
 	for conversation := range s.exchanges {
 		if err := s.startNextLocked(conversation); err != nil {
 			return err

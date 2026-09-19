@@ -82,16 +82,25 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 			slog.Error("task notice not routed", "task", n.TaskID, "error", err)
 		}
 	})
-	coordinator.SetResumer(func(r turn.TaskResume) {
-		err := routeTask(r.Transport, func() error {
-			return cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member, catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession)
+	coordinator.SetResumer(func(r turn.TaskResume) error {
+		return routeTask(r.Transport, func() error {
+			return cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member, catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), r.Admission, coordinator.ReviveSession)
 		}, func() error {
-			go gw.ResumeTask(gateway.Revival{TaskID: r.TaskID, Goal: r.Goal, Member: r.Member, ConversationID: r.ConversationID, ChatID: r.ChatID, MessageID: r.MessageID, Requester: r.Requester, ChatType: r.ChatType, Manual: true}, coordinator.ReviveSession)
-			return nil
+			return gw.QueueTaskResume(ctx, book, r.Admission.ID, gateway.Revival{TaskID: r.TaskID, Goal: r.Goal, Member: r.Member, ConversationID: r.ConversationID, ChatID: r.ChatID, MessageID: r.MessageID, Requester: r.Requester, ChatType: r.ChatType, Manual: true}, r.Admission)
 		})
-		if err != nil {
-			slog.Error("task resume not routed", "task", r.TaskID, "error", err)
-		}
+	})
+	gw.SetRecoveryLedger(book)
+	coordinator.SetResumeDispatcher(func(r turn.TaskResume) {
+		// Acceptance and owner authorization are already durable. Waking a
+		// consumer is best-effort; startup/runtime recovery uses the same input.
+		page.Reconciliations().Go(func() {
+			err := routeTask(r.Transport, func() error { return cons.DispatchResume(r.ConversationID, r.Admission) }, func() error {
+				return gw.DispatchResume(ctx, book, r.Admission, coordinator, coordinator.ReviveSession)
+			})
+			if err != nil {
+				slog.Error("accepted task resume awaits recovery", "task", r.TaskID, "admission", r.Admission.ID, "error", err)
+			}
+		})
 	})
 	return &channelsValues{channel: channel}, nil
 }

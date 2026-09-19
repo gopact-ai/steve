@@ -10,7 +10,9 @@ import (
 
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -260,8 +262,29 @@ func TestConsoleTurnOutlivesTheRequest(t *testing.T) {
 }
 
 func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	tasks, err := task.OpenLedger(book, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked, err := tasks.Create(task.Task{Transport: "console", Channel: "console:main", Member: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.SetAside(tracked.ID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	tracked, _ = tasks.Get(tracked.ID)
+	admission := task.ResumeAdmission{ID: "manual-resume-1", TaskID: tracked.ID, Epoch: tracked.ExecutionEpoch + 1}
 	h := &queueHandler{started: make(chan *queueCall, 8)}
 	s := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	if err := s.PersistLedger(book); err != nil {
+		t.Fatal(err)
+	}
 	first := enqueueForTest(t, s, "main", "first")
 	running := nextCall(t, h)
 	later := enqueueForTest(t, s, "main", "later")
@@ -270,7 +293,7 @@ func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
 		revived = append(revived, conversation+"/"+member)
 		return nil
 	}
-	if err := s.Resume(context.Background(), "main", "53", "claude", "⟳ restart #53", "continue: ship it", revive); err != nil {
+	if err := s.Resume(context.Background(), "main", tracked.ID, "claude", "⟳ restart #53", "continue: ship it", admission, revive); err != nil {
 		t.Fatal(err)
 	}
 	if len(revived) != 1 || revived[0] != "console:main/claude" {
@@ -282,9 +305,12 @@ func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
 	if len(list) != 3 || list[0].ID != first.ID || list[1].Input != "⟳ restart #53" || list[1].Prompt != "@claude continue: ship it" || list[2].ID != later.ID {
 		t.Fatalf("queue = %+v", list)
 	}
+	if _, err := tasks.Resume(tracked.ID, tracked.ExecutionEpoch, tracked.State, admission); err != nil {
+		t.Fatal(err)
+	}
 	running.finish <- nil
 	call := nextCall(t, h)
-	if call.req.Input != "@claude continue: ship it" || call.req.ConversationID != "console:main" || call.req.ExpectedTask != "53" {
+	if call.req.Input != "@claude continue: ship it" || call.req.ConversationID != "console:main" || call.req.ExpectedTask != tracked.ID || call.req.ResumeAdmission != admission {
 		t.Fatalf("continuation = %+v", call.req)
 	}
 	call.finish <- nil
@@ -304,7 +330,7 @@ func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
 		t.Fatalf("sent lines = %v", sent)
 	}
 	// Without a member there is nobody to continue; the session is left alone.
-	if err := s.Resume(context.Background(), "main", "54", "", "n", "p", revive); err == nil || len(revived) != 1 {
+	if err := s.Resume(context.Background(), "main", "54", "", "n", "p", task.ResumeAdmission{}, revive); err == nil || len(revived) != 1 {
 		t.Fatalf("err = %v revived = %v", err, revived)
 	}
 }

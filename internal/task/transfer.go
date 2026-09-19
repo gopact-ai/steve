@@ -113,6 +113,7 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs) {
 	meta := map[string]Meta{}
 	for id, t := range in.Tasks {
 		t.ID = m.Task(id)
+		t.ResumeGrant.Admission.TaskID = m.Task(t.ResumeGrant.Admission.TaskID)
 		t.Parent = m.Task(t.Parent)
 		t.Channel = m.Conversation(t.Channel)
 		t.Origin = m.Key(t.Origin)

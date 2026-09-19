@@ -83,7 +83,7 @@ func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *test
 		t.Fatal("completion not durable")
 	}
 	resumes := 0
-	coordinator.SetResumer(func(TaskResume) { resumes++ })
+	coordinator.SetResumer(func(TaskResume) error { resumes++; return nil })
 	if _, err := handle(coordinator, t.Context(), "/tasks resume 1"); err != nil {
 		t.Fatal(err)
 	}

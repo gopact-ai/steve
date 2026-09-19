@@ -58,6 +58,9 @@ func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID s
 // UserError when the budget is spent. When tracking is configured, admission
 // must be durable before any native execution can start.
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
+	if req.ResumeAdmission != (task.ResumeAdmission{}) && req.ExpectedTask != req.ResumeAdmission.TaskID {
+		return "", fmt.Errorf("%w: resume input requires its original task", task.ErrExecutionStopped)
+	}
 	if c.tasks == nil {
 		if req.ExpectedTask != "" {
 			return "", fmt.Errorf("task continuation requires a task store")
@@ -117,6 +120,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	}
 	_, beginErr := c.tasks.BeginTurn(tracked.ID, selected.ID, executionNode, task.TurnInput{
 		Address: req.Address(), ChatID: req.ChatID, ChatType: string(req.ChatType), CardID: req.CardID, Continuation: req.ExpectedTask != "",
+		ResumeAdmission: req.ResumeAdmission, TurnID: req.MessageID,
 	})
 	if err := beginErr; err != nil {
 		if req.ExpectedTask != "" {
@@ -247,6 +251,7 @@ func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
 // whoever owns the chat: post a notice at the task's anchor and replay it as
 // a real message, and the resumed turn renders a card like any other turn.
 type TaskResume struct {
+	Admission      task.ResumeAdmission
 	Transport      string
 	TaskID         string
 	Goal           string
@@ -258,9 +263,14 @@ type TaskResume struct {
 	ChatType       string
 }
 
-// SetResumer wires that re-entry. Without it /tasks resume still un-pauses the
-// task; the user's next message is what continues it.
-func (c *Coordinator) SetResumer(fn func(TaskResume)) { c.resumer = fn }
+// SetResumer wires durable acceptance of a dormant input. It must not start
+// Handle: the task owner has not yet granted this input execution authority.
+// Without a resumer, the user's next message continues the unpaused task.
+func (c *Coordinator) SetResumer(fn func(TaskResume) error) { c.resumer = fn }
+
+// SetResumeDispatcher wakes accepted inputs after the owner CAS and turn-slot
+// release. A failed wake does not undo acceptance; recovery reads the same grant.
+func (c *Coordinator) SetResumeDispatcher(fn func(TaskResume)) { c.resumeDispatcher = fn }
 
 // TaskNotice is a line Steve pushes into the chat on its own, outside any
 // turn's card. It exists because delivery is a platform promise here: a task

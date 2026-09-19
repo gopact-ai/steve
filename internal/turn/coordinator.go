@@ -66,7 +66,8 @@ type Request struct {
 	// ExpectedProject fences an unattended submission to its creation-time project.
 	ExpectedProject string
 	// ExpectedTask binds an automatic continuation to its original task.
-	ExpectedTask string
+	ExpectedTask    string
+	ResumeAdmission task.ResumeAdmission
 	// Queue makes this prompt wait for the running turn instead of
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool
@@ -214,7 +215,8 @@ type coordinatorState struct {
 	defaultProject    string
 	homeProject       string
 	node              string
-	resumer           func(TaskResume)
+	resumer           func(TaskResume) error
+	resumeDispatcher  func(TaskResume)
 	notifier          func(TaskNotice)
 	afterTurn         func(taskID string)
 	planRecoveryOwner func(task.Task) bool

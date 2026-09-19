@@ -62,6 +62,7 @@ func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) (
 		for _, e := range list {
 			e.Conversation = apply(conversation, e.Conversation)
 			e.ExpectedTask = apply(taskID, e.ExpectedTask)
+			e.ResumeAdmission.TaskID = apply(taskID, e.ResumeAdmission.TaskID)
 			e.Key = apply(key, e.Key)
 			e.Origin = apply(key, e.Origin)
 			aliases := map[string]string{}

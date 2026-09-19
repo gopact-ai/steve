@@ -78,7 +78,7 @@ func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 		t.Fatalf("failed resolution left as %s", got.State)
 	}
 	cmds := c.commands()
-	if _, found := cmds.taskTarget("console:someone-elses-chat", tracked.ID, taskIgnored); !found {
+	if _, found := cmds.taskTarget(Request{ConversationID: "console:someone-elses-chat"}, tracked.ID, taskIgnored); !found {
 		t.Fatal("a task that belongs to no chat cannot be settled from any chat")
 	}
 	if _, err := store.Settle(tracked.ID, task.SettlementIgnored); err != nil {

@@ -25,17 +25,7 @@ func TestTaskPersistenceFailureRefusesExecutionAndCanRetry(t *testing.T) {
 	for _, stage := range []string{"create", "begin", "close-previous-project"} {
 		t.Run(stage, func(t *testing.T) {
 			runner := &fakeRunner{reply: "done"}
-			c, _ := taskCoordinator(t, runner)
-			book, err := ledger.Open(t.TempDir(), ledger.Options{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = book.Close() })
-			tasks, err := task.OpenLedger(book, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			c.SetTasks(tasks, "hub")
+			c, tasks, book := taskCoordinatorBook(t, runner)
 			if stage != "create" {
 				projectID := "codex"
 				if stage == "close-previous-project" {

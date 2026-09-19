@@ -19,20 +19,26 @@ import (
 // one project per agent, named after it and homed on its node at a fresh
 // directory, with the default agent's as the default project. Tests that
 // care which directory a session opens in read it back with workspaceOf.
-func newCoordinator(t *testing.T, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration) *Coordinator {
+func newCoordinator(t *testing.T, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, books ...*ledger.Ledger) *Coordinator {
 	t.Helper()
-	return newCoordinatorIn(t, nil, catalog, store, assembler, rt, timeout)
+	return newCoordinatorIn(t, nil, catalog, store, assembler, rt, timeout, books...)
 }
 
 // newCoordinatorIn is newCoordinator with chosen directories per agent id;
 // agents not in dirs get a fresh one.
-func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration) *Coordinator {
+func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, books ...*ledger.Ledger) *Coordinator {
 	t.Helper()
-	book, err := ledger.Open(t.TempDir(), ledger.Options{})
-	if err != nil {
-		t.Fatal(err)
+	var book *ledger.Ledger
+	if len(books) > 0 {
+		book = books[0]
+	} else {
+		var err error
+		book, err = ledger.Open(t.TempDir(), ledger.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { book.Close() })
 	}
-	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
 	var declared []project.Project
 	for _, a := range catalog.List() {

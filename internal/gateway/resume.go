@@ -82,23 +82,6 @@ func (g *Gateway) Notify(n Notice) {
 	}
 }
 
-// Revive continues tasks a dead gateway left mid-turn. Each revival first
-// clears the crash taint on its session, then posts a visible notice as a
-// reply to the task's last anchor message — the notice becomes the new
-// anchor, so the resumed turn renders its card in the right conversation
-// and topic — and finally re-enters the normal message path with a
-// continuation prompt addressed to the task's member. The agent reloads its
-// own history on session load, so "continue" means exactly that.
-func (g *Gateway) Revive(revivals []Revival, revive func(conversationID, member string) error) {
-	if _, ok := g.ch.(textReplier); !ok {
-		slog.Warn(fmt.Sprintf("gateway: channel cannot post resume notices; %d tasks stay stopped", len(revivals)))
-		return
-	}
-	for _, r := range revivals {
-		g.ResumeTask(r, revive)
-	}
-}
-
 // Deliver puts a message from the platform into a task's chat: a
 // delegated child's result reaching its parent. The notice is posted as
 // a reply at the task's anchor and becomes the anchor of the turn the
@@ -150,54 +133,6 @@ func (g *Gateway) deliver(r Revival, notice, prompt string, confirm func(error))
 	g.mu.Unlock()
 	go func() { confirm(g.serveTask(msg, r.ConversationID, r.TaskID)) }()
 	return fmt.Errorf("%w: parent continuation is awaiting confirmation", channel.ErrOutcomeUnknown)
-}
-
-// ResumeTask picks one task back up. The notice is not decoration: it is the
-// new anchor. A replayed message needs an id of its own — reusing the old one
-// would be dropped as a duplicate, and the resumed turn would have nothing to
-// render its card against.
-func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member string) error) {
-	tr, ok := g.ch.(textReplier)
-	if !ok {
-		slog.Warn(fmt.Sprintf("gateway: channel cannot post resume notices; task #%s stays stopped", r.TaskID), "task", r.TaskID)
-		return
-	}
-	if r.ConversationID == "" || r.MessageID == "" || r.Member == "" {
-		slog.Warn(fmt.Sprintf("gateway: task #%s not resumable: incomplete anchor", r.TaskID), "task", r.TaskID)
-		return
-	}
-	if err := revive(r.ConversationID, r.Member); err != nil {
-		slog.Error(fmt.Sprintf("gateway: revive session for task #%s: %v", r.TaskID, err), "task", r.TaskID, "conversation", r.ConversationID, "member", r.Member)
-		return
-	}
-	if !r.Manual {
-		for _, stale := range append([]string{r.OpenCard}, r.Interim...) {
-			if stale != "" {
-				g.recall(stale)
-			}
-		}
-	}
-	notice, prompt := i18n.ResumeNotice, i18n.ResumePrompt
-	if r.Manual {
-		notice, prompt = i18n.TaskResumeNotice, i18n.TaskResumeManual
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	noticeID, err := tr.ReplyText(ctx, r.MessageID, g.text.T(notice, r.TaskID))
-	cancel()
-	if err != nil || noticeID == "" {
-		slog.Error(fmt.Sprintf("gateway: post resume notice for task #%s: %v", r.TaskID, err), "task", r.TaskID, "conversation", r.ConversationID, "message", r.MessageID)
-		return
-	}
-	slog.Info(fmt.Sprintf("gateway: resuming task #%s conversation=%s member=%s manual=%t", r.TaskID, r.ConversationID, r.Member, r.Manual), "task", r.TaskID, "conversation", r.ConversationID, "member", r.Member)
-	g.handleTaskMessage(feishu.InboundMessage{
-		ConversationID: r.ConversationID,
-		ChatID:         r.ChatID,
-		MessageID:      noticeID,
-		SenderOpenID:   r.Requester,
-		ChatType:       protocol.ParseChatType(r.ChatType),
-		Mentioned:      true,
-		Text:           "@" + r.Member + " " + g.text.T(prompt, r.Goal),
-	}, r.TaskID)
 }
 
 // Fire is one scheduled run. It carries the same anchor-and-replay shape as a

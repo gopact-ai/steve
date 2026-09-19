@@ -8,11 +8,13 @@ import (
 // TurnInput contains adapter metadata committed with turn admission. It is
 // not another persisted address: Task remains the destination's authority.
 type TurnInput struct {
-	Address      channel.Address
-	ChatID       string
-	ChatType     string
-	CardID       string
-	Continuation bool
+	ResumeAdmission ResumeAdmission
+	TurnID          string
+	Address         channel.Address
+	ChatID          string
+	ChatType        string
+	CardID          string
+	Continuation    bool
 }
 
 // BeginTurn makes the reply destination and budget charge one durable fact.

@@ -14,23 +14,16 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 func TestRejectedRunningTransitionNeverPromptsTheAgent(t *testing.T) {
 	runner := &fakeRunner{reply: "must not run"}
-	c, _ := taskCoordinator(t, runner)
+	c, _, book := taskCoordinatorBook(t, runner)
 	// A trigger fails only the durable Running transition, after session setup.
-	book, err := ledger.Open(t.TempDir(), ledger.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer book.Close()
-	c.SetAttempts(attempt.New(book))
 	if _, err := book.DB().Exec(`CREATE TRIGGER deny_running BEFORE UPDATE OF state ON operations WHEN NEW.kind='attempt' AND NEW.state='running' BEGIN SELECT RAISE(FAIL,'cannot record running'); END`); err != nil {
 		t.Fatal(err)
 	}
-	_, err = handle(c, t.Context(), "do work")
+	_, err := handle(c, t.Context(), "do work")
 	if err == nil || !strings.Contains(err.Error(), "arm prompt execution") {
 		t.Fatalf("execution arm failure=%v", err)
 	}

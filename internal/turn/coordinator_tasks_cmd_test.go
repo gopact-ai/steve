@@ -52,6 +52,14 @@ func TestPauseStopsTheRunningTurnAndFreesTheConversation(t *testing.T) {
 	// The conversation is free again: the next message opens its own task
 	// rather than quietly reviving the one the user set aside.
 	runner.canceled.Store(false)
+	// The registered scope cancels the first observer's context, rather
+	// than invoking this fake's legacy Cancel hook. Release its prompt
+	// wait gate now that the first observer has joined.
+	select {
+	case <-runner.done:
+	default:
+		close(runner.done)
+	}
 	if _, err := handle(coordinator, t.Context(), "something else now"); err != nil {
 		t.Fatalf("follow-up turn: %v", err)
 	}
@@ -79,9 +87,11 @@ func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
 	}
 
 	resumed := make(chan TaskResume, 1)
-	coordinator.SetResumer(func(r TaskResume) { resumed <- r })
+	coordinator.SetResumer(func(r TaskResume) error { resumed <- r; return nil })
 
-	tasksCmdText(t, coordinator, "/tasks resume")
+	if _, err := coordinator.Handle(t.Context(), Request{ConversationID: "chat", MessageID: "resume-control", Input: "/tasks resume"}); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case got := <-resumed:
 		if got.TaskID != "1" || got.MessageID != "om_anchor" || got.Member != "codex" {

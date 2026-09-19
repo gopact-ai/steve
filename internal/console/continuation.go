@@ -9,6 +9,37 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 )
 
+// QueueTaskResume records startup continuation input before its original
+// accounting row is closed. It never starts work; Drain belongs after the
+// complete recovery pass, including on retries after a failed settlement.
+func (s *Service) QueueTaskResume(ctx context.Context, conversation, taskID, key, member, notice, prompt string) error {
+	if taskID == "" || key == "" || member == "" {
+		return fmt.Errorf("task recovery needs a task, member and stable key")
+	}
+	s.mu.Lock()
+	existing := s.continuationLocked(conversation, key)
+	if existing != nil {
+		defer s.mu.Unlock()
+		if existing.ExpectedTask != taskID {
+			return fmt.Errorf("%w: recovery input belongs to another task", channel.ErrOutcomeUnknown)
+		}
+		return nil
+	}
+	s.mu.Unlock()
+	e, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{
+		Prompt: "@" + member + " " + prompt, Front: true, Deferred: true, Key: key, ExpectedTask: taskID,
+	})
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e.ExpectedTask != taskID {
+		return fmt.Errorf("%w: recovery input belongs to another task", channel.ErrOutcomeUnknown)
+	}
+	return nil
+}
+
 // ContinueTask keeps the accepted message bound to the parent across queueing
 // and restarts. Durable ingress and confirmed parent processing are distinct.
 func (s *Service) ContinueTask(ctx context.Context, conversation, taskID, key, member, notice, prompt string) error {

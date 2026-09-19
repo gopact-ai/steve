@@ -5,6 +5,7 @@ package turn
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -95,9 +96,9 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 	if verb == taskList {
 		return c.tasksList(req, title), nil
 	}
-	tracked, found := c.taskTarget(req.ConversationID, id, verb)
+	tracked, found := c.taskTarget(req, id, verb)
 	if !found {
-		if verb == taskComplete {
+		if verb == taskComplete || verb == taskResume {
 			text := c.text.T(i18n.TaskNone)
 			if id != "" {
 				text = c.text.T(i18n.TaskUnknown, id)
@@ -121,7 +122,7 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 	case taskCancel:
 		return c.taskSetAside(ctx, title, tracked, task.StateCancelled), nil
 	case taskResume:
-		return c.taskPickUp(title, tracked), nil
+		return c.taskPickUp(ctx, req, title, tracked)
 	case taskComplete:
 		return c.taskComplete(ctx, req, title, tracked)
 	case taskHandled:
@@ -137,14 +138,13 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 // taskTarget resolves which task the user meant. An explicit id is scoped to
 // this conversation on purpose: task ids are short and guessable, and one chat
 // must not be able to reach into another's work.
-func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Task, bool) {
+func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, bool) {
 	if id != "" {
 		tracked, ok := c.tasks.Get(id)
-		// Work the fleet started for itself belongs to no chat. Scoping is
-		// there so one chat cannot reach into another's work, and there is
-		// no other chat to protect here; without this the record of an
-		// automatic repair or conflict resolution could never be settled.
-		if !ok || tracked.Channel != "" && tracked.Channel != conversationID {
+		// Background work may have no conversation to scope. It still
+		// belongs to its recorded transport; missing transport is not
+		// permission for a console or chat adapter to claim the task.
+		if !ok || tracked.Transport != req.Channel || tracked.Channel != "" && tracked.Channel != req.ConversationID {
 			return task.Task{}, false
 		}
 		return tracked, true
@@ -152,7 +152,10 @@ func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Tas
 	// List is newest first, so the bare verb acts on what the user most
 	// plausibly has in mind — the thing they were just talking about.
 	var completed task.Task
-	for _, candidate := range c.tasks.List(conversationID) {
+	for _, candidate := range c.tasks.List(req.ConversationID) {
+		if candidate.Transport != req.Channel {
+			continue
+		}
 		if verb == taskComplete {
 			if candidate.Parent == "" && candidate.Origin == "" {
 				if candidate.State == task.StateRunning || candidate.State == task.StateReview {
@@ -220,28 +223,93 @@ func (c commands) taskSettle(title string, tracked task.Task, as task.Settlement
 	return Result{Title: title, Text: c.text.T(i18n.TaskReopened, settled.ID)}
 }
 
-// taskPickUp puts a set-aside task back in play. The state moves before the
-// re-entry so the replayed message finds it as this conversation's active task
-// instead of opening a second task for the same work.
-func (c commands) taskPickUp(title string, tracked task.Task) Result {
-	moved, err := c.tasks.Advance(tracked.ID, task.StateRunning)
+// Reserve the turn slot until re-entry is accepted and the task is running.
+// A channel refusal must not unpause the task; an accepted continuation must
+// not enter native execution before the task state is durably advanced.
+func (c commands) taskPickUp(ctx context.Context, req Request, title string, tracked task.Task) (result Result, err error) {
+	result.Title = title
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("resume task #%s: %w", tracked.ID, err)
+			result.Text = err.Error()
+		}
+	}()
+	if tracked.State == task.StateRunning {
+		// A repeated click cannot replace an accepted input's grant or submit
+		// another prompt to work that is already resumed.
+		result.Text = c.taskDetail(tracked)
+		return result, nil
+	}
+	if !tracked.State.CanMoveTo(task.StateRunning) {
+		result.Text = c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))
+		return result, nil
+	}
+	var admission task.ResumeAdmission
+	if c.resumer != nil {
+		identity := req.MessageID
+		if req.ExchangeID != "" {
+			identity = req.ExchangeID
+		}
+		if identity == "" {
+			return result, fmt.Errorf("durable resume requires a stable control input identity")
+		}
+		id := fmt.Sprintf("task-resume:%x", sha256.Sum256([]byte(req.Channel+"\x00"+req.ConversationID+"\x00"+identity)))
+		admission = task.ResumeAdmission{ID: id, TaskID: tracked.ID, Epoch: tracked.ExecutionEpoch + 1}
+		if tracked.ResumeGrant.Admission.ID == id {
+			// Replaying the control cannot renew a consumed or revoked grant.
+			// Its channel input retains the original execution's result.
+			result.Text = c.taskDetail(tracked)
+			return result, nil
+		}
+	}
+	resume := TaskResume{
+		Admission: admission,
+		Transport: tracked.Transport, TaskID: tracked.ID, Goal: tracked.Goal, Member: tracked.Member,
+		ConversationID: tracked.Channel, ChatID: tracked.ChatID,
+		MessageID: tracked.AnchorMessage, Requester: tracked.Requester, ChatType: tracked.ChatType,
+	}
+	reserved := false
+	defer func() {
+		if reserved {
+			c.clearActive(tracked.Channel, tracked.Member)
+		}
+	}()
+	if c.resumer != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		if !c.beginTurn(tracked.Channel, tracked.Member, cancel) {
+			cancel()
+			return result, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
+		}
+		reserved = true
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if err := c.resumer(resume); err != nil {
+			return result, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	moved, err := c.tasks.Resume(tracked.ID, tracked.ExecutionEpoch, tracked.State, admission)
 	if err != nil {
-		return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}
+		return result, err
 	}
-	if c.resumer == nil || moved.AnchorMessage == "" || moved.Member == "" {
-		// Nothing can replay a message here; the task is live again, so
-		// the user's next message continues it.
-		return Result{Title: title, Text: c.text.T(i18n.TaskResumed, moved.ID)}
+	if c.resumer == nil {
+		// Standalone coordinators unpause for the user's next input.
+		result.Text = c.text.T(i18n.TaskResumed, moved.ID)
+	} else {
+		result.Text = c.taskDetail(moved)
+		// Clear before waking a consumer. It may synchronously reserve this
+		// same slot, but no channel callback is permission to execute.
+		c.clearActive(tracked.Channel, tracked.Member)
+		reserved = false
+		if c.resumeDispatcher != nil {
+			c.resumeDispatcher(resume)
+		}
 	}
-	c.resumer(TaskResume{
-		Transport: moved.Transport, TaskID: moved.ID, Goal: moved.Goal, Member: moved.Member,
-		ConversationID: moved.Channel, ChatID: moved.ChatID,
-		MessageID: moved.AnchorMessage, Requester: moved.Requester,
-		ChatType: moved.ChatType,
-	})
-	// The re-entry announces itself at the anchor, so this card carries the
-	// detail instead of repeating the announcement.
-	return Result{Title: title, Text: c.taskDetail(moved)}
+	return result, nil
 }
 
 // tasksList is what this conversation has been working on. The listing is the

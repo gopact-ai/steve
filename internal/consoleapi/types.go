@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -789,11 +790,12 @@ type Exchange struct {
 	// because the agent's own session no longer holds it: a thread rewound
 	// to an edited message answers from a session that never saw the turns
 	// that were removed.
-	History         string `json:"history,omitempty"`
-	Origin          string `json:"origin,omitempty"`
-	Requester       string `json:"requester,omitempty"`
-	ExpectedProject string `json:"expected_project,omitempty"`
-	ExpectedTask    string `json:"expected_task,omitempty"`
+	History         string               `json:"history,omitempty"`
+	Origin          string               `json:"origin,omitempty"`
+	Requester       string               `json:"requester,omitempty"`
+	ExpectedProject string               `json:"expected_project,omitempty"`
+	ExpectedTask    string               `json:"expected_task,omitempty"`
+	ResumeAdmission task.ResumeAdmission `json:"resume_admission,omitzero"`
 	// Key is the durable submission identity within this conversation.
 	// Client command IDs and platform deliveries have separate namespaces.
 	Key        string            `json:"key,omitempty"`

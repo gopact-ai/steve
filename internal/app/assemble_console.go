@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"sync"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
@@ -106,8 +105,8 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 		return nil, fmt.Errorf("open materials: %w", err)
 	}
 	life.Defer(func() { materials.Close() })
-	reconciliations := &sync.WaitGroup{}
-	life.Defer(func() { stop(); reconciliations.Wait() })
+	reconciliations := &reconciliationWorkers{}
+	life.Defer(func() { stop(); reconciliations.Close() })
 	if environment != nil {
 		materials.SetReplication(environment.Content)
 	}
@@ -139,7 +138,7 @@ type consoleAssembly interface {
 	Console() *console.Service
 	Dashboard() *httpapi.Server
 	Materials() *material.Store
-	Reconciliations() *sync.WaitGroup
+	Reconciliations() *reconciliationWorkers
 }
 
 type consoleValues struct {
@@ -147,7 +146,7 @@ type consoleValues struct {
 	cons            *console.Service
 	dashboard       *httpapi.Server
 	materials       *material.Store
-	reconciliations *sync.WaitGroup
+	reconciliations *reconciliationWorkers
 }
 
 func (v *consoleValues) Admin() *adminsvc.Service { return v.admin }
@@ -158,4 +157,4 @@ func (v *consoleValues) Dashboard() *httpapi.Server { return v.dashboard }
 
 func (v *consoleValues) Materials() *material.Store { return v.materials }
 
-func (v *consoleValues) Reconciliations() *sync.WaitGroup { return v.reconciliations }
+func (v *consoleValues) Reconciliations() *reconciliationWorkers { return v.reconciliations }

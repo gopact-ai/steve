@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -1057,20 +1058,33 @@ func TestGatewayAnchorsConversationBeforeTurn(t *testing.T) {
 }
 
 func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
 	p := &captureProcessor{req: make(chan turn.Request, 1)}
 	g := New(p)
 	ch := &recordingChannel{events: make(chan string, 8)}
 	g.BindChannel(ch)
 	revived := make(chan string, 1)
-	g.Revive([]Revival{{
+	if err := g.QueueRecovery(t.Context(), book, "restart-7", Revival{
 		TaskID: "7", Goal: "长任务目标", Member: "codex",
 		ConversationID: "omt_thread", ChatID: "oc_1", MessageID: "om_anchor",
 		Requester: "ou_user", ChatType: "group",
 		OpenCard: "om_dead_card", Interim: []string{"om_dead_1"},
-	}}, func(conversationID, member string) error {
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.req) != 0 || len(ch.events) != 0 {
+		t.Fatal("acceptance performed side effects before recovery dispatch")
+	}
+	if err := g.RecoverQueued(t.Context(), book, &recoveryProbe{}, func(conversationID, member string) error {
 		revived <- conversationID + ":" + member
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case got := <-revived:
 		if got != "omt_thread:codex" {

@@ -209,6 +209,7 @@ type PreparedPlan struct {
 }
 
 type Task struct {
+	ResumeGrant       ResumeGrant        `json:"resume_grant,omitzero"`
 	PreparedPlan      *PreparedPlan      `json:"prepared_plan,omitempty"`
 	ExecutionEpoch    uint64             `json:"execution_epoch"`
 	RecoveryWorkspace *RecoveryWorkspace `json:"recovery_workspace,omitempty"`

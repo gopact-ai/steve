@@ -359,13 +359,6 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 	t.managed = run.Managed || pendingNodeOpen(run.Record, err) != nil
 	var step *lifecycle.StepError
 	errors.As(err, &step)
-	if run.Record.ID != "" && run.Record.TaskID != "" && c.afterTurn != nil && (step == nil || step.Step >= lifecycle.StepArm) {
-		// Last of all — after the attempt is closed and the queued
-		// landings are done — whoever waits for this turn's end is told.
-		// A turn that ended before its session was armed — refused, or
-		// without its before-snapshot — was never a turn to wait for.
-		defer c.afterTurn(run.Record.TaskID)
-	}
 	if step != nil {
 		switch step.Step {
 		case lifecycle.StepOpen:

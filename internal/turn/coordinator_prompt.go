@@ -104,7 +104,19 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			if t.managed && errors.Is(finishErr, harness.ErrStopUnconfirmed) {
 				return
 			}
-			c.finishTask(tracked, finishErr, spent.tokens(), spent.model())
+			accountingCtx, cancelAccounting := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+			defer cancelAccounting()
+			if accountingErr := c.finishChatAccounting(accountingCtx, tracked, t.run.Record, finishErr, spent.tokens(), spent.model()); accountingErr != nil {
+				result = Result{}
+				err = retainedBlocked("accounting", "提交原执行的任务记账", "结果已保留，但记账尚未提交。",
+					accountingErr.Error(), "将重试原结果的记账，不会重新发送原任务。", errors.Join(err, accountingErr))
+				return
+			}
+			var step *lifecycle.StepError
+			errors.As(finishErr, &step)
+			if t.run.Record.ID != "" && (step == nil || step.Step >= lifecycle.StepArm) {
+				c.notifyAccountedTurn(tracked)
+			}
 			c.offlineReminder(req, tracked, started, finishErr)
 		}()
 	}
