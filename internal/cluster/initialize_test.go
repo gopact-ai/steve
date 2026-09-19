@@ -44,6 +44,34 @@ func TestInitializePeerPreservesIdentityConfigurationAndSecrets(t *testing.T) {
 	}
 }
 
+func TestInitializePeerRecoversAllocatedListenerBeforeConfigPin(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "service")
+	first, err := InitializePeer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := LoadClusterPeerConfig(first.ClusterConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// OpenPeer persists its allocated port before PinAddress updates config.
+	peer.UIAddress = "127.0.0.1:7777"
+	if err := SaveClusterJSON(first.ClusterConfig, peer, false); err != nil {
+		t.Fatal(err)
+	}
+	before := peerIdentityFiles(t, first)
+	second, err := InitializePeer(root)
+	if err != nil || first != second {
+		t.Fatalf("retry after listener allocation: %+v, %v", second, err)
+	}
+	for name, data := range before {
+		after, err := os.ReadFile(name)
+		if err != nil || !bytes.Equal(data, after) {
+			t.Fatalf("retry replaced %s", name)
+		}
+	}
+}
+
 func TestInitializePeerRejectsUnknownOrUnsafeDirectoriesWithoutChangingThem(t *testing.T) {
 	for _, kind := range []string{"unknown", "standalone", "public", "symlink", "lock-symlink"} {
 		t.Run(kind, func(t *testing.T) {
@@ -117,6 +145,14 @@ func TestInitializePeerRejectsCorruptExistingAuthority(t *testing.T) {
 			case "owner-token":
 				err = os.WriteFile(peer.OwnerTokenFile, []byte("too-short"), 0600)
 			case "listener":
+				cfg, loadErr := config.Load(result.Config)
+				if loadErr != nil {
+					t.Fatal(loadErr)
+				}
+				cfg.Gateway.ReadModelAddr = "127.0.0.1:7778"
+				if err := config.Save(result.Config, cfg); err != nil {
+					t.Fatal(err)
+				}
 				peer.UIAddress = "127.0.0.1:7777"
 				err = SaveClusterJSON(result.ClusterConfig, peer, false)
 			}

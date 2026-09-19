@@ -158,7 +158,7 @@ func preparePeerDirectory(root string) error {
 
 func validateInitializedPeer(peer PeerConfig, installed *desktop.Installation) error {
 	dir := filepath.Join(installed.Paths.Root, "cluster")
-	if peer.NodeID != installed.NodeID || peer.DataDir != dir || peer.UIAddress != strings.TrimPrefix(installed.URL, "http://") || !peer.Bootstrap {
+	if peer.NodeID != installed.NodeID || peer.DataDir != dir || !sameServiceAddress(strings.TrimPrefix(installed.URL, "http://"), peer.UIAddress) || !peer.Bootstrap {
 		return errors.New("cluster initialization does not match this installation's identity, state directory or listener")
 	}
 	info, err := os.Lstat(dir)
