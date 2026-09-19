@@ -1,0 +1,42 @@
+/* The pane beside the conversation: a divider on its leading edge, a
+   strip of tabs, and one panel. It is a column of the workbench, not a
+   sheet over it, so the conversation keeps its own width. */
+.split-pane { position: relative; display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; min-height: 0; height: 100%; border-left: 1px solid var(--color-border-secondary); background: var(--color-bg-primary); }
+.split-pane-bar { display: flex; align-items: center; gap: 4px; min-height: 42px; padding: 5px 8px 5px 10px; border-bottom: 1px solid var(--color-border-secondary); background: var(--toolbar-surface); }
+.split-pane-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
+.split-pane-tabs::-webkit-scrollbar { height: 0; }
+.split-tab { display: inline-flex; align-items: center; gap: 2px; max-width: 220px; flex: 0 0 auto; padding: 2px 4px 2px 6px; border-radius: 7px; color: var(--color-text-tertiary); transition: background-color 120ms, color 120ms; }
+.split-tab:hover { background: var(--color-bg-tertiary); }
+.split-tab[data-active] { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+.split-tab-label { min-width: 0; padding: 4px 2px; font-size: 12px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.split-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 5px; color: var(--color-fg-quaternary); }
+.split-tab-close svg { width: 12px; height: 12px; }
+.split-tab-close:hover { background: var(--color-bg-primary_hover); color: var(--color-text-secondary); }
+.split-pane-body { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }
+/* A tab's content owns the whole panel: the side chat drops the border
+   and width it needs when it stands alone. */
+.split-pane-body > .side-chat { width: 100%; border-left: 0; }
+.split-delegation { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.split-delegation-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--color-border-secondary); font-size: 12px; }
+.split-delegation-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px; }
+/* Below this the two columns cannot both be read, so the pane covers
+   the conversation instead of squeezing it. */
+@media (max-width: 900px) {
+    .split-pane { position: absolute; inset: 0; z-index: 120; width: 100% !important; border-left: 0; }
+    .split-pane .pane-resizer { display: none; }
+}
+
+/* The card's own way into the pane: quiet until the card is under the
+   pointer, and always there for a keyboard. */
+.delegation-expand { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex-shrink: 0; border-radius: 5px; color: var(--color-fg-quaternary); opacity: 0; transition: opacity 120ms, background-color 120ms, color 120ms; }
+.group\/child:hover .delegation-expand, .delegation-expand:focus-visible { opacity: 1; }
+.delegation-expand:hover { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
+@media (hover: none) { .delegation-expand { opacity: 1; } }
+
+/* A delegated child keeps its name and who is on it at any width. When
+   the column cannot hold the rest, the elapsed time steps aside first
+   and the handover time after it; both are still on the card's own
+   tooltip and in the pane. */
+.delegation-row { container: delegation / inline-size; }
+@container delegation (max-width: 520px) { .delegation-elapsed { display: none; } }
+@container delegation (max-width: 440px) { .delegation-when { display: none; } }

@@ -35,8 +35,10 @@ function SideLive({ live }: { live: Live }) {
     </article>;
 }
 
-export function SideChatPanel({ onOpenMain }: { onOpenMain?: () => void } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} /> : null; }
-function SideConversation({ session, onOpenMain }: { session: SideSession; onOpenMain?: () => void }) {
+// Embedded, the panel is already titled and closed by the tab that
+// holds it, so it keeps only the line saying which thread it came from.
+export function SideChatPanel({ onOpenMain, embedded }: { onOpenMain?: () => void; embedded?: boolean } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} embedded={embedded} /> : null; }
+function SideConversation({ session, onOpenMain, embedded }: { session: SideSession; onOpenMain?: () => void; embedded?: boolean }) {
     const { t, locale } = useI18n(); const side = useSideChat(); const { live } = useFleet();
     const draftIssue = useDraftIssue(session.id);
     const savedDraft = useSavedDraft(session.id);
@@ -88,7 +90,7 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
         finally { void load(); }
     }
     return <section data-side-chat className="side-chat" role="region" aria-label={t("sideChat.region")}>
-        <header className="side-chat-header"><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{t("sideChat.title")}</h2><p className="truncate text-xs text-tertiary" title={session.title}>{session.project} · {session.title}</p></div><button type="button" className="workbench-icon-button" aria-label={t("sideChat.close")} onClick={side.close}><X aria-hidden="true" /></button></header>
+        <header className="side-chat-header"><div className="min-w-0 flex-1">{!embedded && <h2 className="text-sm font-semibold">{t("sideChat.title")}</h2>}<p className="truncate text-xs text-tertiary" title={session.title}>{session.project} · {session.title}</p></div>{!embedded && <button type="button" className="workbench-icon-button" aria-label={t("sideChat.close")} onClick={side.close}><X aria-hidden="true" /></button>}</header>
         <a href={`#/console?conversation=${encodeURIComponent(session.id)}`} className="mx-4 mb-2 self-start text-xs text-tertiary underline" onClick={() => { side.close(); onOpenMain?.(); }}>{t("sideChat.openMain")}</a>
         <div ref={transcript} className="side-chat-transcript" onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 48; }}>
             {session.excerpt && <details className="mb-3 rounded-lg bg-secondary p-3 text-xs"><summary className="cursor-pointer text-tertiary">{t("sideChat.source")}</summary><p className="mt-2 whitespace-pre-wrap break-words">{session.excerpt}</p></details>}

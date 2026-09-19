@@ -113,6 +113,7 @@ button:enabled, summary { cursor: pointer; }
 .app-mobile-bar strong { flex: 1; font-size: 14px; }
 .app-sidebar.is-mobile { width: 100%; height: 100%; border: 0; }
 .pane-resizer { position: absolute; z-index: 5; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; }
+.pane-resizer.is-start { right: auto; left: -3px; }
 .pane-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; transition: background-color 120ms, width 120ms; }
 .pane-resizer:hover::after, .pane-resizer:focus-visible::after, .pane-resizer.is-dragging::after { width: 2px; background: var(--color-bg-brand-solid); }
 .pane-resizer:focus-visible { outline: none; }
@@ -159,14 +160,20 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .conversation-time { font-size: 10px; white-space: nowrap; color: var(--color-text-quaternary); }
 .conversation-more { position: absolute; right: 2px; top: 8px; width: 26px; height: 26px; opacity: .45; transition: opacity 120ms; }
 .group\/thread:hover .conversation-more, .group\/thread:focus-within .conversation-more { opacity: 1; }
-.console-content { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr); }
-.console-content.with-inspector { grid-template-columns: minmax(0, 1fr) auto; }
-.resizable-inspector { position: relative; min-width: 0; min-height: 0; height: 100%; }
+/* The conversation keeps the room the columns beside it do not take:
+   a split pane, the inspector, or both. Relative, because a column
+   narrow enough to be unreadable covers it instead. */
+.console-content { position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; }
+.console-content > .conversation-content { flex: 1 1 auto; }
+.resizable-inspector { position: relative; flex: 0 0 auto; min-width: 0; min-height: 0; height: 100%; }
 .inspector-resize-handle { position: absolute; z-index: 5; inset-block: 0; left: -5px; width: 10px; cursor: col-resize; touch-action: none; outline: none; }
 .inspector-resize-handle::after { content: ""; position: absolute; inset-block: 0; left: 4px; width: 2px; background: transparent; }
 .inspector-resize-handle:hover::after, .inspector-resize-handle:focus-visible::after, .inspector-resize-handle.is-dragging::after { background: var(--color-bg-brand-solid); }
-.conversation-content { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--color-bg-primary); }
-.transcript-scroll { padding: 32px clamp(20px, 4vw, 64px); overscroll-behavior: contain; }
+/* The reading column's own width sets its margins, not the window's: a
+   conversation sharing the workbench with a pane beside it would spend
+   a third of what is left on empty space if it measured the screen. */
+.conversation-content { container: conversation / inline-size; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--color-bg-primary); }
+.transcript-scroll { padding: 32px clamp(20px, 4cqi, 64px); overscroll-behavior: contain; }
 .transcript-messages { display: flex; flex-direction: column; gap: 28px; max-width: 820px; margin: 0 auto; }
 .message-user { display: flex; justify-content: flex-end; padding-left: 36px; }
 .message-user-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; max-width: 85%; }
@@ -183,7 +190,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .message-meta button { padding: 3px 0; border-radius: 3px; }
 .message-meta .message-line-action { padding: 0; }
 .message-meta button:hover { color: var(--color-text-brand-secondary); }
-.composer-dock { padding: 12px clamp(16px, 3vw, 48px) 20px; background: var(--color-bg-primary); }
+.composer-dock { padding: 12px clamp(16px, 3cqi, 48px) 20px; background: var(--color-bg-primary); }
 .composer { container: composer / inline-size; position: relative; width: 100%; min-width: 0; max-width: 820px; margin: 0 auto; }
 .composer-input { display: flex; flex-direction: column; border: 1px solid var(--color-border-primary); border-radius: 16px; background: var(--toolbar-surface); box-shadow: 0 2px 8px rgb(0 0 0 / .025); transition: border-color 120ms, box-shadow 120ms; }
 .composer-input:focus-within { border-color: var(--color-brand-400); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 12%, transparent); }
