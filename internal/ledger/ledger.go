@@ -261,7 +261,8 @@ func migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS commands (
 			id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT NOT NULL,
-			received_at TEXT NOT NULL, finished_at TEXT, result TEXT, error TEXT)`,
+			received_at TEXT NOT NULL, finished_at TEXT, result TEXT, error TEXT,
+			acknowledged_by TEXT)`,
 		`CREATE TABLE IF NOT EXISTS operations (
 			id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL,
 			revision INTEGER NOT NULL, incarnation INTEGER NOT NULL,
