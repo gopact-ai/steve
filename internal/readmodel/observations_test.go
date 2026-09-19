@@ -148,7 +148,7 @@ func TestObserveDocumentIODoesNotBlockReadersOrEvents(t *testing.T) {
 			workers.Go(func() {
 				defer close(read)
 				m.Snapshot(t.Context())
-				history, _, err := m.History(t.Context(), 0, 10)
+				history, _, err := m.History(t.Context(), "", 10)
 				if err != nil || len(history) != 1 || history[0].Subject != "A" {
 					t.Errorf("live observation during I/O: history=%+v err=%v", history, err)
 				}

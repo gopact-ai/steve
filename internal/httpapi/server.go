@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,7 +29,7 @@ type Model interface {
 	Snapshot(context.Context) readmodel.Snapshot
 	Subscribe(context.Context) (<-chan readmodel.Event, func())
 	Recent() []readmodel.Event
-	History(context.Context, int64, int) ([]readmodel.HistoryEntry, int64, error)
+	History(context.Context, string, int) ([]readmodel.HistoryEntry, string, error)
 }
 
 // ServerConfig is where the read model is served and who may read it.
@@ -1212,15 +1213,38 @@ func (s *Server) consoleSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"enabled": true, "setup": setup})
 }
 
-// history pages what happened, newest first; before is the ledger
-// sequence to continue from, as the previous page's next.
+// history pages both ledger events and retained observations, newest first.
+// cursor is the opaque next from a previous page; "" starts a traversal.
+// next="" is terminal. limit bounds the combined page (default 60, max 200).
+// Numeric before cursors are no longer supported. Retention-expired cursors
+// return 409 and must be restarted; malformed cursors/queries return 400.
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, next, err := s.model.History(r.Context(), before, limit)
+	query, queryErr := url.ParseQuery(r.URL.RawQuery)
+	if queryErr != nil || query.Has("before") || len(query["cursor"]) > 1 || len(query["limit"]) > 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "history requires one opaque cursor, not a before sequence"})
+		return
+	}
+	limit := 60
+	if query.Has("limit") {
+		var err error
+		limit, err = strconv.Atoi(query.Get("limit"))
+		if err != nil || limit < 1 || limit > 200 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "history limit must be between 1 and 200"})
+			return
+		}
+	}
+	entries, next, err := s.model.History(r.Context(), query.Get("cursor"), limit)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, readmodel.ErrHistoryCursor) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, readmodel.ErrHistoryCursorExpired) {
+			status = http.StatusConflict
+		}
+		w.WriteHeader(status)
 		writeJSON(w, map[string]any{"error": err.Error()})
 		return
 	}

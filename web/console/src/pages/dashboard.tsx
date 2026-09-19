@@ -1,5 +1,5 @@
 import { useI18n } from "@/providers/locale-provider";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { BookOpen01, Database01, HardDrive, SearchSm, ShieldTick, Users01, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
@@ -9,6 +9,7 @@ import type { BadgeColors } from "@/components/base/badges/badge-types";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { fetchHistory } from "@/lib/api/work";
+import { HTTPError, message } from "@/lib/http";
 import { bytes, dateTime, number, short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { useNodeLabel } from "@/lib/node-name";
@@ -28,7 +29,7 @@ const tabs: DashboardTab[] = ["overview", "timeline", "audit"];
 // DashboardPage answers "what is happening, what did it cost, what
 // happened before". The overview holds the live and counted state, the
 // timeline reads the ledger journal and the connectivity observations
-// paged by the ledger's sequence, and the audit tab holds raw records.
+// paged together by an opaque cursor, and the audit tab holds raw records.
 export function DashboardPage() {
     const { t: tr, locale } = useI18n();
     const { snap, events } = useFleet();
@@ -41,21 +42,50 @@ export function DashboardPage() {
     const setTab = (value: DashboardTab) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
     const [family, setFamily] = useState<HistoryFamily | "">("");
     const [entries, setEntries] = useState<HistoryEntry[]>([]);
-    const [next, setNext] = useState(0);
+    const [next, setNext] = useState("");
     const [loading, setLoading] = useState(false);
+    const [historyError, setHistoryError] = useState<{ message: string; cursor: string; replace: boolean } | null>(null);
+    const historyRequest = useRef<{ controller: AbortController; replace: boolean } | null>(null);
+    const refreshQueued = useRef(false);
     const [filter, setFilter] = useState("");
-    const load = async (before: number, replace: boolean) => {
+    const load = useCallback(async (cursor: string, replace: boolean): Promise<void> => {
+        // Only one continuation can append to a traversal. Refreshes replace
+        // its generation, so an older response cannot append after a reset.
+        if (!replace && historyRequest.current) return;
+        if (replace && historyRequest.current?.replace) { refreshQueued.current = true; return; }
+        historyRequest.current?.controller.abort();
+        const current = { controller: new AbortController(), replace };
+        historyRequest.current = current;
         setLoading(true);
+        setHistoryError(null);
         try {
-            const data = await fetchHistory(before);
+            const data = await fetchHistory(cursor, 60, current.controller.signal);
+            if (current.controller.signal.aborted || historyRequest.current !== current) return;
             setEntries((list) => replace ? data.entries : [...list, ...data.entries]);
             setNext(data.next);
-        } finally { setLoading(false); }
-    };
+        } catch (error) {
+            if (current.controller.signal.aborted || historyRequest.current !== current) return;
+            const restart = error instanceof HTTPError && (error.status === 400 || error.status === 409);
+            setHistoryError({ message: message(error), cursor: restart ? "" : cursor, replace: restart || replace });
+        } finally {
+            if (historyRequest.current === current) {
+                historyRequest.current = null;
+                setLoading(false);
+                if (refreshQueued.current) { refreshQueued.current = false; void load("", true); }
+            }
+        }
+    }, []);
     // Identity changes even after the bounded event buffer reaches 300 items.
     const latestEvent = events[0];
     const reads = tab === "timeline";
-    useEffect(() => { if (reads) void load(0, true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [latestEvent, reads]);
+    useEffect(() => {
+        if (reads) void load("", true);
+    }, [latestEvent, reads, load]);
+    useEffect(() => () => {
+        historyRequest.current?.controller.abort();
+        historyRequest.current = null;
+        refreshQueued.current = false;
+    }, [reads]);
     // A row is searched by what it says, so a machine can be found by the
     // name its owner gave it and not only by its node ID.
     const query = filter.trim().toLowerCase();
@@ -115,7 +145,8 @@ export function DashboardPage() {
                         </ol>
                     )}
                     <div className="border-t border-secondary px-5 py-2">
-                        <Button size="sm" color="link-gray" isLoading={loading} isDisabled={!next} onClick={() => void load(next, false)}>{next ? tr("history.loadEarlier") : tr("history.allLoaded")}</Button>
+                        {historyError && <p role="alert" className="mb-2 break-words text-sm text-error-primary">{historyError.message}</p>}
+                        <Button size="sm" color="link-gray" isLoading={loading} isDisabled={loading || (!next && !historyError)} onClick={() => void load(historyError?.cursor ?? next, historyError?.replace ?? !next)}>{historyError ? tr("common.retry") : next ? tr("history.loadEarlier") : tr("history.allLoaded")}</Button>
                     </div>
                 </div>
             )}

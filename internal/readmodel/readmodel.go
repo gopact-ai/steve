@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -475,9 +474,9 @@ type LedgerSource interface {
 	// ProjectList lists every project, for the page and the context bar.
 	ProjectList(ctx context.Context) ([]project.Project, error)
 	// ClosedAttempts are every attempt that reached a terminal state: the
-	// authority on spend. Events pages the journal for history.
+	// authority on spend. HistoryEvents pages the journal chronologically.
 	ClosedAttempts(ctx context.Context) ([]attempt.Record, error)
-	Events(ctx context.Context, before int64, limit int) ([]ledger.Event, error)
+	HistoryEvents(ctx context.Context, before *ledger.EventPosition, through *int64, limit int) ([]ledger.Event, int64, error)
 }
 
 type NodeSource interface {
@@ -1154,53 +1153,6 @@ func (m *Model) LoadObservations() error {
 	m.observations = list
 	m.mu.Unlock()
 	return nil
-}
-
-// History pages what happened, newest first: ledger transitions in
-// words, merged with connectivity observations. before is the ledger
-// sequence to page from (0 = the end).
-func (m *Model) History(ctx context.Context, before int64, limit int) ([]HistoryEntry, int64, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 60
-	}
-	var out []HistoryEntry
-	var next int64
-	if m.src.Ledger != nil {
-		events, err := m.src.Ledger.Events(ctx, before, limit)
-		if err != nil {
-			return nil, 0, err
-		}
-		for _, ev := range events {
-			out = append(out, HistoryEntry{
-				At: ev.At, Seq: ev.Seq, Kind: "ledger", Subject: ev.OperationID, Operation: ev.OperationID,
-				From: ev.From, To: ev.To, Actor: ev.Actor, Text: describeEvent(ev),
-			})
-			next = ev.Seq
-		}
-	}
-	// Observations have no sequence; they slot in by time. The first page
-	// takes everything newer than its oldest ledger entry; a later page
-	// takes what falls between its oldest and its newest.
-	var floor, ceiling time.Time
-	if len(out) > 0 {
-		floor = out[len(out)-1].At
-		if before > 0 {
-			ceiling = out[0].At
-		}
-	}
-	m.mu.Lock()
-	for _, o := range m.observations {
-		if !o.At.After(floor) && !floor.IsZero() {
-			continue
-		}
-		if !ceiling.IsZero() && o.At.After(ceiling) {
-			continue
-		}
-		out = append(out, HistoryEntry{At: o.At, Kind: "observe." + o.Kind, Subject: o.Subject, Text: o.Text, Data: o.Data})
-	}
-	m.mu.Unlock()
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
-	return out, next, nil
 }
 
 // describeEvent puts a ledger transition into words. The operation id's

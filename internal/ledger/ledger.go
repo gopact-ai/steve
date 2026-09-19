@@ -270,6 +270,7 @@ func migrate(db *sql.DB) error {
 			from_state TEXT NOT NULL, to_state TEXT NOT NULL, actor TEXT NOT NULL,
 			fencings TEXT NOT NULL, effects TEXT NOT NULL, at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS events_operation ON events(operation_id, seq)`,
+		`CREATE INDEX IF NOT EXISTS events_history_time_seq ON events(rtrim(at, 'Z'), seq)`,
 		`CREATE TABLE IF NOT EXISTS names (
 			name TEXT PRIMARY KEY, version INTEGER NOT NULL, artifact TEXT NOT NULL,
 			updated_at TEXT NOT NULL)`,

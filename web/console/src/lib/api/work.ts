@@ -1,6 +1,6 @@
 import type { AttemptView, ChangeIndex, FileDiff, FileView, HistoryEntry, Task, TaskDetail, TaskMetaPatch, TreeView } from "../types";
 import { request } from "../http";
-export const fetchHistory = (before: number, limit = 60, signal?: AbortSignal) => request<{ entries: HistoryEntry[]; next: number }>(`/history?before=${before}&limit=${limit}`, { signal });
+export const fetchHistory = (cursor = "", limit = 60, signal?: AbortSignal) => request<{ entries: HistoryEntry[]; next: string }>(`/history?${new URLSearchParams({ cursor, limit: String(limit) })}`, { signal });
 export const fetchTask = (id: string, signal?: AbortSignal) => request<TaskDetail>(`/console/tasks/${encodeURIComponent(id)}`, { signal });
 export const patchTaskMeta = (id: string, body: TaskMetaPatch) => request<Task>(`/console/tasks/${encodeURIComponent(id)}/meta`, { method: "PATCH", body });
 export const fetchTaskAttempts = (id: string, signal?: AbortSignal) => request<AttemptView[]>(`/console/tasks/${encodeURIComponent(id)}/attempts`, { signal });
