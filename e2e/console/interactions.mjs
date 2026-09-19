@@ -2276,6 +2276,61 @@ checks["design-delegation-stream"] = async (f) => {
     await f.page.screenshot({ path: path.join(output, "design-delegation-stream.png"), fullPage: true });
 };
 
+checks["workbench-split"] = async (f) => {
+    const minute = (m) => `2026-09-06T09:${String(m).padStart(2, "0")}:00Z`;
+    const child = { id: "#41", kind: "delegate", goal: "在 BOE 机器上只读盘点开发痕迹。", state: "done", since: minute(51), elapsed: "2m10s", agent: "builder", node: "node-7f3c9a", answer: "盘点完成，仓库共 3 个。" };
+    f.replies[A] = [
+        { id: "sent-1", kind: "sent", conversation: A, at: minute(50), input: "先委派一次盘点。" },
+        { id: "reply-1", kind: "reply", conversation: A, at: minute(53), text: "第一轮结果已汇总。", process: { timeline: [{ kind: "text", text: "第一轮结果已汇总。", at: minute(53) }], steps: [child] } },
+    ];
+    await f.page.reload();
+    await f.page.locator('[data-task-id="#41"]').waitFor();
+    await f.page.getByRole("button", { name: "在分栏中查看委派 #41", exact: true }).click();
+    const pane = f.page.locator(".split-pane");
+    await pane.waitFor();
+    await pane.getByText("盘点完成，仓库共 3 个。").waitFor();
+    assert.equal(await pane.getByRole("tab", { name: "委派 #41", exact: true }).getAttribute("aria-selected"), "true", "The delegation opens as the pane's own tab");
+    await noHorizontalOverflow(f.page);
+    // The pane takes its room from the conversation, which keeps enough
+    // of its own to read and compose in.
+    const room = async () => ({ talk: (await f.page.locator(".conversation-content").boundingBox()).width, pane: (await pane.boundingBox()).width });
+    const before = await room();
+    assert.ok(before.talk >= 480 && before.pane >= 320, `Both columns start readable (${JSON.stringify(before)})`);
+    const handle = pane.getByRole("separator", { name: "拖动调整分栏宽度", exact: true });
+    const drag = async (dx) => {
+        const box = await handle.boundingBox();
+        const x = box.x + box.width / 2, y = box.y + box.height / 2;
+        await f.page.mouse.move(x, y); await f.page.mouse.down();
+        await f.page.mouse.move(x + dx, y, { steps: 10 }); await f.page.mouse.up();
+    };
+    await drag(-120);
+    const widened = await room();
+    assert.ok(Math.abs(widened.pane - before.pane - 120) <= 2, "Dragging the divider left widens the pane");
+    assert.ok(Math.abs(widened.talk - before.talk + 120) <= 2, "What the pane gains the conversation gives");
+    await drag(-2000);
+    assert.ok((await room()).talk >= 480, "The divider stops where the conversation would stop being usable");
+    const summary = f.page.locator('[data-task-id="#41"] > summary').first();
+    assert.ok(await summary.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "A delegation row must stay whole in the column the pane leaves behind");
+    await drag(2000);
+    assert.ok((await pane.boundingBox()).width >= 320, "The pane cannot be squeezed below a readable width");
+    await handle.dblclick();
+    // The details column is independent now: both may be open at once.
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await inspector(f.page).waitFor();
+    await pane.waitFor();
+    await noHorizontalOverflow(f.page);
+    assert.ok((await f.page.locator(".conversation-content").boundingBox()).width >= 480, "Three columns still leave the conversation its minimum");
+    await f.page.screenshot({ path: path.join(output, "workbench-split.png"), fullPage: true });
+    // Hiding keeps the tab; closing it gives the room back for good.
+    await f.page.getByRole("button", { name: "收起分栏", exact: true }).first().click();
+    await pane.waitFor({ state: "detached" });
+    await f.page.getByRole("button", { name: "展开分栏（1）", exact: true }).click();
+    await pane.getByText("盘点完成，仓库共 3 个。").waitFor();
+    await pane.getByRole("button", { name: "关闭委派 #41", exact: true }).click();
+    await pane.waitFor({ state: "detached" });
+    assert.equal(await f.page.locator(".console-toolbar").getByRole("button", { name: /分栏/ }).count(), 0, "With nothing left to show, the pane leaves no controls behind");
+};
+
 checks["process-content"] = async (f) => {
     const process = { agent: "test-agent", node: "node-7f3c9a", model: "GPT-5.6-Sol", tools: [{ id: "read", title: "Read file", status: "completed", output: "file content" }], timeline: [{ kind: "thought", text: "Checking the file", at }, { kind: "text", text: "Opening the file", at }, { kind: "tool", tool: "read", at }, { kind: "text", text: "Checked answer", at }], steps: [{ id: "empty-step", timeline: [{ kind: "thought", text: " ", at }] }] };
     f.replies[A] = [{ id: "trace", kind: "reply", conversation: A, at, text: "Checked answer", process }];

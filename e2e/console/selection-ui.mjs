@@ -97,7 +97,9 @@ try {
  await select(message,'bold passage');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();await page.locator('[data-side-chat]').waitFor();assert.equal(f.posts.length,0);assert.equal(await page.evaluate(()=>sessionStorage.getItem('steve.conversation')),A);
  const side=page.locator('[data-side-chat]');await side.getByRole('textbox').last().fill('Explain this wording');await side.getByRole('button',{name:'Send',exact:true}).click();
  await waitFor(()=>f.posts.some(p=>p.input==='Explain this wording'),'side sends explicit question');const sent=f.posts.find(p=>p.input==='Explain this wording');assert.notEqual(sent.conversation,A);assert.equal(sent.refs.length,1);assert.equal(sent.refs[0].selector.quote,'bold passage');assert.deepEqual(f.initializations,[{conversation:sent.conversation,project:'p'}]);assert.deepEqual(f.posts.map(post=>post.input),['/use local-agent','Explain this wording']);assert.equal(sideContexts.get(sent.conversation).agent,'local-agent','side question uses the compatible origin agent instead of the remote default');assert.equal(await page.evaluate(()=>sessionStorage.getItem('steve.conversation')),A);
- await side.getByRole('button',{name:'Close side chat',exact:true}).click();
+ assert.equal(await page.locator('.side-chat-header').getByRole('button').count(),0,'a side chat docked in the split is closed by its tab, not a second control');
+ await page.getByRole('button',{name:'Close Side chat',exact:true}).click();
+ await side.waitFor({state:'detached'});
  console.log('PASS side question uses separate same-project conversation and preserves main context');
  await page.getByRole('button',{name:/Review changes/}).first().click();
  await page.getByRole('dialog',{name:'Artifact workspace',exact:true}).waitFor();

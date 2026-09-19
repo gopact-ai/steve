@@ -2,7 +2,7 @@ import { useSideChat } from "@/providers/side-chat-provider";
 import { SideChatPanel } from "@/components/steve/side-chat";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
+import { Columns03, LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { ThemeMenu } from "@/components/steve/theme-menu";
 import type { DraftBox } from "@/components/steve/markdown-input";
@@ -14,7 +14,8 @@ import { useReviewActive } from "@/components/steve/review-context";
 import { NativeSessionImport } from "@/components/steve/native-session-import";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { TaskDrawer } from "@/components/steve/task-drawer";
-import { DelegationCard } from "@/components/steve/delegation";
+import { DelegationCard, DelegationPanel } from "@/components/steve/delegation";
+import { SplitPane, SplitPaneProvider, useSplitPane, type SplitTab } from "@/components/steve/split-pane";
 import { RAIL_WIDTH } from "@/components/steve/rail";
 import { BoardPage } from "./board";
 import { Working } from "@/components/steve/trace";
@@ -52,7 +53,14 @@ function stamped(file: File): File {
     return new File([file], `pasted-${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}.${ext === "jpeg" ? "jpg" : ext}`, { type: file.type });
 }
 
+// The pane beside the conversation is opened from inside the transcript
+// — a delegated child's card, a passage asked about — so the page it
+// belongs to is what carries it.
 export function ConsolePage() {
+    return <SplitPaneProvider><ConsoleWorkbench /></SplitPaneProvider>;
+}
+
+function ConsoleWorkbench() {
     const { snap, refresh, live: connection, hubUpdated } = useFleet();
     const nodeLabelOf = useNodeLabel();
     const { t, locale } = useI18n();
@@ -109,6 +117,12 @@ export function ConsolePage() {
     const { dock: dockInspector, resize: resizeInspector } = inspectorLayout.current;
     const [mobileSessions, setMobileSessions] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
+    const split = useSplitPane()!;
+    const { open: openSplit, close: closeSplit, closeKind: closeSplitKind } = split;
+    // A side chat is a tab in the pane like any other: opening one from a
+    // passage opens the pane, and closing its tab ends the side chat.
+    const sideChatID = side.session?.id;
+    useEffect(() => { if (sideChatID) openSplit({ id: "chat", kind: "chat" }); else closeSplit("chat"); }, [sideChatID, openSplit, closeSplit]);
     useEffect(() => { if (!reviewing && materials.sideRequest && context?.project && materials.sideRequest.project === context.project.id) { setInspectorOpen(true); setTab("materials"); } }, [materials.sideRequest, reviewing, context?.project?.id]);
     // A line already sent cannot be unsaid, but the thread can go back to
     // just before it: editing puts that line in the box, and sending it
@@ -128,6 +142,7 @@ export function ConsolePage() {
         }
         return undefined;
     };
+    useEffect(() => { closeSplitKind("delegation"); }, [conversation, closeSplitKind]);
     // The server owns execution; every tab projects the same durable queue.
     const [exchanges, setExchanges] = useState<Exchange[]>([]);
     const queue = useMemo(() => exchanges.filter((e) => e.conversation === conversation && e.state === "queued"), [exchanges, conversation]);
@@ -622,8 +637,14 @@ export function ConsolePage() {
                 collapsed={collapsed} onToggle={toggleSessions}
                 tasks={snap.tasks} onTask={openTask} />;
     const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={closeInspector} />;
+    const splitLabel = (tab: SplitTab) => tab.kind === "chat" ? t("sideChat.title") : t("consoleChrome.delegation", { id: "#" + tab.task });
+    const closeSplitTab = (tab: SplitTab) => { if (tab.kind === "chat") side.close(); else split.close(tab.id); };
+    const renderSplitTab = (tab: SplitTab) => tab.kind === "chat"
+        ? <SideChatPanel embedded />
+        : <DelegationPanel id={"#" + tab.task} info={stepOf(tab.task!)} progress={stepOf(tab.task!)} />;
+    const splitOpen = !reviewing && split.tabs.length > 0 && !split.hidden;
     return (
-        <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
+        <div className="console-workbench">
             {replacingDraft !== null && <ConfirmDialog title={t("console.replaceDraftTitle")} body={t("console.replaceDraftBody")} confirmLabel={t("console.replaceDraft")}
                 onConfirm={() => armRewind(replacingDraft.reply, replacingDraft.text)} onClose={() => setReplacingDraft(null)} />}
             {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} />}
@@ -653,7 +674,8 @@ export function ConsolePage() {
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>{t("console.conversation")}</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>{t("console.board")}</button>
                     </span>
-                    {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} aria-pressed={inspectorOpen} title={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} onClick={() => { if(side.session)side.close();setInspectorOpen(side.session?true:!inspectorOpen); }}><LayoutRight aria-hidden="true" /></button>}
+                    {view === "chat" && split.tabs.length > 0 && <button type="button" className="workbench-icon-button" aria-label={split.hidden ? t("split.show", { count: split.tabs.length }) : t("split.hide")} aria-pressed={!split.hidden} title={split.hidden ? t("split.show", { count: split.tabs.length }) : t("split.hide")} onClick={() => split.setHidden(!split.hidden)}><Columns03 aria-hidden="true" /></button>}
+                    {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} aria-pressed={inspectorOpen} title={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} onClick={() => setInspectorOpen(!inspectorOpen)}><LayoutRight aria-hidden="true" /></button>}
                 </header>}
 
                 {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : child && stepOf(child.id) ? (
@@ -727,12 +749,12 @@ export function ConsolePage() {
                             {(busy || stopping) && <p role="status" className="composer-running"><span>{stopping ? t("console.stopping") : recoveryState === "recovering" ? t("console.recovering") : recoveryState ? t("status.awaitingHuman") : t("console.runningNow")}</span></p>}
                         </div>
                     </div>
-                    {!side.session && inspectorOpen && dockInspector && <ResizableInspector>{inspector}</ResizableInspector>}
-                {!side.session && inspectorOpen && !dockInspector && <Sheet label={t("console.details")}  width={resizeInspector ? "max-content" : 360} onClose={() => setInspectorOpen(false)}>{resizeInspector ? <ResizableInspector overlay>{inspector}</ResizableInspector> : inspector}</Sheet>}
+                    {splitOpen && <SplitPane tabs={split.tabs} active={split.active} label={splitLabel} onFocus={split.focus} onClose={closeSplitTab} onHide={() => split.setHidden(true)} render={renderSplitTab} />}
+                    {inspectorOpen && dockInspector && <ResizableInspector>{inspector}</ResizableInspector>}
+                {inspectorOpen && !dockInspector && <Sheet label={t("console.details")}  width={resizeInspector ? "max-content" : 360} onClose={() => setInspectorOpen(false)}>{resizeInspector ? <ResizableInspector overlay>{inspector}</ResizableInspector> : inspector}</Sheet>}
                 </div>
                 )}
             </div>
-            {!reviewing && <SideChatPanel />}
         </div>
     );
 }

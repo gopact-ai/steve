@@ -25,10 +25,14 @@ export function ResizableInspector({ children, overlay = false }: { children: Re
     const width = Math.min(preferred, maximum);
     const clamp = (value: number) => Math.round(Math.max(minWidth, Math.min(maximum, value)));
 
+    // Docked, the inspector may only take what the conversation can
+    // spare — and a split pane between them has already taken its share,
+    // so the conversation's own width is what is measured, not the row's.
     useLayoutEffect(() => {
-        const container = overlay ? document.documentElement : panel.current?.parentElement;
-        if (!container) return;
-        const measure = () => setMaximum(Math.max(minWidth, Math.min(widthLimit, container.clientWidth - (overlay ? 64 : conversationMinimum))));
+        const own = panel.current;
+        const container = overlay ? document.documentElement : own?.parentElement?.querySelector<HTMLElement>(".conversation-content");
+        if (!container || !own) return;
+        const measure = () => setMaximum(Math.max(minWidth, Math.min(widthLimit, overlay ? container.clientWidth - 64 : container.clientWidth + own.clientWidth - conversationMinimum)));
         measure();
         const observer = new ResizeObserver(measure);
         observer.observe(container);
