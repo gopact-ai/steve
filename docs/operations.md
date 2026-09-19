@@ -2,7 +2,33 @@
 
 本文按当前代码说明配置、部署、门禁和排障。对象与权威边界见 [architecture.md](architecture.md)，首次使用见 [中文 README](../README.md) / [English README](../README.en.md)，旧方案保存在 [history/](history/)。
 
-桌面 App 的首次启动、完整节点接入、协调交接与容灾要求见 [桌面指南](desktop.md)。下方 `steve run` / `steve-node` 配置说明以独立部署为主；共享账本模式的机器身份与声明由 App 管理。
+桌面 App 的首次启动、完整节点接入、协调交接与容灾要求见 [桌面指南](desktop.md)。服务器上的集群首次初始化见[服务端集群初始化](#服务端集群初始化)。下方 `steve run` / `steve-node` 配置说明以独立部署为主。
+
+## 服务端集群初始化
+
+`peer-init` 有两种互斥输入：`--state-dir` 创建新安装；`--config` 初始化已有服务并保留其配置与账本，见[服务模式的集群初始化](#服务模式的集群初始化)。新目录模式不能同时传入 `--config`、`--storage-level` 或地址、节点标识选项。
+
+在部署用户自己的新目录中创建集群首节点，无需启动原生 App：
+
+```sh
+./steve peer-init --state-dir /home/me/steve-service
+```
+
+命令创建私有安装目录、稳定节点身份、集群 CA 与节点证书、控制台凭据、`config.json` 和 `config.json.cluster.json`。完整节点按 `restricted` 级别保存私有协作账本。JSON 输出包含 `config`、`cluster_config`、`cluster_id`、`node_id`、`token_file` 和 `endpoint_file`；凭据内容不写入输出。此命令只初始化文件，不启动服务、不监听端口。
+
+目录可以不存在或为权限 `0700` 的空目录。重复执行会校验已有安装并保留身份、凭据、配置和已绑定端口；并发初始化或运行中的服务会使它拒绝执行。未知的非空目录、符号链接、非私有目录、损坏的身份或凭据不会被覆盖。它不接收旧 hub 配置，也不迁移旧账本。共享桌面安装格式不要求安装桌面应用。
+
+首次启动前，可以在生成的 `config.json` 中配置 `nodes`、远端 `agents`、`projects` 等业务声明。保留生成的 `gateway.hub_id`、`state_path`、`read_model_addr` 和 `read_model_token`；不要用独立 hub 的配置文件覆盖它。然后交给服务管理器以前台进程运行：
+
+```sh
+./steve peer --config /home/me/steve-service/config.json
+```
+
+默认监听端口由系统分配，首次启动后持久保存，重启继续使用。控制台始终绑定 loopback；地址见日志 `UI available at` 或输出指定的 `endpoint_file`。从另一台机器访问时，用 SSH 本地端口转发连接该地址，并使用 `token_file` 中的本地访问凭据登录。Raft 和 peer 通信沿用集群证书验证；初始化不会开启自动容灾。
+
+独立执行节点的 owner 绑定使用初始化输出的 **`cluster_id`**，不是 `node_id` 或配置文件中的 `gateway.hub_id`。为新执行节点配置 `hubs` 时使用该集群 ID，并把节点地址及其访问凭据配置到 hub 的 `nodes` 中。已有节点更换 owner 应使用现有的 `steve-node adopt` 流程，先确认旧 owner 已停止；`peer-init` 不会接管或重启它们。完整副本节点继续按[桌面多机接入流程](desktop.md)加入。
+
+服务运行后，通过控制台管理共享声明。跨节点插件准备由已提交的协调者授权，操作入口见[插件指南](plugins-local.md#部署到节点需要协调者)。初始化若在发布集群 authority 后、写 sidecar 前中断，重试会验证并恢复原身份；已有 `cluster/raft` 数据却丢失 sidecar 时会拒绝恢复，应找回原配置，不能重新生成身份。
 
 ## 配置约定
 

@@ -104,7 +104,7 @@ URL、header、参数和环境值使用同一个引用结构：`text` 为字面�
 
 因此 `steve run` 这样起的独立 hub 可以导入包、保存安装配置、管理自己这台机器的部署，但**不能把安装准备到别的节点**：它没有身份可以出示。控制台的目标状态会直接说明这一点（`this hub is not a cluster coordinator, so it cannot deploy plugins to nodes`），管理接口在请求发出前就拒绝，插件会话也用同一句失败，而不是把节点那句"协调者未授权"抛给运维。
 
-要把插件部署到机群里的节点，hub 要作为集群应用运行（`steve peer`，见桌面多机接入）。这是第一轮的边界，不是临时故障。
+要把插件部署到机群里的节点，hub 要作为集群应用运行。服务器上先用 `steve peer-init --state-dir <新私有目录>` 生成配置，再用 `steve peer --config <目录>/config.json` 启动；完整步骤及节点 owner 绑定见[服务端集群初始化](operations.md#服务端集群初始化)。已有桌面集群沿用桌面多机接入。
 
 ## 管理 API 与运行引用
 
