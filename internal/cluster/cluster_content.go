@@ -24,6 +24,7 @@ import (
 )
 
 const contentObjectHeader = "X-Steve-Content-Object"
+const contentUploadHeader = "X-Steve-Content-Upload"
 
 // Each content operation rechecks the committed project declaration and local
 // replica position. An incoming object's classification is never authoritative.
@@ -134,6 +135,7 @@ func (p *Peer) ContentReplicator(active Activation) (contentreplica.Replicator, 
 		return nil, contentreplica.ErrPlacement
 	}
 	client, err := contentreplica.New(contentreplica.Config{
+		Ledger: active.Ledger,
 		NodeID: p.Config.NodeID, Local: peerLocalContent{peer: p}, Remote: peerContentTransport{peer: p, active: active}, Policy: peerContentPolicy{peer: p},
 		Scope: func(ctx context.Context, id string) (contentreplica.Scope, error) {
 			current, err := p.contentState(ctx, id)
@@ -240,6 +242,22 @@ func (c generationContent) Read(parent context.Context, manifest contentreplica.
 	return updated, nil
 }
 
+func (c generationContent) PrepareBundle(parent context.Context, projectID, commit, base string, ref contentreplica.BlobRef, source io.ReadSeeker) (contentreplica.Manifest, error) {
+	ctx, cancel, err := c.context(parent)
+	if err != nil {
+		return contentreplica.Manifest{}, err
+	}
+	defer cancel()
+	manifest, err := c.client.PrepareBundle(ctx, projectID, commit, base, ref, source)
+	if err != nil {
+		return contentreplica.Manifest{}, err
+	}
+	if _, err := contentGenerationState(ctx, c.active); err != nil {
+		return contentreplica.Manifest{}, err
+	}
+	return manifest, nil
+}
+
 func (p *Peer) acquireContent() (*contentreplica.Store, func(), error) {
 	p.Mu.Lock()
 	if p.closing {
@@ -249,7 +267,7 @@ func (p *Peer) acquireContent() (*contentreplica.Store, func(), error) {
 	p.contentOps.Add(1)
 	p.Mu.Unlock()
 	p.contentOnce.Do(func() {
-		p.content, p.contentErr = contentreplica.Open(contentreplica.StoreConfig{Dir: filepath.Join(p.Config.DataDir, "content"), NodeID: p.Config.NodeID, Policy: peerContentPolicy{peer: p}})
+		p.content, p.contentErr = contentreplica.Open(contentreplica.StoreConfig{Ledger: p.Runtime.Load().Ledger(), Dir: filepath.Join(p.Config.DataDir, "content"), NodeID: p.Config.NodeID, Policy: peerContentPolicy{peer: p}})
 	})
 	if p.contentErr != nil {
 		p.contentOps.Done()
@@ -268,13 +286,13 @@ func (p *Peer) closeContent() error {
 
 type peerLocalContent struct{ peer *Peer }
 
-func (local peerLocalContent) Put(ctx context.Context, object contentreplica.Object, source io.Reader) (contentreplica.Receipt, error) {
+func (local peerLocalContent) Put(ctx context.Context, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
 	store, release, err := local.peer.acquireContent()
 	if err != nil {
 		return contentreplica.Receipt{}, err
 	}
 	defer release()
-	return store.Put(ctx, object, source)
+	return store.Put(ctx, upload, source)
 }
 
 func (local peerLocalContent) Get(ctx context.Context, object contentreplica.Object, into io.Writer) error {
@@ -291,7 +309,7 @@ type peerContentTransport struct {
 	active Activation
 }
 
-func (transport peerContentTransport) request(ctx context.Context, method, nodeID string, object contentreplica.Object, source io.Reader) (*http.Response, error) {
+func (transport peerContentTransport) request(ctx context.Context, method, nodeID string, object contentreplica.Object, uploadID string, source io.Reader) (*http.Response, error) {
 	p := transport.peer
 	if object.Blob.Size < 0 || object.Blob.Size > contentreplica.DefaultMaxObjectBytes {
 		return nil, contentreplica.ErrTooLarge
@@ -329,6 +347,9 @@ func (transport peerContentTransport) request(ctx context.Context, method, nodeI
 		return nil, err
 	}
 	request.Header.Set(contentObjectHeader, base64.RawURLEncoding.EncodeToString(raw))
+	if method == http.MethodPut {
+		request.Header.Set(contentUploadHeader, uploadID)
+	}
 	request.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(state.Coordinator.Epoch, 10))
 	request.Header.Set("X-Steve-Writer-Generation", strconv.FormatUint(state.WriterGeneration, 10))
 	if method == http.MethodPut {
@@ -372,8 +393,9 @@ func (transport peerContentTransport) request(ctx context.Context, method, nodeI
 	return response, nil
 }
 
-func (transport peerContentTransport) Put(ctx context.Context, nodeID string, object contentreplica.Object, source io.Reader) (contentreplica.Receipt, error) {
-	response, err := transport.request(ctx, http.MethodPut, nodeID, object, source)
+func (transport peerContentTransport) Put(ctx context.Context, nodeID string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
+	object := upload.Object
+	response, err := transport.request(ctx, http.MethodPut, nodeID, object, upload.ID, source)
 	if err != nil {
 		return contentreplica.Receipt{}, err
 	}
@@ -390,14 +412,14 @@ func (transport peerContentTransport) Put(ctx context.Context, nodeID string, ob
 	if err != nil {
 		return contentreplica.Receipt{}, err
 	}
-	if receipt.NodeID != nodeID || receipt.ObjectID != object.ID() || receipt.FailureDomain != where.FailureDomain || receipt.StoredAt.IsZero() {
+	if receipt.UploadID != upload.ID || receipt.NodeID != nodeID || receipt.ObjectID != object.ID() || receipt.FailureDomain != where.FailureDomain || receipt.StoredAt.IsZero() {
 		return contentreplica.Receipt{}, contentreplica.ErrIntegrity
 	}
 	return receipt, nil
 }
 
 func (transport peerContentTransport) Get(ctx context.Context, nodeID string, object contentreplica.Object, into io.Writer) error {
-	response, err := transport.request(ctx, http.MethodGet, nodeID, object, nil)
+	response, err := transport.request(ctx, http.MethodGet, nodeID, object, "", nil)
 	if err != nil {
 		return err
 	}
@@ -460,12 +482,16 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	if r.Method != http.MethodPut && r.Method != http.MethodGet {
-		http.Error(w, "GET or PUT required", http.StatusMethodNotAllowed)
+	if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "GET, PUT or POST required", http.StatusMethodNotAllowed)
 		return
 	}
 	if err := p.contentAuthority(r); err != nil {
 		http.Error(w, "content authority denied", http.StatusForbidden)
+		return
+	}
+	if r.Method == http.MethodPost {
+		p.serveContentMaintenance(w, r)
 		return
 	}
 	header := r.Header.Get(contentObjectHeader)
@@ -504,7 +530,8 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "content length differs", http.StatusBadRequest)
 			return
 		}
-		receipt, err := store.Put(r.Context(), object, http.MaxBytesReader(w, r.Body, object.Blob.Size+1))
+		upload := contentreplica.Upload{ID: r.Header.Get(contentUploadHeader), Object: object}
+		receipt, err := store.Put(r.Context(), upload, http.MaxBytesReader(w, r.Body, object.Blob.Size+1))
 		if err != nil {
 			writeContentError(w, err)
 			return

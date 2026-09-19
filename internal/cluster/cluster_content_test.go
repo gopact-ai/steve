@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,7 +131,7 @@ func TestContentPeerRejectsUnclassifiedAndForgedScope(t *testing.T) {
 		t.Fatalf("unclassified material accepted: %v", err)
 	}
 	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "workspace", Level: "public", HomeNodeID: peers[0].Config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
-	if _, err := (peerContentTransport{peer: peers[0], active: active}).Put(t.Context(), peers[1].Config.NodeID, object, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrPlacement) {
+	if _, err := (peerContentTransport{peer: peers[0], active: active}).Put(t.Context(), peers[1].Config.NodeID, contentreplica.Upload{ID: strings.Repeat("a", 64), Object: object}, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrPlacement) {
 		t.Fatalf("sender-chosen classification accepted: %v", err)
 	}
 }
@@ -243,7 +244,7 @@ func TestContentUploadDeadlineReleasesHalfOpenRequest(t *testing.T) {
 	ref := checkpoint.Reference(bytes.Repeat([]byte("x"), 4096))
 	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "workspace", Level: "internal", HomeNodeID: peers[0].Config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
 	raw, _ := json.Marshal(object)
-	if _, err := fmt.Fprintf(connection, "PUT %s HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4096\r\n%s: %s\r\nX-Steve-Coordinator-Epoch: %d\r\nX-Steve-Writer-Generation: %d\r\nConnection: close\r\n\r\nx", clusterContentPath, contentObjectHeader, base64.RawURLEncoding.EncodeToString(raw), active.Assignment.Epoch, active.WriterGeneration); err != nil {
+	if _, err := fmt.Fprintf(connection, "PUT %s HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4096\r\nX-Steve-Content-Upload: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n%s: %s\r\nX-Steve-Coordinator-Epoch: %d\r\nX-Steve-Writer-Generation: %d\r\nConnection: close\r\n\r\nx", clusterContentPath, contentObjectHeader, base64.RawURLEncoding.EncodeToString(raw), active.Assignment.Epoch, active.WriterGeneration); err != nil {
 		t.Fatal(err)
 	}
 	// Only one byte arrives; the other peer never completes its advertised body.

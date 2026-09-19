@@ -10,6 +10,9 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 type Client struct{ cfg Config }
@@ -20,7 +23,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.MaxObjectBytes == 0 {
 		cfg.MaxObjectBytes = DefaultMaxObjectBytes
 	}
-	if !validID(cfg.NodeID) || cfg.Local == nil || cfg.Policy == nil || cfg.Scope == nil || cfg.Members == nil || cfg.MaxObjectBytes < 1 || cfg.MaxObjectBytes >= int64(^uint64(0)>>1) {
+	if cfg.Ledger == nil || !validID(cfg.NodeID) || cfg.Local == nil || cfg.Policy == nil || cfg.Scope == nil || cfg.Members == nil || cfg.MaxObjectBytes < 1 || cfg.MaxObjectBytes >= int64(^uint64(0)>>1) {
 		return nil, ErrInvalid
 	}
 	return &Client{cfg: cfg}, nil
@@ -44,6 +47,14 @@ func (c *Client) CheckLocal(ctx context.Context, project string) (Scope, error) 
 }
 
 func (c *Client) Prepare(ctx context.Context, project, kind, key string, ref BlobRef, source io.ReadSeeker) (Manifest, error) {
+	return c.prepare(ctx, project, kind, key, "", ref, source)
+}
+
+func (c *Client) PrepareBundle(ctx context.Context, project, commit, base string, ref BlobRef, source io.ReadSeeker) (Manifest, error) {
+	return c.prepare(ctx, project, GitBundle, commit, base, ref, source)
+}
+
+func (c *Client) prepare(ctx context.Context, project, kind, key, base string, ref BlobRef, source io.ReadSeeker) (result Manifest, retErr error) {
 	if source == nil {
 		return Manifest{}, ErrInvalid
 	}
@@ -51,7 +62,7 @@ func (c *Client) Prepare(ctx context.Context, project, kind, key string, ref Blo
 	if err != nil {
 		return Manifest{}, err
 	}
-	object := Object{Scope: scope, Kind: kind, Key: key, Blob: ref}
+	object := Object{Scope: scope, Kind: kind, Key: key, Blob: ref, Base: base}
 	if err := validateObject(object, c.cfg.MaxObjectBytes); err != nil {
 		return Manifest{}, err
 	}
@@ -62,6 +73,15 @@ func (c *Client) Prepare(ctx context.Context, project, kind, key string, ref Blo
 	if !slices.Contains(members, c.cfg.NodeID) {
 		return Manifest{}, ErrPlacement
 	}
+	upload, err := c.beginUpload(ctx, object, members)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, c.abortUpload(ctx, upload.ID))
+		}
+	}()
 	m := Manifest{ID: object.ID(), Object: object, RequiredCopies: 2, Protection: Replicated}
 	if scope.Level == "sealed" {
 		m.RequiredCopies, m.Protection = 1, SealedHome
@@ -91,17 +111,17 @@ func (c *Client) Prepare(ctx context.Context, project, kind, key string, ref Blo
 		}
 		var receipt Receipt
 		if node == c.cfg.NodeID {
-			receipt, err = c.cfg.Local.Put(ctx, object, source)
+			receipt, err = c.cfg.Local.Put(ctx, upload, source)
 		} else if c.cfg.Remote == nil {
 			err = ErrIncomplete
 		} else {
-			receipt, err = c.cfg.Remote.Put(ctx, node, object, source)
+			receipt, err = c.cfg.Remote.Put(ctx, node, upload, source)
 		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("content replica %s: %w", node, err))
 			continue
 		}
-		if receipt.ObjectID != m.ID || receipt.NodeID != node || receipt.FailureDomain != where.FailureDomain || receipt.StoredAt.IsZero() {
+		if receipt.UploadID != upload.ID || receipt.ObjectID != m.ID || receipt.NodeID != node || receipt.FailureDomain != where.FailureDomain || receipt.StoredAt.IsZero() {
 			return Manifest{}, ErrIntegrity
 		}
 		m.Receipts = append(m.Receipts, receipt)
@@ -133,6 +153,9 @@ func (c *Client) Prepare(ctx context.Context, project, kind, key string, ref Blo
 			return Manifest{}, errors.Join(ErrPlacement, err)
 		}
 	}
+	if err := c.cfg.Ledger.Update(ctx, func(tx *ledger.Tx) error { return sealUpload(tx, upload.ID, m.Receipts) }); err != nil {
+		return Manifest{}, err
+	}
 	return m, nil
 }
 
@@ -156,7 +179,7 @@ func (c *Client) members(ctx context.Context) ([]string, error) {
 
 // Read stages and verifies each candidate separately. Truncated/corrupt
 // streams never leak into a consumer's destination before a healthy retry.
-func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (Manifest, error) {
+func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result Manifest, retErr error) {
 	if into == nil {
 		return Manifest{}, ErrInvalid
 	}
@@ -167,6 +190,17 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (Manifest
 	if err != nil || scope != m.Object.Scope {
 		return Manifest{}, errors.Join(ErrPlacement, err)
 	}
+	// This pending intent pins the object and its dependency closure until
+	// the owner records the repaired receipt. A lost response retains it.
+	upload, err := c.beginUpload(ctx, m.Object, []string{c.cfg.NodeID})
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, c.abortUpload(ctx, upload.ID))
+		}
+	}()
 	tmp, err := os.CreateTemp("", "steve-content-read-*")
 	if err != nil {
 		return Manifest{}, err
@@ -210,18 +244,21 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (Manifest
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			return Manifest{}, err
 		}
-		repaired, err := c.cfg.Local.Put(ctx, m.Object, tmp)
+		repaired, err := c.cfg.Local.Put(ctx, upload, tmp)
 		if err != nil {
 			return Manifest{}, err
 		}
 		local, err := placement(ctx, c.cfg.Policy, scope, c.cfg.NodeID)
-		if err != nil || repaired.NodeID != c.cfg.NodeID || repaired.ObjectID != m.ID || repaired.FailureDomain != local.FailureDomain || repaired.StoredAt.IsZero() {
+		if err != nil || repaired.UploadID != upload.ID || repaired.NodeID != c.cfg.NodeID || repaired.ObjectID != m.ID || repaired.FailureDomain != local.FailureDomain || repaired.StoredAt.IsZero() {
 			return Manifest{}, errors.Join(ErrIntegrity, err)
 		}
 		updated := m
 		updated.Receipts = slices.Clone(m.Receipts)
 		updated.Receipts = slices.DeleteFunc(updated.Receipts, func(r Receipt) bool { return r.NodeID == repaired.NodeID })
 		updated.Receipts = append(updated.Receipts, repaired)
+		if err := c.cfg.Ledger.Update(ctx, func(tx *ledger.Tx) error { return sealUpload(tx, upload.ID, []Receipt{repaired}) }); err != nil {
+			return Manifest{}, err
+		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			return Manifest{}, err
 		}
@@ -247,6 +284,24 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (Manifest
 		return finish()
 	}
 	return Manifest{}, errors.Join(ErrIncomplete, errors.Join(failures...))
+}
+
+func (c *Client) beginUpload(ctx context.Context, object Object, targets []string) (Upload, error) {
+	var u Upload
+	err := c.cfg.Ledger.Update(ctx, func(tx *ledger.Tx) error {
+		var err error
+		u, err = allocateUpload(tx, object, targets)
+		return err
+	})
+	return u, err
+}
+
+func (c *Client) abortUpload(parent context.Context, id string) error {
+	// The preparation has failed and no manifest was returned. Close its
+	// admission durably; if authority is gone the pending pin remains.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	defer cancel()
+	return c.cfg.Ledger.Update(ctx, func(tx *ledger.Tx) error { return AbortUpload(tx, id) })
 }
 
 type contextReader struct {

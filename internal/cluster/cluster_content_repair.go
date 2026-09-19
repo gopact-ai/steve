@@ -57,6 +57,7 @@ func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObserv
 			if _, err := worker.sweep(ctx); err != nil && ctx.Err() == nil {
 				worker.notice(ctx, "scan", "scan_failed", "协作内容副本检查暂时无法完成；恢复协调连接后会继续检查。")
 			}
+			worker.runMaintenance(ctx)
 			timer := time.NewTimer(interval)
 			select {
 			case <-ctx.Done():
@@ -257,6 +258,11 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 		}
 	}
 	availability[w.peer.Config.NodeID] = true
+	// Persist this exact local upload before a separate preparation can
+	// supersede its receipt. Otherwise it would remain an unknown promise.
+	if err := w.record(ctx, available); err != nil {
+		return "degraded", err
+	}
 	live, err = w.reachableDomains(ctx, available, availability)
 	if err != nil {
 		return "degraded", err
@@ -265,7 +271,13 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 		if _, err := file.Seek(0, 0); err != nil {
 			return "degraded", err
 		}
-		prepared, prepareErr := w.client.Prepare(ctx, scope.ProjectID, manifest.Object.Kind, manifest.Object.Key, manifest.Object.Blob, file)
+		var prepared contentreplica.Manifest
+		var prepareErr error
+		if manifest.Object.Kind == contentreplica.GitBundle {
+			prepared, prepareErr = w.client.PrepareBundle(ctx, scope.ProjectID, manifest.Object.Key, manifest.Object.Base, manifest.Object.Blob, file)
+		} else {
+			prepared, prepareErr = w.client.Prepare(ctx, scope.ProjectID, manifest.Object.Kind, manifest.Object.Key, manifest.Object.Blob, file)
+		}
 		if prepareErr != nil {
 			// Persist a newly recovered local receipt even when no second target
 			// is currently available; Record never reduces existing protection.

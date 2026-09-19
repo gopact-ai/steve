@@ -31,19 +31,20 @@ func (p *places) CheckpointPlacement(_ context.Context, scope contentreplica.Sco
 }
 
 type transport struct {
+	book    *ledger.Ledger
 	stores  map[string]*contentreplica.Store
 	offline map[string]bool
 	before  func(string, contentreplica.Object)
 }
 
-func (r *transport) Put(ctx context.Context, node string, object contentreplica.Object, source io.Reader) (contentreplica.Receipt, error) {
+func (r *transport) Put(ctx context.Context, node string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
 	if r.before != nil {
-		r.before(node, object)
+		r.before(node, upload.Object)
 	}
 	if r.offline[node] {
 		return contentreplica.Receipt{}, errors.New("node offline")
 	}
-	return r.stores[node].Put(ctx, object, source)
+	return r.stores[node].Put(ctx, upload, source)
 }
 func (r *transport) Get(ctx context.Context, node string, object contentreplica.Object, into io.Writer) error {
 	if r.offline[node] {
@@ -52,13 +53,13 @@ func (r *transport) Get(ctx context.Context, node string, object contentreplica.
 	return r.stores[node].Get(ctx, object, into)
 }
 
-func newCluster(t *testing.T, level string, names ...string) (*places, *transport, func(string) *contentreplica.Client) {
+func newCluster(t *testing.T, book *ledger.Ledger, level string, names ...string) (*places, *transport, func(string) *contentreplica.Client) {
 	t.Helper()
 	p := &places{scope: contentreplica.Scope{ProjectID: "p", Level: level, HomeNodeID: "a"}, domains: map[string]string{}, denied: map[string]bool{}}
-	r := &transport{stores: map[string]*contentreplica.Store{}, offline: map[string]bool{}}
+	r := &transport{book: book, stores: map[string]*contentreplica.Store{}, offline: map[string]bool{}}
 	for _, name := range names {
 		p.domains[name] = "machine-" + name
-		store, err := contentreplica.Open(contentreplica.StoreConfig{Dir: t.TempDir(), NodeID: name, Policy: p})
+		store, err := contentreplica.Open(contentreplica.StoreConfig{Ledger: book, Dir: t.TempDir(), NodeID: name, Policy: p})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +67,7 @@ func newCluster(t *testing.T, level string, names ...string) (*places, *transpor
 		r.stores[name] = store
 	}
 	makeClient := func(name string) *contentreplica.Client {
-		c, err := contentreplica.New(contentreplica.Config{NodeID: name, Local: r.stores[name], Remote: r, Policy: p, Scope: func(_ context.Context, id string) (contentreplica.Scope, error) {
+		c, err := contentreplica.New(contentreplica.Config{Ledger: book, NodeID: name, Local: r.stores[name], Remote: r, Policy: p, Scope: func(_ context.Context, id string) (contentreplica.Scope, error) {
 			if id != "p" {
 				return contentreplica.Scope{}, contentreplica.ErrPlacement
 			}
@@ -91,8 +92,8 @@ func openBook(t *testing.T) *ledger.Ledger {
 }
 
 func TestMaterialWaitsForCopiesBeforeMetadataAndRestoresOnAnotherNode(t *testing.T) {
-	_, r, client := newCluster(t, "internal", "a", "b", "c")
 	book := openBook(t)
+	_, r, client := newCluster(t, book, "internal", "a", "b", "c")
 	a, err := material.Open(t.TempDir(), book)
 	if err != nil {
 		t.Fatal(err)
@@ -131,9 +132,9 @@ func TestMaterialWaitsForCopiesBeforeMetadataAndRestoresOnAnotherNode(t *testing
 }
 
 func TestMissingSecondCopyDoesNotAcknowledgeMaterial(t *testing.T) {
-	_, r, client := newCluster(t, "internal", "a", "b")
-	r.offline["b"] = true
 	book := openBook(t)
+	_, r, client := newCluster(t, book, "internal", "a", "b")
+	r.offline["b"] = true
 	store, err := material.Open(t.TempDir(), book)
 	if err != nil {
 		t.Fatal(err)
@@ -154,8 +155,8 @@ func TestMissingSecondCopyDoesNotAcknowledgeMaterial(t *testing.T) {
 }
 
 func TestArtifactRestoresOriginalCommitAndBrowseAfterCoordinatorLoss(t *testing.T) {
-	_, r, client := newCluster(t, "internal", "a", "b", "c")
 	book := openBook(t)
+	_, r, client := newCluster(t, book, "internal", "a", "b", "c")
 	projects := project.Open(book)
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "answer.txt"), []byte("original bytes\n"), 0600); err != nil {
@@ -195,7 +196,7 @@ func TestSingleAndSealedContentDoNotClaimMachineLossProtection(t *testing.T) {
 			if level == "sealed" {
 				names = append(names, "b")
 			}
-			_, r, client := newCluster(t, level, names...)
+			_, r, client := newCluster(t, openBook(t), level, names...)
 			data := []byte("home only")
 			m, err := client("a").Prepare(t.Context(), "p", contentreplica.Material, checkpoint.Reference(data).SHA256, checkpoint.Reference(data), bytes.NewReader(data))
 			if err != nil || m.RequiredCopies != 1 || m.Recoverable() {
@@ -214,8 +215,8 @@ func TestSingleAndSealedContentDoNotClaimMachineLossProtection(t *testing.T) {
 func TestArtifactLandsWithPhysicalDurablePlaceAfterServiceConversion(t *testing.T) {
 	for _, members := range [][]string{{"a"}, {"a", "b"}} {
 		t.Run(members[len(members)-1], func(t *testing.T) {
-			_, _, client := newCluster(t, "internal", members...)
 			book := openBook(t)
+			_, _, client := newCluster(t, book, "internal", members...)
 			projects := project.Open(book)
 			work := t.TempDir()
 			if err := os.WriteFile(filepath.Join(work, "original.txt"), []byte("keep\n"), 0600); err != nil {

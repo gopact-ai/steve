@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 	SingleNode                  = "single_node"
 	SealedHome                  = "sealed_home"
 	DefaultMaxObjectBytes int64 = 512 << 20
+	MaxBundleDepth              = 32
 )
 
 var (
@@ -43,6 +45,9 @@ type Object struct {
 	Kind  string  `json:"kind"`
 	Key   string  `json:"key"`
 	Blob  BlobRef `json:"blob"`
+	// Base is the immutable manifest supplying a Git bundle's prerequisite.
+	// It is part of the receipt identity, not mutable restore metadata.
+	Base string `json:"base,omitempty"`
 }
 
 func (o Object) ID() string {
@@ -52,10 +57,25 @@ func (o Object) ID() string {
 }
 
 type Receipt struct {
+	UploadID      string    `json:"upload_id"`
 	ObjectID      string    `json:"object_id"`
 	NodeID        string    `json:"node_id"`
 	FailureDomain string    `json:"failure_domain"`
 	StoredAt      time.Time `json:"stored_at"`
+}
+
+// Upload is one publication attempt, distinct from the immutable content.
+// Its ordered ID is allocated with its pending intent in one ledger transaction
+// before transfer, and is reused on retry.
+type Upload struct {
+	ID     string `json:"id"`
+	Object Object `json:"object"`
+}
+
+func (r Receipt) Key() string {
+	raw, _ := json.Marshal([3]string{r.UploadID, r.ObjectID, r.NodeID})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 type Manifest struct {
@@ -77,14 +97,14 @@ func (m Manifest) Complete() bool { return validateManifest(m, math.MaxInt64-1) 
 // durable storage. A successful write to a transport socket is not a receipt.
 // Acknowledged objects must remain retained until explicit ledger-aware removal.
 type BinaryStore interface {
-	Put(context.Context, Object, io.Reader) (Receipt, error)
+	Put(context.Context, Upload, io.Reader) (Receipt, error)
 	Get(context.Context, Object, io.Writer) error
 }
 
 // Transport authenticates the addressed receiver and binds Receipt.NodeID to
 // its authenticated identity. In-process and mTLS adapters share this contract.
 type Transport interface {
-	Put(context.Context, string, Object, io.Reader) (Receipt, error)
+	Put(context.Context, string, Upload, io.Reader) (Receipt, error)
 	Get(context.Context, string, Object, io.Writer) error
 }
 
@@ -93,12 +113,14 @@ type Transport interface {
 type Replicator interface {
 	CheckLocal(context.Context, string) (Scope, error)
 	Prepare(context.Context, string, string, string, BlobRef, io.ReadSeeker) (Manifest, error)
+	PrepareBundle(context.Context, string, string, string, BlobRef, io.ReadSeeker) (Manifest, error)
 	// Read returns a manifest including a newly repaired local receipt. The
 	// consumer persists that receipt before treating its cache as restored.
 	Read(context.Context, Manifest, io.Writer) (Manifest, error)
 }
 
 type Config struct {
+	Ledger *ledger.Ledger
 	NodeID string
 	Local  BinaryStore
 	Remote Transport
@@ -118,4 +140,7 @@ type StoreConfig struct {
 	NodeID string
 	Policy PlacementPolicy
 	Limits checkpoint.Limits
+	// Incremental uploads must prove a pending base intent in the receiver's
+	// committed ledger. Full unknown uploads can be retained independently.
+	Ledger *ledger.Ledger
 }

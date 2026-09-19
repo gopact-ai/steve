@@ -20,12 +20,26 @@ func Record(tx *ledger.Tx, m Manifest) (Manifest, error) {
 	if err := validateManifest(m, math.MaxInt64-1); err != nil {
 		return Manifest{}, err
 	}
+	if _, err := closure(m.ID, func(id string) (Manifest, bool, error) {
+		if id == m.ID {
+			return m, true, nil
+		}
+		return lookupTx(tx, id)
+	}); err != nil {
+		return Manifest{}, err
+	}
+	if err := publishReceipts(tx, m); err != nil {
+		return Manifest{}, err
+	}
 	var raw string
 	err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, ManifestKind, m.ID).Scan(&raw)
 	if err == nil {
 		var old Manifest
 		if json.Unmarshal([]byte(raw), &old) != nil || validateManifest(old, math.MaxInt64-1) != nil || old.Object != m.Object {
 			return Manifest{}, ErrIntegrity
+		}
+		if err := publishReceipts(tx, old); err != nil {
+			return Manifest{}, err
 		}
 		if old.RequiredCopies > m.RequiredCopies {
 			m.RequiredCopies, m.Protection = old.RequiredCopies, old.Protection
@@ -49,6 +63,22 @@ func Record(tx *ledger.Tx, m Manifest) (Manifest, error) {
 		return Manifest{}, err
 	}
 	return m, tx.PutBinding(ManifestKind, m.ID, m)
+}
+
+func lookupTx(tx *ledger.Tx, id string) (Manifest, bool, error) {
+	var raw string
+	err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, ManifestKind, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Manifest{}, false, nil
+	}
+	if err != nil {
+		return Manifest{}, false, err
+	}
+	var m Manifest
+	if json.Unmarshal([]byte(raw), &m) != nil || !m.Complete() || m.ID != id {
+		return Manifest{}, false, ErrIntegrity
+	}
+	return m, true, nil
 }
 
 func Lookup(ctx context.Context, book *ledger.Ledger, id string) (Manifest, bool, error) {
