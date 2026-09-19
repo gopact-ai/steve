@@ -47,8 +47,9 @@ func (s *Store) Attest(ctx context.Context, a Attestation) (Attestation, error) 
 		a.ID = a.Artifact + "/" + a.By
 	}
 	if a.At.IsZero() {
-		a.At = s.now().UTC()
+		a.At = s.now()
 	}
+	a.At = a.At.UTC()
 	a.Receipts = []Receipt{{Place: "", At: s.now().UTC()}}
 	return a, s.ledger.PutBinding(ctx, attestationKind, a.ID, a)
 }

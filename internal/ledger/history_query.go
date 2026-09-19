@@ -21,6 +21,10 @@ type EventPosition struct {
 // "00" < "00.001" < "00.01". SQLite date functions round away that precision.
 const historyTimeKey = `rtrim(at, 'Z')`
 
+func init() {
+	MustRegisterReadIndex("events_history_time_seq", `CREATE INDEX IF NOT EXISTS events_history_time_seq ON events(`+historyTimeKey+`, seq)`)
+}
+
 func historyEventQuery(boundary string) string {
 	query := `SELECT seq, operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at
 		FROM events INDEXED BY events_history_time_seq WHERE seq <= ?`

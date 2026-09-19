@@ -46,10 +46,10 @@ func (s *sourceFixture) Closed(context.Context) ([]attempt.Record, error) {
 func (s *sourceFixture) Reservations(context.Context) ([]attempt.Reservation, error) {
 	return []attempt.Reservation{{ID: "reservation"}}, s.fail["reservations"]
 }
-func (s *sourceFixture) Attestations(context.Context, string) ([]artifact.Attestation, error) {
+func (s *sourceFixture) RecentAttestations(context.Context) ([]artifact.Attestation, error) {
 	return []artifact.Attestation{{Artifact: "artifact", Verdict: "pass"}}, s.fail["attestations"]
 }
-func (s *sourceFixture) Replicas(context.Context, string) ([]artifact.Replica, error) {
+func (s *sourceFixture) RecentReplicas(context.Context) ([]artifact.Replica, error) {
 	return []artifact.Replica{{Artifact: "artifact", Node: "node"}}, s.fail["replicas"]
 }
 func (s *sourceFixture) List(context.Context) ([]project.Project, error) {
@@ -64,8 +64,8 @@ func (s *sourceFixture) Grants(context.Context, string) ([]project.Grant, error)
 func (s *sourceFixture) PendingResolution(context.Context) ([]intent.Intent, error) {
 	return s.effects, s.fail["effects"]
 }
-func (s *sourceFixture) Landings(_ context.Context, id string) ([]artifact.Landing, error) {
-	return []artifact.Landing{{ID: "land-" + id, Project: id, State: artifact.LandCommitted}}, s.fail["landings/"+id]
+func (s *sourceFixture) RecentLandings(context.Context) ([]artifact.Landing, error) {
+	return []artifact.Landing{{ID: "land-p", Project: "p", State: artifact.LandCommitted}, {ID: "land-q", Project: "q", State: artifact.LandCommitted}}, s.fail["landings"]
 }
 
 func (s *sourceFixture) AllStuck(_ context.Context) ([]artifact.Stuck, error) {
@@ -84,7 +84,7 @@ func sourceHealth(t *testing.T, snap Snapshot, name string) SourceHealth {
 }
 
 func TestLedgerQueriesReportErrorsAndKeepPartialContributions(t *testing.T) {
-	for _, query := range []string{"live", "projects", "landings/p", "usage"} {
+	for _, query := range []string{"live", "projects", "landings", "usage"} {
 		t.Run(query, func(t *testing.T) {
 			s := newSourceFixture()
 			s.live = []attempt.Record{{Spec: attempt.Spec{ID: "live", Agent: "local", TaskID: "2", Workspace: project.Workspace{Path: "/work/p"}}, State: attempt.Running}}
@@ -219,7 +219,7 @@ func TestUnreadAttentionDoesNotBecomeNoPendingWork(t *testing.T) {
 
 func TestAllQueryFailuresAreAggregatedWithoutOverwriting(t *testing.T) {
 	s := newSourceFixture()
-	queries := []string{"live", "projects", "landings/p", "landings/q", "usage", "reservations", "attestations", "replicas", "disclosures", "grants", "effects"}
+	queries := []string{"live", "projects", "landings", "usage", "reservations", "attestations", "replicas", "disclosures", "grants", "effects"}
 	for _, query := range queries {
 		s.fail[query] = errors.New("injected " + query)
 	}

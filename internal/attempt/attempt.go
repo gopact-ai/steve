@@ -972,13 +972,16 @@ func (s *Service) History(ctx context.Context, id string) ([]ledger.Event, error
 }
 
 func decode(op ledger.Operation) (Record, error) {
-	var r Record
+	var r *Record
 	if err := json.Unmarshal(op.Data, &r); err != nil {
 		return Record{}, fmt.Errorf("attempt %s: %w", op.ID, err)
 	}
+	if r == nil {
+		return Record{}, fmt.Errorf("attempt %s: record is null", op.ID)
+	}
 	r.State = State(op.State)
 	r.Revision = op.Revision
-	return r, nil
+	return *r, nil
 }
 
 // Describe renders a record for a card or a log line.

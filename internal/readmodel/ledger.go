@@ -23,9 +23,9 @@ type Ledger struct {
 		Reservations(context.Context) ([]attempt.Reservation, error)
 	}
 	Artifacts interface {
-		Attestations(context.Context, string) ([]artifact.Attestation, error)
-		Replicas(context.Context, string) ([]artifact.Replica, error)
-		Landings(context.Context, string) ([]artifact.Landing, error)
+		RecentAttestations(context.Context) ([]artifact.Attestation, error)
+		RecentReplicas(context.Context) ([]artifact.Replica, error)
+		RecentLandings(context.Context) ([]artifact.Landing, error)
 		AllStuck(context.Context) ([]artifact.Stuck, error)
 	}
 	Projects interface {
@@ -84,14 +84,14 @@ func (l Ledger) Facts(ctx context.Context) (Facts, error) {
 		failed("reservations", errors.New("attempt source is not configured"))
 	}
 	if l.Artifacts != nil {
-		as, err := l.Artifacts.Attestations(ctx, "")
+		as, err := l.Artifacts.RecentAttestations(ctx)
 		failed("attestations", err)
-		for _, a := range tail(as, 30) {
+		for _, a := range as {
 			f.Attestations = append(f.Attestations, Attestation{Artifact: a.Artifact, Step: a.Step, Kind: a.Kind, Verifier: a.Verifier, Verdict: a.Verdict, Detail: a.Detail, Attempt: a.By, At: a.At})
 		}
-		rs, err := l.Artifacts.Replicas(ctx, "")
+		rs, err := l.Artifacts.RecentReplicas(ctx)
 		failed("replicas", err)
-		for _, r := range tail(rs, 40) {
+		for _, r := range rs {
 			f.Replicas = append(f.Replicas, Replica{Artifact: r.Artifact, Node: r.Node, Generation: r.Generation, State: r.State, Note: r.Note, At: r.At})
 		}
 	} else {
@@ -130,13 +130,6 @@ func (l Ledger) Facts(ctx context.Context) (Facts, error) {
 	return f, errors.Join(failures...)
 }
 
-func tail[T any](in []T, n int) []T {
-	if len(in) > n {
-		return in[len(in)-n:]
-	}
-	return in
-}
-
 func (l Ledger) LiveAttempts(ctx context.Context) ([]Attempt, error) {
 	if l.Attempts == nil {
 		return nil, errors.New("attempt source is not configured")
@@ -159,37 +152,23 @@ func (l Ledger) LiveAttempts(ctx context.Context) ([]Attempt, error) {
 }
 
 func (l Ledger) RecentLandings(ctx context.Context) ([]Landing, error) {
-	if l.Artifacts == nil || l.Projects == nil {
-		return nil, errors.New("artifact or project source is not configured")
+	if l.Artifacts == nil {
+		return nil, errors.New("artifact source is not configured")
 	}
-	projects, err := l.Projects.List(ctx)
+	landings, err := l.Artifacts.RecentLandings(ctx)
 	var out []Landing
-	var failures []error
-	if err != nil {
-		failures = append(failures, fmt.Errorf("projects: %w", err))
-	}
-	for _, p := range projects {
-		landings, err := l.Artifacts.Landings(ctx, p.ID)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("project %s: %w", p.ID, err))
+	for _, land := range landings {
+		at := land.EndedAt
+		if at.IsZero() {
+			at = land.StartedAt
 		}
-		for _, land := range landings {
-			at := land.EndedAt
-			if at.IsZero() {
-				at = land.StartedAt
-			}
-			entry := Landing{ID: land.ID, Project: land.Project, Artifact: land.Artifact, State: land.State, Paths: len(land.Paths), Error: land.Error, At: at}
-			if land.State == artifact.LandMergeConflicted {
-				entry.Files, entry.Resolvable = land.Paths, land.Conflict != ""
-			}
-			out = append(out, entry)
+		entry := Landing{ID: land.ID, Project: land.Project, Artifact: land.Artifact, State: land.State, Paths: len(land.Paths), Error: land.Error, At: at}
+		if land.State == artifact.LandMergeConflicted {
+			entry.Files, entry.Resolvable = land.Paths, land.Conflict != ""
 		}
+		out = append(out, entry)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
-	if len(out) > 20 {
-		out = out[:20]
-	}
-	return out, errors.Join(failures...)
+	return out, err
 }
 
 // Conflicts is what is stopped on a merge conflict across every project,

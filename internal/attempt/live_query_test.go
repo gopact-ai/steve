@@ -72,6 +72,73 @@ func TestLiveQueryDoesNotHideMalformedClosedAttempt(t *testing.T) {
 	}
 }
 
+func TestLiveIndexUsesTheOwnerDecoder(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		wantError bool
+	}{
+		{"array", `[]`, true},
+		{"null", `null`, true},
+		{"wrong-field-type", `{"id":42}`, true},
+		{"nested-wrong-type", `{"usage":{"input":"unknown"}}`, true},
+		{"case-insensitive", `{"id":"candidate","Unsettled":true}`, false},
+		{"duplicate-key", `{"id":"candidate","unsettled":false,"unsettled":true}`, false},
+		{"escaped-key", `{"id":"candidate","un\u0073ettled":true}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newService(t)
+			if _, err := s.l.DB().Exec(`INSERT INTO operations VALUES('candidate','attempt','bound',1,1,?,'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`, tc.raw); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.Live(t.Context())
+			if tc.wantError {
+				if err == nil || !strings.Contains(err.Error(), "candidate") {
+					t.Fatalf("malformed owner record hidden: got=%+v err=%v", got, err)
+				}
+			} else if err != nil || len(got) != 1 || !got[0].Unsettled {
+				t.Fatalf("unsettled execution hidden: got=%+v err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestRestoredReplicaAndWriterKeepOwnerLiveIndex(t *testing.T) {
+	source, _ := newService(t)
+	if _, err := source.l.DB().Exec(`INSERT INTO operations VALUES('candidate','attempt','failed',1,1,'{"id":"candidate","Unsettled":true}','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.l.DB().Exec("DROP INDEX operations_live_attempts"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := source.l.SnapshotReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	target, err := ledger.Open(dir, ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	if err := target.RestoreReplica(raw); err != nil {
+		t.Fatal(err)
+	}
+	check := func(book *ledger.Ledger) {
+		t.Helper()
+		got, err := New(book).Live(t.Context())
+		if err != nil || len(got) != 1 || got[0].ID != "candidate" || !got[0].Unsettled {
+			t.Fatalf("restored read projection: records=%+v err=%v", got, err)
+		}
+	}
+	check(target)
+	writer, err := ledger.Open(dir, ledger.Options{ReplicaWriter: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	check(writer)
+}
+
 func BenchmarkLiveFixedWorkGrowingHistory(b *testing.B) {
 	for _, n := range []int{10000, 100000} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {

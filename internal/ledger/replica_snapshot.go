@@ -218,20 +218,25 @@ func removeReplicaRestoreIntent(dir string) error {
 }
 
 func validateReplicaSnapshot(path string, incarnation uint64) error {
-	db, err := sql.Open("sqlite", path+"?mode=ro")
+	// This is a private staging database, not the live replica. Rebuild only
+	// derived read indexes before accepting it, including on writer handles.
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	if err := validateReplicaSchema(db); err != nil {
+		return err
+	}
+	if err := ensureReadIndexes(db); err != nil {
+		return err
+	}
 	var integrity string
 	if err := db.QueryRow(`PRAGMA quick_check`).Scan(&integrity); err != nil {
 		return fmt.Errorf("check ledger snapshot: %w", err)
 	}
 	if integrity != "ok" {
 		return errors.New("ledger: snapshot integrity check failed")
-	}
-	if err := validateReplicaSchema(db); err != nil {
-		return err
 	}
 	actual, err := metaUint(db, "incarnation")
 	if err != nil || actual != incarnation {

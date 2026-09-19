@@ -140,6 +140,10 @@ func Open(dir string, opts Options) (*Ledger, error) {
 			return nil, err
 		}
 	}
+	if err := ensureReadIndexes(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	seen, err := metaUint(db, "incarnation")
 	if err != nil {
 		db.Close()
@@ -263,14 +267,12 @@ func migrate(db *sql.DB) error {
 			revision INTEGER NOT NULL, incarnation INTEGER NOT NULL,
 			data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS operations_kind_state ON operations(kind, state)`,
-		`CREATE INDEX IF NOT EXISTS operations_live_attempts ON operations(updated_at DESC) WHERE kind = 'attempt' AND (state IN ('leased','prepared','running','snapshotted','published','durable','verifying','bind-ready') OR CASE WHEN json_valid(data) THEN COALESCE(json_extract(data, '$.unsettled'), 0) ELSE 1 END != 0)`,
 		`CREATE TABLE IF NOT EXISTS events (
 			seq INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL,
 			revision INTEGER NOT NULL, incarnation INTEGER NOT NULL,
 			from_state TEXT NOT NULL, to_state TEXT NOT NULL, actor TEXT NOT NULL,
 			fencings TEXT NOT NULL, effects TEXT NOT NULL, at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS events_operation ON events(operation_id, seq)`,
-		`CREATE INDEX IF NOT EXISTS events_history_time_seq ON events(rtrim(at, 'Z'), seq)`,
 		`CREATE TABLE IF NOT EXISTS names (
 			name TEXT PRIMARY KEY, version INTEGER NOT NULL, artifact TEXT NOT NULL,
 			updated_at TEXT NOT NULL)`,
