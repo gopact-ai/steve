@@ -65,3 +65,13 @@ test("the standard console gate reaches every registered regression suite", () =
     const missing = Object.keys(scripts).filter((name) => name.startsWith("test:") && !reached.has(name));
     assert.deepEqual(missing, [], "registered regressions must not silently sit outside make test-console");
 });
+
+test("console CI invokes the complete standard gate instead of a separate suite list", () => {
+    const workflow = readFileSync(path.join(root, "../../.github/workflows/test.yml"), "utf8");
+    const job = workflow.split(/^  console:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];
+    assert.ok(job, "the console CI job must remain present");
+    assert.match(job, /^\s+(?:-\s+)?run:\s*make test-console\s*$/m);
+    assert.doesNotMatch(job, /\bnpm run test:/, "CI must not maintain a second regression list");
+    assert.match(job, /uses: actions\/setup-go@/, "Go wire fixtures need the repository toolchain");
+    assert.match(job, /go-version-file: go\.mod/);
+});

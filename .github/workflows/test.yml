@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -26,14 +29,11 @@ jobs:
           cache-dependency-path: web/console/package-lock.json
       - run: npm ci
         working-directory: web/console
-      - run: npm run test:boundaries && npm run test:unit && npm run build
-        working-directory: web/console
-      - name: Verify embedded console matches source
-        run: test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
       - run: npx playwright install --with-deps chromium
         working-directory: web/console
-      - run: npm run test:streaming && npm run test:ui && npm run test:task-completion && npm run test:architecture && npm run test:settings && npm run test:materials && npm run test:questions && npm run test:desktop && npm run test:ssh && npm run test:coordination && npm run test:node-agents && npm run test:plugins && npm run test:projects && npm run test:delete && npm run test:selection && npm run test:conflicts && npm run test:close-layers
-        working-directory: web/console
+      - run: make test-console
+      - name: Verify embedded console matches source
+        run: test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
   desktop:
     runs-on: macos-latest
     steps:
