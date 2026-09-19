@@ -25,8 +25,13 @@ import (
 
 func awaitPeerQuestion(t *testing.T, peer *cluster.Peer, conversation, attemptID string) consoleapi.PendingQuestion {
 	t.Helper()
+	return awaitPeerExchangeQuestion(t, peer, conversation, attemptID, "", 20*time.Second)
+}
+
+func awaitPeerExchangeQuestion(t *testing.T, peer *cluster.Peer, conversation, attemptID, exchangeID string, timeout time.Duration) consoleapi.PendingQuestion {
+	t.Helper()
 	var last []byte
-	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); {
 		status, body := PeerRequest(t, peer, http.MethodGet, "/console/questions?conversation="+conversation, nil)
 		last = body
 		if status == http.StatusOK {
@@ -37,14 +42,25 @@ func awaitPeerQuestion(t *testing.T, peer *cluster.Peer, conversation, attemptID
 				t.Fatal(err)
 			}
 			for _, q := range response.Questions {
-				if q.State == "pending" && (attemptID == "" || q.AttemptID == attemptID) {
+				if q.State == "pending" && (attemptID == "" || q.AttemptID == attemptID) && (exchangeID == "" || q.ExchangeID == exchangeID) {
 					return q
+				}
+			}
+		}
+		if exchangeID != "" {
+			var listing struct {
+				Queue []consoleapi.Exchange `json:"queue"`
+			}
+			pluginPeerJSON(t, peer, http.MethodGet, "/console/queue?conversation="+conversation, nil, &listing)
+			for _, exchange := range listing.Queue {
+				if exchange.ID == exchangeID && exchange.State.Terminal() {
+					t.Fatalf("original exchange ended before its question: %+v; questions=%s", exchange, last)
 				}
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("original node question was not attached: %s", last)
+	t.Fatalf("original node question was not attached within %s (exchange=%s attempt=%s): %s", timeout, exchangeID, attemptID, last)
 	return consoleapi.PendingQuestion{}
 }
 
@@ -102,7 +118,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	if err := json.Unmarshal(body, &submitted); err != nil {
 		t.Fatal(err)
 	}
-	original := awaitPeerQuestion(t, first, conversation, "")
+	original := awaitPeerExchangeQuestion(t, first, conversation, "", submitted.ID, time.Minute)
 	if submitted.ID == "" || original.ExchangeID != submitted.ID {
 		t.Fatalf("question was not attached to the submitted exchange: %+v %+v", submitted, original)
 	}
@@ -132,7 +148,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 		t.Fatal(err)
 	}
 	WaitPeerReady(t, second)
-	resumed := awaitPeerQuestion(t, first, conversation, original.AttemptID)
+	resumed := awaitPeerExchangeQuestion(t, first, conversation, original.AttemptID, submitted.ID, time.Minute)
 	checkRetainedMCP(t, mcpURL, agentToken, http.StatusOK)
 	if resumed.Kind == "recovery" {
 		t.Fatalf("live node could not reattach: %+v", resumed)
