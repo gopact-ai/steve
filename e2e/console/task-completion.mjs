@@ -54,8 +54,20 @@ try {
                 if (fixture.mode === "hold") await new Promise((resolve) => { fixture.release = resolve; fixture.onHold?.(); });
                 if (fixture.mode === "http-error") return route.fulfill({ status: 409, json: { error: "Execution is reserved; wait for settlement." } });
                 if (fixture.mode === "reply-error") return route.fulfill({ json: { reply: { kind: "reply", text: "Results await a parent-processing receipt.", error: "Results await a parent-processing receipt." } } });
-                fixture.task = { ...fixture.task, state: "done", lifecycle: "done", lane: "ended", can_complete: false };
-                return route.fulfill({ json: { reply: { kind: "reply", conversation, text: locale === "en" ? "Task #148 is completed. Context preserved." : "任务 #148 已完成。上下文保留。" } } });
+                // Commit the owner's actual result before acknowledging it.
+                // Detail and summary reads may both arrive immediately.
+                const command = body.input.split(" ")[1];
+                if (command === "handled" || command === "ignore") {
+                    fixture.task = { ...fixture.task, settlement: command === "handled" ? "handled" : "ignored", lane: "ended" };
+                } else if (command === "reopen") {
+                    fixture.task = { ...fixture.task, settlement: undefined, lane: "needs_you" };
+                } else {
+                    assert.ok(command === "complete" || command === "cancel");
+                    const state = command === "complete" ? "done" : "cancelled";
+                    fixture.task = { ...fixture.task, state, lifecycle: state, lane: "ended", can_complete: false };
+                }
+                const text = command === "complete" ? (locale === "en" ? "Task #148 is completed. Context preserved." : "任务 #148 已完成。上下文保留。") : `Task #148: ${command}`;
+                return route.fulfill({ json: { reply: { kind: "reply", conversation, text } } });
             }
             if (pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [] } });
             if (pathname.startsWith("/console/")) return route.fulfill({ json: { enabled: true, replies: [], verbs: [], suggestions: [], questions: [] } });
@@ -138,7 +150,8 @@ try {
             const settleCalls = fixture.calls.length;
             await dialog.getByRole("button", { name: command === "handled" ? settleName.handled : settleName.ignored, exact: true }).click();
             await eventually(() => fixture.calls.length === settleCalls + 1, "Settling must reach the server");
-            fixture.task = { ...failed, settlement, lane: "ended" };
+            assert.equal(fixture.task.lifecycle, "failed", "settling must preserve failure before acknowledging the command");
+            assert.equal(fixture.task.settlement, settlement);
             // The record still says it failed; it just stops asking.
             await dialog.getByText(shown, { exact: true }).first().waitFor();
             await dialog.getByRole("button", { name: settleName.reopen, exact: true }).waitFor();
@@ -149,7 +162,8 @@ try {
             const reopenCalls = fixture.calls.length;
             await dialog.getByRole("button", { name: settleName.reopen, exact: true }).click();
             await eventually(() => fixture.calls.length === reopenCalls + 1, "Reopening must reach the server");
-            fixture.task = failed;
+            assert.equal(fixture.task.lifecycle, "failed", "reopening clears attention settlement, not execution failure");
+            assert.equal(fixture.task.settlement, undefined);
             await dialog.getByRole("button", { name: settleName.retry, exact: true }).waitFor();
             await page.screenshot({ path: path.join(artifacts, `settled-${settlement}-${locale}.png`) });
             await page.keyboard.press("Escape");
