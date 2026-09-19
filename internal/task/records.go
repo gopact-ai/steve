@@ -191,7 +191,9 @@ func OpenLedger(book *ledger.Ledger, _ string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{book: book, data: loaded, revision: revision, now: time.Now, maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed}, nil
+	s := &Store{book: book, data: loaded, revision: revision, now: time.Now, maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed}
+	s.rebuildReadIndexLocked()
+	return s, nil
 }
 
 type recordChange struct {
@@ -296,6 +298,6 @@ func (s *Store) replaceRecordsLocked(ctx context.Context, next data, guard func(
 	if changed {
 		s.revision++
 	}
-	s.installLocked(next)
+	s.installLocked(next, changes)
 	return nil
 }

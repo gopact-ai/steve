@@ -16,12 +16,13 @@ import (
 // Store serves tasks from memory. Production writes changed ledger records;
 // the file backend preserves whole-document replacement for isolated tests.
 type Store struct {
-	book     *ledger.Ledger
-	revision uint64
-	doc      ledger.Doc
-	mu       sync.Mutex
-	data     data
-	now      func() time.Time
+	book      *ledger.Ledger
+	revision  uint64
+	doc       ledger.Doc
+	mu        sync.Mutex
+	data      data
+	readIndex readIndex
+	now       func() time.Time
 	// Default budgets for new tasks; configurable so long-running work is
 	// a deployment decision, not a code change.
 	maxTurns   int
@@ -55,6 +56,7 @@ func openWith(doc ledger.Doc) (*Store, error) {
 		doc: doc, data: data{NextID: 1, Tasks: map[string]*Task{}, Meta: map[string]Meta{}}, now: time.Now,
 		maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed,
 	}
+	s.rebuildReadIndexLocked()
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read tasks: %w", err)
@@ -76,6 +78,7 @@ func openWith(doc ledger.Doc) (*Store, error) {
 		loaded.NextID = 1
 	}
 	s.data = loaded
+	s.rebuildReadIndexLocked()
 	return s, nil
 }
 
@@ -559,6 +562,10 @@ func (s *Store) replaceLocked(next data) error {
 	if s.book != nil {
 		return s.replaceRecordsLocked(context.Background(), next, nil)
 	}
+	changes, err := recordChanges(s.data, next)
+	if err != nil {
+		return err
+	}
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tasks: %w", err)
@@ -566,20 +573,22 @@ func (s *Store) replaceLocked(next data) error {
 	if err := s.doc.Save(raw); err != nil {
 		return fmt.Errorf("save tasks: %w", err)
 	}
-	s.installLocked(next)
+	s.installLocked(next, changes)
 	return nil
 }
 
-func (s *Store) installLocked(next data) {
+func (s *Store) installLocked(next data, changes []recordChange) {
 	if s.observe != nil {
 		var changed []string
-		for id, t := range next.Tasks {
-			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) || !sameDelivery(prev.Delivery, t.Delivery) {
-				changed = append(changed, id)
+		seen := map[string]bool{}
+		for _, change := range changes {
+			if change.kind != taskKind && change.kind != taskMetaKind || seen[change.id] {
+				continue
 			}
-		}
-		for id := range s.data.Tasks {
-			if _, ok := next.Tasks[id]; !ok {
+			id := change.id
+			seen[id] = true
+			t, prev := next.Tasks[id], s.data.Tasks[id]
+			if t == nil || prev == nil || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) || !sameDelivery(prev.Delivery, t.Delivery) {
 				changed = append(changed, id)
 			}
 		}
@@ -592,5 +601,6 @@ func (s *Store) installLocked(next data) {
 			}()
 		}
 	}
+	s.updateReadIndexLocked(next, changes)
 	s.data = next
 }
