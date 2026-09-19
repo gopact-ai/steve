@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -16,10 +17,12 @@ import (
 // directory. A plan that survives a crash is what lets a task resume where
 // it got to instead of starting over.
 type Store struct {
-	doc  ledger.Doc
-	mu   sync.Mutex
-	data data
-	now  func() time.Time
+	doc          ledger.Doc
+	mu           sync.Mutex
+	data         data
+	now          func() time.Time
+	readIndex    readIndex
+	projectTasks func([]string)
 }
 
 type data struct {
@@ -52,6 +55,7 @@ func openWith(doc ledger.Doc) (*Store, error) {
 		doc: doc, now: time.Now,
 		data: data{NextID: 1, Plans: map[string][]Plan{}, ByTask: map[string]string{}},
 	}
+	s.rebuildReadIndexLocked()
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read plans: %w", err)
@@ -60,8 +64,14 @@ func openWith(doc ledger.Doc) (*Store, error) {
 		return s, nil
 	}
 	var loaded data
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, fmt.Errorf("decode plans: owner state must be an object")
+	}
 	if err := json.Unmarshal(raw, &loaded); err != nil {
 		return nil, fmt.Errorf("decode plans: %w", err)
+	}
+	if err := validateReadState(loaded); err != nil {
+		return nil, err
 	}
 	if loaded.Plans == nil {
 		loaded.Plans = map[string][]Plan{}
@@ -73,6 +83,7 @@ func openWith(doc ledger.Doc) (*Store, error) {
 		loaded.NextID = 1
 	}
 	s.data = loaded
+	s.rebuildReadIndexLocked()
 	return s, nil
 }
 
@@ -84,6 +95,7 @@ func (s *Store) Create(p Plan) (Plan, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	p = clonePlan(p)
 	p.ID = strconv.Itoa(s.data.NextID)
 	p.Rev = 1
 	p.CreatedAt = s.now()
@@ -96,10 +108,10 @@ func (s *Store) Create(p Plan) (Plan, error) {
 	if p.TaskID != "" {
 		next.ByTask[p.TaskID] = p.ID
 	}
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceLocked(next, []string{p.ID}); err != nil {
 		return Plan{}, err
 	}
-	return p, nil
+	return clonePlan(p), nil
 }
 
 // Revise appends a new revision. because is required: a revision nobody can
@@ -127,10 +139,10 @@ func (s *Store) Revise(id string, steps []Step, by, because string) (Plan, error
 	}
 	staged := s.clone()
 	staged.Plans[id] = append(staged.Plans[id], next)
-	if err := s.replaceLocked(staged); err != nil {
+	if err := s.replaceLocked(staged, []string{id}); err != nil {
 		return Plan{}, err
 	}
-	return next, nil
+	return clonePlan(next), nil
 }
 
 // Advance records step progress inside the current revision. Progress is not
@@ -147,7 +159,7 @@ func (s *Store) Advance(id string, step Step) (Plan, error) {
 	found := false
 	for i := range current.Steps {
 		if current.Steps[i].ID == step.ID {
-			current.Steps[i] = step
+			current.Steps[i] = cloneSteps([]Step{step})[0]
 			found = true
 			break
 		}
@@ -155,10 +167,10 @@ func (s *Store) Advance(id string, step Step) (Plan, error) {
 	if !found {
 		return Plan{}, fmt.Errorf("plan %s has no step %q", id, step.ID)
 	}
-	if err := s.replaceLocked(staged); err != nil {
+	if err := s.replaceLocked(staged, []string{id}); err != nil {
 		return Plan{}, err
 	}
-	return *current, nil
+	return clonePlan(*current), nil
 }
 
 // RecordStep is the executor's write-back: progress inside the current
@@ -231,6 +243,7 @@ func cloneSteps(steps []Step) []Step {
 		copied.Needs = append([]string(nil), s.Needs...)
 		copied.Merge = append([]string(nil), s.Merge...)
 		copied.Requires = append([]string(nil), s.Requires...)
+		copied.Touches = append([]string(nil), s.Touches...)
 		copied.Tried = append([]string(nil), s.Tried...)
 		if s.Verify != nil {
 			verify := *s.Verify
@@ -240,6 +253,17 @@ func cloneSteps(steps []Step) []Step {
 			result := *s.Result
 			result.Refs = append([]Ref(nil), s.Result.Refs...)
 			result.Findings = append([]Finding(nil), s.Result.Findings...)
+			for j := range result.Findings {
+				result.Findings[j].Invalidates = append([]string(nil), s.Result.Findings[j].Invalidates...)
+			}
+			if s.Result.ExecutionToken != nil {
+				token := *s.Result.ExecutionToken
+				result.ExecutionToken = &token
+			}
+			if s.Result.Usage != nil {
+				usage := *s.Result.Usage
+				result.Usage = &usage
+			}
 			copied.Result = &result
 		}
 		out[i] = copied
@@ -266,7 +290,7 @@ func (s *Store) clone() data {
 	return next
 }
 
-func (s *Store) replaceLocked(next data) error {
+func (s *Store) replaceLocked(next data, changed []string) error {
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode plans: %w", err)
@@ -274,6 +298,7 @@ func (s *Store) replaceLocked(next data) error {
 	if err := s.doc.Save(raw); err != nil {
 		return fmt.Errorf("save plans: %w", err)
 	}
+	s.updateReadIndexLocked(next, changed)
 	s.data = next
 	return nil
 }
