@@ -2709,6 +2709,72 @@ checks["preferences-during-a-turn"] = async (f) => {
     assert.deepEqual(f.calls.find((c) => c.path === "/console/preferences").patch, { reasoning_effort: "high" }, "The choice made during a turn must reach the server");
 };
 
+// The order of the projects is the reader's own: the one opened every
+// morning belongs at the top. A drag is the whole gesture — there is no
+// save button — and the order survives a reload. The keyboard can do the
+// same move, and the default order can always be had back.
+checks["project-drag-reorder"] = async (f) => {
+    const projects = [project("alpha"), project("beta"), project("gamma"), project("home")];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [], agents: [], tasks: [], plans: [], projects, attempts: [], landings: [] } }));
+    await f.page.reload();
+    const sidebar = f.page.locator(".conversation-sidebar");
+    const rows = sidebar.locator('.conversation-project[draggable="true"]');
+    const order = () => rows.locator(".u-title").allInnerTexts();
+    const rowOf = (id) => rows.filter({ has: f.page.getByRole("button", { name: id, exact: true }) });
+    const stored = () => f.page.evaluate(() => localStorage.getItem("steve.projects.order"));
+    await rowOf("alpha").waitFor();
+    assert.deepEqual(await order(), ["alpha", "beta", "gamma"], "A reader who has never moved anything gets the order by name");
+    assert.equal(await rows.count(), 3, "Only the work projects can be dragged; the private chat keeps its place");
+
+    // Dropping on the upper half of a row puts the project above it, and
+    // the line that says so appears while the pointer is still down.
+    const drag = async (from, onto, edge) => {
+        await rowOf(from).hover();
+        await f.page.mouse.down();
+        const box = await rowOf(onto).boundingBox();
+        const y = edge === "above" ? box.y + 3 : box.y + box.height - 3;
+        await f.page.mouse.move(box.x + 40, y, { steps: 8 });
+        await f.page.mouse.move(box.x + 40, y);
+        assert.equal(await rowOf(onto).getAttribute("data-drop"), edge === "above" ? "before" : "after", "The insertion line must say where the project will land");
+        await f.page.mouse.up();
+    };
+    await drag("gamma", "alpha", "above");
+    assert.deepEqual(await order(), ["gamma", "alpha", "beta"]);
+    assert.equal(await rows.locator("[data-drop]").count(), 0, "The insertion line goes away once the project has landed");
+    assert.deepEqual(JSON.parse(await stored()), ["gamma", "alpha", "beta"], "The drag is the save");
+
+    // A list that forgets how it was ordered is ordered again every morning.
+    await f.page.reload();
+    await rowOf("alpha").waitFor();
+    assert.deepEqual(await order(), ["gamma", "alpha", "beta"]);
+
+    // The same move without a mouse.
+    const title = rowOf("gamma").getByRole("button", { name: "gamma", exact: true });
+    assert.equal(await title.getAttribute("aria-keyshortcuts"), "Alt+ArrowUp Alt+ArrowDown");
+    assert.match(await title.getAttribute("title"), /Alt/, "The row says how it can be moved");
+    await title.focus();
+    await f.page.keyboard.press("Alt+ArrowDown");
+    assert.deepEqual(await order(), ["alpha", "gamma", "beta"]);
+    await f.page.keyboard.press("Alt+ArrowUp");
+    assert.deepEqual(await order(), ["gamma", "alpha", "beta"], "Alt + up is the undo of Alt + down");
+
+    // Dropping below the last row puts a project at the end.
+    await drag("gamma", "beta", "below");
+    assert.deepEqual(await order(), ["alpha", "beta", "gamma"]);
+    assert.deepEqual(JSON.parse(await stored()), ["alpha", "beta", "gamma"], "An order that happens to match the names is still the reader's order");
+
+    // And the default order can be had back without dragging anything.
+    const arrange = sidebar.getByRole("button", { name: /^排列/ });
+    await arrange.click();
+    await f.page.getByRole("menuitem", { name: "恢复默认项目顺序", exact: true }).click();
+    assert.deepEqual(await order(), ["alpha", "beta", "gamma"]);
+    assert.equal(await stored(), null, "Restoring the default order forgets the saved one");
+    await arrange.click();
+    assert.equal(await f.page.getByRole("menuitem", { name: "恢复默认项目顺序", exact: true }).count(), 0, "There is nothing to restore until something is moved");
+    await f.page.keyboard.press("Escape");
+    assert.equal(f.calls.length, 0, "Ordering the sidebar must not submit work");
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {
