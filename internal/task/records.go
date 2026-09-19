@@ -44,7 +44,7 @@ func headOf(t *Task) taskHead {
 func attemptPrefix(id string) string         { return base64.RawURLEncoding.EncodeToString([]byte(id)) + "/" }
 func attemptKey(id string, index int) string { return fmt.Sprintf("%s%020d", attemptPrefix(id), index) }
 
-func readRecordTx(tx *ledger.Tx, kind, id string, out any) (bool, error) {
+func readRecordTx(tx ledger.Reader, kind, id string, out any) (bool, error) {
 	var raw string
 	err := tx.QueryRow(`SELECT data FROM bindings WHERE kind=? AND id=?`, kind, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -73,7 +73,7 @@ func controlTx(tx *ledger.Tx) (recordControl, error) {
 // GetTx reads only the task's header under the caller's transaction. It does
 // not load historical Attempts. Complete task histories belong to Store.Get
 // and the owner export API, not execution/grant admission checks.
-func GetTx(tx *ledger.Tx, id string) (Task, bool, error) {
+func GetTx(tx ledger.Reader, id string) (Task, bool, error) {
 	var head taskHead
 	found, err := readRecordTx(tx, taskKind, id, &head)
 	if err != nil || !found {

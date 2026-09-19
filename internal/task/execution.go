@@ -66,7 +66,7 @@ func checkExecution(tasks map[string]*Task, token ExecutionToken) error {
 
 // CheckExecutionTx reads the task and ancestor headers in the caller's
 // transaction. No task histories or shared JSON documents are decoded.
-func CheckExecutionTx(tx *ledger.Tx, token *ExecutionToken) error {
+func CheckExecutionTx(tx ledger.Reader, token *ExecutionToken) error {
 	if token == nil {
 		return nil
 	}
