@@ -18,6 +18,7 @@ test-console:
 	npm --prefix web/console run test:boundaries
 	npm --prefix web/console run test:unit
 	npm --prefix web/console run build
+	npm --prefix web/console run test:performance
 	npm --prefix web/console run test:ui
 	npm --prefix web/console run test:task-completion
 	npm --prefix web/console run test:architecture

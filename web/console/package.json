@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test:boundaries": "node --test ../../e2e/console/architecture-boundaries.mjs",
-    "test:unit": "node --test ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs ../../e2e/console/project-order.mjs ../../e2e/console/live.mjs ../../e2e/console/history-lines.mjs ../../e2e/console/plain-text.mjs scripts/conversation-projection.test.mjs scripts/conversation-controller.test.mjs scripts/choice-types.test.mjs scripts/management-refresh.test.mjs scripts/task-transport.test.mjs ../../e2e/console/history-pagination.mjs && PURE_ONLY=1 node ../../e2e/console/settings-page.mjs && node ../../e2e/console/material-drafts.mjs && npm run test:contracts",
+    "test:unit": "node --test ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs ../../e2e/console/project-order.mjs ../../e2e/console/live.mjs ../../e2e/console/history-lines.mjs ../../e2e/console/plain-text.mjs scripts/conversation-projection.test.mjs scripts/conversation-controller.test.mjs scripts/choice-types.test.mjs scripts/management-refresh.test.mjs scripts/delegations.test.mjs scripts/format-cache.test.mjs scripts/work-list-index.test.mjs scripts/task-transport.test.mjs ../../e2e/console/history-pagination.mjs && PURE_ONLY=1 node ../../e2e/console/settings-page.mjs && node ../../e2e/console/material-drafts.mjs && npm run test:contracts",
     "test:ui": "node ../../e2e/console/interactions.mjs && npm run test:history-ui && npm run test:controller-ui && npm run test:management-ui && npm run test:task-transport-ui && npm run test:route-lazy && npm run test:usage-demand && npm run test:work-history-ui",
     "test:task-completion": "node ../../e2e/console/task-completion.mjs",
     "test:architecture": "node ../../e2e/console/architecture.mjs",
@@ -34,7 +34,8 @@
     "test:route-lazy": "node scripts/route-lazy.test.mjs",
     "test:contracts": "node scripts/wire-contract.test.mjs",
     "test:usage-demand": "node ../../e2e/console/usage-demand.mjs",
-    "test:work-history-ui": "node scripts/work-history-browser.test.mjs"
+    "test:work-history-ui": "node scripts/work-history-browser.test.mjs",
+    "test:performance": "node ../../e2e/console/performance-ui.mjs && node ../../e2e/console/deferred-details.mjs && node scripts/lazy-region-browser.test.mjs && node scripts/fleet-render-browser.test.mjs && node scripts/sessions-render-browser.test.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
