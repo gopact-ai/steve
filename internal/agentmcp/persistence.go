@@ -189,6 +189,9 @@ func (s *Server) prepareLocked(b binding, token string) error {
 			return tx.Put("binding", bindingKey(binding), grantIndex{hash})
 		})
 		if err != nil {
+			if errors.Is(err, ErrGrantDenied) {
+				return err
+			}
 			return s.failLocked(err)
 		}
 	}

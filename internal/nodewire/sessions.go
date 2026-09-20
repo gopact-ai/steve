@@ -98,6 +98,15 @@ type SessionRequest struct {
 	Answer        *SessionAnswer           `json:"answer,omitempty"`
 	OptionID      string                   `json:"option_id,omitempty"`
 	OptionValue   string                   `json:"option_value,omitempty"`
+
+	// Only cold open may carry a proof; subsequent operations omit it.
+	MCPAuthorizationRefresh *MCPAuthorizationRefresh `json:"mcp_authorization_refresh,omitempty"`
+}
+
+// MCPAuthorizationRefresh proves only the previous built-in steve HTTP MCP
+// Authorization value. It is not execution authority or a reusable credential.
+type MCPAuthorizationRefresh struct {
+	PreviousAuthorization string `json:"previous_authorization"`
 }
 
 type SessionAnswer struct {

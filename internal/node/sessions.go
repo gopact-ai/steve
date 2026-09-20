@@ -240,6 +240,9 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	if err := s.authorize(ctx, principal, req); err != nil {
 		return nodewire.SessionState{}, err
 	}
+	if req.MCPAuthorizationRefresh != nil && (req.Action != nodewire.SessionActionOpen || req.ID == "") {
+		return nodewire.SessionState{}, sessionError("forbidden", "MCP authorization refresh requires a cold native context resume")
+	}
 	if err := validatePluginSessionOpen(req); err != nil {
 		return nodewire.SessionState{}, err
 	}
@@ -276,6 +279,11 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 			return s.open(ctx, principal, req)
 		}
 		return s.closedState(req)
+	}
+	// A proof never authorizes changing or rebinding an existing process.
+	// Only archiveStoppedSession may move that source onto the cold path.
+	if req.MCPAuthorizationRefresh != nil {
+		return nodewire.SessionState{}, sessionError("forbidden", "MCP authorization refresh requires the original native process to stop")
 	}
 	one.mu.Lock()
 	if err := one.admitLocked(req); err != nil {

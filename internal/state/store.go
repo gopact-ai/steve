@@ -45,6 +45,10 @@ type Session struct {
 	// server. It is bound to this conversation+agent and feeds the session's
 	// capability fingerprint, so it must survive restarts with the session.
 	AgentToken string `json:"agent_token,omitempty"`
+	// PendingAgentToken is a durable credential replacement, not a new context.
+	// Keep the previous token and fingerprints until the admitted native resume
+	// succeeds, so a crash cannot lose either side of the configuration proof.
+	PendingAgentToken string `json:"pending_agent_token,omitempty"`
 }
 
 type Conversation struct {
@@ -58,13 +62,10 @@ type Conversation struct {
 	// Preferences are what the owner chose for each agent in this
 	// conversation — the model, a reasoning level, any selector the
 	// harness exposes — by option id, "model" for the model. They outlive
-	// sessions: a fresh session is opened with them.
+	// sessions and are reapplied when a native context is resumed.
 	Preferences map[string]map[string]string `json:"preferences,omitempty"`
-	// Renew names agents whose next session must be opened fresh. A model
-	// is fixed when a session opens, so a model chosen while the agent was
-	// answering cannot reach the session then in use. The choice is kept in
-	// Preferences and the agent is named here; the next turn opens a new
-	// session and clears the name.
+	// Renew retains the older deferred-preference marker for upgrades.
+	// The next turn clears it and applies Preferences without replacing context.
 	Renew map[string]bool `json:"renew,omitempty"`
 }
 
@@ -206,8 +207,7 @@ func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]
 	return s.replaceLocked(next)
 }
 
-// SetRenew names an agent whose next session must be opened fresh, or
-// takes the name off once one has been.
+// SetRenew updates the legacy deferred-preference marker.
 func (s *Store) SetRenew(conversationID, agentID string, renew bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

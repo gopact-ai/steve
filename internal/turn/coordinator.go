@@ -107,7 +107,8 @@ type runtime interface {
 // and token it returns the capability to inject, binding the token to that
 // conversation so the agent can never write anywhere else.
 type AgentGate interface {
-	Extras(conversationID, agentID, token, endpoint string) []capability.Extra
+	PrepareExtras(conversationID, agentID, token, endpoint string) ([]capability.Extra, error)
+	DescribeExtras(token, endpoint string) []capability.Extra
 }
 
 // NodeEndpoints resolves the messaging URL an agent on a given node must
@@ -224,12 +225,13 @@ type coordinatorState struct {
 	// a plain-text ping; zero keeps Steve quiet.
 	offlineAfter time.Duration
 
-	mu            sync.Mutex
-	lastSeen      map[string]time.Time
-	active        map[string]harness.Runner
-	cancels       map[string]*turnEntry
-	cancelPending map[string]time.Time
-	skillsLock    int
+	mu              sync.Mutex
+	preferenceLocks sync.Map // conversation/agent -> *sync.Mutex
+	lastSeen        map[string]time.Time
+	active          map[string]harness.Runner
+	cancels         map[string]*turnEntry
+	cancelPending   map[string]time.Time
+	skillsLock      int
 }
 
 func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {

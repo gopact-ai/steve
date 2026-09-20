@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,6 +103,13 @@ func modeOption(current string) acp.SessionConfigOption {
 
 func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
 	id := acp.SessionID(fmt.Sprintf("mock-session-%d", a.counter.Add(1)))
+	if os.Getenv("MOCKAGENT_MEMORY_DIR") != "" {
+		var err error
+		id, err = newMemorySession()
+		if err != nil {
+			return nil, err
+		}
+	}
 	a.mcp.Store(string(id), req.MCPServers)
 	return &acp.NewSessionResponse{
 		SessionID:     id,
@@ -110,6 +118,26 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 }
 
 func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
+	if dir := os.Getenv("MOCKAGENT_MEMORY_DIR"); dir != "" {
+		if err := memoryEvent("load", req.SessionID, ""); err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(filepath.Join(dir, "reject-load")); err == nil {
+			return nil, errors.New("fixture refuses retained native memory")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		memory, err := readMemory(req.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		a.model.Store(memory.Model)
+		a.mode.Store(memory.Mode)
+		a.mcp.Store(string(req.SessionID), req.MCPServers)
+		return &acp.LoadSessionResponse{
+			ConfigOptions: &[]acp.SessionConfigOption{modeOption(memory.Mode), modelOption(memory.Model)},
+		}, nil
+	}
 	if os.Getenv("MOCKAGENT_REJECT_LOAD") != "" {
 		return nil, fmt.Errorf("fixture refuses selected native session")
 	}
@@ -123,6 +151,12 @@ func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*ac
 // their own terms and skip everything after them.
 func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
 	input := promptText(req.Prompt)
+	if handled, err := a.memoryPrompt(ctx, req, input); handled {
+		if err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
 	// MOCKAGENT_STREAM_CHUNKS unset or not a number means no streaming.
 	if chunks, _ := strconv.Atoi(os.Getenv("MOCKAGENT_STREAM_CHUNKS")); chunks > 0 && chunks <= 1000 {
 		return a.streamFragments(ctx, req.SessionID, chunks)
@@ -454,6 +488,16 @@ func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionCon
 		a.mode.Store(string(value))
 	default:
 		return nil, fmt.Errorf("unknown config option %q", req.ConfigID)
+	}
+	if os.Getenv("MOCKAGENT_MEMORY_DIR") != "" {
+		memory, err := readMemory(req.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		memory.Model, memory.Mode = chosen(&a.model, "mock-fast"), chosen(&a.mode, "agent")
+		if err := writeMemory(memory); err != nil {
+			return nil, err
+		}
 	}
 	return &acp.SetSessionConfigOptionResponse{
 		ConfigOptions: []acp.SessionConfigOption{modeOption(chosen(&a.mode, "agent")), modelOption(chosen(&a.model, "mock-fast"))},

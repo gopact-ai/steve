@@ -320,29 +320,17 @@ func (s *Server) SetDelegator(d Delegator) {
 // Delegated mints the capability for a child task: its own token, bound to
 // the child, so nothing it sends can be mistaken for the parent's, and its
 // milestone cards carry the attribution.
+// Use PrepareDelegated when the caller must handle preparation errors.
 func (s *Server) Delegated(conversationID, agentID, taskID, delegatedBy, token, endpoint string) []capability.Extra {
-	if s == nil || token == "" || conversationID == "" {
-		return nil
-	}
-	if endpoint == "" {
-		endpoint = s.URL()
-	}
+	extras, _ := s.PrepareDelegated(conversationID, agentID, taskID, delegatedBy, token, endpoint)
+	return extras
+}
+
+// PrepareDelegated is Delegated with explicit preparation errors. Authorization
+// rejection does not fence the gate; durable store failures do.
+func (s *Server) PrepareDelegated(conversationID, agentID, taskID, delegatedBy, token, endpoint string) ([]capability.Extra, error) {
 	b := binding{conversationID: conversationID, agentID: agentID, taskID: taskID, delegatedBy: delegatedBy}
-	s.mu.Lock()
-	err := s.prepareLocked(b, token)
-	s.mu.Unlock()
-	if err != nil {
-		return nil
-	}
-	return []capability.Extra{{
-		Name: ServerName,
-		Server: capability.MCPServer{
-			Type:    "http",
-			URL:     endpoint,
-			Headers: map[string]string{"Authorization": "Bearer " + token},
-		},
-		Instructions: Instructions,
-	}}
+	return s.prepareCapability(b, token, endpoint)
 }
 
 // Revoke forgets a token once the work it authorised is over. A child task
@@ -420,19 +408,45 @@ func (s *Server) Interim(conversationID string) bool {
 // the connection it already has. Either way the agent only ever talks to
 // 127.0.0.1 on its own machine, so "loopback only, one bearer token per
 // session" survives the move to another host.
+// Use PrepareExtras when the caller must handle preparation errors.
 func (s *Server) Extras(conversationID, agentID, token, endpoint string) []capability.Extra {
-	if s == nil || token == "" || conversationID == "" {
-		return nil
+	extras, _ := s.PrepareExtras(conversationID, agentID, token, endpoint)
+	return extras
+}
+
+// PrepareExtras prepares the session capability like Extras, but returns
+// ErrGrantDenied when the token cannot be registered. A denied token never
+// revives a revoked grant or fences other sessions. Store failures still fence
+// the gate. A nil server has no capability to prepare and returns nil, nil.
+func (s *Server) PrepareExtras(conversationID, agentID, token, endpoint string) ([]capability.Extra, error) {
+	return s.prepareCapability(binding{conversationID: conversationID, agentID: agentID}, token, endpoint)
+}
+
+func (s *Server) prepareCapability(b binding, token, endpoint string) ([]capability.Extra, error) {
+	if s == nil {
+		return nil, nil
 	}
-	if endpoint == "" {
-		endpoint = s.URL()
+	if token == "" || b.conversationID == "" {
+		return nil, ErrGrantDenied
 	}
-	b := binding{conversationID: conversationID, agentID: agentID}
 	s.mu.Lock()
 	err := s.prepareLocked(b, token)
 	s.mu.Unlock()
 	if err != nil {
+		return nil, err
+	}
+	return s.DescribeExtras(token, endpoint), nil
+}
+
+// DescribeExtras constructs the session capability without registering or
+// authorizing its token or accessing the store. Callers can compare a retained
+// configuration before deciding whether to prepare a grant.
+func (s *Server) DescribeExtras(token, endpoint string) []capability.Extra {
+	if s == nil || token == "" {
 		return nil
+	}
+	if endpoint == "" {
+		endpoint = s.URL()
 	}
 	return []capability.Extra{{
 		Name: ServerName,

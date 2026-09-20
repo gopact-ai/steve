@@ -95,13 +95,24 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	defer release()
 	original := copyExchange(target.Exchange)
 	s.mu.Unlock()
-	stopper, ok := driver.(retainedStopDriver)
-	if !ok {
+	if driver == nil {
 		return turn.Result{}, true, errors.New("stopping the original recovery task is unavailable")
 	}
 	candidate, found, err := s.findRetained(ctx, driver, original)
+	if err == nil && !found && (bound == nil || bound.TaskID == "") {
+		var confirmed bool
+		confirmed, err = confirmNeverAdmitted(ctx, driver, original, requester)
+		if confirmed {
+			result, stopErr := s.finishRecoveryStop(ctx, target, turn.Result{Text: neverAdmittedMessage(original)}, release)
+			return result, true, stopErr
+		}
+	}
 	if err != nil || !found {
 		return turn.Result{}, true, errors.Join(harness.ErrStopUnconfirmed, err)
+	}
+	stopper, ok := driver.(retainedStopDriver)
+	if !ok {
+		return turn.Result{}, true, errors.New("stopping the original recovery task is unavailable")
 	}
 	if original.Requester != "" && original.Requester != requester {
 		return turn.Result{}, true, errors.New("recovery requires the original requester")
@@ -169,13 +180,24 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 	defer release()
 	original := copyExchange(target.Exchange)
 	s.mu.Unlock()
-	stopper, ok := driver.(retainedStopDriver)
-	if !ok {
+	if driver == nil {
 		return errors.New("stopping the original recovery task is unavailable")
 	}
 	candidate, found, err := s.findRetained(ctx, driver, original)
+	if err == nil && !found {
+		var confirmed bool
+		confirmed, err = confirmNeverAdmitted(ctx, driver, original, requester)
+		if confirmed {
+			_, stopErr := s.finishRecoveryStop(ctx, target, turn.Result{Text: neverAdmittedMessage(original)}, release)
+			return stopErr
+		}
+	}
 	if err != nil || !found {
 		return errors.Join(harness.ErrStopUnconfirmed, err)
+	}
+	stopper, ok := driver.(retainedStopDriver)
+	if !ok {
+		return errors.New("stopping the original recovery task is unavailable")
 	}
 	s.mu.Lock()
 	previous := target.RecoveryStopPending

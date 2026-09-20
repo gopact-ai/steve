@@ -45,9 +45,10 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		Binding                      nodewire.SessionBinding
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
-		NativeImport                 *nativehistory.Reference `json:"native_import,omitempty"`
-		ResumeFrom                   string                   `json:"resume_from,omitempty"`
-	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers, req.NativeImport, req.ID})
+		NativeImport                 *nativehistory.Reference          `json:"native_import,omitempty"`
+		ResumeFrom                   string                            `json:"resume_from,omitempty"`
+		MCPAuthorizationRefresh      *nodewire.MCPAuthorizationRefresh `json:"mcp_authorization_refresh,omitempty"`
+	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers, req.NativeImport, req.ID, req.MCPAuthorizationRefresh})
 	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
 	s.mu.Lock()
 	if s.closed {

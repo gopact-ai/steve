@@ -30,6 +30,14 @@ type NodeSessionContext struct {
 
 type nodeSessionContextKey struct{}
 
+type mcpAuthorizationRefreshKey struct{}
+
+// WithMCPAuthorizationRefresh carries a credential-only configuration proof.
+// The node still authorizes the new execution and verifies the stopped source.
+func WithMCPAuthorizationRefresh(ctx context.Context, refresh *nodewire.MCPAuthorizationRefresh) context.Context {
+	return context.WithValue(ctx, mcpAuthorizationRefreshKey{}, refresh)
+}
+
 func WithNodeSession(ctx context.Context, binding NodeSessionContext) context.Context {
 	return context.WithValue(ctx, nodeSessionContextKey{}, binding)
 }
@@ -135,6 +143,10 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 		policy = permission.PolicyRead
 	}
 	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, NativeImport: binding.NativeImport.Clone(), Plugin: profile, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
+	if refresh, _ := ctx.Value(mcpAuthorizationRefreshKey{}).(*nodewire.MCPAuthorizationRefresh); refresh != nil {
+		copy := *refresh
+		request.MCPAuthorizationRefresh = &copy
+	}
 	state, err := transport.NodeSession(ctx, node, request)
 	if err != nil {
 		// The node answering that it reserved nothing is a stronger
@@ -154,6 +166,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	}
 	for state.State == nodewire.SessionOpening {
 		poll := request
+		poll.MCPAuthorizationRefresh = nil
 		poll.Action = nodewire.SessionActionPoll
 		poll.ID = state.ID
 		poll.After = state.Sequence
@@ -393,6 +406,7 @@ observe:
 			}
 		}
 		poll := request
+		poll.MCPAuthorizationRefresh = nil
 		poll.Action = nodewire.SessionActionPoll
 		poll.Text = ""
 		poll.Media = nil

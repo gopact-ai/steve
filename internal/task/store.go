@@ -403,8 +403,8 @@ func (s *Store) begin(id, member, node, session, conversation string, input *Tur
 	stored.Attempts = append(stored.Attempts, Attempt{
 		Member: member, Node: node, Session: session, StartedAt: now, ExecutionEpoch: stored.ExecutionEpoch,
 	})
-	if input != nil && input.ResumeAdmission.Valid() {
-		stored.Attempts[len(stored.Attempts)-1].TurnID = input.TurnID
+	if input != nil {
+		stored.Attempts[len(stored.Attempts)-1].TurnID = input.Address.Message
 	}
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err

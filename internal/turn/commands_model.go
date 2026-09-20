@@ -31,6 +31,8 @@ func (c commands) modelCmd(parent context.Context, req Request, selected agent.A
 	if err != nil {
 		return Result{}, err
 	}
+	unlock := c.lockPreferences(conversationID, selected.ID)
+	defer unlock()
 	configurable, ok := runner.(harness.Configurable)
 	if !ok {
 		return Result{}, UserError{Text: c.text.T(i18n.ModelUnsupported, selected.ID)}

@@ -355,6 +355,14 @@ func (r *exchangeRecovery) observe() bool {
 		r.s.finish(r.e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
 		return false
 	}
+	if !found && lookupErr == nil {
+		var confirmed bool
+		confirmed, lookupErr = confirmNeverAdmitted(r.ctx, r.driver, r.exchange, requester)
+		if confirmed {
+			r.settle(turn.Result{}, errors.New(neverAdmittedMessage(r.exchange)))
+			return false
+		}
+	}
 	request := r.request(requester, identity)
 	var err error
 	if found && lookupErr == nil {

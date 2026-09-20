@@ -1,12 +1,111 @@
 package turn
 
 import (
+	"context"
+	"fmt"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
 )
+
+func TestPreferenceResetAppliesConfiguredDefaultWithoutChangingContext(t *testing.T) {
+	c, rt, _ := selectorCoordinator(t, true)
+	if err := c.catalog.Set("grok", agent.Config{Harness: "grok", Default: true, Model: "m1"}); err != nil {
+		t.Fatal(err)
+	}
+	rt.runner.(*recoveryConfigurable).settings.Model = "m2"
+	selected, _ := c.catalog.Resolve("grok")
+	if selected.Model != "m1" {
+		t.Fatalf("fixture default = %q", selected.Model)
+	}
+	before := c.store.Conversation("chat").Sessions
+	if _, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": ""}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.open(t.Context(), state.Session{ConversationID: "chat", UpstreamID: "sess-1"}, selected, t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if rt.runner.(*recoveryConfigurable).Settings().Model != "m1" {
+		t.Fatal("reset retained the previous explicit model")
+	}
+	if !reflect.DeepEqual(before, c.store.Conversation("chat").Sessions) || len(rt.closed) > 0 {
+		t.Fatal("reset replaced native context")
+	}
+}
+
+func TestPreferenceResetWithoutKnownDefaultDoesNotPretendToSucceed(t *testing.T) {
+	c, _, _ := selectorCoordinator(t, true)
+	if err := c.store.SetPreferences("chat", "grok", map[string]string{"unknown-option": "chosen"}); err != nil {
+		t.Fatal(err)
+	}
+	before := c.store.Conversation("chat")
+	if _, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"unknown-option": ""}); err == nil {
+		t.Fatal("reset without a declared default silently succeeded")
+	}
+	if !reflect.DeepEqual(before, c.store.Conversation("chat")) {
+		t.Fatal("refused reset changed preferences")
+	}
+}
+
+type orderedPreferenceRunner struct {
+	*recoveryConfigurable
+	mu      sync.Mutex
+	value   string
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *orderedPreferenceRunner) SetModel(_ context.Context, _ string, value string) error {
+	if value == "m1" {
+		r.once.Do(func() { close(r.entered) })
+		<-r.release
+	}
+	r.mu.Lock()
+	r.value = value
+	r.mu.Unlock()
+	return nil
+}
+
+func TestConcurrentPreferencesKeepSavedAndLiveOrder(t *testing.T) {
+	c, rt, _ := selectorCoordinator(t, true)
+	r := &orderedPreferenceRunner{recoveryConfigurable: rt.runner.(*recoveryConfigurable),
+		entered: make(chan struct{}), release: make(chan struct{})}
+	c.beginTurn("chat", "grok", func() {})
+	c.setRunner("chat", "grok", r)
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m1"})
+		first <- err
+	}()
+	<-r.entered
+	second := make(chan error, 1)
+	go func() {
+		_, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m2"})
+		second <- err
+	}()
+	// Release after the second call has had a chance to update the store.
+	// Without serialization its live RPC completes before the first RPC.
+	time.AfterFunc(time.Second, func() { close(r.release) })
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if saved := c.store.Preferences("chat", "grok")["model"]; saved != r.value {
+		t.Fatalf("saved model %q differs from live model %q", saved, r.value)
+	}
+}
 
 // A resumed session comes back in the mode the harness policy implies,
 // because the host re-applies that mode on every load. The owner's
@@ -37,139 +136,101 @@ func TestOpenReappliesOptionPreferencesToResumedSession(t *testing.T) {
 	if got["reasoning"] != "high" {
 		t.Fatalf("resumed session reasoning = %q, want preferred high", got["reasoning"])
 	}
-	if configurable.Settings().Model != "m1" {
-		t.Fatalf("resume must keep the session's model %q, got %q", "m1", configurable.Settings().Model)
+	if configurable.Settings().Model != "m2" {
+		t.Fatalf("resume must apply the conversation model %q, got %q", "m2", configurable.Settings().Model)
 	}
 }
 
-// A turn whose session cannot take the change — it has not opened one
-// yet, or the agent refuses mid-answer — keeps the session it started on,
-// and the choice is held for the session the next turn opens.
-func TestSelectorChosenDuringATurnLandsOnTheNextOne(t *testing.T) {
-	c, rt, _ := selectorCoordinator(t, true)
-	if !c.beginTurn("chat", "grok", func() {}) {
-		t.Fatal("the fixture already had a turn in flight")
-	}
-	live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m3"})
-	if err != nil {
-		t.Fatalf("a choice made while the agent was answering was refused: %v", err)
-	}
-	if live {
-		t.Fatal("a turn with no session open yet cannot have taken the change live")
-	}
-	during := c.store.Conversation("chat")
-	if during.Preferences["grok"]["model"] != "m3" {
-		t.Fatalf("the choice was not recorded: %+v", during.Preferences)
-	}
-	if len(rt.closed) != 0 {
-		t.Fatalf("the running turn's session was closed under it: %v", rt.closed)
-	}
-	if _, ok := during.Sessions["grok"]; !ok {
-		t.Fatal("the session record went away while a turn was still on it")
-	}
-	if !during.Renew["grok"] {
-		t.Fatal("the next turn was not asked to open a fresh session")
-	}
-
-	// What the next turn does before it takes the session.
-	c.clearActive("chat", "grok")
-	if err := c.renewIfAsked(t.Context(), "chat", "grok"); err != nil {
-		t.Fatal(err)
-	}
-	after := c.store.Conversation("chat")
-	if _, ok := after.Sessions["grok"]; ok {
-		t.Fatal("the next turn would have reused the session chosen against")
-	}
-	if !reflect.DeepEqual(rt.closed, []string{"ns_retained"}) {
-		t.Fatalf("the replaced upstream session was left open: %v", rt.closed)
-	}
-	if len(after.Archived) != 1 {
-		t.Fatalf("the replaced session is out of reach: %+v", after.Archived)
-	}
-	if after.Renew["grok"] {
-		t.Fatal("the renewal was not spent, so every later turn would open a new session")
-	}
-	// Nothing left to renew: a second pass must not close anything again.
-	if err := c.renewIfAsked(t.Context(), "chat", "grok"); err != nil {
-		t.Fatal(err)
-	}
-	if len(rt.closed) != 1 {
-		t.Fatalf("a spent renewal ran again: %v", rt.closed)
-	}
-}
-
-// Between turns the session is exchanged straight away, as it always was.
-func TestSelectorChosenBetweenTurnsRollsTheSessionAtOnce(t *testing.T) {
-	c, rt, _ := selectorCoordinator(t, true)
-	live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m3"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if live {
-		t.Fatal("an idle conversation has no running session to change")
-	}
-	after := c.store.Conversation("chat")
-	if _, ok := after.Sessions["grok"]; ok || !reflect.DeepEqual(rt.closed, []string{"ns_retained"}) {
-		t.Fatalf("an idle conversation did not roll its session over: sessions=%+v closed=%v", after.Sessions, rt.closed)
-	}
-	if after.Renew["grok"] {
-		t.Fatal("a session already rolled over must not be renewed again")
-	}
-}
-
-// Approval mode is the selector someone changes because they are tired of
-// answering: the request they are looking at is one of many the running
-// turn will make. So a live session takes the change straight away, and
-// no renewal is needed — the turn goes on, asking less.
-func TestSelectorChosenDuringATurnLandsOnTheLiveSession(t *testing.T) {
-	for _, refused := range []bool{false, true} {
-		t.Run(map[bool]string{false: "taken", true: "refused"}[refused], func(t *testing.T) {
-			c, rt, _ := selectorCoordinator(t, true)
-			configurable := rt.runner.(*recoveryConfigurable)
-			configurable.refused = refused
-			configurable.settings.Options = append(configurable.settings.Options, view.Option{
-				ID: "mode", Category: "mode", Current: "read-only",
-				Choices: []view.Choice{{Value: "read-only"}, {Value: "agent-full-access"}},
-			})
-			if !c.beginTurn("chat", "grok", func() {}) {
-				t.Fatal("the fixture already had a turn in flight")
-			}
-			c.setRunner("chat", "grok", configurable)
-			live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"mode": "agent-full-access"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if live == refused {
-				t.Fatalf("live = %v for a session that refused = %v", live, refused)
-			}
-			mode := ""
-			for _, option := range configurable.Settings().Options {
-				if option.ID == "mode" {
-					mode = option.Current
+// Preferences change how the next turn runs, never which conversation it remembers.
+func TestPreferencesPreserveContextAcrossIdleAndBusyUpdates(t *testing.T) {
+	for _, busy := range []bool{false, true} {
+		for _, same := range []bool{false, true} {
+			t.Run(fmt.Sprintf("busy=%v/same=%v", busy, same), func(t *testing.T) {
+				c, rt, _ := selectorCoordinator(t, true)
+				before := c.store.Conversation("chat")
+				if busy {
+					c.beginTurn("chat", "grok", func() {})
 				}
+				value := "m1"
+				if same {
+					value = "m2"
+				}
+				if _, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": value}); err != nil {
+					t.Fatal(err)
+				}
+				after := c.store.Conversation("chat")
+				if !reflect.DeepEqual(before.Sessions, after.Sessions) || !reflect.DeepEqual(before.Archived, after.Archived) || len(rt.closed) != 0 || after.Renew["grok"] {
+					t.Fatal("saving preferences replaced or scheduled replacement of native context")
+				}
+				if after.Preferences["grok"]["model"] != value {
+					t.Fatal("preference was not recorded")
+				}
+			})
+		}
+	}
+}
+
+func TestOldPendingPreferenceRenewalDoesNotDiscardContext(t *testing.T) {
+	c, rt, _ := selectorCoordinator(t, true)
+	before := c.store.Conversation("chat")
+	if err := c.store.SetRenew("chat", "grok", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.renewIfAsked(t.Context(), "chat", "grok"); err != nil {
+		t.Fatal(err)
+	}
+	after := c.store.Conversation("chat")
+	if !reflect.DeepEqual(before.Sessions, after.Sessions) || len(rt.closed) > 0 || len(after.Archived) > 0 || after.Renew["grok"] {
+		t.Fatal("upgrade consumed a pending selector change by losing context")
+	}
+}
+
+func TestResumedSessionAppliesExplicitModelPreference(t *testing.T) {
+	c, rt, _ := selectorCoordinator(t, true)
+	selected, _ := c.catalog.Resolve("grok")
+	saved := state.Session{ConversationID: "chat", AgentID: "grok", HarnessID: "grok", UpstreamID: "sess-1"}
+	if _, err := c.open(t.Context(), saved, selected, t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if rt.runner.(*recoveryConfigurable).Settings().Model != "m2" {
+		t.Fatal("resumed context ignored explicitly selected model")
+	}
+}
+
+func TestLivePreferencesNeverScheduleContextReplacement(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		t.Run(fmt.Sprint(refused), func(t *testing.T) {
+			c, rt, _ := selectorCoordinator(t, true)
+			r := rt.runner.(*recoveryConfigurable)
+			r.refused = refused
+			c.beginTurn("chat", "grok", func() {})
+			c.setRunner("chat", "grok", r)
+			before := c.store.Conversation("chat")
+			live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m1"})
+			if err != nil || live == refused {
+				t.Fatalf("live=%v err=%v", live, err)
 			}
 			after := c.store.Conversation("chat")
-			if refused {
-				if mode != "read-only" {
-					t.Fatalf("a refused change still moved the session to %q", mode)
-				}
-				if !after.Renew["grok"] {
-					t.Fatal("a refused change left nothing for the next turn to renew")
-				}
-				return
-			}
-			if mode != "agent-full-access" {
-				t.Fatalf("the running session's mode = %q, want agent-full-access", mode)
-			}
-			if after.Renew["grok"] {
-				t.Fatal("a session that took the change does not need replacing")
-			}
-			if len(rt.closed) != 0 {
-				t.Fatalf("the running turn's session was closed under it: %v", rt.closed)
-			}
-			if after.Preferences["grok"]["mode"] != "agent-full-access" {
-				t.Fatalf("the choice was not recorded for later sessions: %+v", after.Preferences)
+			if !reflect.DeepEqual(before.Sessions, after.Sessions) || len(rt.closed) > 0 || after.Renew["grok"] {
+				t.Fatal("live preference changed context")
 			}
 		})
+	}
+}
+
+func TestRefusedExplicitPreferencesBlockInputWithoutLosingContext(t *testing.T) {
+	c, rt, _ := selectorCoordinator(t, true)
+	rt.runner.(*recoveryConfigurable).refused = true
+	before := c.store.Conversation("chat")
+	selected, _ := c.catalog.Resolve("grok")
+	turn := &chatTurn{c: c, req: Request{ConversationID: "chat"}, selected: selected}
+	if _, err := turn.arm(t.Context(), &lifecycle.Execution{Session: rt.runner, Record: attempt.Record{}}); err == nil {
+		t.Fatal("unapplied preferences accepted")
+	}
+	if !reflect.DeepEqual(before, c.store.Conversation("chat")) {
+		t.Fatal("refusal changed native session")
+	}
+	if len(rt.runner.(*recoveryConfigurable).seen()) > 0 {
+		t.Fatal("refusal sent input")
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
@@ -16,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -37,11 +37,12 @@ type chatTurn struct {
 	tracked  string
 	prompt   string
 
-	binding        project.Binding
-	workspace      project.Workspace
-	saved          state.Session
-	capabilities   capability.Capabilities
-	contextChanged bool
+	binding           project.Binding
+	workspace         project.Workspace
+	saved             state.Session
+	capabilities      capability.Capabilities
+	contextChanged    bool
+	credentialRefresh *nodewire.MCPAuthorizationRefresh
 
 	// session is the conversation's record of the open session; managed
 	// says a node owns it, or that its open may still be pending there.
@@ -169,9 +170,8 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 	return func(r *attempt.Record) { r.Base = before.ID }, nil
 }
 
-// open reopens the conversation's session, or starts a fresh one in this
-// same turn when the saved upstream cannot be reopened, instead of failing
-// once and waiting for the user to send again.
+// open reconnects an existing native context. A resume failure must never
+// downgrade to a fresh conversation behind the same visible transcript.
 func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Runner, error) {
 	c, selected := t.c, t.selected
 	// Reopening a session the conversation already has and starting a
@@ -181,25 +181,32 @@ func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Ru
 	} else {
 		t.req.stage(view.StageSession)
 	}
+	ctx = harness.WithMCPAuthorizationRefresh(ctx, t.credentialRefresh)
 	runner, err := c.open(ctx, t.saved, selected, t.workspace.Path, e.Servers)
-	if err != nil && t.saved.NativeImport == nil && t.saved.UpstreamID != "" && !strings.HasPrefix(t.saved.UpstreamID, "ns_") && !errors.Is(err, harness.ErrNodeSessionUnavailable) {
-		if stateErr := c.store.DeleteSession(t.req.ConversationID, selected.ID); stateErr != nil {
-			slog.Error(fmt.Sprintf("turn: delete unreopenable session state: %v", stateErr), "attempt", e.Record.ID, "conversation", t.req.ConversationID, "agent", selected.ID)
-		}
-		t.saved.UpstreamID = ""
-		t.saved.InstructionsApplied = false
-		e.Upstream = ""
-		runner, err = c.open(ctx, t.saved, selected, t.workspace.Path, e.Servers)
-	}
 	t.clock.mark("session")
 	return runner, err
 }
 
 // arm makes the open session the conversation's: saved, tainted until the
 // prompt ends well, and reachable for /cancel.
-func (t *chatTurn) arm(_ context.Context, e *lifecycle.Execution) (func(*attempt.Record), error) {
+func (t *chatTurn) arm(ctx context.Context, e *lifecycle.Execution) (func(*attempt.Record), error) {
 	c, req, selected := t.c, t.req, t.selected
 	runner := e.Session
+	unlock := c.lockPreferences(req.ConversationID, selected.ID)
+	defer unlock()
+	// Explicit user choices must be honored or reported before any prompt is sent.
+	prefs := c.store.Preferences(req.ConversationID, selected.ID)
+	if len(prefs) > 0 {
+		options := make(map[string]string, len(prefs))
+		for id, value := range prefs {
+			if id != "model" {
+				options[id] = value
+			}
+		}
+		if err := applyRecoveryPreferences(ctx, runner, &attempt.SessionPreferences{Model: prefs["model"], Options: options}); err != nil {
+			return nil, fmt.Errorf("apply conversation preferences without resetting context: %w", err)
+		}
+	}
 	t.managed = e.Managed
 	req.phase(view.PhaseRunning)
 	t.session = state.Session{
@@ -410,11 +417,8 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			// Unknown physical writers were classified above and
 			// quarantined; a node-owned session keeps its state for the
 			// observer that comes back to it.
-			if !t.managed {
-				if stateErr := c.store.DeleteSession(req.ConversationID, selected.ID); stateErr != nil {
-					slog.Error(fmt.Sprintf("turn: delete unconfirmed session: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
-				}
-			}
+			// Keep the tainted record even for direct ACP. Forgetting its ID
+			// would silently start a fresh context on the next user input.
 		case errors.Is(err, harness.ErrTurnCanceled):
 			// The agent stopped the turn itself (e.g. a permission request
 			// was rejected); the session stays consistent, so keep it and
@@ -425,11 +429,11 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 				slog.Error(fmt.Sprintf("turn: save canceled session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
 			}
 		default:
-			// A failed/expired turn does not authorize killing the shared
-			// host; a confirmed response only invalidates this
-			// conversation's session.
-			if stateErr := c.store.DeleteSession(req.ConversationID, selected.ID); stateErr != nil {
-				slog.Error(fmt.Sprintf("turn: delete failed session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
+			// An error is not a reset. Preserve the native ID; settlement
+			// evidence decides whether a later input may safely resume it.
+			t.session.Tainted = !run.Settled
+			if stateErr := c.store.SaveSession(t.session); stateErr != nil {
+				slog.Error("turn: preserve failed session state", "error", stateErr, "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
 			}
 		}
 	}

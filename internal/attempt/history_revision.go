@@ -19,6 +19,11 @@ func guardRecordOpenTx(tx *ledger.Tx, spec Spec) error {
 	if err := task.CheckExecutionTx(tx, spec.Execution); err != nil {
 		return err
 	}
+	if spec.Kind == KindChat {
+		if err := task.CheckChatAdmissionTx(tx, spec.TaskID, spec.TurnID, spec.Execution); err != nil {
+			return err
+		}
+	}
 	return touchHistoryRevisionTx(tx, spec.TaskID)
 }
 
