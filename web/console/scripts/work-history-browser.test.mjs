@@ -124,7 +124,7 @@ try {
  const response=page.waitForResponse(r=>new URL(r.url()).pathname==="/console/tasks/live" && r.status()===200);
  holdDetail=false; releaseDetail(); releaseDetail=null;
  await response;
- await ownerDrawer.getByText("POINT AFTER PAGE",{exact:true}).waitFor();
+ await ownerDrawer.getByRole("heading", {name:"#live POINT AFTER PAGE", exact:true, level:2}).waitFor();
  await ownerDrawer.getByText("First message: FRESH PAGE CHILD FROM QUERY", {exact:true}).waitFor();
  assert.equal((await ownerDrawer.innerText()).includes("OLDER IN-FLIGHT POINT CHILD"),false);
  await ownerDrawer.getByRole("button", {name:"More turns",exact:true}).click();
@@ -142,7 +142,7 @@ try {
  liveOwner = { ...liveOwner, title: "REFRESHED POINT OWNER" };
  livePlan = undefined; // Explicit no-plan must also hide the old summary plan.
  await page.clock.fastForward(11000); await page.clock.runFor(500);
- await ownerDrawer.getByText("REFRESHED POINT OWNER", {exact:true}).waitFor();
+ await ownerDrawer.getByRole("heading", {name:"#live REFRESHED POINT OWNER", exact:true, level:2}).waitFor();
  await ownerDrawer.getByText("Delivered", {exact:true}).waitFor();
  await ownerDrawer.getByText("accounting-20", {exact:true}).waitFor();
  await ownerDrawer.getByText("First message: FRESH PAGE CHILD FROM QUERY", {exact:true}).waitFor();
