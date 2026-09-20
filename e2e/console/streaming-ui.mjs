@@ -3,6 +3,8 @@ import { workState } from "./work-fixture.mjs";
 // intercepted; this test never starts an agent or contacts an existing node.
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 
@@ -185,6 +187,13 @@ try {
     await f.emit({ kind: "console.sent", exchange_id: "stream-turn", text: "Streaming test" });
     await page.clock.runFor(500);
     await delay(100);
+    const execution = page.locator(".transcript-messages > [role=status]");
+    await execution.getByText("正在执行", { exact: true }).waitFor();
+    assert.equal(await execution.count(), 1, "One execution indicator belongs at the transcript tail, above the composer");
+    assert.equal(await execution.evaluate((el) => el === el.parentElement.lastElementChild), true);
+    assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), "steve-breathe");
+    assert.equal(await execution.locator("svg").count(), 0, "The execution hint is text, not a spinner");
+    assert.equal(await execution.evaluate((el) => getComputedStyle(el, "::before").content), "none", "No decorative status dot");
     const before = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders, projections: window.__historyProjections }));
     assert.ok(Object.keys(before.parses).filter((text) => text.startsWith("Conversation A history")).length === 35, "Instrumentation must observe the actual Markdown parser");
     assert.ok(before.shell > 0, "Instrumentation must observe the actual shell renderer");
@@ -193,6 +202,7 @@ try {
     for (let index = 1; index <= 12; index++) {
         await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { agent: "test-agent", phase: "running", answer: `Streaming answer ${index}`, timeline: [{ kind: "text", text: `Streaming answer ${index}`, at }] } });
         await page.getByText(`Streaming answer ${index}`, { exact: true }).first().waitFor();
+        assert.equal(await execution.textContent(), "正在执行", "Answer fragments must not hide the running hint");
         assert.equal(await page.getByText(`Streaming answer ${index}`, { exact: true }).count(), 1, "A live answer must appear once, not again inside its timeline");
         assert.equal(await page.locator("summary").getByText("过程", { exact: true }).count(), 0, "A plain text stream must not create an empty or duplicate process disclosure");
         await page.clock.runFor(300);
@@ -221,6 +231,7 @@ try {
     const timeline = [{ kind: "text", text: intermediate, at }, { kind: "thought", text: thought, at }, { kind: "tool", tool: "config-read", at }, { kind: "text", text: finalAnswer, at }];
     await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: intermediate + finalAnswer, reasoning: thought, tools: [{ id: "config-read", kind: "read", name: "Read configuration", status: "completed", output: "Configuration content" }], timeline } });
     await page.getByText(finalAnswer, { exact: true }).waitFor();
+    assert.equal(await execution.textContent(), "正在执行", "Completed tools do not mean the turn has finished");
     assert.equal(await page.getByText(finalAnswer, { exact: true }).count(), 1, "The final narration must not be repeated in the process");
     assert.equal(await page.getByText(intermediate, { exact: true }).count(), 1, "Earlier narration must remain once in its timeline");
     await page.locator('[data-span-kind="thought"]').getByText(thought, { exact: true }).waitFor();
@@ -251,6 +262,7 @@ try {
     assert.equal(await page.getByText("Answer with empty trace", { exact: true }).count(), 1, "A trace without text spans must not hide the answer snapshot");
     await f.emit({ kind: "console.reply", exchange_id: "stream-turn", text: "Streaming test completed" });
     await page.getByText("Streaming test completed", { exact: true }).waitFor();
+    await eventually(async () => await execution.count() === 0, "A completed reply removes the execution hint");
     // Task/node lifecycle events still invalidate state.
     for (const kind of ["task.changed", "node.updated", "console.reply", "delegate.progress"]) {
         const previous = f.stateReads;
@@ -284,11 +296,35 @@ try {
         assert.equal(await page.getByText("正在保存结果…", { exact: true }).count(), 0, "The terminal result must close the progress indicator");
         await f.emit({ kind: "console.sent", exchange_id: "narrow-turn", text: "Narrow window status" });
         await f.emit({ kind: "console.progress", exchange_id: "narrow-turn", progress: { phase: "saving", agent: "test-agent-with-a-long-name", model: "a-long-model-name-to-check-wrapping", answer: "Generated reply" } });
-        for (const width of [1600, 1000, 780]) {
+        for (const width of [1600, 1000, 780, 390]) {
             await page.setViewportSize({ width, height: 650 });
             await page.getByText("正在保存结果…", { exact: true }).waitFor();
+            await execution.scrollIntoViewIfNeeded();
+            assert.equal(await execution.isVisible(), true, "The tail hint remains readable in narrow windows");
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Phase feedback must not overflow the window");
+            if (process.env.ARTIFACT_DIR && [1600, 390].includes(width)) {
+                await mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+                for (const dark of [false, true]) {
+                    await page.evaluate((dark) => document.documentElement.classList.toggle("dark-mode", dark), dark);
+                    await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `execution-${width}-${dark ? "dark" : "light"}.png`) });
+                }
+            }
         }
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), "none", "Reduced motion keeps static status text");
+        assert.equal(await execution.textContent(), "正在执行");
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        const active = f.queue.find((entry) => entry.id === "narrow-turn");
+        let queueTime = Date.parse(at);
+        for (const [state, label, animation] of [["awaiting-user", "等你回答", "none"], ["recovering", "正在恢复执行…", "steve-breathe"]]) {
+            active.state = state;
+            await f.emit({ kind: "console.queue", at: new Date(++queueTime).toISOString() });
+            await execution.getByText(label, { exact: true }).waitFor();
+            assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), animation, "Waiting is not active execution");
+        }
+        active.state = "running";
+        await f.emit({ kind: "console.queue", at: new Date(++queueTime).toISOString() });
+        await execution.getByText("正在执行", { exact: true }).waitFor();
         // Keep recovery in this active turn. An older queue snapshot from a
         // reconnect/poll must not be raced against an unrelated new test turn.
         const beforeReconnect = { state: f.stateReads, queue: f.queueReads, replies: f.replyReads };

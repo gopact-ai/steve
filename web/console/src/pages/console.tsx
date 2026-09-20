@@ -614,6 +614,9 @@ function ConsoleWorkbench() {
                             <div className="transcript-messages">
                                 {history}
                                 {live && <Working live={live} plans={runningPlans} compact delegated={turnChildren} recovery={recoveryState} />}
+                                {(busy || stopping) && <p role="status" aria-atomic="true" className="transcript-running" data-breathing={!stopState?.uncertain && recoveryState !== "awaiting-user"}>
+                                    {stopState?.uncertain ? t("console.stopUncertain") : stopping ? t("console.stopping") : recoveryState === "recovering" ? t("console.recovering") : recoveryState ? t("status.awaitingHuman") : t("console.runningNow")}
+                                </p>}
                             </div>
                         </div>
                         <div className="composer-dock">
@@ -657,7 +660,6 @@ function ConsoleWorkbench() {
                                 onSelectors={context?.agent ? loadSelectors : undefined}
                                 onPrefer={prefer}
                             />
-                            {(busy || stopping) && <p role="status" className="composer-running"><span>{stopping ? t("console.stopping") : recoveryState === "recovering" ? t("console.recovering") : recoveryState ? t("status.awaitingHuman") : t("console.runningNow")}</span></p>}
                         </div>
                     </div>
                     {splitOpen && <SplitPane tabs={split.tabs} active={split.active} label={splitLabel} onFocus={split.focus} onClose={closeSplitTab} onHide={() => split.setHidden(true)} render={renderSplitTab} />}
