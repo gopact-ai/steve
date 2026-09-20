@@ -2,21 +2,28 @@ import { useI18n } from "@/providers/locale-provider";
 import { ChevronDown } from "@untitledui/icons";
 import { useFollowTail } from "@/hooks/use-follow-tail";
 import { Md } from "./markdown";
+import { DeferredDetails } from "./deferred-details";
 
 // ThinkingFold is the agent's one-line-per-step summary of what it was
 // thinking, folded; it is a summary, not the thinking.
 export function ThinkingFold({ text, open, live }: { text: string; open?: boolean; live?: boolean }) {
     const { t } = useI18n();
-    const { followTail, ...scroll } = useFollowTail(text, live);
     return (
-        <details open={open} className="group/think min-w-0" onToggle={followTail}>
+        <DeferredDetails open={open} className="group/think min-w-0" summary={
             <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary" title={t("consoleChrome.thinkingHint")}>
                 <span>{t("consoleChrome.thinking")}</span>
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/think:rotate-180" />
             </summary>
-            <div {...scroll} tabIndex={0} className="ml-2 max-h-60 overflow-y-auto border-l border-secondary pl-3 [overflow-anchor:none]">
-                <Md size="xs" text={text} className="md-quiet" />
-            </div>
-        </details>
+        }>
+            <ThinkingBody text={text} live={live} />
+        </DeferredDetails>
     );
+}
+
+function ThinkingBody({ text, live }: { text: string; live?: boolean }) {
+    // Attach the observer with the body; it also follows when details reopens.
+    const { followTail: _, ...scroll } = useFollowTail(text, live);
+    return <div {...scroll} tabIndex={0} className="ml-2 max-h-60 overflow-y-auto border-l border-secondary pl-3 [overflow-anchor:none]">
+        <Md size="xs" text={text} className="md-quiet" />
+    </div>;
 }

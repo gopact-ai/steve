@@ -15,6 +15,7 @@ import { hasProcessContent } from "./progress-view";
 import { MaterialAttachments } from "./material-attachments";
 import { MaterialActions } from "./material-actions";
 import { ThinkingFold } from "./thinking-fold";
+import { DeferredDetails } from "./deferred-details";
 
 // CopyLine copies one line of the transcript. A blocked clipboard is said
 // where the click happened: nothing else on the page would show it.
@@ -100,12 +101,13 @@ export function InlineProcess({ process }: { process: Process }) {
     if (process.timeline?.length || steps.some((s) => s.timeline?.length || s.plan?.length)) return (
         <div className="flex min-w-0 flex-col gap-1">
             {hasProcessContent({ ...process, steps: steps.filter((s) => s.kind !== "delegate") }, true) && (
-                <details className="group/process min-w-0">
+                <DeferredDetails className="group/process min-w-0" summary={
                     <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary">
                         {t("console.trace")} <ChevronDown aria-hidden="true" className="size-3.5 transition group-open/process:rotate-180" />
                     </summary>
+                }>
                     <div className="mt-2"><ProcessBody process={process} omitFinalText omitDelegations /></div>
-                </details>
+                </DeferredDetails>
             )}
             {cards}
         </div>

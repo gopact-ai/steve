@@ -8,6 +8,7 @@ import { plain } from "@/lib/plain";
 import { useNodeLabel, whoIs } from "@/lib/node-name";
 import { ThinkingFold } from "./thinking-fold";
 import { ToolCalls, ToolRowList } from "./tool-calls";
+import { DeferredDetails } from "./deferred-details";
 
 // Trace is one agent's progress: its checklist, its thinking summary,
 // its tool calls, and (for a plain turn) the answer forming.
@@ -41,7 +42,7 @@ function Activity({ tools }: { tools: ToolCall[] }) {
     const { t, locale } = useI18n();
     const summary = activity(tools, locale);
     return (
-        <details data-span-kind="tool" className="group/activity min-w-0">
+        <DeferredDetails data-span-kind="tool" className="group/activity min-w-0" summary={
             <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary">
                 <span className="flex shrink-0 items-center gap-1">
                     {summary.kinds.map((kind) => { const Icon = activityIcons[kind]; return <Icon key={kind} className="size-3.5 shrink-0" />; })}
@@ -51,8 +52,9 @@ function Activity({ tools }: { tools: ToolCall[] }) {
                 {summary.running && <Loading01 className="size-3 shrink-0 animate-spin" />}
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/activity:rotate-180" />
             </summary>
+        }>
             <div className="ml-2"><ToolRowList tools={tools} /></div>
-        </details>
+        </DeferredDetails>
     );
 }
 

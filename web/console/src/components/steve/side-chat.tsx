@@ -13,6 +13,7 @@ import { Md } from "./markdown";
 import { StageLine, Trace, finalTextIndex, hasTraceContent } from "./progress-view";
 import type { Live } from "@/lib/live";
 import { QuestionPanel } from "./question-panel";
+import { DeferredDetails } from "./deferred-details";
 import "@/styles/side-chat.css";
 
 // SideLive is the side conversation's running turn: its phase, the process
@@ -29,7 +30,7 @@ function SideLive({ live }: { live: Live }) {
     return <article className="side-chat-answer flex min-w-0 flex-col gap-2">
         <p role="status" className="flex items-center gap-2 text-xs text-tertiary"><Loading01 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none text-fg-brand-primary" />{label}{turn?.agent ? ` · ${turn.agent}` : ""}</p>
         {phase === "waking" && <StageLine stage={turn?.stage} />}
-        {turn && hasTraceContent(turn, finalText) && <details className="text-xs text-tertiary"><summary className="cursor-pointer">{t("console.trace")}</summary><Trace p={turn} live omitText={finalText} /></details>}
+        {turn && hasTraceContent(turn, finalText) && <DeferredDetails className="text-xs text-tertiary" summary={<summary className="cursor-pointer">{t("console.trace")}</summary>}><Trace p={turn} live omitText={finalText} /></DeferredDetails>}
         {answer && <Md text={answer} />}
     </article>;
 }

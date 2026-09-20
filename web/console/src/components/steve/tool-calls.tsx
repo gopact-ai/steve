@@ -6,6 +6,7 @@ import type { ToolCall } from "@/lib/types";
 import { formatToolText, type Shown } from "@/lib/tooltext";
 import { toolFailed } from "@/lib/activity";
 import { CodeBlock } from "./code-block";
+import { DeferredDetails } from "./deferred-details";
 
 // ToolCalls is a group of tool calls as the transcript shows them, the
 // way Codex does: one folding line saying how many commands ran, and
@@ -85,14 +86,15 @@ export function ToolCalls({ tools, title, defaultOpen = true }: { tools: ToolCal
     if (!tools.length) return null;
     const running = tools.some((t) => t.status !== "completed" && t.status !== "failed");
     return (
-        <details open={defaultOpen} className="group/calls min-w-0">
+        <DeferredDetails open={defaultOpen} className="group/calls min-w-0" summary={
             <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs text-tertiary hover:text-primary">
                 {running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
                 <span>{title ?? headingOf(tools, locale)}</span>
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/calls:rotate-180" />
             </summary>
+        }>
             <ToolRowList tools={tools} />
-        </details>
+        </DeferredDetails>
     );
 }
 
@@ -112,7 +114,7 @@ function FoldedRows({ rows }: { rows: Row[] }) {
     const running = rows.some((r) => r.t.status !== "completed" && r.t.status !== "failed");
     return (
         <li className="min-w-0">
-            <details className="group/fold">
+            <DeferredDetails className="group/fold" summary={
                 <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-secondary">
                     {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : failed ? <FailedMark /> : <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" />}
                     <span className="shrink-0 text-tertiary">{first.verb}</span>
@@ -120,10 +122,11 @@ function FoldedRows({ rows }: { rows: Row[] }) {
                     <span className="shrink-0 rounded-full bg-secondary px-1.5 u-meta">×{number(rows.length, locale)}</span>
                     <ChevronDown className="ml-auto size-3 shrink-0 text-quaternary transition group-open/fold:rotate-180" />
                 </summary>
+            }>
                 <ul className="ml-3 flex flex-col border-l border-secondary pl-2">
                     {rows.map((r, i) => <ToolRow key={r.t.id || i} row={r} />)}
                 </ul>
-            </details>
+            </DeferredDetails>
         </li>
     );
 }
@@ -134,7 +137,7 @@ function ToolRow({ row }: { row: Row }) {
     const expandable = !!(row.input || row.output);
     return (
         <li className="min-w-0">
-            <details className="group/row">
+            <DeferredDetails className="group/row" summary={
                 <summary className={`flex list-none items-center gap-2 rounded-md px-1.5 py-1 text-xs ${expandable ? "cursor-pointer hover:bg-secondary" : ""}`}>
                     {row.failed ? <FailedMark /> : t.status === "completed" ? <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" /> : <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" />}
                     <span className="shrink-0 text-tertiary">{row.verb}</span>
@@ -142,13 +145,14 @@ function ToolRow({ row }: { row: Row }) {
                     {row.output?.meta && <span className="shrink-0 text-quaternary">{row.output.meta}</span>}
                     {expandable && <ChevronDown className="ml-auto size-3 shrink-0 text-quaternary transition group-open/row:rotate-180" />}
                 </summary>
+            }>
                 {expandable && (
                     <div className="mb-1 ml-5 flex flex-col">
                         {row.input && <CodeBlock code={row.shell ? unwrapShell(row.input.body) : row.input.body} lang={row.shell ? "shell" : row.input.lang} label={row.shell ? tr("consoleChrome.command") : tr("consoleChrome.input")} meta={row.input.meta} />}
                         {row.output && <CodeBlock code={row.output.body} lang={row.output.lang} label={tr("consoleChrome.output")} meta={row.output.meta} muted maxHeight={256} />}
                     </div>
                 )}
-            </details>
+            </DeferredDetails>
         </li>
     );
 }
