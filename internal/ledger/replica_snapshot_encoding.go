@@ -3,6 +3,7 @@ package ledger
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -16,6 +17,16 @@ const replicaSnapshotMagic = "STVSQL02"
 const replicaSnapshotHeader = 24 + sha256.Size
 
 func encodeReplicaSnapshot(path string, incarnation uint64) ([]byte, error) {
+	// Both snapshot entry points pass a private backup, outside applyMu.
+	// Do not export local indexes whose functions an older receiver may lack.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	err = stripSnapshotReadIndexes(db)
+	if err := errors.Join(err, db.Close()); err != nil {
+		return nil, fmt.Errorf("prepare snapshot read schema: %w", err)
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err

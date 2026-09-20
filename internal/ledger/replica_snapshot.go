@@ -38,8 +38,9 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 		return nil, err
 	}
 	defer cleanup()
-	// The private backup is immutable. Reading and framing it need not hold
-	// the apply lock; only the SQLite backup defines the committed boundary.
+	// The private backup is detached from the live database. Preparing its
+	// read schema and framing it need not hold the apply lock; only the
+	// SQLite backup defines the committed boundary.
 	return encodeReplicaSnapshot(path, incarnation)
 }
 
