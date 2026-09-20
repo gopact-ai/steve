@@ -5,7 +5,6 @@ import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import { type DragEvent, type FC, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, MessageQuestionCircle, Plus, Server01, SwitchVertical01, Trash01, Users01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
-import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { Input } from "@/components/base/input/input";
 import type { Conversation, Project, Task } from "@/lib/types";
@@ -255,9 +254,8 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
             <li key={p.id} className="flex flex-col">
                 <div {...drag} data-drop={dropMark?.id === p.id ? (dropMark.after ? "after" : "before") : undefined} data-dragging={dragged === p.id || undefined}
                     className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
-                    <button type="button" onClick={() => toggle(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}>
-                        <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
-                    </button>
+                    <IconButton size="xs" onClick={() => toggle(p.id)} className="shrink-0" aria-expanded={open} label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}
+                        icon={<ChevronDown className={`transition ${open ? "" : "-rotate-90"}`} />} />
                     <Folder className="size-4 shrink-0 text-fg-quaternary" />
                     <button type="button" onClick={() => toggle(p.id)} className="flex min-h-6 min-w-0 flex-1 flex-col justify-center text-left" title={[hint || places, reorderHint].filter(Boolean).join(" · ")}
                         aria-keyshortcuts={sortable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
@@ -307,9 +305,8 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
         return (
             <li key={b.key} className="flex flex-col">
                 <div className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
-                    <button type="button" onClick={() => toggle(b.key)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}>
-                        <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
-                    </button>
+                    <IconButton size="xs" onClick={() => toggle(b.key)} className="shrink-0" aria-expanded={open} label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}
+                        icon={<ChevronDown className={`transition ${open ? "" : "-rotate-90"}`} />} />
                     <Icon className="size-4 shrink-0 text-fg-quaternary" />
                     <button type="button" onClick={() => toggle(b.key)} className="flex min-h-6 min-w-0 flex-1 flex-col justify-center text-left">
                         <span className="truncate u-title">{b.label}</span>
@@ -336,8 +333,8 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     if (collapsed) {
         return (
             <aside className="conversation-sidebar is-collapsed">
-                <button type="button" onClick={onToggle} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title={tr("consoleChrome.expandSessions")} aria-label={tr("consoleChrome.expandSessions")}><ChevronRightDouble className="size-4" /></button>
-                <button type="button" disabled={creating} onClick={() => onNew()} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title={tr("console.newConversation")} aria-label={tr("console.newConversation")}><Edit05 className="size-4" /></button>
+                <IconButton size="sm" onClick={onToggle} title={tr("consoleChrome.expandSessions")} label={tr("consoleChrome.expandSessions")} icon={ChevronRightDouble} />
+                <IconButton size="sm" isDisabled={creating} onClick={() => onNew()} title={tr("console.newConversation")} label={tr("console.newConversation")} icon={Edit05} />
                 {list.some((c) => c.running) && <Loading01 className="mt-1 size-3 animate-spin text-fg-brand-primary" />}
             </aside>
         );
@@ -349,7 +346,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
                     <Edit05 className="size-4 text-fg-quaternary" />
                     <span>{tr("console.newConversation")}</span>
                 </button>
-                {onToggle && <button type="button" onClick={onToggle} className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title={tr("consoleChrome.collapseSessions")} aria-label={tr("consoleChrome.collapseSessions")}><ChevronLeftDouble className="size-4" /></button>}
+                {onToggle && <IconButton size="sm" onClick={onToggle} className="shrink-0" title={tr("consoleChrome.collapseSessions")} label={tr("consoleChrome.collapseSessions")} icon={ChevronLeftDouble} />}
             </div>
             {onImport && <button type="button" onClick={onImport} className="mx-3 mb-2 rounded-md px-2 py-1.5 text-left text-xs text-tertiary hover:bg-secondary focus-visible:outline-2 focus-visible:outline-brand">{tr("nativeImport.open")}</button>}
             <div className="conversation-search"><Input size="sm" aria-label={tr("consoleChrome.searchConversations")} placeholder={tr("consoleChrome.searchPlaceholder")} value={search} onChange={setSearch} /></div>
@@ -421,9 +418,7 @@ function ArrangeMenu({ value, onChange, arranged, onResetOrder }: { value: Arran
     };
     return (
         <Dropdown.Root>
-            <AriaButton className="conversation-arrange" aria-label={`${tr("consoleChrome.arrange")}: ${groups[value.group]} · ${sorts[value.sort]}`}>
-                <SwitchVertical01 className="size-3.5" />
-            </AriaButton>
+            <IconButton size="xs" className="conversation-arrange" label={`${tr("consoleChrome.arrange")}: ${groups[value.group]} · ${sorts[value.sort]}`} icon={SwitchVertical01} />
             <Dropdown.Popover placement="bottom end" className="w-48">
                 <Dropdown.Menu aria-label={tr("consoleChrome.arrange")} onAction={(key) => { if (key === "reset-order") onResetOrder?.(); }}>
                     {/* Grouping and order are two choices, and a reader who
@@ -479,12 +474,11 @@ const Thread = memo(function Thread({ c, current, unseen, onPick, usualAgent, us
                 <RenameBox initial={c.title} onDone={(title) => onRenamed(c.id, title)} />
             ) : (
                 <div className="flex items-start">
-                    {work.length > 0 ? <button type="button" onClick={() => setWorkOpen((open) => !open)}
+                    {work.length > 0 ? <IconButton size="xs" onClick={() => setWorkOpen((open) => !open)}
                         aria-expanded={workOpen} aria-controls={workID}
-                        aria-label={tr(workOpen ? "consoleChrome.collapseWork" : "consoleChrome.expandWork", { title: c.title || tr("console.newConversation") })}
-                        className="mt-2 flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-tertiary focus-visible:outline-2 focus-visible:outline-brand">
-                        <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform motion-reduce:transition-none ${workOpen ? "" : "-rotate-90"}`} />
-                    </button> : <span className="w-6 shrink-0" />}
+                        label={tr(workOpen ? "consoleChrome.collapseWork" : "consoleChrome.expandWork", { title: c.title || tr("console.newConversation") })}
+                        className="mt-2 shrink-0"
+                        icon={<ChevronDown aria-hidden="true" className={`transition-transform motion-reduce:transition-none ${workOpen ? "" : "-rotate-90"}`} />} /> : <span className="w-6 shrink-0" />}
                     <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row min-w-0 flex-1 ${current ? "is-selected" : ""}`} title={c.questions ? tr("consoleChrome.awaitingReply", { count: number(c.questions, locale) }) : !c.running && unseen ? tr("consoleChrome.newResult") : nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale, nodeLabelOf) : undefined}>
                         <span className="flex w-full items-baseline gap-2">
                             {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}

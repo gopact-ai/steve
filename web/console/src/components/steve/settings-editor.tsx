@@ -3,7 +3,7 @@ import { errorText } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { Plus, Trash01 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
-import { ButtonUtility } from "@/components/base/buttons/button-utility";
+import { IconButton } from "@/components/steve/icon-button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { TextArea } from "@/components/base/textarea/textarea";
@@ -109,12 +109,12 @@ export function ListEditor({ items, placeholder, onChange }: { items: string[]; 
             {items.map((x, i) => (
                 <div key={x} className="flex items-center gap-2">
                     <span className="flex-1 rounded-md bg-secondary px-2 py-1 font-mono text-xs text-primary">{x}</span>
-                    <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip={tr("common.remove")} onClick={() => onChange(items.filter((_, j) => j !== i))} />
+                    <IconButton size="xs" color="tertiary" icon={Trash01} tooltip={tr("common.remove")} label={tr("common.remove")} onClick={() => onChange(items.filter((_, j) => j !== i))} />
                 </div>
             ))}
             <div className="flex items-center gap-2">
                 <div className="flex-1"><Input size="sm" aria-label={tr("settingsEditor.new")} placeholder={placeholder} value={draft} onChange={setDraft} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} /></div>
-                <ButtonUtility size="xs" color="secondary" icon={Plus} tooltip={tr("common.add")} onClick={add} />
+                <IconButton size="xs" color="secondary" icon={Plus} tooltip={tr("common.add")} label={tr("common.add")} onClick={add} />
             </div>
         </div>
     );
@@ -132,7 +132,7 @@ function KeyedRows<T>({ rows, onChange, blank, render }: {
         {rows.map((row) => <div key={row.key} className="flex items-start gap-2">
             {render({ value: row.id, set: (id) => onChange(rows.map((item) => item.key === row.key ? { ...item, id } : item)) }, row.value,
                 (value) => onChange(rows.map((item) => item.key === row.key ? { ...item, value } : item)))}
-            <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip={tr("common.remove")} className="mt-0.5" onClick={() => onChange(rows.filter((item) => item.key !== row.key))} />
+            <IconButton size="xs" color="tertiary" icon={Trash01} tooltip={tr("common.remove")} label={tr("common.remove")} className="mt-0.5" onClick={() => onChange(rows.filter((item) => item.key !== row.key))} />
         </div>)}
         <div><Button size="sm" color="link-gray" iconLeading={Plus} onClick={() => onChange([...rows, { key: nextKey.current++, id: "", value: blank }])}>{tr("settingsEditor.addItem")}</Button></div>
     </div>;
@@ -143,7 +143,7 @@ function ArgumentsEditor({ args, onChange }: { args: string[]; onChange: (args: 
     return <div className="flex min-w-0 flex-col gap-1.5">
         {args.map((argument, index) => <div key={index} className="flex min-w-0 items-center gap-1">
             <Input size="sm" aria-label={tr("settingsEditor.argument", { index: index + 1 })} value={argument} onChange={(value) => onChange(args.map((item, i) => i === index ? value : item))} />
-            <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip={tr("settingsEditor.removeArgument", { index: index + 1 })} onClick={() => onChange(args.filter((_, i) => i !== index))} />
+            <IconButton size="xs" color="tertiary" icon={Trash01} tooltip={tr("settingsEditor.removeArgument", { index: index + 1 })} label={tr("settingsEditor.removeArgument", { index: index + 1 })} onClick={() => onChange(args.filter((_, i) => i !== index))} />
         </div>)}
         <Button size="sm" color="link-gray" className="self-start" iconLeading={Plus} onClick={() => onChange([...args, ""])}>{tr("settingsEditor.addArgument")}</Button>
     </div>;

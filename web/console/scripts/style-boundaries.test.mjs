@@ -78,3 +78,37 @@ test("shared presentation consumers select variants instead of overriding chrome
     }
     assert.deepEqual(failures, []);
 });
+
+// These consumers have ordinary icon actions and disclosures. Specialized
+// controls (e.g. the code-copy success indicator) are outside this contract.
+test("migrated icon actions use the accessible shared adapter", () => {
+    const failures = [];
+    const consumers = [
+        "components/steve/sessions-tree.tsx", "components/steve/task-meta-menu.tsx",
+        "components/steve/settings-editor.tsx", "components/steve/ssh-connect.tsx",
+        "components/steve/machine-upgrade.tsx", "pages/skills.tsx",
+    ];
+    for (const relative of consumers) {
+        const file = path.join(root, relative);
+        const ast = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        function visit(node) {
+            if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text.endsWith("/button-utility")) {
+                failures.push(`${relative}: business icon actions require IconButton's explicit label`);
+            }
+            if (ts.isJsxElement(node) && ["button", "AriaButton"].includes(node.openingElement.tagName.getText(ast))) {
+                const content = node.children.filter((child) => !ts.isJsxText(child) || child.text.trim());
+                const className = node.openingElement.attributes.properties.find((prop) => ts.isJsxAttribute(prop) && prop.name.text === "className")?.initializer;
+                const ownChrome = className && ts.isStringLiteral(className) && (/(?:^|\s)size-\d/.test(className.text) || className.text === "conversation-arrange");
+                if (ownChrome && content.length === 1 && ts.isJsxSelfClosingElement(content[0]) && /^[A-Z]/.test(content[0].tagName.getText(ast))) {
+                    failures.push(`${relative}: single-icon action duplicates the shared control`);
+                }
+            }
+            if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === "Button" && node.attributes.properties.some((prop) => ts.isJsxAttribute(prop) && prop.name.text === "iconLeading")) {
+                failures.push(`${relative}: icon-only Button must use IconButton`);
+            }
+            ts.forEachChild(node, visit);
+        }
+        visit(ast);
+    }
+    assert.deepEqual(failures, []);
+});

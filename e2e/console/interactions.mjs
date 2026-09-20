@@ -2609,6 +2609,32 @@ checks["native-history-auto-project"] = (f) => checkNativeHistoryImport(f, true)
 // is that machine busy with" — grouping by machine or Agent, ordering by
 // time, attention or name. The arrangement is the reader's and it is
 // remembered; arranging never submits anything.
+checks["shared-sidebar-icon-actions"] = async (f) => {
+    const sidebar = f.page.locator(".conversation-sidebar");
+    await sidebar.getByRole("button", { name: "收起会话栏", exact: true }).click();
+    await f.page.locator(".conversation-sidebar.is-collapsed").waitFor();
+    const expand = sidebar.getByRole("button", { name: "展开会话栏", exact: true });
+    const newConversation = sidebar.getByRole("button", { name: "新会话", exact: true });
+    for (const button of [expand, newConversation]) {
+        const box = await button.boundingBox(), rail = await sidebar.boundingBox();
+        assert.equal(box.width, 28, "Dense sidebar actions use the explicit shared sm size");
+        assert.equal(box.height, 28);
+        assert.ok(box.x >= rail.x && box.x + box.width <= rail.x + rail.width, "Icon actions fit the unchanged narrow rail");
+    }
+    await expand.focus(); await f.page.keyboard.press("Enter");
+    await sidebar.getByRole("button", { name: "收起会话栏", exact: true }).waitFor();
+    const disclosure = sidebar.locator(".conversation-project button[aria-expanded]").first();
+    const before = await disclosure.getAttribute("aria-expanded");
+    await disclosure.focus(); await f.page.keyboard.press("Space");
+    assert.equal(await disclosure.getAttribute("aria-expanded"), String(before !== "true"), "Keyboard toggles the group exactly once");
+    const arrange = sidebar.getByRole("button", { name: /^排列/ });
+    await arrange.focus(); await f.page.keyboard.press("Enter");
+    await f.page.getByRole("menuitemradio", { name: "按机器", exact: true }).waitFor();
+    await f.page.keyboard.press("Escape");
+    await f.page.waitForFunction((element) => element === document.activeElement, await arrange.elementHandle());
+    assert.equal(f.calls.length, 0, "Presentation and grouping do not submit work");
+};
+
 checks["sessions-arrangement"] = async (f) => {
     const threads = [
         { id: A, title: "Conversation A", project: "scratch", agent: "builder", place: { workspace: "w-a", kind: "canonical", node: "node-one" }, last_at: "2026-09-06T09:00:00Z", count: 1, running: false, questions: 2 },

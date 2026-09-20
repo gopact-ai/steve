@@ -6,6 +6,7 @@ import { Radio, RadioGroup } from "react-aria-components";
 import { CheckCircle, FolderSearch, XCircle, X } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/steve/icon-button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -176,7 +177,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     return <ModalOverlay isOpen isDismissable={!busy} isKeyboardDismissDisabled={!!busy} onOpenChange={(open) => { if (!open) close(); }} className="motion-reduce:animate-none motion-reduce:duration-0">
         <Modal className="max-w-2xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("ssh.title")} className="block"><DialogSurface className="overflow-hidden">
             <DialogBody ref={scrollArea} className="max-h-[min(840px,85dvh)] overflow-y-auto overscroll-contain block">
-                <header className="mb-5 flex items-start gap-3"><div className="min-w-0 flex-1"><h1 ref={!check && !plan ? stageHeading : undefined} tabIndex={-1} className="text-md font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.title")}</h1><p className="mt-2 text-sm leading-6 text-tertiary">{t("ssh.description")}</p></div><Button size="sm" color="tertiary" iconLeading={X} aria-label={t("ssh.close")} isDisabled={!!busy} onClick={close} /></header>
+                <header className="mb-5 flex items-start gap-3"><div className="min-w-0 flex-1"><h1 ref={!check && !plan ? stageHeading : undefined} tabIndex={-1} className="text-md font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.title")}</h1><p className="mt-2 text-sm leading-6 text-tertiary">{t("ssh.description")}</p></div><IconButton size="sm" color="tertiary" icon={X} label={t("ssh.close")} isDisabled={!!busy} onClick={close} /></header>
                 {!check && !plan && <section className="space-y-4">
                     {loading && <p role="status" className="text-sm text-tertiary">{t("ssh.loading")}</p>}
                     {!loading && !readError && discovery.candidates.length === 0 && <div className="space-y-2 rounded-lg bg-secondary p-4"><h2 className="text-sm font-semibold text-primary">{t("ssh.empty")}</h2><p className="text-sm leading-6 text-tertiary">{t("ssh.emptyHint")}</p></div>}

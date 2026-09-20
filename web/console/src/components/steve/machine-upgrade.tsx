@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckCircle, X, XCircle } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/steve/icon-button";
 import { InstallLog, InstallProgress, SSHSteps } from "@/components/steve/ssh-connect";
 import { useI18n } from "@/providers/locale-provider";
 import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
@@ -56,7 +57,7 @@ export function MachineUpgrade({ nodes, version, onClose, onChanged }: { nodes: 
     return <ModalOverlay isOpen isDismissable={!running} isKeyboardDismissDisabled={running} onOpenChange={(open) => { if (!open && !running) onClose(); }} className="motion-reduce:animate-none motion-reduce:duration-0">
         <Modal className="max-w-2xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("fleet.upgradeTitle")} className="block"><DialogSurface className="overflow-hidden">
             <DialogBody className="max-h-[min(840px,85dvh)] space-y-4 overflow-y-auto overscroll-contain block">
-                <header className="flex items-start gap-3"><div className="min-w-0 flex-1"><h1 className="text-md font-semibold text-primary">{t("fleet.upgradeTitle")}</h1><p className="mt-2 text-sm leading-6 text-tertiary">{t("fleet.upgradeIntro", { version })}</p></div><Button size="sm" color="tertiary" iconLeading={X} aria-label={t("common.close")} isDisabled={running} onClick={onClose} /></header>
+                <header className="flex items-start gap-3"><div className="min-w-0 flex-1"><h1 className="text-md font-semibold text-primary">{t("fleet.upgradeTitle")}</h1><p className="mt-2 text-sm leading-6 text-tertiary">{t("fleet.upgradeIntro", { version })}</p></div><IconButton size="sm" color="tertiary" icon={X} label={t("common.close")} isDisabled={running} onClick={onClose} /></header>
                 <ul className="divide-y divide-secondary rounded-lg border border-secondary">{nodes.map((node) => {
                     const outcome = outcomes[node.name] ?? { status: "waiting" as const };
                     const readable = outcome.status !== "waiting";
