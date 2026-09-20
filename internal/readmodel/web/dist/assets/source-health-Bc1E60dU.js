@@ -1,0 +1,1 @@
+function e(e,t){let n=e.find(e=>e.name===t)??e.find(e=>e.name===`ledger`);return n&&(!n.wired||n.error)?n:void 0}export{e as t};
