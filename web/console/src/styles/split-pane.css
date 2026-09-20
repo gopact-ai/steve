@@ -9,7 +9,7 @@
 .split-pane-bar { display: flex; align-items: stretch; min-height: 36px; border-bottom: 1px solid var(--color-border-secondary); background: var(--toolbar-surface); }
 .split-pane-tabs { display: flex; align-items: stretch; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .split-pane-tabs::-webkit-scrollbar { height: 0; }
-.split-pane-bar > .workbench-icon-button { align-self: center; margin: 0 6px 0 4px; }
+.split-pane-bar > .split-pane-hide { align-self: center; margin: 0 6px 0 4px; }
 .split-tab { position: relative; display: inline-flex; align-items: center; gap: 4px; max-width: 220px; flex: 0 0 auto; padding: 0 6px 0 10px; border-right: 1px solid var(--color-border-secondary); color: var(--color-text-tertiary); transition: background-color 120ms, color 120ms; }
 .split-tab:hover { color: var(--color-text-secondary); background: var(--color-bg-primary_hover); }
 .split-tab[data-active] { color: var(--color-text-primary); background: var(--color-bg-primary); }

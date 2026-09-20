@@ -83,7 +83,7 @@ export function Working({ live, plans, compact, delegated, recovery }: { live: L
         );
     }
     return (
-        <Panel title={phaseLabel} badge={<span className="flex items-center gap-1 text-xs text-tertiary"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{fmtSeconds(elapsed, locale)}</span>}>
+        <Panel variant="section" title={phaseLabel} badge={<span className="flex items-center gap-1 text-xs text-tertiary"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{fmtSeconds(elapsed, locale)}</span>}>
             <div className="flex min-w-0 flex-col gap-3">
                 {!recovery && phase === "waking" && <StageLine stage={latest?.stage} />}
                 {steps.length > 0 && (
@@ -155,7 +155,7 @@ export function InjectedPanel({ at, in: x }: { at: string; in: Injected }) {
     const opts = Object.entries(x.options || {});
     const kb = number(x.instructions_bytes / 1024, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     return (
-        <Panel title={t("consoleChrome.injectedAt", { time: when(at, locale) })} badge={<span className="text-xs text-tertiary">{x.new_session ? t("console.newConversation") : t("consoleChrome.reusedSession")}</span>}>
+        <Panel variant="section" title={t("consoleChrome.injectedAt", { time: when(at, locale) })} badge={<span className="text-xs text-tertiary">{x.new_session ? t("console.newConversation") : t("consoleChrome.reusedSession")}</span>}>
             <KeyValue dense rows={[
                 { k: "Agent", v: <span>{x.agent} <span className="text-tertiary">· {x.harness}{x.node ? <> @ <Where node={x.node} /></> : null}</span></span> },
                 { k: t("console.project"), v: x.project ? <span>{x.project} <Mono className="text-tertiary">{x.workspace}</Mono></span> : <span className="text-quaternary">—</span> },

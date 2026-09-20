@@ -1,3 +1,4 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Loading01, X } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
@@ -79,7 +80,7 @@ function SideConversation({ session, onOpenMain, embedded }: { session: SideSess
         finally { void load(); }
     }
     return <section data-side-chat className="side-chat" role="region" aria-label={t("sideChat.region")}>
-        <header className="side-chat-header"><div className="min-w-0 flex-1">{!embedded && <h2 className="text-sm font-semibold">{t("sideChat.title")}</h2>}<p className="truncate text-xs text-tertiary" title={session.title}>{session.project} · {session.title}</p></div>{!embedded && <button type="button" className="workbench-icon-button" aria-label={t("sideChat.close")} onClick={side.close}><X aria-hidden="true" /></button>}</header>
+        <header className="side-chat-header"><div className="min-w-0 flex-1">{!embedded && <h2 className="text-sm font-semibold">{t("sideChat.title")}</h2>}<p className="truncate text-xs text-tertiary" title={session.title}>{session.project} · {session.title}</p></div>{!embedded && <IconButton label={t("sideChat.close")} onClick={side.close} icon={X} />}</header>
         <a href={`#/console?conversation=${encodeURIComponent(session.id)}`} className="mx-4 mb-2 self-start text-xs text-tertiary underline" onClick={() => { side.close(); onOpenMain?.(); }}>{t("sideChat.openMain")}</a>
         <div ref={transcript} className="side-chat-transcript" onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 48; }}>
             {session.excerpt && <details className="mb-3 rounded-lg bg-secondary p-3 text-xs"><summary className="cursor-pointer text-tertiary">{t("sideChat.source")}</summary><p className="mt-2 whitespace-pre-wrap break-words">{session.excerpt}</p></details>}

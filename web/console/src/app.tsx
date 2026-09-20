@@ -1,3 +1,4 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { CoordinationProvider, useCoordination } from "@/lib/coordination";
 import { DesktopOnboarding } from "@/components/steve/desktop-onboarding";
 import { SelectionProvider } from "@/providers/selection-provider";
@@ -109,7 +110,7 @@ function Shell() {
             <div className="app-sidebar-tools">
                 <a href="#/settings?section=general" className="app-settings-link" aria-label={t("settingsPage.centerTitle")} title={small ? t("settingsPage.centerTitle") : undefined} aria-current={location.pathname === "/settings" ? "page" : undefined} onClick={() => setMobileNav(false)}><Settings01 aria-hidden="true" />{!small && <span>{t("settingsPage.centerTitle")}</span>}</a>
                 {!small && <span className="app-version" title={nodeLabelIn(snap.nodes, snap.hub.node)}>{snap.hub.version || "—"}</span>}
-                {desktop && <button type="button" className="workbench-icon-button app-collapse" aria-label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }}><ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" /></button>}
+                {desktop && <IconButton size={small ? "lg" : "sm"} className="app-collapse" label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }} icon={<ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" />} />}
             </div>
         </div>
     </>;
@@ -119,8 +120,8 @@ function Shell() {
             {navigation(compact)}
             {!compact && <PaneResizer width={navWidth} onChange={setNavWidth} min={NAV_MIN} max={NAV_MAX} initial={NAV_WIDTH} label={t("nav.resize")} />}
         </aside>}
-        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
-        {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("nav.close")} onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
+        {!tablet && <div className="app-mobile-bar"><IconButton label={t("nav.menu")} onClick={() => setMobileNav(true)} icon={Menu01} /><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
+        {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><IconButton className="sheet-close" label={t("nav.close")} onClick={() => setMobileNav(false)} icon={X} /><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
             <LazyRegion resetKey={location.pathname + location.search} onClose={() => navigate("/console")}><Routes>
                 <Route path="/" element={<Navigate to="/console" replace />} />

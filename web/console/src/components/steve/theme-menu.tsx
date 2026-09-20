@@ -1,7 +1,7 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { Palette } from "@untitledui/icons";
 
 import { Dropdown } from "@/components/base/dropdown/dropdown";
-import { Button as AriaButton } from "react-aria-components";
 import { useI18n } from "@/providers/locale-provider";
 import { PALETTES, paletteOf, type ThemeId } from "@/lib/themes";
 import { useTheme } from "@/providers/theme-provider";
@@ -21,9 +21,7 @@ export function ThemeMenu() {
     const current = paletteOf(theme)?.name ?? basics.find((b) => b.id === theme)?.label ?? "";
     return (
         <Dropdown.Root>
-            <AriaButton className="workbench-icon-button" aria-label={`${t("consoleChrome.theme")}: ${current}`}>
-                <Palette aria-hidden="true" />
-            </AriaButton>
+            <IconButton label={`${t("consoleChrome.theme")}: ${current}`} icon={Palette} />
             <Dropdown.Popover placement="bottom end" className="w-56">
                 <Dropdown.Menu aria-label={t("consoleChrome.theme")}>
                     <Dropdown.Section selectionMode="single" disallowEmptySelection selectedKeys={[theme]}

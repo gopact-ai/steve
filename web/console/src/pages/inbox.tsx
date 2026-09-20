@@ -7,7 +7,7 @@ import { useFleet, useIntent } from "@/lib/fleet";
 import { nodeLabelIn } from "@/lib/node-name";
 import { label, labelsFor } from "@/lib/labels";
 import { Md } from "@/components/steve/markdown";
-import { PageBody, PageHeader } from "@/components/steve/page";
+import { PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Nothing } from "@/components/steve/ui";
 import { unavailableSource } from "@/lib/source-health";
 import { ConflictsPanel } from "@/components/steve/conflicts";
@@ -35,13 +35,10 @@ export function InboxPage() {
             <PageBody>
             {unavailable && <div role="status" className="rounded-lg bg-secondary p-4 text-sm text-secondary">{tr("inbox.incomplete")}{unavailable.error}</div>}
             {(conflicts.length > 0 || conflictSource) && <ConflictsPanel conflicts={conflicts} nodes={snap.nodes} incomplete={conflictSource?.error} />}
-            {!unavailable && groups.length === 0 && conflicts.length === 0 && <div className="workbench-panel rounded-lg bg-primary ring-1 ring-secondary"><Nothing icon={Inbox01} title={tr("inbox.empty")}>{tr("inbox.emptyHint")}</Nothing></div>}
+            {!unavailable && groups.length === 0 && conflicts.length === 0 && <Panel padding="flush"><Nothing icon={Inbox01} title={tr("inbox.empty")}>{tr("inbox.emptyHint")}</Nothing></Panel>}
             {groups.map((g) => (
-                <section key={g.type} className="workbench-panel min-w-0 rounded-lg bg-primary ring-1 ring-secondary">
-                    <div className="flex items-center gap-2 border-b border-secondary px-5 py-3">
-                        <span className="text-sm font-semibold text-primary">{label(labelsFor(locale).requestType, g.type)}</span>
-                        <Badge type="pill-color" size="sm" color="warning">{g.items.length}</Badge>
-                    </div>
+                <Panel key={g.type} padding="flush" title={label(labelsFor(locale).requestType, g.type)}
+                    badge={<Badge type="pill-color" size="sm" color="warning">{g.items.length}</Badge>}>
                     <ul className="divide-y divide-secondary">
                         {g.items.map((r) => (
                             <li key={r.id} className="flex min-w-0 flex-col items-start gap-3 px-4 py-4 sm:flex-row">
@@ -64,7 +61,7 @@ export function InboxPage() {
                             </li>
                         ))}
                     </ul>
-                </section>
+                </Panel>
             ))}
             <p className="text-xs text-tertiary">{tr("inbox.otherChannels")}</p>
             </PageBody>

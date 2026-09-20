@@ -1,3 +1,4 @@
+import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Button } from "@/components/base/buttons/button";
@@ -151,7 +152,7 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
             </li>;
         })}</ul>}
         <details className="settings-advanced" onToggle={(event) => setAdvanced(event.currentTarget.open)}><summary>{t("settingsPage.identityDetails")} · {t("settingsPage.protocol")}</summary>{advanced && <ServiceDetails />}</details>
-        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirm(null); }}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.restartTitle", { service: machine(confirm) })}><div className="settings-dialog"><h2>{t("settingsPage.restartTitle", { service: machine(confirm) })}</h2><p>{t("settingsPage.restartConfirmHint")}</p><code>{confirm.name}</code><div className="settings-actions"><Button size="sm" color="secondary" onClick={() => setConfirm(null)}>{t("common.cancel")}</Button><Button size="sm" color="tertiary" onClick={() => start(confirm, "now")}>{t("settingsPage.confirmRestart")}</Button><Button size="sm" color="primary" onClick={() => start(confirm, "when-idle")}>{t("settingsPage.restartWhenIdle")}</Button></div></div></Dialog></Modal></ModalOverlay>}
+        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirm(null); }}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.restartTitle", { service: machine(confirm) })}><DialogSurface><DialogBody><DialogHeader title={t("settingsPage.restartTitle", { service: machine(confirm) })} description={t("settingsPage.restartConfirmHint")} /><code className="break-all text-xs text-secondary">{confirm.name}</code><DialogFooter><Button size="sm" color="secondary" onClick={() => setConfirm(null)}>{t("common.cancel")}</Button><Button size="sm" color="tertiary" onClick={() => start(confirm, "now")}>{t("settingsPage.confirmRestart")}</Button><Button size="sm" color="primary" onClick={() => start(confirm, "when-idle")}>{t("settingsPage.restartWhenIdle")}</Button></DialogFooter></DialogBody></DialogSurface></Dialog></Modal></ModalOverlay>}
     </section>;
 }
 

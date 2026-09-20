@@ -1,3 +1,4 @@
+import { DialogSurface, DialogBody } from "@/components/steve/dialog-surface";
 import { useEffect, useRef, useState } from "react";
 import { Radio, RadioGroup } from "react-aria-components";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
@@ -108,7 +109,7 @@ export function NodeAgentEnrollment({ node, name = node, onClose, onRegistered }
     }
     const registered = result?.agents?.length ? result.agents.join("、") : result?.agent_id || "";
     const radio = "group flex min-h-8 cursor-pointer items-center gap-2 rounded-md border border-secondary px-3 py-1.5 text-sm text-primary data-selected:border-brand data-selected:bg-secondary data-focus-visible:outline-2 data-focus-visible:outline-focus-ring";
-    return <ModalOverlay isOpen isDismissable={!busy} isKeyboardDismissDisabled={busy} onOpenChange={(open) => { if (!open && !busy) onClose(); }} className="z-[100] motion-reduce:animate-none motion-reduce:duration-0"><Modal className="max-w-xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("nodeAgents.title", { node: name })} className="block overflow-hidden rounded-xl bg-primary p-0 ring-1 ring-secondary"><div className="max-h-[min(800px,85dvh)] overflow-y-auto overscroll-contain p-5 sm:p-6" ref={form}>
+    return <ModalOverlay isOpen isDismissable={!busy} isKeyboardDismissDisabled={busy} onOpenChange={(open) => { if (!open && !busy) onClose(); }} className="z-[100] motion-reduce:animate-none motion-reduce:duration-0"><Modal className="max-w-xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("nodeAgents.title", { node: name })} className="block"><DialogSurface className="overflow-hidden"><DialogBody className="max-h-[min(800px,85dvh)] overflow-y-auto overscroll-contain block" ref={form}>
         <header className="mb-5 space-y-2"><h2 className="break-words text-md font-semibold text-primary">{t("nodeAgents.title", { node: name })}</h2><p className="text-sm leading-6 text-secondary">{t("nodeAgents.description")}</p><p className="text-xs leading-5 text-tertiary">{t("nodeAgents.presenceHint")}</p></header>
         {result ? <div className="space-y-3"><h3 role="status" className="text-base font-semibold text-primary">{t("nodeAgents.success")}</h3><p className="break-words text-sm leading-6 text-secondary">{t("nodeAgents.successHint", { agent: registered, node: name })}</p><Button size="md" onClick={onClose}>{t("nodeAgents.done")}</Button></div> : <div className="space-y-4">
             {loading && <p role="status" className="text-sm text-tertiary">{t("nodeAgents.loading")}</p>}
@@ -148,5 +149,5 @@ export function NodeAgentEnrollment({ node, name = node, onClose, onRegistered }
             {busy && <p role="status" className="text-sm text-tertiary">{t("nodeAgents.registering")}</p>}
             <div className="flex flex-wrap gap-2"><Button size="md" isLoading={busy} isDisabled={loading || !!readError} onClick={() => void register()}>{t(draft.pending ? "nodeAgents.retry" : "nodeAgents.register")}</Button><Button size="md" color="secondary" isDisabled={busy} onClick={() => { setLoading(true); void load(); }}>{t("nodeAgents.refresh")}</Button><Button size="md" color="tertiary" isDisabled={busy} onClick={onClose}>{t("nodeAgents.close")}</Button></div>
         </div>}
-    </div></Dialog></Modal></ModalOverlay>;
+    </DialogBody></DialogSurface></Dialog></Modal></ModalOverlay>;
 }

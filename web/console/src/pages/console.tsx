@@ -1,3 +1,4 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { useSideChat } from "@/providers/side-chat-provider";
 import { SideChatPanel } from "@/components/steve/side-chat";
 import { lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
@@ -561,7 +562,7 @@ function ConsoleWorkbench() {
                 onConfirm={() => armRewind(replacingDraft.reply, replacingDraft.text)} onClose={() => setReplacingDraft(null)} />}
             {importing && <div className="fixed bottom-4 right-4 z-50"><LazyRegion onClose={() => setImporting(false)}><NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} /></LazyRegion></div>}
             {view === "chat" && desktopSessions && !side.session && sessions()}
-            {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false, false)}</Sheet>}
+            {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><IconButton className="sheet-close" label={t("console.closeSessions")} onClick={() => setMobileSessions(false)} icon={X} />{sessions(false, false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
             <div className="console-main">
@@ -569,7 +570,7 @@ function ConsoleWorkbench() {
                     {t("console.hubUpdated")}<button type="button" className="underline" onClick={() => { if (window.confirm(t("console.reloadConfirm"))) window.location.reload(); }}>{t("console.reloadPage")}</button>
                 </div>}
                 {view === "chat" && <header className="console-toolbar">
-                    <button type="button" className="workbench-icon-button" aria-label={t("console.sessions")}  title={t("console.sessions")}  onClick={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(true)}><LayoutLeft aria-hidden="true" /></button>
+                    <IconButton label={t("console.sessions")} title={t("console.sessions")} onClick={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(true)} icon={LayoutLeft} />
                     <div className="console-heading">
                     <h1 title={title}>{title}</h1>
                     {context?.project && <div className="console-location" title={context.agent?.place ? placeLabel(context.agent.place, locale, nodeLabelOf) : context.project.path}>{context.project.id} · {context.agent?.place ? placeLabel(context.agent.place, locale, nodeLabelOf) : nodeLabelOf(context.project.node)}</div>}
@@ -586,8 +587,8 @@ function ConsoleWorkbench() {
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>{t("console.conversation")}</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>{t("console.board")}</button>
                     </span>
-                    {view === "chat" && split.tabs.length > 0 && <button type="button" className="workbench-icon-button" aria-label={split.hidden ? t("split.show", { count: split.tabs.length }) : t("split.hide")} aria-pressed={!split.hidden} title={split.hidden ? t("split.show", { count: split.tabs.length }) : t("split.hide")} onClick={() => split.setHidden(!split.hidden)}><Columns03 aria-hidden="true" /></button>}
-                    {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} aria-pressed={inspectorOpen} title={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} onClick={() => setInspectorOpen(!inspectorOpen)}><LayoutRight aria-hidden="true" /></button>}
+                    {view === "chat" && split.tabs.length > 0 && <IconButton label={split.hidden ? t("split.show", { count: split.tabs.length }) : t("split.hide")} aria-pressed={!split.hidden} title={split.hidden ? t("split.show", { count: split.tabs.length }) : t("split.hide")} onClick={() => split.setHidden(!split.hidden)} icon={Columns03} />}
+                    {view === "chat" && <IconButton className="inspector-toggle" label={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} aria-pressed={inspectorOpen} title={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} onClick={() => setInspectorOpen(!inspectorOpen)} icon={LayoutRight} />}
                 </header>}
 
                 {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><LazyRegion onClose={() => navigate("/console")}><BoardPage /></LazyRegion></div> : child && stepOf(child.id) ? (

@@ -1,3 +1,4 @@
+import { DialogSurface, DialogBody } from "@/components/steve/dialog-surface";
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { RemoteDirectoryPicker } from "@/components/steve/remote-directory-picker";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -173,8 +174,8 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
         onClose();
     }
     return <ModalOverlay isOpen isDismissable={!busy} isKeyboardDismissDisabled={!!busy} onOpenChange={(open) => { if (!open) close(); }} className="motion-reduce:animate-none motion-reduce:duration-0">
-        <Modal className="max-w-2xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("ssh.title")} className="block overflow-hidden rounded-xl bg-primary p-0 ring-1 ring-secondary">
-            <div ref={scrollArea} className="max-h-[min(840px,85dvh)] overflow-y-auto overscroll-contain p-5 sm:p-6">
+        <Modal className="max-w-2xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("ssh.title")} className="block"><DialogSurface className="overflow-hidden">
+            <DialogBody ref={scrollArea} className="max-h-[min(840px,85dvh)] overflow-y-auto overscroll-contain block">
                 <header className="mb-5 flex items-start gap-3"><div className="min-w-0 flex-1"><h1 ref={!check && !plan ? stageHeading : undefined} tabIndex={-1} className="text-md font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.title")}</h1><p className="mt-2 text-sm leading-6 text-tertiary">{t("ssh.description")}</p></div><Button size="sm" color="tertiary" iconLeading={X} aria-label={t("ssh.close")} isDisabled={!!busy} onClick={close} /></header>
                 {!check && !plan && <section className="space-y-4">
                     {loading && <p role="status" className="text-sm text-tertiary">{t("ssh.loading")}</p>}
@@ -246,7 +247,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                 {busy && busy !== "install" && <p role="status" className="mt-3 text-sm text-tertiary">{t(busy === "check" ? "ssh.checking" : busy === "abandon" ? "ssh.abandoning" : "ssh.planning")}</p>}
                 {enrolling && connected && result && <NodeAgentEnrollment node={result.node_id || result.name} name={result.name} onClose={() => setEnrolling(false)} onRegistered={onChanged} />}
                 {error && <p role="alert" className="mt-3 break-words text-sm text-error-primary">{error}</p>}
-            </div>
+            </DialogBody></DialogSurface>
         </Dialog></Modal>
     </ModalOverlay>;
 }

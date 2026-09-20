@@ -1,3 +1,4 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { Link } from "react-router";
 import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
@@ -264,9 +265,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
                         <span className="truncate u-title">{title}</span>
                     </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
-                    <button type="button" disabled={creating} onClick={() => onNew(p.id)} className="workbench-icon-button conversation-project-new" aria-label={tr("consoleChrome.newInProject", { project: p.id })} title={tr("consoleChrome.newInProject", { project: p.id })}>
-                        <Plus className="size-3.5" />
-                    </button>
+                    <IconButton isDisabled={creating} onClick={() => onNew(p.id)} className="conversation-project-new" label={tr("consoleChrome.newInProject", { project: p.id })} title={tr("consoleChrome.newInProject", { project: p.id })} icon={Plus} />
                 </div>
                 {open && (
                     <ul className="ml-4 flex flex-col gap-0.5 border-l border-secondary pl-2">
@@ -505,9 +504,7 @@ const Thread = memo(function Thread({ c, current, unseen, onPick, usualAgent, us
             )}
             {!renaming && (
                 <Dropdown.Root>
-                    <AriaButton aria-label={tr("consoleChrome.more")} className="workbench-icon-button conversation-more">
-                        <DotsHorizontal className="size-3.5" />
-                    </AriaButton>
+                    <IconButton label={tr("consoleChrome.more")} className="conversation-more" icon={DotsHorizontal} />
                     <Dropdown.Popover placement="bottom end" className="w-44">
                         <Dropdown.Menu onAction={(k) => { if (k === "rename") onRename(c.id); else if (k === "archive") onArchive(c.id, !c.archived); else if (k === "delete") setConfirming(true); }}>
                             <Dropdown.Item id="rename" label={tr("consoleChrome.rename")} icon={Edit05} />

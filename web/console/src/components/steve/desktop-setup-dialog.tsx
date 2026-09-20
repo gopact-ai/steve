@@ -1,3 +1,4 @@
+import { DialogSurface, DialogBody } from "@/components/steve/dialog-surface";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { Radio, RadioGroup } from "react-aria-components";
@@ -63,8 +64,8 @@ export function DesktopSetupDialog({ status, entry, onClose, onStatus }: { statu
     }
     const shared = { status, onStatus, busy, setBusy, onNext: () => (forward ? go(forward) : onClose()), onBack: back ? () => go(back) : undefined };
     return <ModalOverlay className="motion-reduce:animate-none motion-reduce:duration-0" isOpen isDismissable={!busy && !nested} isKeyboardDismissDisabled={busy || nested} onOpenChange={(open) => { if (!open && !busy && !nested) onClose(); }}>
-        <Modal className="max-w-xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("desktop.guide")} className="block overflow-hidden rounded-xl bg-primary p-0 ring-1 ring-secondary">
-            <div className="max-h-[min(760px,85dvh)] overflow-y-auto overscroll-contain p-5 sm:p-6">
+        <Modal className="max-w-xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("desktop.guide")} className="block"><DialogSurface className="overflow-hidden">
+            <DialogBody className="max-h-[min(760px,85dvh)] overflow-y-auto overscroll-contain block">
                 <header className="mb-5 space-y-3">
                     <div className="flex items-start justify-between gap-3">
                         <Monitor01 className="size-8 text-tertiary" aria-hidden="true" />
@@ -80,7 +81,7 @@ export function DesktopSetupDialog({ status, entry, onClose, onStatus }: { statu
                 {step === "machines" && <MachinesStep {...shared} nested={nested} setNested={setNested} />}
                 {step === "preferences" && <PreferencesStep {...shared} />}
                 {step === "finished" && <FinishedStep status={status} busy={busy} error={finishError} onBack={() => go("preferences")} onFinish={() => void finish()} />}
-            </div>
+            </DialogBody></DialogSurface>
         </Dialog></Modal>
     </ModalOverlay>;
 }

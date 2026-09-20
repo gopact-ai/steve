@@ -16,7 +16,7 @@ import { useNodeLabel } from "@/lib/node-name";
 import { describeHistory, familyOf, historyFamilies, type HistoryFamily, type HistoryLine, type HistoryTone } from "@/lib/history-lines";
 import type { HistoryEntry } from "@/lib/types";
 import type { Locale, MessageKey, Translator } from "@/lib/i18n";
-import { PageBody, PageHeader } from "@/components/steve/page";
+import { PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { RunningExecutions } from "@/components/steve/running-executions";
 import { usePaged } from "@/components/steve/table-paging";
 import { Mono, Nothing, StateBadge, Where, useStateWord } from "@/components/steve/ui";
@@ -120,8 +120,7 @@ export function DashboardPage() {
                 </div>
             )}
             {tab === "timeline" && (
-                <div className="workbench-panel min-w-0 rounded-lg bg-primary ring-1 ring-secondary">
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-secondary px-4 py-3">
+                <Panel padding="flush" toolbar={<>
                         <Input size="sm" aria-label={tr("history.filter")} icon={SearchSm} className="min-w-0 max-w-sm flex-1" placeholder={tr("history.searchPlaceholder")} value={filter} onChange={setFilter} />
                         <span className="shrink-0 text-xs tabular-nums text-tertiary">{tr("history.recordCount", { count: number(shown.length, locale) })}</span>
                         {families.length > 1 && (
@@ -130,7 +129,10 @@ export function DashboardPage() {
                                 {families.map((name) => <FamilyChip key={name} label={tr(familyWords[name])} count={counts.get(name) || 0} locale={locale} on={family === name} onPick={() => setFamily(family === name ? "" : name)} />)}
                             </div>
                         )}
-                    </div>
+                    </>} footer={<>
+                        {historyError && <p role="alert" className="mb-2 break-words text-sm text-error-primary">{historyError.message}</p>}
+                        <Button size="sm" color="link-gray" isLoading={loading} isDisabled={loading || (!next && !historyError)} onClick={() => void load(historyError?.cursor ?? next, historyError?.replace ?? !next)}>{historyError ? tr("common.retry") : next ? tr("history.loadEarlier") : tr("history.allLoaded")}</Button>
+                    </>}>
                     {shown.length === 0 ? <Nothing icon={BookOpen01} title={filter || family ? tr("history.noMatches") : loading ? tr("history.loading") : tr("history.empty")} /> : (
                         <ol className="divide-y divide-secondary">
                             {shown.map(({ entry, line }, i) => {
@@ -145,11 +147,7 @@ export function DashboardPage() {
                             })}
                         </ol>
                     )}
-                    <div className="border-t border-secondary px-5 py-2">
-                        {historyError && <p role="alert" className="mb-2 break-words text-sm text-error-primary">{historyError.message}</p>}
-                        <Button size="sm" color="link-gray" isLoading={loading} isDisabled={loading || (!next && !historyError)} onClick={() => void load(historyError?.cursor ?? next, historyError?.replace ?? !next)}>{historyError ? tr("common.retry") : next ? tr("history.loadEarlier") : tr("history.allLoaded")}</Button>
-                    </div>
-                </div>
+                </Panel>
             )}
             {tab === "audit" && (
                 <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-2">

@@ -148,9 +148,9 @@ function TaskDrawerContent({ detail, detailError, ownerRows, readChildren, chang
         finally { acting.current = false; setPending(false); }
     }
     return (
-        <Drawer width={width} title={<>
-                <span className="text-sm font-semibold text-primary">#{t.id}</span>
-                {meta.renaming ? <TaskTitleEditor t={t} pending={meta.pending} onDone={async (title) => { const saved = await meta.finishTitle(title); if (saved && title !== null) reload(); return saved; }} /> : <span className="min-w-0 break-words text-sm font-semibold text-primary">{t.title || t.goal}</span>}
+        <Drawer width={width} title={`#${t.id} ${t.title || t.goal}`}
+            titleEditor={meta.renaming ? <TaskTitleEditor t={t} pending={meta.pending} onDone={async (title) => { const saved = await meta.finishTitle(title); if (saved && title !== null) reload(); return saved; }} /> : undefined}
+            badges={<>
                 <StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(labelsFor(locale).status, t.lane)}</span>
                 {t.priority === "high" && <Badge type="pill-color" size="sm" color="warning">{tr("tasks.high")}</Badge>}
                 {t.archived_at && <Badge type="pill-color" size="sm" color="gray">{tr("tasks.archived")}</Badge>}

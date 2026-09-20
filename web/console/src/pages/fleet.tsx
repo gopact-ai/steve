@@ -1,3 +1,5 @@
+import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
+import { IconButton } from "@/components/steve/icon-button";
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
@@ -153,7 +155,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
     const modelItems = [{ id: "__none", label: tr("fleet.toolDefault") }, ...(a.models || []).map((m) => ({ id: m, label: m }))];
     if (spec.model && !(a.models || []).includes(spec.model)) modelItems.push({ id: spec.model, label: spec.model });
     return (
-        <Drawer title={<><span className="text-base font-semibold text-primary">{a.id}</span>
+        <Drawer title={a.id} badges={<>
                         {a.default && <Badge type="pill-color" size="sm" color="brand">{tr("common.default")}</Badge>}
                         <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<AgentTrouble a={a} onChanged={onChanged} />} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>{tr("fleet.assign")}</Button>
                 {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
@@ -261,14 +263,10 @@ function AddMachine({ machines, harnesses, executor, onClose, onDone }: { machin
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
                 <Dialog aria-label={mode === "machine" ? tr("fleet.addMachine") : tr("fleet.addAgent")}>
-                    <div className="flex max-h-[85dvh] w-full flex-col gap-4 overflow-y-auto overscroll-contain rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
-                        <div className="flex items-start gap-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-base font-semibold text-primary">{tr(mode === "machine" ? "fleet.addMachine" : "fleet.addAgent")}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? tr(executor ? "ssh.manualExecutorHint" : "fleet.addMachineHint") : tr("fleet.addAgentHint")}</div>
-                            </div>
-                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
-                        </div>
+                    <DialogSurface><DialogBody className="max-h-[85dvh] overflow-y-auto overscroll-contain">
+                        <DialogHeader title={tr(mode === "machine" ? "fleet.addMachine" : "fleet.addAgent")}
+                            description={mode === "machine" ? tr(executor ? "ssh.manualExecutorHint" : "fleet.addMachineHint") : tr("fleet.addAgentHint")}
+                            aside={<IconButton icon={X} onClick={onClose} label={tr("common.close")} />} />
                         {!result && !done && (
                             <Tabs selectedKey={mode} onSelectionChange={(k) => setMode(k as "machine" | "agent")}>
                                 <TabList type="button-border" size="sm" items={[{ id: "machine", label: tr("fleet.machine") }, { id: "agent", label: "Agent" }]}>{(item) => <Tab {...item} />}</TabList>
@@ -306,11 +304,11 @@ function AddMachine({ machines, harnesses, executor, onClose, onDone }: { machin
                         )}
                         {mode === "agent" && done && <div className="text-sm text-primary">{tr("fleet.agentAdded", { agent: agent.trim(), harness, node: machines.find((m) => m.id === (node || "__hub"))?.label || node })}</div>}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
-                        <div className="flex justify-end gap-2">
+                        <DialogFooter>
                             <Button size="sm" color="secondary" onClick={onClose}>{result || done ? tr("fleet.done") : tr("common.cancel")}</Button>
                             {!result && !done && <Button size="sm" color="primary" isLoading={busy} isDisabled={mode === "machine" ? !name.trim() || !addr.trim() : !agent.trim()} onClick={() => void submit()}>{mode === "machine" ? tr("fleet.registerMachine") : tr("fleet.registerAgent")}</Button>}
-                        </div>
-                    </div>
+                        </DialogFooter>
+                    </DialogBody></DialogSurface>
                 </Dialog>
             </Modal>
         </ModalOverlay>
@@ -391,9 +389,9 @@ function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: No
         try { await removeNode(n.name); onChanged(); onClose(); } catch (e) { setRemoveError(String(e).replace(/^Error: /, "")); setRemoving(false); }
     }
     return (
-        <Drawer title={<><span className="text-base font-semibold text-primary">{nodeLabel(n)}</span>
+        <Drawer title={nodeLabel(n)} badges={<>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</Badge>
-                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div className="mt-0.5"><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{n.role !== "hub" && n.up && n.version && hubVersion && n.version !== hubVersion && <Button size="sm" color="secondary" onClick={() => onUpgrade(n)}>{tr("fleet.upgradeTo", { version: hubVersion })}</Button>}{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
+                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="text-error-primary">{n.last_error}</div>}</>} actions={<>{n.role !== "hub" && n.up && n.version && hubVersion && n.version !== hubVersion && <Button size="sm" color="secondary" onClick={() => onUpgrade(n)}>{tr("fleet.upgradeTo", { version: hubVersion })}</Button>}{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
                 {renaming ? (
                     <form className="flex flex-col gap-2 rounded-lg border border-secondary p-3" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
                         <Input label={tr("fleet.displayName")} hint={tr("fleet.displayNameHint")} value={nameDraft} onChange={setNameDraft} maxLength={64} isDisabled={nameBusy} autoFocus />

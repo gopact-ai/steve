@@ -176,8 +176,8 @@ function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeplo
     const nodeLabelOf = useNodeLabel();
     const [removing, setRemoving] = useState(false);
     return (
-        <Drawer width={640} title={<><span className="text-base font-semibold text-primary">{d.name}</span><Badge type="modern" size="sm" color="gray">{typeWord(d.type, tr)}</Badge><State d={d} /></>}
-            subtitle={<><div className="mt-0.5 text-xs text-tertiary">{tr("mcp.onMachine", { node: nodeLabelOf(d.node) })}</div></>}
+        <Drawer width={640} title={d.name} badges={<><Badge type="modern" size="sm" color="gray">{typeWord(d.type, tr)}</Badge><State d={d} /></>}
+            subtitle={tr("mcp.onMachine", { node: nodeLabelOf(d.node) })}
             actions={<><Button size="sm" color="secondary" iconLeading={RefreshCw01} isLoading={busy === "probe:" + d.node + d.name} isDisabled={busy !== ""} onClick={onProbe}>{tr("mcp.probe")}</Button></>} onClose={onClose}>
             <KeyValue dense rows={[
                 { k: tr("mcp.endpoint"), v: <Mono className="break-all">{d.command ? [d.command, ...(d.args || [])].join(" ") : d.url || "—"}</Mono> },

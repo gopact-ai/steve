@@ -1,3 +1,4 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, GitBranch01, MessageChatSquare, X } from "@untitledui/icons";
 import { useI18n } from "@/providers/locale-provider";
@@ -134,7 +135,7 @@ export function SplitPane({ tabs, active, label, onFocus, onClose, onHide, rende
                         </span>;
                     })}
                 </div>
-                <button type="button" className="workbench-icon-button shrink-0" aria-label={t("split.hide")} title={t("split.hide")} onClick={onHide}><ChevronRight aria-hidden="true" /></button>
+                <IconButton className="split-pane-hide shrink-0" label={t("split.hide")} title={t("split.hide")} onClick={onHide} icon={ChevronRight} />
             </div>
             <div key={current.id} id={`split-panel-${current.id}`} role="tabpanel" aria-labelledby={`split-tab-${current.id}`} className="split-pane-body">{render(current)}</div>
         </aside>

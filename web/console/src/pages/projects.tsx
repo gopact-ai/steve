@@ -1,8 +1,9 @@
+import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import { labelsFor } from "@/lib/labels";
 import { DotsHorizontal, Folder, GitBranch01, Loading01, Plus, Trash01, X } from "@untitledui/icons";
-import { Button as AriaButton } from "react-aria-components";
+import { IconButton } from "@/components/steve/icon-button";
 import { useNavigate } from "react-router";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -24,7 +25,7 @@ import { ConfirmDialog } from "@/components/steve/confirm";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { projectDirName, WorkspaceDirectoryField, WorkspaceDirectoryPreview } from "@/components/steve/workspace-directory";
 import { CodeBlock } from "@/components/steve/code-block";
-import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
+import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
 
 
@@ -110,9 +111,7 @@ export function ProjectsPage() {
                                             <div className="flex items-center justify-end gap-1">
                                                 <Button size="sm" color="link-color" onClick={() => newSession(p.id)}>{tr("projects.newConversation")}</Button>
                                                 <Dropdown.Root>
-                                                    <AriaButton aria-label={tr("projects.menu", { project: p.id })} className="workbench-icon-button">
-                                                        <DotsHorizontal className="size-3.5" />
-                                                    </AriaButton>
+                                                    <IconButton label={tr("projects.menu", { project: p.id })} icon={DotsHorizontal} />
                                                     <Dropdown.Popover placement="bottom end" className="w-44">
                                                         <Dropdown.Menu onAction={(k) => { if (k === "delete") void ask(p); }}>
                                                             <Dropdown.Item id="delete" label={tr("projects.removeProject")} icon={Trash01} isDisabled={!!p.default} />
@@ -129,13 +128,15 @@ export function ProjectsPage() {
                 )}
             </TableCard.Root>
             {home && (
-                <div className="workbench-panel flex min-w-0 flex-wrap items-center gap-4 rounded-lg bg-primary px-5 py-4 ring-1 ring-secondary">
+                <Panel>
+                <div className="flex min-w-0 flex-wrap items-center gap-4">
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">{tr("projects.personal")}</span><Mono className="text-quaternary">{home.id}</Mono><Badge type="modern" size="sm" color="gray">{levelName(home.level, locale)}</Badge></div>
                         <div className="mt-0.5 break-words text-xs text-tertiary">{tr("projects.personalHint")}<Mono>{home.path}</Mono></div>
                     </div>
                     <Button size="sm" color="link-color" onClick={() => newSession(home.id)}>{tr("projects.newConversation")}</Button>
                 </div>
+                </Panel>
             )}
             {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} onRemove={() => void ask(current)} />}
             {removing && <ConfirmDialog title={tr("projects.removeTitle", { project: removing.id })} confirmLabel={tr("projects.removeProject")}
@@ -255,7 +256,7 @@ function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onC
     const grants = snap.facts.grants.filter((g) => g.project === p.id);
     const stepAgents = snap.agents.filter((a) => a.eligible && (p.repo === "isolated" || a.node === p.node)).map((a) => a.id);
     return (
-        <Drawer width={600} label={p.id} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>{tr("projects.primaryOnly", { node: nodeLabelOf(p.node) })}</> : <>{tr("projects.workspaceSummary", { count: p.workspaces.length, node: nodeLabelOf(p.node), copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => nodeLabelOf(w.node)).join(", ") })}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
+        <Drawer width={600} title={p.id} badges={<>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={p.workspaces.length === 1 ? tr("projects.primaryOnly", { node: nodeLabelOf(p.node) }) : tr("projects.workspaceSummary", { count: p.workspaces.length, node: nodeLabelOf(p.node), copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => nodeLabelOf(w.node)).join(", ") })} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
                 <DrawerSection title={tr("projects.workspaces")} aside={<Button size="sm" color="link-color" iconLeading={Plus} onClick={() => setAddingWorkspace(true)}>{tr("projects.addCopy")}</Button>}>
                     {addingWorkspace && <AddWorkspace p={p} onClose={() => setAddingWorkspace(false)} onDone={() => refresh()} />}
                     <ProjectTopology p={p} />
@@ -319,14 +320,10 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
                 <Dialog aria-label={tr("projects.addWorkspaceFor", { project: p.id })}>
-                    <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
-                        <div className="flex items-start gap-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-base font-semibold text-primary">{tr("projects.addWorkspaceFor", { project: p.id })}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{tr("projects.primaryHint", { node: home ? nodeLabelIn(snap.nodes, home.node) : "—" })}</div>
-                            </div>
-                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
-                        </div>
+                    <DialogSurface><DialogBody>
+                        <DialogHeader title={tr("projects.addWorkspaceFor", { project: p.id })}
+                            description={tr("projects.primaryHint", { node: home ? nodeLabelIn(snap.nodes, home.node) : "—" })}
+                            aside={<IconButton icon={X} onClick={onClose} label={tr("common.close")} />} />
                         {machines.length === 0 ? <div className="text-sm text-tertiary">{tr("projects.allMachinesHaveWorkspace")}</div> : (
                             <div className="grid grid-cols-1 gap-4">
                                 <Select size="sm" label={tr("projects.machine")} selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
@@ -341,11 +338,11 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
                             </div>
                         )}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
-                        <div className="flex justify-end gap-2">
+                        <DialogFooter>
                             <Button size="sm" color="secondary" onClick={onClose}>{tr("common.cancel")}</Button>
                             {machines.length > 0 && <Button size="sm" color="primary" isLoading={busy} isDisabled={origin === "clone" && !remote} onClick={() => void submit()}>{origin === "clone" ? tr("projects.startClone") : tr("projects.addWorkspace")}</Button>}
-                        </div>
-                    </div>
+                        </DialogFooter>
+                    </DialogBody></DialogSurface>
                 </Dialog>
             </Modal>
         </ModalOverlay>
@@ -375,14 +372,9 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
                 <Dialog aria-label={tr("projects.add")}>
-                    <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
-                        <div className="flex items-start gap-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-base font-semibold text-primary">{tr("projects.add")}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{tr("projects.addHint")}</div>
-                            </div>
-                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
-                        </div>
+                    <DialogSurface><DialogBody>
+                        <DialogHeader title={tr("projects.add")} description={tr("projects.addHint")}
+                            aside={<IconButton icon={X} onClick={onClose} label={tr("common.close")} />} />
                         {done ? <div className="text-sm text-primary">{tr("projects.added", { project: id.trim() })}</div> : (
                             <div className="grid grid-cols-1 gap-4">
                                 <Input size="sm" label={tr("projects.name")} placeholder="my-service" value={id} onChange={setID} autoFocus hint={tr("projects.nameHint")} />
@@ -397,11 +389,11 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
                             </div>
                         )}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
-                        <div className="flex justify-end gap-2">
+                        <DialogFooter>
                             <Button size="sm" color="secondary" onClick={onClose}>{done ? tr("projects.done") : tr("common.cancel")}</Button>
                             {!done && <Button size="sm" color="primary" isLoading={busy} isDisabled={!id.trim()} onClick={() => void submit()}>{tr("projects.add")}</Button>}
-                        </div>
-                    </div>
+                        </DialogFooter>
+                    </DialogBody></DialogSurface>
                 </Dialog>
             </Modal>
         </ModalOverlay>

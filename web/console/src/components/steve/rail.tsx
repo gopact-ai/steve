@@ -1,3 +1,4 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { Link } from "react-router";
 import { memo, useEffect, useState, useSyncExternalStore } from "react";
 import { GitBranch01, MessageChatSquare, X } from "@untitledui/icons";
@@ -49,7 +50,7 @@ export const Rail = memo(function Rail({ conversation, context, live, plans, rep
     const elsewhere = context?.agents.filter((a) => !a.usable) ?? [];
     return (
         <aside className="workbench-inspector" aria-label={t("console.details")} >
-            <div className="inspector-heading"><strong>{t("console.details")}</strong><button type="button" className="workbench-icon-button" aria-label={t("console.closeDetails")}  onClick={onClose}><X aria-hidden="true" /></button></div>
+            <div className="inspector-heading"><strong>{t("console.details")}</strong><IconButton label={t("console.closeDetails")} onClick={onClose} icon={X} /></div>
             <div className="inspector-tabs">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as RailTab)}>
                     <TabList type="button-border" size="sm" items={[{ id: "context", label: t("console.conversation") }, { id: "trace", label: t("console.trace") }, { id: "graph", label: t("console.graph") }, { id: "artifacts", label: t("console.artifacts") }, ...(support.material_refs ? [{ id: "materials", label: t("materials.shelf"), badge: materials.length || undefined }] : [])]}>{(item) => <Tab {...item} />}</TabList>
@@ -58,7 +59,7 @@ export const Rail = memo(function Rail({ conversation, context, live, plans, rep
             <div className="inspector-body">
                 {tab === "context" && context && (
                     <>
-                        <Panel title={t("console.project")}  badge={context.project && !context.project.bound ? <Badge type="pill-color" size="sm" color="gray">{t("console.unbound")}</Badge> : undefined}>
+                        <Panel variant="section" title={t("console.project")}  badge={context.project && !context.project.bound ? <Badge type="pill-color" size="sm" color="gray">{t("console.unbound")}</Badge> : undefined}>
                             {context.project ? (
                                 <KeyValue dense rows={[
                                     { k: t("console.name"), v: <span className="font-medium">{context.project.id}</span> },
@@ -71,7 +72,7 @@ export const Rail = memo(function Rail({ conversation, context, live, plans, rep
                             ) : <span className="text-sm text-quaternary">{t("console.noProject")}</span>}
 
                         </Panel>
-                        <Panel title={t("console.currentAgent")} >
+                        <Panel variant="section" title={t("console.currentAgent")} >
                             {context.agent ? (
                                 <KeyValue dense rows={[
                                     { k: t("console.name"), v: <span className="font-medium">{context.agent.id}</span> },
@@ -82,7 +83,7 @@ export const Rail = memo(function Rail({ conversation, context, live, plans, rep
                                 ]} />
                             ) : <span className="text-sm text-quaternary">{t("console.noAgent")}</span>}
                         </Panel>
-                        <Panel title={t("console.usableAgents")} >
+                        <Panel variant="section" title={t("console.usableAgents")} >
                             <div className="flex flex-col gap-2 text-sm">
                                 <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node ? nodeLabelOf(a.node) : ""} · ${a.harness}` }))} empty={<span className="text-error-primary">{t("console.noUsableAgents")}</span>} />
                                 {elsewhere.length > 0 && (
@@ -100,7 +101,7 @@ export const Rail = memo(function Rail({ conversation, context, live, plans, rep
                         <>
                             {reply.injected && <InjectedPanel at={reply.at} in={reply.injected} />}
                             {reply.process && (
-                                <Panel title={`${t("console.trace")} · ${when(reply.at, locale)}`}>
+                                <Panel variant="section" title={`${t("console.trace")} · ${when(reply.at, locale)}`}>
                                     <ProcessBody process={reply.process} />
                                 </Panel>
                             )}
@@ -112,7 +113,7 @@ export const Rail = memo(function Rail({ conversation, context, live, plans, rep
                 {tab === "graph" && <p className="py-2 text-xs text-tertiary">{t("workHistory.coverage", { count: snap.task_coverage.recent_closed })} <Link className="rounded underline outline-focus-ring focus-visible:outline-2" to={`/console?view=board&tab=all&history_conversation=${encodeURIComponent(conversation)}`}>{t("workHistory.history")}</Link></p>}
                 {tab === "graph" && (
                     roots.length ? (
-                        <Panel title={t("console.workingFor")}  badge={<span className="text-xs text-tertiary">{t("console.treeHint")}</span>}>
+                        <Panel variant="section" title={t("console.workingFor")}  badge={<span className="text-xs text-tertiary">{t("console.treeHint")}</span>}>
                             <CallGraph roots={roots} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
                         </Panel>
                     ) : <Nothing icon={GitBranch01} title={t("console.noTasks")} >{t("console.noTasksHint")}</Nothing>

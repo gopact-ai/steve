@@ -227,7 +227,7 @@ export function SkillsPage() {
                     </Panel>
                 </div>
                 {opened && (
-                    <Drawer width={640} title={<><span className="text-base font-semibold text-primary">{opened.name}</span><Badge type="modern" size="sm" color="gray">SKILL.md</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary"><Mono>{opened.path}</Mono></div></>} onClose={() => setOpened(null)}>
+                    <Drawer width={640} title={opened.name} badges={<Badge type="modern" size="sm" color="gray">SKILL.md</Badge>} subtitle={<Mono>{opened.path}</Mono>} onClose={() => setOpened(null)}>
                     <SkillBody content={opened.content} />
                 </Drawer>
                 )}

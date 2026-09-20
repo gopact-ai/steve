@@ -4,6 +4,7 @@ import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { GitBranch01 } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
+import { Panel } from "@/components/steve/page";
 import { conflictFile, resolveAllConflicts, resolveConflictByHand, resolveConflictWithAgent } from "@/lib/api/projects";
 import { relative, short } from "@/lib/format";
 import { nodeLabelIn } from "@/lib/node-name";
@@ -62,20 +63,16 @@ export function ConflictsPanel({ conflicts, nodes, incomplete }: { conflicts: Co
         } catch (e) { setNote(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
     return (
-        <section className="workbench-panel min-w-0 rounded-lg bg-primary ring-1 ring-secondary" aria-label={t("conflicts.title")}>
-            <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-secondary px-5 py-3">
-                <span className="text-sm font-semibold text-primary">{t("conflicts.title")}</span>
-                {conflicts.length > 0 && <Badge type="pill-color" size="sm" color="warning">{conflicts.length}</Badge>}
-                <span className="min-w-0 flex-1 truncate text-xs text-tertiary">{t("conflicts.description")}</span>
-                {resolvable > 0 && <Button size="sm" color="secondary" isDisabled={busy} onClick={handAll}>{t("conflicts.resolveAll")}</Button>}
-            </div>
+        <Panel padding="flush" label={t("conflicts.title")} title={t("conflicts.title")} description={t("conflicts.description")}
+            badge={conflicts.length > 0 ? <Badge type="pill-color" size="sm" color="warning">{conflicts.length}</Badge> : undefined}
+            aside={resolvable > 0 ? <Button size="sm" color="secondary" isDisabled={busy} onClick={handAll}>{t("conflicts.resolveAll")}</Button> : undefined}>
             {note && <p role="status" className="border-b border-secondary px-5 py-2 text-xs text-tertiary">{note}</p>}
             {incomplete && <p role="status" className="border-b border-secondary px-5 py-2 text-xs text-warning-primary">{t("conflicts.incomplete")}{incomplete}</p>}
             {conflicts.length === 0
                 ? <Nothing icon={GitBranch01} title={t("conflicts.none")}>{t("conflicts.noneHint")}</Nothing>
                 : <ul className="divide-y divide-secondary">{conflicts.map((c) => <ConflictRow key={c.artifact} conflict={c} nodes={nodes} locale={locale} onEdit={() => setEditing(c)} />)}</ul>}
             {editing && <ConflictEditor conflict={editing} onClose={() => setEditing(null)} />}
-        </section>
+        </Panel>
     );
 }
 

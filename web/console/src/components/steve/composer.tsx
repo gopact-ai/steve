@@ -1,3 +1,5 @@
+import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/steve/icon-button";
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
 import { memo, useState, type RefObject } from "react";
@@ -126,9 +128,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                 />
                 <div className="composer-controls"><div className="composer-options">
                     <Dropdown.Root>
-                        <AriaButton aria-label={t("consoleChrome.verbs")} className="workbench-icon-button">
-                            <Plus className="size-4" />
-                        </AriaButton>
+                        <IconButton label={t("consoleChrome.verbs")} icon={Plus} />
                         <Dropdown.Popover placement="top start" className="w-80">
                             <Dropdown.Menu onAction={(k) => p.onVerb(String(k))}>
                                 <Dropdown.Section>
@@ -226,15 +226,15 @@ function QueuedLine({ q, p }: { q: Queued; p: ComposerProps }) {
                 <CornerDownRight className="size-3.5 shrink-0 text-fg-quaternary" />
                 {editing ? <>
                     <textarea aria-label={t("consoleChrome.editQueued")} value={draft} onChange={(e) => setDraft(e.target.value)} disabled={saving} className="min-w-0 flex-1 rounded bg-primary px-2 py-1 text-primary" />
-                    <button type="button" disabled={saving || !draft.trim()} onClick={() => void save()} className="text-xs text-tertiary">{t("common.save")}</button>
-                    <button type="button" disabled={saving} onClick={() => { setEditing(false); setError(""); }} className="text-xs text-tertiary">{t("common.cancel")}</button>
+                    <Button size="xs" color="link-gray" isDisabled={saving || !draft.trim()} onClick={() => void save()}>{t("common.save")}</Button>
+                    <Button size="xs" color="link-gray" isDisabled={saving} onClick={() => { setEditing(false); setError(""); }}>{t("common.cancel")}</Button>
                 </> : <>
                     <span className="min-w-0 flex-1 truncate text-primary" title={q.input}>{q.input}</span>
                     {!!q.quotes?.length && <span className="text-xs text-quaternary">{t("consoleChrome.quotes", { count: number(q.quotes.length, locale) })}</span>}
-                    <button type="button" onClick={() => p.onSteer?.(q)} className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-tertiary hover:bg-primary hover:text-primary" title={t("consoleChrome.steerHint")}>{t("consoleChrome.steer")}</button>
-                    <button type="button" onClick={() => p.onDropQueued?.(q)} className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary" aria-label={t("common.delete")} title={t("common.delete")}><Trash01 className="size-3.5" /></button>
+                    <Button size="xs" color="tertiary" onClick={() => p.onSteer?.(q)} title={t("consoleChrome.steerHint")}>{t("consoleChrome.steer")}</Button>
+                    <IconButton size="xs" label={t("common.delete")} icon={Trash01} onClick={() => p.onDropQueued?.(q)} title={t("common.delete")} />
                     <Dropdown.Root>
-                        <AriaButton aria-label={t("consoleChrome.more")} className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-quaternary outline-none hover:bg-primary"><DotsHorizontal className="size-3.5" /></AriaButton>
+                        <IconButton size="xs" label={t("consoleChrome.more")} icon={DotsHorizontal} />
                         <Dropdown.Popover placement="top end" className="w-44">
                             <Dropdown.Menu onAction={(k) => {
                                 if (k === "edit") { setDraft(q.input); setEditing(true); }
