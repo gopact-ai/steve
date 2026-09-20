@@ -1055,8 +1055,9 @@ checks["mcp-tool-details"] = async (f) => {
     await summary.click();
     await noHorizontalOverflow(f.page);
     await f.page.getByRole("row").filter({ hasText: "example-service" }).click();
-    const drawer = f.page.getByRole("dialog", { name: "详细信息", exact: true });
+    const drawer = f.page.getByRole("dialog", { name: "example-service", exact: true });
     await drawer.waitFor();
+    assert.equal(await drawer.getByRole("heading", { name: "example-service", exact: true, level: 2 }).count(), 1, "Entity drawers expose their actual name as a heading");
     await drawer.locator("summary").filter({ hasText: externalName }).click();
     assert.equal(await drawer.getByRole("paragraph").filter({ hasText: description }).isVisible(), true, "Installed tools must also expose the full description beyond the preview");
     await drawer.getByText("输入参数", { exact: true }).waitFor();
