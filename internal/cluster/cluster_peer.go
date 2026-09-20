@@ -511,7 +511,7 @@ func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 		p.serveDesktopLocal(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/console/") && r.URL.Path != "/state" && r.URL.Path != "/events" && r.URL.Path != "/history" && !strings.HasPrefix(r.URL.Path, "/bootstrap/") && !strings.HasPrefix(r.URL.Path, "/dist/") {
+	if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/console/") && r.URL.Path != "/state" && r.URL.Path != "/usage" && r.URL.Path != "/events" && r.URL.Path != "/history" && !strings.HasPrefix(r.URL.Path, "/bootstrap/") && !strings.HasPrefix(r.URL.Path, "/dist/") {
 		p.staticPage(w, r)
 		return
 	}
