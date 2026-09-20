@@ -97,7 +97,7 @@ function ConsoleWorkbench() {
     const [conversationsError, setConversationsError] = useState("");
     // Stopping a turn is an act on that turn: the control and its receipt
     // stay in the ledger, the transcript stays what was said and answered.
-    const transcript = entries.filter((r) => !r.silent).map((r) => withDelegations(r, delegations));
+    const transcript = useMemo(() => entries.filter((r) => !r.silent).map((r) => withDelegations(r, delegations)), [entries, delegations]);
     const [context, setContext] = useState<ConversationContext | null>(null);
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [pick, setPick] = useState(0);
@@ -429,22 +429,26 @@ function ConsoleWorkbench() {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
     }
 
-    const lastWithProcess = [...entries].reverse().find((r) => r.kind === "reply" && (r.process || r.injected));
-    const shownProcess = (selectedReply ? transcript.find((r) => r.id === selectedReply.id) : undefined) ?? (lastWithProcess ? withDelegations(lastWithProcess, delegations) : null);
-    const recordedSteps = new Set(entries.flatMap((r) => r.process?.steps?.map((s) => s.id) || []));
-    const unrecordedChildren = Object.values(delegations).map(({ step }) => step).filter((s) => !recordedSteps.has(s.id));
+    const shownProcess = useMemo(() => {
+        const selected = selectedReply ? transcript.find((r) => r.id === selectedReply.id) : undefined;
+        const last = entries.findLast((r) => r.kind === "reply" && (r.process || r.injected));
+        return selected ?? (last ? withDelegations(last, delegations) : null);
+    }, [transcript, selectedReply, entries, delegations]);
+    const unrecordedChildren = useMemo(() => {
+        const recordedSteps = new Set(entries.flatMap((r) => r.process?.steps?.map((s) => s.id) || []));
+        return Object.values(delegations).map(({ step }) => step).filter((s) => !recordedSteps.has(s.id));
+    }, [entries, delegations]);
     // Children the replies have not recorded yet still belong where they
     // started: this turn's inside the line in flight, older ones back
     // among the replies they were handed over from.
-    const { current: turnChildren, earlier: earlierChildren } = childrenOfTurn(unrecordedChildren, live?.since);
+    const { current: turnChildren, earlier: earlierChildren } = useMemo(() => childrenOfTurn(unrecordedChildren, live?.since), [unrecordedChildren, live?.since]);
     // How much of the thread a send would take back, counted from what is
     // drawn: the lines under the message being edited.
     const rewindView = useMemo(() => {
         if (!rewind) return undefined;
         const at = transcript.findIndex((r) => r.id === rewind.reply);
         return { following: at < 0 ? 0 : transcript.length - at - 1 };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [rewind, entries, delegations]);
+    }, [rewind, transcript]);
     const current = conversations.find((c) => c.id === conversation);
     const title = current?.title || (entries.find((r) => r.kind === "sent" && r.input?.trim() && !r.input.trim().startsWith("/"))?.input?.split("\n")[0]) || t("console.newConversation");
     useEffect(() => { materials.setTarget(context?.project ? { conversation, project: context.project.id, title } : null); }, [conversation, context?.project?.id, title, materials.setTarget]);
@@ -525,6 +529,13 @@ function ConsoleWorkbench() {
     const loadSelectors = useEventCallback(() => fetchSelectors(conversation, context!.agent!.id));
     const prefer = useEventCallback(async (patch: Record<string, string>) => { if (!context?.agent) return; const running = !!live; const result = await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(t(result.live ? "console.preferenceLive" : running ? "console.preferenceNextTurn" : "console.preferenceSaved")); loadContext(); } });
 
+    // Draft edits and streamed fragments do not change retained history.
+    // Keep its element tree stable; the live turn below owns its own updates.
+    const history = useMemo(() => streamWithChildren(transcript, earlierChildren).map(({ reply: r, child }, i) => child
+        ? <DelegationCard key={child.id} id={child.id} info={child} progress={child} />
+        : r!.kind === "sent" ? <UserMessage key={r!.id || i} r={r!} onEdit={editSent} /> : <AssistantMessage key={r!.id || i} r={r!} selected={shownProcess?.id === r!.id} onSelect={selectReply} onQuote={quoteReply} />),
+    [transcript, earlierChildren, editSent, shownProcess?.id, selectReply, quoteReply]);
+
     const sessions = (collapsed = sessionsCollapsed, resizable = true) => <SessionsTree resizable={resizable} list={listed} projects={snap.projects} current={conversation} onPick={pickConversation} onNew={openNewSession} creating={creating} onImport={openImport}
                 onUpdate={patchConversation}
                 onDelete={dropConversation}
@@ -598,9 +609,7 @@ function ConsoleWorkbench() {
                                 </div>
                             )}
                             <div className="transcript-messages">
-                                {streamWithChildren(transcript, earlierChildren).map(({ reply: r, child }, i) => child
-                                    ? <DelegationCard key={child.id} id={child.id} info={child} progress={child} />
-                                    : r!.kind === "sent" ? <UserMessage key={r!.id || i} r={r!} onEdit={editSent} /> : <AssistantMessage key={r!.id || i} r={r!} selected={shownProcess?.id === r!.id} onSelect={selectReply} onQuote={quoteReply} />)}
+                                {history}
                                 {live && <Working live={live} plans={runningPlans} compact delegated={turnChildren} recovery={recoveryState} />}
                             </div>
                         </div>

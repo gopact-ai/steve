@@ -14,6 +14,12 @@ const server = await createServer({
     plugins: [{ name: "streaming-render-measurements", enforce: "pre", transform(source, id) {
         if (id.endsWith("/components/steve/markdown.tsx")) return source.replace('const raw = String(file.value);', 'const raw = String(file.value); globalThis.__markdownParses ??= {}; globalThis.__markdownParses[raw] = (globalThis.__markdownParses[raw] || 0) + 1;');
         if (id.endsWith("/src/app.tsx")) return source.replace('function Shell() {', 'function Shell() { globalThis.__shellRenders = (globalThis.__shellRenders || 0) + 1;');
+        if (id.endsWith("/src/lib/delegations.ts")) {
+            const open = 'const out: { reply?: Reply; child?: StepProcess }[] = [];';
+            assert.ok(source.includes(open), "Transcript instrumentation must observe the real projection");
+            return source.replace('if (!children.length) return replies.map((reply) => ({ reply }));',
+                'globalThis.__historyProjections = (globalThis.__historyProjections || 0) + 1; if (!children.length) return replies.map((reply) => ({ reply }));');
+        }
         // The columns either side of the transcript show nothing that a
         // fragment of streamed text can change. Counting their renders is
         // how that stays true.
@@ -179,7 +185,7 @@ try {
     await f.emit({ kind: "console.sent", exchange_id: "stream-turn", text: "Streaming test" });
     await page.clock.runFor(500);
     await delay(100);
-    const before = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders }));
+    const before = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders, projections: window.__historyProjections }));
     assert.ok(Object.keys(before.parses).filter((text) => text.startsWith("Conversation A history")).length === 35, "Instrumentation must observe the actual Markdown parser");
     assert.ok(before.shell > 0, "Instrumentation must observe the actual shell renderer");
     const reads = f.stateReads;
@@ -192,7 +198,7 @@ try {
         await page.clock.runFor(300);
     }
     await delay(100);
-    const after = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders }));
+    const after = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders, projections: window.__historyProjections }));
     const historyParses = Object.entries(after.parses).filter(([text]) => text.startsWith("Conversation A history")).reduce((sum, [text, count]) => sum + count - (before.parses[text] || 0), 0);
     const measurements = { streamMilliseconds: Math.round(performance.now() - start), stateReads: f.stateReads - reads, historicalMarkdownParses: historyParses, shellRenders: after.shell - before.shell, composerRenders: after.composer - before.composer, sessionRenders: after.sessions - before.sessions };
     console.log(JSON.stringify(measurements));
@@ -203,6 +209,11 @@ try {
         assert.ok(before.composer > 0 && before.sessions > 0, "Instrumentation must observe the real composer and session list");
         assert.equal(measurements.composerRenders, 0, "Streaming text must not rerender the composer");
         assert.equal(measurements.sessionRenders, 0, "Streaming text must not rerender the session list");
+        assert.ok(before.projections > 0, "Instrumentation must observe the real historical transcript projection");
+        assert.equal(after.projections - before.projections, 0, "Streaming text must not traverse unchanged historical replies");
+        await page.locator(".cm-content").fill("Draft edits do not traverse retained history");
+        await page.clock.runFor(300);
+        assert.equal(await page.evaluate(() => window.__historyProjections), after.projections, "Typing must not traverse retained historical replies");
     }
     const intermediate = "I will inspect the configuration.";
     const thought = "Checking the selected workspace.";
