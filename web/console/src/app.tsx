@@ -3,10 +3,10 @@ import { DesktopOnboarding } from "@/components/steve/desktop-onboarding";
 import { SelectionProvider } from "@/providers/selection-provider";
 import { SideChatProvider } from "@/providers/side-chat-provider";
 import { CloseStackProvider } from "@/providers/close-stack";
-import { lazy, Suspense, useState } from "react";
+import { lazy, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { BarChartSquare02, BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
-import appIcon from "../../../desktop/macos/Assets/AppIcon.png";
+import appIcon from "@/assets/app-icon.png";
 import { Sheet } from "@/components/steve/drawer";
 import { PaneResizer } from "@/components/steve/pane-resizer";
 import { usePaneWidth } from "@/hooks/use-pane-width";
@@ -16,11 +16,9 @@ import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { ConsolePage } from "@/pages/console";
-import { InboxPage } from "@/pages/inbox";
-import { ProjectsPage } from "@/pages/projects";
-import { HomePage } from "@/pages/home";
 import { MaterialProvider } from "@/providers/material-provider";
 import { ReviewProvider } from "@/components/steve/review-context";
+import { LazyRegion } from "@/components/steve/lazy-region";
 
 // The menu is narrow by default and stays readable down to an icon-and-
 // label minimum; past that the compact rail is the better answer.
@@ -34,6 +32,9 @@ const DashboardPage = lazy(() => import("@/pages/dashboard").then((module) => ({
 const SkillsPage = lazy(() => import("@/pages/skills").then((module) => ({ default: module.SkillsPage })));
 const MCPPage = lazy(() => import("@/pages/mcp").then((module) => ({ default: module.MCPPage })));
 const SettingsPage = lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })));
+const InboxPage = lazy(() => import("@/pages/inbox").then((module) => ({ default: module.InboxPage })));
+const ProjectsPage = lazy(() => import("@/pages/projects").then((module) => ({ default: module.ProjectsPage })));
+const HomePage = lazy(() => import("@/pages/home").then((module) => ({ default: module.HomePage })));
 
 export function App() {
     const navigate = useNavigate();
@@ -44,6 +45,7 @@ function Shell() {
     const { snap, live } = useFleet();
     const { view: coordination, error: coordinationError } = useCoordination();
     const location = useLocation();
+    const navigate = useNavigate();
     const { locale, t } = useI18n();
     const desktop = useBreakpoint("xl");
     const tablet = useBreakpoint("sm");
@@ -120,7 +122,7 @@ function Shell() {
         {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
         {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("nav.close")} onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
-            <Suspense fallback={<div role="status" className="p-6 text-sm text-tertiary">{t("common.loading")}</div>}><Routes>
+            <LazyRegion resetKey={location.pathname + location.search} onClose={() => navigate("/console")}><Routes>
                 <Route path="/" element={<Navigate to="/console" replace />} />
                 <Route path="/console" element={<ConsolePage />} />
                 <Route path="/tasks" element={<Navigate to="/console?view=board" replace />} />
@@ -137,7 +139,7 @@ function Shell() {
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/history" element={<Navigate to="/dashboard?tab=timeline" replace />} />
                 <Route path="/activity" element={<Navigate to="/dashboard" replace />} />
-            </Routes></Suspense>
+            </Routes></LazyRegion>
         </main>
     </div>;
 }

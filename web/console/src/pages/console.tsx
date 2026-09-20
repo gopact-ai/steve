@@ -1,6 +1,6 @@
 import { useSideChat } from "@/providers/side-chat-provider";
 import { SideChatPanel } from "@/components/steve/side-chat";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
+import { lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Columns03, LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
@@ -12,19 +12,18 @@ import { Rail, type RailTab } from "@/components/steve/rail";
 import { ResizableInspector } from "@/components/steve/resizable-inspector";
 import { useReviewActive } from "@/components/steve/review-context";
 import { closeOrder, useCloseLayer } from "@/providers/close-stack";
-import { NativeSessionImport } from "@/components/steve/native-session-import";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { DelegationCard, DelegationPanel } from "@/components/steve/delegation";
 import { SplitPane, SplitPaneProvider, useSplitPane, type SplitTab } from "@/components/steve/split-pane";
 import { RAIL_WIDTH } from "@/components/steve/rail";
-import { BoardPage } from "./board";
 import { Working } from "@/components/steve/trace";
 import { conversationContextRevision } from "@/lib/conversation-context-revision";
 import { Nothing } from "@/components/steve/ui";
 import { enqueue, deleteConversation, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
 import { ConfirmDialog } from "@/components/steve/confirm";
+import { LazyRegion } from "@/components/steve/lazy-region";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -42,6 +41,9 @@ import type { MaterialRef } from "@/lib/types";
 import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { useNodeLabel } from "@/lib/node-name";
 import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess } from "@/lib/types";
+
+const BoardPage = lazy(() => import("./board").then((module) => ({ default: module.BoardPage })));
+const NativeSessionImport = lazy(() => import("@/components/steve/native-session-import").then((module) => ({ default: module.NativeSessionImport })));
 
 // ConsolePage composes the conversation controller, draft commands and the
 // three workbench columns. Public transcript/live state is shared with the
@@ -557,7 +559,7 @@ function ConsoleWorkbench() {
         <div className="console-workbench">
             {replacingDraft !== null && <ConfirmDialog title={t("console.replaceDraftTitle")} body={t("console.replaceDraftBody")} confirmLabel={t("console.replaceDraft")}
                 onConfirm={() => armRewind(replacingDraft.reply, replacingDraft.text)} onClose={() => setReplacingDraft(null)} />}
-            {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} />}
+            {importing && <div className="fixed bottom-4 right-4 z-50"><LazyRegion onClose={() => setImporting(false)}><NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} /></LazyRegion></div>}
             {view === "chat" && desktopSessions && !side.session && sessions()}
             {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false, false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
@@ -588,7 +590,7 @@ function ConsoleWorkbench() {
                     {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} aria-pressed={inspectorOpen} title={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} onClick={() => setInspectorOpen(!inspectorOpen)}><LayoutRight aria-hidden="true" /></button>}
                 </header>}
 
-                {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : child && stepOf(child.id) ? (
+                {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><LazyRegion onClose={() => navigate("/console")}><BoardPage /></LazyRegion></div> : child && stepOf(child.id) ? (
                 <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
                     <div className="mx-auto flex max-w-3xl flex-col gap-3">
                         <button type="button" onClick={() => setChild(null)} className="self-start text-xs text-tertiary hover:text-primary">{t("console.backConversation")}</button>
