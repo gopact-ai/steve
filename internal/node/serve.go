@@ -154,6 +154,7 @@ type Server struct {
 	launch *LaunchProbe
 	// broker binds this machine's MCP servers for sessions: in-process
 	// from node.json, or another process reached over its socket.
+	// Publication and reads are protected by settingsMu.
 	broker mcpBroker
 	// hub is the hub currently served. A second hub is refused: two hubs
 	// placing work on one machine would each believe they own its slots.
@@ -232,7 +233,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	s.settingsMu.Lock()
 	s.ctx = ctx
+	s.settingsMu.Unlock()
 	listener := s.conf().Listener
 	if listener == nil {
 		var err error

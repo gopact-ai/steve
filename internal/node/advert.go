@@ -88,7 +88,7 @@ func OwnSkills(maxAge time.Duration) []nodewire.OwnSkill {
 // snapshot observes this machine now, as the next revision.
 func (s *Server) snapshot() *ability.Snapshot {
 	o := Observe{Harnesses: s.conf().Harnesses, Tools: s.conf().Tools, MCP: s.conf().MCPServers, Declares: s.conf().Declares, Tags: s.conf().Capabilities, Launch: s.launch.Lookup, Skills: s.skillEntries(), SkillsKnown: true}
-	if rb, ok := s.broker.(remoteBroker); ok {
+	if rb, ok := s.currentBroker().(remoteBroker); ok {
 		// The servers are the broker's: what it lists is what there is,
 		// and the broker vouches for them, not a PATH lookup here.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -127,9 +127,10 @@ func (s *Server) admit(stream *nodewire.Stream) {
 	// server this machine does not have, or cannot start for a session,
 	// is a definite no.
 	var bindings []ability.Binding
+	broker := s.currentBroker()
 	for _, id := range req.Uses {
 		atom := "mcp:" + id
-		if s.broker == nil {
+		if broker == nil {
 			adm.Verdict, adm.Code = ability.False, ability.CodeAbsent
 			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeAbsent, Detail: "this node has no MCP servers"})
 			continue
@@ -137,7 +138,7 @@ func (s *Server) admit(stream *nodewire.Stream) {
 		if adm.Verdict != ability.True {
 			continue
 		}
-		d, err := s.broker.Bind(context.Background(), id, req.Attempt, req.Harness)
+		d, err := broker.Bind(context.Background(), id, req.Attempt, req.Harness)
 		switch {
 		case errors.Is(err, ErrNoSuchServer):
 			adm.Verdict, adm.Code = ability.False, ability.CodeAbsent

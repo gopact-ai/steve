@@ -174,6 +174,20 @@ func (b *Broker) SetServers(servers map[string]MCPSpec) {
 	b.mu.Unlock()
 }
 
+// SetWorkspaceRoot changes only the working directory of future launches.
+// Existing MCP processes and their bindings are not stopped or rewritten.
+func (b *Broker) SetWorkspaceRoot(root string) {
+	b.mu.Lock()
+	b.cfg.WorkspaceRoot = root
+	b.mu.Unlock()
+}
+
+func (b *Broker) workspaceRoot() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.cfg.WorkspaceRoot
+}
+
 func (b *Broker) server(id string) (MCPSpec, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -387,8 +401,8 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 	for k, v := range spec.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	if b.cfg.WorkspaceRoot != "" {
-		cmd.Dir = b.cfg.WorkspaceRoot
+	if root := b.workspaceRoot(); root != "" {
+		cmd.Dir = root
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

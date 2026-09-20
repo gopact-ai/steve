@@ -146,7 +146,7 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 		b.b.SetServers(next.MCPServers)
 	case nil:
 		if len(next.MCPServers) > 0 {
-			if err := s.startBroker(); err != nil {
+			if err := s.startBrokerLocked(); err != nil {
 				slog.Error(fmt.Sprintf("steve-node: %v", err))
 			}
 		}
@@ -158,6 +158,19 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 
 // startBroker starts the MCP broker the settings call for, if any.
 func (s *Server) startBroker() error {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	return s.startBrokerLocked()
+}
+
+func (s *Server) currentBroker() mcpBroker {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	return s.broker
+}
+
+// startBrokerLocked shares the publication boundary with configuration updates.
+func (s *Server) startBrokerLocked() error {
 	cfg := s.conf()
 	switch {
 	case cfg.MCPBroker != nil && cfg.MCPBroker.Socket != "":
@@ -381,6 +394,9 @@ func (s *Server) SetWorkspaceRoot(root string) error {
 	}
 	s.cfg.Store(&next)
 	slog.Info(fmt.Sprintf("steve-node: workspace directory is now %s", root), "workspace", root)
+	if broker, ok := s.broker.(localBroker); ok {
+		broker.b.SetWorkspaceRoot(root)
+	}
 	return writeErr
 }
 
