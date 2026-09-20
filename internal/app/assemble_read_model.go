@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -81,11 +82,11 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 		slog.Error(fmt.Sprintf("steve: skills could not be packed for nodes: %v", err))
 	}
 	live.After = func() error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		shipper.ShipAll(ctx)
-		return manager.Restart()
+		remoteErr := shipper.ShipAll(ctx)
+		// Links already changed under skills admission. Retire old hosts
+		// even when propagation is pending; neither error acknowledges apply.
+		localErr := manager.Restart()
+		return errors.Join(remoteErr, localErr)
 	}
 	// Machines coming and going are history, not just log lines.
 	nodes.SetObserver(func(s node.Status) {

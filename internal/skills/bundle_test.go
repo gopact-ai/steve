@@ -3,11 +3,41 @@ package skills
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestResolveRefsPreservesNamesAndInput(t *testing.T) {
+	root := t.TempDir()
+	original := bundleSkill(t, root, "alpha", "instructions")
+	link := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(original.Path, link); err != nil {
+		t.Fatal(err)
+	}
+	refs := []Ref{{Name: "selected-name", Path: link}}
+	before := slices.Clone(refs)
+	resolved, err := ResolveRefs(refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(original.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(refs, before) || len(resolved) != 1 || resolved[0] != (Ref{Name: "selected-name", Path: real}) {
+		t.Fatalf("refs = %v, resolved = %v", refs, resolved)
+	}
+	if err := os.RemoveAll(original.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveRefs(refs); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("broken root error = %v", err)
+	}
+}
 
 func bundleSkill(t *testing.T, root, name, body string) Ref {
 	t.Helper()

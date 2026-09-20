@@ -1,7 +1,9 @@
 package skills
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -14,7 +16,20 @@ type Live struct {
 	Dests []string
 	After func() error
 
-	mu sync.Mutex
+	mu      sync.Mutex
+	applied liveState
+	// Only committed removals awaiting a successful apply may be retried
+	// after their source record has disappeared.
+	pendingRemovals map[string]bool
+}
+
+// The bundle determines whether harnesses must rescan; both logical and
+// physical source paths determine whether their links need preparing.
+// An empty hash means no successful application has established a baseline.
+type liveState struct {
+	hash     string
+	refs     []Ref
+	resolved []Ref
 }
 
 // Setup opens the map, makes sure the user's own skills directory is
@@ -71,9 +86,9 @@ func (l *Live) AddSource(ctx context.Context, spec string) (Source, error) {
 	return l.Map.AddSource(ctx, spec)
 }
 
-// UpdateSources fetches every source again. The text of an enabled
-// skill may have changed, so what the machines hold is repacked and the
-// AI tools restart, whether or not the enabled set moved.
+// UpdateSources fetches every source again, preparing changed links and
+// restarting harnesses only when the enabled bundle changed or applying
+// it previously failed.
 func (l *Live) UpdateSources(ctx context.Context) ([]Source, error) {
 	if l == nil || l.Map == nil {
 		return nil, fmt.Errorf("skills map is not configured")
@@ -89,7 +104,35 @@ func (l *Live) UpdateSources(ctx context.Context) ([]Source, error) {
 
 // RemoveSource forgets a source; skills enabled from it go with it.
 func (l *Live) RemoveSource(slug string) error {
-	return l.mutate(func() error { return l.Map.RemoveSource(slug) })
+	return l.mutate(func() error {
+		if l.pendingRemovals[slug] {
+			l.Map.mu.Lock()
+			data, err := l.Map.readLocked()
+			l.Map.mu.Unlock()
+			if err != nil {
+				return err
+			}
+			// A source reinstalled under the same slug must be removed anew.
+			if !slices.ContainsFunc(data.Sources, func(s Source) bool { return s.Slug == slug }) {
+				return nil
+			}
+		}
+		err := l.Map.RemoveSource(slug)
+		var committed *committedWriteError
+		if err != nil && !errors.As(err, &committed) {
+			return err
+		}
+		if l.pendingRemovals == nil {
+			l.pendingRemovals = make(map[string]bool)
+		}
+		l.pendingRemovals[slug] = true
+		if err != nil {
+			// Rename already published the deletion. Preserve its durability
+			// error, but allow the missing source to reconcile on retry.
+			l.applied = liveState{}
+		}
+		return err
+	})
 }
 
 func (l *Live) Apply() error {
@@ -129,27 +172,55 @@ func (l *Live) mutate(op func() error) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	before := l.Map.Fingerprint()
 	if err := op(); err != nil {
 		return err
-	}
-	if l.Map.Fingerprint() == before {
-		return nil
 	}
 	return l.applyLocked()
 }
 
 func (l *Live) applyLocked() error {
+	desired, err := l.desiredLocked()
+	if err != nil {
+		return err
+	}
+	contentChanged := desired.hash != l.applied.hash
+	if !contentChanged && slices.Equal(desired.refs, l.applied.refs) && slices.Equal(desired.resolved, l.applied.resolved) {
+		l.pendingRemovals = nil
+		return nil
+	}
+	// Preparation and After can each fail after partial side effects. Do not
+	// call even the previous bundle applied until reconciliation succeeds.
+	l.applied = liveState{}
 	for _, dest := range l.Dests {
 		if err := l.Map.Materialize(dest); err != nil {
 			return err
 		}
 	}
-	if l.After == nil {
-		return nil
+	if contentChanged && l.After != nil {
+		if err := l.After(); err != nil {
+			return fmt.Errorf("apply skills: %w", err)
+		}
 	}
-	if err := l.After(); err != nil {
-		return fmt.Errorf("restart harnesses: %w", err)
-	}
+	// Startup prepares before After is wired. That preparation establishes
+	// the baseline too: wiring the callback alone is not a content change.
+	l.applied = desired
+	l.pendingRemovals = nil
 	return nil
+}
+
+func (l *Live) desiredLocked() (liveState, error) {
+	refs, err := l.Map.Enabled()
+	if err != nil {
+		return liveState{}, err
+	}
+	slices.SortFunc(refs, func(a, b Ref) int { return cmp.Compare(a.Name, b.Name) })
+	resolved, err := ResolveRefs(refs)
+	if err != nil {
+		return liveState{}, err
+	}
+	bundle, err := Pack(resolved)
+	if err != nil {
+		return liveState{}, fmt.Errorf("pack enabled skills: %w", err)
+	}
+	return liveState{hash: bundle.Hash, refs: refs, resolved: resolved}, nil
 }

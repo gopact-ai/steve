@@ -37,6 +37,21 @@ type Bundle struct {
 // mistake, not a skill.
 const MaxBundleBytes = 32 << 20
 
+// ResolveRefs returns a copy with each skill root resolved to its physical
+// directory. Installed sources expose roots through symlinks; resolve those
+// before Pack, which deliberately skips symlinks inside a skill.
+func ResolveRefs(refs []Ref) ([]Ref, error) {
+	resolved := make([]Ref, len(refs))
+	for i, ref := range refs {
+		path, err := filepath.EvalSymlinks(ref.Path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve skill %q: %w", ref.Name, err)
+		}
+		resolved[i] = Ref{Name: ref.Name, Path: path}
+	}
+	return resolved, nil
+}
+
 // Pack packs the skill directories into a bundle. Only regular files go
 // in; symlinks and special files are skipped. Headers carry no times,
 // owners or modes beyond the executable bit, so the bytes depend on the

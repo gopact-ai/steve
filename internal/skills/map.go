@@ -34,7 +34,21 @@ type Ref struct {
 type Map struct {
 	path string
 	mu   sync.Mutex
+	// Nil uses syncDir. The per-map hook permits faults at the post-rename
+	// durability boundary without changing other maps or global state.
+	syncDir func(string) error
 }
+
+// committedWriteError means rename published the new map, but directory sync
+// did not confirm crash durability. The visible change must not be rolled back
+// or treated as though the mutation never happened.
+type committedWriteError struct{ err error }
+
+func (e *committedWriteError) Error() string {
+	return fmt.Sprintf("skills map replaced but directory sync failed: %v", e.err)
+}
+
+func (e *committedWriteError) Unwrap() error { return e.err }
 
 func DefaultPath(stateDir string) string {
 	return filepath.Join(stateDir, "skills.json")
@@ -445,7 +459,14 @@ func (m *Map) writeLocked(data fileData) error {
 		os.Remove(name)
 		return err
 	}
-	return syncDir(dir)
+	sync := syncDir
+	if m.syncDir != nil {
+		sync = m.syncDir
+	}
+	if err := sync(dir); err != nil {
+		return &committedWriteError{err: err}
+	}
+	return nil
 }
 
 // syncDir flushes a directory entry after a rename so the replacement
