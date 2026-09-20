@@ -10,12 +10,12 @@ export type Live = "connecting" | "live" | "reconnecting" | "unauthorized";
 interface FleetState {
     snap: Snapshot;
     live: Live;
-    events: Event[];
     refresh: () => void;
     hubUpdated: boolean;
 }
 
 const FleetContext = createContext<FleetState | null>(null);
+const FleetEventsContext = createContext<Event[] | null>(null);
 const ConsoleFeedContext = createContext<ConsoleFeed | null>(null);
 
 // A streaming turn sends a fragment of text many times a second. Held in
@@ -154,15 +154,21 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         return () => { window.clearInterval(floor); source?.close(); feed.stop(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
     }, [load, refresh, feed]);
 
-    const value = useMemo(() => ({ snap, live, events, refresh, hubUpdated }), [snap, live, events, refresh, hubUpdated]);
+    const value = useMemo(() => ({ snap, live, refresh, hubUpdated }), [snap, live, refresh, hubUpdated]);
     const names = useNodeNames(snap.nodes);
-    return <FleetContext.Provider value={value}><NodeNamesContext.Provider value={names}><ConsoleFeedContext.Provider value={feed}>{children}</ConsoleFeedContext.Provider></NodeNamesContext.Provider></FleetContext.Provider>;
+    return <FleetContext.Provider value={value}><FleetEventsContext.Provider value={events}><NodeNamesContext.Provider value={names}><ConsoleFeedContext.Provider value={feed}>{children}</ConsoleFeedContext.Provider></NodeNamesContext.Provider></FleetEventsContext.Provider></FleetContext.Provider>;
 }
 
 export function useFleet(): FleetState {
     const ctx = useContext(FleetContext);
     if (!ctx) throw new Error("useFleet outside FleetProvider");
     return ctx;
+}
+
+export function useFleetEvents(): Event[] {
+    const events = useContext(FleetEventsContext);
+    if (!events) throw new Error("useFleetEvents outside FleetProvider");
+    return events;
 }
 
 // useConsoleEvents hands a component the console events that arrived since

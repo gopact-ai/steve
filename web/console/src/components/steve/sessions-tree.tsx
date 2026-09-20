@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { type DragEvent, type FC, memo, useEffect, useId, useRef, useState } from "react";
+import { type DragEvent, type FC, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, MessageQuestionCircle, Plus, Server01, SwitchVertical01, Trash01, Users01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -16,6 +16,8 @@ import { ConfirmDialog } from "./confirm";
 import { PaneResizer } from "./pane-resizer";
 import { usePaneWidth } from "@/hooks/use-pane-width";
 import { plain } from "@/lib/plain";
+import { indexSessionWork } from "@/lib/work-list-index";
+import { useEventCallback } from "@/hooks/use-event-callback";
 
 // The session list holds a project name, a thread title and the time
 // beside it; below the minimum the title has nothing left to show, and
@@ -163,12 +165,9 @@ function ordered(list: Conversation[], sort: Ordering, locale: Locale): Conversa
 // A bucket is one heading and the threads under it, for the arrangements
 // that do not follow the project tree.
 type Bucket = { key: string; label: string; icon: FC<{ className?: string }>; items: Conversation[] };
+const EMPTY_TASKS: Task[] = [];
 
-function notable(t: Task, all: Task[]): boolean {
-    return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
-}
-
-export const SessionsTree = memo(function SessionsTree({ list, projects, current, onPick, onNew, onImport, onUpdate, onDelete, collapsed, onToggle, creating, resizable, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onImport?: () => void; onUpdate: (id: string, patch: ConversationPatch) => void; onDelete: (id: string) => Promise<void>; collapsed?: boolean; onToggle?: () => void; creating?: boolean; resizable?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
+export const SessionsTree = memo(function SessionsTree({ list, projects, current, onPick, onNew, onImport, onUpdate, onDelete, collapsed, onToggle, creating, resizable, tasks = EMPTY_TASKS, onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onImport?: () => void; onUpdate: (id: string, patch: ConversationPatch) => void; onDelete: (id: string) => Promise<void>; collapsed?: boolean; onToggle?: () => void; creating?: boolean; resizable?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const [width, setWidth] = usePaneWidth("steve.sessions.width", SESSIONS_WIDTH, SESSIONS_MIN, SESSIONS_MAX);
@@ -183,16 +182,28 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     const [dragged, setDragged] = useState<string | null>(null);
     const [dropMark, setDropMark] = useState<{ id: string; after: boolean } | null>(null);
     const unseen = useUnseen(list, current);
+    const { rootsByConversation, childrenByParent } = useMemo(() => indexSessionWork(tasks), [tasks]);
+    const pickConversation = useEventCallback(onPick);
+    const renameConversation = useEventCallback((id: string, title: string | null) => {
+        setRenaming(null);
+        if (title !== null) onUpdate(id, { title });
+    });
+    const archiveConversation = useEventCallback((id: string, archived: boolean) => onUpdate(id, { archived }));
+    const deleteConversation = useEventCallback(onDelete);
+    const pickTask = useEventCallback((task: Task) => onTask?.(task));
     const sorted = (items: Conversation[]) => ordered(items, arrangement.sort, locale);
     // An archived thread stays under 已归档 even while it is open: moving
     // it back under its project would look like it had been unarchived.
     const archived = list.filter((c) => c.archived && matches(c));
     const live = list.filter((c) => !c.archived && matches(c));
+    const flatNorm = arrangement.group === "none" ? usual(live, locale, nodeLabelOf) : undefined;
     const archivedOpen = archived.some((c) => c.id === current);
     const byProject = new Map<string, Conversation[]>();
     for (const c of live) {
         const key = c.project || "";
-        byProject.set(key, [...(byProject.get(key) || []), c]);
+        const threads = byProject.get(key);
+        if (threads) threads.push(c);
+        else byProject.set(key, [c]);
     }
     const home = projects.find((p) => p.home);
     const work = arrangeProjects(projects.filter((p) => !p.home), projectOrder);
@@ -211,13 +222,15 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     };
     const known = new Set(projects.map((p) => p.id));
     const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
-    const workOf = (c: Conversation) => tasks.filter((t) => t.transport === "console" && t.channel === c.id && !t.parent && notable(t, tasks));
-    const row = (c: Conversation, norm?: { agent: string; place: string }, note?: string, grouped?: boolean) => (
-        <Thread key={c.id} c={c} current={c.id === current} unseen={unseen.has(c.id)} onPick={onPick} norm={norm} note={note} inMachine={grouped}
-            renaming={renaming === c.id} onRename={() => setRenaming(c.id)} onRenamed={(title) => { setRenaming(null); if (title !== null) onUpdate(c.id, { title }); }}
-            onArchive={(archived) => onUpdate(c.id, { archived })} onDelete={() => onDelete(c.id)}
-            work={workOf(c)} childrenOf={(id) => tasks.filter((t) => t.parent === id)} onTask={onTask} />
-    );
+    const childrenOf = useCallback((id: string) => childrenByParent.get(id) || EMPTY_TASKS, [childrenByParent]);
+    const row = (c: Conversation, norm?: { agent: string; place: string }, note?: string, grouped?: boolean) => {
+        const work = rootsByConversation.get(c.id) || EMPTY_TASKS;
+        return <Thread key={c.id} c={c} current={c.id === current} unseen={unseen.has(c.id)} onPick={pickConversation}
+            usualAgent={norm?.agent} usualPlace={norm?.place} note={note} inMachine={grouped}
+            renaming={renaming === c.id} onRename={setRenaming} onRenamed={renameConversation}
+            onArchive={archiveConversation} onDelete={deleteConversation}
+            work={work} childrenOf={work.length ? childrenOf : undefined} onTask={onTask ? pickTask : undefined} />;
+    };
     const node = (p: Project, title: string, hint?: string, sortable = false) => {
         const threads = sorted(byProject.get(p.id) || []);
         const norm = usual(threads, locale, nodeLabelOf);
@@ -274,7 +287,9 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
         const held = new Map<string, Conversation[]>();
         for (const c of live) {
             const key = by(c);
-            held.set(key, [...(held.get(key) || []), c]);
+            const threads = held.get(key);
+            if (threads) threads.push(c);
+            else held.set(key, [c]);
         }
         return [...held.entries()]
             .map(([key, items]) => ({
@@ -359,7 +374,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
                         )}
                     </>
                 ) : arrangement.group === "none" ? (
-                    <ul className="ml-2 flex flex-col gap-0.5">{sorted(live).map((c) => row(c, usual(live, locale, nodeLabelOf), c.project))}</ul>
+                    <ul className="ml-2 flex flex-col gap-0.5">{sorted(live).map((c) => row(c, flatNorm, c.project))}</ul>
                 ) : (
                     <ul className="flex flex-col gap-0.5">{buckets().map(bucketNode)}</ul>
                 )}
@@ -437,7 +452,7 @@ function ArrangeMenu({ value, onChange, arranged, onResetOrder }: { value: Arran
 // Thread is one conversation: its name, its agent, when it last spoke,
 // and — when the project is in more than one place, or the agent has
 // nowhere to work — where it runs. Its menu renames or puts it away.
-function Thread({ c, current, unseen, onPick, norm, note, inMachine, renaming, onRename, onRenamed, onArchive, onDelete, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; unseen?: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; note?: string; inMachine?: boolean; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; onDelete: () => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+const Thread = memo(function Thread({ c, current, unseen, onPick, usualAgent, usualPlace, note, inMachine, renaming, onRename, onRenamed, onArchive, onDelete, work = EMPTY_TASKS, childrenOf, onTask }: { c: Conversation; current: boolean; unseen?: boolean; onPick: (id: string) => void; usualAgent?: string; usualPlace?: string; note?: string; inMachine?: boolean; renaming: boolean; onRename: (id: string) => void; onRenamed: (id: string, title: string | null) => void; onArchive: (id: string, archived: boolean) => void; onDelete: (id: string) => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const [workOpen, setWorkOpen] = useState(false);
@@ -456,13 +471,13 @@ function Thread({ c, current, unseen, onPick, norm, note, inMachine, renaming, o
         // row no longer says by where it sits, so it says it itself.
         note || "",
         c.archived ? tr("console.archived") : "",
-        norm && c.agent && c.agent !== norm.agent ? c.agent : "",
-        norm && place && place !== norm.place ? shownPlace : "",
+        usualAgent !== undefined && c.agent && c.agent !== usualAgent ? c.agent : "",
+        usualPlace !== undefined && place && place !== usualPlace ? shownPlace : "",
     ].filter(Boolean);
     return (
         <li className="group/thread relative">
             {renaming ? (
-                <RenameBox initial={c.title} onDone={onRenamed} />
+                <RenameBox initial={c.title} onDone={(title) => onRenamed(c.id, title)} />
             ) : (
                 <div className="flex items-start">
                     {work.length > 0 ? <button type="button" onClick={() => setWorkOpen((open) => !open)}
@@ -494,7 +509,7 @@ function Thread({ c, current, unseen, onPick, norm, note, inMachine, renaming, o
                         <DotsHorizontal className="size-3.5" />
                     </AriaButton>
                     <Dropdown.Popover placement="bottom end" className="w-44">
-                        <Dropdown.Menu onAction={(k) => { if (k === "rename") onRename(); else if (k === "archive") onArchive(!c.archived); else if (k === "delete") setConfirming(true); }}>
+                        <Dropdown.Menu onAction={(k) => { if (k === "rename") onRename(c.id); else if (k === "archive") onArchive(c.id, !c.archived); else if (k === "delete") setConfirming(true); }}>
                             <Dropdown.Item id="rename" label={tr("consoleChrome.rename")} icon={Edit05} />
                             <Dropdown.Item id="archive" label={c.archived ? tr("console.unarchive") : tr("consoleChrome.archive")} icon={Archive} />
                             <Dropdown.Item id="delete" label={tr("common.delete")} icon={Trash01} />
@@ -505,10 +520,10 @@ function Thread({ c, current, unseen, onPick, norm, note, inMachine, renaming, o
             {work.length > 0 && <div id={workID} hidden={!workOpen}>{workOpen && <ThreadWork conversation={c.id} work={work} childrenOf={childrenOf} onTask={onTask} />}</div>}
             {confirming && <ConfirmDialog title={tr("consoleChrome.deleteTitle")} confirmLabel={tr("common.delete")}
                 body={tr("workHistory.deleteConversation", { title: c.title || tr("console.newConversation") })}
-                onConfirm={onDelete} onClose={() => setConfirming(false)} />}
+                onConfirm={() => onDelete(c.id)} onClose={() => setConfirming(false)} />}
         </li>
     );
-}
+});
 
 // Work is revealed from the conversation row, including its summary counts.
 function ThreadWork({ conversation, work, childrenOf, onTask }: { conversation: string; work: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {

@@ -11,7 +11,7 @@ import { Input } from "@/components/base/input/input";
 import { fetchHistory } from "@/lib/api/work";
 import { HTTPError, message } from "@/lib/http";
 import { bytes, dateTime, number, short, when } from "@/lib/format";
-import { useFleet } from "@/lib/fleet";
+import { useFleet, useFleetEvents } from "@/lib/fleet";
 import { useNodeLabel } from "@/lib/node-name";
 import { describeHistory, familyOf, historyFamilies, type HistoryFamily, type HistoryLine, type HistoryTone } from "@/lib/history-lines";
 import type { HistoryEntry } from "@/lib/types";
@@ -32,7 +32,8 @@ const tabs: DashboardTab[] = ["overview", "timeline", "audit"];
 // paged together by an opaque cursor, and the audit tab holds raw records.
 export function DashboardPage() {
     const { t: tr, locale } = useI18n();
-    const { snap, events } = useFleet();
+    const { snap } = useFleet();
+    const events = useFleetEvents();
     const nodeLabelOf = useNodeLabel();
     const stateWord = useStateWord();
     const [params, setParams] = useSearchParams();

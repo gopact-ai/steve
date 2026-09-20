@@ -1,5 +1,5 @@
 import { useI18n } from "@/providers/locale-provider";
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Navigate, useSearchParams } from "react-router";
 import { ClipboardCheck, Clock } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
@@ -10,7 +10,8 @@ import { Toggle } from "@/components/base/toggle/toggle";
 import { relative, when } from "@/lib/format";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, labelsFor } from "@/lib/labels";
-import type { Plan, Task } from "@/lib/types";
+import type { Activity, Plan, Task } from "@/lib/types";
+import { indexBoardWork } from "@/lib/work-list-index";
 import { PageHeader } from "@/components/steve/page";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "@/components/steve/task-meta-menu";
@@ -21,6 +22,7 @@ import { unavailableSource } from "@/lib/source-health";
 import { useUsage } from "@/hooks/use-usage";
 import { useWorkPage } from "@/hooks/use-work-page";
 import { fetchTasks } from "@/lib/api/work";
+import { useEventCallback } from "@/hooks/use-event-callback";
 
 type TabKey = "active" | "all" | "scheduled";
 
@@ -29,28 +31,25 @@ type TabKey = "active" | "all" | "scheduled";
 // cost". Cards are top-level tasks only; steps and subtasks unfold inside.
 export function BoardPage() {
     const { t: tr, locale } = useI18n();
-const lanes: { key: string; title: string; hint: string }[] = [
-    { key: "pending", title: tr("board.pending"), hint: tr("board.pendingHint") },
-    { key: "running", title: tr("status.running"), hint: tr("board.runningHint") },
-    { key: "needs_you", title: tr("board.attention"), hint: tr("board.attentionHint") },
-    { key: "unknown", title: tr("board.unknown"), hint: tr("board.unknownHint") },
-    { key: "ended", title: tr("workHistory.recent"), hint: tr("board.endedHint") },
-];
     const { snap } = useFleet();
+    const indexedWork = useMemo(() => indexBoardWork(snap.plans, snap.agents), [snap.plans, snap.agents]);
     const { fill } = useIntent();
     const [params, setParams] = useSearchParams();
     const selectedTab = params.get("tab");
     const tab: TabKey = selectedTab === "all" || selectedTab === "scheduled" ? selectedTab : "active";
     const setTab = (value: TabKey) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
+    const openHistory = useEventCallback(() => setTab("all"));
     const [selected, setSelected] = useState<string | null>(null);
     const movedToDashboard = selectedTab === "usage";
     const usage = useUsage(!movedToDashboard);
     const [showArchived, setShowArchived] = useState(false);
     const conversation = params.get("history_conversation") || "";
     const history = useWorkPage(`board:${conversation}:${showArchived}`, (cursor, signal) => fetchTasks({ ...(conversation ? { scope: "conversation", scope_id: conversation } as const : {}), archived: showArchived ? "all" : "hide" }, cursor, signal), tab === "all");
-    const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
-    const visibleIDs = new Set(visibleTasks.map((t) => t.id));
-    const roots = visibleTasks.filter((t) => !t.parent || !visibleIDs.has(t.parent));
+    const roots = useMemo(() => {
+        const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
+        const visibleIDs = new Set(visibleTasks.map((t) => t.id));
+        return visibleTasks.filter((t) => !t.parent || !visibleIDs.has(t.parent));
+    }, [snap.tasks, showArchived]);
     const running = roots.filter((t) => t.lane === "running").length;
     const needsYou = roots.filter((t) => t.lane === "needs_you").length;
     const activityUnavailable = !!unavailableSource(snap.sources, "ledger-live");
@@ -59,7 +58,6 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const usageSource = usage.response?.sources.find((source) => source.name === "ledger-usage");
     const usageUnavailable = !!usage.error || !usageSource?.wired || !!usageSource.error;
     const todayTokens = `${fmtTokens(todayUsage?.tokens.total || 0, locale)} tok`;
-    const setAside = roots.filter((t) => t.lane === "set_aside");
     const counts = snap.task_coverage;
     const taskSource = snap.sources.find((source) => source.name === "tasks");
     const taskUnavailable = !taskSource?.wired || !!taskSource.error || !!counts.missing?.length;
@@ -94,28 +92,7 @@ const lanes: { key: string; title: string; hint: string }[] = [
                 {(usage.error || usageSource?.error) && <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 text-sm text-error-primary"><span className="min-w-0 break-words">{tr("usage.unavailable", { error: usage.error || usageSource?.error || "" })}</span><Button size="sm" color="link-gray" isDisabled={usage.loading} onClick={usage.refresh}>{tr("common.retry")}</Button></div>}
                 {usageSource?.wired === false && <p role="status" className="mb-4 text-sm text-tertiary">{tr("usage.unwired")}</p>}
                 <p role={taskUnavailable ? "status" : undefined} className="mb-4 text-xs text-tertiary">{taskUnavailable ? tr("workHistory.unavailable", { error: taskSource?.error || tr("common.unknown") }) : tr("workHistory.coverage", { count: counts.recent_closed })}</p>
-                {tab === "active" && (
-                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-                        {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {
-                            const items = roots.filter((t) => t.lane === lane.key).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-                            const shown = lane.key === "ended" ? items.slice(0, 8) : items;
-                            return (
-                                <div key={lane.key} className="workbench-task-lane flex min-w-0 flex-col gap-2">
-                                    <div className="mb-1 flex items-center gap-2 px-1" title={lane.hint}>
-                                        <span className="text-sm font-semibold text-primary">{lane.title}</span>
-                                        <span className="text-xs text-quaternary">{items.length}</span>
-                                    </div>
-                                    {shown.map((t) => <Card key={t.id} t={t} plan={snap.plans.find((p) => p.task_id === t.id)} onOpen={() => setSelected(t.id)} selected={selected === t.id} />)}
-                                    {lane.key === "ended" && <Button size="sm" color="link-gray" onClick={() => setTab("all")}>{tr("workHistory.history")}</Button>}
-                                    {shown.length === 0 && <div className="rounded-lg bg-secondary/50 px-3 py-8 text-center text-xs text-tertiary">{tr("board.emptyLane")}</div>}
-                                </div>
-                            );
-                        })}
-                        {setAside.length > 0 && (
-                            <div className="col-span-full text-xs text-tertiary">{tr("board.pausedPrefix")}{setAside.map((t) => <button key={t.id} type="button" className="mx-1 rounded px-1 underline outline-focus-ring focus-visible:outline-2" onClick={() => setSelected(t.id)}>#{t.id}</button>)}</div>
-                        )}
-                    </div>
-                )}
+                {tab === "active" && <ActiveLanes roots={roots} work={indexedWork} selected={selected} onOpen={setSelected} onHistory={openHistory} />}
                 {tab === "all" && <>
                     {conversation && <p className="mb-2 text-sm text-secondary">{tr("workHistory.scope")}</p>}
                     <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -134,6 +111,42 @@ const lanes: { key: string; title: string; hint: string }[] = [
     );
 }
 
+const ActiveLanes = memo(function ActiveLanes({ roots, work, selected, onOpen, onHistory }: {
+    roots: Task[]; work: ReturnType<typeof indexBoardWork>; selected: string | null; onOpen: (id: string) => void; onHistory: () => void;
+}) {
+    const { t: tr } = useI18n();
+    const lanes = [
+        { key: "pending", title: tr("board.pending"), hint: tr("board.pendingHint") },
+        { key: "running", title: tr("status.running"), hint: tr("board.runningHint") },
+        { key: "needs_you", title: tr("board.attention"), hint: tr("board.attentionHint") },
+        { key: "unknown", title: tr("board.unknown"), hint: tr("board.unknownHint") },
+        { key: "ended", title: tr("workHistory.recent"), hint: tr("board.endedHint") },
+    ];
+    const setAside = roots.filter((t) => t.lane === "set_aside");
+    return (
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+            {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {
+                const items = roots.filter((t) => t.lane === lane.key).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+                const shown = lane.key === "ended" ? items.slice(0, 8) : items;
+                return (
+                    <div key={lane.key} className="workbench-task-lane flex min-w-0 flex-col gap-2">
+                        <div className="mb-1 flex items-center gap-2 px-1" title={lane.hint}>
+                            <span className="text-sm font-semibold text-primary">{lane.title}</span>
+                            <span className="text-xs text-quaternary">{items.length}</span>
+                        </div>
+                        {shown.map((t) => <Card key={t.id} t={t} plan={work.plansByTask.get(t.id)} now={work.activitiesByTask.get(t.id)} onOpen={() => onOpen(t.id)} selected={selected === t.id} />)}
+                        {lane.key === "ended" && <Button size="sm" color="link-gray" onClick={onHistory}>{tr("workHistory.history")}</Button>}
+                        {shown.length === 0 && <div className="rounded-lg bg-secondary/50 px-3 py-8 text-center text-xs text-tertiary">{tr("board.emptyLane")}</div>}
+                    </div>
+                );
+            })}
+            {setAside.length > 0 && (
+                <div className="col-span-full text-xs text-tertiary">{tr("board.pausedPrefix")}{setAside.map((t) => <button key={t.id} type="button" className="mx-1 rounded px-1 underline outline-focus-ring focus-visible:outline-2" onClick={() => onOpen(t.id)}>#{t.id}</button>)}</div>
+            )}
+        </div>
+    );
+});
+
 function Stat({ label: name, value, tone }: { label: string; value: number | string; tone: "blue" | "warning" | "gray" }) {
     return (
         <div className="flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums">
@@ -143,12 +156,10 @@ function Stat({ label: name, value, tone }: { label: string; value: number | str
     );
 }
 
-function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () => void; selected: boolean }) {
+function Card({ t, plan, now, onOpen, selected }: { t: Task; plan?: Plan; now?: Activity; onOpen: () => void; selected: boolean }) {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
     const meta = useTaskMeta(t);
     const closing = useTaskClose(t);
-    const now = snap.agents.flatMap((a) => a.activities || []).find((a) => a.task_id === t.id);
     const steps = plan?.steps || [];
     const done = steps.filter((s) => s.state === "done").length;
     return (

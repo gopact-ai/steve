@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useResourceRead } from "./use-resource-read";
 import { fetchUsage } from "@/lib/api/usage";
-import { useConsoleEvents, useFleet } from "@/lib/fleet";
+import { useConsoleEvents, useFleet, useFleetEvents } from "@/lib/fleet";
 import { message } from "@/lib/http";
 import type { Event, UsageResponse } from "@/lib/types";
 
@@ -16,7 +16,8 @@ function invalidatesUsage(event: Event): boolean {
 }
 
 export function useUsage(enabled = true) {
-    const { events, live } = useFleet();
+    const { live } = useFleet();
+    const events = useFleetEvents();
     const [response, setResponse] = useState<UsageResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(enabled);

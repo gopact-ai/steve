@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
-import { useFleet } from "@/lib/fleet";
+import { useFleet, useFleetEvents } from "@/lib/fleet";
 import { managementDependencyKey, managementEventAffects, type ManagementDomain } from "@/lib/management-refresh";
 
 export function useManagementRefresh(domain: ManagementDomain, load: () => Promise<void>) {
-    const { snap, events, live } = useFleet();
+    const { snap, live } = useFleet();
+    const events = useFleetEvents();
     const dependency = managementDependencyKey(domain, snap);
     const head = useRef(events[0]);
     const seen = useRef(new Set<string>());
