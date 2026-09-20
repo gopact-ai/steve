@@ -163,7 +163,11 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                             <ChevronDown className="size-3 text-fg-quaternary" />
                         </AriaButton>
                         <Dropdown.Popover placement="top end" className="w-96">
-                            <Dropdown.Menu onAction={(k) => { if (String(k) !== p.agent?.id) p.onAgent(String(k)); }}>
+                            <Dropdown.Menu onAction={(k) => { if (String(k) !== p.agent?.id) p.onAgent(String(k)); }}
+                                renderEmptyState={() => <div className="px-3 py-2">
+                                    <p className="text-sm text-secondary">{t("consoleChrome.noAgents")}</p>
+                                    <p className="mt-1 text-xs text-tertiary">{t("consoleChrome.noAgentsHint")}</p>
+                                </div>}>
                                 {(p.agents ?? []).map((a) => (
                                     <Dropdown.Item key={a.id} id={a.id} textValue={a.id} isDisabled={!a.usable}>
                                         <div className="flex min-w-0 flex-col">
