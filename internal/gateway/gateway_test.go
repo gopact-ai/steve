@@ -654,14 +654,14 @@ func TestGatewayHandleQuestionAction(t *testing.T) {
 	}
 }
 
-// The card reports progress, it does not stream. Growing assistant text is
-// not news; a tool or a plan step changing is.
-func TestCardRepaintsOnMilestonesNotOnText(t *testing.T) {
+// Every changed snapshot can repaint; the timer, not the kind of update,
+// coalesces streaming bursts.
+func TestCardRepaintsOnChangedProgress(t *testing.T) {
 	base := card.Turn{
 		Plan:  []card.Step{{Text: "one", Status: card.StepInProgress}},
 		Tools: []card.Tool{{ID: "t1", Status: card.ToolRunning}},
 	}
-	quiet := []struct {
+	news := []struct {
 		name string
 		next card.Progress
 	}{
@@ -677,19 +677,6 @@ func TestCardRepaintsOnMilestonesNotOnText(t *testing.T) {
 			Usage: card.Usage{ContextTokens: 9000},
 			Plan:  base.Plan, Tools: base.Tools,
 		}},
-	}
-	for _, tc := range quiet {
-		t.Run(tc.name, func(t *testing.T) {
-			if isMilestone(base, tc.next) {
-				t.Fatal("repainted the card for something the user would not act on")
-			}
-		})
-	}
-
-	news := []struct {
-		name string
-		next card.Progress
-	}{
 		{"plan step advanced", card.Progress{
 			Plan:  []card.Step{{Text: "one", Status: card.StepCompleted}},
 			Tools: base.Tools,
@@ -719,8 +706,7 @@ func TestCardRepaintsOnMilestonesNotOnText(t *testing.T) {
 	}
 }
 
-// Settings arrive once and then repeat on every snapshot; only the first is
-// news, or the card would repaint forever.
+// Repeated settings must not keep the card repainting.
 func TestKnownSettingsAreNotRepeatedNews(t *testing.T) {
 	settled := card.Turn{Settings: card.Settings{Harness: "codex", Model: "GPT 5.6 Sol"}}
 	if isMilestone(settled, card.Progress{Settings: settled.Settings}) {

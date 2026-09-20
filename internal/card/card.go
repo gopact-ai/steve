@@ -57,6 +57,7 @@ const (
 	maxToolDetail      = 240
 	maxToolIO          = 800
 	maxVisibleTools    = 6
+	maxVisibleFields   = 16
 	maxSummaryRunes    = 100
 	maxReasoningRunes  = 1000
 	maxReasoningLines  = 12
@@ -69,7 +70,6 @@ const (
 	maxChoices         = 4
 	maxChoiceLabel     = 40
 	maxQuestionRunes   = 400
-	headerIconToken    = "myai_colorful"
 	cardActionApproval = "tool_approval"
 	cardActionQuestion = "elicit_answer"
 	cardActionRecover  = "history_restore"
@@ -106,34 +106,77 @@ type Copy struct {
 	AllowOnce      string
 	Deny           string
 	Waking         string
+	Finishing      string
+	Saving         string
+	Partial        string
 	Stop           string
 	Retry          string
 }
 
+type renderOmissions struct {
+	tools   int
+	details bool
+}
+
 func Render(t Turn, copy Copy) []byte {
-	t = bound(t)
-	raw := mustJSON(build(t, copy))
+	t, omitted := bound(t)
+	raw := mustJSON(build(t, copy, omitted))
 	for len(raw) > MaxBytes {
-		if t.Answer != "" {
-			t.Answer = shrinkRunes(t.Answer, utf8.RuneCountInString(t.Answer)*3/4)
-		} else if len(t.Tools) > 1 {
+		// Execution detail must not crowd the answer or actionable controls out.
+		if len(t.Tools) > 0 {
 			t.Tools = t.Tools[1:]
+			omitted.tools++
+		} else if t.Reasoning != "" {
+			t.Reasoning = ""
+		} else if shrinkPlan(t.Plan) || shrinkFields(t.Fields) {
+			omitted.details = true
+		} else if t.Answer != "" {
+			t.Answer = shrinkRunes(t.Answer, utf8.RuneCountInString(t.Answer)*3/4)
 		} else if t.Error != "" {
 			t.Error = shrinkRunes(t.Error, utf8.RuneCountInString(t.Error)*3/4)
 		} else {
 			break
 		}
-		raw = mustJSON(build(t, copy))
+		raw = mustJSON(build(t, copy, omitted))
 	}
 	return raw
 }
 
-func bound(t Turn) Turn {
+func shrinkPlan(plan []Step) bool {
+	changed := false
+	for i := range plan {
+		if plan[i].Text != "" {
+			plan[i].Text = shrinkRunes(plan[i].Text, utf8.RuneCountInString(plan[i].Text)/2)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func shrinkFields(fields []Field) bool {
+	changed := false
+	for i := range fields {
+		if fields[i].Value != "" {
+			fields[i].Value = shrinkRunes(fields[i].Value, utf8.RuneCountInString(fields[i].Value)/2)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func bound(t Turn) (Turn, renderOmissions) {
+	omitted := renderOmissions{tools: max(0, len(t.Tools)-maxVisibleTools)}
+	t.Title = truncateRunes(t.Title, maxFieldValue)
 	t.Answer = truncateRunes(t.Answer, maxAnswerRunes)
 	t.Reasoning = visibleReasoning(t.Reasoning)
 	t.Error = truncateRunes(t.Error, maxErrorRunes)
-	t.Tools = boundTools(t.Tools)
+	t.Tools, omitted.details = boundTools(t.Tools)
 	t.Plan, t.PlanHidden = boundSteps(t.Plan)
+	if len(t.Fields) > maxVisibleFields {
+		t.Fields = t.Fields[:maxVisibleFields]
+		omitted.details = true
+	}
+	t.Fields = append([]Field(nil), t.Fields...)
 	for i := range t.Fields {
 		t.Fields[i].Label = truncateRunes(t.Fields[i].Label, maxFieldLabel)
 		t.Fields[i].Value = truncateRunes(t.Fields[i].Value, maxFieldValue)
@@ -142,18 +185,24 @@ func bound(t Turn) Turn {
 		t.UpdatedAt = t.StartedAt
 	}
 	if t.Approval != nil {
+		approval := *t.Approval
+		t.Approval = &approval
 		t.Approval.ToolName = truncateRunes(t.Approval.ToolName, maxToolName)
 		t.Approval.Reason = truncateRunes(t.Approval.Reason, maxApprovalReason)
 	}
 	t.Question = boundQuestion(t.Question)
-	return t
+	return t, omitted
 }
 
-func build(t Turn, copy Copy) map[string]any {
-	elements := make([]map[string]any, 0, 4)
+func build(t Turn, copy Copy, omitted renderOmissions) map[string]any {
+	elements := make([]map[string]any, 0, 8)
+	// Business headings (such as /status) are content, never a bot banner.
+	if title := strings.TrimSpace(t.Title); title != "" {
+		elements = append(elements, markdown("title", "**"+escapeText(title)+"**", "normal"))
+	}
 	elements = append(elements, fieldBlocks(t)...)
-	if plan := planBlock(t, copy); plan != nil {
-		elements = append(elements, plan)
+	if activity := activityLine(t, copy); activity != nil {
+		elements = append(elements, activity)
 	}
 	elements = append(elements, approvalBlocks(t, copy)...)
 	elements = append(elements, questionBlocks(t, copy)...)
@@ -163,11 +212,20 @@ func build(t Turn, copy Copy) map[string]any {
 	if t.Error != "" {
 		elements = append(elements, highlight("error", "red-50", "red-100", escape(t.Error)))
 	}
+	if plan := planBlock(t, copy); plan != nil {
+		elements = append(elements, plan)
+	}
+	if execution := executionPanel(t, copy, omitted.tools); execution != nil {
+		elements = append(elements, execution)
+	}
 	if control := controlRow(t, copy); control != nil {
 		elements = append(elements, control)
 	}
 	if row := recoverRow(t, copy); row != nil {
 		elements = append(elements, row)
+	}
+	if omitted.details {
+		elements = append(elements, greyText("omitted", firstNonEmpty(copy.Partial, "部分详情已省略"), "notation", 0))
 	}
 	elements = append(elements, footer(t, copy))
 	for i, el := range elements {
@@ -197,68 +255,60 @@ func build(t Turn, copy Copy) map[string]any {
 			"elements":           elements,
 		},
 	}
-	if h := header(t, copy); h != nil {
-		out["header"] = h
-	}
 	return out
 }
 
-// header carries the card's state as colour: a running turn is blue, one
-// waiting on a human is orange, a failed one red — scannable from the chat
-// list without reading a word. A completed plain answer drops the banner,
-// because a finished archive no longer has a state worth announcing; only
-// titled results (status reports) keep their green header.
-func header(t Turn, copy Copy) map[string]any {
-	title := strings.TrimSpace(t.Title)
-	if title == "" {
-		if t.Status == StatusCompleted {
-			return nil
+// statusLabel is shared by the body and metadata so state never depends on
+// a decorative header. Missing provider information is not invented.
+func statusLabel(t Turn, copy Copy) string {
+	if t.Status == StatusRunning {
+		if t.Approval != nil && t.Approval.RequestID != "" {
+			return firstNonEmpty(copy.Awaiting, "待授权")
 		}
-		title = copy.Title
-		if title == "" {
-			title = "Steve"
+		if t.Question != nil {
+			return firstNonEmpty(copy.QuestionTitle, "需要你确认")
 		}
-	}
-	label, template, tagColor := headerTone(t, copy)
-	h := map[string]any{
-		"title":    map[string]any{"tag": "plain_text", "content": title},
-		"template": template,
-		"icon":     map[string]any{"tag": "standard_icon", "token": headerIconToken},
-		"text_tag_list": []map[string]any{
-			{
-				"tag":   "text_tag",
-				"text":  map[string]any{"tag": "plain_text", "content": label},
-				"color": tagColor,
-			},
-		},
-	}
-	if sub := subtitle(t); sub != "" {
-		h["subtitle"] = map[string]any{"tag": "plain_text", "content": sub}
-	}
-	return h
-}
-
-func headerTone(t Turn, copy Copy) (label, template, tagColor string) {
-	if t.Approval != nil && t.Approval.RequestID != "" && t.Status == StatusRunning {
-		label = copy.Awaiting
-		if label == "" {
-			label = "待授权"
+		switch t.Phase {
+		case PhaseWaking:
+			return firstNonEmpty(copy.Waking, "Agent 正在唤醒")
+		case view.PhaseFinishing:
+			return firstNonEmpty(copy.Finishing, "正在整理结果")
+		case view.PhaseSaving:
+			return firstNonEmpty(copy.Saving, "正在保存结果")
 		}
-		return label, "orange", "orange"
-	}
-	if t.Status == StatusRunning && t.Phase == PhaseWaking && copy.Waking != "" {
-		return copy.Waking, "blue", "yellow"
 	}
 	switch t.Status {
 	case StatusCompleted:
-		return copy.Completed, "green", "green"
+		return firstNonEmpty(copy.Completed, "完成")
 	case StatusFailed:
-		return copy.Failed, "red", "red"
+		return firstNonEmpty(copy.Failed, "失败")
 	case StatusCancelled:
-		return copy.Cancelled, "grey", "neutral"
+		return firstNonEmpty(copy.Cancelled, "已取消")
 	default:
-		return copy.Running, "blue", "yellow"
+		return firstNonEmpty(copy.Running, "进行中")
 	}
+}
+
+func activityLine(t Turn, copy Copy) map[string]any {
+	if t.Status != StatusRunning {
+		return nil
+	}
+	label := statusLabel(t, copy)
+	if t.Approval == nil && t.Question == nil && (t.Phase == "" || t.Phase == PhaseRunning) {
+		for i := len(t.Tools) - 1; i >= 0; i-- {
+			if tool := t.Tools[i]; tool.Status == ToolRunning {
+				label += " · " + firstNonEmpty(tool.Name, tool.Kind, tool.ID)
+				return greyText("activity", label, "notation", 2)
+			}
+		}
+		for _, step := range t.Plan {
+			if step.Status == StepInProgress {
+				label += " · " + step.Text
+				break
+			}
+		}
+	}
+	return greyText("activity", label, "notation", 2)
 }
 
 func fieldBlocks(t Turn) []map[string]any {
@@ -428,16 +478,41 @@ func boundSteps(steps []Step) ([]Step, int) {
 	return out, hidden
 }
 
-func boundTools(tools []Tool) []Tool {
-	for i := range tools {
-		tools[i].Kind = truncateRunes(tools[i].Kind, maxToolName)
-		tools[i].Name = truncateRunes(tools[i].Name, maxToolDetail)
-		tools[i].Detail = truncateRunes(tools[i].Detail, maxToolDetail)
-		tools[i].Input = truncateRunes(tools[i].Input, maxToolIO)
-		tools[i].Output = truncateRunes(tools[i].Output, maxToolIO)
-		tools[i].Children = boundTools(tools[i].Children)
+// Limit both depth and total tools before rendering nested panels. Copy the
+// tree: progress snapshots remain owned by the caller and are compared later.
+func boundTools(tools []Tool) ([]Tool, bool) {
+	remaining, omitted := 12, false
+	out := boundToolTree(tools, 0, &remaining, &omitted)
+	return out, omitted
+}
+
+func boundToolTree(tools []Tool, depth int, remaining *int, omitted *bool) []Tool {
+	if depth > 2 || *remaining == 0 {
+		if len(tools) > 0 {
+			*omitted = true
+		}
+		return nil
 	}
-	return tools
+	if depth > 0 && len(tools) > maxVisibleTools {
+		*omitted = true
+	}
+	tools, _ = visibleTools(tools)
+	if len(tools) > *remaining {
+		tools = tools[len(tools)-*remaining:]
+		*omitted = true
+	}
+	*remaining -= len(tools) // reserve siblings before spending on children
+	out := make([]Tool, 0, len(tools))
+	for _, tool := range tools {
+		tool.Kind = truncateRunes(tool.Kind, maxToolName)
+		tool.Name = truncateRunes(tool.Name, maxToolDetail)
+		tool.Detail = truncateRunes(tool.Detail, maxToolDetail)
+		tool.Input = truncateRunes(tool.Input, maxToolIO)
+		tool.Output = truncateRunes(tool.Output, maxToolIO)
+		tool.Children = boundToolTree(tool.Children, depth+1, remaining, omitted)
+		out = append(out, tool)
+	}
+	return out
 }
 
 // planBlock draws the plan the agent said it is working to. It sits above the
@@ -499,16 +574,14 @@ func stepMark(status StepStatus) string {
 	}
 }
 
-func executionPanel(t Turn, copy Copy) map[string]any {
-	tools, hidden := visibleTools(t.Tools)
-	if len(tools) == 0 && t.Reasoning == "" && t.Status != StatusRunning {
+func executionPanel(t Turn, copy Copy, hidden int) map[string]any {
+	tools := t.Tools
+	if len(tools) == 0 && t.Reasoning == "" && hidden == 0 {
 		return nil
 	}
 	elements := make([]map[string]any, 0, len(tools)+3)
 	if t.Reasoning != "" {
 		elements = append(elements, greyText("think", t.Reasoning, "notation", maxReasoningLines))
-	} else if len(tools) == 0 {
-		elements = append(elements, markdown("", "<font color='grey'>"+escape(placeholder(t, copy))+"</font>", "notation"))
 	}
 	if hidden > 0 && copy.EarlierTools != "" {
 		elements = append(elements, markdown("", fmt.Sprintf("<font color='grey'>%d %s</font>", hidden, escape(copy.EarlierTools)), "notation"))
@@ -521,16 +594,6 @@ func executionPanel(t Turn, copy Copy) map[string]any {
 		title = "执行过程"
 	}
 	return collapsible("exec", "**"+escape(title)+"**", t.Status == StatusRunning, elements)
-}
-
-func placeholder(t Turn, copy Copy) string {
-	if t.Status == StatusRunning && t.Phase == PhaseWaking {
-		if copy.Waking != "" {
-			return copy.Waking
-		}
-		return "Agent 正在唤醒"
-	}
-	return copy.Running
 }
 
 func visibleReasoning(s string) string {
@@ -680,14 +743,11 @@ func collapsible(id, title string, expanded bool, elements []map[string]any) map
 		"direction":        "vertical",
 		"vertical_spacing": "8px",
 		"padding":          "12px 12px 12px 12px",
-		"background_color": "bg-white",
 		"expanded":         expanded,
-		"border":           map[string]any{"color": "blue-100", "corner_radius": "8px"},
 		"header": map[string]any{
-			"title":            map[string]any{"tag": "markdown", "content": title},
-			"background_color": "bg-white",
-			"vertical_align":   "center",
-			"padding":          "8px 8px 8px 8px",
+			"title":          map[string]any{"tag": "markdown", "content": title},
+			"vertical_align": "center",
+			"padding":        "8px 8px 8px 8px",
 			"icon": map[string]any{
 				"tag":   "standard_icon",
 				"token": "down-small-ccm_outlined",
@@ -755,15 +815,6 @@ func toolMark(status ToolStatus) string {
 
 func summary(t Turn, copy Copy) string {
 	return truncateRunes(footerText(t, copy), maxSummaryRunes)
-}
-
-func subtitle(t Turn) string {
-	for _, field := range t.Fields {
-		if field.IsMetric && field.Value != "" {
-			return field.Value
-		}
-	}
-	return ""
 }
 
 func footer(t Turn, copy Copy) map[string]any {
@@ -857,7 +908,7 @@ func controlRow(t Turn, copy Copy) map[string]any {
 	var label, action, kind string
 	switch t.Status {
 	case StatusRunning:
-		label, action, kind = copy.Stop, cardActionCancel, "danger"
+		label, action, kind = copy.Stop, cardActionCancel, "default"
 		if label == "" {
 			label = "终止"
 		}
@@ -882,7 +933,7 @@ func controlRow(t Turn, copy Copy) map[string]any {
 				"name":  action,
 				"text":  map[string]any{"tag": "plain_text", "content": label},
 				"type":  kind,
-				"width": "fill",
+				"width": "default",
 				"size":  "medium",
 				"behaviors": []map[string]any{{
 					"type":  "callback",
@@ -977,13 +1028,34 @@ func SettingsLine(s Settings) string {
 	return strings.Join(SettingsParts(s), " · ")
 }
 
-// footerText names who is speaking and where the turn stands — nothing
-// else. Elapsed time and token telemetry moved off the card: they answered
-// "is it stuck", which the colored header now answers, and they made every
-// card read like a dashboard.
+// Metadata uses only agent-reported counters. Elapsed time is measured at
+// the latest event (or completion); it does not require idle timer patches.
 func footerText(t Turn, copy Copy) string {
-	label, _, _ := headerTone(t, copy)
-	return strings.Join(append(settingsText(t), label), " · ")
+	parts := append(settingsText(t), statusLabel(t, copy))
+	if !t.StartedAt.IsZero() && !t.UpdatedAt.IsZero() {
+		parts = append(parts, elapsed(t))
+	}
+	u := t.Usage
+	if u.ContextTokens > 0 || u.ContextWindow > 0 {
+		context := firstNonEmpty(copy.Context, "Ctx") + " " + compactTokens(u.ContextTokens)
+		if u.ContextWindow > 0 {
+			context += "/" + compactTokens(u.ContextWindow) + " (" + compactPercent(u.ContextTokens, u.ContextWindow) + ")"
+		}
+		parts = append(parts, context)
+	}
+	if u.TotalTokens > 0 {
+		parts = append(parts, "Tokens "+compactTokens(u.TotalTokens))
+	}
+	if u.TokensReported() && (u.TotalTokens == 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
+		parts = append(parts, firstNonEmpty(copy.In, "In")+" "+compactTokens(u.InputTokens), firstNonEmpty(copy.Out, "Out")+" "+compactTokens(u.OutputTokens))
+	}
+	if u.CacheReadTokens > 0 {
+		parts = append(parts, firstNonEmpty(copy.Hit, "Hit")+" "+compactTokens(u.CacheReadTokens))
+	}
+	if u.CacheWriteTokens > 0 {
+		parts = append(parts, firstNonEmpty(copy.Write, "Wr")+" "+compactTokens(u.CacheWriteTokens))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // footerLine appends the address tag: 发送给 <at>. The mention
@@ -1103,7 +1175,11 @@ func shrinkRunes(s string, max int) string {
 	if max < 1 {
 		return ""
 	}
-	return truncateRunes(s, max)
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	// The ellipsis is part of the budget, so repeated shrinking converges.
+	return string([]rune(s)[:max-1]) + "…"
 }
 
 func mustJSON(v any) []byte {
