@@ -2,7 +2,9 @@ package node
 
 import (
 	"fmt"
+	"slices"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -23,7 +25,34 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 	// receipt and its final text therefore cross the durable boundary together.
 	if one.pendingProgress != nil {
 		next.State.Progress = *one.pendingProgress
-		next.State.Settings = one.pendingProgress.Settings
+	}
+	// Progress is presentation, not configuration authority: a coalesced
+	// callback may predate an already-confirmed approval/model change.
+	// Only this native generation can revise the canonical selector snapshot.
+	// Before open has published a generation, initialization may hold the host
+	// lock across its RPC. Cancellation must not wait for that RPC to finish.
+	if one.host != nil && next.Generation != 0 {
+		if settings, known := one.host.SettingsForGeneration(acp.SessionID(next.UpstreamID), next.Generation); known {
+			next.State.Settings = settings
+			next.State.ModelOption, next.State.ModelChoices = "", nil
+			for _, byCategory := range []bool{true, false} {
+				for _, option := range settings.Options {
+					if byCategory && option.Category == "model" || !byCategory && option.ID == "model" {
+						next.State.ModelOption = option.ID
+						next.State.ModelChoices = slices.Clone(option.Choices)
+						break
+					}
+				}
+				if next.State.ModelOption != "" {
+					break
+				}
+			}
+		}
+	}
+	// A live turn follows the current configuration; a completed turn keeps
+	// the configuration it actually reported, even if an idle selector changes.
+	if previous, exists := one.record.Commands[next.CurrentCommand]; !exists || !previous.Settled {
+		next.State.Progress.Settings = copySessionSettings(next.State.Settings)
 	}
 	if err := freezeTerminalReceipt(one.record, &next); err != nil {
 		return err

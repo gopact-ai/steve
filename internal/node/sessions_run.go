@@ -180,9 +180,6 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 		if next.State.State != nodewire.SessionClosing && next.State.State != nodewire.SessionClosed {
 			next.State.State = nodewire.SessionIdle
 		}
-		next.State.Settings = host.Settings(native)
-		option, choices := host.ModelChoices(native)
-		next.State.ModelOption, next.State.ModelChoices = string(option), choices
 		next.State.SupportsHTTPMCP = httpMCP
 	}
 	saveErr := one.commitLocked(next)

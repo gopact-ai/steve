@@ -109,7 +109,6 @@ func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest
 	optionErr := host.SetOption(ctx, acp.SessionID(id), generation, acp.SessionConfigID(req.OptionID), req.OptionValue)
 	one.mu.Lock()
 	next := one.copyLocked()
-	next.State.Settings = host.Settings(acp.SessionID(id))
 	if next.State.State == nodewire.SessionConfiguring {
 		next.State.State = nodewire.SessionIdle
 		if host.ProcessStopped(generation) {

@@ -1297,10 +1297,7 @@ func (h *Host) applySettings(sid acp.SessionID, u acp.SessionUpdate) {
 // switched to mid-turn.
 func (h *Host) sessionSettings(sid acp.SessionID) func() view.Settings {
 	return func() view.Settings {
-		h.mu.Lock()
-		state := h.sessions[sid]
-		h.mu.Unlock()
-		return state.settings()
+		return h.Settings(sid)
 	}
 }
 
@@ -1308,13 +1305,29 @@ func (h *Host) sessionSettings(sid acp.SessionID) func() view.Settings {
 // configured. It is empty for a session this host does not know.
 func (h *Host) Settings(sid acp.SessionID) view.Settings {
 	h.mu.Lock()
-	state := h.sessions[sid]
-	adapter := h.adapter
-	h.mu.Unlock()
-	out := state.settings()
-	out.Adapter = adapter
-	out.Options = optionsView(h.Options(sid))
+	defer h.mu.Unlock()
+	out := h.sessions[sid].settings()
+	out.Adapter = h.adapter
 	return out
+}
+
+// SettingsForGeneration returns a single, complete native configuration
+// observation. Unknown is distinct from a known session with no selectors:
+// process exit must not erase the last confirmed settings on its owner.
+// This is not proof that the process is still running or authorized.
+func (h *Host) SettingsForGeneration(sid acp.SessionID, generation uint64) (view.Settings, bool) {
+	if generation == 0 {
+		return view.Settings{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state := h.sessions[sid]
+	if h.generation != generation || state == nil {
+		return view.Settings{}, false
+	}
+	out := state.settings()
+	out.Adapter = h.adapter
+	return out, true
 }
 
 // CloseIdle atomically refuses a running prompt before closing its host. It

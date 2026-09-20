@@ -31,7 +31,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated agent: %v %s", err, out)
 	}
-	for _, name := range []string{"recall", "load_failure_does_not_open_fresh", "repair_archived_revoked_credential"} {
+	for _, name := range []string{"recall", "warm_rebind", "load_failure_does_not_open_fresh", "repair_archived_revoked_credential"} {
 		t.Run(name, func(t *testing.T) {
 			rejectLoad := name == "load_failure_does_not_open_fresh"
 			repairCredential := name == "repair_archived_revoked_credential"
@@ -79,6 +79,12 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 				"conversation": conversation, "agent": "worker",
 				"patch": map[string]string{"model": "mock-deep", "mode": "read-only"},
 			}
+			if name == "warm_rebind" {
+				// An explicit model causes an option RPC on every open and can
+				// accidentally repopulate selectors lost by progress. Exercise
+				// the common mode-only preference with no such repair.
+				preferences["patch"] = map[string]string{"mode": "read-only"}
+			}
 			continuityRequest(t, first, http.MethodPut, "/console/preferences", preferences)
 			var random [24]byte
 			if _, err := rand.Read(random[:]); err != nil {
@@ -107,6 +113,44 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 			if native == "" || business[1].Session != native || business[1].PID != nativePID ||
 				!strings.Contains(business[1].Input, "fixture-remember "+marker) {
 				t.Fatal("first prompt was not delivered to its new native session")
+			}
+			if name == "warm_rebind" {
+				// No restart/load may hide a selector lost while publishing
+				// progress. Both unchanged and changed preferences must work
+				// on the exact same native process after a completed turn.
+				for i, mode := range []string{"read-only", "agent"} {
+					continuityRequest(t, first, http.MethodPut, "/console/preferences", map[string]any{
+						"conversation": conversation, "agent": "worker",
+						"patch": map[string]string{"mode": mode},
+					})
+					recall := continuitySend(t, first, conversation, "fixture-recall", "warm-recall-"+mode)
+					if recall.Error != "" || !strings.Contains(recall.Text, "memory: "+marker) ||
+						!strings.Contains(recall.Text, "model=mock-fast mode="+mode+" mcp=ok") {
+						t.Fatalf("warm input %d lost native memory/preferences: %s %s", i, recall.Error, recall.Text)
+					}
+					next, err := attempt.New(first.Runtime.Load().Ledger()).Get(t.Context(), recall.AttemptID)
+					if err != nil || next.NativeContext != original.NativeContext || next.Unsettled ||
+						next.Preferences == nil || next.Preferences.Options["mode"] != mode {
+						t.Fatalf("warm input did not confirm its actual selectors/context: %+v %v", next.Preferences, err)
+					}
+					current := continuityConversation(t, first, conversation)
+					if current.Sessions["worker"].UpstreamID != saved.UpstreamID ||
+						current.Sessions["worker"].AgentToken != saved.AgentToken ||
+						len(current.Archived) != len(before.Archived) {
+						t.Fatal("warm input replaced its native session or credential")
+					}
+				}
+				events := continuityEvents(t, memory)[len(eventsBefore):]
+				if len(events) != 2 {
+					t.Fatalf("warm inputs reopened/replayed instead of continuing: %+v", events)
+				}
+				for _, event := range events {
+					if event.Kind != "prompt" || event.Session != native || event.PID != nativePID ||
+						strings.Contains(event.Input, marker) {
+						t.Fatalf("warm input lost exact native memory: %+v", event)
+					}
+				}
+				return
 			}
 			replacementToken := ""
 			if repairCredential {
