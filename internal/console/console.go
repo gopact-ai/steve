@@ -116,16 +116,18 @@ type Service struct {
 	// recoveryQuiet is how long a recovery rejoins the original execution
 	// on its own before the owner is asked anything, and recoveryProbe how
 	// often an open recovery question looks for the original coming back.
-	recoveryQuiet      time.Duration
-	recoveryProbe      time.Duration
-	defaultLocale      string
-	closing            bool
-	recoveryLifetime   context.Context
-	recoveryDriver     RetainedChatDriver
-	workers            sync.WaitGroup
-	drained            chan struct{}
-	materials          MaterialResolver
-	authorizeMaterials func(context.Context, string, string, string) error
+	recoveryQuiet time.Duration
+	recoveryProbe time.Duration
+	defaultLocale string
+	// DefaultLocaleSource is configured before admission starts.
+	DefaultLocaleSource func() string
+	closing             bool
+	recoveryLifetime    context.Context
+	recoveryDriver      RetainedChatDriver
+	workers             sync.WaitGroup
+	drained             chan struct{}
+	materials           MaterialResolver
+	authorizeMaterials  func(context.Context, string, string, string) error
 }
 
 func New(handler Handler, owner string, model Events) *Service {

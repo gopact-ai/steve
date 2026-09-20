@@ -165,22 +165,26 @@ type Coordinator struct {
 // coordinatorState owns shared execution state. Request-local views replace
 // the owner and text catalog; mutexes and runtime state are never copied.
 type coordinatorState struct {
-	requestMu     sync.RWMutex
-	maintaining   bool
-	executions    *execution.Registry
-	catalog       *agent.Catalog
-	store         *state.Store
-	assembler     *capability.Assembler
-	runtime       runtime
-	timeout       time.Duration
-	channelOwners map[string]string
-	home          home.Loader
-	homePath      string
-	skills        *skills.Live
-	gate          AgentGate
-	endpoints     NodeEndpoints
-	RegisterIdle  idle.Registrar
-	tasks         *task.Store
+	requestMu   sync.RWMutex
+	maintaining bool
+	executions  *execution.Registry
+	catalog     *agent.Catalog
+	store       *state.Store
+	assembler   *capability.Assembler
+	runtime     runtime
+	timeout     time.Duration
+	// Runtime policy sources are installed before serving and read only at
+	// operation boundaries; a saved setting never interrupts a live turn.
+	TimeoutSource     func() time.Duration
+	AutoResolveSource func() bool
+	channelOwners     map[string]string
+	home              home.Loader
+	homePath          string
+	skills            *skills.Live
+	gate              AgentGate
+	endpoints         NodeEndpoints
+	RegisterIdle      idle.Registrar
+	tasks             *task.Store
 
 	consoleCompletionGuard ConsoleCompletionGuard
 
@@ -317,6 +321,13 @@ func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
 // is handed to an agent without anyone asking.
 func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
 
+func (c *Coordinator) promptTimeout() time.Duration {
+	if c.TimeoutSource != nil {
+		return c.TimeoutSource()
+	}
+	return c.timeout
+}
+
 func (c *Coordinator) SetTasks(store *task.Store, node string) {
 	c.tasks = store
 	c.node = node
@@ -356,6 +367,9 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	if req.Locale != "" {
 		c = c.localized(i18n.FromLang(req.Locale))
 	}
+	// Freeze the default language for this request as well as explicitly
+	// localized requests. A settings update must not switch it mid-reply.
+	c = c.localized(c.text.Locale())
 	if c.maintaining {
 		return Result{}, UserError{Text: c.text.T(i18n.HubMaintenance)}
 	}

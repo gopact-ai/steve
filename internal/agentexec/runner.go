@@ -123,14 +123,19 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 			if prior.TaskID != spec.TaskID || prior.WorkID != identity {
 				return out, Blocked(prior, "work", "核对原规划或验证请求", "同一请求标识对应的输入条件已经变化。", "建议核对原任务与已有执行，不重发原命令。", nil)
 			}
-			return r.resumeAttempt(parent, prior, validate)
+			input, err := originalInput(prior)
+			if err != nil {
+				return out, Blocked(prior, "input", "读取原执行的请求与工作身份", "原请求记录不完整或无法核对。", "建议核对原任务和执行记录，不构造另一份原始请求。", err)
+			}
+			// Select the durable policy while holding the same claim that
+			// fences admission and recovery. A live caller timeout is not the
+			// policy of the command already running on the node.
+			ctx, cancel := context.WithTimeout(parent, promptTimeout(input.Spec.Timeout))
+			defer cancel()
+			return r.resumeAttempt(ctx, prior, validate)
 		}
 	}
-	timeout := spec.Timeout
-	if timeout <= 0 {
-		timeout = 3 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
+	ctx, cancel := context.WithTimeout(parent, promptTimeout(spec.Timeout))
 	defer cancel()
 	// Dependencies such as SQLite can return their own interruption error
 	// when a prompt expires. Keep both errors so callers can recognize the
@@ -169,6 +174,13 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	}
 	runErr, unresolved = work.settle(run, err)
 	return out, runErr
+}
+
+func promptTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return 3 * time.Minute
+	}
+	return timeout
 }
 
 // candidate is the roster's word on the agent the caller named.

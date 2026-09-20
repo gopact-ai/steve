@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -101,6 +102,7 @@ type Channel struct {
 	api    *lark.Client
 	ws     longConn
 	access Access
+	policy atomic.Pointer[accessPolicy]
 	// journal records every outbound message as an effect: started before
 	// the API call, confirmed with the message id after. It is the only
 	// egress this version has, and the only one recovery has to reconcile.
@@ -140,7 +142,8 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	channel := &Channel{api: api, access: opts.Access}
+	channel := &Channel{api: api}
+	channel.SetAccess(opts.Access, opts.AllowUnmentioned)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(channel.messageHandler(identity.OpenID, opts.AllowUnmentioned, handler)).
 		OnP2MessageReactionCreatedV1(func(context.Context, *larkim.P2MessageReactionCreatedV1) error {
@@ -179,11 +182,12 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 
 func (channel *Channel) messageHandler(botOpenID string, allowUnmentioned bool, handler Handler) func(context.Context, *larkim.P2MessageReceiveV1) error {
 	return func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-		msg, ok := normalize(event, botOpenID, allowUnmentioned)
+		policy := channel.loadAccess(allowUnmentioned)
+		msg, ok := normalize(event, botOpenID, policy.allowUnmentioned)
 		if !ok {
 			return nil
 		}
-		if decide(msg, channel.access) != actionAllow {
+		if decide(msg, policy.access) != actionAllow {
 			return nil
 		}
 		// The SDK maps a returned error to a non-success WS response. Wait

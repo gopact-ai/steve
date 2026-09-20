@@ -84,6 +84,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	}
 	admin := &adminsvc.Service{Lifetime: ctx, Cfg: cfg, Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, View: view,
 		LiveSkills: live, Shipper: shipper, Observation: observation, Coordinator: coordinator, HomePath: cfg.Gateway.HomePath, Memory: memories, Artifacts: artifacts}
+	admin.RuntimeSettings = boot.Settings()
 	life.Defer(func() { admin.CloseSSH() })
 	if environment != nil {
 		admin.WriteConfig = environment.WriteConfig

@@ -157,6 +157,9 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 			options.Locale = string(i18n.ContextLocale(ctx))
 			if options.Locale == "" {
 				options.Locale = s.defaultLocale
+				if s.DefaultLocaleSource != nil {
+					options.Locale = s.DefaultLocaleSource()
+				}
 			}
 		}
 	}

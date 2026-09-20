@@ -8,6 +8,7 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -56,6 +57,9 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		} else {
 			gw.BindChannel(channel)
 			channel.SetJournal(book.Journal())
+			channelSettings.BindAccessUpdater(func(f config.Feishu) {
+				channel.SetAccess(feishu.AccessFrom(f), f.AllowUnmentioned)
+			})
 		}
 	}
 	if gate != nil {
@@ -103,15 +107,25 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 			}
 		})
 	})
-	return &channelsValues{channel: channel}, nil
+	return &channelsValues{channel: channel, startup: channelStartup{
+		owner: cfg.Feishu.OwnerOpenID, home: cfg.Gateway.HomePath, timeout: time.Duration(cfg.Gateway.PromptTimeout),
+	}}, nil
 }
 
 type channelsAssembly interface {
 	Channel() *feishu.Channel
+	Startup() channelStartup
+}
+
+type channelStartup struct {
+	owner, home string
+	timeout     time.Duration
 }
 
 type channelsValues struct {
 	channel *feishu.Channel
+	startup channelStartup
 }
 
 func (v *channelsValues) Channel() *feishu.Channel { return v.channel }
+func (v *channelsValues) Startup() channelStartup  { return v.startup }

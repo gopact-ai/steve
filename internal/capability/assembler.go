@@ -66,11 +66,12 @@ type skillFingerprinter interface {
 }
 
 type Assembler struct {
-	mu      sync.RWMutex
-	servers map[string]MCPServer
-	home    home.Loader
-	skills  skillFingerprinter
-	locale  home.Locale
+	mu           sync.RWMutex
+	servers      map[string]MCPServer
+	home         home.Loader
+	skills       skillFingerprinter
+	locale       home.Locale
+	localeSource func() home.Locale
 }
 
 // SetServers replaces the MCP servers the hub machine can start.
@@ -98,6 +99,14 @@ func (a *Assembler) SetHome(loader home.Loader) *Assembler {
 // otherwise thinks in English no matter who it is talking to.
 func (a *Assembler) SetLocale(locale home.Locale) *Assembler {
 	a.locale = locale
+	return a
+}
+
+// SetLocaleSource injects a locale source before assembly begins. The callback
+// must be safe for concurrent calls and must not be replaced while in use.
+// Each assembly samples it once; nil keeps the locale supplied by SetLocale.
+func (a *Assembler) SetLocaleSource(source func() home.Locale) *Assembler {
+	a.localeSource = source
 	return a
 }
 
@@ -139,6 +148,10 @@ func (a *Assembler) AssembleExtraPinned(selected agent.Agent, mode home.Mode, ex
 }
 
 func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras []Extra, pinnedSkills *string) (Capabilities, error) {
+	locale := a.locale
+	if a.localeSource != nil {
+		locale = a.localeSource()
+	}
 	var snap home.Snapshot
 	if a.home != nil && mode != home.ModeNone {
 		var err error
@@ -153,10 +166,10 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 		parts = append(parts, snap.Identity)
 		sections = append(sections, Section{Kind: SectionIdentity, Bytes: len(snap.Identity)})
 	}
-	if a.locale != "" {
-		rule := home.LanguageRule(a.locale)
+	if locale != "" {
+		rule := home.LanguageRule(locale)
 		parts = append(parts, rule)
-		sections = append(sections, Section{Kind: SectionLanguage, Name: string(a.locale), Bytes: len(rule)})
+		sections = append(sections, Section{Kind: SectionLanguage, Name: string(locale), Bytes: len(rule)})
 	}
 	// Configured is what this agent itself was given: its own prompt and the
 	// skills mapped onto it. Platform guidance — the identity, the language

@@ -1,6 +1,7 @@
 import { request } from "../http";
 
 export type SettingsObject = { [key: string]: string | number | SettingsObject };
+export type SettingsApplyMode = "live" | "next_operation" | "next_task" | "deployment" | "restart";
 export interface SettingsField {
     path: string;
     type: "string" | "integer" | "duration";
@@ -9,14 +10,14 @@ export interface SettingsField {
     maximum?: number;
     enum?: string[];
     default?: string | number;
-    apply_mode: string;
+    apply_mode: SettingsApplyMode;
 }
 export interface HubSettings {
     revision: string;
     desired: SettingsObject;
     effective: SettingsObject;
     pending_restart: boolean;
-    apply_mode: string;
+    apply_mode: "live" | "restart";
     fields: SettingsField[];
     warning?: string;
 }
@@ -39,7 +40,7 @@ export interface ChannelValues {
     console: { enabled: true; owner_id: string };
     feishu: { enabled: boolean; app_id: string; app_secret_configured: boolean; domain: "feishu" | "lark"; owner_open_id: string; group_policy: "open" | "allowlist" | "disabled"; allow_unmentioned: boolean; allowed_senders: string[]; blocked_senders: string[] };
 }
-export interface ChannelSettings { revision: string; desired: ChannelValues; effective: ChannelValues; pending_restart: boolean; apply_mode: "restart"; warning?: string; runtime_error?: string }
+export interface ChannelSettings { revision: string; desired: ChannelValues; effective: ChannelValues; pending_restart: boolean; apply_mode: "restart" | "mixed"; live_fields?: string[]; warning?: string; runtime_error?: string }
 export interface ChannelPatch { default_channel?: "console" | "feishu"; feishu?: Partial<Omit<ChannelValues["feishu"], "app_secret_configured">> & { app_secret?: { action: "replace" | "clear"; value?: string } } }
 export const fetchChannels = (signal?: AbortSignal) => request<ChannelSettings>("/console/channels", { signal });
 export const saveChannels = (revision: string, channels: ChannelPatch) => request<ChannelSettings>("/console/channels", { method: "PUT", body: { base_revision: revision, channels } });

@@ -29,6 +29,9 @@ func assembleAdministration(life lifetime, input inputAssembly, boot runtimeAsse
 	admin.MaterialLevel = cfg.HubLevel()
 	cons.SetMaterials(materials, admin.AuthorizeMaterials)
 	cons.SetDefaultLocale(cfg.EffectiveLocale())
+	if settings := boot.Settings(); settings != nil {
+		cons.DefaultLocaleSource = func() string { return settings.Load().Gateway.Locale }
+	}
 	dashboard.SetSettings(adminsvc.NewSettings(admin, cfg))
 	channelSettings := adminsvc.NewChannels(admin, cfg)
 	dashboard.SetChannels(channelSettings)

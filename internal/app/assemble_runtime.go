@@ -66,7 +66,7 @@ func assembleRuntime(life lifetime, input inputAssembly) (runtimeAssembly, error
 	}
 	background := newApplicationBackground(ctx)
 	life.Defer(func() { background.Close() })
-	return &runtimeValues{background: background, book: book, catalog: catalog, cfg: cfg, ctx: ctx, live: live, manager: manager, stop: stop}, nil
+	return &runtimeValues{background: background, book: book, catalog: catalog, cfg: cfg, settings: config.NewRuntimeSettings(cfg), ctx: ctx, live: live, manager: manager, stop: stop}, nil
 }
 
 type runtimeAssembly interface {
@@ -74,6 +74,7 @@ type runtimeAssembly interface {
 	Book() *ledger.Ledger
 	Catalog() *agent.Catalog
 	Config() *config.Config
+	Settings() *config.RuntimeSettings
 	Context() context.Context
 	Live() *skills.Live
 	Manager() *harness.Manager
@@ -85,6 +86,7 @@ type runtimeValues struct {
 	book       *ledger.Ledger
 	catalog    *agent.Catalog
 	cfg        *config.Config
+	settings   *config.RuntimeSettings
 	ctx        context.Context
 	live       *skills.Live
 	manager    *harness.Manager
@@ -98,6 +100,8 @@ func (v *runtimeValues) Book() *ledger.Ledger { return v.book }
 func (v *runtimeValues) Catalog() *agent.Catalog { return v.catalog }
 
 func (v *runtimeValues) Config() *config.Config { return v.cfg }
+
+func (v *runtimeValues) Settings() *config.RuntimeSettings { return v.settings }
 
 func (v *runtimeValues) Context() context.Context { return v.ctx }
 

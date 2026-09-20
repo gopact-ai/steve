@@ -42,6 +42,9 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	// verification rule, the recovery limit.
 	stepRunner := exec.NewAgentRunner(manager, capabilitiesFor(assembler), fleet)
 	stepRunner.Timeout = time.Duration(cfg.Policies.Execution.StepTimeout)
+	if settings := boot.Settings(); settings != nil {
+		stepRunner.TimeoutSource = func() time.Duration { return time.Duration(settings.Load().Policies.Execution.StepTimeout) }
+	}
 	// Workflow checkpoints are durable so a plan outlives the process that
 	// started it; the ledger records which runs are open.
 	var checkpoints workflow.Store
@@ -64,8 +67,11 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	auxiliary.SetCapabilities(capabilitiesFor(assembler))
 	verifiers := exec.NewVerifiers(nodes, auxiliary)
 	verifiers.Timeout = time.Duration(cfg.Policies.Execution.VerifyTimeout)
+	if settings := boot.Settings(); settings != nil {
+		verifiers.TimeoutSource = func() time.Duration { return time.Duration(settings.Load().Policies.Execution.VerifyTimeout) }
+	}
 	supervisor := exec.NewSupervisor(
-		choosePlanner(cfg, catalog, auxiliary),
+		choosePlannerWithSettings(cfg, catalog, auxiliary, boot.Settings()),
 		exec.Deps{
 			Roster: fleet, Runner: stepRunner, Budget: taskBudget{tasks: tasks},
 			// Verification runs where the work is: a command on the step's

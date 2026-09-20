@@ -26,13 +26,21 @@ type applicationMemory struct {
 // prepareApplicationMemory chooses one authority per deployment. Cluster
 // activation uses only the generation-scoped ledger after its initial import.
 func prepareApplicationMemory(ctx context.Context, cfg *config.Config, book *ledger.Ledger) (applicationMemory, error) {
+	return prepareApplicationMemoryWithSettings(ctx, cfg, book, nil)
+}
+
+func prepareApplicationMemoryWithSettings(ctx context.Context, cfg *config.Config, book *ledger.Ledger, settings *config.RuntimeSettings) (applicationMemory, error) {
 	locale := home.LocaleZH
 	if cfg.EffectiveLocale() == "en" {
 		locale = home.LocaleEN
 	}
+	var localeSource func() home.Locale
+	if settings != nil {
+		localeSource = func() home.Locale { return home.Locale(settings.Load().Gateway.Locale) }
+	}
 	memoryDir := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "memory")
 	if book == nil {
-		return applicationMemory{Service: memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl")), Home: home.Dir{Path: cfg.Gateway.HomePath, Locale: locale}, Locale: locale}, nil
+		return applicationMemory{Service: memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl")), Home: home.Dir{Path: cfg.Gateway.HomePath, Locale: locale, LocaleSource: localeSource}, Locale: locale}, nil
 	}
 	shared := memory.NewLedgerStore(book)
 	shared.SetWriteGuard(func(ctx context.Context, tx *ledger.Tx) error {
@@ -96,7 +104,7 @@ func prepareApplicationMemory(ctx context.Context, cfg *config.Config, book *led
 	if locale == home.LocaleEN {
 		label = "Shared profile"
 	}
-	reader := home.Reader{Locale: locale, Label: label, ReadFiles: func() (map[string]string, error) { return shared.HomeFiles(ctx) }}
+	reader := home.Reader{Locale: locale, LocaleSource: localeSource, Label: label, ReadFiles: func() (map[string]string, error) { return shared.HomeFiles(ctx) }}
 	editable := home.EditableReader{Reader: reader, SaveIdentity: func(ctx context.Context, soul, user string) error {
 		return shared.WriteIdentity(ctx, soul, user, memory.Actor{By: "onboard"})
 	}}

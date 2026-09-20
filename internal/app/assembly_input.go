@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+
+	"github.com/gopact-ai/steve/internal/config"
 )
 
 // Assembly interfaces carry completed construction results between subsystem
@@ -21,4 +23,7 @@ func (v *assemblyInput) Parent() context.Context   { return v.parent }
 func (v *assemblyInput) ConfigPath() *string       { return &v.path }
 func (v *assemblyInput) Environment() *Environment { return v.environment }
 
-type channelRuntime interface{ SetRuntimeError(string) }
+type channelRuntime interface {
+	SetRuntimeError(string)
+	BindAccessUpdater(func(config.Feishu))
+}

@@ -91,6 +91,9 @@ type Nodes interface {
 // Store holds every project's shadow repository on the hub — the default
 // durable place — and materialises workspaces anywhere.
 type Store struct {
+	// Policy supplies one atomic policy snapshot per request. Install it before
+	// use and never replace it while the store is running. Nil uses Limits/Review.
+	Policy           func() (Limits, ReviewLimits)
 	Review           ReviewLimits
 	landingDriverTTL time.Duration
 	// renewTicks paces landing-driver renewals; nil means a real ticker.
@@ -164,8 +167,21 @@ func metadataOnly(p project.Project) bool {
 	return p.Level == project.LevelSealed && p.Home.Node != ""
 }
 
-// Repo opens the project's shadow repository on the hub.
+func (s *Store) policy() (Limits, ReviewLimits) {
+	if s.Policy != nil {
+		return s.Policy()
+	}
+	return s.Limits, s.Review
+}
+
+// Repo opens the project's shadow repository on the hub. Its policy is copied
+// at entry and stays fixed for every operation on the returned repository.
 func (s *Store) Repo(ctx context.Context, projectID string) (*Repo, error) {
+	limits, review := s.policy()
+	return s.repoWithPolicy(ctx, projectID, limits, review)
+}
+
+func (s *Store) repoWithPolicy(ctx context.Context, projectID string, limits Limits, review ReviewLimits) (*Repo, error) {
 	objectsAllowed := true
 	if s.replication != nil {
 		p, ok, err := s.projects.GetHistorical(ctx, projectID)
@@ -184,7 +200,7 @@ func (s *Store) Repo(ctx context.Context, projectID string) (*Repo, error) {
 	}
 	r, err := Open(ctx, filepath.Join(s.Dir, "objects", projectID+".git"))
 	if err == nil {
-		r.Limits = s.Limits
+		r.Limits, r.Review = limits, review
 		if s.replication != nil && objectsAllowed {
 			err = s.restoreContent(ctx, projectID, r)
 		}
@@ -447,7 +463,7 @@ func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.P
 			return "", false, trusted, err
 		}
 	}
-	result, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Snapshot, Repo: bare, WorkTree: dir, Parent: parent, Message: message, Flatten: flatten, Limits: ops.Limits(s.Limits)})
+	result, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Snapshot, Repo: bare, WorkTree: dir, Parent: parent, Message: message, Flatten: flatten, Limits: ops.Limits(hub.Limits)})
 	if err != nil {
 		var tooLarge TooLarge
 		if errors.As(err, &tooLarge) {

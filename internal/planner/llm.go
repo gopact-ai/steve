@@ -61,6 +61,10 @@ type LLM struct {
 	// Attempts is how many times an invalid plan is sent back with the
 	// validation error before giving up. Zero takes the default.
 	Attempts int
+	// Policy supplies one atomic timeout/attempts snapshot for each new Plan.
+	// Install before use and never replace while running. Nil uses the fields
+	// above; ResumePlan always uses the original durable policy instead.
+	Policy func() (time.Duration, int)
 }
 
 const (
@@ -75,10 +79,13 @@ func (l LLM) Plan(ctx context.Context, req Request) (plan.Plan, error) {
 		return plan.Plan{}, fmt.Errorf("llm planner has no bounded agent executor")
 	}
 	timeout := l.Timeout
+	attempts := l.Attempts
+	if l.Policy != nil {
+		timeout, attempts = l.Policy()
+	}
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	attempts := l.Attempts
 	if attempts <= 0 {
 		attempts = DefaultAttempts
 	}

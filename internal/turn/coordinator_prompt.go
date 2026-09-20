@@ -53,7 +53,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// And it is an idle clock: it runs out after c.timeout of silence,
 	// not of work, so a turn that awaits other agents is not cut short
 	// while they are still answering.
-	idleCtx, expire, touch := idle.WithTimeout(turnCtx, c.timeout)
+	idleCtx, expire, touch := idle.WithTimeout(turnCtx, c.promptTimeout())
 	var ctx context.Context = idleCtx
 	defer expire()
 	if c.RegisterIdle != nil {

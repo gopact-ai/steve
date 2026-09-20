@@ -174,7 +174,7 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 		return Selectors{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	req := Request{ConversationID: conversationID, ChatType: protocol.ChatP2P, SenderOpenID: c.ownerOpenID}
-	ctx, cancel := context.WithTimeout(parent, c.timeout)
+	ctx, cancel := context.WithTimeout(parent, c.promptTimeout())
 	defer cancel()
 	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
 	if err != nil {

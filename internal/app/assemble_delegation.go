@@ -89,6 +89,9 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 			recoverRetainedDelegates = delegation.RecoverRetained
 		}
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
+		if settings := boot.Settings(); settings != nil {
+			delegation.SilenceSource = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
+		}
 		delegation.RecoveryQuiet = time.Duration(cfg.Gateway.RecoveryQuiet)
 		delegation.RegisterIdle = nodes.RegisterIdle
 		delegation.SetObserver(delegateObserver(ctx, admin, view, cons))

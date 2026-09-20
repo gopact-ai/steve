@@ -41,10 +41,17 @@ type Loader interface {
 type Dir struct {
 	Path   string
 	Locale Locale
+	// LocaleSource overrides Locale when set. Inject it before use; the
+	// callback must be safe for concurrent calls and is sampled once per Load.
+	LocaleSource func() Locale
 }
 
 func (d Dir) Load(mode Mode) (Snapshot, error) {
-	return LoadWithLocale(d.Path, mode, d.Locale)
+	locale := d.Locale
+	if d.LocaleSource != nil {
+		locale = d.LocaleSource()
+	}
+	return LoadWithLocale(d.Path, mode, locale)
 }
 
 type Snapshot struct {

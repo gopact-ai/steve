@@ -307,10 +307,11 @@ const (
 )
 
 type Catalog struct {
-	locale Locale
+	locale       Locale
+	localeSource func() Locale
 }
 
-func (c Catalog) IsZero() bool { return c.locale == "" }
+func (c Catalog) IsZero() bool { return c.locale == "" && c.localeSource == nil }
 
 func New(locale Locale) Catalog {
 	if locale != LocaleEN {
@@ -319,11 +320,22 @@ func New(locale Locale) Catalog {
 	return Catalog{locale: locale}
 }
 
+// Dynamic samples source for each Locale or T call. The callback is fixed at
+// construction; it must be safe for concurrent calls as its underlying locale changes.
+// A nil source returns a zero catalog, which defaults to Chinese.
+func Dynamic(source func() Locale) Catalog {
+	return Catalog{localeSource: source}
+}
+
 func (c Catalog) Locale() Locale {
-	if c.locale == "" {
+	locale := c.locale
+	if c.localeSource != nil {
+		locale = c.localeSource()
+	}
+	if locale != LocaleEN {
 		return LocaleZH
 	}
-	return c.locale
+	return locale
 }
 
 func (c Catalog) T(key Key, args ...any) string {

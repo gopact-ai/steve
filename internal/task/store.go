@@ -27,6 +27,9 @@ type Store struct {
 	// a deployment decision, not a code change.
 	maxTurns   int
 	maxElapsed time.Duration
+	// BudgetSource is wired once before serving. Each new task captures its
+	// defaults; retained tasks keep their durable budget.
+	BudgetSource func() (int, time.Duration)
 	// observe is told each task id a write changed, after the write
 	// landed; it runs off the store's lock.
 	observe func(id string)
@@ -99,11 +102,15 @@ func (s *Store) Create(t Task) (Task, error) {
 	}
 	t.CreatedAt = now
 	t.UpdatedAt = now
+	maxTurns, maxElapsed := s.maxTurns, s.maxElapsed
+	if s.BudgetSource != nil {
+		maxTurns, maxElapsed = s.BudgetSource()
+	}
 	if t.Budget.MaxTurns == 0 {
-		t.Budget.MaxTurns = s.maxTurns
+		t.Budget.MaxTurns = maxTurns
 	}
 	if t.Budget.MaxElapsed == 0 {
-		t.Budget.MaxElapsed = s.maxElapsed
+		t.Budget.MaxElapsed = maxElapsed
 	}
 	next := s.clone()
 	next.NextID = s.data.NextID + 1

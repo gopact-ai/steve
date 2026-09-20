@@ -12,6 +12,7 @@ type ChannelsView struct {
 	Effective      config.ChannelSettings `json:"effective"`
 	PendingRestart bool                   `json:"pending_restart"`
 	ApplyMode      string                 `json:"apply_mode"`
+	LiveFields     []string               `json:"live_fields,omitempty"`
 	Warning        string                 `json:"warning,omitempty"`
 	RuntimeError   string                 `json:"runtime_error,omitempty"`
 }

@@ -81,6 +81,9 @@ type Service struct {
 	// reporting is left alone, one that hung is not. The child's own
 	// budget (MaxElapsed) stays the hard limit.
 	MaxSilence time.Duration
+	// SilenceSource, when supplied at startup, is sampled for each new
+	// delegation. Existing idle clocks retain their original duration.
+	SilenceSource func() time.Duration
 	// RecoveryQuiet is how long a child's recovery keeps rejoining its
 	// node on its own before the parent's owner is asked anything. A node
 	// restart or a dropped link lasts seconds while the child keeps
@@ -662,10 +665,14 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	defer cancel()
 	touch := func() {}
-	if s.MaxSilence > 0 {
+	silence := s.MaxSilence
+	if s.SilenceSource != nil {
+		silence = s.SilenceSource()
+	}
+	if silence > 0 {
 		var stop func()
 		var clock idle.Context
-		clock, stop, touch = idle.WithTimeout(ctx, s.MaxSilence)
+		clock, stop, touch = idle.WithTimeout(ctx, silence)
 		ctx = clock
 		defer stop()
 		if s.RegisterIdle != nil {

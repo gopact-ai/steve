@@ -14,7 +14,9 @@ import (
 
 func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, work executionAssembly, projection readModelAssembly, management administrationAssembly, channels channelsAssembly) error {
 	background := boot.Background()
-	cfg := boot.Config()
+	// The console is already accepting settings writes. Onboarding belongs
+	// to this channel activation, not a later pending connection identity.
+	startup := channels.Startup()
 	ctx := boot.Context()
 	store := storage.Store()
 	profile := identity.Profile()
@@ -30,11 +32,15 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 		return nil
 	}
 	background.Go(func(ctx context.Context) {
-		onboardCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Gateway.PromptTimeout))
+		timeout := startup.timeout
+		if settings := boot.Settings(); settings != nil {
+			timeout = time.Duration(settings.Load().Gateway.PromptTimeout)
+		}
+		onboardCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		if err := onboard.Start(onboardCtx, onboard.Request{
-			Owner:   cfg.Feishu.OwnerOpenID,
-			Home:    cfg.Gateway.HomePath,
+			Owner:   startup.owner,
+			Home:    startup.home,
 			Reader:  profile.Home,
 			Store:   store,
 			Catalog: catalogText,
@@ -64,7 +70,9 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 	})
 
 	slog.Info("steve: starting Feishu long connection")
-	if err := channel.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
+	err := channel.Start(ctx)
+	channelSettings.BindAccessUpdater(nil)
+	if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 		slog.Error(fmt.Sprintf("steve: Feishu connection failed; Console remains available: %v", err))
 		// Keys: channel.
 		view.Observe("channel.error", "feishu", "Feishu connection failed; check channel credentials and restart the Hub", map[string]string{"channel": "feishu"})
