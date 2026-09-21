@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeChannelHistory } from "../src/lib/channel-history.ts";
+import { mergeChannelHistory, revalidateChannelHistory } from "../src/lib/channel-history.ts";
 import { conversationExecution, conversationKey, conversationURL } from "../src/lib/conversation-identity.ts";
 import { taskConversationAddress, consoleTaskConversation } from "../src/lib/task-transport.ts";
 
@@ -42,4 +42,31 @@ test("channel unknown execution outranks the compatibility running flag", () => 
     assert.equal(conversationExecution({ execution: "unknown", running: true }), "unknown");
     assert.equal(conversationExecution({ running: true }), "running");
     assert.equal(conversationExecution({ running: false }), "idle");
+});
+
+const turn = (id, text, delivery = "unconfirmed") => [
+    { ...r(`${id}-sent`), exchange_id: id, kind: "sent" },
+    ...(text === undefined ? [] : [{ ...r(`${id}-reply`, text), exchange_id: id, delivery }]),
+];
+
+test("a newer earlier page replaces overlapping complete turns, including late answers", () => {
+    const held = [...turn("b"), ...turn("c", "latest")];
+    const page = [...turn("a", "older"), ...turn("b", "late", "confirmed")];
+    assert.deepEqual(mergeChannelHistory(held, page, true).replies, [...page, ...turn("c", "latest")]);
+});
+
+test("revalidation updates loaded turns in place without importing unrequested older history", () => {
+    const held = [...turn("b"), ...turn("c", "pending"), ...turn("d", "latest")];
+    const page = [...turn("a", "not loaded"), ...turn("b", "late"), ...turn("c", "final", "confirmed")];
+    assert.deepEqual(revalidateChannelHistory(held, page), [
+        ...turn("b", "late"), ...turn("c", "final", "confirmed"), ...turn("d", "latest"),
+    ]);
+    assert.deepEqual(revalidateChannelHistory(held, []), held);
+});
+
+test("revalidation uses complete server turns, not timestamps or individual reply append order", () => {
+    const held = [...turn("b", "obsolete"), ...turn("c", "pending"), ...turn("d", "latest")];
+    assert.deepEqual(revalidateChannelHistory(held, [...turn("b"), ...turn("c", "final", "suppressed")]), [
+        ...turn("b"), ...turn("c", "final", "suppressed"), ...turn("d", "latest"),
+    ]);
 });

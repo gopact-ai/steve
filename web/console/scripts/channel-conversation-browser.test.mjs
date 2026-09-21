@@ -35,6 +35,8 @@ let latest = [reply("new-input", 3, { kind: "sent", input: "New channel question
 let older = [reply("old-input", 1, { kind: "sent", input: "Old channel question", text: "" }), reply("old-answer", 2, { text: "Old channel answer", delivery: "confirmed" }), latest[0]];
 let failLatest = false, failOlder = false, failList = false, cursor = "older cursor/+", reads = 0, hold;
 const errors = [], requests = [], writes = [];
+const externalRuns = [];
+let expectedExternalRun;
 page.on("pageerror", e => errors.push(String(e)));
 page.on("console", m => { if (m.type() === "error" && /Encountered two children|Each child.*unique/.test(m.text())) errors.push(m.text()); });
 await context.route("**/*", async route => {
@@ -42,7 +44,16 @@ await context.route("**/*", async route => {
     if (url.origin !== origin) { errors.push(`External request: ${url.origin}`); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events", "/history"].includes(p)) return route.continue();
     requests.push([req.method(), p, url.search]);
-    if (req.method() !== "GET") { writes.push(p); return route.abort(); }
+    if (req.method() !== "GET") {
+        const body = req.postDataJSON();
+        if (expectedExternalRun && p === "/console/queue" && req.method() === "POST" && body.input === expectedExternalRun) {
+            assert.notEqual(body.conversation, ID);
+            assert.ok(body.conversation.startsWith("console:"));
+            externalRuns.push(body);
+            return route.fulfill({ json: { id: "external-fixture", conversation: body.conversation, key: `client:${body.command_id}`, state: "queued" } });
+        }
+        writes.push(p); return route.abort();
+    }
     if (p === "/state") return route.fulfill({ json: workState({ at: at(4), hub: { node: "fixture", started: at(0) }, nodes: [], agents: [], tasks: [], projects: [project], plans: [], attempts: [], landings: [] }) });
     if (p === "/console/conversations" && failList) return route.fulfill({ status: 503, json: { error: "Fixture directory unavailable" } });
     if (p === `/console/tasks/${task.id}`) return route.fulfill({ json: workDetail(task) });
@@ -83,6 +94,17 @@ try {
     hold = undefined; initialHold.release.resolve();
     await pane().getByText("New channel answer", { exact: true }).waitFor();
     await pane().getByText("Delivery unconfirmed", { exact: true }).waitFor();
+    // A fresh action originating outside the channel must reach a writable
+    // Console identity, not be consumed by the previously viewed channel.
+    await page.locator('a[href="#/fleet"]').first().click();
+    await pane().waitFor({ state: "hidden" });
+    await page.evaluate(() => window.__channelFixture.fill("@fixture external assignment"));
+    await page.locator('.cm-content[contenteditable="true"]').filter({ hasText: "@fixture external assignment" }).waitFor();
+    const externalID = await page.evaluate(() => sessionStorage.getItem("steve.conversation"));
+    assert.notEqual(externalID, ID);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("steve.conversation.transport")), "console");
+    await page.getByRole("button", { name: /Feishu original/ }).click();
+    await pane().getByText("New channel answer", { exact: true }).waitFor();
     assert.equal(await page.locator(".composer-dock").count(), 0);
     assert.equal(requests.some(([, p, query]) => ["/console/replies", "/console/context", "/console/queue"].includes(p) && new URLSearchParams(query).get("conversation") === ID), false, "channel must not mount console hooks");
     assert.equal(await pane().getByRole("button", { name: /edit|quote|send|cancel|retry|agent|add to/i }).count(), 0);
@@ -193,6 +215,13 @@ try {
     cursor = "older cursor/+"; latest = [reply("after-empty", 12)];
     await pane().getByText("after-empty", { exact: true }).waitFor();
     await pane().getByRole("button", { name: "Load earlier messages" }).waitFor();
+    await page.locator('a[href="#/inbox"]').first().click();
+    await pane().waitFor({ state: "hidden" });
+    expectedExternalRun = "@fixture external run";
+    const submitted = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/console/queue");
+    await page.evaluate(text => window.__channelFixture.act(text), expectedExternalRun);
+    assert.equal((await submitted).status(), 200);
+    assert.equal(externalRuns.length, 1);
     assert.deepEqual(writes, []); assert.deepEqual(errors, []); assert.ok(reads >= 6);
     console.log("Channel read-only browser: identity, delivery, pagination, polling, errors, narrow/keyboard, switch isolation, console editing PASS");
 } finally { await context.close(); await browser.close(); await server.close(); }

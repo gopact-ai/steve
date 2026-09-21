@@ -84,16 +84,20 @@ func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
 		return
 	}
-	conversation := r.URL.Query().Get("conversation")
-	if conversation == "" {
-		conversation = "console:main"
-	}
-	if !s.consoleIdentity(w, r, conversation) {
-		return
-	}
-	list := s.console.Queue(conversation)
-	if list == nil {
-		list = []consoleapi.Exchange{}
+	list := []consoleapi.Exchange{}
+	// Capabilities describe the Console service, not a conversation. A probe
+	// must not read a queue or depend on the channel identity directory.
+	if r.URL.Query().Get("capabilities") != "1" {
+		conversation := r.URL.Query().Get("conversation")
+		if conversation == "" {
+			conversation = "console:main"
+		}
+		if !s.consoleIdentity(w, r, conversation) {
+			return
+		}
+		if queue := s.console.Queue(conversation); queue != nil {
+			list = queue
+		}
 	}
 	// Clients must confirm support before submitting or retrying a command ID;
 	// older hubs accepted the field but did not preserve its identity.

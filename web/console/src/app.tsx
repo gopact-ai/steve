@@ -20,6 +20,7 @@ import { ConsolePage } from "@/pages/console";
 import { MaterialProvider } from "@/providers/material-provider";
 import { ReviewProvider } from "@/components/steve/review-context";
 import { LazyRegion } from "@/components/steve/lazy-region";
+import { conversationURL } from "@/lib/conversation-identity";
 
 // The menu is narrow by default and stays readable down to an icon-and-
 // label minimum; past that the compact rail is the better answer.
@@ -39,7 +40,14 @@ const HomePage = lazy(() => import("@/pages/home").then((module) => ({ default: 
 
 export function App() {
     const navigate = useNavigate();
-    return <CloseStackProvider><FleetProvider><CoordinationProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /><DesktopOnboarding /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></CoordinationProvider></FleetProvider></CloseStackProvider>;
+    const location = useLocation();
+    const navigateIntent = () => {
+        // An explicit action from another page must not inherit a channel's
+        // read-only address. In-channel commands remain disabled and consumed.
+        const fromChannel = location.pathname !== "/console" && sessionStorage.getItem("steve.conversation.transport") === "feishu";
+        navigate(fromChannel ? conversationURL(`console:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`) : "/console");
+    };
+    return <CloseStackProvider><FleetProvider><CoordinationProvider><IntentProvider onNavigate={navigateIntent}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /><DesktopOnboarding /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></CoordinationProvider></FleetProvider></CloseStackProvider>;
 }
 
 function Shell() {

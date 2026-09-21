@@ -51,9 +51,21 @@ try {
     const api = await import(pathToFileURL(path.join(temp, "console.mjs")));
     const work = await import(pathToFileURL(path.join(temp, "work.mjs")));
     let response = fixture.queue;
+    let mainCollision = false;
+    let capabilityResponse = { ...fixture.queue, body: JSON.stringify({ ...queue, queue: [] }) };
     const reads = [];
     globalThis.fetch = async (url, options) => {
         reads.push({ url, options });
+        const parsed = new URL(url, "http://localhost");
+        if (mainCollision && parsed.pathname === "/console/queue" && !options?.method) {
+            if (parsed.searchParams.get("capabilities") === "1") {
+                assert.equal(parsed.searchParams.has("conversation"), false, "capability preflight has no conversation identity");
+                return new Response(capabilityResponse.body, { status: capabilityResponse.status });
+            }
+            if (parsed.searchParams.get("conversation") === "console:main") {
+                return new Response("channel conversations are read-only", { status: 403 });
+            }
+        }
         const value = options?.method === "POST" ? fixture.ack : response;
         return new Response(value.body, { status: value.status });
     };
@@ -66,6 +78,28 @@ try {
     assert.equal(ack.key, "client:wire-command");
     assert.equal(Object.hasOwn(ack, "history"), false, "handler strips private prompt history");
     assert.deepEqual(ack.quotes, [{ conversation: "console:source", reply_id: "r1" }]);
+    mainCollision = true;
+    const beforeProbe = reads.length;
+    const firstProbe = api.checkSubmissionSupport();
+    assert.equal(api.checkSubmissionSupport(), firstProbe, "concurrent preflights share one request");
+    assert.equal((await firstProbe).state, "supported", "a channel colliding with console:main must not block capability detection");
+    assert.equal(reads.length, beforeProbe + 1);
+    assert.equal(reads.at(-1).url, "./console/queue?capabilities=1");
+    assert.equal(reads.at(-1).options.cache, "no-store");
+    assert.equal(api.getSubmissionSupport().state, "supported");
+    assert.deepEqual(await api.enqueue("console:wire", "wire input", undefined, "wire-command"), ack,
+        "ordinary console writes remain available despite the default channel collision");
+    await assert.rejects(api.fetchQueue("console:main"), (error) => error.status === 403,
+        "ordinary queue reads retain their identity guard");
+    capabilityResponse = fixture.errors.closing;
+    const beforeFailure = reads.length;
+    await assert.rejects(api.enqueue("console:wire", "must not send", undefined, "wire-command"), http.UnsentRequestError);
+    assert.equal(reads.length, beforeFailure + 1, "failed capability probe must not send a write");
+    assert.equal(api.getSubmissionSupport().state, "unknown");
+    assert.equal(api.getSubmissionSupport().checking, false);
+    capabilityResponse = fixture.queue;
+    assert.equal((await api.checkSubmissionSupport()).state, "supported", "a failed probe can be retried");
+    mainCollision = false;
     response = fixture.empty;
     assert.deepEqual((await api.fetchQueue("console:empty")).queue, []);
     assert.equal(api.getSubmissionSupport().material_refs, false);

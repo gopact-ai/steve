@@ -17,6 +17,98 @@ type channelHistoryStub struct {
 	extra string
 }
 
+type capabilityProbeConsole struct {
+	fakeConsole
+	queueReads int
+}
+
+func (*capabilityProbeConsole) Conversations() []string { return nil }
+func (f *capabilityProbeConsole) Queue(conversation string) []consoleapi.Exchange {
+	f.queueReads++
+	return []consoleapi.Exchange{{ID: "private-exchange", Conversation: conversation}}
+}
+func (*capabilityProbeConsole) SubmissionCapabilities() (bool, bool) { return true, false }
+
+type capabilityProbeHistory struct {
+	channelHistoryStub
+	containsReads int
+}
+
+func (f *capabilityProbeHistory) Contains(ctx context.Context, id string) (bool, error) {
+	f.containsReads++
+	return f.channelHistoryStub.Contains(ctx, id)
+}
+
+func TestConsoleQueueCapabilitiesDoNotReadConversations(t *testing.T) {
+	for _, channel := range []string{"console:main", "main"} {
+		for _, unavailable := range []bool{false, true} {
+			f := &capabilityProbeConsole{}
+			history := &capabilityProbeHistory{channelHistoryStub: channelHistoryStub{extra: channel}}
+			if unavailable {
+				history.err = errors.New("private database failure")
+			}
+			s := &Server{token: "owner", console: f}
+			s.SetChannelHistory(history)
+			read := func(query, token string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest("GET", "/console/queue"+query, nil)
+				req.Header.Set("Authorization", "Bearer "+token)
+				rec := httptest.NewRecorder()
+				s.guard(s.consoleQueue)(rec, req)
+				return rec
+			}
+			for _, query := range []string{"?capabilities=1", "?capabilities=1&conversation=native%2Ftopic"} {
+				rec := read(query, "owner")
+				var got struct {
+					Queue               []consoleapi.Exchange `json:"queue"`
+					SubmissionKeys      bool                  `json:"submission_keys"`
+					MaterialRefs        bool                  `json:"material_refs"`
+					InteractiveRequests *bool                 `json:"interactive_requests"`
+				}
+				if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil ||
+					got.Queue == nil || len(got.Queue) != 0 || !got.SubmissionKeys || !got.MaterialRefs ||
+					got.InteractiveRequests == nil || *got.InteractiveRequests ||
+					rec.Header().Get("Cache-Control") != "no-store" {
+					t.Fatalf("channel=%q unavailable=%v query=%q: %d %s", channel, unavailable, query, rec.Code, rec.Body.String())
+				}
+				if f.queueReads != 0 || history.containsReads != 0 {
+					t.Fatal("capability probe read conversation state", f.queueReads, history.containsReads)
+				}
+			}
+			if rec := read("?capabilities=1", ""); rec.Code != 401 {
+				t.Fatal("capability probe bypassed authentication", rec.Code)
+			}
+			want := 403
+			if unavailable {
+				want = 503
+			}
+			for _, query := range []string{"", "?capabilities=0", "?conversation=console%3Amain"} {
+				if rec := read(query, "owner"); rec.Code != want {
+					t.Fatal("ordinary queue read bypassed identity guard", query, rec.Code, rec.Body.String())
+				}
+			}
+			if f.queueReads != 0 {
+				t.Fatal("guarded queue was read", f.queueReads)
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", "/console/queue?capabilities=1", strings.NewReader(`{"input":"must not send","command_id":"probe"}`))
+			req.Header.Set("Authorization", "Bearer owner")
+			s.guard(s.consoleEnqueue)(rec, req)
+			if rec.Code != want || len(f.exchanges) != 0 {
+				t.Fatal("capability query bypassed mutation guard", rec.Code, rec.Body.String())
+			}
+			if !unavailable {
+				if rec := read("?conversation=console%3Aother", "owner"); rec.Code != 200 || f.queueReads != 1 {
+					t.Fatal("unrelated console queue was blocked", rec.Code, rec.Body.String())
+				}
+			}
+			s.console = nil
+			if rec := read("?capabilities=1", "owner"); rec.Code != 501 {
+				t.Fatal("disabled console advertised capabilities", rec.Code)
+			}
+		}
+	}
+}
+
 func TestChannelIdentityCannotReachConsoleMetadataOrReadAliases(t *testing.T) {
 	for _, test := range []struct {
 		method, path, body string
