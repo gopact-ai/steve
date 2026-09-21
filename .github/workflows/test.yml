@@ -14,6 +14,8 @@ jobs:
       - name: gofmt
         run: test -z "$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
       - run: go vet ./cmd/... ./internal/... ./e2e/...
+      - name: Raft snapshot retry regression
+        run: ./scripts/test-raft.sh -race -run '^TestRaft_AppendEntriesSnapshotBoundary' -count=1
       - run: go test -race ./cmd/... ./internal/... ./e2e/...
   console:
     runs-on: ubuntu-latest
