@@ -1,3 +1,5 @@
+import { ChannelConversationPane } from "./channel-conversation";
+import { conversationURL, type ConversationTransport } from "@/lib/conversation-identity";
 import { IconButton } from "@/components/steve/icon-button";
 import { useSideChat } from "@/providers/side-chat-provider";
 import { SideChatPanel } from "@/components/steve/side-chat";
@@ -62,10 +64,19 @@ function stamped(file: File): File {
 // — a delegated child's card, a passage asked about — so the page it
 // belongs to is what carries it.
 export function ConsolePage() {
-    return <SplitPaneProvider><ConsoleWorkbench /></SplitPaneProvider>;
+    const location = useLocation();
+    const params = new URLSearchParams(location.search);
+    const explicit = params.get("conversation");
+    const fresh = params.has("new") || params.get("view") === "board";
+    const storedTransport = sessionStorage.getItem("steve.conversation.transport");
+    const transport = explicit ? params.get("transport") : fresh ? "console" : storedTransport;
+    const id = explicit || (fresh && storedTransport === "feishu" ? "console:main" : sessionStorage.getItem("steve.conversation")) || "console:main";
+    return <SplitPaneProvider>{transport === "feishu"
+        ? <ChannelConversationPane key={id} id={id} />
+        : <ConsoleWorkbench initialConversation={id} />}</SplitPaneProvider>;
 }
 
-function ConsoleWorkbench() {
+function ConsoleWorkbench({ initialConversation }: { initialConversation: string }) {
     const { snap, refresh, live: connection, hubUpdated } = useFleet();
     const nodeLabelOf = useNodeLabel();
     const { t, locale } = useI18n();
@@ -74,7 +85,7 @@ function ConsoleWorkbench() {
     const [uploading, setUploading] = useState(false);
     const [openedMaterial, setOpenedMaterial] = useState<MaterialRef | null>(null);
     const { intent, consume } = useIntent();
-    const [conversation, setConversation] = useState(() => sessionStorage.getItem("steve.conversation") || "console:main");
+    const [conversation, setConversation] = useState(initialConversation);
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const { entries, loadingReplies, enabled, live, delegations, exchanges, busy, queueError, replyError, loadQueue, invalidateReplies } = useConversationController(conversation);
     const text = useDraft(conversation);
@@ -162,7 +173,7 @@ function ConsoleWorkbench() {
     const followTranscript = useRef(true);
     const handled = useRef(0);
 
-    useEffect(() => { sessionStorage.setItem("steve.conversation", conversation); }, [conversation]);
+    useEffect(() => { sessionStorage.setItem("steve.conversation", conversation); sessionStorage.setItem("steve.conversation.transport", "console"); }, [conversation]);
 
     // "/console?new=1&project=x&prompt=y" — from the projects or profile
     // page: a fresh thread bound to that project, carrying a draft the
@@ -259,11 +270,11 @@ function ConsoleWorkbench() {
     // dialog that asked, so it is not swallowed here.
     async function removeConversation(id: string) {
         await deleteConversation(id);
-        const remaining = conversations.filter((c) => c.id !== id);
+        const remaining = conversations.filter((c) => c.id !== id || c.transport === "feishu");
         setConversations(remaining);
         loadConversations();
         if (id !== activeConversation.current) return;
-        if (remaining.length > 0) selectConversation(remaining[0].id);
+        if (remaining.length > 0) pickConversation(remaining[0].id, remaining[0].transport);
         else await newSession();
     }
 
@@ -452,9 +463,9 @@ function ConsoleWorkbench() {
         const at = transcript.findIndex((r) => r.id === rewind.reply);
         return { following: at < 0 ? 0 : transcript.length - at - 1 };
     }, [rewind, transcript]);
-    const current = conversations.find((c) => c.id === conversation);
+    const current = conversations.find((c) => c.id === conversation && c.transport !== "feishu");
     const title = current?.title || (entries.find((r) => r.kind === "sent" && r.input?.trim() && !r.input.trim().startsWith("/"))?.input?.split("\n")[0]) || t("console.newConversation");
-    useEffect(() => { materials.setTarget(context?.project ? { conversation, project: context.project.id, title } : null); }, [conversation, context?.project?.id, title, materials.setTarget]);
+    useEffect(() => { materials.setTarget(context?.project ? { conversation, project: context.project.id, title } : null); return () => materials.setTarget(null); }, [conversation, context?.project?.id, title, materials.setTarget]);
     async function upload(files: FileList | File[] | null) {
         const chosen = Array.from(files ?? []);
         if (!chosen.length || uploading || !context?.project || !submissionSupport.material_refs) return;
@@ -465,13 +476,13 @@ function ConsoleWorkbench() {
         finally { setUploading(false); }
     }
     const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueError ? readErrorText(queueError) : "") || (replyError ? readErrorText(replyError) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
-    const listed = useMemo(() => conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations], [conversations, conversation, t, context?.project?.id, context?.agent?.id]);
+    const listed = useMemo(() => conversations.some((c) => c.id === conversation && c.transport !== "feishu") ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations], [conversations, conversation, t, context?.project?.id, context?.agent?.id]);
     const agents = useMemo(() => context?.agents ?? [], [context?.agents]);
 
     // Handlers keep one identity for the life of the page and always run
     // the current closure; a memoised column is then only drawn again when
     // something it shows has actually changed.
-    const pickConversation = useEventCallback((id: string) => selectConversation(id));
+    const pickConversation = useEventCallback((id: string, transport: ConversationTransport = "console") => { if (transport === "feishu") navigate(conversationURL(id, transport)); else selectConversation(id); });
     const openNewSession = useEventCallback((project?: string) => void newSession(project || startingProject()));
     const openImport = useEventCallback(() => { setMobileSessions(false); setImporting(true); });
     const patchConversation = useEventCallback((id: string, patch: { title?: string; archived?: boolean }) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, ""))));

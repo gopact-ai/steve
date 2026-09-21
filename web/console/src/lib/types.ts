@@ -171,7 +171,7 @@ export interface Event {
     // over a buffer that is trimmed from the front.
     n?: number;
 }
-export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean; questions?: number }
+export interface Conversation { transport?: "console" | "feishu"; read_only?: boolean; execution?: "running" | "idle" | "unknown"; id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean; questions?: number }
 export interface Injected {
     project?: string; workspace?: string; agent: string; node?: string; harness: string; model?: string; options?: Record<string, string>;
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;
@@ -188,6 +188,7 @@ export interface SessionSetup {
     instructions?: string; sections?: InstructionSection[]; mcp_servers?: string[]; applied: boolean;
 }
 export interface Reply {
+    delivery?: "confirmed" | "unconfirmed" | "suppressed" | "unavailable";
     id?: string; exchange_id?: string; at: string; conversation: string; input?: string; title?: string; text: string; format?: "markdown" | "text"; error?: string; kind: string; process?: Process; injected?: Injected;
     changes?: ChangeSummary; project_id?: string; revision?: string; refs?: MaterialRef[]; materials?: FrozenMaterial[];
     // A silent line is kept by the server but never drawn: stopping a turn

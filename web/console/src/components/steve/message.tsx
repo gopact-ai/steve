@@ -40,18 +40,18 @@ function CopyLine({ text }: { text: string }) {
 // a copy of it, and it back in the box to say again, differently. A line
 // Steve relayed for the owner has no rewrite: there is nothing of theirs
 // in it to say differently.
-export const UserMessage = memo(function UserMessage({ r, onEdit }: { r: Reply; onEdit?: (r: Reply) => void }) {
+export const UserMessage = memo(function UserMessage({ r, onEdit, readOnly = false }: { r: Reply; readOnly?: boolean; onEdit?: (r: Reply) => void }) {
     const { t, locale } = useI18n();
     const text = r.input || "";
     return (
         <div className="message-user">
             <div className="message-user-stack">
                 <div className="message-user-body"><Md text={text} /></div>
-                {(!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} label={t("materials.attached")} align="end" />}
+                {!readOnly && (!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} label={t("materials.attached")} align="end" />}
                 <div className="message-user-meta">
                     <span>{when(r.at, locale)}</span>
                     <CopyLine text={text} />
-                    {onEdit && text && !r.relayed && <button type="button" onClick={() => onEdit(r)} className="message-line-action" aria-label={t("console.editResend")} title={t("console.editResend")}><Edit03 aria-hidden="true" className="size-3.5" /></button>}
+                    {!readOnly && onEdit && text && !r.relayed && <button type="button" onClick={() => onEdit(r)} className="message-line-action" aria-label={t("console.editResend")} title={t("console.editResend")}><Edit03 aria-hidden="true" className="size-3.5" /></button>}
                 </div>
             </div>
         </div>
@@ -61,26 +61,26 @@ export const UserMessage = memo(function UserMessage({ r, onEdit }: { r: Reply; 
 // AssistantMessage is one line from Steve, laid out the way Codex lays
 // out a turn: first what the agent did (its thinking summary and tool
 // calls, folding), then what it said, then a small meta line.
-export const AssistantMessage = memo(function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply; selected?: boolean; onSelect?: (r: Reply) => void; onQuote?: (r: Reply) => void }) {
+export const AssistantMessage = memo(function AssistantMessage({ r, selected, onSelect, onQuote, readOnly = false }: { r: Reply; readOnly?: boolean; selected?: boolean; onSelect?: (r: Reply) => void; onQuote?: (r: Reply) => void }) {
     const { t, locale } = useI18n();
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
     const state = r.error ? (/cancelled|canceled|context canceled/i.test(r.error) ? t("console.stopped") : t("console.unfinished")) : r.kind === "notice" ? t("console.notice") : r.kind === "milestone" ? t("console.milestone") : "";
     return (
         <div className={`message-assistant ${selected ? "is-selected" : ""}`}>
             {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
-            {r.process && <InlineProcess process={r.process} />}
-            {r.text && <SelectionSurface version={`${r.conversation}:${r.id}:${r.revision}`} resolve={(range,root)=>{ if(!r.project_id||!r.id||!r.revision)return null; const selected=selectionForReply(range,root,r.text); return selected ? { ...selected,capture:{project:r.project_id,title:r.title||r.text.split("\n")[0].slice(0,60),source:{kind:"reply",conversation:r.conversation,reply_id:r.id,revision:r.revision}} } : null; }}>{r.format === "text"
+            {!readOnly && r.process && <InlineProcess process={r.process} />}
+            {r.text && <SelectionSurface version={`${r.conversation}:${r.id}:${r.revision}`} resolve={(range,root)=>{ if(readOnly||!r.project_id||!r.id||!r.revision)return null; const selected=selectionForReply(range,root,r.text); return selected ? { ...selected,capture:{project:r.project_id,title:r.title||r.text.split("\n")[0].slice(0,60),source:{kind:"reply",conversation:r.conversation,reply_id:r.id,revision:r.revision}} } : null; }}>{r.format === "text"
                 ? <div className={`whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere] ${r.error && state !== t("console.stopped") ? "text-error-primary" : ""}`}>{state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text}</div>
                 : <Md text={state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text} className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""} />}</SelectionSurface>}
-            {r.changes && <ChangesFold summary={r.changes} label={t("console.netChanges")} />}
-            {(!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} />}
+            {!readOnly && r.changes && <ChangesFold summary={r.changes} label={t("console.netChanges")} />}
+            {!readOnly && (!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} />}
             <div className="message-meta">
                 <span>{when(r.at, locale)}</span>
                 {state && <span className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""}>{state}</span>}
                 {r.text && <CopyLine text={r.text} />}
-                {onSelect && (r.process || r.injected) && <button type="button" onClick={() => onSelect(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary">{t("console.detailAction")}</button>}
-                {r.id && r.project_id && r.revision && <MaterialActions capture={{ project: r.project_id, title: r.title || r.text.split("\n")[0].slice(0, 60) || t("materials.reply"), source: { kind: "reply", conversation: r.conversation, reply_id: r.id, revision: r.revision } }} />}
-                {!support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={() => onQuote(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary" title={t("console.quoteHint")}>{t("console.quote")}</button>}
+                {!readOnly && onSelect && (r.process || r.injected) && <button type="button" onClick={() => onSelect(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary">{t("console.detailAction")}</button>}
+                {!readOnly && r.id && r.project_id && r.revision && <MaterialActions capture={{ project: r.project_id, title: r.title || r.text.split("\n")[0].slice(0, 60) || t("materials.reply"), source: { kind: "reply", conversation: r.conversation, reply_id: r.id, revision: r.revision } }} />}
+                {!readOnly && !support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={() => onQuote(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary" title={t("console.quoteHint")}>{t("console.quote")}</button>}
             </div>
         </div>
     );

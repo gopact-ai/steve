@@ -84,7 +84,7 @@ try {
         const complete = drawer.getByRole("button", { name: "Complete task", exact: true });
         await complete.waitFor();
         assert.equal(await complete.isEnabled(), allowed, JSON.stringify(address));
-        assert.equal(await drawer.getByRole("button", { name: "Open in workbench", exact: true }).isEnabled(), allowed);
+        assert.equal(await drawer.getByRole("button", { name: "Open in workbench", exact: true }).isEnabled(), allowed || (address.transport === "feishu" && !!address.channel));
         for (const button of await drawer.getByRole("button").all()) {
             if (["Pause", "Cancel"].includes(await button.innerText())) assert.equal(await button.isEnabled(), allowed);
         }

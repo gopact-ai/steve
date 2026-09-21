@@ -9,7 +9,8 @@ import { useFleet } from "@/lib/fleet";
 import { nodeLabelIn } from "@/lib/node-name";
 import { fmtSeconds, fmtTokens, label, spend, labelsFor } from "@/lib/labels";
 import type { Plan, Task, TaskDetail, WorkPage } from "@/lib/types";
-import { consoleTaskConversation } from "@/lib/task-transport";
+import { conversationURL } from "@/lib/conversation-identity";
+import { consoleTaskConversation, taskConversationAddress } from "@/lib/task-transport";
 import { TaskDeliveries } from "./task-deliveries";
 import { CallGraph } from "./call-graph";
 import { Drawer, DrawerSection } from "./drawer";
@@ -126,6 +127,7 @@ function TaskDrawerContent({ detail, detailError, ownerRows, readChildren, chang
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
     const conversation = consoleTaskConversation(t);
+    const address = taskConversationAddress(t);
     const consoleTask = conversation !== null;
     // A failure nobody has decided about yet: the only state where retrying
     // and settling are both on offer.
@@ -185,7 +187,7 @@ function TaskDrawerContent({ detail, detailError, ownerRows, readChildren, chang
                         {failedOpen && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks ignore ${t.id}`)}>{tr("tasks.markIgnored")}</Button>}
                         {t.settlement && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks reopen ${t.id}`)}>{tr("tasks.reopen")}</Button>}
                         {holds && !t.settlement && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>{tr("common.cancel")}</Button>}
-                        <Button size="sm" color="link-gray" isDisabled={!consoleTask} onClick={() => { if (conversation === null) return; onClose(); navigate(`/console?conversation=${encodeURIComponent(conversation)}`); }}>{tr("tasks.viewInWorkbench")}</Button>
+                        <Button size="sm" color="link-gray" isDisabled={!address} onClick={() => { if (!address) return; onClose(); navigate(conversationURL(address.id, address.transport)); }}>{tr("tasks.viewInWorkbench")}</Button>
                     </div>
                     {failedOpen && <p className="mt-2 text-xs text-tertiary">{tr("tasks.settleHint")}</p>}
                     {completionRoot && <p className="mt-2 text-xs text-tertiary">{tr(canComplete ? "tasks.completeHint" : t.attention ? "tasks.completeAttention" : t.execution !== "idle" ? "tasks.completeBusy" : "tasks.completePending")}</p>}
