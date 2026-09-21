@@ -147,12 +147,21 @@ type State struct {
 	Voters           map[string]string               `json:"voters"`
 	Removing         map[string]bool                 `json:"removing"`
 	PendingAddresses map[string]MemberAddressRequest `json:"pending_addresses"`
+	PendingJoins     map[string]bool                 `json:"pending_joins"`
+	PendingVotes     map[string]VotingRequest        `json:"pending_votes"`
 	Coordinator      Assignment                      `json:"coordinator"`
 	AutoFailover     bool                            `json:"auto_failover"`
 	AppVersion       uint64                          `json:"app_version"`
 	AppReplayFloor   uint64                          `json:"app_replay_floor"`
 	WriterGeneration uint64                          `json:"writer_generation"`
 	Audit            []AuditRecord                   `json:"audit"`
+}
+
+// IsActiveReplica excludes incomplete joins and removals from business authority.
+// Voting is a separate consensus role, not a prerequisite for manual assignment.
+func (s State) IsActiveReplica(nodeID string) bool {
+	member, ok := s.Members[nodeID]
+	return ok && member.NodeID == nodeID && member.Address != "" && s.Replicas[nodeID] == member.Address && !s.PendingJoins[nodeID] && !s.Removing[nodeID]
 }
 
 func (s State) CanAutoFailover() bool {

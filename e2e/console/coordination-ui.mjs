@@ -36,6 +36,7 @@ await page.route("**/*", async (route) => {
             if (kind === "transfer") { assert.equal(body.expected_epoch, f.view.epoch); event = { ...event, kind: "coordinator_transferred", from: f.view.coordinator_id, to: body.target_node_id, reason: "User requested handover" }; f.view.coordinator_id = body.target_node_id; f.view.epoch++; }
             if (kind === "policy") { assert.equal(body.expected_revision, f.view.revision); f.view.auto_failover = body.enabled; event.kind = body.enabled ? "automatic_failover_enabled" : "automatic_failover_disabled"; }
             if (kind === "eligibility") { assert.equal(body.expected_revision, f.view.revision); const target = f.view.nodes.find((item) => item.id === body.node_id); target.auto_eligible = body.eligible; event.to = body.node_id; event.kind = body.eligible ? "automatic_eligibility_granted" : "automatic_eligibility_removed"; }
+            if (kind === "voting") { assert.equal(body.expected_revision, f.view.revision); const target = f.view.nodes.find((item) => item.id === body.node_id); target.voter = body.voting; event.to = body.node_id; event.kind = body.voting ? "member_vote_granted" : "member_vote_revoked"; }
             f.view.revision++; f.view.events = [event, ...f.view.events];
         }
         if (f.reset) { f.reset = false; return route.abort("connectionreset"); }
@@ -88,7 +89,7 @@ try {
     f.view.authoritative = false; f.view.ready = false; f.view.reason = "Only one voting node is reachable; a majority is unavailable.";
     await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
     await panel.getByText(f.view.reason, { exact: true }).waitFor();
-    assert.equal(await panel.getByRole("button", { name: "Hand over", exact: true }).isDisabled(), true);
+    assert.equal(await panel.getByRole("button", { name: "Switch Hub", exact: true }).isDisabled(), true);
     assert.equal(await policy.isDisabled(), true);
     assert.equal(await policy.isChecked(), true);
     await panel.getByText("Failover settings", { exact: true }).click();
@@ -99,18 +100,18 @@ try {
     f.view.authoritative = true; f.view.ready = true; f.view.reason = ""; f.view.auto_failover = false;
     const third = f.view.nodes.pop();
     await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
-    await waitFor(async () => !(await panel.getByRole("button", { name: "Hand over", exact: true }).isDisabled()), "two nodes allow manual handover");
+    await waitFor(async () => !(await panel.getByRole("button", { name: "Switch Hub", exact: true }).isDisabled()), "two nodes allow manual handover");
     assert.equal(await policy.isDisabled(), true);
     f.view.nodes.push(third);
     await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
     console.log("PASS two-node and minority constraints distinguish configured policy from current readiness");
 
-    await panel.getByRole("button", { name: "Hand over", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Hand over coordination", exact: true });
+    await panel.getByRole("button", { name: "Switch Hub", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Switch Hub", exact: true });
     assert.equal(await dialog.getByRole("radio", { name: "build-node", exact: true }).isDisabled(), false, "manual handover does not require automatic eligibility");
     await dialog.getByText("laptop", { exact: true }).click();
     f.reset = true; f.hideReceipts = true;
-    await dialog.getByRole("button", { name: "Hand over", exact: true }).click();
+    await dialog.getByRole("button", { name: "Switch Hub", exact: true }).click();
     await panel.getByRole("button", { name: "Retry the same operation", exact: true }).waitFor();
     const transfer = f.calls.at(-1); assert.equal(transfer.body.expected_epoch, 1); assert.equal(transfer.body.target_node_id, "a");
     assert.equal(f.view.nodes.every((item) => item.online), true);
@@ -152,15 +153,89 @@ try {
     console.log("PASS revision conflicts retain the rejected command before permitting a new choice");
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await panel.getByRole("button", { name: "Hand over", exact: true }).focus();
+    await panel.getByRole("button", { name: "Switch Hub", exact: true }).focus();
     assert.ok(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth));
     await screenshot("coordination-narrow-light");
     await page.evaluate(() => document.documentElement.classList.add("dark-mode")); await page.waitForTimeout(180);
     await screenshot("coordination-narrow-dark");
+
+    f.view.auto_failover = false;
+    const candidate = f.view.nodes.find((item) => item.id === "c");
+    candidate.voter = false; candidate.auto_eligible = false;
+    await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await panel.getByText("Voting members", { exact: true }).click();
+    const enableVote = panel.getByRole("button", { name: "Enable voting for build-node", exact: true });
+    await enableVote.click();
+    const voteDialog = page.getByRole("dialog", { name: "Change voting membership", exact: true });
+    const beforeVote = f.calls.length;
+    await voteDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(f.calls.length, beforeVote, "Opening or cancelling voting confirmation must not change membership");
+
+    f.view.auto_failover = true;
+    await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await panel.getByRole("button", { name: "Switch Hub", exact: true }).click();
+    const automaticDialog = page.getByRole("dialog", { name: "Switch Hub", exact: true });
+    assert.equal(await automaticDialog.getByRole("radio", { name: /build-node/ }).isDisabled(), true, "Automatic failover policy still requires a voting Hub");
+    await automaticDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    f.view.auto_failover = false;
+    await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
+
+    // A synchronized non-voter can be chosen manually without changing its vote.
+    await panel.getByRole("button", { name: "Switch Hub", exact: true }).click();
+    const manual = page.getByRole("dialog", { name: "Switch Hub", exact: true });
+    const candidateRadio = manual.getByRole("radio", { name: /build-node/ });
+    assert.equal(await candidateRadio.isDisabled(), false);
+    await candidateRadio.focus(); await page.keyboard.press("Space");
+    await manual.getByRole("button", { name: "Switch Hub", exact: true }).click();
+    await manual.waitFor({ state: "hidden" });
+    assert.equal(f.calls.at(-1).kind, "transfer");
+    assert.equal(f.calls.at(-1).body.target_node_id, "c");
+    assert.equal(candidate.voter, false, "Manual selection must not silently grant a Raft vote");
+    assert.equal(f.calls.length, beforeVote + 1);
+    await page.getByRole("link", { name: "Coordinated by build-node", exact: true }).waitFor();
+    assert.equal(await policy.isDisabled(), true, "Failover cannot be enabled while the current Hub is a non-voter");
+
+    // Voting uses the same durable command/receipt lifecycle as handover.
+    await enableVote.click();
+    f.reset = true; f.hideReceipts = true;
+    await voteDialog.getByRole("button", { name: "Confirm", exact: true }).click();
+    await panel.getByRole("button", { name: "Retry the same operation", exact: true }).waitFor();
+    const voting = f.calls.at(-1);
+    assert.equal(voting.kind, "voting"); assert.equal(voting.body.node_id, "c"); assert.equal(voting.body.voting, true);
+    await page.reload();
+    await panel.getByRole("button", { name: "Retry the same operation", exact: true }).waitFor();
+    f.hideReceipts = false;
+    await panel.getByRole("button", { name: "Retry the same operation", exact: true }).click();
+    await panel.getByText("Operation recorded", { exact: true }).waitFor();
+    assert.equal(f.calls.length, beforeVote + 2, "A recovered voting receipt must not repeat the configuration change");
+    await panel.getByText("Voting members", { exact: true }).click();
+    assert.equal(await panel.getByRole("button", { name: "Disable voting for build-node", exact: true }).isDisabled(), true, "The current voting Hub cannot accidentally remove its own vote");
+    await screenshot("coordination-voting-narrow");
+    console.log("PASS explicit voting confirmation, receipt recovery and non-voter manual Hub selection");
+
+    // A refreshed background view must not silently approve a newer membership.
+    await panel.getByRole("button", { name: "Disable voting for laptop", exact: true }).click();
+    const reviewedRevision = f.view.revision;
+    f.view.revision++;
+    f.reject = true;
+    await page.waitForTimeout(5200);
+    await voteDialog.getByRole("button", { name: "Confirm", exact: true }).click();
+    await panel.getByText("This operation was not accepted", { exact: true }).waitFor();
+    assert.equal(f.calls.at(-1).body.expected_revision, reviewedRevision, "Voting must submit the revision the user reviewed");
+    await panel.getByRole("button", { name: "Choose an operation again", exact: true }).click();
+    console.log("PASS voting confirmation preserves the reviewed revision across background refresh");
+
+    // The entry stays discoverable even when every target is temporarily blocked.
+    for (const item of f.view.nodes) { if (item.id !== "c") { item.online = false; item.ready = false; } }
+    await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await panel.getByRole("button", { name: "Switch Hub", exact: true }).click();
+    await manual.getByText("No target is ready. Check connectivity and synchronization, then refresh.", { exact: true }).waitFor();
+    assert.equal(await manual.getByRole("radio", { name: /laptop/ }).isDisabled(), true);
+    await manual.getByRole("button", { name: "Cancel", exact: true }).click();
     f.view.enabled = false;
     await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
     await panel.waitFor({ state: "hidden" });
-    assert.equal(await page.getByRole("button", { name: "Hand over", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Switch Hub", exact: true }).count(), 0);
     assert.deepEqual(f.errors, []);
     console.log("PASS responsive controls and disabled deployments expose no unsupported management actions");
 } catch (error) { console.log("DEBUG", JSON.stringify(f.errors), await page.locator("body").innerText()); throw error; }

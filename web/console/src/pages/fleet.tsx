@@ -534,7 +534,7 @@ export function FleetPage() {
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
-                actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>}>
+                actions={<>{coordination?.enabled && tab !== "coordination" && <Button size="sm" color="secondary" onClick={() => setTab("coordination")}>{tr("coord.manage")}</Button>}<Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>}>
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as FleetTab)}>
                     <TabList type="button-border" size="sm" items={[{ id: "coordination", label: tr("coord.title") }, { id: "machines", label: tr("fleet.tabMachines"), badge: snap.nodes.length || undefined }, { id: "agents", label: "Agent", badge: snap.agents.length || undefined }]}>
                         {(item) => <Tab {...item} />}

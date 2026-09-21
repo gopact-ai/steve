@@ -71,7 +71,8 @@ type CoordinatorRename struct {
 }
 
 // CoordinatorVoting grants or revokes a machine's vote in the cluster.
-// A machine needs one before it can take over as coordinator.
+// Votes govern the quorum for all replicated writes. Manual coordinator
+// assignment does not require a vote while automatic failover is disabled.
 type CoordinatorVoting struct {
 	CommandID        string `json:"command_id"`
 	ExpectedRevision uint64 `json:"expected_revision"`

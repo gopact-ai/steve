@@ -4650,7 +4650,7 @@
           "writer_generation": 1
         },
         "code": "invalid",
-        "message": "target is not a voting member"
+        "message": "target is not an active replica"
       }
     },
     {
@@ -6120,6 +6120,8 @@
     },
     "removing": {},
     "pending_addresses": {},
+    "pending_joins": {},
+    "pending_votes": {},
     "coordinator": {
       "node_id": "n2",
       "epoch": 2

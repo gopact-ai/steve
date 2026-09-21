@@ -1223,8 +1223,8 @@ func (p *Peer) SetCoordinatorEligibility(ctx context.Context, request consoleapi
 }
 
 // SetNodeVoting gives a machine a vote in the cluster, or takes it back.
-// Machines join without one, so this is what a machine needs before it can
-// be handed the coordinator role.
+// This is separate from manually choosing the coordinator when automatic
+// failover is disabled.
 func (p *Peer) SetNodeVoting(ctx context.Context, request consoleapi.CoordinatorVoting) (consoleapi.CoordinationView, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {

@@ -61,7 +61,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.failure(w, http.StatusMethodNotAllowed, ErrInvalid)
 		return
 	}
-	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "rename" && action != "join" && action != "remove" && action != "address" {
+	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "rename" && action != "voting" && action != "join" && action != "remove" && action != "address" {
 		http.NotFound(w, r)
 		return
 	}

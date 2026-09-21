@@ -80,7 +80,7 @@ type machine struct {
 }
 
 func newMachine(clusterID string, app Application) *machine {
-	return &machine{state: State{ClusterID: clusterID, Members: map[string]Member{}, Replicas: map[string]string{}, Voters: map[string]string{}, Removing: map[string]bool{}, PendingAddresses: map[string]MemberAddressRequest{}}, receipts: map[string]receipt{}, app: app, failed: make(chan struct{}), membershipChanged: make(chan struct{}, 1)}
+	return &machine{state: State{ClusterID: clusterID, Members: map[string]Member{}, Replicas: map[string]string{}, Voters: map[string]string{}, Removing: map[string]bool{}, PendingAddresses: map[string]MemberAddressRequest{}, PendingJoins: map[string]bool{}, PendingVotes: map[string]VotingRequest{}}, receipts: map[string]receipt{}, app: app, failed: make(chan struct{}), membershipChanged: make(chan struct{}, 1)}
 }
 
 func (m *machine) read() State {
@@ -109,6 +109,8 @@ func cloneState(s State) State {
 	s.Voters = maps.Clone(s.Voters)
 	s.Removing = maps.Clone(s.Removing)
 	s.PendingAddresses = maps.Clone(s.PendingAddresses)
+	s.PendingJoins = maps.Clone(s.PendingJoins)
+	s.PendingVotes = maps.Clone(s.PendingVotes)
 	s.Audit = slices.Clone(s.Audit)
 	return s
 }
@@ -201,6 +203,8 @@ func (m *machine) applyCommand(c command, index uint64, r *receipt) (*AuditRecor
 		return applyEligibility(s, c, r), nil
 	case "rename":
 		return applyRename(s, c, r), nil
+	case "voting_prepare":
+		return applyVotingPrepare(s, c, r), nil
 	case "voting":
 		return applyVoting(s, c, r), nil
 	case "transfer":
@@ -264,7 +268,7 @@ func bumpsRevision(kind string) bool {
 // re-reads.
 func changesMembership(kind string) bool {
 	switch kind {
-	case "initialize", "join_prepare", "join", "remove", "address", "voting":
+	case "initialize", "join_prepare", "join", "remove", "address", "voting_prepare", "voting":
 		return true
 	}
 	return false
@@ -320,6 +324,10 @@ func applyJoinPrepare(s *State, c command, r *receipt) *AuditRecord {
 		}
 	}
 	s.Members[c.Member.NodeID] = c.Member
+	if s.PendingJoins == nil {
+		s.PendingJoins = map[string]bool{}
+	}
+	s.PendingJoins[c.Member.NodeID] = true
 	return nil
 }
 
@@ -332,6 +340,7 @@ func applyJoin(s *State, c command, r *receipt) *AuditRecord {
 		r.reject("conflict", "member has not joined the voting configuration")
 		return nil
 	}
+	delete(s.PendingJoins, c.Member.NodeID)
 	return &AuditRecord{Kind: "member_joined", To: c.Member.NodeID}
 }
 
@@ -342,6 +351,10 @@ func applyRemovePrepare(s *State, c command, r *receipt) *AuditRecord {
 	}
 	if _, ok := s.Members[c.Remove.NodeID]; !ok {
 		r.reject("invalid", "member does not exist")
+		return nil
+	}
+	if _, pending := s.PendingVotes[c.Remove.NodeID]; pending {
+		r.reject("conflict", "voting change is pending")
 		return nil
 	}
 	s.Removing[c.Remove.NodeID] = true
@@ -359,6 +372,7 @@ func applyRemove(s *State, c command, r *receipt) *AuditRecord {
 		return nil
 	}
 	delete(s.Members, c.Remove.NodeID)
+	delete(s.PendingJoins, c.Remove.NodeID)
 	delete(s.Removing, c.Remove.NodeID)
 	delete(s.PendingAddresses, c.Remove.NodeID)
 	return &AuditRecord{Kind: "member_removed", From: c.Remove.NodeID}
@@ -372,6 +386,10 @@ func applyAddressPrepare(s *State, c command, r *receipt) *AuditRecord {
 	}
 	if _, ok := s.Members[request.NodeID]; !ok || s.Replicas[request.NodeID] == "" || s.Removing[request.NodeID] {
 		r.reject("invalid", "address changes require an active member")
+		return nil
+	}
+	if _, pending := s.PendingVotes[request.NodeID]; pending {
+		r.reject("conflict", "voting change is pending")
 		return nil
 	}
 	if pending, ok := s.PendingAddresses[request.NodeID]; ok && pending.ID != request.ID {
@@ -410,6 +428,10 @@ func applyAddress(s *State, c command, r *receipt) *AuditRecord {
 func applyPolicy(s *State, c command, r *receipt) *AuditRecord {
 	if c.Policy.ExpectedRevision != s.Revision {
 		r.reject("conflict", "policy revision changed")
+		return nil
+	}
+	if c.Policy.Enabled && s.Voters[s.Coordinator.NodeID] == "" {
+		r.reject("invalid", "automatic failover requires the current coordinator to be a voter")
 		return nil
 	}
 	if c.Policy.Enabled && !s.CanAutoFailover() {
@@ -464,11 +486,52 @@ func applyRename(s *State, c command, r *receipt) *AuditRecord {
 	return &AuditRecord{Kind: "member_renamed", To: member.NodeID, Reason: fmt.Sprintf("%s -> %s", previous, name)}
 }
 
+// applyVotingPrepare retains the reviewed change across a lost response or
+// leadership change between the Raft configuration and its final receipt.
+func applyVotingPrepare(s *State, c command, r *receipt) *AuditRecord {
+	request := c.Voting
+	if request.ExpectedRevision != s.Revision {
+		r.reject("conflict", "membership revision changed")
+		return nil
+	}
+	if !s.IsActiveReplica(request.NodeID) {
+		r.reject("invalid", "node is not an active replica")
+		return nil
+	}
+	if _, pending := s.PendingAddresses[request.NodeID]; pending {
+		r.reject("conflict", "member address change is pending")
+		return nil
+	}
+	if !request.Voting && s.Coordinator.NodeID == request.NodeID {
+		r.reject("invalid", "the coordinator keeps its vote")
+		return nil
+	}
+	if s.PendingVotes == nil {
+		s.PendingVotes = map[string]VotingRequest{}
+	}
+	// A fresh, explicitly reviewed revision may replace an unfinished intent.
+	// Older retries retain their preparation receipt but cannot finalize it.
+	s.PendingVotes[request.NodeID] = request
+	return nil
+}
+
 // applyVoting records whether a member should hold a vote. Raft has already
 // changed the configuration when this commits; the flag is what survives a
 // restart and what tells the coordinator which members to keep demoted.
 func applyVoting(s *State, c command, r *receipt) *AuditRecord {
 	request := c.Voting
+	// Historical voting log entries predate preparation and have no fence.
+	// Newly submitted operations always carry a nonzero configuration index.
+	if c.ExpectedConfigurationIndex != 0 {
+		if pending, ok := s.PendingVotes[request.NodeID]; !ok || pending != request || c.ExpectedConfigurationIndex != s.ConfigurationIndex {
+			r.reject("conflict", "voting change preparation or configuration differs")
+			return nil
+		}
+		if !s.IsActiveReplica(request.NodeID) {
+			r.reject("invalid", "node is not an active replica")
+			return nil
+		}
+	}
 	member, ok := s.Members[request.NodeID]
 	if !ok || s.Removing[request.NodeID] {
 		r.reject("invalid", "node is not an active member")
@@ -490,6 +553,7 @@ func applyVoting(s *State, c command, r *receipt) *AuditRecord {
 	}
 	member.Voting = request.Voting
 	s.Members[request.NodeID] = member
+	delete(s.PendingVotes, request.NodeID)
 	event := &AuditRecord{Kind: "member_vote_revoked", To: request.NodeID}
 	if request.Voting {
 		event.Kind = "member_vote_granted"
@@ -507,8 +571,16 @@ func applyTransfer(s *State, c command, r *receipt) *AuditRecord {
 		return nil
 	}
 	member, ok := s.Members[c.Transfer.TargetNodeID]
-	if !ok || s.Voters[member.NodeID] == "" || s.Removing[member.NodeID] {
-		r.reject("invalid", "target is not a voting member")
+	if !ok || !s.IsActiveReplica(member.NodeID) {
+		r.reject("invalid", "target is not an active replica")
+		return nil
+	}
+	if _, pending := s.PendingVotes[member.NodeID]; pending {
+		r.reject("conflict", "target voting change is pending")
+		return nil
+	}
+	if (c.Automatic || s.AutoFailover) && s.Voters[member.NodeID] != member.Address {
+		r.reject("invalid", "automatic policy requires a voting coordinator")
 		return nil
 	}
 	if c.Automatic && (!s.AutoFailover || !s.CanAutoFailover() || !member.AutoEligible) {
@@ -612,7 +684,7 @@ type snapshotData struct {
 	HasApplication bool               `json:"has_application"`
 }
 
-const snapshotFormat = 3
+const snapshotFormat = 4
 
 func (m *machine) Snapshot() (raft.FSMSnapshot, error) {
 	data, application, persisted, err := m.captureSnapshot()
@@ -680,8 +752,30 @@ func (m *machine) Restore(reader io.ReadCloser) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if data.Format != snapshotFormat || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
+	if (data.Format != snapshotFormat && data.Format != 3) || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
 		return fmt.Errorf("%w: snapshot identity or format differs", ErrInvalid)
+	}
+	if data.Format == 3 {
+		// Format 3 included admitted-but-incomplete joins in Members. Completion
+		// is recoverable from the retained administrative audit, not suffrage.
+		completed := map[string]bool{}
+		for _, event := range data.State.Audit {
+			switch event.Kind {
+			case "coordinator_initialized", "member_joined":
+				completed[event.To] = true
+			case "member_removed":
+				delete(completed, event.From)
+			}
+		}
+		data.State.PendingJoins = map[string]bool{}
+		data.State.PendingVotes = map[string]VotingRequest{}
+		for id := range data.State.Members {
+			if !completed[id] {
+				data.State.PendingJoins[id] = true
+			}
+		}
+	} else if data.State.PendingJoins == nil || data.State.PendingVotes == nil {
+		return fmt.Errorf("%w: snapshot is missing pending membership state", ErrInvalid)
 	}
 	if data.HasApplication != (m.app != nil) || (!data.HasApplication && len(application) != 0) {
 		return fmt.Errorf("%w: snapshot application configuration differs", ErrInvalid)
