@@ -1,3 +1,44 @@
+/* Embedded components own their typography. Do not re-enter prose inside
+   not-prose, even if an embedded component happens to use Markdown classes. */
+.prose :where(.not-prose) {
+    font-family: var(--font-body);
+    font-size: var(--ui-font-size);
+    line-height: var(--text-sm--line-height);
+}
+
+/* The typography plugin also styles each prose root; neutralize that root
+   rule at an exclusion boundary without styling its component descendants. */
+.prose :where(.not-prose .prose) {
+    font: inherit;
+    color: inherit;
+}
+
+/* Semantic UI headings consume their existing size rung exactly once. These
+   rules affect headings only; ordinary text utilities remain on the UI axis. */
+:where(h1, h2, h3, h4, h5, h6):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-family: var(--font-display);
+    &.text-xs { font-size: calc(var(--text-xs) * var(--heading-scale)); }
+    &.text-sm { font-size: calc(var(--text-sm) * var(--heading-scale)); }
+    &.text-base { font-size: calc(var(--text-base) * var(--heading-scale)); }
+    &.text-md { font-size: calc(var(--text-md) * var(--heading-scale)); }
+    &.text-lg { font-size: calc(var(--text-lg) * var(--heading-scale)); }
+    &.text-xl { font-size: calc(var(--text-xl) * var(--heading-scale)); }
+    &.text-2xl { font-size: calc(var(--text-2xl) * var(--heading-scale)); }
+    &.text-3xl { font-size: calc(var(--text-3xl) * var(--heading-scale)); }
+    &.text-4xl { font-size: calc(var(--text-4xl) * var(--heading-scale)); }
+    &.text-5xl { font-size: calc(var(--text-5xl) * var(--heading-scale)); }
+    &.text-6xl { font-size: calc(var(--text-6xl) * var(--heading-scale)); }
+    &.text-7xl { font-size: calc(var(--text-7xl) * var(--heading-scale)); }
+    &.text-8xl { font-size: calc(var(--text-8xl) * var(--heading-scale)); }
+    &.text-9xl { font-size: calc(var(--text-9xl) * var(--heading-scale)); }
+    &.text-display-xs { font-size: calc(var(--text-display-xs) * var(--heading-scale)); }
+    &.text-display-sm { font-size: calc(var(--text-display-sm) * var(--heading-scale)); }
+    &.text-display-md { font-size: calc(var(--text-display-md) * var(--heading-scale)); }
+    &.text-display-lg { font-size: calc(var(--text-display-lg) * var(--heading-scale)); }
+    &.text-display-xl { font-size: calc(var(--text-display-xl) * var(--heading-scale)); }
+    &.text-display-2xl { font-size: calc(var(--text-display-2xl) * var(--heading-scale)); }
+}
+
 .prose:not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     --tw-prose-body: var(--color-text-tertiary);
     --tw-prose-headings: var(--color-text-primary);
@@ -18,8 +59,9 @@
 
     /* Base */
     color: var(--tw-prose-body);
-    font-size: var(--text-md);
-    line-height: var(--text-md--line-height);
+    font-family: var(--font-reading);
+    font-size: var(--reading-font-size);
+    line-height: 1.5;
 }
 
 .prose :not(:where([class~="not-prose"], [class~="not-prose"] *)) {
@@ -30,8 +72,8 @@
     }
 
     &:where([class~="lead"]) {
-        font-size: var(--text-md);
-        line-height: var(--text-md--line-height);
+        font-size: 1em;
+        line-height: 1.5;
         margin-top: 1.2em;
         margin-bottom: 1.2em;
     }
@@ -88,8 +130,8 @@
         font-weight: 500;
         font-style: italic;
 
-        font-size: var(--text-xl);
-        line-height: var(--text-xl--line-height);
+        font-size: 1.25em;
+        line-height: 1.5;
     }
     &:where(blockquote p:first-of-type::before) {
         content: open-quote;
@@ -103,8 +145,9 @@
         color: var(--tw-prose-headings);
         font-weight: 600;
 
-        font-size: var(--text-display-sm);
-        line-height: var(--text-display-sm--line-height);
+        font-size: calc(var(--reading-font-size) * 30 / 16 * var(--heading-scale));
+        font-family: var(--font-display);
+        line-height: calc(38 / 30);
         margin-bottom: calc(var(--spacing) * 5);
         margin-top: calc(var(--spacing) * 10);
     }
@@ -112,8 +155,9 @@
         color: var(--tw-prose-headings);
         font-weight: 600;
 
-        font-size: var(--text-display-xs);
-        line-height: var(--text-display-xs--line-height);
+        font-size: calc(var(--reading-font-size) * 24 / 16 * var(--heading-scale));
+        font-family: var(--font-display);
+        line-height: calc(32 / 24);
         margin-bottom: calc(var(--spacing) * 4);
         margin-top: calc(var(--spacing) * 8);
     }
@@ -121,8 +165,9 @@
         color: var(--tw-prose-headings);
         font-weight: 600;
 
-        font-size: var(--text-xl);
-        line-height: var(--text-xl--line-height);
+        font-size: calc(var(--reading-font-size) * 20 / 16 * var(--heading-scale));
+        font-family: var(--font-display);
+        line-height: 1.5;
         margin-bottom: calc(var(--spacing) * 3);
         margin-top: calc(var(--spacing) * 8);
     }
@@ -130,10 +175,16 @@
         color: var(--tw-prose-headings);
         font-weight: 600;
 
-        font-size: var(--text-lg);
-        line-height: var(--text-lg--line-height);
+        font-size: calc(var(--reading-font-size) * 18 / 16 * var(--heading-scale));
+        font-family: var(--font-display);
+        line-height: calc(28 / 18);
         margin-bottom: calc(var(--spacing) * 2);
         margin-top: calc(var(--spacing) * 5);
+    }
+
+    &:where(h5, h6) {
+        font-family: var(--font-display);
+        font-size: calc(var(--reading-font-size) * var(--heading-scale));
     }
 
     &:where(h2 + *) {
@@ -203,6 +254,7 @@
         gap: calc(var(--spacing) * 1.5);
     }
     &:where(figcaption) {
+        font-family: var(--font-body);
         color: var(--tw-prose-captions);
 
         font-size: var(--text-sm);
@@ -233,8 +285,9 @@
 
     /* Inline code element */
     &:where(code:not(pre code)) {
-        font-size: 0.875rem;
-        line-height: 1.25rem;
+        font-family: var(--font-mono);
+        font-size: 0.9em;
+        line-height: inherit;
         font-weight: 700;
         border-radius: 6px;
         padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 1.5);
@@ -278,8 +331,8 @@
 .prose.md\:prose-lg:not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     @media (width >= 48rem /* 768px */) {
         /* Base */
-        font-size: var(--text-lg);
-        line-height: var(--text-lg--line-height);
+        font-size: calc(var(--reading-font-size) * 18 / 16);
+        line-height: calc(28 / 18);
     }
 }
 
@@ -292,8 +345,8 @@
         }
 
         &:where([class~="lead"]) {
-            font-size: var(--text-xl);
-            line-height: var(--text-xl--line-height);
+            font-size: calc(var(--reading-font-size) * 20 / 16);
+            line-height: 1.5;
             margin-top: 1.09em;
             margin-bottom: 1.09em;
         }
@@ -336,32 +389,36 @@
         &:where(blockquote p) {
             margin: 0;
 
-            font-size: var(--text-display-xs);
-            line-height: var(--text-display-xs--line-height);
+            font-size: calc(var(--reading-font-size) * 24 / 16);
+            line-height: calc(32 / 24);
         }
 
         /* Headings */
         &:where(h1) {
-            font-size: var(--text-display-md);
-            line-height: var(--text-display-md--line-height);
+            font-size: calc(var(--reading-font-size) * 36 / 16 * var(--heading-scale));
+            font-family: var(--font-display);
+            line-height: calc(44 / 36);
             margin-bottom: calc(var(--spacing) * 6);
             margin-top: calc(var(--spacing) * 12);
         }
         &:where(h2) {
-            font-size: var(--text-display-sm);
-            line-height: var(--text-display-sm--line-height);
+            font-size: calc(var(--reading-font-size) * 30 / 16 * var(--heading-scale));
+            font-family: var(--font-display);
+            line-height: calc(38 / 30);
             margin-bottom: calc(var(--spacing) * 5);
             margin-top: calc(var(--spacing) * 10);
         }
         &:where(h3) {
-            font-size: var(--text-display-xs);
-            line-height: var(--text-display-xs--line-height);
+            font-size: calc(var(--reading-font-size) * 24 / 16 * var(--heading-scale));
+            font-family: var(--font-display);
+            line-height: calc(32 / 24);
             margin-bottom: calc(var(--spacing) * 4);
             margin-top: calc(var(--spacing) * 8);
         }
         &:where(h4) {
-            font-size: var(--text-xl);
-            line-height: var(--text-xl--line-height);
+            font-size: calc(var(--reading-font-size) * 20 / 16 * var(--heading-scale));
+            font-family: var(--font-display);
+            line-height: 1.5;
             margin-bottom: calc(var(--spacing) * 3);
             margin-top: calc(var(--spacing) * 8);
         }
@@ -392,6 +449,7 @@
         }
 
         &:where(figcaption) {
+            font-family: var(--font-body);
             margin-top: calc(var(--spacing) * 4);
         }
 
@@ -409,8 +467,9 @@
 
         /* Inline code element */
         &:where(code:not(pre code)) {
-            font-size: 0.875rem;
-            line-height: 1.25rem;
+            font-family: var(--font-mono);
+            font-size: 0.9em;
+            line-height: inherit;
             font-weight: 700;
             border-radius: 6px;
             padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 1.5);

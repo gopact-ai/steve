@@ -1,97 +1,99 @@
-import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useState } from "react";
-
-import { isTheme, paletteOf, type Scheme, type ThemeId } from "@/lib/themes";
-
-type Theme = ThemeId;
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  APPEARANCE_KEY,
+  defaultAppearance,
+  normalizeAppearance,
+  readAppearance,
+  resolveAppearance,
+  type Appearance,
+} from "@/lib/appearance";
+import { applyAppearance } from "@/lib/appearance-dom";
+import type { Scheme } from "@/lib/themes";
 
 interface ThemeContextType {
-    theme: Theme;
-    /** Light or dark, after "system" and any palette have been resolved. */
-    scheme: Scheme;
-    setTheme: (theme: Theme) => void;
+  appearance: Appearance;
+  scheme: Scheme;
+  updateAppearance: (update: (current: Appearance) => Appearance) => void;
+  storageError: boolean;
 }
-
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
-
-export const useTheme = (): ThemeContextType => {
-    const context = useContext(ThemeContext);
-
-    if (context === undefined) {
-        throw new Error("useTheme must be used within a ThemeProvider");
-    }
-
-    return context;
-};
-
-interface ThemeProviderProps {
-    children: ReactNode;
-    /**
-     * The class to add to the root element when the theme reads as dark
-     * @default "dark-mode"
-     */
-    darkModeClass?: string;
-    /**
-     * The default theme to use if no theme is stored in localStorage
-     * @default "system"
-     */
-    defaultTheme?: Theme;
-    /**
-     * The key to use to store the theme in localStorage
-     * @default "ui-theme"
-     */
-    storageKey?: string;
+export function useTheme(): ThemeContextType {
+  const value = useContext(ThemeContext);
+  if (!value) throw new Error("useTheme must be used within ThemeProvider");
+  return value;
 }
-
-// The scheme is stored next to the theme so the boot script in index.html
-// can paint the right background before this module is even parsed,
-// without carrying a copy of the palette table.
-export const schemeKey = "ui-theme-scheme";
-
-const systemScheme = (): Scheme => (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-const schemeOf = (theme: Theme): Scheme => (theme === "system" ? systemScheme() : theme === "light" || theme === "dark" ? theme : paletteOf(theme)?.scheme ?? "light");
-
-export const ThemeProvider = ({ children, defaultTheme = "system", storageKey = "ui-theme", darkModeClass = "dark-mode" }: ThemeProviderProps) => {
-    const [theme, setTheme] = useState<Theme>(() => {
-        if (typeof window !== "undefined") {
-            const saved = localStorage.getItem(storageKey);
-            return saved && isTheme(saved) ? saved : defaultTheme;
-        }
-        return defaultTheme;
-    });
-    const [scheme, setScheme] = useState<Scheme>(() => (typeof window === "undefined" ? "light" : schemeOf(theme)));
-
-    useEffect(() => {
-        const applyTheme = () => {
-            const root = window.document.documentElement;
-            const palette = paletteOf(theme);
-            const resolved = schemeOf(theme);
-
-            if (palette) root.dataset.theme = palette.id;
-            else delete root.dataset.theme;
-            root.classList.toggle(darkModeClass, resolved === "dark");
-            setScheme(resolved);
-
-            if (theme === "system") localStorage.removeItem(storageKey);
-            else localStorage.setItem(storageKey, theme);
-            localStorage.setItem(schemeKey, resolved);
-            document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(root).getPropertyValue("--color-bg-primary").trim() || (resolved === "dark" ? "#232428" : "#f5f5f7"));
-        };
-
-        applyTheme();
-
-        // Listen for system theme changes
-        const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-
-        const handleChange = () => {
-            if (theme === "system") {
-                applyTheme();
-            }
-        };
-
-        mediaQuery.addEventListener("change", handleChange);
-        return () => mediaQuery.removeEventListener("change", handleChange);
-    }, [theme]);
-
-    return <ThemeContext.Provider value={{ theme, scheme, setTheme }}>{children}</ThemeContext.Provider>;
-};
+const systemDark = () =>
+  window.matchMedia("(prefers-color-scheme: dark)").matches;
+function initial() {
+  try {
+    localStorage.getItem(APPEARANCE_KEY);
+    return { appearance: readAppearance(localStorage), storageError: false };
+  } catch {
+    return { appearance: defaultAppearance(), storageError: true };
+  }
+}
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState(initial);
+  const current = useRef(state.appearance);
+  const [dark, setDark] = useState(systemDark);
+  const { appearance, storageError } = state;
+  const scheme = resolveAppearance(appearance, dark).scheme;
+  const updateAppearance = useCallback(
+    (update: (current: Appearance) => Appearance) => {
+      const next = normalizeAppearance(update(current.current));
+      let failed = false;
+      try {
+        localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next));
+      } catch {
+        failed = true;
+      }
+      current.current = next;
+      setState({ appearance: next, storageError: failed });
+    },
+    [],
+  );
+  useLayoutEffect(() => {
+    applyAppearance(appearance, dark);
+  }, [appearance, dark]);
+  useEffect(() => {
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const change = () => setDark(media.matches);
+    const storage = (event: StorageEvent) => {
+      if (event.key !== APPEARANCE_KEY && event.key !== null) return;
+      try {
+        if (event.storageArea !== localStorage) return;
+        // Read the latest value, rather than replaying an older event
+        // after another window has already saved a newer preference.
+        const next = readAppearance(localStorage);
+        current.current = next;
+        setState({ appearance: next, storageError: false });
+      } catch {
+        setState((s) => ({ ...s, storageError: true }));
+      }
+    };
+    media.addEventListener("change", change);
+    window.addEventListener("storage", storage);
+    change();
+    return () => {
+      media.removeEventListener("change", change);
+      window.removeEventListener("storage", storage);
+    };
+  }, []);
+  const value = useMemo(
+    () => ({ appearance, scheme, updateAppearance, storageError }),
+    [appearance, scheme, updateAppearance, storageError],
+  );
+  return (
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+  );
+}

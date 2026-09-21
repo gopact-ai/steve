@@ -124,8 +124,8 @@ function PeriodDashboard({ period, metric, setMetric, zone }: { period: UsagePer
                 <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                     <LineChart data={points} margin={{ top: 12, right: 24, bottom: 4, left: 0 }} accessibilityLayer>
                         <CartesianGrid stroke="var(--color-border-secondary)" strokeDasharray="3 5" vertical={false} />
-                        <XAxis dataKey="key" tickFormatter={(value) => tick(String(value))} axisLine={false} tickLine={false} minTickGap={28} tickMargin={12} tick={{ fill: "var(--color-text-tertiary)", fontSize: 11 }} />
-                        <YAxis tickFormatter={(value) => format(Number(value))} domain={[0, "auto"]} allowDecimals={false} width={62} axisLine={false} tickLine={false} tick={{ fill: "var(--color-text-tertiary)", fontSize: 11 }} />
+                        <XAxis dataKey="key" tickFormatter={(value) => tick(String(value))} axisLine={false} tickLine={false} minTickGap={28} tickMargin={12} tick={{ fill: "var(--color-text-tertiary)", fontSize: "var(--text-xs)" }} />
+                        <YAxis tickFormatter={(value) => format(Number(value))} domain={[0, "auto"]} allowDecimals={false} width={62} axisLine={false} tickLine={false} tick={{ fill: "var(--color-text-tertiary)", fontSize: "var(--text-xs)" }} />
                         <Tooltip isAnimationActive={false} cursor={{ stroke: "var(--color-border-primary)" }} content={({ active, payload }) => {
                             const point = payload?.[0]?.payload as (typeof points)[number] | undefined;
                             if (!active || !point) return null;

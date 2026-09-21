@@ -36,7 +36,7 @@ export function CodeBlock({ code, lang, label, meta, muted, maxHeight = 320, den
                     {copied ? <Check className="size-3.5 text-fg-success-primary" /> : <Copy01 className="size-3.5" />}
                 </button>
             </div>
-            <pre style={{ maxHeight }} className={`overflow-auto whitespace-pre-wrap break-words font-mono ${density === "reading" ? "px-4 py-3 text-sm leading-7" : "px-3 py-2 text-[12px] leading-relaxed"} [overflow-wrap:anywhere] ${muted ? "text-tertiary" : "text-secondary"}`}><code data-md-start={sourceStart} data-md-end={sourceEnd} data-md-kind="code">{code}</code></pre>
+            <pre style={{ maxHeight }} className={`overflow-auto whitespace-pre-wrap break-words text-code ${density === "reading" ? "px-4 py-3 leading-7" : "px-3 py-2 leading-relaxed"} [overflow-wrap:anywhere] ${muted ? "text-tertiary" : "text-secondary"}`}><code data-md-start={sourceStart} data-md-end={sourceEnd} data-md-kind="code">{code}</code></pre>
         </div>
     );
 }

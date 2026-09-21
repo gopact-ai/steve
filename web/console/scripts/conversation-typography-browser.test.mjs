@@ -29,12 +29,39 @@ try {
     await writeFile(path.join(scratch, "style.css"), `@import "${web}/src/styles/globals.css";\n@source "${web}/src";\n@source "${scratch}/entry.tsx";`);
     await writeFile(path.join(scratch, "entry.tsx"), `
         import { createRoot } from "react-dom/client";
+        import { useRef, useState } from "react";
+        import { PageHeader, Panel } from "@/components/steve/page";
+        import { DialogHeader } from "@/components/steve/dialog-surface";
+        import { SourceView } from "@/components/steve/source-view";
+        import { DiffView } from "@/components/steve/diff-view";
+        import { CodeBlock } from "@/components/steve/code-block";
+        import { MarkdownInput } from "@/components/steve/markdown-input";
         import { AssistantMessage, UserMessage } from "@/components/steve/message";
         import { Md } from "@/components/steve/markdown";
         import { LocaleProvider } from "@/providers/locale-provider";
         import "./style.css";
         const text = ${JSON.stringify(markdown)};
         const reply = { id:"fixture", conversation:"console:fixture", kind:"reply", text, at:"2026-09-21T07:16:29Z" };
+        function RoleFixtures() {
+            const [draft, setDraft] = useState(${JSON.stringify("Composer reading text\n\n## Composer heading\n\n```text\ncomposer code\n```")});
+            const handle = useRef(null);
+            return <section id="roles">
+                <PageHeader title="Page heading" /><Panel title="Section heading">UI body</Panel>
+                <div data-dialog-surface><DialogHeader title="Dialog heading" /></div>
+                <div className="profile-reading"><Md text={${JSON.stringify("# Profile heading\n\nProfile reading text")}} /></div>
+                <textarea className="profile-editor font-mono text-sm" defaultValue="Profile draft" />
+                <MarkdownInput value={draft} onChange={setDraft} label="Draft" placeholder="Write" handle={handle} />
+                <SourceView file={{ path:"fixture.txt", text:"source text", size:11 }} />
+                <DiffView layout="unified" diff={${JSON.stringify("@@ -1 +1 @@\n-old\n+new\n")}} />
+                <div id="reader"><Md text={${JSON.stringify("## Reader heading\n\nReader text with `inline code`.\n\n##### Small heading")}} /></div>
+                <div id="tool-output"><CodeBlock code="tool output" lang="shell" /></div>
+                <div className="prose md md-conversation"><div className="not-prose" id="embedded-ui">
+                    <span className="u-meta">Embedded metadata</span>
+                    <div className="prose md md-conversation"><p>Nested excluded prose</p><h2>Nested excluded heading</h2><code>excluded code</code></div>
+                </div></div>
+                <div className="app-nav-item">Navigation</div><span className="text-xs" id="ui-token">UI token</span>
+            </section>;
+        }
         createRoot(document.getElementById("root")).render(<LocaleProvider>
             <main className="conversation-content" style={{ minHeight:"100vh" }}>
                 <header className="console-toolbar"><div className="console-heading"><h1>检查结果与后续处理</h1><div className="console-location">示例项目 · 工作区</div></div></header>
@@ -44,6 +71,7 @@ try {
                     <section id="plain"><AssistantMessage r={{...reply,id:"plain",text:"Plain text stays plain.\\n第二行保留原始换行。",format:"text"}} readOnly /></section>
                     <section id="compact"><Md size="xs" className="md-quiet" text={"过程摘要：\\n\\n保持紧凑，不采用最终回答的段落间距。"} /></section>
                 </div></div>
+                <RoleFixtures />
             </main>
         </LocaleProvider>);
     `);
@@ -116,8 +144,74 @@ try {
         assert.equal(await page.evaluate(() => window.copiedText), markdown, "copy keeps the original markdown");
         assert.equal(await page.locator("#plain [data-selection-surface]").innerText(), "Plain text stays plain.\n第二行保留原始换行。");
         assert.ok(await page.locator("#answer [data-md-start]").count() > 0, "source mapping survives presentation changes");
+        const sampleRoles = () => page.evaluate(() => {
+            const style = selector => {
+                const element = document.querySelector(selector), css = getComputedStyle(element);
+                return { size: parseFloat(css.fontSize), family: css.fontFamily, line: parseFloat(css.lineHeight),
+                    margin: parseFloat(css.marginBottom), padding: css.padding };
+            };
+            return Object.fromEntries(Object.entries({
+                answer: "#answer .md", plain: "#plain .conversation-text", user: ".message-user-body",
+                compact: "#compact .md", compactParagraph: "#compact p", inline: "#answer p code",
+                heading: "#answer h2", page: "#roles .workbench-page-header h1", section: "#roles h2.text-sm",
+                dialog: "#roles [data-dialog-surface] h2", profile: ".profile-reading .md", profileHeading: ".profile-reading h1",
+                profileEditor: ".profile-editor", composer: "#roles .cm-scroller", composerHeading: "#roles .cm-md-h2", composerCode: "#roles .cm-md-code-line", code: "#answer pre",
+                codeMeta: "#answer .not-prose .u-meta", source: "#roles .source-code", diff: "#roles .review-diff-code",
+                sourceMeta: "#roles .source-file-meta", diffMeta: "#roles .review-diff-table thead", meta: "#answer .message-meta",
+                reader: "#reader .md", readerHeading: "#reader h2", readerInline: "#reader p code", smallHeading: "#reader h5", tool: "#tool-output pre", nav: "#roles .app-nav-item",
+                token: "#ui-token", embedded: "#embedded-ui .u-meta", excluded: "#embedded-ui p",
+                excludedHeading: "#embedded-ui h2", excludedCode: "#embedded-ui code", paragraph: "#answer p",
+            }).map(([role, selector]) => [role, style(selector)]));
+        });
+        const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 0.03, `${message}: ${actual} vs ${expected}`);
+        const defaults = await sampleRoles();
+        near(defaults.answer.size, 16, "default reading size");
+        near(defaults.answer.line, 29.6, "default reading rhythm");
+        near(defaults.paragraph.margin, 16, "default paragraph spacing");
+        near(defaults.compact.size, 14, "compact notes keep their default size");
+        near(defaults.compactParagraph.margin, 7, "compact notes keep their default spacing");
+        for (const [ui, reading, code, heading] of [[14,16,13,1], [18,16,13,1], [14,20,13,1], [14,16,17,1], [14,16,13,0.9], [14,16,13,1.15], [18,20,17,1.15], [12,12,11,0.9], [18,24,22,1.15], [12,12,22,1.15]]) {
+            await page.evaluate(({ ui, reading, code, heading }) => {
+                for (const [name, value] of Object.entries({ "--ui-font-size": `${ui}px`, "--reading-font-size": `${reading}px`,
+                    "--code-font-size": `${code}px`, "--heading-scale": String(heading), "--font-body": "Arial",
+                    "--font-reading": "Georgia", "--font-display": '"Times New Roman"', "--font-mono": '"Courier New"' })) {
+                    document.documentElement.style.setProperty(name, value);
+                }
+            }, { ui, reading, code, heading });
+            for (const width of [1100, 390]) {
+                await page.setViewportSize({ width, height: 1500 });
+                const roles = await sampleRoles();
+                for (const role of ["answer", "plain", "user", "profile", "profileEditor", "composer", "reader"]) {
+                    near(roles[role].size, reading, `${role} follows reading size`);
+                    assert.ok(roles[role].family.includes("Georgia"), `${role} follows reading font`);
+                }
+                for (const role of ["code", "source", "diff", "tool", "composerCode"]) {
+                    near(roles[role].size, code, `${role} follows code size`);
+                    assert.ok(roles[role].family.includes("Courier New"), `${role} follows mono font`);
+                }
+                for (const [role, base] of [["meta",11], ["codeMeta",12], ["sourceMeta",12], ["diffMeta",11], ["nav",13], ["token",12], ["embedded",12]]) {
+                    near(roles[role].size, ui * base / 14, `${role} follows UI size independently`);
+                    assert.ok(roles[role].family.includes("Arial"), `${role} follows UI font`);
+                }
+                for (const [role, size] of [["page",ui * 20/14], ["section",ui], ["dialog",ui * 16/14], ["heading",reading * 1.25], ["profileHeading",reading * 1.5], ["readerHeading",reading * 1.5], ["smallHeading",reading], ["composerHeading",reading * 17/16]]) {
+                    near(roles[role].size, size * heading, `${role} follows heading scale once`);
+                    assert.ok(roles[role].family.includes("Times New Roman"), `${role} follows display font`);
+                }
+                near(roles.composerCode.line, code * 22/13, "composer code line-height is independent of reading size");
+                near(roles.compact.size, reading * 14/16, "compact reading size");
+                near(roles.inline.size, reading * 0.9, "inline code stays relative to reading text");
+                near(roles.readerInline.size, reading * 0.9, "reader inline code stays relative");
+                for (const role of ["excluded", "excludedHeading", "excludedCode"]) {
+                    near(roles[role].size, ui, `${role} excludes nested prose typography`);
+                }
+                near(roles.excluded.margin, 0, "nested not-prose paragraphs exclude prose margins");
+                near(roles.answer.line / reading, 1.85, "reading line-height remains unchanged");
+                assert.equal(roles.nav.padding, defaults.nav.padding, "UI font changes do not scale layout padding");
+                assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "appearance settings do not overflow the viewport");
+            }
+        }
         assert.deepEqual(errors, []);
-        console.log("Conversation typography: dark/light, wide/narrow, hierarchy, quiet code, compact isolation and copy PASS");
+        console.log("Conversation typography: dark/light, wide/narrow, hierarchy, quiet code, compact isolation, independent appearance axes and copy PASS");
     }
 } finally {
     await browser?.close();

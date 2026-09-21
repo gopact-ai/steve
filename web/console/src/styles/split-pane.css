@@ -17,7 +17,7 @@
    strip's own border underneath it. */
 .split-tab[data-active]::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--color-bg-brand-solid); }
 .split-tab[data-active]::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 1px; background: var(--color-bg-primary); }
-.split-tab-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 100%; padding: 0; font-size: 12px; font-weight: 500; }
+.split-tab-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 100%; padding: 0; font-size: var(--text-xs); font-weight: 500; }
 .split-tab-icon { width: 14px; height: 14px; flex-shrink: 0; color: var(--color-fg-quaternary); }
 .split-tab[data-active] .split-tab-icon { color: var(--color-fg-brand-primary); }
 .split-tab-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -33,7 +33,7 @@
    and width it needs when it stands alone. */
 .split-pane-body > .side-chat { width: 100%; border-left: 0; }
 .split-delegation { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.split-delegation-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--color-border-secondary); font-size: 12px; }
+.split-delegation-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--color-border-secondary); font-size: var(--text-xs); }
 .split-delegation-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px; }
 /* Below this the two columns cannot both be read, so the pane covers
    the conversation instead of squeezing it. */

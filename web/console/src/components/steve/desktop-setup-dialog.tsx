@@ -445,7 +445,7 @@ function MachineRow({ node, busy, onChanged }: { node: Node; busy: boolean; onCh
 // the backend's messages; appearance is a window preference.
 function PreferencesStep({ busy, setBusy, onNext, onBack }: StepProps) {
     const { t, preference, setLocale } = useI18n();
-    const { theme, setTheme } = useTheme();
+    const { appearance, updateAppearance } = useTheme();
     const [error, setError] = useState("");
     async function save() {
         setBusy(true); setError("");
@@ -465,7 +465,7 @@ function PreferencesStep({ busy, setBusy, onNext, onBack }: StepProps) {
             <span className="text-sm font-medium text-primary">{t("desktop.language")}</span>
             <div className="flex flex-wrap gap-2">{([["system", "desktop.languageSystem"], ["zh", "desktop.languageZh"], ["en", "desktop.languageEn"]] as const).map(([value, label]) => <Radio key={value} value={value} className={option}>{t(label)}</Radio>)}</div>
         </RadioGroup>
-        <RadioGroup aria-label={t("desktop.appearance")} value={theme} isDisabled={busy} onChange={(value) => setTheme(value as "system" | "light" | "dark")} className="space-y-2">
+        <RadioGroup aria-label={t("desktop.appearance")} value={appearance.mode} isDisabled={busy} onChange={(value) => updateAppearance(a => ({ ...a, mode: value as "system" | "light" | "dark" }))} className="space-y-2">
             <span className="text-sm font-medium text-primary">{t("desktop.appearance")}</span>
             <div className="flex flex-wrap gap-2">{([["system", "desktop.appearanceSystem"], ["light", "desktop.appearanceLight"], ["dark", "desktop.appearanceDark"]] as const).map(([value, label]) => <Radio key={value} value={value} className={option}>{t(label)}</Radio>)}</div>
         </RadioGroup>

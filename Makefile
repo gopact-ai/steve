@@ -23,6 +23,7 @@ test-console:
 	npm --prefix web/console run test:ui
 	npm --prefix web/console run test:task-completion
 	npm --prefix web/console run test:architecture
+	npm --prefix web/console run test:appearance
 	npm --prefix web/console run test:settings
 	npm --prefix web/console run test:materials
 	npm --prefix web/console run test:questions

@@ -1,7 +1,7 @@
 import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router";
-import { Globe01, Settings01, Server01, Sliders04 } from "@untitledui/icons";
+import { Globe01, Settings01, Server01, Sliders04, Palette } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -18,18 +18,16 @@ import { errorText, type LocalePreference } from "@/lib/i18n";
 import { registerBackNavigationGuard } from "@/lib/navigation-guard";
 import { settingGroups, settingValue, settingsInputs, settingsPatch, type SettingPath } from "@/lib/settings-values";
 import { useI18n } from "@/providers/locale-provider";
-import { PALETTES, type ThemeId } from "@/lib/themes";
-import { useTheme } from "@/providers/theme-provider";
+import { SettingsAppearance } from "@/components/steve/settings-appearance";
 
 type Group = "hub" | "channels";
-type Section = "general" | "channels" | "policies" | "services";
-const sections = ["general", "channels", "policies", "services"] as const;
+type Section = "appearance" | "general" | "channels" | "policies" | "services";
+const sections = ["general", "appearance", "channels", "policies", "services"] as const;
 const servicesHref = "#/settings?section=services";
-const icons = { general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
+const icons = { appearance: Palette, general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
 
 export function SettingsPage() {
     const { t, locale, preference, setLocale } = useI18n();
-    const { theme, setTheme } = useTheme();
     const [params, setParams] = useSearchParams();
     const location = useLocation();
     const chosen = params.get("section");
@@ -95,7 +93,13 @@ export function SettingsPage() {
         } catch (error) { if (alive.current && revision === requests.current[group]) setErrors((value) => ({ ...value, [group]: error })); }
         finally { if (alive.current && revision === requests.current[group]) setLoading((value) => ({ ...value, [group]: false })); }
     }
-    useEffect(() => { alive.current = true; void read("hub"); void read("channels"); return () => { alive.current = false; requests.current.hub++; requests.current.channels++; }; }, []);
+    const loadedServerSettings = useRef(false);
+    useEffect(() => { alive.current = true; return () => { alive.current = false; loadedServerSettings.current = false; requests.current.hub++; requests.current.channels++; }; }, []);
+    useEffect(() => {
+        if (section === "appearance" || loadedServerSettings.current) return;
+        loadedServerSettings.current = true;
+        void read("hub"); void read("channels");
+    }, [section]);
     async function save(group: Group) {
         if (sending.current || loading[group] || stale[group]) return;
         sending.current = true; setSaving(group); setErrors((all) => ({ ...all, [group]: null }));
@@ -130,7 +134,7 @@ export function SettingsPage() {
     const pendingGroup = group === "hub" ? !!hub?.pending_restart : !!channels?.pending_restart;
     const update = (path: string, value: string) => { setInputs((all) => ({ ...all, [path]: value })); setNotices((all) => ({ ...all, hub: undefined })); setErrors((all) => ({ ...all, hub: null })); };
     const rows = (paths: readonly SettingPath[]) => hub && paths.filter((path) => fields.has(path)).map((path) => <SettingRow key={path} path={path} field={fields.get(path)!} view={hub} value={inputs[path] ?? ""} disabled={blocked} restart={restartLink} onChange={(value) => update(path, value)} />);
-    const groupStatus = section !== "services" && <>
+    const groupStatus = section !== "services" && section !== "appearance" && <>
         {!!errors[group] && <p role="alert" className="settings-alert">{errorText(errors[group], locale)}</p>}
         {stale[group] && <div role="alert" className="settings-conflict"><p>{t("settingsPage.sharedRevision")}</p><div className="settings-actions"><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead(true)}>{t("settingsPage.reviewLatest")}</Button><Button size="sm" color="link-gray" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.discardReload")}</Button></div></div>}
         {notices[group] && <p role="status" className="settings-note">{t(notices[group] === "review" ? "settingsPage.reviewedNotice" : pendingGroup ? "settingsPage.savedPendingNotice" : group === "channels" ? "settingsPage.channelsSavedNotice" : "settingsPage.savedNotice")}{notices[group] === "saved" && pendingGroup && <> {restartLink}</>}</p>}
@@ -142,10 +146,11 @@ export function SettingsPage() {
         <div className="settings-layout"><nav aria-label={t("settingsPage.categories")} className="settings-nav">{sections.map((item) => { const Icon = icons[item]; return <a key={item} aria-label={t(`settingsPage.section.${item}`)} href={`#/settings?section=${item}`} aria-current={item === section ? "page" : undefined} onClick={(event) => { event.preventDefault(); setParams({ section: item }); }}><Icon aria-hidden="true" /><span className="settings-nav-label">{t(`settingsPage.section.${item}`)}</span>{(item === "channels" ? dirtyChannels : item === "policies" || item === "general" ? dirtyHub : false) && <span className="settings-dirty-dot" aria-label={t("settingsPage.unsaved")} />}</a>; })}</nav>
         <main className="settings-content" aria-label={t(`settingsPage.section.${section}`)}>
             {groupStatus}
+            {section === "appearance" && <SettingsAppearance />}
             {section === "general" && <>
                 <div className="settings-section-heading"><div><h2>{t("settingsPage.section.general")}</h2><p>{t("settingsPage.localPreferences")}</p></div></div>
                 <div className="settings-field"><div><label className="settings-field-label">{t("settings.language")}</label><p className="settings-field-description">{t("settingsPage.localLanguageHint")}</p></div><Select size="sm" aria-label={t("settings.language")} selectedKey={preference} onSelectionChange={(key) => { if (key) setLocale(String(key) as LocalePreference); }} items={[{ id: "system", label: t("settings.system") }, { id: "zh", label: "简体中文" }, { id: "en", label: "English" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
-                <div className="settings-field"><label className="settings-field-label">{t("settings.appearance")}</label><Select size="sm" aria-label={t("settings.appearance")} selectedKey={theme} onSelectionChange={(key) => { if (key) setTheme(String(key) as ThemeId); }} items={[...(["system", "light", "dark"] as const).map((id) => ({ id: id as ThemeId, label: t(`settings.${id}`) })), ...PALETTES.map((p) => ({ id: p.id as ThemeId, label: p.name }))]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
+                <a className="text-sm text-brand-secondary underline underline-offset-4" href="#/settings?section=appearance" onClick={event => { event.preventDefault(); setParams({ section: "appearance" }); }}>{t("settings.appearance")}</a>
                 <section className="settings-subsection"><h3>{t("settingsPage.hubDefaults")}</h3>{rows(["gateway.locale"])}</section>
                 <details className="settings-advanced"><summary>{t("settingsPage.identityDetails")}</summary><dl><dt>{t("settingsPage.owner")}</dt><dd><code>{hub ? settingValue(hub.effective, "gateway.owner_id") || "—" : "—"}</code></dd><dt>{t("settingsPage.revision")}</dt><dd><code>{hub?.revision || "—"}</code></dd></dl><p>{t("settingsPage.ownerHint")}</p></details>
                 {saveBar}
@@ -153,7 +158,7 @@ export function SettingsPage() {
             {section === "channels" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.channels")}</h2><p>{t("settingsPage.channelScopeHint")}</p></div></div>{channels && channelDraft ? <ChannelForm view={channels} draft={channelDraft} disabled={blocked} onChange={(next) => { setChannelDraft(next); setNotices((all) => ({ ...all, channels: undefined })); setErrors((all) => ({ ...all, channels: null })); }} /> : <p className="settings-note">{t(loading.channels ? "common.loading" : "settingsPage.channelsUnavailable")}</p>}{saveBar}</>}
             {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section className="settings-subsection"><h3>{t("settingsPage.approval")}</h3><p className="settings-note">{t("settingsPage.approvalHint")}</p>{rows(settingGroups.approval)}<ApprovalSyncRow disabled={blocked} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review", "landing"] as const).filter((name) => settingGroups[name].some((path) => fields.has(path))).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
             {section === "services" && <SettingsServices onRestarted={(service) => { if (service === "hub") { if (!latest.current.dirtyHub) void read("hub"); if (!latest.current.dirtyChannels) void read("channels"); } }} />}
-            {section !== "services" && !hub && <p role="status" className="settings-note">{t(loading.hub ? "common.loading" : "settingsPage.readFailed")}</p>}
+            {section !== "services" && section !== "appearance" && !hub && <p role="status" className="settings-note">{t(loading.hub ? "common.loading" : "settingsPage.readFailed")}</p>}
         </main></div>
         {confirmRead && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirmRead(null); }}><Modal className="max-w-md"><Dialog aria-label={t(confirmRead.keep ? "settingsPage.reviewLatest" : "settingsPage.reloadTitle")}><DialogSurface><DialogBody><DialogHeader title={t(confirmRead.keep ? "settingsPage.reviewLatest" : "settingsPage.reloadTitle")} description={t(confirmRead.keep ? "settingsPage.mergeHint" : "settingsPage.reloadHint")} /><DialogFooter><Button size="sm" color="secondary" onClick={() => setConfirmRead(null)}>{t("common.cancel")}</Button><Button size="sm" color="primary" onClick={() => { const action = confirmRead; setConfirmRead(null); void read(action.group, action.keep); }}>{t(confirmRead.keep ? "settingsPage.keepAndRead" : "settingsPage.confirmReload")}</Button></DialogFooter></DialogBody></DialogSurface></Dialog></Modal></ModalOverlay>}
     </div>;

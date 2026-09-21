@@ -14,7 +14,7 @@ import "@/styles/settings.css";
 installBackNavigationGuard();
 createRoot(document.getElementById("root")!).render(
     <StrictMode>
-        <LocaleProvider><ThemeProvider defaultTheme="system">
+        <LocaleProvider><ThemeProvider>
             <HashRouter>
                 <RouteProvider>
                     <App />
