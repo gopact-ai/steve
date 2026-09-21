@@ -26,10 +26,18 @@ async function eventually(predicate, message) {
     assert.fail(message);
 }
 
-async function fixture({ history = false, running = false } = {}) {
-    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: "block" });
+async function fixture({ history = false, running = false, sandboxed = false } = {}) {
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: sandboxed ? "allow" : "block" });
+    // Playwright's serviceWorkers:"block" init script reads this getter without
+    // a guard and throws in opaque-origin previews. Keep registration blocked
+    // without masking application pageerrors or changing the frame's sandbox.
+    if (sandboxed) await context.addInitScript(() => {
+        let workers;
+        try { workers = navigator.serviceWorker; } catch (error) { if (error.name !== "SecurityError") throw error; }
+        if (workers) workers.register = async () => { throw new Error("Service workers are blocked in interaction fixtures"); };
+    });
     const page = await context.newPage();
-    await page.addInitScript(() => localStorage.setItem("steve.ui.locale", "zh"));
+    await page.addInitScript(() => { if (window === window.top) localStorage.setItem("steve.ui.locale", "zh"); });
     page.setDefaultTimeout(2500);
     await page.clock.install();
     const f = { page, context, calls: [], errors: [], releases: [], binding: null, enqueue: null, cancel: null, failBinding: false, failEnqueue: false, replyReads: 0 };
@@ -106,6 +114,7 @@ async function fixture({ history = false, running = false } = {}) {
         return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
     });
     await page.addInitScript((conversation) => {
+        if (window !== window.top) return;
         if (!sessionStorage.getItem("steve.conversation")) sessionStorage.setItem("steve.conversation", conversation);
         window.sources = [];
         window.EventSource = class {
@@ -1210,7 +1219,7 @@ checks["inspector-resize"] = async (f) => {
     await noHorizontalOverflow(f.page);
 };
 
-async function reviewFixture(f, { open = true } = {}) {
+async function reviewFixture(f, { open = true, files = {} } = {}) {
     const changes = [
         { path: "src/main.ts", status: "M", added: 1, deleted: 1 },
         { path: "removed.txt", status: "D", added: 0, deleted: 1 },
@@ -1237,10 +1246,10 @@ async function reviewFixture(f, { open = true } = {}) {
             if (state.failIndex) return route.fulfill({ status: 400, body: "Index unavailable" });
             return route.fulfill({ json: { attempt: "review-attempt", project: "scratch", base: "before", artifact: "after", changes } });
         }
-        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", dir: file, entries: file === "src" ? [{ name: "main.ts", path: "src/main.ts", kind: "file", size: 48 }, { name: "helper.ts", path: "src/helper.ts", kind: "file", size: 22 }] : [{ name: "src", path: "src", kind: "dir" }, { name: "README.md", path: "README.md", kind: "file", size: 36 }, { name: "empty.txt", path: "empty.txt", kind: "file", size: 0 }, { name: "new.txt", path: "new.txt", kind: "file", size: 10 }, { name: "linked", path: "linked", kind: "link" }, { name: "vendor", path: "vendor", kind: "repo" }, { name: "large.txt", path: "large.txt", kind: "file", size: 40000 }] } });
+        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", dir: file, entries: file === "src" ? [{ name: "main.ts", path: "src/main.ts", kind: "file", size: 48 }, { name: "helper.ts", path: "src/helper.ts", kind: "file", size: 22 }] : [{ name: "src", path: "src", kind: "dir" }, { name: "README.md", path: "README.md", kind: "file", size: 36 }, { name: "empty.txt", path: "empty.txt", kind: "file", size: 0 }, { name: "new.txt", path: "new.txt", kind: "file", size: 10 }, { name: "linked", path: "linked", kind: "link" }, { name: "vendor", path: "vendor", kind: "repo" }, { name: "large.txt", path: "large.txt", kind: "file", size: 40000 }, ...Object.entries(files).map(([path, text]) => ({ name: path, path, kind: "file", size: Buffer.byteLength(text) }))] } });
         if (url.pathname.endsWith("/file")) {
             if (state.holdFile && file === "README.md") await state.holdFile;
-            const text = file === "README.md" ? "# Project\n\nUnchanged project guide.\n\nSee [the helper](./src/helper.ts), [outside](../outside.txt), [the site](https://example.com/docs) and [top](#project).\n" : file === "src/main.ts" ? "const shared = true;\nconst after = 2;\n" : file === "empty.txt" ? "" : file === "large.txt" ? Array.from({ length: 1501 }, (_, i) => `line ${i + 1}`).join("\n") : file === "linked" ? "README.md" : "export const helper = 1;";
+            const text = files[file] ?? (file === "README.md" ? "# Project\n\nUnchanged project guide.\n\nSee [the helper](./src/helper.ts), [outside](../outside.txt), [the site](https://example.com/docs) and [top](#project).\n" : file === "src/main.ts" ? "const shared = true;\nconst after = 2;\n" : file === "empty.txt" ? "" : file === "large.txt" ? Array.from({ length: 1501 }, (_, i) => `line ${i + 1}`).join("\n") : file === "linked" ? "README.md" : "export const helper = 1;");
             return route.fulfill({ json: { attempt: "review-attempt", path: file, commit: "after", text, size: text.length } });
         }
         if (state.hold && file === "src/main.ts") await state.hold;
@@ -1574,6 +1583,160 @@ checks["preview-document-links"] = async (f) => {
     assert.equal(f.page.url(), before, "Following a document link keeps the console on its own page");
     await workspace.getByRole("button", { name: "阅读 README.md", exact: true }).click();
     await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    assert.equal(f.calls.length, 0);
+};
+
+// These documents exist only in mocked snapshot responses, never in a user's
+// project. Exercise the real file tree and FilePreview, not a hand-built iframe.
+const previewFiles = {
+    "static.html": `<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>body { margin: 12px; } h1 { color: rgb(12, 34, 56); }</style></head>
+<body><h1>Static preview report</h1><p>Snapshot HTML content</p></body></html>`,
+    "interactive.html": `<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>
+body { margin: 12px; background-color: rgb(1, 2, 3) !important; color: white; }
+button { color: rgb(4, 5, 6) !important; }
+.review-file-header { display: none !important; }
+</style></head><body>
+<h1>Interactive preview</h1><button id="increment">Increment</button><output id="count">0</output>
+<p id="ready">Script pending</p><pre id="isolation"></pre>
+<script>
+const count = document.getElementById("count");
+document.getElementById("increment").addEventListener("click", () => { count.textContent = String(Number(count.textContent) + 1); });
+const results = {};
+for (const [name, probe] of Object.entries({
+    parentDOM: () => { parent.document.body.dataset.previewEscaped = "yes"; },
+    localStorage: () => { localStorage.setItem("preview-sentinel", "escaped"); },
+    sessionStorage: () => { sessionStorage.setItem("preview-sentinel", "escaped"); },
+    parentStorage: () => { parent.localStorage.setItem("preview-sentinel", "escaped"); }
+})) {
+    try { probe(); results[name] = "allowed"; } catch (error) { results[name] = error.name; }
+}
+document.getElementById("isolation").textContent = JSON.stringify(results);
+document.getElementById("ready").textContent = "Inline script ready";
+</script></body></html>`,
+    "diagram.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 140" width="100%"
+onload="document.getElementById('load-state').textContent = 'Load handler ran'">
+<title>Script-free diagram</title><rect width="320" height="140" fill="#eef"/>
+<text id="script-state" x="12" y="30">SVG script pending</text>
+<text id="load-state" x="12" y="60">SVG load pending</text>
+<text id="click-state" x="12" y="100" onclick="this.textContent = 'Click handler ran'">Click SVG probe</text>
+<script>document.getElementById('script-state').textContent = 'SVG script ran';</script>
+</svg>`,
+};
+
+async function filePreviewFixture(f) {
+    const state = await reviewFixture(f, { open: false, files: previewFiles });
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).click();
+    const workspace = f.page.getByRole("dialog", { name: "产物工作区", exact: true });
+    const tree = workspace.getByRole("navigation", { name: "项目文件", exact: true });
+    await tree.waitFor();
+    const iframe = workspace.locator("iframe.file-preview-frame");
+    const frame = workspace.frameLocator("iframe.file-preview-frame");
+    const open = async (file) => {
+        if (!await tree.isVisible()) await workspace.getByRole("button", { name: "文件导航", exact: true }).click();
+        await tree.getByRole("button", { name: file, exact: true }).click();
+        await workspace.getByRole("heading", { name: file, exact: true }).waitFor();
+        await eventually(async () => await iframe.getAttribute("srcdoc") === previewFiles[file], `FilePreview must load ${file} from the mocked snapshot`);
+    };
+    return { state, workspace, tree, iframe, frame, open };
+}
+
+checks["preview-html-interaction-isolation"] = async (f) => {
+    const { workspace, iframe, frame, open } = await filePreviewFixture(f);
+    await open("static.html");
+    await frame.getByRole("heading", { name: "Static preview report", exact: true }).waitFor();
+    await frame.getByText("Snapshot HTML content", { exact: true }).waitFor();
+    assert.equal(await frame.locator("h1").evaluate((element) => getComputedStyle(element).color), "rgb(12, 34, 56)", "Static HTML must render its own CSS");
+    const parentStyle = () => f.page.evaluate(() => ({
+        background: getComputedStyle(document.body).backgroundColor,
+        headerDisplay: getComputedStyle(document.querySelector(".review-file-header")).display,
+        buttonColor: getComputedStyle(document.querySelector(".review-file-actions button")).color,
+    }));
+    const beforeStyle = await parentStyle(), beforeURL = f.page.url();
+    await f.page.evaluate(() => {
+        localStorage.setItem("preview-sentinel", "parent-local");
+        sessionStorage.setItem("preview-sentinel", "parent-session");
+    });
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    assert.deepEqual(JSON.parse(await frame.locator("#isolation").innerText()), {
+        parentDOM: "SecurityError", localStorage: "SecurityError", sessionStorage: "SecurityError", parentStorage: "SecurityError",
+    }, "Running inline JS must be unable to access the parent DOM or browser storage");
+    assert.equal(await iframe.getAttribute("sandbox"), "allow-scripts", "HTML allows scripts but no same-origin or navigation privileges");
+    assert.equal(await iframe.getAttribute("referrerpolicy"), "no-referrer");
+    assert.equal(await frame.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(1, 2, 3)", "The isolation probe's CSS must actually apply inside the preview");
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    assert.equal(await frame.locator("#count").innerText(), "2", "Inline event listeners must work repeatedly");
+    assert.deepEqual(await parentStyle(), beforeStyle, "Artifact CSS must not restyle or hide console controls");
+    assert.deepEqual(await f.page.evaluate(() => ({
+        escaped: document.body.dataset.previewEscaped ?? null,
+        local: localStorage.getItem("preview-sentinel"), session: sessionStorage.getItem("preview-sentinel"),
+    })), { escaped: null, local: "parent-local", session: "parent-session" }, "The parent document and its storage must remain untouched");
+    assert.equal(f.page.url(), beforeURL);
+    await workspace.getByRole("button", { name: "源码", exact: true }).click();
+    await workspace.getByRole("region", { name: "源码 interactive.html", exact: true }).waitFor();
+    assert.equal(f.calls.length, 0, "Preview interactions must not submit console work");
+};
+
+async function assertInertSVG(frame) {
+    await frame.locator("svg").waitFor();
+    await eventually(() => frame.locator("svg").evaluate((element) => element.ownerDocument.readyState === "complete"), "SVG must finish loading before testing blocked scripts");
+    assert.equal(await frame.locator("#script-state").textContent(), "SVG script pending", "SVG script elements must not execute");
+    assert.equal(await frame.locator("#load-state").textContent(), "SVG load pending", "SVG onload must not execute");
+    await frame.locator("#click-state").click();
+    assert.equal(await frame.locator("#click-state").textContent(), "Click SVG probe", "SVG click handlers must not execute");
+}
+
+checks["preview-svg-scripts-disabled"] = async (f) => {
+    const { iframe, frame, open } = await filePreviewFixture(f);
+    // Transition from a script-enabled HTML frame: SVG must not inherit it.
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    await open("diagram.svg");
+    await assertInertSVG(frame);
+    assert.equal(await iframe.getAttribute("sandbox"), "", "SVG must retain an empty sandbox, not omit the attribute");
+    assert.equal(await frame.locator("h1").count(), 0, "Switching to SVG must remove the previous HTML document");
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    assert.equal(await frame.locator("#count").innerText(), "1", "Returning to HTML must restore script-enabled interaction");
+    assert.equal(f.calls.length, 0);
+};
+
+checks["preview-html-source-switch-narrow"] = async (f) => {
+    const { state, workspace, iframe, frame, open } = await filePreviewFixture(f);
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    await frame.getByRole("button", { name: "Increment", exact: true }).press("Enter");
+    assert.equal(await frame.locator("#count").innerText(), "1", "Preview interaction must remain keyboard-accessible in a narrow window");
+    await workspace.getByRole("button", { name: "源码", exact: true }).click();
+    const source = workspace.getByRole("region", { name: "源码 interactive.html", exact: true });
+    await source.waitFor();
+    assert.ok((await source.innerText()).includes('document.getElementById("increment").addEventListener'), "Source mode must show the literal inline script");
+    assert.equal(await iframe.count(), 0, "Source mode must unmount the executable preview");
+    await open("static.html");
+    await frame.getByRole("heading", { name: "Static preview report", exact: true }).waitFor();
+    await workspace.getByRole("button", { name: "阅读 interactive.html", exact: true }).click();
+    await source.waitFor();
+    assert.equal(await iframe.count(), 0, "Returning to a file must remember its source mode");
+    await workspace.getByRole("button", { name: "预览", exact: true }).click();
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    assert.equal(await frame.locator("#count").innerText(), "0", "Reopening preview must render a fresh document rather than stale interactive state");
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    assert.equal(await frame.locator("#count").innerText(), "1");
+    await noHorizontalOverflow(f.page);
+    const bounds = await iframe.boundingBox();
+    assert.ok(bounds && bounds.width > 100 && bounds.x >= 0 && bounds.x + bounds.width <= 391, `HTML preview must fit the narrow reading pane: ${JSON.stringify(bounds)}`);
+    await visibleControl(workspace.getByRole("button", { name: "源码", exact: true }), "Source switch");
+    await f.page.screenshot({ path: path.join(output, "preview-html-narrow.png") });
+    await open("diagram.svg");
+    await assertInertSVG(frame);
+    await noHorizontalOverflow(f.page);
+    await f.page.screenshot({ path: path.join(output, "preview-svg-narrow.png") });
+    assert.equal(state.reads.filter((read) => read.endpoint === "file" && read.file === "interactive.html").length, 1, "File and mode switches must reuse the loaded snapshot source");
     assert.equal(f.calls.length, 0);
 };
 
@@ -2892,7 +3055,7 @@ let failed = 0;
 try {
     for (const name of selected) {
         assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
-        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn" });
+        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn", sandboxed: name.startsWith("preview-html-") || name === "preview-svg-scripts-disabled" });
         try {
             await checks[name](f);
             assert.deepEqual(f.errors, [], "Browser and mocked API errors");
