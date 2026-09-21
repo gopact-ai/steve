@@ -1,13 +1,13 @@
 import { useI18n } from "@/providers/locale-provider";
 import { memo, useMemo, useState } from "react";
 import { Navigate, useSearchParams } from "react-router";
-import { ClipboardCheck, Clock } from "@untitledui/icons";
+import { ClipboardCheck } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Toggle } from "@/components/base/toggle/toggle";
-import { relative, when } from "@/lib/format";
+import { relative } from "@/lib/format";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, labelsFor } from "@/lib/labels";
 import type { Activity, Plan, Task } from "@/lib/types";
@@ -23,6 +23,8 @@ import { useUsage } from "@/hooks/use-usage";
 import { useWorkPage } from "@/hooks/use-work-page";
 import { fetchTasks } from "@/lib/api/work";
 import { useEventCallback } from "@/hooks/use-event-callback";
+
+import { Scheduled } from "@/components/steve/scheduled-tasks";
 
 type TabKey = "active" | "all" | "scheduled";
 
@@ -232,41 +234,6 @@ function AllTasks({ tasks, total, onOpen }: { tasks: Task[]; total?: number; onO
                                 <Table.Cell><span className="font-mono text-xs text-tertiary">{t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns}</span></Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{spend(t.tokens, locale)} · {fmtSeconds(t.seconds, locale)}</span></Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{t.updated_at ? relative(t.updated_at, locale) : ""}</span></Table.Cell>
-                            </Table.Row>
-                        )}
-                    </Table.Body>
-                </Table>
-            )}
-        </TableCard.Root>
-    );
-}
-
-function Scheduled() {
-    const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
-    const { act } = useIntent();
-    return (
-        <TableCard.Root size="sm" className="workbench-table min-w-0">
-            <TableCard.Header title={tr("board.scheduled")} badge={`${snap.schedules.length}`} description={tr("board.scheduleHint")} />
-            {snap.schedules.length === 0 ? <Nothing icon={Clock} title={tr("board.noSchedules")}>{tr("board.schedulePrefix")}<code>/every 9:00 …</code> {tr("board.or")}<code>/at 18:30 …</code> {tr("board.scheduleSuffix")}</Nothing> : (
-                <Table aria-label={tr("board.scheduled")} size="sm">
-                    <Table.Header>
-                        <Table.Head id="when" label={tr("board.when")} isRowHeader />
-                        <Table.Head id="next" label={tr("board.next")} />
-                        <Table.Head id="what" label={tr("board.what")} />
-                        <Table.Head id="who" label={tr("board.where")} />
-                        <Table.Head id="last" label={tr("board.last")} />
-                        <Table.Head id="actions" label="" />
-                    </Table.Header>
-                    <Table.Body items={snap.schedules}>
-                        {(s) => (
-                            <Table.Row id={s.id}>
-                                <Table.Cell><span className="text-primary">{s.spec}</span></Table.Cell>
-                                <Table.Cell><span className="text-tertiary">{when(s.next_at, locale)}</span>{s.state && <div className="mt-1"><StateBadge state={s.state} /></div>}</Table.Cell>
-                                <Table.Cell><span className="line-clamp-2 max-w-md">{s.prompt}</span>{s.error && <span className="mt-1 block max-w-md text-xs text-error-primary">{s.error}</span>}</Table.Cell>
-                                <Table.Cell><span className="text-xs text-tertiary">{s.conversation} · {s.agent || tr("common.default")}</span></Table.Cell>
-                                <Table.Cell><span className="text-xs text-tertiary">{s.last_at ? tr("board.lastRun", { time: relative(s.last_at, locale), count: s.runs }) : tr("board.neverRun")}</span></Table.Cell>
-                                <Table.Cell><Button size="sm" color="link-gray" onClick={() => act("/schedules")}>{tr("board.view")}</Button></Table.Cell>
                             </Table.Row>
                         )}
                     </Table.Body>

@@ -169,6 +169,7 @@ type Server struct {
 	informer            Informer
 	fleeter             Fleeter
 	memorizer           Memorizer
+	scheduler           Scheduler
 	journal             func(conversationID, agentID, taskID string, receipt channel.Address)
 	tokens              map[string]binding
 	byBind              map[binding]string
@@ -448,6 +449,12 @@ func (s *Server) DescribeExtras(token, endpoint string) []capability.Extra {
 	if endpoint == "" {
 		endpoint = s.URL()
 	}
+	instructions := Instructions
+	s.mu.Lock()
+	if s.scheduler != nil {
+		instructions += "\n\n" + scheduleInstructions
+	}
+	s.mu.Unlock()
 	return []capability.Extra{{
 		Name: ServerName,
 		Server: capability.MCPServer{
@@ -455,7 +462,7 @@ func (s *Server) DescribeExtras(token, endpoint string) []capability.Extra {
 			URL:     endpoint,
 			Headers: map[string]string{"Authorization": "Bearer " + token},
 		},
-		Instructions: Instructions,
+		Instructions: instructions,
 	}}
 }
 
@@ -545,7 +552,7 @@ type PlatformTool struct {
 // the channel messaging set always, delegation when a delegator is wired.
 func PlatformTools(delegating bool) []PlatformTool {
 	var out []PlatformTool
-	for _, t := range toolList(delegating, true, true, true) {
+	for _, t := range toolList(delegating, true, true, true, true) {
 		name, _ := t["name"].(string)
 		desc, _ := t["description"].(string)
 		out = append(out, PlatformTool{Name: name, Description: desc})
@@ -557,8 +564,9 @@ func (s *Server) toolList() []map[string]any {
 	s.mu.Lock()
 	informing, fleeting, remembering := s.informer != nil, s.fleeter != nil, s.memorizer != nil
 	delegating := s.delegator != nil
+	scheduling := s.scheduler != nil
 	s.mu.Unlock()
-	return toolList(delegating, informing, fleeting, remembering)
+	return toolList(delegating, informing, fleeting, remembering, scheduling)
 }
 
 // titles are the short labels the console shows for the platform's own
@@ -568,6 +576,7 @@ var titles = map[string]string{
 	"steve_context": "看当前上下文", "steve_help": "查平台用法", "steve_projects": "查项目", "steve_fleet": "查名册",
 	"steve_delegate": "委派子任务", "steve_await": "等子任务",
 	"steve_remember": "记一条记忆", "steve_recall": "查记忆", "steve_forget": "忘一条记忆",
+	"steve_schedule": "创建定时任务", "steve_schedules": "查定时任务", "steve_schedule_cancel": "取消定时任务",
 	"channel_send": "发进度消息", "channel_update": "改进度消息", "channel_recall": "撤回消息",
 	"steve_nodes": "查机器", "steve_node_add": "登记机器", "steve_node_refresh": "刷新机器", "steve_node_remove": "移除机器",
 }
@@ -577,7 +586,7 @@ var titles = map[string]string{
 // harness's naming. A tool without a label is still recognised, by name.
 func ToolTitles() map[string]string {
 	out := map[string]string{}
-	for _, t := range toolList(true, true, true, true) {
+	for _, t := range toolList(true, true, true, true, true) {
 		name, _ := t["name"].(string)
 		if name == "" {
 			continue
@@ -591,7 +600,7 @@ func ToolTitles() map[string]string {
 	return out
 }
 
-func toolList(delegating, informing, fleeting, remembering bool) []map[string]any {
+func toolList(delegating, informing, fleeting, remembering, scheduling bool) []map[string]any {
 	tools := baseTools()
 	if delegating {
 		tools = append(tools, delegationTools()...)
@@ -605,6 +614,9 @@ func toolList(delegating, informing, fleeting, remembering bool) []map[string]an
 	}
 	if remembering {
 		tools = append(tools, memoryTools()...)
+	}
+	if scheduling {
+		tools = append(tools, scheduleTools()...)
 	}
 	return tools
 }
@@ -789,6 +801,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.steveRecall(ctx, bind, call.Arguments)
 	case "steve_forget":
 		out, err = s.steveForget(ctx, bind, call.Arguments)
+	case "steve_schedule", "steve_schedules", "steve_schedule_cancel":
+		out, err = s.scheduleCall(ctx, bind, call.Name, call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}

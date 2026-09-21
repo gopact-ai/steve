@@ -72,6 +72,9 @@ func (parsed ParsedInput) Control() bool {
 	if parsed.Command == protocol.CommandCancel {
 		return true
 	}
+	if parsed.Command == protocol.CommandEvery || parsed.Command == protocol.CommandAt || parsed.Command == protocol.CommandSchedules {
+		return true
+	}
 	if parsed.Command == protocol.CommandTasks {
 		verb, _, ok := parseTaskArgs(parsed.Rest)
 		// Settling a failed task is bookkeeping about work that already
