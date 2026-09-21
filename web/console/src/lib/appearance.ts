@@ -68,9 +68,9 @@ const stacks = {
 export function fontStack(family: string, role: FontRole): string {
   const fallback = role === "code" ? stacks.mono : stacks.system;
   if (!validFamily(family)) return fallback;
-  return (
-    stacks[family as keyof typeof stacks] ?? `"${family.trim()}", ${fallback}`
-  );
+  return Object.hasOwn(stacks, family)
+    ? stacks[family as keyof typeof stacks]
+    : `"${family.trim()}", ${fallback}`;
 }
 function validPalette(value: unknown): Palette | null {
   const p = object(value),

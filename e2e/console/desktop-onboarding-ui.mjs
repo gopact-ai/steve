@@ -146,6 +146,9 @@ try {
     await dialog.getByRole("button", { name: "Skip for now", exact: true }).click();
     await dialog.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
     await dialog.getByText("Dark", { exact: true }).click();
+    // Local preferences commit under a cross-window lock, then React paints.
+    // No reload or backend operation should be needed to apply the choice.
+    await page.waitForFunction(() => document.documentElement.classList.contains("dark-mode"), null, { timeout: 2000 });
     assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark-mode")), true, "appearance applies at once");
     await dialog.getByText("English", { exact: true }).click();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();

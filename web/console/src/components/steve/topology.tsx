@@ -54,7 +54,7 @@ function Chip({ spoke, center, style }: { spoke: Spoke; center?: boolean; style?
             <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${dot[spoke.tone]}`} />
             <span className="flex min-w-0 flex-col">
                 <span className={`truncate text-xs leading-4 font-medium ${center ? "text-brand-secondary" : "text-primary"}`}>{spoke.label}</span>
-                {spoke.sub && <span className="truncate text-[11px] leading-4 text-tertiary">{spoke.sub}</span>}
+                {spoke.sub && <span className="truncate text-[length:calc(var(--ui-font-size)*11/14)] leading-4 text-tertiary">{spoke.sub}</span>}
             </span>
         </div>
     );
@@ -82,7 +82,7 @@ export function Topology({ center, spokes, legend, label }: { center: Spoke; spo
                 <Chip spoke={center} center style={{ left: "50%", top: "50%" }} />
                 {placed.map(({ spoke, x, y }) => <Chip key={spoke.id} spoke={spoke} style={{ left: `${x}%`, top: `${y}%` }} />)}
             </div>
-            {legend && <figcaption className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-tertiary">{legend}</figcaption>}
+            {legend && <figcaption className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[length:calc(var(--ui-font-size)*11/14)] text-tertiary">{legend}</figcaption>}
         </figure>
     );
 }

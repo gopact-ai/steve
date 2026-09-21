@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { build } from "../node_modules/vite/dist/node/index.js";
 import { chromium } from "../node_modules/playwright/index.mjs";
+import react from "../node_modules/@vitejs/plugin-react/dist/index.js";
+import tailwindcss from "../node_modules/@tailwindcss/vite/dist/index.mjs";
 
 const web = fileURLToPath(new URL("..", import.meta.url));
 const scratch = await mkdtemp(path.join(tmpdir(), "steve-conversation-type-"));
@@ -29,7 +31,7 @@ try {
     await writeFile(path.join(scratch, "style.css"), `@import "${web}/src/styles/globals.css";\n@source "${web}/src";\n@source "${scratch}/entry.tsx";`);
     await writeFile(path.join(scratch, "entry.tsx"), `
         import { createRoot } from "react-dom/client";
-        import { useRef, useState } from "react";
+        import { useMemo, useRef, useState } from "react";
         import { PageHeader, Panel } from "@/components/steve/page";
         import { DialogHeader } from "@/components/steve/dialog-surface";
         import { SourceView } from "@/components/steve/source-view";
@@ -39,11 +41,15 @@ try {
         import { AssistantMessage, UserMessage } from "@/components/steve/message";
         import { Md } from "@/components/steve/markdown";
         import { LocaleProvider } from "@/providers/locale-provider";
+        import { SelectionProvider } from "@/providers/selection-provider";
         import "./style.css";
         const text = ${JSON.stringify(markdown)};
         const reply = { id:"fixture", conversation:"console:fixture", kind:"reply", text, at:"2026-09-21T07:16:29Z" };
         function RoleFixtures() {
             const [draft, setDraft] = useState(${JSON.stringify("Composer reading text\n\n## Composer heading\n\n```text\ncomposer code\n```")});
+            const [sourceLines, setSourceLines] = useState(1);
+            window.setSourceLines = setSourceLines;
+            const sourceText = useMemo(() => Array(sourceLines).fill("source text").join("\\n"), [sourceLines]);
             const handle = useRef(null);
             return <section id="roles">
                 <PageHeader title="Page heading" /><Panel title="Section heading">UI body</Panel>
@@ -51,7 +57,13 @@ try {
                 <div className="profile-reading"><Md text={${JSON.stringify("# Profile heading\n\nProfile reading text")}} /></div>
                 <textarea className="profile-editor font-mono text-sm" defaultValue="Profile draft" />
                 <MarkdownInput value={draft} onChange={setDraft} label="Draft" placeholder="Write" handle={handle} />
-                <SourceView file={{ path:"fixture.txt", text:"source text", size:11 }} />
+                <SelectionProvider><div id="source-fixture" style={{height:300}}>
+                    <SourceView file={{ path:"fixture.txt", text:sourceText, size:sourceText.length }}
+                        capture={{project:"fixture",title:"Fixture",source:{kind:"snapshot-file",attempt:"fixture",commit:"fixture",path:"fixture.txt"}}} />
+                </div></SelectionProvider>
+                <div className="console-toolbar" style={{width:600,maxWidth:"100%"}}>
+                    <span className="console-status" id="status-fixture" style={{width:200}}>Stop is not confirmed.<br/>Retry the same request.</span>
+                </div>
                 <DiffView layout="unified" diff={${JSON.stringify("@@ -1 +1 @@\n-old\n+new\n")}} />
                 <div id="reader"><Md text={${JSON.stringify("## Reader heading\n\nReader text with `inline code`.\n\n##### Small heading")}} /></div>
                 <div id="tool-output"><CodeBlock code="tool output" lang="shell" /></div>
@@ -76,7 +88,17 @@ try {
         </LocaleProvider>);
     `);
     await build({
-        root: scratch, configFile: path.join(web, "vite.config.ts"), envDir: false,
+        root: scratch, configFile: false, envDir: false,
+        plugins: [react(), tailwindcss(), {
+            // Exercise the real selection UI without fleet, storage or action side effects.
+            name: "selection-fixture-context", enforce: "pre",
+            load(id) {
+                if (id.endsWith("/providers/material-provider.tsx"))
+                    return 'export const useMaterial = () => ({target:{project:"fixture",conversation:"fixture",title:"Fixture"}});';
+                if (id.endsWith("/providers/side-chat-provider.tsx"))
+                    return "export const useSideChat = () => ({});";
+            },
+        }],
         cacheDir: path.join(scratch, "cache"), logLevel: "error",
         resolve: { alias: { "@": path.join(web, "src"), react: path.join(web, "node_modules/react"), "react-dom": path.join(web, "node_modules/react-dom") } },
         build: { outDir: path.join(scratch, "dist"), emptyOutDir: true },
@@ -97,10 +119,16 @@ try {
     const errors = [];
     page.on("pageerror", error => errors.push(String(error)));
     await page.route("**/*", route => {
-        if (new URL(route.request().url()).origin === origin) return route.continue();
-        errors.push("Unexpected external request"); return route.abort();
+        const request = route.request(), url = new URL(request.url());
+        if (url.origin === origin && request.method() === "GET") {
+            if (url.pathname === "/console/queue" && url.searchParams.get("capabilities") === "1")
+                return route.fulfill({ json: { queue: [], submission_keys: true, material_refs: true } });
+            if (!url.pathname.startsWith("/console/") && url.pathname !== "/state") return route.continue();
+        }
+        errors.push(`Unexpected request: ${request.method()} ${url.pathname}`); return route.abort();
     });
     await page.addInitScript(() => {
+        localStorage.setItem("steve.ui.locale", "en");
         Object.defineProperty(navigator, "clipboard", { value: { writeText: async value => { window.copiedText = value; } } });
     });
     await page.goto(origin);
@@ -210,7 +238,122 @@ try {
                 assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "appearance settings do not overflow the viewport");
             }
         }
+        // Geometry, not just computed font sizes: enlarged text must stay readable.
+        const layoutFailures = [];
+        const checkLayout = async (name, run) => {
+            try { await run(); console.log(`PASS ${name}`); }
+            catch (error) { layoutFailures.push(`${name}: ${error.message}`); }
+        };
+        const layoutScreenshot = async (name, locator) => {
+            if (process.env.TYPOGRAPHY_SCREENSHOTS)
+                await locator.screenshot({ path: path.join(process.env.TYPOGRAPHY_SCREENSHOTS, `${name}.png`) });
+        };
+        await page.evaluate(() => {
+            for (const [key, value] of Object.entries({
+                "--ui-font-size": "18px", "--code-font-size": "22px",
+                "--font-body": "Arial", "--font-mono": '"Courier New"',
+            })) document.documentElement.style.setProperty(key, value);
+            window.setSourceLines(1000);
+        });
+        await page.locator('#source-fixture [data-line="1000"]').waitFor({ state: "attached" });
+        await page.setViewportSize({ width: 390, height: 1500 });
+        const sourceGeometry = () => page.locator('#source-fixture [data-line="1000"]').evaluate(number => {
+            const range = document.createRange();
+            range.selectNodeContents(number);
+            const text = range.getBoundingClientRect(), box = number.getBoundingClientRect();
+            const code = number.nextElementSibling.getBoundingClientRect();
+            return { width: box.width, left: box.left, right: text.right, textLeft: text.left,
+                codeLeft: code.left, gap: code.left - text.right, padding: parseFloat(getComputedStyle(number).paddingRight) };
+        });
+        await checkLayout("1000th source line fits at code 22 / narrow", async () => {
+            for (const wrap of [false, true]) {
+                if (wrap) await page.locator("#source-fixture").getByRole("button", { name: "Wrap lines", exact: true }).click();
+                const m = await sourceGeometry();
+                assert.ok(m.textLeft >= m.left - 0.1 && m.gap >= m.padding - 0.1,
+                    `line number must preserve its code gap (wrap=${wrap}): ${JSON.stringify(m)}`);
+            }
+            await page.locator('#source-fixture [data-line="1000"]').scrollIntoViewIfNeeded();
+            await layoutScreenshot("source-code22-390", page.locator("#source-fixture"));
+            await page.locator("#source-fixture").getByRole("button", { name: "Wrap lines", exact: true }).click();
+        });
+        await checkLayout("source gutter reserves total digits before pagination", async () => {
+            await page.evaluate(() => window.setSourceLines(100000));
+            await page.waitForFunction(() => document.querySelector(".source-file-meta").textContent.includes("100000"));
+            const before = await sourceGeometry();
+            const digitWidth = await page.locator(".source-code").evaluate(element => {
+                const canvas = document.createElement("canvas"), context = canvas.getContext("2d"), css = getComputedStyle(element);
+                context.font = `${css.fontSize} ${css.fontFamily}`;
+                return context.measureText("100000").width;
+            });
+            assert.ok(before.width >= digitWidth + before.padding - 0.1,
+                `gutter must reserve all six digits, not just the rendered page: ${before.width}`);
+            await page.locator(".source-more button").click();
+            await page.locator('#source-fixture [data-line="2000"]').waitFor({ state: "attached" });
+            near((await sourceGeometry()).width, before.width, "pagination must not move the code column");
+        });
+        await checkLayout("default source gutter widths stay unchanged", async () => {
+            await page.evaluate(() => {
+                window.setSourceLines(1000);
+                document.documentElement.style.setProperty("--code-font-size", "13px");
+            });
+            for (const [width, gutter] of [[1100, 64], [390, 44]]) {
+                await page.setViewportSize({ width, height: 1500 });
+                near((await sourceGeometry()).width, gutter, "default gutter");
+            }
+        });
+        await checkLayout("console status preserves two complete lines at UI 18", async () => {
+            await page.setViewportSize({ width: 1100, height: 1500 });
+            for (const ui of [14, 18]) {
+                await page.evaluate(ui => document.documentElement.style.setProperty("--ui-font-size", `${ui}px`), ui);
+                const m = await page.locator("#status-fixture").evaluate(element => {
+                    const css = getComputedStyle(element), box = element.getBoundingClientRect(), range = document.createRange();
+                    range.selectNodeContents(element);
+                    return { height: box.height, line: parseFloat(css.lineHeight), bottom: box.bottom,
+                        textBottom: Math.max(...Array.from(range.getClientRects(), rect => rect.bottom)) };
+                });
+                near(m.height, 2 * m.line, `UI ${ui}: status must allow two line boxes`);
+                assert.ok(m.textBottom <= m.bottom + 0.1, `UI ${ui}: status glyphs must not be clipped`);
+            }
+            await layoutScreenshot("console-status-ui18", page.locator("#status-fixture"));
+        });
+        await checkLayout("actual English selection actions fit at UI 18 and narrow widths", async () => {
+            // Hold the source pane in view so document scrolling cannot dismiss
+            // the actual selection toolbar while we inspect its geometry.
+            await page.locator("#source-fixture").evaluate(element => {
+                Object.assign(element.style, { position: "fixed", inset: "160px 16px auto", zIndex: "100" });
+                element.querySelector(".source-scroll").scrollTop = 0;
+            });
+            for (const [width, ui] of [[1100, 14], [390, 18], [320, 18]]) {
+                await page.setViewportSize({ width, height: 1500 });
+                await page.evaluate(ui => document.documentElement.style.setProperty("--ui-font-size", `${ui}px`), ui);
+                await page.locator('#source-fixture [data-line="1"]').click();
+                const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
+                await toolbar.waitFor();
+                const m = await toolbar.evaluate(element => {
+                    const box = element.getBoundingClientRect();
+                    return { left: box.left, right: box.right, bottom: box.bottom, client: element.clientWidth, scroll: element.scrollWidth,
+                        viewport: innerWidth, buttons: Array.from(element.querySelectorAll("button"), button => {
+                            const r = button.getBoundingClientRect();
+                            return { label: button.textContent, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+                        }) };
+                });
+                assert.equal(m.buttons.length, 4, "all actual selection actions are present");
+                assert.ok(m.scroll <= m.client + 1, `toolbar content must fit: ${JSON.stringify(m)}`);
+                for (const b of m.buttons)
+                    assert.ok(b.left >= m.left && b.right <= m.right && b.right <= m.viewport && b.bottom <= m.bottom,
+                        `${b.label} must stay inside toolbar and viewport: ${JSON.stringify(m)}`);
+                if (ui === 14) assert.equal(new Set(m.buttons.map(b => b.top)).size, 1, "default toolbar stays one row");
+                await layoutScreenshot(`selection-ui${ui}-${width}`, toolbar);
+                // The last action must remain keyboard-reachable after wrapping.
+                await toolbar.getByRole("button", { name: "Add to chat", exact: true }).focus();
+                await page.keyboard.press("End");
+                assert.equal(await toolbar.getByRole("button", { name: "Dismiss selection actions" }).evaluate(element => element === document.activeElement), true);
+                await page.keyboard.press("Escape");
+                await toolbar.waitFor({ state: "detached" });
+            }
+        });
         assert.deepEqual(errors, []);
+        assert.deepEqual(layoutFailures, [], "Typography layout regressions");
         console.log("Conversation typography: dark/light, wide/narrow, hierarchy, quiet code, compact isolation, independent appearance axes and copy PASS");
     }
 } finally {

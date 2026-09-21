@@ -1,3 +1,4 @@
+import { registerBackNavigationGuard } from "@/lib/navigation-guard";
 import {
   useEffect,
   useRef,
@@ -27,6 +28,7 @@ import {
   defaultAppearance,
   exportPalette,
   FONT_LIMITS,
+  FONT_PRESETS,
   fontStack,
   importPalette,
   MAX_PALETTES,
@@ -44,10 +46,15 @@ import "@/styles/appearance-settings.css";
 
 const schemes = ["light", "dark"] as const;
 const roles = ["ui", "reading", "code", "heading"] as const;
-const presets = ["system", "serif", "mono"] as const;
+const presets = FONT_PRESETS;
 const hex = /^#[0-9a-fA-F]{6}$/;
 const MAX_FILE_BYTES = 64 * 1024;
-type Draft = { palette: Palette; original: Palette; isNew: boolean };
+type Draft = {
+  session: object;
+  palette: Palette;
+  original: Palette;
+  isNew: boolean;
+};
 const nameIsValid = (name: string) =>
   !!name.trim() && name.length <= 60 && !/[\u0000-\u001f]/.test(name);
 const paletteEqual = (a: Palette, b: Palette) =>
@@ -70,30 +77,35 @@ const systemSnapshot = () =>
   window.matchMedia("(prefers-color-scheme: dark)").matches;
 const serverSnapshot = () => false;
 
+function applyPaletteEdits(
+  existing: Palette,
+  edited: Palette,
+  original: Palette,
+): Palette {
+  const colors = { ...existing.colors };
+  for (const key of COLOR_KEYS)
+    if (edited.colors[key] !== original.colors[key])
+      colors[key] = edited.colors[key];
+  return {
+    ...existing,
+    colors,
+    name: edited.name !== original.name ? edited.name : existing.name,
+    scheme: edited.scheme !== original.scheme ? edited.scheme : existing.scheme,
+  };
+}
+
 // Patch only fields edited in this draft; unrelated changes from another window survive.
 function mergeDraft(current: Appearance, draft: Draft): Appearance {
   const existing = current.custom.find((p) => p.id === draft.palette.id);
-  if (draft.isNew ? current.custom.length >= MAX_PALETTES : !existing)
+  if (
+    draft.isNew ? !existing && current.custom.length >= MAX_PALETTES : !existing
+  )
     return current;
-  let palette = cleanPalette(draft.palette);
-  if (!draft.isNew && existing) {
-    const colors = { ...existing.colors };
-    for (const key of COLOR_KEYS)
-      if (draft.palette.colors[key] !== draft.original.colors[key])
-        colors[key] = draft.palette.colors[key];
-    palette = cleanPalette({
-      ...existing,
-      colors,
-      name:
-        draft.palette.name !== draft.original.name
-          ? palette.name
-          : existing.name,
-      scheme:
-        draft.palette.scheme !== draft.original.scheme
-          ? palette.scheme
-          : existing.scheme,
-    });
-  }
+  const palette = cleanPalette(
+    existing
+      ? applyPaletteEdits(existing, draft.palette, draft.original)
+      : draft.palette,
+  );
   const next = {
     ...current,
     custom: existing
@@ -137,7 +149,12 @@ export function SettingsAppearance() {
     !!draft &&
     !draft.isNew &&
     !appearance.custom.some((p) => p.id === draft.palette.id);
-  const blocked = !!draft && ((draft.isNew && atLimit) || missing);
+  const blocked =
+    !!draft &&
+    ((draft.isNew &&
+      atLimit &&
+      !appearance.custom.some((p) => p.id === draft.palette.id)) ||
+      missing);
   const draftDirty =
     !!draft && (draft.isNew || !paletteEqual(draft.palette, draft.original));
   const valid =
@@ -184,12 +201,11 @@ export function SettingsAppearance() {
     if (!draftDirty) return;
     const href = window.location.href,
       historyState = window.history.state;
-    let allowed = false;
+    let approvedHref: string | null = null;
+    let approvalTimer: ReturnType<typeof setTimeout> | undefined;
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (!allowed) {
-        event.preventDefault();
-        event.returnValue = "";
-      }
+      event.preventDefault();
+      event.returnValue = "";
     };
     const click = (event: MouseEvent) => {
       if (
@@ -206,31 +222,45 @@ export function SettingsAppearance() {
         !(anchor instanceof HTMLAnchorElement) ||
         anchor.target === "_blank" ||
         anchor.hasAttribute("download") ||
-        anchor.href === href
+        anchor.href === href ||
+        (anchor.origin === window.location.origin &&
+          anchor.pathname === window.location.pathname &&
+          anchor.hash &&
+          !anchor.hash.startsWith("#/"))
       )
         return;
       if (!window.confirm(t("appearance.discardDraft"))) {
         event.preventDefault();
         event.stopImmediatePropagation();
-      } else allowed = true;
+      } else {
+        // Native hash links also emit popstate. Consume this exact navigation
+        // once; an intercepted/no-op link must not waive a later confirmation.
+        approvedHref = anchor.href;
+        clearTimeout(approvalTimer);
+        approvalTimer = setTimeout(() => {
+          approvedHref = null;
+        }, 0);
+      }
     };
     const pop = (event: PopStateEvent) => {
-      if (allowed || window.location.href === href) return;
-      if (window.confirm(t("appearance.discardDraft"))) {
-        allowed = true;
+      if (window.location.href === href) return;
+      if (window.location.href === approvedHref) {
+        approvedHref = null;
         return;
       }
+      if (window.confirm(t("appearance.discardDraft"))) return;
       event.stopImmediatePropagation();
       window.history.pushState(historyState, "", href);
     };
-    // A separate capture listener leaves SettingsPage's single-slot back guard intact.
+    // Register with the bootstrap listener, which runs before HashRouter.
     window.addEventListener("beforeunload", beforeUnload);
     document.addEventListener("click", click, true);
-    window.addEventListener("popstate", pop, true);
+    const releaseBackGuard = registerBackNavigationGuard(pop, 1);
     return () => {
+      clearTimeout(approvalTimer);
       window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("click", click, true);
-      window.removeEventListener("popstate", pop, true);
+      releaseBackGuard();
     };
   }, [draftDirty, t]);
   useEffect(() => {
@@ -239,18 +269,30 @@ export function SettingsAppearance() {
     const saved = appearance.custom.find(
       (p) => p.id === savingDraft.palette.id,
     );
-    if (saved) {
-      setDraft(null);
-      setSelectedCustom(saved.id);
-      setNotice("appearance.saved");
+    if (saved && draft?.session === savingDraft.session) {
+      if (draft === savingDraft) {
+        setDraft(null);
+        setSelectedCustom(saved.id);
+        setNotice("appearance.saved");
+      } else {
+        // A lock may have delayed this save. Keep edits made since submission,
+        // based on what was actually saved (including other windows' fields).
+        setDraft({
+          session: draft.session,
+          palette: applyPaletteEdits(saved, draft.palette, savingDraft.palette),
+          original: saved,
+          isNew: false,
+        });
+      }
     }
     setSavingDraft(null);
-  }, [appearance, savingDraft]);
+  }, [appearance, savingDraft, draft]);
 
   function openDraft(palette: Palette, isNew: boolean) {
     setError(null);
     setNotice(null);
     setDraft({
+      session: {},
       palette: { ...palette, colors: { ...palette.colors } },
       original: palette,
       isNew,
@@ -302,11 +344,15 @@ export function SettingsAppearance() {
       setError("appearance.exportFailed");
     }
   }
-  function save() {
+  async function save() {
     if (!draft || !valid || blocked) return;
     setNotice(null);
-    updateAppearance((current) => mergeDraft(current, draft));
-    setSavingDraft(draft);
+    if (
+      await updateAppearance((current) => mergeDraft(current, draft), {
+        requirePersistence: true,
+      })
+    )
+      setSavingDraft(draft);
   }
   function patchPalette(patch: Partial<Palette>) {
     setDraft((current) =>
@@ -760,7 +806,9 @@ function FontSetting({
 }: {
   role: FontRole;
   appearance: Appearance;
-  updateAppearance: (update: (current: Appearance) => Appearance) => void;
+  updateAppearance: (
+    update: (current: Appearance) => Appearance,
+  ) => Promise<boolean>;
 }) {
   const { t } = useI18n();
   const family = appearance.fonts[role].family;

@@ -1,18 +1,5 @@
 // Palette colours and metadata have one owner; CSS derives semantic tokens from these seeds.
 export type Scheme = "light" | "dark";
-export type ThemeId = "system" | "light" | "dark" | PaletteId;
-export type PaletteId =
-  | "vscode-dark"
-  | "one-dark"
-  | "one-light"
-  | "dracula"
-  | "nord"
-  | "tokyo-night"
-  | "solarized-dark"
-  | "solarized-light"
-  | "gruvbox-dark"
-  | "monokai";
-
 export const COLOR_KEYS = [
   "bg",
   "sunken",
@@ -264,12 +251,6 @@ export const PALETTES: Palette[] = [
 
 export const paletteOf = (theme: string): Palette | undefined =>
   PALETTES.find((p) => p.id === theme);
-export const isTheme = (value: string): value is ThemeId =>
-  value === "system" ||
-  value === "light" ||
-  value === "dark" ||
-  !!paletteOf(value);
-
 export const DEFAULT_PALETTES: Palette[] = [
   {
     id: "light",

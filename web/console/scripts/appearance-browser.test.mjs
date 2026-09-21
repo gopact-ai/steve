@@ -30,15 +30,18 @@ try {
     path.join(scratch, "entry.tsx"),
     `
  import {createRoot} from 'react-dom/client';
- import {HashRouter} from 'react-router';
+ import {HashRouter, useLocation, useNavigate} from 'react-router';
+ import {installBackNavigationGuard, registerBackNavigationGuard} from '@/lib/navigation-guard';
+ installBackNavigationGuard();
+ window.registerBackNavigationGuard=registerBackNavigationGuard;
  import {LocaleProvider} from '@/providers/locale-provider';
  import {ThemeProvider,useTheme} from '@/providers/theme-provider';
  import {SettingsPage} from '@/pages/settings';
  import {ThemeMenu} from '@/components/steve/theme-menu';
  import {Md} from '@/components/steve/markdown';
  import './style.css';
- function Fixture(){const value=useTheme();window.appearance=value.appearance;window.changeAppearance=value.updateAppearance;
- return <><header style={{padding:16,display:'flex',justifyContent:'flex-end'}}><ThemeMenu/></header><SettingsPage/><section id="role-fixture" style={{padding:24}}><div className="u-meta">辅助信息</div><Md variant="conversation" text={${JSON.stringify("## 标题\n\n正文内容 `inline_code`\n\n```go\nvar answer = 42\n```")}}/></section></>;}
+ function Fixture(){const location=useLocation(),navigate=useNavigate();const value=useTheme();window.appearance=value.appearance;window.changeAppearance=value.updateAppearance;
+ return <><a href="#main-content" onClick={e=>{e.preventDefault();document.querySelector('#role-fixture').focus();}}>跳到内容</a><a href="#/other">原生路由链接</a><button onClick={()=>navigate('/settings?section=appearance')}>前往外观</button><header style={{padding:16,display:'flex',justifyContent:'flex-end'}}><ThemeMenu/></header>{location.pathname==='/settings'?<SettingsPage/>:<main id="main-content" tabIndex={-1}>其他页面</main>}<section id="role-fixture" style={{padding:24}}><div className="u-meta">辅助信息</div><Md variant="conversation" text={${JSON.stringify("## 标题\n\n正文内容 `inline_code`\n\n```go\nvar answer = 42\n```")}}/></section></>;}
  createRoot(document.getElementById('root')).render(<LocaleProvider><ThemeProvider><HashRouter><Fixture/></HashRouter></ThemeProvider></LocaleProvider>);
  `,
   );
@@ -112,6 +115,13 @@ try {
   });
   await context.addInitScript(() => {
     localStorage.setItem("steve.ui.locale", "zh");
+    window.addEventListener(
+      "storage",
+      (event) => {
+        if (window.pauseAppearanceStorage) event.stopImmediatePropagation();
+      },
+      true,
+    );
   });
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -201,6 +211,91 @@ try {
     "22px",
   );
   await boot.close();
+  // A suspended window may not receive storage events before its next edit.
+  await second.evaluate(() => {
+    window.pauseAppearanceStorage = true;
+  });
+  await page.evaluate(() =>
+    window.changeAppearance((a) => ({
+      ...a,
+      fonts: { ...a.fonts, code: { ...a.fonts.code, size: 21 } },
+    })),
+  );
+  assert.notEqual(
+    await second.evaluate(() => window.appearance.fonts.code.size),
+    21,
+  );
+  await second.evaluate(() =>
+    window.changeAppearance((a) => ({ ...a, mode: "dark" })),
+  );
+  assert.equal(
+    await second.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("steve.ui.appearance")).fonts.code.size,
+    ),
+    21,
+    "mode edit must rebase onto another window persisted code size",
+  );
+  await second.evaluate(() => {
+    window.pauseAppearanceStorage = false;
+  });
+  await Promise.all([
+    page.evaluate(() =>
+      window.changeAppearance((a) => ({
+        ...a,
+        fonts: { ...a.fonts, ui: { ...a.fonts.ui, size: 17 } },
+      })),
+    ),
+    second.evaluate(() =>
+      window.changeAppearance((a) => ({
+        ...a,
+        fonts: { ...a.fonts, reading: { ...a.fonts.reading, size: 23 } },
+      })),
+    ),
+  ]);
+  const parallelFonts = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("steve.ui.appearance")).fonts,
+  );
+  assert.equal(parallelFonts.ui.size, 17);
+  assert.equal(
+    parallelFonts.reading.size,
+    23,
+    "simultaneous independent edits are serialized, not last-snapshot wins",
+  );
+  // Local font input applies only validated names, and reset clears the editor.
+  await page.getByRole("button", { name: /阅读正文字体/ }).click();
+  await page
+    .getByRole("option", { name: "本地字体名称…", exact: true })
+    .click();
+  const localFont = page.getByRole("textbox", {
+    name: "阅读正文本地字体名称",
+    exact: true,
+  });
+  await localFont.fill("bad; color:red");
+  assert.equal(
+    await page
+      .getByRole("button", { name: "应用名称", exact: true })
+      .isDisabled(),
+    true,
+  );
+  await localFont.fill("Hiragino Sans GB");
+  await localFont.press("Enter");
+  await second.waitForFunction(
+    () => window.appearance.fonts.reading.family === "Hiragino Sans GB",
+  );
+  assert.match(
+    await page
+      .locator("#role-fixture .md")
+      .evaluate((el) => getComputedStyle(el).fontFamily),
+    /Hiragino Sans GB/,
+  );
+  await page.getByRole("button", { name: "恢复默认字体", exact: true }).click();
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: "阅读正文本地字体名称", exact: true })
+      .count(),
+    0,
+  );
   // Edit with actual controls, keyboard selection, scoped preview and JSON roundtrip.
   await page.setViewportSize({ width: 1200, height: 1000 });
   await page.getByRole("button", { name: /阅读正文字号/ }).click();
@@ -424,6 +519,139 @@ try {
     "appearance page does not need server configuration",
   );
   assert.deepEqual(errors, []);
+  // The bootstrap guard must run before HashRouter unmounts the editor.
+  const nav = await context.newPage();
+  nav.on("pageerror", (e) => errors.push(String(e)));
+  await nav.goto(origin + "/#/other");
+  await nav.getByText("其他页面", { exact: true }).waitFor();
+  assert.deepEqual(
+    await nav.evaluate(() => {
+      const calls = [];
+      const parent = window.registerBackNavigationGuard((event) => {
+        calls.push("parent");
+        event.stopImmediatePropagation();
+      });
+      const child = window.registerBackNavigationGuard((event) => {
+        calls.push("child");
+        event.stopImmediatePropagation();
+      }, 1);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      child();
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      parent();
+      return calls;
+    }),
+    ["child", "parent"],
+    "child rejection runs first, and releasing it preserves the parent guard",
+  );
+  await nav.getByRole("button", { name: "前往外观", exact: true }).click();
+  await nav
+    .getByRole("button", { name: "复制并编辑", exact: true })
+    .first()
+    .click();
+  await nav
+    .getByRole("textbox", { name: "配色名称", exact: true })
+    .fill("保留返回草稿");
+  let confirmations = 0;
+  const reject = (dialog) => {
+    confirmations++;
+    return dialog.dismiss();
+  };
+  nav.on("dialog", reject);
+  await Promise.all([nav.waitForEvent("dialog"), nav.goBack()]);
+  assert.equal(
+    confirmations,
+    1,
+    "Back must ask before unmounting an appearance draft",
+  );
+  assert.equal(
+    await nav
+      .getByRole("textbox", { name: "配色名称", exact: true })
+      .inputValue(),
+    "保留返回草稿",
+  );
+  await nav.getByRole("link", { name: "跳到内容", exact: true }).click();
+  assert.equal(
+    confirmations,
+    1,
+    "same-document focus links are not navigation",
+  );
+  assert.equal(
+    await nav.evaluate(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+    true,
+    "focus link must not disable unload protection",
+  );
+  nav.off("dialog", reject);
+  nav.once("dialog", (dialog) => dialog.accept());
+  await nav.goBack();
+  await nav.getByText("其他页面", { exact: true }).waitFor();
+  await nav.getByRole("button", { name: "前往外观", exact: true }).click();
+  await nav
+    .getByRole("button", { name: "复制并编辑", exact: true })
+    .first()
+    .click();
+  let nativeConfirmations = 0;
+  nav.on("dialog", (dialog) => {
+    nativeConfirmations++;
+    return dialog.accept();
+  });
+  await nav.getByRole("link", { name: "原生路由链接", exact: true }).click();
+  await nav.getByText("其他页面", { exact: true }).waitFor();
+  assert.equal(
+    nativeConfirmations,
+    1,
+    "native hash click and popstate share exactly one confirmation",
+  );
+  await nav.close();
+  assert.deepEqual(errors, []);
+  // A queued save must not close an editor that changed while the lock was held.
+  await page
+    .getByRole("button", { name: "复制并编辑", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("textbox", { name: "配色名称", exact: true })
+    .fill("SAVE SNAPSHOT");
+  await page.evaluate((key) => {
+    window.saveLockHeld = false;
+    window.heldSaveLock = navigator.locks.request(
+      key,
+      () =>
+        new Promise((resolve) => {
+          window.releaseSaveLock = resolve;
+          window.saveLockHeld = true;
+        }),
+    );
+  }, APPEARANCE_KEY);
+  await page.waitForFunction(() => window.saveLockHeld);
+  await page
+    .getByRole("button", { name: "保存并应用配色", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "配色名称", exact: true })
+    .fill("LATER EDIT");
+  await page.evaluate(() => window.releaseSaveLock());
+  await page.waitForFunction(() =>
+    window.appearance.custom.some((p) => p.name === "SAVE SNAPSHOT"),
+  );
+  await page.waitForTimeout(100);
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: "配色名称", exact: true })
+      .inputValue(),
+    "LATER EDIT",
+    "an earlier save must not discard later typing",
+  );
+  await page
+    .getByRole("button", { name: "保存并应用配色", exact: true })
+    .click();
+  await page
+    .getByText("配色已保存并选用于对应模式。", { exact: true })
+    .waitFor();
   // Malformed storage and storage failure do not make the app inaccessible.
   const broken = await browser.newContext();
   await broken.route("**/*", (r) =>
@@ -440,8 +668,23 @@ try {
     await bp.evaluate(() => window.appearance),
     defaultAppearance(),
   );
+  await bp.evaluate(
+    (palette) =>
+      window.changeAppearance((a) => ({
+        ...a,
+        custom: Array.from({ length: 31 }, (_, index) => ({
+          ...palette,
+          id: `custom-capacity-${index}`,
+          name: `Saved ${index}`,
+        })),
+      })),
+    custom,
+  );
   await bp.evaluate(() => {
+    window.originalSetItem = Storage.prototype.setItem;
+    window.failedAppearanceWrites = 0;
     Storage.prototype.setItem = () => {
+      window.failedAppearanceWrites++;
       throw new DOMException("quota", "QuotaExceededError");
     };
     window.changeAppearance((a) => ({ ...a, mode: "dark" }));
@@ -453,6 +696,149 @@ try {
     .getByRole("alert")
     .filter({ hasText: /无法持久保存/ })
     .waitFor();
+  await bp
+    .getByRole("button", { name: "复制并编辑", exact: true })
+    .first()
+    .click();
+  await bp
+    .getByRole("textbox", { name: "配色名称", exact: true })
+    .fill("未保存配色");
+  await bp.getByRole("button", { name: "保存并应用配色", exact: true }).click();
+  await bp.waitForFunction(() => window.failedAppearanceWrites >= 2);
+  assert.equal(
+    await bp.evaluate(() => window.appearance.custom.length),
+    31,
+    "failed palette save must not create a phantom saved palette",
+  );
+  assert.equal(
+    await bp
+      .getByRole("textbox", { name: "配色名称", exact: true })
+      .inputValue(),
+    "未保存配色",
+    "failed persistence must keep the palette draft open",
+  );
+  assert.equal(
+    await bp.getByText("配色已保存并选用于对应模式。", { exact: true }).count(),
+    0,
+  );
+  await bp.evaluate(() => {
+    Storage.prototype.setItem = window.originalSetItem;
+  });
+  assert.equal(
+    await bp
+      .getByRole("button", { name: "保存并应用配色", exact: true })
+      .isEnabled(),
+    true,
+    "the 32nd unsaved palette must remain retryable",
+  );
+  await bp.getByRole("button", { name: "保存并应用配色", exact: true }).click();
+  await bp.getByText("配色已保存并选用于对应模式。", { exact: true }).waitFor();
+  assert.equal(
+    await bp.evaluate((key) => {
+      const saved = JSON.parse(localStorage.getItem(key));
+      return (
+        saved.mode === "dark" &&
+        saved.custom.filter((p) => p.name === "未保存配色").length === 1
+      );
+    }, APPEARANCE_KEY),
+    true,
+    "retry replays unsaved changes without duplicating the palette",
+  );
+  // Reset after a failed edit must not persist the failed name on the next save.
+  await bp.getByRole("button", { name: "编辑", exact: true }).click();
+  await bp
+    .getByRole("textbox", { name: "配色名称", exact: true })
+    .fill("FAILED NAME");
+  await bp.evaluate(() => {
+    window.failedAppearanceWrites = 0;
+    Storage.prototype.setItem = () => {
+      window.failedAppearanceWrites++;
+      throw new DOMException("quota", "QuotaExceededError");
+    };
+  });
+  await bp.getByRole("button", { name: "保存并应用配色", exact: true }).click();
+  await bp.waitForFunction(() => window.failedAppearanceWrites === 1);
+  bp.once("dialog", (dialog) => dialog.accept());
+  await bp.getByRole("button", { name: "恢复原配色", exact: true }).click();
+  assert.equal(
+    await bp
+      .getByRole("textbox", { name: "配色名称", exact: true })
+      .inputValue(),
+    "未保存配色",
+  );
+  await bp.evaluate(() => {
+    Storage.prototype.setItem = window.originalSetItem;
+  });
+  await bp.getByRole("button", { name: "保存并应用配色", exact: true }).click();
+  await bp.getByText("配色已保存并选用于对应模式。", { exact: true }).waitFor();
+  assert.equal(
+    await bp.evaluate(
+      (key) =>
+        JSON.parse(localStorage.getItem(key)).custom.some(
+          (p) => p.name === "FAILED NAME",
+        ),
+      APPEARANCE_KEY,
+    ),
+    false,
+    "failed palette edits must not survive Reset",
+  );
+  await bp.getByRole("button", { name: "编辑", exact: true }).click();
+  await bp
+    .getByRole("textbox", { name: "配色名称", exact: true })
+    .fill("CANCELLED NAME");
+  await bp.evaluate(() => {
+    window.failedAppearanceWrites = 0;
+    Storage.prototype.setItem = () => {
+      window.failedAppearanceWrites++;
+      throw new DOMException("quota", "QuotaExceededError");
+    };
+  });
+  await bp.getByRole("button", { name: "保存并应用配色", exact: true }).click();
+  await bp.waitForFunction(() => window.failedAppearanceWrites === 1);
+  bp.once("dialog", (dialog) => dialog.accept());
+  await bp.getByRole("button", { name: "取消", exact: true }).click();
+  await bp.evaluate(async () => {
+    Storage.prototype.setItem = window.originalSetItem;
+    await window.changeAppearance((a) => ({
+      ...a,
+      fonts: { ...a.fonts, ui: { ...a.fonts.ui, size: 17 } },
+    }));
+  });
+  assert.equal(
+    await bp.evaluate(
+      (key) =>
+        JSON.parse(localStorage.getItem(key)).custom.some(
+          (p) => p.name === "CANCELLED NAME",
+        ),
+      APPEARANCE_KEY,
+    ),
+    false,
+    "a later font save must not replay cancelled palette edits",
+  );
+  await bp.evaluate(() =>
+    Object.defineProperty(navigator, "locks", {
+      value: undefined,
+      configurable: true,
+    }),
+  );
+  assert.equal(
+    await bp.evaluate(() =>
+      window.changeAppearance((a) => ({ ...a, mode: "light" })),
+    ),
+    false,
+  );
+  await bp
+    .getByRole("alert")
+    .filter({ hasText: /无法持久保存/ })
+    .waitFor();
+  assert.equal(
+    await bp.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key)).mode,
+      APPEARANCE_KEY,
+    ),
+    "dark",
+    "without coordination changes stay local rather than overwriting other windows",
+  );
   await broken.close();
   await context.close();
   console.log(

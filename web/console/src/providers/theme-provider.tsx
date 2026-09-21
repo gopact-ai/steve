@@ -23,7 +23,10 @@ import type { Scheme } from "@/lib/themes";
 interface ThemeContextType {
   appearance: Appearance;
   scheme: Scheme;
-  updateAppearance: (update: (current: Appearance) => Appearance) => void;
+  updateAppearance: (
+    update: (current: Appearance) => Appearance,
+    options?: { requirePersistence?: boolean },
+  ) => Promise<boolean>;
   storageError: boolean;
 }
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -45,20 +48,60 @@ function initial() {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState(initial);
   const current = useRef(state.appearance);
+  const pending = useRef<((a: Appearance) => Appearance)[]>([]);
   const [dark, setDark] = useState(systemDark);
   const { appearance, storageError } = state;
   const scheme = resolveAppearance(appearance, dark).scheme;
   const updateAppearance = useCallback(
-    (update: (current: Appearance) => Appearance) => {
-      const next = normalizeAppearance(update(current.current));
-      let failed = false;
+    async (
+      update: (current: Appearance) => Appearance,
+      options?: { requirePersistence?: boolean },
+    ) => {
+      const commit = (canPersist: boolean) => {
+        let base = current.current;
+        let available = canPersist;
+        if (available) {
+          try {
+            // The storage event may be delayed in a background window. Read
+            // and update under the shared lock rather than overwriting its snapshot.
+            localStorage.getItem(APPEARANCE_KEY);
+            base = readAppearance(localStorage);
+            for (const retry of pending.current)
+              base = normalizeAppearance(retry(base));
+          } catch {
+            available = false;
+          }
+        }
+        const next = normalizeAppearance(update(base));
+        let failed = !available;
+        if (available) {
+          try {
+            localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next));
+          } catch {
+            failed = true;
+          }
+        }
+        // Explicit palette saves are transactional: failure leaves only the
+        // editor's draft, not a queued mutation that could outlive Cancel/Reset.
+        if (failed && options?.requirePersistence) {
+          setState((state) => ({ ...state, storageError: true }));
+          return false;
+        }
+        pending.current = failed ? [...pending.current, update] : [];
+        current.current = next;
+        setState({ appearance: next, storageError: failed });
+        return !failed;
+      };
+      // Existing draft storage also requires Web Locks. Without a lock, keep
+      // changes local and warn instead of claiming a safe multi-window save.
+      if (!navigator.locks) return commit(false);
       try {
-        localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next));
+        return await navigator.locks.request(APPEARANCE_KEY, () =>
+          commit(true),
+        );
       } catch {
-        failed = true;
+        return commit(false);
       }
-      current.current = next;
-      setState({ appearance: next, storageError: failed });
     },
     [],
   );
@@ -70,6 +113,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const change = () => setDark(media.matches);
     const storage = (event: StorageEvent) => {
       if (event.key !== APPEARANCE_KEY && event.key !== null) return;
+      if (pending.current.length) return; // keep explicitly unsaved local edits
       try {
         if (event.storageArea !== localStorage) return;
         // Read the latest value, rather than replaying an older event

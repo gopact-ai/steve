@@ -40,10 +40,11 @@
 .source-notice { background: var(--color-bg-secondary); }
 .source-scroll { flex: 1; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .source-scroll:focus-visible { outline: 2px solid var(--color-border-brand); outline-offset: -2px; }
-.source-code { width: max-content; min-width: 100%; margin: 0; padding: 12px 0; font-family: var(--font-mono); font-size: var(--code-font-size); line-height: calc(22 / 13); tab-size: 4; }
+/* Reserve the retrieved file's total digits, so paging does not move the code. */
+.source-code { --source-gutter-min: 64px; --source-gutter-padding: 16px; width: max-content; min-width: 100%; margin: 0; padding: 12px 0; font-family: var(--font-mono); font-size: var(--code-font-size); line-height: calc(22 / 13); tab-size: 4; }
 .source-code > code { display: block; font: inherit; }
-.source-line { display: grid; grid-template-columns: 64px minmax(0, 1fr); min-height: 22px; }
-.source-number { padding-right: 16px; text-align: right; color: var(--color-text-quaternary); user-select: none; font-variant-numeric: tabular-nums; }
+.source-line { display: grid; grid-template-columns: max(var(--source-gutter-min), calc(var(--source-line-digits, 1) * 1ch + var(--source-gutter-padding))) minmax(0, 1fr); min-height: 22px; }
+.source-number { padding-right: var(--source-gutter-padding); text-align: right; color: var(--color-text-quaternary); user-select: none; font-variant-numeric: tabular-nums; }
 .source-text { display: block; padding-right: 20px; white-space: pre; }
 .source-wrap .source-code { width: 100%; }
 .source-wrap .source-text { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -79,6 +80,5 @@
 
 @media (max-width: 640px) {
     .source-toolbar { padding-inline: 12px; }
-    .source-line { grid-template-columns: 44px minmax(0, 1fr); }
-    .source-number { padding-right: 12px; }
+    .source-code { --source-gutter-min: 44px; --source-gutter-padding: 12px; }
 }

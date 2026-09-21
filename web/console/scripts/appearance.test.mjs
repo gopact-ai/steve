@@ -137,3 +137,9 @@ test("missing colour keys, invalid scheme, empty names, and external font CSS ar
   ])
     assert.ok(!fontStack(family, "reading").includes(family));
 });
+test('local font names never resolve Object prototype properties as presets', () => {
+  for (const family of ['constructor', '__proto__', 'toString']) {
+    assert.equal(typeof fontStack(family, 'ui'), 'string');
+    assert.ok(fontStack(family, 'ui').startsWith(`"${family}",`));
+  }
+});
