@@ -29,6 +29,10 @@ var (
 	ErrReceiptExpired  = errors.New("coordination: application replay receipt expired")
 )
 
+// ControlProtocolVersion covers prepared voting changes and nonvoter
+// coordinators. Missing capability fields from older binaries mean version 0.
+const ControlProtocolVersion uint64 = 1
+
 // Application applies deterministic atomic changes. A durable implementation
 // must store (Version, ID) and its result in the same transaction as the change: committed
 // Raft entries can be replayed after a process restart. Returning an error is a
@@ -149,12 +153,16 @@ type State struct {
 	PendingAddresses map[string]MemberAddressRequest `json:"pending_addresses"`
 	PendingJoins     map[string]bool                 `json:"pending_joins"`
 	PendingVotes     map[string]VotingRequest        `json:"pending_votes"`
-	Coordinator      Assignment                      `json:"coordinator"`
-	AutoFailover     bool                            `json:"auto_failover"`
-	AppVersion       uint64                          `json:"app_version"`
-	AppReplayFloor   uint64                          `json:"app_replay_floor"`
-	WriterGeneration uint64                          `json:"writer_generation"`
-	Audit            []AuditRecord                   `json:"audit"`
+	// RequiredControlProtocol is raised when new control semantics first commit.
+	// Downgrades after activation are unsupported: old binaries cannot enforce
+	// this floor or preserve the additive snapshot fields.
+	RequiredControlProtocol uint64        `json:"required_control_protocol,omitempty"`
+	Coordinator             Assignment    `json:"coordinator"`
+	AutoFailover            bool          `json:"auto_failover"`
+	AppVersion              uint64        `json:"app_version"`
+	AppReplayFloor          uint64        `json:"app_replay_floor"`
+	WriterGeneration        uint64        `json:"writer_generation"`
+	Audit                   []AuditRecord `json:"audit"`
 }
 
 // IsActiveReplica excludes incomplete joins and removals from business authority.
@@ -184,21 +192,23 @@ func (s State) CanAutoFailover() bool {
 }
 
 type Progress struct {
-	ClusterID     string `json:"cluster_id"`
-	NodeID        string `json:"node_id"`
-	AppliedIndex  uint64 `json:"applied_index"`
-	AppVersion    uint64 `json:"app_version"`
-	FailureDomain string `json:"failure_domain"`
-	StorageLevel  string `json:"storage_level"`
+	ControlProtocol uint64 `json:"control_protocol"`
+	ClusterID       string `json:"cluster_id"`
+	NodeID          string `json:"node_id"`
+	AppliedIndex    uint64 `json:"applied_index"`
+	AppVersion      uint64 `json:"app_version"`
+	FailureDomain   string `json:"failure_domain"`
+	StorageLevel    string `json:"storage_level"`
 }
 
 type Status struct {
 	State
-	NodeID        string `json:"node_id"`
-	Address       string `json:"address"`
-	LeaderID      string `json:"leader_id"`
-	LeaderAddress string `json:"leader_address"`
-	IsLeader      bool   `json:"is_leader"`
+	ControlProtocol uint64 `json:"control_protocol"`
+	NodeID          string `json:"node_id"`
+	Address         string `json:"address"`
+	LeaderID        string `json:"leader_id"`
+	LeaderAddress   string `json:"leader_address"`
+	IsLeader        bool   `json:"is_leader"`
 	// Build is the program build this node runs, as it names itself.
 	Build         string `json:"build,omitempty"`
 	Healthy       bool   `json:"healthy"`
@@ -207,7 +217,7 @@ type Status struct {
 }
 
 func (s Status) Progress() Progress {
-	return Progress{ClusterID: s.ClusterID, NodeID: s.NodeID, AppliedIndex: s.AppliedIndex, AppVersion: s.AppVersion, FailureDomain: s.FailureDomain, StorageLevel: s.StorageLevel}
+	return Progress{ControlProtocol: s.ControlProtocol, ClusterID: s.ClusterID, NodeID: s.NodeID, AppliedIndex: s.AppliedIndex, AppVersion: s.AppVersion, FailureDomain: s.FailureDomain, StorageLevel: s.StorageLevel}
 }
 
 type Result struct {

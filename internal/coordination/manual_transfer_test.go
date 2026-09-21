@@ -55,7 +55,7 @@ func TestNonvoterTransferRequiresProgress(t *testing.T) {
 	c := newTestCluster(t, 1)
 	leader, _ := joinNonvoter(t, c)
 	leader.config.Probe = func(context.Context, Member) (Progress, error) {
-		return Progress{ClusterID: "test-cluster", NodeID: "new-node", FailureDomain: "nonvoter-domain", StorageLevel: "restricted"}, nil
+		return Progress{ControlProtocol: ControlProtocolVersion, ClusterID: "test-cluster", NodeID: "new-node", FailureDomain: "nonvoter-domain", StorageLevel: "restricted"}, nil
 	}
 	_, err := leader.Transfer(t.Context(), TransferRequest{ID: "lagging", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "new-node"})
 	if !errors.Is(err, ErrNotReady) {
@@ -362,7 +362,13 @@ func TestVoteProgressTimeoutCanResumeOrBeReReviewed(t *testing.T) {
 		t.Run(map[bool]string{true: "same-id", false: "new-review"}[sameID], func(t *testing.T) {
 			c := newTestCluster(t, 1)
 			leader, _ := joinNonvoter(t, c)
-			leader.config.Probe = func(context.Context, Member) (Progress, error) { return Progress{}, ErrUnavailable }
+			// The same-version peer passes the capability gate, but remains
+			// behind after preparation, exercising resumable progress failure.
+			leader.config.Probe = func(ctx context.Context, member Member) (Progress, error) {
+				progress, err := c.probe(ctx, member)
+				progress.AppliedIndex = 0
+				return progress, err
+			}
 			request := VotingRequest{ID: "timeout", Actor: "owner", ExpectedRevision: leader.Status().Revision, NodeID: "new-node", Voting: true}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			_, err := leader.SetVoting(ctx, request)

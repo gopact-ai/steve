@@ -33,6 +33,7 @@ type command struct {
 	Automatic                  bool                 `json:"automatic,omitempty"`
 	ExpectedAppVersion         uint64               `json:"expected_app_version,omitempty"`
 	ExpectedConfigurationIndex uint64               `json:"expected_configuration_index,omitempty"`
+	MemberControlProtocol      uint64               `json:"member_control_protocol,omitempty"`
 }
 
 type receipt struct {
@@ -170,11 +171,12 @@ func (m *machine) Apply(log *raft.Log) interface{} {
 		return old
 	}
 	r := receipt{Fingerprint: c.Fingerprint}
+	previousControlProtocol := m.state.RequiredControlProtocol
 	event, err := m.applyCommand(c, log.Index, &r)
 	if err != nil {
 		return m.fail(err)
 	}
-	return m.settle(c, log.Index, r, event)
+	return m.settle(c, log.Index, r, event, previousControlProtocol)
 }
 
 // applyCommand dispatches one committed command by kind. A rejection is
@@ -224,7 +226,7 @@ func (m *machine) applyCommand(c command, index uint64, r *receipt) (*AuditRecor
 // failover loop when membership changed, and appends its audit record.
 // The receipt then carries the state's version numbers and is kept for
 // the next entry that reuses the command ID.
-func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord) receipt {
+func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord, previousControlProtocol uint64) receipt {
 	s := &m.state
 	if c.Kind == "app" {
 		version := c.App.ExpectedVersion
@@ -236,6 +238,22 @@ func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord)
 		}
 		if changesMembership(c.Kind) {
 			m.notifyMembership()
+		}
+		// Keep a marker in the legacy audit shape when a new control
+		// protocol is activated. Older binaries ignore the additive state
+		// fields in a format-3 snapshot, but they preserve this known
+		// AuditRecord representation. A newer binary can therefore fail
+		// closed if an old binary rewrites a snapshot after activation
+		// instead of silently treating the activated state as legacy.
+		if previousControlProtocol < ControlProtocolVersion && s.RequiredControlProtocol >= ControlProtocolVersion {
+			s.Audit = append(s.Audit, AuditRecord{
+				CommandID: c.ID + "/control-protocol",
+				Index:     index,
+				Time:      c.Time,
+				Actor:     c.Actor,
+				Kind:      "control_protocol_required",
+				Reason:    fmt.Sprintf("protocol=%d", s.RequiredControlProtocol),
+			})
 		}
 		if event != nil {
 			event.CommandID = c.ID
@@ -291,6 +309,10 @@ func applyInitialize(s *State, c command, r *receipt) *AuditRecord {
 // applyJoinPrepare admits a member before Raft adds it as a voter. A
 // repeated preparation of the same member is accepted as is.
 func applyJoinPrepare(s *State, c command, r *receipt) *AuditRecord {
+	if c.MemberControlProtocol < s.RequiredControlProtocol {
+		r.reject("invalid", "joining node control protocol is too old; downgrade is unsupported")
+		return nil
+	}
 	if c.Member.StorageLevel != "restricted" && c.Member.StorageLevel != "sealed" {
 		r.reject("invalid", "full ledger replica requires restricted storage authorization")
 		return nil
@@ -512,6 +534,7 @@ func applyVotingPrepare(s *State, c command, r *receipt) *AuditRecord {
 	// A fresh, explicitly reviewed revision may replace an unfinished intent.
 	// Older retries retain their preparation receipt but cannot finalize it.
 	s.PendingVotes[request.NodeID] = request
+	s.RequiredControlProtocol = max(s.RequiredControlProtocol, ControlProtocolVersion)
 	return nil
 }
 
@@ -592,6 +615,9 @@ func applyTransfer(s *State, c command, r *receipt) *AuditRecord {
 		return nil
 	}
 	event := &AuditRecord{Kind: "coordinator_transferred", From: s.Coordinator.NodeID, To: member.NodeID, Epoch: s.Coordinator.Epoch + 1, Reason: c.Transfer.Reason}
+	if s.Voters[member.NodeID] != member.Address {
+		s.RequiredControlProtocol = max(s.RequiredControlProtocol, ControlProtocolVersion)
+	}
 	s.Coordinator = Assignment{NodeID: member.NodeID, Epoch: s.Coordinator.Epoch + 1}
 	return event
 }
@@ -684,7 +710,9 @@ type snapshotData struct {
 	HasApplication bool               `json:"has_application"`
 }
 
-const snapshotFormat = 4
+// Keep the existing envelope version during rolling upgrades. New state fields
+// are additive; new log semantics are gated separately before submission.
+const snapshotFormat = 3
 
 func (m *machine) Snapshot() (raft.FSMSnapshot, error) {
 	data, application, persisted, err := m.captureSnapshot()
@@ -752,12 +780,35 @@ func (m *machine) Restore(reader io.ReadCloser) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if (data.Format != snapshotFormat && data.Format != 3) || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
+	if data.Format != snapshotFormat || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
 		return fmt.Errorf("%w: snapshot identity or format differs", ErrInvalid)
 	}
-	if data.Format == 3 {
-		// Format 3 included admitted-but-incomplete joins in Members. Completion
-		// is recoverable from the retained administrative audit, not suffrage.
+	if data.State.RequiredControlProtocol > ControlProtocolVersion {
+		return fmt.Errorf("%w: snapshot requires a newer control protocol; downgrade is unsupported", ErrInvalid)
+	}
+	var fields struct {
+		State struct {
+			PendingJoins json.RawMessage `json:"pending_joins"`
+			PendingVotes json.RawMessage `json:"pending_votes"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return fmt.Errorf("%w: decode snapshot membership state: %v", ErrInvalid, err)
+	}
+	controlProtocolMarker := false
+	for _, event := range data.State.Audit {
+		if event.Kind == "control_protocol_required" {
+			controlProtocolMarker = true
+			break
+		}
+	}
+	if controlProtocolMarker && data.State.RequiredControlProtocol < ControlProtocolVersion {
+		return fmt.Errorf("%w: activated control protocol state was lost; downgrade is unsupported", ErrInvalid)
+	}
+	if data.Format == 3 && len(fields.State.PendingJoins) == 0 && len(fields.State.PendingVotes) == 0 && data.State.RequiredControlProtocol == 0 {
+		// Only genuinely legacy snapshots omit BOTH fields. Administrative
+		// audit is retained and distinguishes completed joins from admission,
+		// including a member removed and then admitted again under the same ID.
 		completed := map[string]bool{}
 		for _, event := range data.State.Audit {
 			switch event.Kind {

@@ -33,12 +33,15 @@ type Service struct {
 	fsm          *machine
 	opMu         sync.Mutex
 	membershipMu sync.Mutex
-	closed       atomic.Bool
-	closeOnce    sync.Once
-	closeErr     error
-	ctx          context.Context
-	cancel       context.CancelFunc
-	workers      sync.WaitGroup
+	// admissionMu serializes Join preparation with new-control capability
+	// checks and activation. Never acquire opMu while holding this lock.
+	admissionMu sync.Mutex
+	closed      atomic.Bool
+	closeOnce   sync.Once
+	closeErr    error
+	ctx         context.Context
+	cancel      context.CancelFunc
+	workers     sync.WaitGroup
 }
 
 // addressTransport keeps RPC source addresses consistent with live listener
@@ -225,7 +228,7 @@ func checkIdentity(c Config) error {
 func (s *Service) Status() Status {
 	address, id := s.raft.LeaderWithID()
 	healthy := !s.closed.Load() && s.fsm.healthy() && s.raft.State() != raft.Shutdown
-	return Status{State: s.fsm.read(), NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
+	return Status{State: s.fsm.read(), ControlProtocol: ControlProtocolVersion, NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
 }
 
 // TransportPeers reads Raft's durable latest membership before FSM replay has
@@ -403,7 +406,7 @@ func (s *Service) SetVoting(ctx context.Context, request VotingRequest) (Result,
 	if old, ok := s.fsm.lookup(request.ID, fp); ok {
 		return old.Result, old.err()
 	}
-	if _, err := s.submit(ctx, command{Kind: "voting_prepare", ID: request.ID + "/prepare", Actor: request.Actor, Fingerprint: fp, Voting: request}); err != nil {
+	if err := s.prepareVoting(ctx, request, fp); err != nil {
 		return Result{}, err
 	}
 	state := s.fsm.read()
@@ -470,6 +473,8 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Result
 }
 
 func (s *Service) transfer(ctx context.Context, request TransferRequest, automatic bool) (Result, error) {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	if err := s.barrier(ctx); err != nil {
 		return Result{}, err
 	}
@@ -496,6 +501,11 @@ func (s *Service) transfer(ctx context.Context, request TransferRequest, automat
 	}
 	if (automatic || state.AutoFailover) && state.Voters[member.NodeID] != member.Address {
 		return Result{}, fmt.Errorf("%w: automatic policy requires a voting coordinator", ErrInvalid)
+	}
+	if state.Voters[member.NodeID] != member.Address {
+		if err := s.requireControlProtocol(ctx, state); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := s.waitForProgress(ctx, member, state); err != nil {
 		return Result{}, err
@@ -577,24 +587,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 	if old, ok := s.fsm.lookup(request.ID, fp); ok {
 		return old.Result, old.err()
 	}
-	progress, err := s.probe(ctx, request.Member)
-	if err != nil {
-		return Result{}, fmt.Errorf("verify joining node: %w", err)
-	}
-	request.Member.FailureDomain = progress.FailureDomain
-	request.Member.StorageLevel = progress.StorageLevel
-	if request.Member.StorageLevel != "restricted" && request.Member.StorageLevel != "sealed" {
-		return Result{}, fmt.Errorf("%w: a full ledger replica requires explicit restricted storage authorization", ErrInvalid)
-	}
-	if request.Member.FailureDomain == "" {
-		return Result{}, fmt.Errorf("%w: joining node has no verified physical failure domain", ErrInvalid)
-	}
-	if s.config.AuthorizeReplica != nil {
-		if err := s.config.AuthorizeReplica(ctx, request.Member); err != nil {
-			return Result{}, fmt.Errorf("%w: ledger replica authorization: %v", ErrInvalid, err)
-		}
-	}
-	if _, err := s.submit(ctx, command{Kind: "join_prepare", ID: request.ID + "/prepare", Actor: request.Actor, Fingerprint: fp, Member: request.Member}); err != nil {
+	if err := s.prepareJoin(ctx, &request, fp); err != nil {
 		return Result{}, err
 	}
 	if s.config.Application != nil {
