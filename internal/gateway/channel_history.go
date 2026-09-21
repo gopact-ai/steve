@@ -288,7 +288,9 @@ func channelRepliesTx(ctx context.Context, tx *ledger.ReadTx, id, conversation s
 		return nil, err
 	}
 	var output recoveredOutput
-	hasOutput := channelSuccessful(dispatch, prefix+"-dispatch", input.Actor) && !bytes.Equal(bytes.TrimSpace(dispatch.Result), []byte("null")) && json.Unmarshal(dispatch.Result, &output) == nil
+	// A recovery-required dispatch is not the output eventually delivered.
+	// A later reply proof confirms delivery only; it cannot confirm this body.
+	hasOutput := channelSuccessful(dispatch, prefix+"-dispatch", input.Actor) && !bytes.Equal(bytes.TrimSpace(dispatch.Result), []byte("null")) && json.Unmarshal(dispatch.Result, &output) == nil && !output.Recover
 	if hasOutput {
 		reply.Text, reply.Title, reply.AttemptID = output.Result.Text, output.Result.Title, output.Result.Attempt
 		// Match finalText's disclosure boundary: Error is internal diagnostic

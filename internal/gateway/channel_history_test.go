@@ -561,6 +561,46 @@ func TestChannelHistoryErrorsDoNotExposeInternalDiagnostics(t *testing.T) {
 	}
 }
 
+func TestChannelHistoryPendingRecoveryIsNotFinalOutput(t *testing.T) {
+	for _, prefix := range []string{"gateway-input", "gateway-recovery"} {
+		for _, delivered := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/delivered=%v", prefix, delivered), func(t *testing.T) {
+				book := historyBook(t)
+				if prefix == "gateway-input" {
+					historyInput(t, book, "input", "chat", "prompt")
+				} else {
+					historyRecord(t, book, "input", recoveryInputKind, recoveryInput{
+						Revival: Revival{ConversationID: "chat", MessageID: "input", Requester: "owner"},
+						Prompt:  "prompt",
+					})
+				}
+				historyRecord(t, book, "input/dispatch", prefix+"-dispatch", recoveredOutput{
+					Recover: true, Result: turn.Result{Text: "obsolete partial", Injected: &turn.Injected{Project: "obsolete-project"}},
+				})
+				if delivered {
+					historyRecord(t, book, "input/reply", prefix+"-reply", ledger.CommandProof{CommandID: "input", Receipt: "recovered-reply"})
+				}
+				h := NewChannelHistory(book)
+				got, err := h.Read(t.Context(), "chat", "", 10)
+				wantCount := 1
+				if delivered {
+					wantCount = 2
+				}
+				if err != nil || len(got.Replies) != wantCount || got.Conversation.Count != wantCount || got.Conversation.Project != "" {
+					t.Fatalf("pending recovery became final history: %+v %v", got, err)
+				}
+				if delivered && (got.Replies[1].Text != "" || got.Replies[1].Delivery != "confirmed" || got.Replies[1].Injected != nil) {
+					t.Fatalf("recovery proof must not confirm obsolete dispatch content: %+v", got.Replies[1])
+				}
+				list, err := h.List(t.Context(), "", 10)
+				if err != nil || len(list.Conversations) != 1 || list.Conversations[0].Count != wantCount || list.Conversations[0].Project != "" {
+					t.Fatalf("directory includes obsolete dispatch: %+v %v", list, err)
+				}
+			})
+		}
+	}
+}
+
 func TestChannelHistoryRunningDispatchAndRebuiltSnapshotIndexes(t *testing.T) {
 	book := historyBook(t)
 	historyInput(t, book, "input", "console:opaque", "accepted before execution")

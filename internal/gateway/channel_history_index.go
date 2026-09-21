@@ -102,7 +102,7 @@ func channelRecordFact(kind, actor string, raw []byte, field string) driver.Valu
 		}
 	case "gateway-input-dispatch", "gateway-recovery-dispatch":
 		var output recoveredOutput
-		if strings.TrimSpace(string(raw)) != "null" && json.Unmarshal(raw, &output) == nil {
+		if strings.TrimSpace(string(raw)) != "null" && json.Unmarshal(raw, &output) == nil && !output.Recover {
 			if field == "output" {
 				return int64(1)
 			}
