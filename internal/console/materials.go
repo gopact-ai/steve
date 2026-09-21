@@ -42,7 +42,7 @@ func (s *Service) SetMaterials(resolver MaterialResolver, authorize func(context
 // back to it, which is the one part that must happen before anything is
 // queued: the agent's session is closed out here, outside the lock.
 func (s *Service) submissionOptions(ctx context.Context, req consoleapi.Submission) (enqueueOptions, error) {
-	options := enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale}
+	options := enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale, ExpectedProject: req.ExpectedProject}
 	if req.RewindTo == "" {
 		return options, nil
 	}
@@ -110,6 +110,12 @@ func extendedSubmissionHash(textHash string, refs []material.Ref, locale string)
 		Refs   []material.Ref
 		Locale string
 	}{textHash, refs, locale})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func projectSubmissionHash(hash, project string) string {
+	raw, _ := json.Marshal(struct{ Submission, ExpectedProject string }{hash, project})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

@@ -696,7 +696,10 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	}
 	s.processes[exchange.ID] = work
 	s.mu.Unlock()
-	if s.anchor != nil {
+	// Schedule controls manage durable work but are not a new agent turn.
+	// Do not advance the conversation's mutable interim-message anchor while
+	// another turn may still be publishing progress into that conversation.
+	if s.anchor != nil && !parsed.ScheduleControl() {
 		s.anchor(conversation, ChatID, AnchorMark+exchange.ID)
 	}
 	stop := s.follow(ctx, conversation, work)

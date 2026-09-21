@@ -31,6 +31,15 @@ func (g *Gateway) immediateInput(text string) bool {
 	return turn.ImmediateInput(text)
 }
 
+func (g *Gateway) scheduleControl(text string) bool {
+	if parser, ok := g.processor.(inputParser); ok {
+		_, parsed := parser.ParseInput(text)
+		return parsed.ScheduleControl()
+	}
+	_, parsed := turn.ParseAddressedInput(text)
+	return parsed.ScheduleControl()
+}
+
 func (g *Gateway) acceptAndWake(key string, input gatewayInput) error {
 	ctx := g.ingressContext
 	if ctx == nil {

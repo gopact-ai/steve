@@ -259,7 +259,7 @@ func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) er
 		g.seedTopic(msg, rest)
 		return nil
 	}
-	if g.gate != nil && msg.MessageID != "" {
+	if g.gate != nil && msg.MessageID != "" && !g.scheduleControl(msg.Text) {
 		g.gate.Anchor(conversationID, channel.Address{Channel: "feishu", Conversation: conversationID, Message: msg.MessageID})
 	}
 	ui := g.newTurnUI(msg, listen)

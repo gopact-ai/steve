@@ -12,13 +12,13 @@ import { useI18n } from "@/providers/locale-provider";
 import { useFleet } from "@/lib/fleet";
 import { relative, when } from "@/lib/format";
 import { conversationTransport, conversationURL } from "@/lib/conversation-identity";
-import { fetchContext, fetchConversations, send } from "@/lib/api/console";
+import { fetchContext, fetchConversations, readScheduleReceipt, sendSchedule } from "@/lib/api/console";
 import { message } from "@/lib/http";
 import type { Conversation, ConversationContext, Schedule } from "@/lib/types";
 
 type Action = "cancel" | "confirm" | "retry";
-type Draft = { conversation: string; agent: string; mode: "every" | "at"; when: string; prompt: string };
-type Operation = { id: string; conversation: string; input: string; kind: "create" | Action; draft?: Draft };
+type Draft = { conversation: string; agent: string; expectedProject: string; mode: "every" | "at"; when: string; prompt: string };
+type Operation = { id: string; conversation: string; input: string; kind: "create" | Action; expectedProject?: string; draft?: Draft };
 type Selection = { job: Schedule; action: Action };
 const pendingKey = "steve.schedule.pending";
 
@@ -119,7 +119,7 @@ function ScheduleDialog({ conversations, restored, selection, onRetain, onChange
     conversations: Conversation[]; restored: Operation | null; selection: Selection | null; onRetain: (op: Operation | null) => void; onChanged: () => void; onClose: () => void;
 }) {
     const { t: tr } = useI18n();
-    const [draft, setDraft] = useState<Draft>(() => restored?.draft || { conversation: "", agent: "", mode: "every", when: "", prompt: "" });
+    const [draft, setDraft] = useState<Draft>(() => restored?.draft || { conversation: "", agent: "", expectedProject: "", mode: "every", when: "", prompt: "" });
     const [operation, setOperation] = useState(restored);
     const [context, setContext] = useState<ConversationContext | null>(null);
     const [contextError, setContextError] = useState("");
@@ -131,35 +131,45 @@ function ScheduleDialog({ conversations, restored, selection, onRetain, onChange
     const title = tr(kind === "create" ? "board.createSchedule" : kind === "cancel" ? "board.cancelSchedule" : kind === "confirm" ? "board.confirmSchedule" : "board.retrySchedule");
     const locked = !!operation || busy;
     useEffect(() => {
-        if (!draft.conversation || locked || kind !== "create") return;
+        if (!draft.conversation || operation || kind !== "create") return;
         const controller = new AbortController();
         setContext(null); setContextError("");
         void fetchContext(draft.conversation, controller.signal).then(result => {
             if (controller.signal.aborted) return;
             if (!result.enabled || !result.context) throw new Error(tr("board.consoleUnavailable"));
             setContext(result.context);
-            setDraft(old => ({ ...old, agent: result.context?.agent?.id || "" }));
+            setDraft(old => ({ ...old, agent: result.context?.agent?.id || "", expectedProject: result.context?.project?.id || "" }));
         }).catch(cause => { if (!controller.signal.aborted) setContextError(message(cause)); });
         return () => controller.abort();
-    }, [draft.conversation, locked, kind, tr]);
+    }, [draft.conversation, operation, kind, tr]);
     const change = (patch: Partial<Draft>) => setDraft(old => ({ ...old, ...patch }));
     const target = conversations.find(c => c.id === draft.conversation);
-    const valid = !!target && !!draft.agent && !!context && !contextError && !!draft.when.trim() && !!draft.prompt.trim();
+    const valid = !!target && !!draft.agent && !!draft.expectedProject && !!context && !contextError && !!draft.when.trim() && !!draft.prompt.trim();
     const command = `@${draft.agent} /${draft.mode} ${draft.when.trim()} ${draft.prompt.trim()}`;
     async function submit() {
         if (working.current || receipt || (!operation && kind === "create" && !valid)) return;
         working.current = true; setBusy(true); setError("");
         try {
             const op = operation || (selection ? { id: crypto.randomUUID(), kind: selection.action, conversation: selection.job.conversation, input: `/schedules ${selection.action} ${selection.job.id}` }
-                : { id: crypto.randomUUID(), kind: "create" as const, conversation: draft.conversation, input: command, draft: { ...draft } });
+                : { id: crypto.randomUUID(), kind: "create" as const, conversation: draft.conversation, input: command, expectedProject: draft.expectedProject, draft: { ...draft } });
             // A retained operation is not authority to recreate a deleted
             // conversation or write to a target whose channel has changed.
             const directory = await fetchConversations();
             const targets = directory.conversations?.filter(c => c.id === op.conversation) || [];
             if (!directory.enabled || targets.length !== 1 || !editable(targets[0])) throw new Error(tr("board.scheduleTargetUnavailable"));
+            let reply = null;
+            if (op.kind === "create") {
+                const current = await fetchContext(op.conversation);
+                if (!op.expectedProject || !current.enabled || current.context?.project?.id !== op.expectedProject) {
+                    // Only read an already accepted operation; never POST into
+                    // a different project, even under the old command ID.
+                    if (operation) reply = await readScheduleReceipt(op.conversation, op.id);
+                    if (!reply) throw new Error(tr("board.scheduleProjectChanged"));
+                }
+            }
             sessionStorage.setItem(pendingKey, JSON.stringify(op));
             setOperation(op); onRetain(op);
-            const reply = await send(op.conversation, op.input, undefined, op.id);
+            reply ||= await sendSchedule(op.conversation, op.input, op.id, op.expectedProject);
             if (!reply || reply.conversation !== op.conversation || !reply.id || !reply.exchange_id || typeof reply.text !== "string") throw new Error(tr("board.invalidScheduleReceipt"));
             // The command can refuse in a successful HTTP reply. Display its
             // actual text with neutral styling, not a guessed success toast.
@@ -174,10 +184,10 @@ function ScheduleDialog({ conversations, restored, selection, onRetain, onChange
                 <DialogHeader title={title} description={kind === "create" ? tr("board.createScheduleHint") : tr(kind === "cancel" ? "board.cancelScheduleHint" : kind === "confirm" ? "board.confirmScheduleHint" : "board.retryScheduleHint", { id: selection?.job.id || "" })} />
                 {kind === "create" ? <>
                     <Select label={tr("board.targetConversation")} placeholder={tr("board.chooseConversation")} selectedKey={draft.conversation || null} isDisabled={locked}
-                        onSelectionChange={key => { setContext(null); change({ conversation: String(key || ""), agent: "" }); }} items={conversations.map(c => ({ id: c.id, label: c.title || c.id }))}>
+                        onSelectionChange={key => { setContext(null); change({ conversation: String(key || ""), agent: "", expectedProject: "" }); }} items={conversations.map(c => ({ id: c.id, label: c.title || c.id }))}>
                         {item => <Select.Item {...item} />}
                     </Select>
-                    <p className="break-words text-xs text-tertiary">{tr("board.scheduleTarget", { project: context?.project?.id || target?.project || "—", agent: draft.agent || "—" })}</p>
+                    <p className="break-words text-xs text-tertiary">{tr("board.scheduleTarget", { project: draft.expectedProject || "—", agent: draft.agent || "—" })}</p>
                     {contextError && <p role="alert" className="text-sm text-error-primary">{contextError}</p>}
                     <Select label={tr("board.scheduleType")} selectedKey={draft.mode} isDisabled={locked} onSelectionChange={key => change({ mode: key === "at" ? "at" : "every" })}
                         items={[{ id: "every", label: tr("board.recurring") }, { id: "at", label: tr("board.once") }]}>{item => <Select.Item {...item} />}</Select>
@@ -190,7 +200,7 @@ function ScheduleDialog({ conversations, restored, selection, onRetain, onChange
                 {operation && !receipt && !busy && <p className="text-sm text-tertiary">{tr("board.scheduleUncertain")}</p>}
                 <DialogFooter>
                     <Button size="sm" color="secondary" isDisabled={busy} onClick={onClose}>{tr(receipt || operation ? "common.close" : "common.cancel")}</Button>
-                    {receipt ? kind === "create" && <Button size="sm" color="secondary" onClick={() => { setOperation(null); setReceipt(""); setError(""); change({ prompt: "", when: "" }); }}>{tr("board.createAnother")}</Button>
+                    {receipt ? kind === "create" && <Button size="sm" color="secondary" onClick={() => { setOperation(null); setReceipt(""); setError(""); change({ conversation: "", agent: "", expectedProject: "", prompt: "", when: "" }); }}>{tr("board.createAnother")}</Button>
                         : <Button size="sm" color={kind === "cancel" ? "primary-destructive" : "primary"} isDisabled={busy || (!operation && kind === "create" && !valid)} isLoading={busy} onClick={() => void submit()}>
                             {tr(operation ? "board.retryOriginal" : kind === "create" ? "board.create" : kind === "cancel" ? "board.confirmCancelSchedule" : kind === "confirm" ? "board.confirmSchedule" : "board.retrySchedule")}
                         </Button>}

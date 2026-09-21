@@ -95,7 +95,7 @@ func (g *Gateway) dispatchInput(ctx context.Context, book *ledger.Ledger, key st
 		return output, ui, err
 	}
 	raw, replayed, err := book.Command(ctx, key+"/dispatch", "gateway-input-dispatch", actor, func(ctx context.Context) (json.RawMessage, error) {
-		if g.gate != nil {
+		if g.gate != nil && !g.scheduleControl(msg.Text) {
 			g.gate.Anchor(conversationID(msg), channel.Address{Channel: "feishu", Conversation: conversationID(msg), Message: msg.MessageID})
 		}
 		if input.Action != nil && input.Action.Action == "turn_retry" {

@@ -72,7 +72,7 @@ func (parsed ParsedInput) Control() bool {
 	if parsed.Command == protocol.CommandCancel {
 		return true
 	}
-	if parsed.Command == protocol.CommandEvery || parsed.Command == protocol.CommandAt || parsed.Command == protocol.CommandSchedules {
+	if parsed.ScheduleControl() {
 		return true
 	}
 	if parsed.Command == protocol.CommandTasks {
@@ -83,4 +83,10 @@ func (parsed ParsedInput) Control() bool {
 			verb == taskHandled || verb == taskIgnored || verb == taskReopen)
 	}
 	return false
+}
+
+// ScheduleControl manages standing work without starting an agent turn or
+// replacing the active turn's interim-message anchor.
+func (parsed ParsedInput) ScheduleControl() bool {
+	return parsed.Command == protocol.CommandEvery || parsed.Command == protocol.CommandAt || parsed.Command == protocol.CommandSchedules
 }

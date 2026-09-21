@@ -22,6 +22,9 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 	if c.schedules == nil {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.SchedulesEmpty, cmd)}
 	}
+	if req.Origin != "" {
+		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：自动触发的任务不能再创建定时任务。"}
+	}
 	if strings.TrimSpace(rest) == "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleUsage, cmd)}
 	}
@@ -44,6 +47,9 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 	}
 	binding, err := c.bindingFor(context.Background(), req)
 	if err != nil {
+		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：" + err.Error()}
+	}
+	if err := checkScheduledProject(req.ExpectedProject, binding.ProjectID); err != nil {
 		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：" + err.Error()}
 	}
 	created, err := c.schedules.Create(schedule.Job{

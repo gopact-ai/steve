@@ -20,6 +20,7 @@ const prompt = "检查 CI\n\n- 保留  两个空格\n- 仅报告失败";
 const jobs = [];
 const writes = [], errors = [];
 let loseReceipt = true, refuse = false, readsFail = false;
+let project = "p", terminalFailure = false, bare502 = false, wrongReceipt = false;
 const receipts = new Map();
 const at = "2026-09-22T09:00:00Z";
 const conversations = [
@@ -49,20 +50,25 @@ try {
             ? { status: 503, body: "fixture directory unavailable" }
             : { json: { enabled: true, conversations } });
         if (url.pathname === "/console/context") return route.fulfill({ json: { enabled: true, context: {
-            conversation: url.searchParams.get("conversation"), project: { id: "p" },
+            conversation: url.searchParams.get("conversation"), project: { id: project },
             agent: { id: "builder", usable: true }, agents: [{ id: "builder", usable: true }],
         } } });
-        if (url.pathname === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [] } });
+        if (url.pathname === "/console/replies") return route.fulfill({ json: { enabled: true, replies: terminalFailure
+            ? [...receipts.values()].map(reply => wrongReceipt ? { ...reply, exchange_id: "unrelated" } : reply) : [] } });
         if (url.pathname === "/console/verbs") return route.fulfill({ json: { verbs: [] } });
         if (url.pathname === "/console/suggest") return route.fulfill({ json: { suggestions: [] } });
-        if (url.pathname === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });
+        if (url.pathname === "/console/queue") return route.fulfill({ json: { queue: terminalFailure ? [...receipts.entries()].map(([id, reply]) => ({
+            id: reply.exchange_id, key: `client:${id}`, conversation: reply.conversation, state: "failed", reply_id: reply.id,
+        })) : [], submission_keys: true } });
         if (url.pathname === "/console/send") {
             const body = req.postDataJSON();
             writes.push(body);
+            if (bare502) return route.fulfill({ status: 502, body: "fixture proxy unavailable" });
             if (!receipts.has(body.command_id)) {
                 let text;
                 if (body.input.includes("/every") || body.input.includes("/at")) {
-                    if (refuse) text = "fixture：时间无效，未创建定时任务";
+                    if (terminalFailure) text = "fixture：终态执行失败";
+                    else if (refuse) text = "fixture：时间无效，未创建定时任务";
                     else {
                         jobs.push({ id: String(jobs.length + 1), conversation: body.conversation, agent: "builder",
                             prompt, spec: "30m", next_at: at, runs: 0, state: "scheduled" });
@@ -80,6 +86,7 @@ try {
                     at, conversation: body.conversation, text, kind: "reply" });
             }
             if (loseReceipt) { loseReceipt = false; return route.abort(); }
+            if (terminalFailure) return route.fulfill({ status: 502, json: { error: "fixture：终态执行失败", reply: receipts.get(body.command_id) } });
             return route.fulfill({ json: { reply: receipts.get(body.command_id) } });
         }
         if (url.pathname.startsWith("/console/")) { errors.push(`Unexpected ${req.method()} ${url.pathname}`); return route.fulfill({ status: 501, body: "Unmocked" }); }
@@ -105,6 +112,7 @@ try {
     assert.equal(jobs.length, 1);
     assert.equal(writes[0].conversation, conversation);
     assert.equal(writes[0].input, "@builder /every 30m " + prompt);
+    assert.equal(writes[0].expected_project, "p", "creation freezes the displayed project");
     assert.equal(await dialog.getByRole("textbox", { name: "任务内容", exact: true }).inputValue(), prompt);
     assert.ok(await dialog.getByRole("textbox", { name: "任务内容", exact: true }).isDisabled());
     // The same immutable operation is retained across a reload after a lost receipt.
@@ -170,6 +178,52 @@ try {
     if (process.env.SCHEDULE_SCREENSHOT) await page.screenshot({ path: process.env.SCHEDULE_SCREENSHOT });
     await dialog.getByRole("button", { name: "取消", exact: true }).click();
 
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await create.click();
+    dialog = page.getByRole("dialog", { name: "创建定时任务", exact: true });
+    await choose("目标会话", "报告会话");
+    await dialog.getByRole("textbox", { name: "时间", exact: true }).fill("30m");
+    await dialog.getByRole("textbox", { name: "任务内容", exact: true }).fill(prompt);
+    // Drift after the form resolved p must not silently create in q.
+    const beforeDrift = writes.length;
+    project = "q"; conversations[0] = { ...original, project };
+    await dialog.getByRole("button", { name: "创建", exact: true }).click();
+    await dialog.getByRole("alert").filter({ hasText: "项目已变更" }).waitFor();
+    assert.equal(writes.length, beforeDrift);
+    await dialog.getByRole("button", { name: "创建", exact: true }).click();
+    await dialog.getByRole("alert").filter({ hasText: "项目已变更" }).waitFor();
+    assert.equal(writes.length, beforeDrift, "failed preflight must not silently refresh the frozen project");
+    project = "p"; conversations[0] = original;
+    // A transport 502 without a correlated terminal receipt stays uncertain.
+    bare502 = true;
+    await dialog.getByRole("button", { name: "创建", exact: true }).click();
+    await dialog.getByRole("alert").filter({ hasText: "fixture proxy unavailable" }).waitFor();
+    assert.ok(await dialog.getByRole("button", { name: "重试原请求", exact: true }).isVisible());
+    const failedID = writes.at(-1).command_id;
+    await page.reload();
+    dialog = page.getByRole("dialog", { name: "创建定时任务", exact: true });
+    project = "q";
+    const beforeRetry = writes.length;
+    await dialog.getByRole("button", { name: "重试原请求", exact: true }).click();
+    await dialog.getByRole("alert").filter({ hasText: "项目已变更" }).waitFor();
+    assert.equal(writes.length, beforeRetry, "a restored, never accepted operation must not drift");
+    project = "p";
+    bare502 = false; terminalFailure = true;
+    wrongReceipt = true;
+    await dialog.getByRole("button", { name: "重试原请求", exact: true }).click();
+    await dialog.getByRole("alert").filter({ hasText: "fixture：终态执行失败" }).waitFor();
+    assert.ok(await dialog.getByRole("button", { name: "重试原请求", exact: true }).isVisible(), "unrelated receipt must not unlock the operation");
+    wrongReceipt = false;
+    await dialog.getByRole("button", { name: "重试原请求", exact: true }).click();
+    await dialog.getByRole("status").filter({ hasText: "fixture：终态执行失败" }).waitFor();
+    assert.equal(writes.at(-1).command_id, failedID);
+    assert.equal(writes.at(-1).expected_project, "p");
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("steve.schedule.pending")), null);
+    await dialog.getByRole("button", { name: "再创建一项", exact: true }).click();
+    assert.ok(await dialog.getByRole("textbox", { name: "任务内容", exact: true }).isEnabled());
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    terminalFailure = false;
+
     // Both uncertainty-resolution controls retain the original conversation.
     for (const [action, label] of [["confirm", "确认已执行"], ["retry", "授权重试"]]) {
         jobs.splice(0, jobs.length, { id: "uncertain", conversation, agent: "builder", prompt,
@@ -183,7 +237,7 @@ try {
         await dialog.getByRole("button", { name: "关闭", exact: true }).click();
     }
     assert.deepEqual(errors, []);
-    console.log("PASS scheduled creation, cancel/confirm/retry, preserved refusal, reload retry, target revalidation, keyboard and narrow layout");
+    console.log("PASS scheduled creation, scoped management, project freeze/reload drift guard, correlated terminal 502 recovery, uncertain 502 retention, keyboard and narrow layout");
 } finally {
     await browser.close();
     await server.close();

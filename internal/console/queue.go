@@ -179,6 +179,11 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if len(options.Refs) > 0 || options.Locale != "" {
 		hash = extendedSubmissionHash(hash, options.Refs, options.Locale)
 	}
+	// Only an explicitly supplied project changes client request identity.
+	// Existing callers without it keep their established receipt hashes.
+	if options.ExpectedProject != "" && strings.HasPrefix(key, "client:") {
+		hash = projectSubmissionHash(hash, options.ExpectedProject)
+	}
 	s.mu.Lock()
 	existing, err := s.submittedLocked(conversation, key, hash)
 	s.mu.Unlock()
@@ -199,6 +204,18 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	frozen, project, err := s.freezeMaterials(ctx, conversation, options.Refs)
 	if err != nil {
 		return nil, Exchange{}, err
+	}
+	if options.ExpectedProject != "" && project == "" {
+		state, err := s.Context(ctx, conversation)
+		if err != nil {
+			return nil, Exchange{}, err
+		}
+		if state.Project != nil {
+			project = state.Project.ID
+		}
+	}
+	if options.ExpectedProject != "" && strings.HasPrefix(key, "client:") && options.ExpectedProject != project {
+		return nil, Exchange{}, fmt.Errorf("expected project %s, but conversation is bound to %s", options.ExpectedProject, project)
 	}
 	if len(options.Refs) > 0 {
 		if _, parsed := s.parseInput(input); parsed.Control() {
