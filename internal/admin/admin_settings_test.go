@@ -109,7 +109,7 @@ func TestSettingsSaveFailuresRespectTheCommitBoundary(t *testing.T) {
 // read it back as what is running now; leaving it out of the effective
 // snapshot would show the owner a stance that has already been replaced.
 func TestDefaultApprovalAppliesWithoutARestart(t *testing.T) {
-	a := agentAdminFixture(t)
+	a := approvalAdminFixture(t, "ask")
 	a.Cfg.Gateway.OwnerID = "owner"
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
@@ -136,5 +136,11 @@ func TestDefaultApprovalAppliesWithoutARestart(t *testing.T) {
 	}
 	if got := a.Catalog.Default().Approval; got != "full" {
 		t.Fatalf("the running catalog carries %q", got)
+	}
+	if got := a.Catalog.Default().Options["mode"]; got != "read-only" {
+		t.Fatalf("saving a global default cleared the Agent override: %q", got)
+	}
+	if got := a.Cfg.Agents["pinned"].Options["effort"]; got != "high" {
+		t.Fatalf("saving a global default changed unrelated options: %q", got)
 	}
 }

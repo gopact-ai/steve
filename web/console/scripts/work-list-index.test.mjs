@@ -1,10 +1,44 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { indexSessionWork, indexBoardWork } from "../src/lib/work-list-index.ts";
+import { indexSessionWork, indexBoardWork, sessionWorkAttention } from "../src/lib/work-list-index.ts";
 
 const task = (id, extra = {}) => ({ id, transport: "console", channel: "a", execution: "idle", attention: 0, ...extra });
 const roots = (tasks, conversation) => tasks.filter((t) => t.transport === "console" && t.channel === conversation && !t.parent
     && (t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || tasks.some((child) => child.parent === t.id)));
+
+// taskAxes has already rolled local approvals/plan attention into ancestors.
+// These are snapshot values, not independent counts to sum across all tasks.
+for (const scenario of [
+    { name: "one child approval", tasks: [task("root", { attention: 1 }), task("child", { parent: "root", attention: 1 })], expected: 1 },
+    { name: "one parent and one child approval", tasks: [task("root", { attention: 2 }), task("child", { parent: "root", attention: 1 })], expected: 2 },
+    { name: "three levels with local attention at every level", tasks: [
+        task("root", { attention: 3 }), task("child", { parent: "root", attention: 2 }), task("grandchild", { parent: "child", attention: 1 }),
+    ], expected: 3 },
+    { name: "multiple roots with conversation and transport boundaries", tasks: [
+        task("root", { attention: 1 }), task("child", { parent: "root", attention: 1 }),
+        task("second", { attention: 2 }), task("second-child", { parent: "second", attention: 2 }),
+        task("elsewhere", { channel: "b", attention: 7 }), task("external", { transport: "feishu", attention: 9 }),
+        task("orphan", { parent: "missing", attention: 5 }),
+    ], expected: 3 },
+    { name: "rolled root without loaded descendants", tasks: [task("root", { attention: 4 })], expected: 4 },
+    { name: "no work", tasks: [], expected: 0 },
+    { name: "notable root without attention", tasks: [task("root", { plan_id: "p", attention: undefined })], expected: 0 },
+]) {
+    test(`session attention counts ${scenario.name} once`, () => {
+        const before = structuredClone(scenario.tasks);
+        const { rootsByConversation } = indexSessionWork(scenario.tasks);
+        assert.equal(sessionWorkAttention(rootsByConversation.get("a") || []), scenario.expected);
+        assert.deepEqual(scenario.tasks, before, "Counting must not mutate the snapshot");
+    });
+}
+
+test("session attention clears when approvals are handled in the next snapshot", () => {
+    const pending = [task("root", { attention: 2 }), task("child", { parent: "root", attention: 1 })];
+    const count = (tasks) => sessionWorkAttention(indexSessionWork(tasks).rootsByConversation.get("a") || []);
+    assert.equal(count(pending), 2);
+    assert.equal(count(pending.map((item) => ({ ...item, attention: 0 }))), 0);
+    assert.equal(count(pending), 2, "Earlier snapshots remain unchanged");
+});
 
 test("session work preserves root eligibility, channel boundaries and child order", () => {
     const tasks = [

@@ -17,7 +17,7 @@ import { ConfirmDialog } from "./confirm";
 import { PaneResizer } from "./pane-resizer";
 import { usePaneWidth } from "@/hooks/use-pane-width";
 import { plain } from "@/lib/plain";
-import { indexSessionWork } from "@/lib/work-list-index";
+import { indexSessionWork, sessionWorkAttention } from "@/lib/work-list-index";
 import { useEventCallback } from "@/hooks/use-event-callback";
 
 // The session list holds a project name, a thread title and the time
@@ -531,7 +531,7 @@ function ThreadWork({ conversation, work, childrenOf, onTask }: { conversation: 
     const all = work.flatMap((t) => [t, ...(childrenOf?.(t.id) || [])]);
     const running = all.filter((t) => t.execution === "running").length;
     const failed = all.filter((t) => taskState(t) === "failed").length;
-    const waiting = all.reduce((n, t) => n + (t.attention || 0), 0);
+    const waiting = sessionWorkAttention(work);
     const kids = all.length - work.length;
     return (
         <div className="ml-3 border-l border-secondary pl-2">

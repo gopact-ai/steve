@@ -141,6 +141,49 @@ func TestOpenReappliesOptionPreferencesToResumedSession(t *testing.T) {
 	}
 }
 
+func TestApprovalDefaultPrecedenceWhenResuming(t *testing.T) {
+	for _, tc := range []struct {
+		name, global, agentMode, conversationMode, want string
+	}{
+		{"tool default", "", "", "", "read-only"},
+		{"global default", "auto", "", "", "agent"},
+		{"Agent overrides global", "full", "read-only", "", "read-only"},
+		{"conversation overrides both", "ask", "agent", "agent-full-access", "agent-full-access"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rt, _ := selectorCoordinator(t, true)
+			configurable := rt.runner.(*recoveryConfigurable)
+			configurable.settings.Options = append(configurable.settings.Options, view.Option{
+				ID: "mode", Category: "mode", Current: "read-only",
+				Choices: []view.Choice{{Value: "read-only"}, {Value: "agent"}, {Value: "agent-full-access"}},
+			})
+			selected, _ := c.catalog.Resolve("grok")
+			selected.Approval = tc.global
+			selected.Options = map[string]string{}
+			if tc.agentMode != "" {
+				selected.Options["mode"] = tc.agentMode
+			}
+			if tc.conversationMode != "" {
+				if err := c.store.SetPreferences("chat", "grok", map[string]string{"mode": tc.conversationMode}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			saved := state.Session{ConversationID: "chat", AgentID: "grok", HarnessID: "grok", UpstreamID: "sess-1"}
+			if _, err := c.open(t.Context(), saved, selected, t.TempDir(), nil); err != nil {
+				t.Fatal(err)
+			}
+			for _, option := range configurable.Settings().Options {
+				if option.ID == "mode" && option.Current != tc.want {
+					t.Fatalf("approval = %q, want %q", option.Current, tc.want)
+				}
+			}
+			if selected.Options["mode"] != tc.agentMode || c.store.Preferences("chat", "grok")["mode"] != tc.conversationMode {
+				t.Fatal("applying defaults mutated an Agent or conversation override")
+			}
+		})
+	}
+}
+
 // Preferences change how the next turn runs, never which conversation it remembers.
 func TestPreferencesPreserveContextAcrossIdleAndBusyUpdates(t *testing.T) {
 	for _, busy := range []bool{false, true} {

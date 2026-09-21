@@ -35,7 +35,7 @@
 .question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .question-actions button { white-space: normal; }
 .question-permission-options { display: flex; max-height: clamp(6rem, 18dvh, 16rem); flex-direction: column; gap: 8px; padding: 2px; overflow-y: auto; overscroll-behavior: contain; }
-.question-radio { display: flex; min-width: 0; min-height: 36px; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--color-border-secondary); border-radius: 8px; cursor: pointer; }
+.question-radio { position: relative; display: flex; min-width: 0; min-height: 36px; flex-shrink: 0; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--color-border-secondary); border-radius: 8px; cursor: pointer; }
 .question-radio:hover { background: var(--color-bg-primary_hover); }
 .question-radio[data-selected] { border-color: var(--color-bg-brand-solid); background: var(--color-bg-active); }
 .question-radio[data-focus-visible] { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }

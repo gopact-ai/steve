@@ -1,4 +1,5 @@
 import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
+import { AgentApproval, isApprovalSelector } from "@/components/steve/agent-approval";
 import { IconButton } from "@/components/steve/icon-button";
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
@@ -27,7 +28,7 @@ import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { useCoordination } from "@/lib/coordination";
 import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
-import type { AbilitySnapshot, Agent, Capability, Condition, Node as NodeT, Selector, Snapshot } from "@/lib/types";
+import type { AbilitySnapshot, Agent, Capability, Condition, Node as NodeT, Snapshot } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { ListEditor, SettingsEditor } from "@/components/steve/settings-editor";
@@ -119,15 +120,6 @@ function AgentTrouble({ a, onChanged }: { a: Agent; onChanged: () => void }) {
     );
 }
 
-// An agent approves through the selector its tool reserves for the
-// purpose, and the stance it follows there is the hub's, in short words.
-const isApproval = (selector: Selector) => selector.category === "mode" || selector.id === "mode";
-const approvalNames = { ask: "fleet.approval.ask", auto: "fleet.approval.auto", full: "fleet.approval.full" } as const;
-function approvalName(intent: string | undefined, tr: Translator): string {
-    const key = intent && approvalNames[intent as keyof typeof approvalNames];
-    return key ? tr(key) : "";
-}
-
 // AgentDrawer is one agent in full, and the place to change it: where it
 // runs, with which AI tool and model, what its machine must offer, which
 // MCP servers it uses. Saved changes reach the running catalog at once
@@ -140,8 +132,10 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
-    const [spec, setSpec] = useState<AgentSpec>({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", options: { ...(a.options || {}) }, about: a.about || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
-    const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && (sel.choices || []).length > 0);
+    const agentSpec = (): AgentSpec => ({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", options: { ...(a.options || {}) }, about: a.about || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
+    const [spec, setSpec] = useState<AgentSpec>(agentSpec);
+    const beginEdit = () => { setSpec(agentSpec()); setError(""); setEditing(true); };
+    const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && !isApprovalSelector(sel) && (sel.choices || []).length > 0);
     const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
     const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelName(l, locale)).join("、");
     async function save() {
@@ -158,7 +152,10 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
         <Drawer title={a.id} badges={<>
                         {a.default && <Badge type="pill-color" size="sm" color="brand">{tr("common.default")}</Badge>}
                         <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<AgentTrouble a={a} onChanged={onChanged} />} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>{tr("fleet.assign")}</Button>
-                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
+                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={beginEdit}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
+                <AgentApproval agent={a} options={spec.options || {}} editing={editing} disabled={busy}
+                    contextChanged={editing && (spec.harness !== a.harness || (spec.node || snap.hub.node) !== (a.node || snap.hub.node))}
+                    onEdit={beginEdit} onChange={options => setSpec({ ...spec, options })} />
                 {!editing ? (
                     <>
                         <KeyValue dense rows={[
@@ -168,7 +165,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
                             { k: tr("fleet.preferredModel"), v: a.preferred || <span className="text-quaternary">{tr("fleet.defaultModel")}</span>, hint: tr("fleet.modelHint") },
                             { k: tr("fleet.lastModel"), v: a.observed || <span className="text-quaternary">{tr("fleet.noSessions")}</span>, hint: tr("fleet.observedModelHint") },
                             { k: tr("fleet.availableModels"), v: a.models?.length ? <span className="text-secondary">{a.models.length} {tr("fleet.items")}</span> : <span className="text-quaternary">{tr("common.unknown")}</span> },
-                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : isApproval(sel) && approvalName(a.approval, tr) ? <span className="text-secondary">{tr("fleet.followsApproval", { value: approvalName(a.approval, tr) })}</span> : <span className="text-quaternary">{tr("fleet.unpinned")}{sel.current ? tr("fleet.previousOption", { value: sel.current }) : ""}</span>, hint: tr("fleet.optionHint") })),
+                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : <span className="text-quaternary">{tr("fleet.unpinned")}{sel.current ? tr("fleet.previousOption", { value: sel.current }) : ""}</span>, hint: tr("fleet.optionHint") })),
                             { k: tr("fleet.eligibleProjects"), v: tr("fleet.projectLevels", { levels: canTake }), hint: tr("fleet.classificationHint") },
                             { k: tr("fleet.mcpServers"), v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">{tr("fleet.none")}</span>, hint: tr("fleet.mcpHint") },
                             { k: tr("fleet.requirements"), v: <Conditions a={a} />, hint: tr("fleet.requirementsHint") },
@@ -204,7 +201,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
                         {extras.map((sel) => (
                             <Select key={sel.id} size="sm" label={sel.name || sel.id} hint={tr("fleet.sessionOptionHint", { previous: sel.current ? tr("fleet.previousWas", { value: sel.current }) : "" })} selectedKey={spec.options?.[sel.id] || "__none"}
                                 onSelectionChange={(k) => { const next = { ...(spec.options || {}) }; if (!k || String(k) === "__none") delete next[sel.id]; else next[sel.id] = String(k); setSpec({ ...spec, options: next }); }}
-                                items={[{ id: "__none", label: isApproval(sel) && approvalName(a.approval, tr) ? tr("fleet.followApproval", { value: approvalName(a.approval, tr) }) : tr("fleet.toolDefault") }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
+                                items={[{ id: "__none", label: tr("fleet.toolDefault") }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
                                 {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                             </Select>
                         ))}

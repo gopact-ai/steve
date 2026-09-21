@@ -22,6 +22,11 @@ export function indexSessionWork(tasks: Task[]) {
     return { rootsByConversation, childrenByParent };
 }
 
+export function sessionWorkAttention(roots: readonly Task[]): number {
+    // The read model rolls descendant attention into each root already.
+    return roots.reduce((count, task) => count + (task.attention || 0), 0);
+}
+
 export function indexBoardWork(plans: Plan[], agents: Agent[]) {
     const plansByTask = new Map<string, Plan>();
     const activitiesByTask = new Map<string, Activity>();

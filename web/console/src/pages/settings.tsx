@@ -1,7 +1,7 @@
 import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router";
-import { Globe01, Settings01, Server01, Sliders04, Palette } from "@untitledui/icons";
+import { Globe01, Settings01, Server01, Sliders04, Palette, Shield01 } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -21,10 +21,10 @@ import { useI18n } from "@/providers/locale-provider";
 import { SettingsAppearance } from "@/components/steve/settings-appearance";
 
 type Group = "hub" | "channels";
-type Section = "appearance" | "general" | "channels" | "policies" | "services";
-const sections = ["general", "appearance", "channels", "policies", "services"] as const;
+type Section = "approval" | "appearance" | "general" | "channels" | "policies" | "services";
+const sections = ["general", "appearance", "approval", "channels", "policies", "services"] as const;
 const servicesHref = "#/settings?section=services";
-const icons = { appearance: Palette, general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
+const icons = { approval: Shield01, appearance: Palette, general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
 
 export function SettingsPage() {
     const { t, locale, preference, setLocale } = useI18n();
@@ -143,7 +143,7 @@ export function SettingsPage() {
     const saveBar = (hub || channels) && <div className="settings-savebar"><span>{t(dirtyGroup ? "settingsPage.unsaved" : pendingGroup ? "settingsPage.pendingRestart" : "settingsPage.serverSettingsHint")}{!dirtyGroup && pendingGroup && section !== "services" && <> · {restartLink}</>}</span><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.reload")}</Button><Button size="sm" color="primary" isLoading={saving === group} isDisabled={!dirtyGroup || blocked || stale[group]} onClick={() => void save(group)}>{t(group === "hub" ? "settingsPage.saveHub" : "settingsPage.saveChannels")}</Button></div>;
     return <div className="workbench-page settings-page">
         <header className="settings-header"><h1>{t("settingsPage.centerTitle")}</h1><div role="status">{dirty && <span>{t("settingsPage.unsaved")}</span>}{(hub?.pending_restart || channels?.pending_restart) && <a className="settings-pending-link" href={servicesHref} aria-label={t("settingsPage.pendingRestartAction")} title={t("settingsPage.pendingRestartAction")} onClick={openServices}><Badge size="sm" color="warning">{t("settingsPage.pendingRestart")}</Badge></a>}</div></header>
-        <div className="settings-layout"><nav aria-label={t("settingsPage.categories")} className="settings-nav">{sections.map((item) => { const Icon = icons[item]; return <a key={item} aria-label={t(`settingsPage.section.${item}`)} href={`#/settings?section=${item}`} aria-current={item === section ? "page" : undefined} onClick={(event) => { event.preventDefault(); setParams({ section: item }); }}><Icon aria-hidden="true" /><span className="settings-nav-label">{t(`settingsPage.section.${item}`)}</span>{(item === "channels" ? dirtyChannels : item === "policies" || item === "general" ? dirtyHub : false) && <span className="settings-dirty-dot" aria-label={t("settingsPage.unsaved")} />}</a>; })}</nav>
+        <div className="settings-layout"><nav aria-label={t("settingsPage.categories")} className="settings-nav">{sections.map((item) => { const Icon = icons[item]; return <a key={item} aria-label={t(`settingsPage.section.${item}`)} href={`#/settings?section=${item}`} aria-current={item === section ? "page" : undefined} onClick={(event) => { event.preventDefault(); setParams({ section: item }); }}><Icon aria-hidden="true" /><span className="settings-nav-label">{t(`settingsPage.section.${item}`)}</span>{(item === "channels" ? dirtyChannels : item === "policies" || item === "approval" || item === "general" ? dirtyHub : false) && <span className="settings-dirty-dot" aria-label={t("settingsPage.unsaved")} />}</a>; })}</nav>
         <main className="settings-content" aria-label={t(`settingsPage.section.${section}`)}>
             {groupStatus}
             {section === "appearance" && <SettingsAppearance />}
@@ -156,7 +156,15 @@ export function SettingsPage() {
                 {saveBar}
             </>}
             {section === "channels" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.channels")}</h2><p>{t("settingsPage.channelScopeHint")}</p></div></div>{channels && channelDraft ? <ChannelForm view={channels} draft={channelDraft} disabled={blocked} onChange={(next) => { setChannelDraft(next); setNotices((all) => ({ ...all, channels: undefined })); setErrors((all) => ({ ...all, channels: null })); }} /> : <p className="settings-note">{t(loading.channels ? "common.loading" : "settingsPage.channelsUnavailable")}</p>}{saveBar}</>}
-            {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section className="settings-subsection"><h3>{t("settingsPage.approval")}</h3><p className="settings-note">{t("settingsPage.approvalHint")}</p>{rows(settingGroups.approval)}<ApprovalSyncRow disabled={blocked} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review", "landing"] as const).filter((name) => settingGroups[name].some((path) => fields.has(path))).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
+            {section === "approval" && <>
+                <div className="settings-section-heading"><div><h2>{t("settingsPage.section.approval")}</h2><p>{t("settingsPage.approvalHint")}</p></div></div>
+                <p className="settings-note">{t("settingsPage.approvalPrecedence")}</p>
+                {rows(settingGroups.approval)}
+                <a className="text-sm text-brand-secondary underline underline-offset-4" href="#/fleet?tab=agents">{t("settingsPage.agentApprovalSettings")}</a>
+                {saveBar}
+                <section className="settings-subsection"><ApprovalSyncRow disabled={blocked || stale.hub || !!errors.hub} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section>
+            </>}
+            {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review", "landing"] as const).filter((name) => settingGroups[name].some((path) => fields.has(path))).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
             {section === "services" && <SettingsServices onRestarted={(service) => { if (service === "hub") { if (!latest.current.dirtyHub) void read("hub"); if (!latest.current.dirtyChannels) void read("channels"); } }} />}
             {section !== "services" && section !== "appearance" && !hub && <p role="status" className="settings-note">{t(loading.hub ? "common.loading" : "settingsPage.readFailed")}</p>}
         </main></div>
@@ -189,17 +197,17 @@ function SettingRow({ path, field, view, value, disabled, restart, onChange }: {
     </div>;
 }
 
-// ApprovalSyncRow hands the saved default to the whole fleet at once: the
-// agents that pinned an approval mode of their own let go of it, so the
-// setting above is the only place the stance is decided. It works from what
-// the hub has saved, so an edited draft has to be saved first.
+// Clearing Agent overrides is a separate, confirmed action. Saving the
+// global default alone never changes Agent or conversation choices.
 function ApprovalSyncRow({ disabled, dirty, intent }: { disabled: boolean; dirty: boolean; intent: string }) {
     const { t, locale } = useI18n();
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState<ApprovalSync | null>(null);
+    const [confirm, setConfirm] = useState(false);
     const [error, setError] = useState<unknown>(null);
     async function sync() {
-        setBusy(true); setError(null); setResult(null);
+        if (busy || disabled || dirty || !intent) return;
+        setConfirm(false); setBusy(true); setError(null); setResult(null);
         try { setResult(await syncApproval()); } catch (failure) { setError(failure); } finally { setBusy(false); }
     }
     const names = (items: string[]) => items.join("、");
@@ -207,7 +215,11 @@ function ApprovalSyncRow({ disabled, dirty, intent }: { disabled: boolean; dirty
         <div><label className="settings-field-label">{t("settingsPage.approvalSync")}</label><p className="settings-field-description">{t(dirty ? "settingsPage.approvalSyncSave" : intent ? "settingsPage.approvalSyncHint" : "settingsPage.approvalSyncNone")}</p>
             {result && <p role="status" className="settings-field-description settings-note">{result.cleared?.length ? t("settingsPage.approvalSynced", { count: result.cleared.length, agents: names(result.cleared.map((item) => item.agent)) }) : t("settingsPage.approvalAlready")}{result.unmapped?.length ? " · " + t("settingsPage.approvalUnmapped", { agents: names(result.unmapped) }) : ""}</p>}
             {!!error && <p role="alert" className="settings-field-description settings-alert">{errorText(error, locale)}</p>}</div>
-        <div><Button size="sm" color="secondary" isLoading={busy} isDisabled={disabled || dirty || !intent} onClick={() => void sync()}>{t("settingsPage.approvalSyncAction")}</Button></div>
+        <div><Button size="sm" color="secondary" isLoading={busy} isDisabled={disabled || dirty || !intent} onClick={() => setConfirm(true)}>{t("settingsPage.approvalSyncAction")}</Button></div>
+        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={setConfirm}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.approvalResetTitle")}><DialogSurface><DialogBody>
+            <DialogHeader title={t("settingsPage.approvalResetTitle")} description={t("settingsPage.approvalSyncHint")} />
+            <DialogFooter><Button size="sm" color="secondary" onClick={() => setConfirm(false)}>{t("common.cancel")}</Button><Button size="sm" color="primary" isDisabled={disabled || dirty || !intent || busy} onClick={() => void sync()}>{t("settingsPage.approvalResetConfirm")}</Button></DialogFooter>
+        </DialogBody></DialogSurface></Dialog></Modal></ModalOverlay>}
     </div>;
 }
 

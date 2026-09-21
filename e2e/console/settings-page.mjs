@@ -237,8 +237,10 @@ if (process.env.PURE_ONLY !== "1") {
         // The approval stance is set once for the fleet: the agents that pinned
         // a mode of their own are let go of it on request, and only from what
         // the hub has already saved.
+        await nav.getByRole("link", { name: "审批与权限", exact: true }).click();
+        await page.getByText("会话单独设置 → Agent 默认 → 全局默认 → AI 工具默认", { exact: true }).waitFor();
         const approvalSelect = page.locator('[data-setting="gateway.default_approval"] button').first();
-        const syncButton = page.getByRole("button", { name: "同步到默认", exact: true });
+        const syncButton = page.getByRole("button", { name: "恢复 Agent 跟随", exact: true });
         assert.equal(await syncButton.isDisabled(), true, "Syncing an unset stance must be refused");
         await approvalSelect.click();
         await page.getByRole("option", { name: "完全放行", exact: true }).click();
@@ -246,11 +248,25 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
         await page.locator('[data-setting="gateway.default_approval"] [data-desired]').filter({ hasText: "完全放行" }).waitFor();
         assert.equal(writes.at(-1).settings.gateway.default_approval, "full");
+        assert.deepEqual(approvalSyncs, [], "Saving a global default must never clear Agent overrides");
         await syncButton.click();
+        const resetDialog = page.getByRole("dialog", { name: "恢复所有 Agent 跟随全局默认？", exact: true });
+        await resetDialog.waitFor();
+        assert.deepEqual(approvalSyncs, [], "Opening confirmation must not write");
+        await resetDialog.getByRole("button", { name: "取消", exact: true }).click();
+        assert.deepEqual(approvalSyncs, [], "Cancelling must preserve overrides");
+        await syncButton.click();
+        await resetDialog.getByRole("button", { name: "确认恢复", exact: true }).click();
         await page.getByRole("status").filter({ hasText: "1 个 Agent 已改为跟随默认：dev" }).waitFor();
         await page.getByRole("status").filter({ hasText: "dev-claude" }).waitFor();
         assert.deepEqual(approvalSyncs, ["POST"], "Syncing must be one deliberate write");
-        if (screenshots) await page.screenshot({ path: path.join(screenshots, "policies-desktop.png") });
+        if (screenshots) await page.screenshot({ path: path.join(screenshots, "approval-desktop.png") });
+        await page.setViewportSize({ width: 390, height: 620 });
+        await page.evaluate(() => document.documentElement.style.setProperty("--ui-font-size", "18px"));
+        assert.ok(await page.locator(".settings-content").evaluate(el => el.scrollWidth <= el.clientWidth + 1), "Approval defaults and reset controls wrap at UI18");
+        if (screenshots) await page.screenshot({ path: path.join(screenshots, "approval-mobile.png"), fullPage: true });
+        await page.evaluate(() => document.documentElement.style.removeProperty("--ui-font-size"));
+        await page.setViewportSize({ width: 1280, height: 960 });
         await nav.getByRole("link", { name: "节点与服务", exact: true }).click();
         const hubRow = page.locator('.settings-service-list > li').filter({ hasText: "Coordinator" });
         await hubRow.getByRole("button", { name: "重启服务", exact: true }).click();
@@ -400,7 +416,10 @@ if (process.env.PURE_ONLY !== "1") {
         assert.equal(await row("gateway.task_max_turns").locator(".settings-restart-link").count(), 1);
         assert.equal(await row("gateway.prompt_timeout").locator(".settings-restart-link").count(), 0);
         assert.equal(await row("gateway.task_max_elapsed").locator(".settings-restart-link").count(), 0);
+        await page.locator(".settings-nav").getByRole("link", { name: "Approval & permissions", exact: true }).click();
+        await row("gateway.default_approval").waitFor();
         assert.equal(await row("gateway.default_approval").locator(".settings-restart-link").count(), 0);
+        await page.locator(".settings-nav").getByRole("link", { name: "Execution & resources", exact: true }).click();
         state.pending_restart = false;
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         await page.waitForFunction(() => !document.querySelector(".settings-pending-link"));
