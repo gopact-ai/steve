@@ -147,7 +147,7 @@ if (process.env.PURE_ONLY !== "1") {
                 if (restartUnknown || !operations.has(id)) return route.fulfill({ status: 503, json: { error: "temporarily disconnected" } });
                 return route.fulfill({ json: operations.get(id) });
             }
-            if (url.pathname === "/console/agents/approval") { approvalSyncs.push(request.method()); return route.fulfill({ json: { intent: "full", cleared: [{ agent: "dev", was: "read-only" }], following: ["planner"], unmapped: ["dev-claude"] } }); }
+            if (url.pathname === "/console/agents/approval") { approvalSyncs.push(request.method()); configRevision = `revision-approval-${approvalSyncs.length}`; return route.fulfill({ json: { intent: "full", cleared: [{ agent: "dev", was: "read-only" }], following: ["planner"], unmapped: ["dev-claude"] } }); }
             if (url.pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [{ id: "console:one", title: "发布流程", last_at: "", count: 1, running: false }] } });
             if (url.pathname === "/console/versions") { versionsReads++; return route.fulfill({ json: { hub: "v1", hub_id: "hub-fixture", protocol_min: 1, protocol_max: 2, automatic: false, discovery_configured: false, nodes: [], projects: [], peers: [] } }); }
             if (url.pathname.startsWith("/console/")) { errors.push(`Unexpected API ${url.pathname}`); return route.fulfill({ status: 501, json: { error: "Unmocked API" } }); }
@@ -248,6 +248,9 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
         await page.locator('[data-setting="gateway.default_approval"] [data-desired]').filter({ hasText: "完全放行" }).waitFor();
         assert.equal(writes.at(-1).settings.gateway.default_approval, "full");
+        await nav.getByRole("link", { name: "接入渠道", exact: true }).click();
+        await page.getByRole("textbox", { name: "App ID", exact: true }).fill("channel-draft-kept");
+        await nav.getByRole("link", { name: "审批与权限", exact: true }).click();
         assert.deepEqual(approvalSyncs, [], "Saving a global default must never clear Agent overrides");
         await syncButton.click();
         const resetDialog = page.getByRole("dialog", { name: "恢复所有 Agent 跟随全局默认？", exact: true });
@@ -260,6 +263,22 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("status").filter({ hasText: "1 个 Agent 已改为跟随默认：dev" }).waitFor();
         await page.getByRole("status").filter({ hasText: "dev-claude" }).waitFor();
         assert.deepEqual(approvalSyncs, ["POST"], "Syncing must be one deliberate write");
+        // Agent resets change the same config revision as system settings.
+        // The next save must use the refreshed revision, not force a conflict.
+        await approvalSelect.click();
+        await page.getByRole("option", { name: "自动执行", exact: true }).click();
+        await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
+        await page.locator('[data-setting="gateway.default_approval"] [data-desired]').filter({ hasText: "自动执行" }).waitFor();
+        assert.equal(writes.at(-1).base_revision, "revision-approval-1");
+        assert.deepEqual(approvalSyncs, ["POST"], "Later default edits remain independent of reset");
+        await nav.getByRole("link", { name: "接入渠道", exact: true }).click();
+        assert.equal(await page.getByRole("textbox", { name: "App ID", exact: true }).inputValue(), "channel-draft-kept", "Refreshing after reset must preserve unrelated drafts");
+        await page.locator(".settings-conflict").waitFor();
+        assert.equal(await page.getByRole("button", { name: "保存渠道设置", exact: true }).isDisabled(), true, "Unrelated drafts must be reviewed against the new revision");
+        await page.getByRole("button", { name: "重新读取", exact: true }).click();
+        await page.getByRole("button", { name: "放弃草稿并读取", exact: true }).click();
+        await page.waitForFunction(() => !document.querySelector(".settings-dirty-dot"));
+        await nav.getByRole("link", { name: "审批与权限", exact: true }).click();
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "approval-desktop.png") });
         await page.setViewportSize({ width: 390, height: 620 });
         await page.evaluate(() => document.documentElement.style.setProperty("--ui-font-size", "18px"));

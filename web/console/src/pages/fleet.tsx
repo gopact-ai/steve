@@ -120,11 +120,20 @@ function AgentTrouble({ a, onChanged }: { a: Agent; onChanged: () => void }) {
     );
 }
 
+function agentSpecKey(spec: AgentSpec): string {
+    return JSON.stringify([
+        spec.harness, spec.node || "", spec.model?.trim() || "", spec.about?.trim() || "",
+        Object.entries(spec.options || {}).map(([key, value]) => [key.trim(), value.trim()])
+            .filter(([key, value]) => key && value).sort(([a], [b]) => a.localeCompare(b)),
+        spec.requires || [], spec.mcp_servers || [],
+    ]);
+}
+
 // AgentDrawer is one agent in full, and the place to change it: where it
 // runs, with which AI tool and model, what its machine must offer, which
 // MCP servers it uses. Saved changes reach the running catalog at once
 // and the config file with it.
-function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveActivity; onClose: () => void; onChanged: () => void }) {
+function AgentDrawer({ a: observed, live, onClose, onChanged }: { a: Agent; live?: LiveActivity; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const { fill } = useIntent();
@@ -132,15 +141,21 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
-    const agentSpec = (): AgentSpec => ({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", options: { ...(a.options || {}) }, about: a.about || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
-    const [spec, setSpec] = useState<AgentSpec>(agentSpec);
-    const beginEdit = () => { setSpec(agentSpec()); setError(""); setEditing(true); };
+    const remoteSpec: AgentSpec = { harness: observed.harness, node: observed.node === snap.hub.node ? "" : observed.node || "", model: observed.preferred || "", options: { ...(observed.options || {}) }, about: observed.about || "", requires: observed.requires || [], mcp_servers: observed.mcp_servers || [] };
+    const [confirmed, setConfirmed] = useState<AgentSpec | null>(null);
+    // Refresh is deferred. Until a snapshot confirms the latest write,
+    // re-editing uses that write, not an older or intermediate read.
+    if (confirmed && agentSpecKey(confirmed) === agentSpecKey(remoteSpec)) setConfirmed(null);
+    const baseline = confirmed || remoteSpec;
+    const a = { ...observed, ...baseline, node: baseline.node || snap.hub.node, preferred: baseline.model };
+    const [spec, setSpec] = useState<AgentSpec>(remoteSpec);
+    const beginEdit = () => { setSpec(baseline); setError(""); setEditing(true); };
     const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && !isApprovalSelector(sel) && (sel.choices || []).length > 0);
     const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
     const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelName(l, locale)).join("、");
     async function save() {
         setBusy(true); setError("");
-        try { await updateAgent(a.id, spec); onChanged(); setEditing(false); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
+        try { await updateAgent(a.id, spec); setConfirmed(spec); onChanged(); setEditing(false); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
     async function remove() {
         setError("");
@@ -154,7 +169,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
                         <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<AgentTrouble a={a} onChanged={onChanged} />} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>{tr("fleet.assign")}</Button>
                 {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={beginEdit}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
                 <AgentApproval agent={a} options={spec.options || {}} editing={editing} disabled={busy}
-                    contextChanged={editing && (spec.harness !== a.harness || (spec.node || snap.hub.node) !== (a.node || snap.hub.node))}
+                    contextChanged={editing && (spec.harness !== observed.harness || (spec.node || snap.hub.node) !== (observed.node || snap.hub.node))}
                     onEdit={beginEdit} onChange={options => setSpec({ ...spec, options })} />
                 {!editing ? (
                     <>

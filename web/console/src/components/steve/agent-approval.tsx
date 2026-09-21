@@ -24,16 +24,22 @@ export function AgentApproval({ agent, options, editing, contextChanged, disable
     const pinned = (editing ? options : agent.options)?.[id];
     const key = agent.approval && approvalNames[agent.approval as keyof typeof approvalNames];
     const inherited = key ? t(key) : t("fleet.approvalToolDefault");
-    const choices = selector?.choices || [];
+    const choices = (selector?.values || selector?.choices || []).map((value, index) => ({
+        id: value, label: selector?.choices?.[index] || value,
+    }));
+    // Older pins may use an exact display label. Resolve only an unambiguous
+    // label and keep unknown values intact until the owner chooses a new one.
+    const labels = choices.filter(choice => choice.label === pinned);
+    const selected = choices.some(choice => choice.id === pinned) ? pinned : labels.length === 1 ? labels[0].id : pinned;
     const items = [
         { id: "__none", label: t("fleet.followApproval", { value: inherited }) },
-        ...choices.map(value => ({ id: value, label: value })),
+        ...choices,
     ];
-    if (pinned && !choices.includes(pinned)) items.push({ id: pinned, label: t("fleet.approvalSavedMode", { value: pinned }) });
+    if (selected && !choices.some(choice => choice.id === selected)) items.push({ id: selected, label: t("fleet.approvalSavedMode", { value: selected }) });
     return <DrawerSection title={t("fleet.defaultApproval")}>
         <div className="flex min-w-0 flex-col gap-3">
             {editing ? <Select size="sm" aria-label={t("fleet.defaultApproval")}
-                selectedKey={pinned || "__none"} items={items}
+                selectedKey={selected || "__none"} items={items}
                 isDisabled={disabled || contextChanged || choices.length === 0}
                 onSelectionChange={value => {
                     if (value == null) return;

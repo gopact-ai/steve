@@ -39,6 +39,7 @@ export function SettingsPage() {
     const [stale, setStale] = useState<Record<Group, boolean>>({ hub: false, channels: false });
     const [notices, setNotices] = useState<Partial<Record<Group, "saved" | "review">>>({});
     const [saving, setSaving] = useState<Group | null>(null);
+    const [approvalSyncing, setApprovalSyncing] = useState(false);
     const [confirmRead, setConfirmRead] = useState<{ group: Group; keep: boolean } | null>(null);
     const requests = useRef<Record<Group, number>>({ hub: 0, channels: 0 }), alive = useRef(true), sending = useRef(false);
     const dirtyHub = !!hub && Object.keys(changedInputs(settingsInputs(hub), inputs)).length > 0;
@@ -123,7 +124,13 @@ export function SettingsPage() {
         } finally { sending.current = false; if (alive.current) setSaving(null); }
     }
     const fields = new Map((hub?.fields || []).map((field) => [field.path, field]));
-    const blocked = !!saving || loading.hub || loading.channels;
+    const blocked = !!saving || approvalSyncing || loading.hub || loading.channels;
+    const approvalSynced = () => {
+        for (const group of ["hub", "channels"] as const) {
+            if (group === "hub" ? latest.current.dirtyHub : latest.current.dirtyChannels) setStale(value => ({ ...value, [group]: true }));
+            else void read(group);
+        }
+    };
     const group: Group = section === "channels" ? "channels" : "hub";
     const dirtyGroup = group === "hub" ? dirtyHub : dirtyChannels;
     const requestRead = (keep = false) => dirtyGroup ? setConfirmRead({ group, keep }) : void read(group, keep);
@@ -162,7 +169,7 @@ export function SettingsPage() {
                 {rows(settingGroups.approval)}
                 <a className="text-sm text-brand-secondary underline underline-offset-4" href="#/fleet?tab=agents">{t("settingsPage.agentApprovalSettings")}</a>
                 {saveBar}
-                <section className="settings-subsection"><ApprovalSyncRow disabled={blocked || stale.hub || !!errors.hub} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section>
+                <section className="settings-subsection"><ApprovalSyncRow onBusyChange={setApprovalSyncing} onSynced={approvalSynced} disabled={blocked || stale.hub || !!errors.hub} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section>
             </>}
             {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review", "landing"] as const).filter((name) => settingGroups[name].some((path) => fields.has(path))).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
             {section === "services" && <SettingsServices onRestarted={(service) => { if (service === "hub") { if (!latest.current.dirtyHub) void read("hub"); if (!latest.current.dirtyChannels) void read("channels"); } }} />}
@@ -199,7 +206,7 @@ function SettingRow({ path, field, view, value, disabled, restart, onChange }: {
 
 // Clearing Agent overrides is a separate, confirmed action. Saving the
 // global default alone never changes Agent or conversation choices.
-function ApprovalSyncRow({ disabled, dirty, intent }: { disabled: boolean; dirty: boolean; intent: string }) {
+function ApprovalSyncRow({ disabled, dirty, intent, onBusyChange, onSynced }: { disabled: boolean; dirty: boolean; intent: string; onBusyChange: (busy: boolean) => void; onSynced: () => void }) {
     const { t, locale } = useI18n();
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState<ApprovalSync | null>(null);
@@ -207,8 +214,8 @@ function ApprovalSyncRow({ disabled, dirty, intent }: { disabled: boolean; dirty
     const [error, setError] = useState<unknown>(null);
     async function sync() {
         if (busy || disabled || dirty || !intent) return;
-        setConfirm(false); setBusy(true); setError(null); setResult(null);
-        try { setResult(await syncApproval()); } catch (failure) { setError(failure); } finally { setBusy(false); }
+        setConfirm(false); setBusy(true); onBusyChange(true); setError(null); setResult(null);
+        try { setResult(await syncApproval()); onSynced(); } catch (failure) { setError(failure); } finally { setBusy(false); onBusyChange(false); }
     }
     const names = (items: string[]) => items.join("、");
     return <div className="settings-field" data-setting="approval-sync">
