@@ -52,6 +52,9 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
+	if !s.consoleSubmissionIdentity(w, r, req) {
+		return
+	}
 	var exchange consoleapi.Exchange
 	var err error
 	if extended, ok := s.console.(consoleapi.Submissions); ok {
@@ -85,6 +88,9 @@ func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 	if conversation == "" {
 		conversation = "console:main"
 	}
+	if !s.consoleIdentity(w, r, conversation) {
+		return
+	}
 	list := s.console.Queue(conversation)
 	if list == nil {
 		list = []consoleapi.Exchange{}
@@ -103,11 +109,17 @@ func (s *Server) consoleDeleteQueued(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
 		return
 	}
+	if !s.consoleExchangeIdentity(w, r) {
+		return
+	}
 	queueResponse(w, map[string]bool{"ok": true}, s.console.DeleteQueued(r.PathValue("id")))
 }
 
 func (s *Server) consoleEditQueued(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
+		return
+	}
+	if !s.consoleExchangeIdentity(w, r) {
 		return
 	}
 	var req struct {
@@ -127,6 +139,9 @@ func (s *Server) consoleEditQueued(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) consoleSteer(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
+		return
+	}
+	if !s.consoleExchangeIdentity(w, r) {
 		return
 	}
 	exchange, err := s.console.Steer(r.Context(), r.PathValue("id"))

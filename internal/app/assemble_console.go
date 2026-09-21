@@ -11,6 +11,7 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/project"
@@ -73,6 +74,9 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	view.SetInteractions(cons)
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
+	dashboard.SetChannelHistory(&channelConversations{
+		ChannelHistory: gateway.NewChannelHistory(book), contexts: coordinator, tasks: tasks, activity: work.Gateway(),
+	})
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.
 	projects.Levels = func(node string) project.Level {

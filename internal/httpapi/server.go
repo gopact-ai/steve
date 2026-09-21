@@ -50,23 +50,24 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
-	plugins      consoleapi.PluginsService
-	coordination consoleapi.CoordinationService
-	ssh          SSHService
-	sshOrigin    string
-	desktop      consoleapi.DesktopService
-	mutationMu   sync.RWMutex
-	maintenance  bool
-	services     consoleapi.ServiceControl
-	channels     consoleapi.ChannelsService
-	settings     consoleapi.SettingsService
-	console      consoleapi.Console
-	admin        consoleapi.Admin
-	model        Model
-	token        string
-	listener     net.Listener
-	httpServer   *http.Server
-	stopRequests context.CancelFunc
+	plugins        consoleapi.PluginsService
+	coordination   consoleapi.CoordinationService
+	ssh            SSHService
+	sshOrigin      string
+	desktop        consoleapi.DesktopService
+	mutationMu     sync.RWMutex
+	maintenance    bool
+	services       consoleapi.ServiceControl
+	channels       consoleapi.ChannelsService
+	settings       consoleapi.SettingsService
+	console        consoleapi.Console
+	channelHistory consoleapi.ChannelHistory
+	admin          consoleapi.Admin
+	model          Model
+	token          string
+	listener       net.Listener
+	httpServer     *http.Server
+	stopRequests   context.CancelFunc
 }
 
 // NewServer binds immediately so the caller knows the URL before serving.
@@ -122,6 +123,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/queue/{id}/steer", s.guard(s.consoleSteer))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
+	mux.HandleFunc("GET /console/channel-conversations/{id}", s.guard(s.consoleChannelConversation))
 	mux.HandleFunc("PUT /console/conversations/{id}/initialize", s.guard(s.consoleInitializeConversation))
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
 	mux.HandleFunc("DELETE /console/conversations/{id}", s.guard(s.consoleDeleteConversation))
@@ -866,6 +868,10 @@ func (s *Server) consoleSelectors(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOr(w) {
 		return
 	}
+	// Selector discovery may attach a workspace/open a session despite being GET.
+	if !s.consoleMutationIdentity(w, r, r.URL.Query().Get("conversation")) {
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	sel, err := s.admin.Selectors(r.Context(), r.URL.Query().Get("conversation"), r.URL.Query().Get("agent"))
 	if err != nil {
@@ -892,6 +898,9 @@ func (s *Server) consoleSetPreferences(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !s.consoleIdentity(w, r, req.Conversation) {
 		return
 	}
 	live, err := s.admin.SetPreferences(r.Context(), req.Conversation, req.Agent, req.Patch)
@@ -1113,6 +1122,9 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
+	if !s.consoleSubmissionIdentity(w, r, req) {
+		return
+	}
 	var reply consoleapi.Reply
 	var err error
 	if extended, ok := s.console.(consoleapi.Submissions); ok {
@@ -1154,6 +1166,9 @@ func (s *Server) consoleContext(w http.ResponseWriter, r *http.Request) {
 	if conversation == "" {
 		conversation = "console:main"
 	}
+	if !s.consoleIdentity(w, r, conversation) {
+		return
+	}
 	ctx, err := s.console.Context(r.Context(), conversation)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1179,6 +1194,9 @@ func (s *Server) consoleSetup(w http.ResponseWriter, r *http.Request) {
 	conversation := r.URL.Query().Get("conversation")
 	if conversation == "" {
 		conversation = "console:main"
+	}
+	if !s.consoleIdentity(w, r, conversation) {
+		return
 	}
 	setup, err := s.console.Setup(r.Context(), conversation, r.URL.Query().Get("agent"))
 	if err != nil {
@@ -1238,6 +1256,9 @@ func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
 		if conversation == "" {
 			conversation = "console:main"
 		}
+		if !s.consoleIdentity(w, r, conversation) {
+			return
+		}
 		items = append(items, s.console.Suggest(r.Context(), conversation, r.URL.Query().Get("q"))...)
 	}
 	writeJSON(w, map[string]any{"suggestions": items})
@@ -1264,6 +1285,7 @@ func (s *Server) consoleVerbs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) consoleConversations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	if s.console == nil {
 		writeJSON(w, map[string]any{"enabled": false, "conversations": []consoleapi.Conversation{}})
 		return
@@ -1272,6 +1294,29 @@ func (s *Server) consoleConversations(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []consoleapi.Conversation{}
 	}
+	for i := range list {
+		list[i].Transport = "console"
+	}
+	if s.channelHistory != nil {
+		cursor := ""
+		for {
+			page, err := s.channelHistory.List(r.Context(), cursor, 200)
+			if err != nil {
+				channelHistoryError(w, err)
+				return
+			}
+			list = append(list, page.Conversations...)
+			if page.NextCursor == "" {
+				break
+			}
+			if cursor == page.NextCursor {
+				channelHistoryError(w, errors.New("channel directory cursor did not advance"))
+				return
+			}
+			cursor = page.NextCursor
+		}
+	}
+	sortConversations(list)
 	writeJSON(w, map[string]any{"enabled": true, "conversations": list})
 }
 
@@ -1279,6 +1324,9 @@ func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	if s.console == nil {
 		http.Error(w, "console is not enabled", http.StatusNotImplemented)
+		return
+	}
+	if !s.consoleIdentity(w, r, r.PathValue("id")) {
 		return
 	}
 	var patch consoleapi.ConversationPatch
@@ -1298,6 +1346,9 @@ func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Reques
 // and only the admin can reach all of them.
 func (s *Server) consoleDeleteConversation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if !s.consoleIdentity(w, r, r.PathValue("id")) {
+		return
+	}
 	if s.admin == nil {
 		http.Error(w, "administration is not enabled", http.StatusNotImplemented)
 		return
@@ -1318,6 +1369,9 @@ func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {
 	conversation := r.URL.Query().Get("conversation")
 	if conversation == "" {
 		conversation = "console:main"
+	}
+	if !s.consoleIdentity(w, r, conversation) {
+		return
 	}
 	names := s.console.Conversations()
 	if names == nil {
