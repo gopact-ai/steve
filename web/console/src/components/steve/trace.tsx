@@ -78,7 +78,7 @@ export function Working({ live, plans, compact, delegated, recovery }: { live: L
                 {steps.map((s) => cards(s.id))}
                 {extra.map(cards)}
                 {(delegated || []).map((child) => <DelegationCard key={child.id} id={child.id} info={child} progress={child} live={!child.state} />)}
-                {answer && <Md text={answer} />}
+                {answer && <Md variant="conversation" text={answer} />}
             </div>
         );
     }

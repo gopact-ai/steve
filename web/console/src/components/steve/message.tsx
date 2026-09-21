@@ -46,7 +46,7 @@ export const UserMessage = memo(function UserMessage({ r, onEdit, readOnly = fal
     return (
         <div className="message-user">
             <div className="message-user-stack">
-                <div className="message-user-body"><Md text={text} /></div>
+                <div className="message-user-body"><Md text={text} variant="conversation" /></div>
                 {!readOnly && (!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} label={t("materials.attached")} align="end" />}
                 <div className="message-user-meta">
                     <span>{when(r.at, locale)}</span>
@@ -70,8 +70,8 @@ export const AssistantMessage = memo(function AssistantMessage({ r, selected, on
             {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
             {!readOnly && r.process && <InlineProcess process={r.process} />}
             {r.text && <SelectionSurface version={`${r.conversation}:${r.id}:${r.revision}`} resolve={(range,root)=>{ if(readOnly||!r.project_id||!r.id||!r.revision)return null; const selected=selectionForReply(range,root,r.text); return selected ? { ...selected,capture:{project:r.project_id,title:r.title||r.text.split("\n")[0].slice(0,60),source:{kind:"reply",conversation:r.conversation,reply_id:r.id,revision:r.revision}} } : null; }}>{r.format === "text"
-                ? <div className={`whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere] ${r.error && state !== t("console.stopped") ? "text-error-primary" : ""}`}>{state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text}</div>
-                : <Md text={state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text} className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""} />}</SelectionSurface>}
+                ? <div className={`conversation-text whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${r.error && state !== t("console.stopped") ? "text-error-primary" : ""}`}>{state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text}</div>
+                : <Md variant="conversation" text={state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text} className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""} />}</SelectionSurface>}
             {!readOnly && r.changes && <ChangesFold summary={r.changes} label={t("console.netChanges")} />}
             {!readOnly && (!!r.materials?.length || !!r.refs?.length) && <MaterialAttachments items={r.materials} refs={r.refs} />}
             <div className="message-meta">

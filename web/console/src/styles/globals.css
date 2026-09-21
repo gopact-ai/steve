@@ -117,7 +117,7 @@ input[type="search"]::-webkit-search-cancel-button {
     /* Chat body text is one size — the same as what the person typed;
        the xs variant (thoughts, child cards) sets its own. */
     font-size: var(--text-sm);
-    line-height: var(--text-sm--line-height);
+    line-height: 1.65;
     --tw-prose-body: var(--color-text-secondary);
     --tw-prose-links: var(--color-text-brand-secondary);
     --tw-prose-code: var(--color-text-primary);
@@ -233,3 +233,48 @@ input[type="search"]::-webkit-search-cancel-button {
 .prose.md :where(blockquote p:first-of-type::before, blockquote p:last-of-type::after):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     content: none;
 }
+
+/* Final and streaming conversation bodies share a reading variant. Working
+   notes and compact reference panels retain the default Markdown density. */
+:root { --conversation-measure: 48rem; }
+.conversation-text,
+.prose.md.md-conversation {
+    font-size: var(--text-md);
+    line-height: 1.85;
+}
+.prose.md.md-conversation :where(p, ul, ol, blockquote, table):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    margin-block: 1em;
+}
+.prose.md.md-conversation :where(h1, h2, h3, h4, h5, h6):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    line-height: 1.4;
+    margin-block: 1.75em 0.65em;
+    font-weight: 600;
+}
+.prose.md.md-conversation :where(h1):not(:where([class~="not-prose"], [class~="not-prose"] *)) { font-size: 1.5em; }
+.prose.md.md-conversation :where(h2):not(:where([class~="not-prose"], [class~="not-prose"] *)) { font-size: 1.25em; }
+.prose.md.md-conversation :where(h3, h4, h5, h6):not(:where([class~="not-prose"], [class~="not-prose"] *)) { font-size: 1.0625em; }
+.prose.md.md-conversation :where(li):not(:where([class~="not-prose"], [class~="not-prose"] *)) { margin-block: 0.5em; }
+.prose.md.md-conversation :where(li > p, li > ul, li > ol):not(:where([class~="not-prose"], [class~="not-prose"] *)) { margin-block: 0.5em; }
+.prose.md.md-conversation :where(:not(pre) > code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: 0.9em;
+    font-weight: 400;
+    line-height: inherit;
+    border: 0;
+    box-shadow: none;
+    margin: 0;
+    padding: 0.1em 0.3em;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+}
+.prose.md.md-conversation :where(blockquote):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    border-left-color: var(--color-border-primary);
+    padding-inline-start: 1em;
+}
+.prose.md.md-conversation :where(blockquote p):not(:where([class~="not-prose"], [class~="not-prose"] *))::before,
+.prose.md.md-conversation :where(blockquote p):not(:where([class~="not-prose"], [class~="not-prose"] *))::after { content: none; }
+.prose.md.md-conversation :where(table):not(:where([class~="not-prose"], [class~="not-prose"] *)) { font-size: 0.875em; line-height: 1.65; }
+.prose.md.md-conversation :where(th, td):not(:where([class~="not-prose"], [class~="not-prose"] *)) { padding: 0.65em 0.75em; }
+.prose.md.md-conversation > :first-child { margin-top: 0; }
+.prose.md.md-conversation > :last-child { margin-bottom: 0; }

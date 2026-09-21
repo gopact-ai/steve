@@ -19,7 +19,7 @@ export function langName(lang?: string): string {
 // CodeBlock is one block of code or output: a header naming what it is
 // (and, for a command, what it came back with), a copy button, and the
 // text itself, scrolling past a height.
-export function CodeBlock({ code, lang, label, meta, muted, maxHeight = 320, className, sourceStart, sourceEnd }: { code: string; lang?: string; label?: ReactNode; meta?: ReactNode; muted?: boolean; maxHeight?: number; className?: string; sourceStart?: number; sourceEnd?: number }) {
+export function CodeBlock({ code, lang, label, meta, muted, maxHeight = 320, density = "compact", className, sourceStart, sourceEnd }: { code: string; lang?: string; label?: ReactNode; meta?: ReactNode; muted?: boolean; maxHeight?: number; density?: "compact" | "reading"; className?: string; sourceStart?: number; sourceEnd?: number }) {
     const [copied, setCopied] = useState(false);
     const shell = lang === "shell" || lang === "sh" || lang === "bash" || lang === "console";
     const Icon = shell ? Terminal : Code02;
@@ -27,7 +27,7 @@ export function CodeBlock({ code, lang, label, meta, muted, maxHeight = 320, cla
         void navigator.clipboard?.writeText(code).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); }).catch(() => undefined);
     }
     return (
-        <div className={`not-prose my-2 flex min-w-0 flex-col overflow-hidden rounded-lg bg-secondary ring-1 ring-secondary ${className ?? ""}`}>
+        <div className={`not-prose ${density === "reading" ? "my-5" : "my-2"} flex min-w-0 flex-col overflow-hidden rounded-lg bg-secondary ring-1 ring-secondary ${className ?? ""}`}>
             <div data-selection-ignore className="flex items-center gap-1.5 border-b border-secondary px-3 py-1 u-meta text-quaternary">
                 <Icon className="size-3.5 shrink-0" />
                 <span className="font-medium">{label ?? langName(lang)}</span>
@@ -36,7 +36,7 @@ export function CodeBlock({ code, lang, label, meta, muted, maxHeight = 320, cla
                     {copied ? <Check className="size-3.5 text-fg-success-primary" /> : <Copy01 className="size-3.5" />}
                 </button>
             </div>
-            <pre style={{ maxHeight }} className={`overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-relaxed [overflow-wrap:anywhere] ${muted ? "text-tertiary" : "text-secondary"}`}><code data-md-start={sourceStart} data-md-end={sourceEnd} data-md-kind="code">{code}</code></pre>
+            <pre style={{ maxHeight }} className={`overflow-auto whitespace-pre-wrap break-words font-mono ${density === "reading" ? "px-4 py-3 text-sm leading-7" : "px-3 py-2 text-[12px] leading-relaxed"} [overflow-wrap:anywhere] ${muted ? "text-tertiary" : "text-secondary"}`}><code data-md-start={sourceStart} data-md-end={sourceEnd} data-md-kind="code">{code}</code></pre>
         </div>
     );
 }
