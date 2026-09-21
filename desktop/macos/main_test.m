@@ -143,6 +143,16 @@ static void checkNavigationIsolation(TestApplication *app, TestWebView *web) {
         decisionHandler:^(WKNavigationActionPolicy policy) {
             check(policy == WKNavigationActionPolicyAllow, @"Authenticated workspace reload was blocked");
         }];
+    action.targetFrame = nil;
+    action.request = [NSURLRequest requestWithURL:app.serviceURL];
+    web.loadedRequest = nil;
+    [app webView:(WKWebView *)web decidePolicyForNavigationAction:(WKNavigationAction *)action
+        decisionHandler:^(WKNavigationActionPolicy policy) {
+            check(policy == WKNavigationActionPolicyAllow, @"Trusted service link did not reach the UI delegate");
+        }];
+    [app webView:(WKWebView *)web createWebViewWithConfiguration:(WKWebViewConfiguration *)unused
+        forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)unused];
+    check([web.loadedRequest.URL isEqual:app.serviceURL], @"Trusted service link was not kept in the workspace");
 }
 
 int main(void) {

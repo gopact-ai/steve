@@ -331,7 +331,15 @@
         decisionHandler(inlineDocument ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
         return;
     }
-    if (action.targetFrame.isMainFrame && [self isServiceURL:url]) {
+    if ([self isServiceURL:url]) {
+        // Keep trusted target=_blank service links on the existing workspace
+        // via the UI delegate instead of opening an unauthenticated browser.
+        if (!action.targetFrame) {
+            BOOL workspaceLink = [self isWorkspaceFrame:action.sourceFrame] &&
+                action.navigationType == WKNavigationTypeLinkActivated;
+            decisionHandler(workspaceLink ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+            return;
+        }
         // A child frame must never use main-document reload authentication.
         // The first native load already carries a header; subsequent page
         // navigations must originate in the trusted workspace.
