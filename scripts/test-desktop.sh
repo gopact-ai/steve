@@ -13,3 +13,7 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter \
   -mmacosx-version-min=13.0 -framework Cocoa -framework WebKit \
   "$task_root/desktop/macos/main_test.m" -o "$task_build/navigation-test"
 "$task_build/navigation-test"
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter \
+  -mmacosx-version-min=13.0 -framework Cocoa -framework WebKit \
+  "$task_root/desktop/macos/preview_test.m" -o "$task_build/preview-test"
+python3 "$task_root/desktop/macos/preview_test.py" "$task_build/preview-test"
