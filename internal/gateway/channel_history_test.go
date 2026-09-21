@@ -536,7 +536,10 @@ func TestChannelHistoryErrorsDoNotExposeInternalDiagnostics(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			book := historyBook(t)
 			historyInput(t, book, "input", "chat", "prompt")
-			historyRecord(t, book, "input/dispatch", "gateway-input-dispatch", recoveredOutput{Error: "open /private/secret-config: token=do-not-disclose", UserError: tc.user, Canceled: tc.canceled})
+			historyRecord(t, book, "input/dispatch", "gateway-input-dispatch", recoveredOutput{
+				Result: turn.Result{Text: "partial result not disclosed by the final card"},
+				Error:  "open /private/secret-config: token=do-not-disclose", UserError: tc.user, Canceled: tc.canceled,
+			})
 			got, err := NewChannelHistory(book).Read(t.Context(), "chat", "", 1)
 			if err != nil || len(got.Replies) != 2 {
 				t.Fatalf("reply: %+v %v", got, err)
@@ -550,6 +553,9 @@ func TestChannelHistoryErrorsDoNotExposeInternalDiagnostics(t *testing.T) {
 			}
 			if tc.user != "" && got.Replies[1].Error != tc.user {
 				t.Fatalf("public error lost: %+v", got.Replies[1])
+			}
+			if got.Replies[1].Text != got.Replies[1].Error {
+				t.Fatalf("history must show the public final error instead of an undisclosed partial result: %+v", got.Replies[1])
 			}
 		})
 	}

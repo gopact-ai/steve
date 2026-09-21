@@ -302,6 +302,9 @@ func channelRepliesTx(ctx context.Context, tx *ledger.ReadTx, id, conversation s
 		case output.Error != "":
 			reply.Error = text.T(i18n.AgentFailed)
 		}
+		if reply.Error != "" {
+			reply.Text = reply.Error
+		}
 		if injected := output.Result.Injected; injected != nil {
 			reply.ProjectID = injected.Project
 			reply.Injected = &consoleapi.Injected{Project: injected.Project, Agent: injected.Agent, Workspace: injected.Workspace, Node: injected.Node, Harness: injected.Harness, Model: injected.Model}
