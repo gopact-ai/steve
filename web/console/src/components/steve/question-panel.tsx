@@ -159,7 +159,7 @@ function QuestionCard({ question, refresh, onResolved }: { question: PendingQues
             <p role="status">{t("materials.answerDeferred")}</p>
             <Button size="sm" color="secondary" onClick={() => edit({ deferred: false })}>{t("materials.replyNow")}</Button>
         </div> : <div className="question-response">
-            {permission ? <RadioGroup ref={choices} aria-label={t("materials.chooseOption")} value={draft.choice} onChange={(choice) => edit({ choice })} isDisabled={disabled} className="question-permission-options">
+            {permission ? <RadioGroup ref={choices} aria-label={t("materials.chooseOption")} value={draft.choice || null} onChange={(choice) => edit({ choice })} isDisabled={disabled} className="question-permission-options">
                 {question.options.map((option) => <Radio key={option.id} value={option.id} className="question-radio"><span className="question-radio-dot" aria-hidden="true" /><span className="question-option-copy"><span className="question-option-label">{option.label}</span>{option.description && <span className="question-option-description">{option.description}</span>}</span></Radio>)}
             </RadioGroup> : !writing && <div className="question-options">
                 {question.options.map((option) => <Button key={option.id} size="md" color="secondary" aria-label={option.label} className="question-option" isDisabled={disabled} isLoading={busy && pending?.choice === option.id} showTextWhileLoading onClick={() => void submit("accept", { choice: option.id })}>

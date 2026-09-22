@@ -2,13 +2,13 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -57,10 +57,14 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		} else {
 			gw.BindChannel(channel)
 			channel.SetJournal(book.Journal())
+			channelSettings.BindAccessUpdater(func(f config.Feishu) {
+				channel.SetAccess(feishu.AccessFrom(f), f.AllowUnmentioned)
+			})
 		}
 	}
 	if gate != nil {
 		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
+		gate.SetScheduler(coordinator)
 		if channel != nil {
 			gate.BindChannel("feishu", feishu.Messenger{API: channel})
 		}
@@ -75,39 +79,54 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	// arrives as an ordinary message.
 	coordinator.SetOfflineReminder(time.Duration(cfg.Gateway.OfflineReminderAfter))
 	coordinator.SetNotifier(func(n turn.TaskNotice) {
-		if n.ChatID == console.ChatID || console.IsConsole(n.MessageID) {
-			cons.Notice(n)
-			return
+		err := routeTask(n.Transport, func() error { cons.Notice(n); return nil }, func() error {
+			gw.Notify(gateway.Notice{TaskID: n.TaskID, MessageID: n.MessageID, Requester: n.Requester, Text: n.Text})
+			return nil
+		})
+		if err != nil {
+			slog.Error("task notice not routed", "task", n.TaskID, "error", err)
 		}
-		gw.Notify(gateway.Notice{
-			TaskID: n.TaskID, MessageID: n.MessageID,
-			Requester: n.Requester, Text: n.Text,
+	})
+	coordinator.SetResumer(func(r turn.TaskResume) error {
+		return routeTask(r.Transport, func() error {
+			return cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member, catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), r.Admission, coordinator.ReviveSession)
+		}, func() error {
+			return gw.QueueTaskResume(ctx, book, r.Admission.ID, gateway.Revival{TaskID: r.TaskID, Goal: r.Goal, Member: r.Member, ConversationID: r.ConversationID, ChatID: r.ChatID, MessageID: r.MessageID, Requester: r.Requester, ChatType: r.ChatType, Manual: true}, r.Admission)
 		})
 	})
-	coordinator.SetResumer(func(r turn.TaskResume) {
-		if r.ChatID == console.ChatID || console.IsConsole(r.ConversationID) {
-			if err := cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member,
-				catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession); err != nil {
-				slog.Error(fmt.Sprintf("console: resume task #%s: %v", r.TaskID, err), "task", r.TaskID, "conversation", r.ConversationID)
+	gw.SetRecoveryLedger(book)
+	gw.SetIngressLifetime(ctx, page.Reconciliations())
+	coordinator.SetResumeDispatcher(func(r turn.TaskResume) {
+		// Acceptance and owner authorization are already durable. Waking a
+		// consumer is best-effort; startup/runtime recovery uses the same input.
+		page.Reconciliations().Go(func() {
+			err := routeTask(r.Transport, func() error { return cons.DispatchResume(r.ConversationID, r.Admission) }, func() error {
+				return gw.DispatchResume(ctx, book, r.Admission, coordinator, coordinator.ReviveSession)
+			})
+			if err != nil {
+				slog.Error("accepted task resume awaits recovery", "task", r.TaskID, "admission", r.Admission.ID, "error", err)
 			}
-			return
-		}
-		go gw.ResumeTask(gateway.Revival{
-			TaskID: r.TaskID, Goal: r.Goal, Member: r.Member,
-			ConversationID: r.ConversationID, ChatID: r.ChatID,
-			MessageID: r.MessageID, Requester: r.Requester,
-			ChatType: r.ChatType, Manual: true,
-		}, coordinator.ReviveSession)
+		})
 	})
-	return &channelsValues{channel: channel}, nil
+	return &channelsValues{channel: channel, startup: channelStartup{
+		owner: cfg.Feishu.OwnerOpenID, home: cfg.Gateway.HomePath, timeout: time.Duration(cfg.Gateway.PromptTimeout),
+	}}, nil
 }
 
 type channelsAssembly interface {
 	Channel() *feishu.Channel
+	Startup() channelStartup
+}
+
+type channelStartup struct {
+	owner, home string
+	timeout     time.Duration
 }
 
 type channelsValues struct {
 	channel *feishu.Channel
+	startup channelStartup
 }
 
 func (v *channelsValues) Channel() *feishu.Channel { return v.channel }
+func (v *channelsValues) Startup() channelStartup  { return v.startup }

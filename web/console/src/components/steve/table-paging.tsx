@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import { ChevronLeft, ChevronRight } from "@untitledui/icons";
-import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/steve/icon-button";
 import { Select } from "@/components/base/select/select";
 import { number } from "@/lib/format";
 import { useI18n } from "@/providers/locale-provider";
@@ -56,8 +56,8 @@ export function usePaged<T>(items: T[]): { items: T[]; footer: React.ReactNode }
                         {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                     </Select>
                     <span className="table-pager-page">{t("table.page", { page: number(page + 1, locale), pages: number(pages, locale) })}</span>
-                    <Button size="sm" color="tertiary" iconLeading={ChevronLeft} aria-label={t("table.previous")} isDisabled={page === 0} onClick={() => setPage(page - 1)} />
-                    <Button size="sm" color="tertiary" iconLeading={ChevronRight} aria-label={t("table.next")} isDisabled={page >= pages - 1} onClick={() => setPage(page + 1)} />
+                    <IconButton icon={ChevronLeft} label={t("table.previous")} isDisabled={page === 0} onClick={() => setPage(page - 1)} />
+                    <IconButton icon={ChevronRight} label={t("table.next")} isDisabled={page >= pages - 1} onClick={() => setPage(page + 1)} />
                 </div>
             </div>
         ),

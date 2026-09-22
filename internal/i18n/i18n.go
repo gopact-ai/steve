@@ -90,6 +90,8 @@ const (
 	BudgetTurns            Key = "budget_turns"
 	BudgetElapsed          Key = "budget_elapsed"
 	CancelRequested        Key = "cancel_requested"
+	CancelStoppedChildren  Key = "cancel_stopped_children"
+	CancelStopUnconfirmed  Key = "cancel_stop_unconfirmed"
 	SkillsOwnerOnly        Key = "skills_owner_only"
 	SkillsUnconfigured     Key = "skills_unconfigured"
 	SkillsEnabled          Key = "skills_enabled"
@@ -285,6 +287,9 @@ const (
 	CardWrite              Key = "card_write"
 	CardAwaiting           Key = "card_awaiting"
 	CardWaking             Key = "card_waking"
+	CardFinishing          Key = "card_finishing"
+	CardSaving             Key = "card_saving"
+	CardPartial            Key = "card_partial"
 	CardStop               Key = "card_stop"
 	CardRetry              Key = "card_retry"
 	TurnStopRequested      Key = "turn_stop_requested"
@@ -307,10 +312,11 @@ const (
 )
 
 type Catalog struct {
-	locale Locale
+	locale       Locale
+	localeSource func() Locale
 }
 
-func (c Catalog) IsZero() bool { return c.locale == "" }
+func (c Catalog) IsZero() bool { return c.locale == "" && c.localeSource == nil }
 
 func New(locale Locale) Catalog {
 	if locale != LocaleEN {
@@ -319,11 +325,22 @@ func New(locale Locale) Catalog {
 	return Catalog{locale: locale}
 }
 
+// Dynamic samples source for each Locale or T call. The callback is fixed at
+// construction; it must be safe for concurrent calls as its underlying locale changes.
+// A nil source returns a zero catalog, which defaults to Chinese.
+func Dynamic(source func() Locale) Catalog {
+	return Catalog{localeSource: source}
+}
+
 func (c Catalog) Locale() Locale {
-	if c.locale == "" {
+	locale := c.locale
+	if c.localeSource != nil {
+		locale = c.localeSource()
+	}
+	if locale != LocaleEN {
 		return LocaleZH
 	}
-	return c.locale
+	return locale
 }
 
 func (c Catalog) T(key Key, args ...any) string {

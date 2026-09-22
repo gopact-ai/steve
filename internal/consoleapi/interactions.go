@@ -68,12 +68,13 @@ type Interactions interface {
 }
 
 type Submission struct {
-	Conversation string         `json:"conversation"`
-	Input        string         `json:"input"`
-	CommandID    string         `json:"command_id"`
-	Quotes       []QuoteRef     `json:"quotes,omitempty"`
-	Refs         []material.Ref `json:"refs,omitempty"`
-	Locale       string         `json:"locale,omitempty"`
+	ExpectedProject string         `json:"expected_project,omitempty"`
+	Conversation    string         `json:"conversation"`
+	Input           string         `json:"input"`
+	CommandID       string         `json:"command_id"`
+	Quotes          []QuoteRef     `json:"quotes,omitempty"`
+	Refs            []material.Ref `json:"refs,omitempty"`
+	Locale          string         `json:"locale,omitempty"`
 	// RewindTo names a line already sent that this submission replaces.
 	// The thread goes back to the moment before it: that line and
 	// everything after it leaves the transcript, and this input is said

@@ -13,6 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/readmodel"
+	tasks "github.com/gopact-ai/steve/internal/task"
 )
 
 // Exercise the whole client against the HTTP contract. Only the fake remote
@@ -30,9 +34,19 @@ func TestGate(t *testing.T) {
 		{"no_change", "changes index must contain A"},
 		{"deleted_file", "changes index must contain A"},
 		{"wrong_index", "changes index must contain A"},
-		{"unreported", "expected successful attempt_rows"},
-		{"empty_tokens", "expected successful attempt_rows"},
-		{"parent_tokens_only", "expected successful attempt_rows"},
+		{"unreported", "expected successful accounting row"},
+		{"empty_tokens", "expected successful accounting row"},
+		{"parent_tokens_only", "expected successful accounting row"},
+		{"usage_failed", "/usage: ledger offline"},
+		{"usage_partial", "/usage: incomplete history"},
+		{"usage_unwired", "/usage: ledger-usage is not wired"},
+		{"usage_missing_source", "/usage: missing ledger-usage source"},
+		{"usage_missing", "/usage: missing usage"},
+		{"usage_zero", "/usage: missing reported tokens for agent shipper"},
+		{"usage_other_agent", "/usage: missing reported tokens for agent shipper"},
+		{"usage_unreported", "/usage: missing reported tokens for agent shipper"},
+		{"usage_incomplete_tokens", "/usage: missing reported tokens for agent shipper"},
+		{"usage_http_error", "GET /usage: HTTP 503"},
 		{"missing_file", "landing: stat"},
 		{"wrong_content", "has wrong content"},
 		{"symlink", "must be a regular file"},
@@ -42,22 +56,27 @@ func TestGate(t *testing.T) {
 			var output bytes.Buffer
 			g := newGate(options{token: "secret-token", project: "scratch", agent: "claude", targetNode: "node-b", targetAgent: "shipper", timeout: time.Second}, &output)
 			var sent int
+			var usageReads int
 			var stored reply
 			used := make(map[string]bool)
-			child := func() task {
+			// The task detail and the attempt page are served as the hub
+			// serves them — the read model's own types — so the client is
+			// checked against the contract, not against a copy of it.
+			child := func() readmodel.TaskDetail {
 				taskID := "child"
 				if tc.name == "wrong_task" {
 					taskID = "unrelated"
 				}
-				row := attemptRow{Agent: "shipper", Node: "node-b", Outcome: "ok", Reported: tc.name != "unreported", Tokens: tokens{Input: 10, Output: 2, Total: 12}}
+				row := readmodel.AttemptRow{Agent: "shipper", Node: "node-b", Outcome: "ok", Reported: tc.name != "unreported", Tokens: readmodel.Tokens{Input: 10, Output: 2, Total: 12}}
 				if tc.name == "empty_tokens" {
-					row.Tokens = tokens{}
+					row.Tokens = readmodel.Tokens{}
 				}
-				tsk := task{ID: taskID, Parent: "parent", State: "done", Member: "shipper", Node: "node-b", Project: "scratch", Channel: g.conversation, AttemptRows: []attemptRow{row}}
+				tsk := readmodel.Task{ID: taskID, Parent: "parent", State: tasks.StateDone, Member: "shipper", NodeID: "node-b", ProjectID: "scratch", Channel: g.conversation}
+				accounting := readmodel.AccountingPage{Items: []readmodel.AccountingItem{{AttemptRow: row}}, Total: 1}
 				if tc.name == "parent_tokens_only" {
-					tsk.AttemptRows = nil
+					accounting = readmodel.AccountingPage{Items: []readmodel.AccountingItem{}}
 				}
-				return tsk
+				return readmodel.TaskDetail{Task: tsk, Children: readmodel.TaskPage{Items: []readmodel.Task{}}, Accounting: accounting}
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer secret-token" || r.URL.Query().Has("token") {
@@ -68,8 +87,47 @@ func TestGate(t *testing.T) {
 				case "GET /state":
 					s := state{Agents: []agent{{ID: "claude", Node: "hub", Eligible: true}, {ID: "shipper", Node: "node-b", Eligible: true}}, Projects: []project{{ID: "scratch", Node: "hub", Path: home}}}
 					s.Hub.Node, s.Hub.Version = "hub", "test-version"
-					s.Tasks = []task{{ID: "parent", AttemptRows: []attemptRow{{Agent: "shipper", Node: "node-b", Outcome: "ok", Reported: true, Tokens: tokens{Total: 999}}}}, child()}
+					// Base state is not the usage contract. Child evidence must
+					// come from task detail, aggregates from /usage.
+					s.Tasks = []task{{ID: "parent"}, {ID: "child"}}
 					response = s
+				case "GET /usage":
+					usageReads++
+					if tc.name == "usage_http_error" {
+						http.Error(w, "usage unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					health := map[string]any{"name": "ledger-usage", "wired": tc.name != "usage_unwired"}
+					sources := []any{health}
+					if tc.name == "usage_failed" {
+						health["error"] = "ledger offline"
+					}
+					if tc.name == "usage_partial" {
+						health["error"] = "incomplete history"
+					}
+					if tc.name == "usage_missing_source" {
+						sources = nil
+					}
+					total := tokens{Input: 100, Output: 20, Total: 120}
+					if tc.name == "usage_zero" {
+						total = tokens{}
+					}
+					row := map[string]any{"key": "shipper", "attempts": 1, "tokens": total}
+					switch tc.name {
+					case "usage_other_agent":
+						row["key"] = "coordinator"
+					case "usage_unreported":
+						row["unreported"] = 1
+					case "usage_incomplete_tokens":
+						row["tokens"] = tokens{Input: 9, Output: 2, Total: 11}
+					}
+					response = map[string]any{"at": time.Now(), "sources": sources, "usage": map[string]any{
+						"total":    map[string]any{"attempts": 2, "tokens": total},
+						"by_agent": []any{row},
+					}}
+					if tc.name == "usage_missing" || tc.name == "usage_failed" {
+						delete(response.(map[string]any), "usage")
+					}
 				case "POST /console/send":
 					var req struct {
 						Conversation string `json:"conversation"`
@@ -146,11 +204,14 @@ func TestGate(t *testing.T) {
 					milestone.ID, milestone.Kind = "milestone", "milestone"
 					response = map[string]any{"replies": []reply{milestone, stored}}
 				case "GET /console/tasks/child":
-					attempts := []attempt{{ID: "child-attempt", Kind: "delegate", State: "bound", Agent: "shipper", Node: "node-b", Artifact: "snapshot"}}
+					response = child()
+				case "GET /console/tasks/child/attempts":
+					page := consoleapi.AttemptHistoryPage{Items: []consoleapi.AttemptHistoryItem{{TaskID: "child", Project: "scratch",
+						AttemptView: consoleapi.AttemptView{ID: "child-attempt", Kind: "delegate", State: "bound", Agent: "shipper", Node: "node-b", Artifact: "snapshot"}}}}
 					if tc.name == "no_attempt" {
-						attempts = nil
+						page.Items = nil
 					}
-					response = map[string]any{"task": child(), "attempts": attempts}
+					response = page
 				case "GET /console/attempts/child-attempt/changes":
 					name, status, attemptID := g.filename, "A", "child-attempt"
 					switch tc.name {
@@ -179,6 +240,9 @@ func TestGate(t *testing.T) {
 			if tc.want == "" {
 				if err != nil || !strings.Contains(output.String(), "FLEET PASS") {
 					t.Fatalf("run: %v\n%s", err, &output)
+				}
+				if usageReads != 1 {
+					t.Fatalf("usage must be read independently once, got %d reads", usageReads)
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(output.String(), "FLEET PASS") {
 				t.Fatalf("want failure containing %q, got %v\n%s", tc.want, err, &output)
@@ -231,8 +295,8 @@ func TestFailureDiagnosticsStayInThisConversationAndDeadline(t *testing.T) {
 				{ID: "own-task", Channel: g.conversation, Member: "claude", State: "running"},
 				{ID: "other-task", Channel: "console:someone-else"},
 			}}
-		case "/console/tasks/own-task":
-			response = map[string]any{"attempts": []attempt{{ID: "own-attempt", State: "failed"}}}
+		case "/console/tasks/own-task/attempts":
+			response = consoleapi.AttemptHistoryPage{Items: []consoleapi.AttemptHistoryItem{{TaskID: "own-task", AttemptView: consoleapi.AttemptView{ID: "own-attempt", State: "failed"}}}}
 		case "/console/replies":
 			response = map[string]any{"replies": []reply{{ID: "own-reply", Conversation: g.conversation, Kind: "reply", Error: "private-token rejected"}}}
 		default:

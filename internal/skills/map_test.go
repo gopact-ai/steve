@@ -1,11 +1,80 @@
 package skills
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 )
+
+func TestMapWriteReportsCommittedDirectorySyncFailure(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	m, err := Open(DefaultPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := fileData{Sources: []Source{{Slug: "fixture"}}}
+	if err := m.writeLocked(before); err != nil {
+		t.Fatal(err)
+	}
+	failure := &os.PathError{Op: "sync", Path: root, Err: syscall.EIO}
+	syncs := 0
+	m.syncDir = func(dir string) error {
+		syncs++
+		if dir != root {
+			t.Fatalf("synced %q, want %q", dir, root)
+		}
+		// Read through a fresh Map: the real write and rename must have
+		// published the deletion before this fault is injected.
+		reader, err := Open(m.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := reader.readLocked()
+		if err != nil || len(got.Sources) != 0 {
+			t.Fatalf("sync ran before deletion was published: %+v, %v", got, err)
+		}
+		return failure
+	}
+	err = m.writeLocked(fileData{})
+	var committed *committedWriteError
+	if !errors.As(err, &committed) || !errors.Is(err, failure) || !errors.Is(err, syscall.EIO) {
+		t.Fatalf("post-rename failure lost commit phase or cause: %v", err)
+	}
+	if syncs != 1 {
+		t.Fatalf("directory syncs = %d, want 1", syncs)
+	}
+}
+
+func TestMapRenameFailureIsNotCommitted(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := DefaultPath(root)
+	// Renaming the temporary regular file onto a directory must fail.
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.syncDir = func(string) error {
+		t.Error("directory sync ran after a failed rename")
+		return nil
+	}
+	err = m.writeLocked(fileData{})
+	var committed *committedWriteError
+	if err == nil || errors.As(err, &committed) {
+		t.Fatalf("pre-commit failure misclassified: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(path) || !entries[0].IsDir() {
+		t.Fatalf("rename failure altered destination or left a temp file: %v, %v", entries, err)
+	}
+}
 
 func writeSkill(t *testing.T, dir, name, body string) string {
 	t.Helper()

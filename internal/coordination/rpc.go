@@ -61,7 +61,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.failure(w, http.StatusMethodNotAllowed, ErrInvalid)
 		return
 	}
-	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "rename" && action != "join" && action != "remove" && action != "address" {
+	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "rename" && action != "voting" && action != "join" && action != "remove" && action != "address" {
 		http.NotFound(w, r)
 		return
 	}
@@ -265,6 +265,8 @@ func errorCode(err error) string {
 		return "command_conflict"
 	case errors.Is(err, ErrApplication):
 		return "application"
+	case errors.Is(err, ErrReceiptExpired):
+		return "receipt_expired"
 	default:
 		return "invalid"
 	}
@@ -291,6 +293,8 @@ func (f rpcFailure) err() error {
 		kind = ErrCommandConflict
 	case "application":
 		kind = ErrApplication
+	case "receipt_expired":
+		kind = ErrReceiptExpired
 	default:
 		kind = ErrInvalid
 	}

@@ -1,3 +1,4 @@
+import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { number } from "@/lib/format";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator, MessageKey, Locale } from "@/lib/i18n";
@@ -213,11 +214,10 @@ function ProfileWorkspace({ view, onSaved }: { view: HomeView; onSaved: (doc: Pr
                         {draft && (dirty ? <DialogTrigger>
                             <Button size="sm" color="link-gray" isDisabled={saving === doc.id}>{tr("home.discard")}</Button>
                             <ModalOverlay isDismissable><Modal className="max-w-sm"><Dialog aria-label={tr("home.discard")}>
-                                {({ close }) => <div className="w-full rounded-xl bg-primary p-6 shadow-lg">
-                                    <h3 className="text-md font-semibold text-primary">{tr("home.discardTitle")}</h3>
-                                    <p className="mt-2 text-sm leading-6 text-secondary">{tr("home.discardHint", { title: doc.title })}</p>
-                                    <div className="mt-5 flex justify-end gap-2"><Button size="sm" color="secondary" onClick={close}>{tr("home.keepEditing")}</Button><Button size="sm" color="primary-destructive" onClick={() => { discard(); close(); }}>{tr("home.confirmDiscard")}</Button></div>
-                                </div>}
+                                {({ close }) => <DialogSurface><DialogBody>
+                                    <DialogHeader title={tr("home.discardTitle")} description={tr("home.discardHint", { title: doc.title })} />
+                                    <DialogFooter><Button size="sm" color="secondary" onClick={close}>{tr("home.keepEditing")}</Button><Button size="sm" color="primary-destructive" onClick={() => { discard(); close(); }}>{tr("home.confirmDiscard")}</Button></DialogFooter>
+                                </DialogBody></DialogSurface>}
                             </Dialog></Modal></ModalOverlay>
                         </DialogTrigger> : <Button size="sm" color="link-gray" isDisabled={saving === doc.id} onClick={discard}>{tr("home.finishEditing")}</Button>)}
                         {!wide && draft?.editing && <Button size="sm" color="primary" isDisabled={!dirty || over || !!saving} isLoading={saving === doc.id} onClick={() => void save()}>{tr("common.save")}</Button>}
@@ -248,14 +248,13 @@ function Regenerate({ doc }: { doc: ProfileDocument }) {
         <DialogTrigger>
             <Button size="sm" color="secondary" iconLeading={MagicWand01}>{tr("home.generate")}</Button>
             <ModalOverlay isDismissable><Modal className="max-w-md"><Dialog aria-label={tr("home.generateTitle", { title: doc.title })}>
-                {({ close }) => <div className="w-full rounded-xl bg-primary p-6 shadow-lg">
-                    <h3 className="text-md font-semibold text-primary">{tr("home.generateTitle", { title: doc.title })}</h3>
-                    <p className="mt-2 text-sm leading-6 text-secondary">{tr("home.generateHint")}</p>
-                    <div className="mt-5 flex justify-end gap-2">
+                {({ close }) => <DialogSurface><DialogBody>
+                    <DialogHeader title={tr("home.generateTitle", { title: doc.title })} description={tr("home.generateHint")} />
+                    <DialogFooter>
                         <Button size="sm" color="secondary" onClick={close}>{tr("common.cancel")}</Button>
                         <Button size="sm" color="primary" onClick={() => { close(); open(); }}>{tr("home.confirmGenerate")}</Button>
-                    </div>
-                </div>}
+                    </DialogFooter>
+                </DialogBody></DialogSurface>}
             </Dialog></Modal></ModalOverlay>
         </DialogTrigger>
     );

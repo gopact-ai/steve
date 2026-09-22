@@ -1,16 +1,17 @@
 import { useI18n } from "@/providers/locale-provider";
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Navigate, useSearchParams } from "react-router";
-import { ClipboardCheck, Clock } from "@untitledui/icons";
+import { ClipboardCheck } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Toggle } from "@/components/base/toggle/toggle";
-import { relative, when } from "@/lib/format";
+import { relative } from "@/lib/format";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, labelsFor } from "@/lib/labels";
-import type { Plan, Task } from "@/lib/types";
+import type { Activity, Plan, Task } from "@/lib/types";
+import { indexBoardWork } from "@/lib/work-list-index";
 import { PageHeader } from "@/components/steve/page";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "@/components/steve/task-meta-menu";
@@ -18,6 +19,12 @@ import { TaskCloseDialog, useTaskClose } from "@/components/steve/task-close";
 import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 import { unavailableSource } from "@/lib/source-health";
+import { useUsage } from "@/hooks/use-usage";
+import { useWorkPage } from "@/hooks/use-work-page";
+import { fetchTasks } from "@/lib/api/work";
+import { useEventCallback } from "@/hooks/use-event-callback";
+
+import { Scheduled } from "@/components/steve/scheduled-tasks";
 
 type TabKey = "active" | "all" | "scheduled";
 
@@ -26,36 +33,36 @@ type TabKey = "active" | "all" | "scheduled";
 // cost". Cards are top-level tasks only; steps and subtasks unfold inside.
 export function BoardPage() {
     const { t: tr, locale } = useI18n();
-const lanes: { key: string; title: string; hint: string }[] = [
-    { key: "pending", title: tr("board.pending"), hint: tr("board.pendingHint") },
-    { key: "running", title: tr("status.running"), hint: tr("board.runningHint") },
-    { key: "needs_you", title: tr("board.attention"), hint: tr("board.attentionHint") },
-    { key: "unknown", title: tr("board.unknown"), hint: tr("board.unknownHint") },
-    { key: "ended", title: tr("board.ended"), hint: tr("board.endedHint") },
-];
     const { snap } = useFleet();
+    const indexedWork = useMemo(() => indexBoardWork(snap.plans, snap.agents), [snap.plans, snap.agents]);
     const { fill } = useIntent();
     const [params, setParams] = useSearchParams();
     const selectedTab = params.get("tab");
     const tab: TabKey = selectedTab === "all" || selectedTab === "scheduled" ? selectedTab : "active";
     const setTab = (value: TabKey) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
+    const openHistory = useEventCallback(() => setTab("all"));
     const [selected, setSelected] = useState<string | null>(null);
     const movedToDashboard = selectedTab === "usage";
+    const usage = useUsage(!movedToDashboard);
     const [showArchived, setShowArchived] = useState(false);
-    const byID = useMemo(() => new Map(snap.tasks.map((t) => [t.id, t])), [snap.tasks]);
-    const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
-    const visibleIDs = new Set(visibleTasks.map((t) => t.id));
-    const roots = visibleTasks.filter((t) => !t.parent || !visibleIDs.has(t.parent));
+    const conversation = params.get("history_conversation") || "";
+    const history = useWorkPage(`board:${conversation}:${showArchived}`, (cursor, signal) => fetchTasks({ ...(conversation ? { scope: "conversation", scope_id: conversation } as const : {}), archived: showArchived ? "all" : "hide" }, cursor, signal), tab === "all");
+    const roots = useMemo(() => {
+        const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
+        const visibleIDs = new Set(visibleTasks.map((t) => t.id));
+        return visibleTasks.filter((t) => !t.parent || !visibleIDs.has(t.parent));
+    }, [snap.tasks, showArchived]);
     const running = roots.filter((t) => t.lane === "running").length;
     const needsYou = roots.filter((t) => t.lane === "needs_you").length;
     const activityUnavailable = !!unavailableSource(snap.sources, "ledger-live");
     const attentionUnavailable = !!unavailableSource(snap.sources, "ledger-attention");
-    const today = new Date().toISOString().slice(0, 10);
-    const todayUsage = snap.usage.periods?.["1d"]?.total ?? snap.usage.by_day.find((r) => r.key === today);
-    const usageUnavailable = !!unavailableSource(snap.sources, "ledger-usage");
+    const todayUsage = usage.response?.usage?.periods?.["1d"]?.total;
+    const usageSource = usage.response?.sources.find((source) => source.name === "ledger-usage");
+    const usageUnavailable = !!usage.error || !usageSource?.wired || !!usageSource.error;
     const todayTokens = `${fmtTokens(todayUsage?.tokens.total || 0, locale)} tok`;
-    const setAside = roots.filter((t) => t.lane === "set_aside");
-    const current = selected ? byID.get(selected) : undefined;
+    const counts = snap.task_coverage;
+    const taskSource = snap.sources.find((source) => source.name === "tasks");
+    const taskUnavailable = !taskSource?.wired || !!taskSource.error || !!counts.missing?.length;
 
     if (movedToDashboard) return <Navigate to={`/dashboard?tab=overview${params.get("range") ? `&range=${params.get("range")}` : ""}`} replace />;
     return (
@@ -72,46 +79,75 @@ const lanes: { key: string; title: string; hint: string }[] = [
                         {(item) => <Tab {...item} />}
                     </TabList>
                 </Tabs>
-                <div role="region" aria-label={tr("board.rootSummary")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <Stat label={tr("board.totalRoots")} value={roots.length} tone="gray" />
-                    <Stat label={tr("board.completed")} value={roots.filter((t) => t.lifecycle === "done").length} tone="gray" />
-                    <Stat label={tr("board.cancelled")} value={roots.filter((t) => t.lifecycle === "cancelled").length} tone="gray" />
-                    <Stat label={tr("board.paused")} value={roots.filter((t) => t.lifecycle === "paused").length} tone="gray" />
+                <div role="region" title={tr("workHistory.allCounts")} aria-label={tr("board.rootSummary")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <Stat label={tr("board.totalRoots")} value={taskUnavailable ? tr("common.unknown") : counts.roots} tone="gray" />
+                    <Stat label={tr("board.completed")} value={taskUnavailable ? tr("common.unknown") : counts.completed_roots} tone="gray" />
+                    <Stat label={tr("board.cancelled")} value={taskUnavailable ? tr("common.unknown") : counts.cancelled_roots} tone="gray" />
+                    <Stat label={tr("board.paused")} value={taskUnavailable ? tr("common.unknown") : counts.paused_roots} tone="gray" />
                     <Stat label={tr("status.running")} value={activityUnavailable ? (running ? `${running}+` : tr("common.unknown")) : running} tone={running ? "blue" : "gray"} />
                     <Stat label={tr("board.attention")} value={attentionUnavailable ? (needsYou ? `${needsYou}+` : tr("common.unknown")) : needsYou} tone={needsYou ? "warning" : "gray"} />
-                    <Stat label={tr("board.today")} value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds, locale)}` : "—"} tone="gray" />
+                    <Stat label={tr("board.today")} value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds, locale)}` : usage.loading ? tr("usage.loading") : tr("common.unknown")} tone="gray" />
                 </div>
                 </div>
             </PageHeader>
             <div className="workbench-page-body min-h-0 min-w-0 flex-1 overflow-auto px-4 py-5 sm:px-6 lg:px-8">
-                {tab === "active" && (
-                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-                        {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {
-                            const items = roots.filter((t) => t.lane === lane.key).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-                            const shown = lane.key === "ended" ? items.slice(0, 8) : items;
-                            return (
-                                <div key={lane.key} className="workbench-task-lane flex min-w-0 flex-col gap-2">
-                                    <div className="mb-1 flex items-center gap-2 px-1" title={lane.hint}>
-                                        <span className="text-sm font-semibold text-primary">{lane.title}</span>
-                                        <span className="text-xs text-quaternary">{items.length}</span>
-                                    </div>
-                                    {shown.map((t) => <Card key={t.id} t={t} plan={snap.plans.find((p) => p.task_id === t.id)} onOpen={() => setSelected(t.id)} selected={selected === t.id} />)}
-                                    {shown.length === 0 && <div className="rounded-lg bg-secondary/50 px-3 py-8 text-center text-xs text-tertiary">{tr("board.emptyLane")}</div>}
-                                </div>
-                            );
-                        })}
-                        {setAside.length > 0 && (
-                            <div className="col-span-full text-xs text-tertiary">{tr("board.pausedPrefix")}{setAside.map((t) => <button key={t.id} type="button" className="mx-1 rounded px-1 underline outline-focus-ring focus-visible:outline-2" onClick={() => setSelected(t.id)}>#{t.id}</button>)}</div>
-                        )}
+                {(usage.error || usageSource?.error) && <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 text-sm text-error-primary"><span className="min-w-0 break-words">{tr("usage.unavailable", { error: usage.error || usageSource?.error || "" })}</span><Button size="sm" color="link-gray" isDisabled={usage.loading} onClick={usage.refresh}>{tr("common.retry")}</Button></div>}
+                {usageSource?.wired === false && <p role="status" className="mb-4 text-sm text-tertiary">{tr("usage.unwired")}</p>}
+                <p role={taskUnavailable ? "status" : undefined} className="mb-4 text-xs text-tertiary">{taskUnavailable ? tr("workHistory.unavailable", { error: taskSource?.error || tr("common.unknown") }) : tr("workHistory.coverage", { count: counts.recent_closed })}</p>
+                {tab === "active" && <ActiveLanes roots={roots} work={indexedWork} selected={selected} onOpen={setSelected} onHistory={openHistory} />}
+                {tab === "all" && <>
+                    {conversation && <p className="mb-2 text-sm text-secondary">{tr("workHistory.scope")}</p>}
+                    <div className="mb-3 flex flex-wrap items-center gap-3">
+                        <Button size="sm" color="secondary" isDisabled={history.loading} onClick={history.refresh}>{tr("workHistory.refresh")}</Button>
+                        {history.total !== undefined && <span className="text-xs text-tertiary">{tr("workHistory.loaded", { count: history.items.length, total: history.total })}</span>}
                     </div>
-                )}
-                {tab === "all" && <AllTasks tasks={visibleTasks} onOpen={setSelected} />}
+                    {history.loading && <p role="status" className="mb-2 text-sm text-tertiary">{tr("workHistory.loading")}</p>}
+                    {history.error && <div role="alert" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-error-primary">{history.stale ? tr("workHistory.stale") : history.error}<Button size="sm" color="link-gray" isDisabled={history.loading} onClick={history.stale ? history.refresh : history.retry}>{tr(history.stale ? "workHistory.refresh" : "common.retry")}</Button></div>}
+                    {(!history.loading && !history.error || history.items.length > 0) && <AllTasks tasks={history.items} total={history.total} onOpen={setSelected} />}
+                    {history.hasMore && <Button className="mt-3" size="sm" color="secondary" isDisabled={history.loading || history.stale} onClick={history.more}>{tr("workHistory.more")}</Button>}
+                </>}
                 {tab === "scheduled" && <Scheduled />}
             </div>
-            {current && <TaskDrawer t={current} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === current.id)} onClose={() => setSelected(null)} />}
+            {selected && <TaskDrawer t={{ id: selected }} tasks={snap.tasks} onClose={() => setSelected(null)} />}
         </div>
     );
 }
+
+const ActiveLanes = memo(function ActiveLanes({ roots, work, selected, onOpen, onHistory }: {
+    roots: Task[]; work: ReturnType<typeof indexBoardWork>; selected: string | null; onOpen: (id: string) => void; onHistory: () => void;
+}) {
+    const { t: tr } = useI18n();
+    const lanes = [
+        { key: "pending", title: tr("board.pending"), hint: tr("board.pendingHint") },
+        { key: "running", title: tr("status.running"), hint: tr("board.runningHint") },
+        { key: "needs_you", title: tr("board.attention"), hint: tr("board.attentionHint") },
+        { key: "unknown", title: tr("board.unknown"), hint: tr("board.unknownHint") },
+        { key: "ended", title: tr("workHistory.recent"), hint: tr("board.endedHint") },
+    ];
+    const setAside = roots.filter((t) => t.lane === "set_aside");
+    return (
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+            {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {
+                const items = roots.filter((t) => t.lane === lane.key).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+                const shown = lane.key === "ended" ? items.slice(0, 8) : items;
+                return (
+                    <div key={lane.key} className="workbench-task-lane flex min-w-0 flex-col gap-2">
+                        <div className="mb-1 flex items-center gap-2 px-1" title={lane.hint}>
+                            <span className="text-sm font-semibold text-primary">{lane.title}</span>
+                            <span className="text-xs text-quaternary">{items.length}</span>
+                        </div>
+                        {shown.map((t) => <Card key={t.id} t={t} plan={work.plansByTask.get(t.id)} now={work.activitiesByTask.get(t.id)} onOpen={() => onOpen(t.id)} selected={selected === t.id} />)}
+                        {lane.key === "ended" && <Button size="sm" color="link-gray" onClick={onHistory}>{tr("workHistory.history")}</Button>}
+                        {shown.length === 0 && <div className="rounded-lg bg-secondary/50 px-3 py-8 text-center text-xs text-tertiary">{tr("board.emptyLane")}</div>}
+                    </div>
+                );
+            })}
+            {setAside.length > 0 && (
+                <div className="col-span-full text-xs text-tertiary">{tr("board.pausedPrefix")}{setAside.map((t) => <button key={t.id} type="button" className="mx-1 rounded px-1 underline outline-focus-ring focus-visible:outline-2" onClick={() => onOpen(t.id)}>#{t.id}</button>)}</div>
+            )}
+        </div>
+    );
+});
 
 function Stat({ label: name, value, tone }: { label: string; value: number | string; tone: "blue" | "warning" | "gray" }) {
     return (
@@ -122,12 +158,10 @@ function Stat({ label: name, value, tone }: { label: string; value: number | str
     );
 }
 
-function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () => void; selected: boolean }) {
+function Card({ t, plan, now, onOpen, selected }: { t: Task; plan?: Plan; now?: Activity; onOpen: () => void; selected: boolean }) {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
     const meta = useTaskMeta(t);
     const closing = useTaskClose(t);
-    const now = snap.agents.flatMap((a) => a.activities || []).find((a) => a.task_id === t.id);
     const steps = plan?.steps || [];
     const done = steps.filter((s) => s.state === "done").length;
     return (
@@ -170,16 +204,12 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
     );
 }
 
-function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => void }) {
+function AllTasks({ tasks, total, onOpen }: { tasks: Task[]; total?: number; onOpen: (id: string) => void }) {
     const { t: tr, locale } = useI18n();
-    const byID = new Map(tasks.map((t) => [t.id, t]));
-    const rows: (Task & { depth: number })[] = [];
-    const walk = (t: Task, depth: number) => { rows.push({ ...t, depth }); tasks.filter((c) => c.parent === t.id).forEach((c) => walk(c, depth + 1)); };
-    tasks.filter((t) => !t.parent || !byID.has(t.parent)).forEach((t) => walk(t, 0));
     return (
         <TableCard.Root size="sm" className="workbench-table min-w-0">
-            <TableCard.Header title={tr("board.allTasks")} badge={`${tasks.length}`} />
-            {rows.length === 0 ? <Nothing icon={ClipboardCheck} title={tr("board.empty")} /> : (
+            <TableCard.Header title={tr("board.allTasks")} badge={total === undefined ? undefined : `${tasks.length} / ${total}`} />
+            {tasks.length === 0 ? <Nothing icon={ClipboardCheck} title={tr("board.empty")} /> : (
                 <Table aria-label={tr("board.allTasks")} size="sm">
                     <Table.Header>
                         <Table.Head id="task" label={tr("board.title")} isRowHeader />
@@ -192,10 +222,10 @@ function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => vo
                         <Table.Head id="cost" label={tr("board.usage")} />
                         <Table.Head id="updated" label={tr("board.updated")} />
                     </Table.Header>
-                    <Table.Body items={rows}>
+                    <Table.Body items={tasks}>
                         {(t) => (
                             <Table.Row id={t.id} onAction={() => onOpen(t.id)}>
-                                <Table.Cell><span style={{ paddingLeft: t.depth * 16 }} className="font-medium text-primary">{t.depth ? "└ " : ""}#{t.id}</span></Table.Cell>
+                                <Table.Cell><span className="font-medium text-primary">#{t.id}</span>{t.parent && <span className="ml-2 text-xs text-tertiary">↳ #{t.parent}</span>}</Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{label(labelsFor(locale).status, t.lane)}</span></Table.Cell>
                                 <Table.Cell><StateBadge state={taskState(t)} /></Table.Cell>
                                 <Table.Cell><span className="line-clamp-2 max-w-sm text-primary">{t.title || t.goal}</span></Table.Cell>
@@ -204,41 +234,6 @@ function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => vo
                                 <Table.Cell><span className="font-mono text-xs text-tertiary">{t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns}</span></Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{spend(t.tokens, locale)} · {fmtSeconds(t.seconds, locale)}</span></Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{t.updated_at ? relative(t.updated_at, locale) : ""}</span></Table.Cell>
-                            </Table.Row>
-                        )}
-                    </Table.Body>
-                </Table>
-            )}
-        </TableCard.Root>
-    );
-}
-
-function Scheduled() {
-    const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
-    const { act } = useIntent();
-    return (
-        <TableCard.Root size="sm" className="workbench-table min-w-0">
-            <TableCard.Header title={tr("board.scheduled")} badge={`${snap.schedules.length}`} description={tr("board.scheduleHint")} />
-            {snap.schedules.length === 0 ? <Nothing icon={Clock} title={tr("board.noSchedules")}>{tr("board.schedulePrefix")}<code>/every 9:00 …</code> {tr("board.or")}<code>/at 18:30 …</code> {tr("board.scheduleSuffix")}</Nothing> : (
-                <Table aria-label={tr("board.scheduled")} size="sm">
-                    <Table.Header>
-                        <Table.Head id="when" label={tr("board.when")} isRowHeader />
-                        <Table.Head id="next" label={tr("board.next")} />
-                        <Table.Head id="what" label={tr("board.what")} />
-                        <Table.Head id="who" label={tr("board.where")} />
-                        <Table.Head id="last" label={tr("board.last")} />
-                        <Table.Head id="actions" label="" />
-                    </Table.Header>
-                    <Table.Body items={snap.schedules}>
-                        {(s) => (
-                            <Table.Row id={s.id}>
-                                <Table.Cell><span className="text-primary">{s.spec}</span></Table.Cell>
-                                <Table.Cell><span className="text-tertiary">{when(s.next_at, locale)}</span>{s.state && <div className="mt-1"><StateBadge state={s.state} /></div>}</Table.Cell>
-                                <Table.Cell><span className="line-clamp-2 max-w-md">{s.prompt}</span>{s.error && <span className="mt-1 block max-w-md text-xs text-error-primary">{s.error}</span>}</Table.Cell>
-                                <Table.Cell><span className="text-xs text-tertiary">{s.conversation} · {s.agent || tr("common.default")}</span></Table.Cell>
-                                <Table.Cell><span className="text-xs text-tertiary">{s.last_at ? tr("board.lastRun", { time: relative(s.last_at, locale), count: s.runs }) : tr("board.neverRun")}</span></Table.Cell>
-                                <Table.Cell><Button size="sm" color="link-gray" onClick={() => act("/schedules")}>{tr("board.view")}</Button></Table.Cell>
                             </Table.Row>
                         )}
                     </Table.Body>

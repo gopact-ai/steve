@@ -1,3 +1,4 @@
+import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
 // Synthetic usage for dashboard interaction and visual checks; no live data.
 const zeroTokens = () => ({ input: 0, output: 0, total: 0, cached_read: 0, cached_write: 0, context: 0 });
 function row(key, value, attempts = 3, missing = 0) {
@@ -26,8 +27,11 @@ export function usageFixture() {
     }));
     return { timezone: "Asia/Shanghai", periods, total: periods["30d"].total, by_day: [], by_agent: [], by_model: [] };
 }
-export function usageState(usage = usageFixture()) {
-    return { at: "2026-09-06T14:25:00+08:00", hub: { node: "dashboard-preview", started: "2026-09-01T00:00:00Z", version: "sample" }, nodes: [], agents: [], tasks: [], projects: [], plans: [], schedules: [], attempts: [], landings: [], sources: [{ name: "ledger", wired: true }], usage };
+export function usageState() {
+    return workState({ at: "2026-09-06T14:25:00+08:00", hub: { node: "dashboard-preview", started: "2026-09-01T00:00:00Z", version: "sample" }, nodes: [], agents: [], tasks: [], projects: [], plans: [], schedules: [], attempts: [], landings: [], sources: [{ name: "ledger", wired: true }] });
+}
+export function usageResponse(usage = usageFixture()) {
+    return { at: "2026-09-06T14:25:00+08:00", usage, sources: [{ name: "ledger-usage", wired: true }] };
 }
 
 export function usageDurationFixture(mode) {

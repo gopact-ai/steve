@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Deleting is reachable and asks once: a project row and a conversation
 // row each offer a delete that states what goes with it, and only the
 // confirmed dialog issues the request.
@@ -33,7 +34,7 @@ await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = decodeURIComponent(u.pathname);
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "node-mac", version: "test" }, nodes, agents: [], projects, tasks, plans: [], attempts: [], landings: [], facts: { grants: [] } } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "node-mac", version: "test" }, nodes, agents: [], projects, tasks, plans: [], attempts: [], landings: [], facts: { grants: [] } }) });
     if (p === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations } });
     if (p === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });
     if (p === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [], conversations: conversations.map((c) => c.id) } });

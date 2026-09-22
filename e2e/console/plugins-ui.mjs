@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
@@ -22,7 +23,7 @@ await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "laptop", version: "test" }, nodes: [], agents: [], projects: [{ id: "p", node: "", path: "/work", workspaces: [], agents: [], level: "internal" }], tasks: [], plans: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "laptop", version: "test" }, nodes: [], agents: [], projects: [{ id: "p", node: "", path: "/work", workspaces: [], agents: [], level: "internal" }], tasks: [], plans: [], attempts: [], landings: [] }) });
     if (p === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });
     if (p === "/console/coordination" || p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false } });
     if (p === "/console/plugins") return f.failRead ? route.fulfill({ status: 503, json: { error: "Cannot read current plugin state" } }) : route.fulfill({ json: f.view });

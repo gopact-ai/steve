@@ -9,6 +9,8 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/execution"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -174,14 +176,25 @@ func TestProjectSwitchClosesTheConversationsTasks(t *testing.T) {
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	store, err := state.OpenLedger(book, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, book)
+	tasks, err := task.OpenLedger(book, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	coordinator.SetTasks(tasks, "laptop")
+	registry := execution.New(t.Context(), tasks)
+	coordinator.SetExecution(registry)
+	coordinator.artifacts.SetExecution(registry)
 
 	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
 		t.Fatal(err)

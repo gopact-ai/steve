@@ -23,11 +23,19 @@ func TestSessionDispatchPreservesObservationAndRejectsClientStart(t *testing.T) 
 		service: server.sessions,
 		changed: make(chan struct{}),
 		record: sessionRecord{
+			Format:     1,
 			ClusterID:  req.Authority.ClusterID,
 			Authority:  req.Authority,
 			ConfigHash: sessionConfigHash(req),
 			State:      state,
 		},
+	}
+	store, err := server.sessions.recordsStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.save(sessionRecord{}, server.sessions.sessions[req.ID].record); err != nil {
+		t.Fatal(err)
 	}
 	for _, action := range []nodewire.SessionAction{nodewire.SessionActionOpen, nodewire.SessionActionAttach, nodewire.SessionActionSettings, nodewire.SessionActionPoll} {
 		t.Run(string(action), func(t *testing.T) {

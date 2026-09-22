@@ -77,6 +77,16 @@ type fakeRunner struct {
 	cancels  atomic.Int32
 	aborts   atomic.Int32
 	stop     sync.Once
+	// cancelSettles answers a cancel the way a harness does: the prompt
+	// settles with ErrTurnCanceled, the agent having acknowledged the stop.
+	// Without it a cancel is a local context.Canceled, never settled.
+	cancelSettles bool
+	// onCancel runs inside Cancel, before the prompt is let go: what the
+	// agent manages to do while the stop is under way.
+	onCancel func()
+	// cancelErr is what Cancel answers: an agent that did not accept the
+	// stop. The prompt is still let go.
+	cancelErr error
 	// start fires once per runner; a turn can now be interrupted by the
 	// next one, so Prompt is reached more than once with the same runner.
 	start sync.Once
@@ -105,6 +115,9 @@ func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(view.Prog
 		}
 	}
 	if r.canceled.Load() {
+		if r.cancelSettles {
+			return "", nil, harness.ErrTurnCanceled
+		}
 		return "", nil, context.Canceled
 	}
 	if r.reply != "" {
@@ -114,15 +127,18 @@ func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(view.Prog
 }
 func (r *fakeRunner) Cancel(context.Context) error {
 	r.cancels.Add(1)
+	if r.onCancel != nil {
+		r.onCancel()
+	}
 	r.canceled.Store(true)
 	if r.done != nil {
 		r.stop.Do(func() { close(r.done) })
 	}
-	return nil
+	return r.cancelErr
 }
 func (r *fakeRunner) Abort() { r.aborts.Add(1) }
 
-func TestCoordinatorDropsSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
+func TestCoordinatorPreservesSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", SystemPrompt: "rules", Default: true},
 	})
@@ -138,8 +154,8 @@ func TestCoordinatorDropsSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
 	if runner.cancels.Load() != 0 || runner.aborts.Load() != 0 {
 		t.Fatalf("healthy process was torn down: cancels=%d aborts=%d", runner.cancels.Load(), runner.aborts.Load())
 	}
-	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
-		t.Fatal("failed turn session was retained")
+	if saved, ok := store.Conversation("chat").Sessions["codex"]; !ok || saved.UpstreamID == "" {
+		t.Fatal("failed turn lost its native context")
 	}
 }
 
@@ -164,12 +180,12 @@ func TestCoordinatorTimeoutDoesNotAbortSharedProcess(t *testing.T) {
 	if runner.aborts.Load() != 0 || runner.cancels.Load() != 0 {
 		t.Fatal("one expired turn tore down or re-cancelled the shared process")
 	}
-	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
-		t.Fatal("timed-out session was retained")
+	if saved, ok := store.Conversation("chat").Sessions["codex"]; !ok || saved.UpstreamID == "" {
+		t.Fatal("timed-out turn lost its native context")
 	}
 }
 
-func TestCoordinatorDropsStaleSessionWhenOpenFails(t *testing.T) {
+func TestCoordinatorKeepsContextWhenResumeFails(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	assembler := capability.NewAssembler(nil)
 	capabilities, err := assembler.Assemble(catalog.Default())
@@ -190,12 +206,12 @@ func TestCoordinatorDropsStaleSessionWhenOpenFails(t *testing.T) {
 	if _, err := handle(coordinator, t.Context(), "hello"); err == nil {
 		t.Fatal("expected open error")
 	}
-	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
-		t.Fatal("unreopenable session record was retained")
+	if saved, ok := store.Conversation("chat").Sessions["codex"]; !ok || saved.UpstreamID != "stale-session" {
+		t.Fatal("resume failure discarded the native context")
 	}
 }
 
-func TestCoordinatorRetriesNewSessionAfterLoadFails(t *testing.T) {
+func TestCoordinatorNeverFallsBackToNewSessionAfterLoadFails(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	assembler := capability.NewAssembler(nil)
 	capabilities, err := assembler.Assemble(catalog.Default())
@@ -218,10 +234,10 @@ func TestCoordinatorRetriesNewSessionAfterLoadFails(t *testing.T) {
 	}
 	coordinator := newCoordinatorIn(t, map[string]string{"codex": dir}, catalog, store, assembler, manager, time.Minute)
 	result, err := handle(coordinator, t.Context(), "hello")
-	if err != nil || result.Text != "recovered" {
-		t.Fatalf("retry = %#v, %v", result, err)
+	if err == nil || result.Text != "" {
+		t.Fatalf("resume failure was hidden: %#v, %v", result, err)
 	}
-	if len(manager.opened) != 1 || manager.opened[0] != "codex:" {
+	if len(manager.opened) != 0 || len(manager.runners["codex"].seen()) != 0 {
 		t.Fatalf("opens = %v", manager.opened)
 	}
 }
@@ -421,8 +437,8 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 	case <-time.After(waitDeadline):
 		t.Fatal("turn did not finish after cancel")
 	}
-	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
-		t.Fatal("prompt goroutine did not clean up the canceled session")
+	if saved, ok := store.Conversation("chat").Sessions["codex"]; !ok || saved.UpstreamID == "" {
+		t.Fatal("cancel discarded the conversation context")
 	}
 }
 
@@ -485,10 +501,9 @@ func TestGracefullyCancelledTurnKeepsItsSession(t *testing.T) {
 	}
 }
 
-// A turn the agent never settled leaves the session mid-flight, so it is
-// dropped instead. The two paths are what make graceful cancellation worth
-// doing at all.
-func TestAbandonedTurnDropsItsSession(t *testing.T) {
+// A turn the agent never settled preserves a tainted native context; it must
+// not silently start over on the next message.
+func TestAbandonedTurnPreservesTaintedContext(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{id: "sess-1", err: context.Canceled}
@@ -497,8 +512,8 @@ func TestAbandonedTurnDropsItsSession(t *testing.T) {
 	if _, err := handle(coordinator, t.Context(), "first"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
-	if saved := store.Conversation("chat").Sessions["codex"]; saved.UpstreamID != "" {
-		t.Fatalf("abandoned turn kept its session: %+v", saved)
+	if saved := store.Conversation("chat").Sessions["codex"]; saved.UpstreamID == "" || !saved.Tainted {
+		t.Fatal("abandoned turn lost its context or uncertainty marker")
 	}
 }
 

@@ -87,11 +87,6 @@ func (t *retainedTurn) settle(parent context.Context, run lifecycle.Result, err 
 		}
 		return result, nil, err
 	}
-	if c.afterTurn != nil && t.record.TaskID != "" {
-		// Last of all — after the attempt is closed and the queued
-		// landings are done — whoever waits for this turn's end is told.
-		defer c.afterTurn(t.record.TaskID)
-	}
 	if !run.Durable {
 		return Result{}, err, err
 	}

@@ -1,3 +1,6 @@
+import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
+import { AgentApproval, isApprovalSelector } from "@/components/steve/agent-approval";
+import { IconButton } from "@/components/steve/icon-button";
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
@@ -25,7 +28,7 @@ import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { useCoordination } from "@/lib/coordination";
 import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
-import type { AbilitySnapshot, Agent, Capability, Condition, Node as NodeT, Selector, Snapshot } from "@/lib/types";
+import type { AbilitySnapshot, Agent, Capability, Condition, Node as NodeT, Snapshot } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { ListEditor, SettingsEditor } from "@/components/steve/settings-editor";
@@ -117,20 +120,20 @@ function AgentTrouble({ a, onChanged }: { a: Agent; onChanged: () => void }) {
     );
 }
 
-// An agent approves through the selector its tool reserves for the
-// purpose, and the stance it follows there is the hub's, in short words.
-const isApproval = (selector: Selector) => selector.category === "mode" || selector.id === "mode";
-const approvalNames = { ask: "fleet.approval.ask", auto: "fleet.approval.auto", full: "fleet.approval.full" } as const;
-function approvalName(intent: string | undefined, tr: Translator): string {
-    const key = intent && approvalNames[intent as keyof typeof approvalNames];
-    return key ? tr(key) : "";
+function agentSpecKey(spec: AgentSpec): string {
+    return JSON.stringify([
+        spec.harness, spec.node || "", spec.model?.trim() || "", spec.about?.trim() || "",
+        Object.entries(spec.options || {}).map(([key, value]) => [key.trim(), value.trim()])
+            .filter(([key, value]) => key && value).sort(([a], [b]) => a.localeCompare(b)),
+        spec.requires || [], spec.mcp_servers || [],
+    ]);
 }
 
 // AgentDrawer is one agent in full, and the place to change it: where it
 // runs, with which AI tool and model, what its machine must offer, which
 // MCP servers it uses. Saved changes reach the running catalog at once
 // and the config file with it.
-function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveActivity; onClose: () => void; onChanged: () => void }) {
+function AgentDrawer({ a: observed, live, onClose, onChanged }: { a: Agent; live?: LiveActivity; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const { fill } = useIntent();
@@ -138,13 +141,21 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
-    const [spec, setSpec] = useState<AgentSpec>({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", options: { ...(a.options || {}) }, about: a.about || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
-    const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && (sel.choices || []).length > 0);
+    const remoteSpec: AgentSpec = { harness: observed.harness, node: observed.node === snap.hub.node ? "" : observed.node || "", model: observed.preferred || "", options: { ...(observed.options || {}) }, about: observed.about || "", requires: observed.requires || [], mcp_servers: observed.mcp_servers || [] };
+    const [confirmed, setConfirmed] = useState<AgentSpec | null>(null);
+    // Refresh is deferred. Until a snapshot confirms the latest write,
+    // re-editing uses that write, not an older or intermediate read.
+    if (confirmed && agentSpecKey(confirmed) === agentSpecKey(remoteSpec)) setConfirmed(null);
+    const baseline = confirmed || remoteSpec;
+    const a = { ...observed, ...baseline, node: baseline.node || snap.hub.node, preferred: baseline.model };
+    const [spec, setSpec] = useState<AgentSpec>(remoteSpec);
+    const beginEdit = () => { setSpec(baseline); setError(""); setEditing(true); };
+    const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && !isApprovalSelector(sel) && (sel.choices || []).length > 0);
     const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
     const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelName(l, locale)).join("、");
     async function save() {
         setBusy(true); setError("");
-        try { await updateAgent(a.id, spec); onChanged(); setEditing(false); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
+        try { await updateAgent(a.id, spec); setConfirmed(spec); onChanged(); setEditing(false); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
     async function remove() {
         setError("");
@@ -153,10 +164,13 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
     const modelItems = [{ id: "__none", label: tr("fleet.toolDefault") }, ...(a.models || []).map((m) => ({ id: m, label: m }))];
     if (spec.model && !(a.models || []).includes(spec.model)) modelItems.push({ id: spec.model, label: spec.model });
     return (
-        <Drawer title={<><span className="text-base font-semibold text-primary">{a.id}</span>
+        <Drawer title={a.id} badges={<>
                         {a.default && <Badge type="pill-color" size="sm" color="brand">{tr("common.default")}</Badge>}
                         <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<AgentTrouble a={a} onChanged={onChanged} />} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>{tr("fleet.assign")}</Button>
-                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
+                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={beginEdit}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
+                <AgentApproval agent={a} options={spec.options || {}} editing={editing} disabled={busy}
+                    contextChanged={editing && (spec.harness !== observed.harness || (spec.node || snap.hub.node) !== (observed.node || snap.hub.node))}
+                    onEdit={beginEdit} onChange={options => setSpec({ ...spec, options })} />
                 {!editing ? (
                     <>
                         <KeyValue dense rows={[
@@ -166,7 +180,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
                             { k: tr("fleet.preferredModel"), v: a.preferred || <span className="text-quaternary">{tr("fleet.defaultModel")}</span>, hint: tr("fleet.modelHint") },
                             { k: tr("fleet.lastModel"), v: a.observed || <span className="text-quaternary">{tr("fleet.noSessions")}</span>, hint: tr("fleet.observedModelHint") },
                             { k: tr("fleet.availableModels"), v: a.models?.length ? <span className="text-secondary">{a.models.length} {tr("fleet.items")}</span> : <span className="text-quaternary">{tr("common.unknown")}</span> },
-                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : isApproval(sel) && approvalName(a.approval, tr) ? <span className="text-secondary">{tr("fleet.followsApproval", { value: approvalName(a.approval, tr) })}</span> : <span className="text-quaternary">{tr("fleet.unpinned")}{sel.current ? tr("fleet.previousOption", { value: sel.current }) : ""}</span>, hint: tr("fleet.optionHint") })),
+                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : <span className="text-quaternary">{tr("fleet.unpinned")}{sel.current ? tr("fleet.previousOption", { value: sel.current }) : ""}</span>, hint: tr("fleet.optionHint") })),
                             { k: tr("fleet.eligibleProjects"), v: tr("fleet.projectLevels", { levels: canTake }), hint: tr("fleet.classificationHint") },
                             { k: tr("fleet.mcpServers"), v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">{tr("fleet.none")}</span>, hint: tr("fleet.mcpHint") },
                             { k: tr("fleet.requirements"), v: <Conditions a={a} />, hint: tr("fleet.requirementsHint") },
@@ -202,7 +216,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
                         {extras.map((sel) => (
                             <Select key={sel.id} size="sm" label={sel.name || sel.id} hint={tr("fleet.sessionOptionHint", { previous: sel.current ? tr("fleet.previousWas", { value: sel.current }) : "" })} selectedKey={spec.options?.[sel.id] || "__none"}
                                 onSelectionChange={(k) => { const next = { ...(spec.options || {}) }; if (!k || String(k) === "__none") delete next[sel.id]; else next[sel.id] = String(k); setSpec({ ...spec, options: next }); }}
-                                items={[{ id: "__none", label: isApproval(sel) && approvalName(a.approval, tr) ? tr("fleet.followApproval", { value: approvalName(a.approval, tr) }) : tr("fleet.toolDefault") }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
+                                items={[{ id: "__none", label: tr("fleet.toolDefault") }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
                                 {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                             </Select>
                         ))}
@@ -261,14 +275,10 @@ function AddMachine({ machines, harnesses, executor, onClose, onDone }: { machin
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
                 <Dialog aria-label={mode === "machine" ? tr("fleet.addMachine") : tr("fleet.addAgent")}>
-                    <div className="flex max-h-[85dvh] w-full flex-col gap-4 overflow-y-auto overscroll-contain rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
-                        <div className="flex items-start gap-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-base font-semibold text-primary">{tr(mode === "machine" ? "fleet.addMachine" : "fleet.addAgent")}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? tr(executor ? "ssh.manualExecutorHint" : "fleet.addMachineHint") : tr("fleet.addAgentHint")}</div>
-                            </div>
-                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
-                        </div>
+                    <DialogSurface><DialogBody className="max-h-[85dvh] overflow-y-auto overscroll-contain">
+                        <DialogHeader title={tr(mode === "machine" ? "fleet.addMachine" : "fleet.addAgent")}
+                            description={mode === "machine" ? tr(executor ? "ssh.manualExecutorHint" : "fleet.addMachineHint") : tr("fleet.addAgentHint")}
+                            aside={<IconButton icon={X} onClick={onClose} label={tr("common.close")} />} />
                         {!result && !done && (
                             <Tabs selectedKey={mode} onSelectionChange={(k) => setMode(k as "machine" | "agent")}>
                                 <TabList type="button-border" size="sm" items={[{ id: "machine", label: tr("fleet.machine") }, { id: "agent", label: "Agent" }]}>{(item) => <Tab {...item} />}</TabList>
@@ -306,11 +316,11 @@ function AddMachine({ machines, harnesses, executor, onClose, onDone }: { machin
                         )}
                         {mode === "agent" && done && <div className="text-sm text-primary">{tr("fleet.agentAdded", { agent: agent.trim(), harness, node: machines.find((m) => m.id === (node || "__hub"))?.label || node })}</div>}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
-                        <div className="flex justify-end gap-2">
+                        <DialogFooter>
                             <Button size="sm" color="secondary" onClick={onClose}>{result || done ? tr("fleet.done") : tr("common.cancel")}</Button>
                             {!result && !done && <Button size="sm" color="primary" isLoading={busy} isDisabled={mode === "machine" ? !name.trim() || !addr.trim() : !agent.trim()} onClick={() => void submit()}>{mode === "machine" ? tr("fleet.registerMachine") : tr("fleet.registerAgent")}</Button>}
-                        </div>
-                    </div>
+                        </DialogFooter>
+                    </DialogBody></DialogSurface>
                 </Dialog>
             </Modal>
         </ModalOverlay>
@@ -391,9 +401,9 @@ function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: No
         try { await removeNode(n.name); onChanged(); onClose(); } catch (e) { setRemoveError(String(e).replace(/^Error: /, "")); setRemoving(false); }
     }
     return (
-        <Drawer title={<><span className="text-base font-semibold text-primary">{nodeLabel(n)}</span>
+        <Drawer title={nodeLabel(n)} badges={<>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</Badge>
-                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div className="mt-0.5"><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{n.role !== "hub" && n.up && n.version && hubVersion && n.version !== hubVersion && <Button size="sm" color="secondary" onClick={() => onUpgrade(n)}>{tr("fleet.upgradeTo", { version: hubVersion })}</Button>}{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
+                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="text-error-primary">{n.last_error}</div>}</>} actions={<>{n.role !== "hub" && n.up && n.version && hubVersion && n.version !== hubVersion && <Button size="sm" color="secondary" onClick={() => onUpgrade(n)}>{tr("fleet.upgradeTo", { version: hubVersion })}</Button>}{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
                 {renaming ? (
                     <form className="flex flex-col gap-2 rounded-lg border border-secondary p-3" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
                         <Input label={tr("fleet.displayName")} hint={tr("fleet.displayNameHint")} value={nameDraft} onChange={setNameDraft} maxLength={64} isDisabled={nameBusy} autoFocus />
@@ -524,7 +534,7 @@ export function FleetPage() {
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
-                actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>}>
+                actions={<>{coordination?.enabled && tab !== "coordination" && <Button size="sm" color="secondary" onClick={() => setTab("coordination")}>{tr("coord.manage")}</Button>}<Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>}>
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as FleetTab)}>
                     <TabList type="button-border" size="sm" items={[{ id: "coordination", label: tr("coord.title") }, { id: "machines", label: tr("fleet.tabMachines"), badge: snap.nodes.length || undefined }, { id: "agents", label: "Agent", badge: snap.agents.length || undefined }]}>
                         {(item) => <Tab {...item} />}

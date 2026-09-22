@@ -17,8 +17,10 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
@@ -65,13 +67,21 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, home.FileMemory), []byte("private owner memory"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, _, runner := homeCoordinator(t, dir, "console-owner")
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	c, _, runner := homeCoordinator(t, dir, "console-owner", book)
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(book, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.SetTasks(tasks, "")
+	registry := execution.New(t.Context(), tasks)
+	c.SetExecution(registry)
+	c.artifacts.SetExecution(registry)
 	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "hello", MessageID: "om-native", ChatID: "oc-native"})
 	if err != nil {
 		t.Fatal(err)

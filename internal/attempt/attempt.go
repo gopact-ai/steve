@@ -31,6 +31,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -184,6 +185,9 @@ type Usage struct {
 // Record is the attempt as the ledger holds it.
 type Record struct {
 	Spec
+	// NodeReceipt is authenticated original native evidence, recorded with the
+	// terminal result. Its pending retry index is separate from closed history.
+	NodeReceipt *nodewire.SessionReceipt `json:"node_receipt,omitempty"`
 	// SessionSettled is nil for records without durable execution evidence.
 	// Running arms it false before Prompt; confirmed settlement writes true.
 	SessionSettled *bool          `json:"session_settled,omitempty"`
@@ -234,6 +238,10 @@ func (n NoSlot) Error() string {
 var (
 	ErrLost     = errors.New("attempt: lease lost")
 	ErrBadState = errors.New("attempt: transition not allowed")
+	// ErrNotFound is a read that found no attempt under the id, as opposed
+	// to one that failed: a caller settling what an absent attempt left
+	// must not mistake a broken read for absence.
+	ErrNotFound = errors.New("attempt: not found")
 )
 
 const (
@@ -411,7 +419,7 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 	settled := true
 	record := Record{SessionSettled: &settled, Spec: spec, State: Leased, Revision: 1, Leases: held, StartedAt: s.now().UTC()}
 	if _, err := s.l.BeginGuarded(ctx, spec.ID, kind, string(Leased), spec.By, record, func(tx *ledger.Tx) error {
-		return task.CheckExecutionTx(tx, spec.Execution)
+		return guardRecordOpenTx(tx, spec)
 	}); err != nil {
 		release()
 		return Record{}, err
@@ -468,7 +476,10 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 					return err
 				}
 			}
-			return tx.SetData(op, next)
+			if err := recordNodeReceiptTx(tx, current, next); err != nil {
+				return err
+			}
+			return setRecordDataTx(tx, op, next)
 		})
 	if err != nil {
 		if errors.Is(err, ledger.ErrStale) {
@@ -523,9 +534,10 @@ type NameBinding struct {
 // Completion is the result and spend to record together with a result name.
 // A nil Binding completes an attempt without publishing a name.
 type Completion struct {
-	Result  Result
-	Usage   *Usage
-	Binding *NameBinding
+	Result      Result
+	Usage       *Usage
+	Binding     *NameBinding
+	NodeReceipt *nodewire.SessionReceipt
 }
 
 // Complete commits a prepared result from BindReady to Bound. A stale lease
@@ -539,6 +551,7 @@ func (s *Service) Complete(ctx context.Context, id, actor string, completion Com
 		if completion.Usage != nil {
 			r.Usage = completion.Usage
 		}
+		r.NodeReceipt = completion.NodeReceipt
 	}, completion.Binding)
 }
 
@@ -569,6 +582,7 @@ func (s *Service) RejectCompletion(parent context.Context, id, actor string, com
 		if completion.Usage != nil {
 			r.Usage = completion.Usage
 		}
+		r.NodeReceipt = completion.NodeReceipt
 	})
 	if err != nil {
 		return errors.Join(cause, fmt.Errorf("close rejected completion %s: %w", id, err))
@@ -765,7 +779,7 @@ func (s *Service) Supersede(ctx context.Context, oldID string, spec Spec, actor 
 			r.State = Superseded
 			r.SupersededBy = spec.ID
 			r.Revision = op.Revision + 1
-			return tx.SetData(op, r)
+			return setRecordDataTx(tx, op, r)
 		}); err != nil {
 		return Record{}, err
 	}
@@ -867,7 +881,7 @@ func (s *Service) expireWith(ctx context.Context, r Record, actor, cause string,
 			next.Error = cause
 			next.Revision = op.Revision + 1
 			next.EndedAt = s.now().UTC()
-			return tx.SetData(op, next)
+			return setRecordDataTx(tx, op, next)
 		})
 	return err
 }
@@ -879,28 +893,14 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		return Record{}, err
 	}
 	if !ok {
-		return Record{}, fmt.Errorf("attempt %s not found", id)
+		return Record{}, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	return decode(op)
 }
 
 // Live lists every attempt that is not over.
 func (s *Service) Live(ctx context.Context) ([]Record, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
-	if err != nil {
-		return nil, err
-	}
-	var out []Record
-	for _, op := range ops {
-		r, err := decode(op)
-		if err != nil {
-			return nil, err
-		}
-		if !r.State.Terminal() || r.Unsettled {
-			out = append(out, r)
-		}
-	}
-	return out, nil
+	return s.liveRecords(ctx)
 }
 
 // Closed lists every attempt that reached a terminal state, oldest first:
@@ -926,45 +926,19 @@ func (s *Service) Closed(ctx context.Context) ([]Record, error) {
 
 // ForTask lists a task's attempts, oldest first.
 func (s *Service) ForTask(ctx context.Context, taskID string) ([]Record, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
-	if err != nil {
-		return nil, err
-	}
-	var out []Record
-	for _, op := range ops {
-		r, err := decode(op)
-		if err != nil {
-			return nil, err
-		}
-		if r.TaskID == taskID {
-			out = append(out, r)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })
-	return out, nil
+	return s.identityRecords(ctx, taskIdentitySQL, taskID)
 }
 
 // LatestForTurn is the most recent attempt of a logical turn, if any.
 func (s *Service) LatestForTurn(ctx context.Context, turnID string) (Record, bool, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
+	records, err := s.identityRecords(ctx, turnIdentitySQL, turnID)
 	if err != nil {
 		return Record{}, false, err
 	}
-	var latest Record
-	found := false
-	for _, op := range ops {
-		r, err := decode(op)
-		if err != nil {
-			return Record{}, false, err
-		}
-		if r.TurnID != turnID {
-			continue
-		}
-		if !found || r.StartedAt.After(latest.StartedAt) {
-			latest, found = r, true
-		}
+	if len(records) == 0 {
+		return Record{}, false, nil
 	}
-	return latest, found, nil
+	return records[0], true, nil
 }
 
 // TakeoverAllowed says whether a previous attempt of the turn leaves work
@@ -986,13 +960,16 @@ func (s *Service) History(ctx context.Context, id string) ([]ledger.Event, error
 }
 
 func decode(op ledger.Operation) (Record, error) {
-	var r Record
+	var r *Record
 	if err := json.Unmarshal(op.Data, &r); err != nil {
 		return Record{}, fmt.Errorf("attempt %s: %w", op.ID, err)
 	}
+	if r == nil {
+		return Record{}, fmt.Errorf("attempt %s: record is null", op.ID)
+	}
 	r.State = State(op.State)
 	r.Revision = op.Revision
-	return r, nil
+	return *r, nil
 }
 
 // Describe renders a record for a card or a log line.
@@ -1014,16 +991,11 @@ func Describe(r Record) string {
 // LiveAttemptOf is the id of the task's attempt in flight, if any: what a
 // side effect made on the task's behalf is claimed by.
 func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, bool) {
-	records, err := s.ForTask(ctx, taskID)
-	if err != nil {
+	records, err := s.identityRecords(ctx, liveTaskIdentitySQL, taskID)
+	if err != nil || len(records) == 0 {
 		return "", false
 	}
-	for i := len(records) - 1; i >= 0; i-- {
-		if !records[i].State.Terminal() || records[i].Unsettled {
-			return records[i].ID, true
-		}
-	}
-	return "", false
+	return records[0].ID, true
 }
 
 // Reservation is capacity held ahead of an attempt: one endpoint slot,
@@ -1199,7 +1171,7 @@ func (s *Service) MarkUnsettled(ctx context.Context, id, actor string, cause err
 		if usage != nil {
 			next.Usage = usage
 		}
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	return err
 }
@@ -1236,7 +1208,7 @@ func (s *Service) ConfirmStopped(ctx context.Context, id, actor, evidence string
 		next.StopEvidence = evidence
 		next.State = to
 		next.EndedAt = s.now().UTC()
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if err != nil {
 		return Record{}, err
@@ -1277,7 +1249,7 @@ func (s *Service) ReleaseEndpointAfterSessionClosed(ctx context.Context, id, act
 		next.Leases = held
 		settled := true
 		next.SessionSettled = &settled
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if err != nil {
 		return err

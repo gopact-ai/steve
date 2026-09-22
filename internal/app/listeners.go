@@ -39,6 +39,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	}
 	if environment != nil {
 		stops := newApplicationStops(attempts, tasks, manager)
+		stops.executions = work.Executions()
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile requested task stops", stops.Reconcile) })
 	}
 	if err := services.Ready(); err != nil {

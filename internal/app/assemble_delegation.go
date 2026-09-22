@@ -17,10 +17,10 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/delegate"
-	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
@@ -89,30 +89,19 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 			recoverRetainedDelegates = delegation.RecoverRetained
 		}
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
+		if settings := boot.Settings(); settings != nil {
+			delegation.SilenceSource = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
+		}
 		delegation.RecoveryQuiet = time.Duration(cfg.Gateway.RecoveryQuiet)
 		delegation.RegisterIdle = nodes.RegisterIdle
 		delegation.SetObserver(delegateObserver(ctx, admin, view, cons))
 		gate.SetDelegator(delegation)
-		// A child's result goes back into its parent's conversation as a
-		// message — the page's queue or the chat — instead of the parent
-		// polling for it; a turn's end delivers what ended meanwhile.
-		delegation.SetReplaySafeDelivery(func(parent task.Task) bool {
-			return parent.ChatID == console.ChatID || console.IsConsole(parent.Channel)
-		})
-		delegation.SetDeliveryReceipt(func(parent task.Task, key string) (bool, error) {
-			if parent.ChatID == console.ChatID || console.IsConsole(parent.Channel) {
-				return cons.ContinuationReceipt(parent.Channel, parent.ID, key)
-			}
-			return false, nil
-		})
-		delegation.SetDeliverer(func(ctx context.Context, d delegate.Delivery) error {
-			if d.ChatID == console.ChatID || console.IsConsole(d.Conversation) {
-				return cons.ContinueTask(ctx, d.Conversation, d.ParentTask, d.Key, d.Member, d.Notice(), d.Prompt())
-			}
-			return gw.DeliverConfirmed(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation,
-				ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt(), func(err error) { delegation.ConfirmDelivery(d, err) })
-		})
+		wireDelegateDelivery(delegation, cons, gw)
 		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
+		coordinator.SetTurnPreface(func(ctx context.Context, taskID string) turn.Preface {
+			text, told := delegation.Preface(ctx, taskID)
+			return turn.Preface{Text: text, Told: told}
+		})
 		reconcileDeliveries = delegation.ReconcileDeliveries
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the
@@ -191,7 +180,7 @@ func delegateObserver(ctx context.Context, admin *adminsvc.Service, view *readmo
 			}
 		}
 		view.DelegateProgress(c.Task, c.Agent, where, info, p)
-		if console.IsConsole(c.Conversation) {
+		if c.Transport == "console" {
 			progress := readmodel.FromProgress(p)
 			progress.Agent, progress.Node = c.Agent, where
 			cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))

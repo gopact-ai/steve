@@ -57,17 +57,17 @@ func (s *Scope) AdoptRetained() {
 		return
 	default:
 	}
-	if s.key.AttemptID == "" {
+	if s.key.AttemptID == "" || s.token == nil || s.stopRequested || s.ctx.Err() != nil ||
+		s.registry.tasks == nil || s.registry.tasks.CheckExecution(*s.token) != nil {
 		return
 	}
 	for previous := range s.registry.entries {
-		if previous == s || previous.key.AttemptID != s.key.AttemptID {
+		if previous == s || previous.key.AttemptID != s.key.AttemptID ||
+			previous.key.TaskID != s.key.TaskID || previous.token == nil || *previous.token != *s.token {
 			continue
 		}
-		select {
-		case <-previous.done:
+		if previous.joinedLocked() {
 			delete(s.registry.entries, previous)
-		default:
 		}
 	}
 }

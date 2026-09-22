@@ -1,5 +1,6 @@
-import { createContext, useEffect, useRef, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useEffect, useRef, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useFleet } from "@/lib/fleet";
+import { useEventCallback } from "@/hooks/use-event-callback";
 import { addDraftMaterial } from "@/lib/drafts";
 import { refKey } from "@/lib/api/material";
 import type { Material, MaterialRef, DraftMaterial, MaterialAnnotation } from "@/lib/types";
@@ -26,22 +27,26 @@ export function MaterialProvider({ children }: { children: ReactNode }) {
     const [notice, setNotice] = useState("");
     useEffect(()=>{if(!notice)return;const timer=window.setTimeout(()=>setNotice(""),4000);return()=>window.clearTimeout(timer)},[notice]);
     const changed = useCallback(() => setRevision((value) => value + 1), []);
-    const storageKey = (project: string) => `steve.material.pins:${window.location.origin}:${snap.hub.node}:${project}`;
-    const pins = (project: string): DraftMaterial[] => { try { const saved = JSON.parse(localStorage.getItem(storageKey(project)) || "[]"); return Array.isArray(saved) ? saved.filter((item) => item && typeof item.id === "string" && item.project === project && typeof item.title === "string" && ["text", "image", "binary"].includes(item.kind)) : []; } catch { return []; } };
+    const storageKey = useCallback((project: string) => `steve.material.pins:${window.location.origin}:${snap.hub.node}:${project}`, [snap.hub.node]);
+    // pins is also called during render, so a hub change must publish the new
+    // reader immediately rather than wait for an event callback's layout effect.
+    const pins = useCallback((project: string): DraftMaterial[] => { try { const saved = JSON.parse(localStorage.getItem(storageKey(project)) || "[]"); return Array.isArray(saved) ? saved.filter((item) => item && typeof item.id === "string" && item.project === project && typeof item.title === "string" && ["text", "image", "binary"].includes(item.kind)) : []; } catch { return []; } }, [storageKey]);
     const item = (material: Material, ref: MaterialRef): DraftMaterial => ({ ...ref, title: material.title, project: material.project, kind: material.kind, mime: material.mime, size: material.size });
-    const add = async (material: Material, ref: MaterialRef, to: MaterialTarget) => {
+    const add = useEventCallback(async (material: Material, ref: MaterialRef, to: MaterialTarget) => {
         if (material.project !== to.project || (liveTarget.current?.conversation===to.conversation && liveTarget.current.project!==to.project)) throw new Error(t("materials.wrongProject"));
         if (!await addDraftMaterial(to.conversation, item(material, ref))) throw new Error(t("materials.sourceUnavailable"));
         setNotice(t("materials.added", { title: to.title }));
-    };
-    const pin = (material: Material, ref: MaterialRef) => {
+    });
+    const pin = useEventCallback((material: Material, ref: MaterialRef) => {
         if (!snap.hub.node) throw new Error(t("materials.loading"));
         const current = pins(material.project);
         localStorage.setItem(storageKey(material.project), JSON.stringify([...current.filter((entry) => refKey(entry) !== refKey(ref)), item(material, ref)]));
         changed(); setSideRequest({ project: material.project, nonce: Date.now() }); setNotice(t("materials.pinned"));
-    };
-    const unpin = (project: string, ref: MaterialRef) => { localStorage.setItem(storageKey(project), JSON.stringify(pins(project).filter((entry) => refKey(entry) !== refKey(ref)))); changed(); };
-    return <Context.Provider value={{ target, setTarget, add, pin, unpin, pins, annotate: setEditor, sideRequest, revision, changed }}>{children}
+    });
+    const unpin = useEventCallback((project: string, ref: MaterialRef) => { localStorage.setItem(storageKey(project), JSON.stringify(pins(project).filter((entry) => refKey(entry) !== refKey(ref)))); changed(); });
+    const value = useMemo(() => ({ target, setTarget, add, pin, unpin, pins, annotate: setEditor, sideRequest, revision, changed }),
+        [target, add, pin, unpin, pins, sideRequest, revision, changed]);
+    return <Context.Provider value={value}>{children}
         {notice && <div role="status" className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 z-[140] flex max-w-sm items-center gap-3 rounded-lg border border-secondary bg-primary p-3 text-sm text-primary shadow-lg"><span>{notice}</span><button type="button" className="pointer-events-auto" aria-label={t("materials.close")} onClick={() => setNotice("")}>×</button></div>}
         {editor && <AnnotationEditor key={editor.annotation?.id || refKey(editor.ref)} material={editor.material} anchor={editor.ref} annotation={editor.annotation} onClose={() => setEditor(null)} onSaved={() => { changed(); setNotice(t("materials.saved")); }} />}
     </Context.Provider>;

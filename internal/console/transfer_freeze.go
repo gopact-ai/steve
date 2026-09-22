@@ -3,19 +3,29 @@ package console
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-// FreezeProject seals only the source's dispatchable work after its original
-// queue was exported. Stable receipts keep retries from resurrecting it.
-func FreezeProject(doc ledger.Doc, project string) error {
+// FreezeProjectDocument is the explicit file/test adapter. Stable receipts
+// keep retries from resurrecting dispatchable work.
+func FreezeProjectDocument(doc ledger.Doc, project string) error {
 	saved, err := loadTranscript(doc)
 	if err != nil {
 		return err
 	}
+	freezeConsole(&saved, project)
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		return fmt.Errorf("freeze project console: %w", err)
+	}
+	return doc.Save(raw)
+}
+
+func freezeConsole(saved *transcript, project string) {
 	now := time.Now().UTC()
 	for conversation, list := range saved.Exchanges {
 		for _, e := range list {
@@ -38,9 +48,31 @@ func FreezeProject(doc ledger.Doc, project string) error {
 			saved.Questions[id] = q
 		}
 	}
-	raw, err := json.Marshal(saved)
+}
+
+// FreezeProjectTx seals source dispatch and receipt evidence in the same
+// transaction releasing task records and project ownership.
+func FreezeProjectTx(tx *ledger.Tx, exported ProjectTransfer) error {
+	before, err := loadConsoleRecordsTx(tx)
 	if err != nil {
-		return fmt.Errorf("freeze project console: %w", err)
+		return err
 	}
-	return doc.Save(raw)
+	state, err := before.state()
+	if err != nil {
+		return err
+	}
+	next := state.transcript()
+	current, err := exportProject(next, exported.Project, exported.Conversations)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(current, exported) {
+		return fmt.Errorf("%w: console changed during export", ledger.ErrConflict)
+	}
+	freezeConsole(&next, exported.Project)
+	changes, err := consoleChanges(before, next)
+	if err != nil {
+		return err
+	}
+	return writeConsoleChangesTx(tx, before.revision, changes)
 }

@@ -11,13 +11,45 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/readmodel"
 )
+
+func assertPeerUsage(t *testing.T, peer *cluster.Peer) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, peer.UiURL+"/usage", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+peer.UIToken)
+	client := &http.Client{Timeout: 15 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("usage gateway returned status=%d type=%q cache=%q", response.StatusCode, response.Header.Get("Content-Type"), response.Header.Get("Cache-Control"))
+	}
+	var usage readmodel.UsageSnapshot
+	if err := json.NewDecoder(response.Body).Decode(&usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Usage == nil || usage.At.IsZero() || len(usage.Sources) != 1 || !usage.Sources[0].Wired || usage.Sources[0].Error != "" {
+		t.Fatalf("usage unavailable through desktop gateway: %+v", usage)
+	}
+	for _, period := range []string{"1d", "7d", "30d"} {
+		if _, ok := usage.Usage.Periods[period]; !ok {
+			t.Fatalf("usage missing period %s", period)
+		}
+	}
+}
 
 func TestClusterPeerActualApplicationActivates(t *testing.T) {
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
@@ -27,6 +59,7 @@ func TestClusterPeerActualApplicationActivates(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("actual application failed: %d %s", status, body)
 	}
+	assertPeerUsage(t, peer)
 	if err := peer.Close(); err != nil {
 		t.Fatal(fmt.Errorf("shutdown actual application: %w", err))
 	}
@@ -64,6 +97,7 @@ func TestClusterPeerActualApplicationsRebuildAcrossThreePeerTransfer(t *testing.
 	if status != http.StatusOK {
 		t.Fatalf("original UI could not access second real application: %d %s", status, body)
 	}
+	assertPeerUsage(t, first)
 	status, body = PeerRequest(t, first, http.MethodPost, "/console/coordination/transfer", consoleapi.CoordinatorTransfer{CommandID: "real-return", ExpectedEpoch: 2, TargetNodeID: first.Config.NodeID})
 	if status != http.StatusOK {
 		t.Fatalf("real application return: %d %s", status, body)

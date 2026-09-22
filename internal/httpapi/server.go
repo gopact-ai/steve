@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,16 +20,23 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
 // Model supplies system projections to the transport; it owns no HTTP state.
 type Model interface {
 	Snapshot(context.Context) readmodel.Snapshot
+	UsageSummary(context.Context) readmodel.UsageSnapshot
 	Subscribe(context.Context) (<-chan readmodel.Event, func())
 	Recent() []readmodel.Event
-	History(context.Context, int64, int) ([]readmodel.HistoryEntry, int64, error)
+	History(context.Context, string, int) ([]readmodel.HistoryEntry, string, error)
+	TaskHistory(context.Context, task.Query) (readmodel.TaskPage, error)
+	TaskDetail(context.Context, string) (readmodel.TaskDetail, error)
+	TaskAccounting(string, string, int) (readmodel.AccountingPage, error)
+	PlanHistory(plan.Query) (readmodel.PlanPage, error)
 }
 
 // ServerConfig is where the read model is served and who may read it.
@@ -42,23 +50,24 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
-	plugins      consoleapi.PluginsService
-	coordination consoleapi.CoordinationService
-	ssh          SSHService
-	sshOrigin    string
-	desktop      consoleapi.DesktopService
-	mutationMu   sync.RWMutex
-	maintenance  bool
-	services     consoleapi.ServiceControl
-	channels     consoleapi.ChannelsService
-	settings     consoleapi.SettingsService
-	console      consoleapi.Console
-	admin        consoleapi.Admin
-	model        Model
-	token        string
-	listener     net.Listener
-	httpServer   *http.Server
-	stopRequests context.CancelFunc
+	plugins        consoleapi.PluginsService
+	coordination   consoleapi.CoordinationService
+	ssh            SSHService
+	sshOrigin      string
+	desktop        consoleapi.DesktopService
+	mutationMu     sync.RWMutex
+	maintenance    bool
+	services       consoleapi.ServiceControl
+	channels       consoleapi.ChannelsService
+	settings       consoleapi.SettingsService
+	console        consoleapi.Console
+	channelHistory consoleapi.ChannelHistory
+	admin          consoleapi.Admin
+	model          Model
+	token          string
+	listener       net.Listener
+	httpServer     *http.Server
+	stopRequests   context.CancelFunc
 }
 
 // NewServer binds immediately so the caller knows the URL before serving.
@@ -100,6 +109,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("PUT /console/settings", s.guard(s.consoleSettings))
 	mux.HandleFunc("PATCH /console/settings", s.guard(s.consoleSettings))
 	mux.HandleFunc("GET /state", s.guard(s.state))
+	mux.HandleFunc("GET /usage", s.guard(s.usage))
 	mux.HandleFunc("GET /events", s.guard(s.events))
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("POST /console/queue", s.guard(s.consoleEnqueue))
@@ -113,6 +123,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/queue/{id}/steer", s.guard(s.consoleSteer))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
+	mux.HandleFunc("GET /console/channel-conversations/{id}", s.guard(s.consoleChannelConversation))
 	mux.HandleFunc("PUT /console/conversations/{id}/initialize", s.guard(s.consoleInitializeConversation))
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
 	mux.HandleFunc("DELETE /console/conversations/{id}", s.guard(s.consoleDeleteConversation))
@@ -152,6 +163,10 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/selectors", s.guard(s.consoleSelectors))
 	mux.HandleFunc("PUT /console/preferences", s.guard(s.consoleSetPreferences))
 	mux.HandleFunc("GET /console/tasks/{task}", s.guard(s.consoleTask))
+	mux.HandleFunc("GET /console/tasks", s.guard(s.consoleTasks))
+	mux.HandleFunc("GET /console/plans", s.guard(s.consolePlans))
+	mux.HandleFunc("GET /console/tasks/{task}/accounting", s.guard(s.consoleTaskAccounting))
+	mux.HandleFunc("GET /console/attempts", s.guard(s.consoleNativeAttempts))
 	mux.HandleFunc("PATCH /console/tasks/{task}/meta", s.guard(s.consoleTaskMeta))
 	mux.HandleFunc("GET /console/tasks/{task}/attempts", s.guard(s.consoleTaskAttempts))
 	mux.HandleFunc("GET /console/attempts/{attempt}/tree", s.guard(s.consoleAttemptTree))
@@ -853,6 +868,10 @@ func (s *Server) consoleSelectors(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOr(w) {
 		return
 	}
+	// Selector discovery may attach a workspace/open a session despite being GET.
+	if !s.consoleMutationIdentity(w, r, r.URL.Query().Get("conversation")) {
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	sel, err := s.admin.Selectors(r.Context(), r.URL.Query().Get("conversation"), r.URL.Query().Get("agent"))
 	if err != nil {
@@ -881,6 +900,9 @@ func (s *Server) consoleSetPreferences(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if !s.consoleIdentity(w, r, req.Conversation) {
+		return
+	}
 	live, err := s.admin.SetPreferences(r.Context(), req.Conversation, req.Agent, req.Patch)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -899,52 +921,16 @@ func (s *Server) consoleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	id := r.PathValue("task")
-	snap := s.model.Snapshot(r.Context())
-	var found *readmodel.Task
-	for i := range snap.Tasks {
-		if snap.Tasks[i].ID == id {
-			found = &snap.Tasks[i]
-			break
-		}
-	}
-	if found == nil {
-		http.Error(w, "no task "+id, http.StatusNotFound)
+	detail, err := s.model.TaskDetail(r.Context(), r.PathValue("task"))
+	if err != nil {
+		writeWorkQueryError(w, err)
 		return
-	}
-	detail := TaskDetail{Task: *found, Children: []readmodel.Task{}, Attempts: []consoleapi.AttemptView{}}
-	for _, t := range snap.Tasks {
-		if t.Parent == id {
-			detail.Children = append(detail.Children, t)
-		}
-	}
-	for i := range snap.Plans {
-		if snap.Plans[i].TaskID == id {
-			p := snap.Plans[i]
-			detail.Plan = &p
-			break
-		}
-	}
-	if attempts, err := s.admin.TaskAttempts(r.Context(), id); err == nil && attempts != nil {
-		detail.Attempts = attempts
 	}
 	writeJSON(w, detail)
 }
 
 func (s *Server) consoleTaskAttempts(w http.ResponseWriter, r *http.Request) {
-	if !s.adminOr(w) {
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	attempts, err := s.admin.TaskAttempts(r.Context(), r.PathValue("task"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if attempts == nil {
-		attempts = []consoleapi.AttemptView{}
-	}
-	writeJSON(w, attempts)
+	s.nativeAttempts(w, r, r.PathValue("task"))
 }
 
 func (s *Server) consoleAttemptTree(w http.ResponseWriter, r *http.Request) {
@@ -1136,6 +1122,9 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
+	if !s.consoleSubmissionIdentity(w, r, req) {
+		return
+	}
 	var reply consoleapi.Reply
 	var err error
 	if extended, ok := s.console.(consoleapi.Submissions); ok {
@@ -1177,6 +1166,9 @@ func (s *Server) consoleContext(w http.ResponseWriter, r *http.Request) {
 	if conversation == "" {
 		conversation = "console:main"
 	}
+	if !s.consoleIdentity(w, r, conversation) {
+		return
+	}
 	ctx, err := s.console.Context(r.Context(), conversation)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1203,6 +1195,9 @@ func (s *Server) consoleSetup(w http.ResponseWriter, r *http.Request) {
 	if conversation == "" {
 		conversation = "console:main"
 	}
+	if !s.consoleIdentity(w, r, conversation) {
+		return
+	}
 	setup, err := s.console.Setup(r.Context(), conversation, r.URL.Query().Get("agent"))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1212,15 +1207,38 @@ func (s *Server) consoleSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"enabled": true, "setup": setup})
 }
 
-// history pages what happened, newest first; before is the ledger
-// sequence to continue from, as the previous page's next.
+// history pages both ledger events and retained observations, newest first.
+// cursor is the opaque next from a previous page; "" starts a traversal.
+// next="" is terminal. limit bounds the combined page (default 60, max 200).
+// Numeric before cursors are no longer supported. Retention-expired cursors
+// return 409 and must be restarted; malformed cursors/queries return 400.
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, next, err := s.model.History(r.Context(), before, limit)
+	query, queryErr := url.ParseQuery(r.URL.RawQuery)
+	if queryErr != nil || query.Has("before") || len(query["cursor"]) > 1 || len(query["limit"]) > 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "history requires one opaque cursor, not a before sequence"})
+		return
+	}
+	limit := 60
+	if query.Has("limit") {
+		var err error
+		limit, err = strconv.Atoi(query.Get("limit"))
+		if err != nil || limit < 1 || limit > 200 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "history limit must be between 1 and 200"})
+			return
+		}
+	}
+	entries, next, err := s.model.History(r.Context(), query.Get("cursor"), limit)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, readmodel.ErrHistoryCursor) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, readmodel.ErrHistoryCursorExpired) {
+			status = http.StatusConflict
+		}
+		w.WriteHeader(status)
 		writeJSON(w, map[string]any{"error": err.Error()})
 		return
 	}
@@ -1237,6 +1255,9 @@ func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
 		conversation := r.URL.Query().Get("conversation")
 		if conversation == "" {
 			conversation = "console:main"
+		}
+		if !s.consoleIdentity(w, r, conversation) {
+			return
 		}
 		items = append(items, s.console.Suggest(r.Context(), conversation, r.URL.Query().Get("q"))...)
 	}
@@ -1264,6 +1285,7 @@ func (s *Server) consoleVerbs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) consoleConversations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	if s.console == nil {
 		writeJSON(w, map[string]any{"enabled": false, "conversations": []consoleapi.Conversation{}})
 		return
@@ -1272,6 +1294,29 @@ func (s *Server) consoleConversations(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []consoleapi.Conversation{}
 	}
+	for i := range list {
+		list[i].Transport = "console"
+	}
+	if s.channelHistory != nil {
+		cursor := ""
+		for {
+			page, err := s.channelHistory.List(r.Context(), cursor, 200)
+			if err != nil {
+				channelHistoryError(w, err)
+				return
+			}
+			list = append(list, page.Conversations...)
+			if page.NextCursor == "" {
+				break
+			}
+			if cursor == page.NextCursor {
+				channelHistoryError(w, errors.New("channel directory cursor did not advance"))
+				return
+			}
+			cursor = page.NextCursor
+		}
+	}
+	sortConversations(list)
 	writeJSON(w, map[string]any{"enabled": true, "conversations": list})
 }
 
@@ -1279,6 +1324,9 @@ func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	if s.console == nil {
 		http.Error(w, "console is not enabled", http.StatusNotImplemented)
+		return
+	}
+	if !s.consoleIdentity(w, r, r.PathValue("id")) {
 		return
 	}
 	var patch consoleapi.ConversationPatch
@@ -1298,6 +1346,9 @@ func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Reques
 // and only the admin can reach all of them.
 func (s *Server) consoleDeleteConversation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if !s.consoleIdentity(w, r, r.PathValue("id")) {
+		return
+	}
 	if s.admin == nil {
 		http.Error(w, "administration is not enabled", http.StatusNotImplemented)
 		return
@@ -1318,6 +1369,9 @@ func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {
 	conversation := r.URL.Query().Get("conversation")
 	if conversation == "" {
 		conversation = "console:main"
+	}
+	if !s.consoleIdentity(w, r, conversation) {
+		return
 	}
 	names := s.console.Conversations()
 	if names == nil {

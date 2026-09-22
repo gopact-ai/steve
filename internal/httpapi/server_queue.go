@@ -52,6 +52,9 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
+	if !s.consoleSubmissionIdentity(w, r, req) {
+		return
+	}
 	var exchange consoleapi.Exchange
 	var err error
 	if extended, ok := s.console.(consoleapi.Submissions); ok {
@@ -81,13 +84,20 @@ func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
 		return
 	}
-	conversation := r.URL.Query().Get("conversation")
-	if conversation == "" {
-		conversation = "console:main"
-	}
-	list := s.console.Queue(conversation)
-	if list == nil {
-		list = []consoleapi.Exchange{}
+	list := []consoleapi.Exchange{}
+	// Capabilities describe the Console service, not a conversation. A probe
+	// must not read a queue or depend on the channel identity directory.
+	if r.URL.Query().Get("capabilities") != "1" {
+		conversation := r.URL.Query().Get("conversation")
+		if conversation == "" {
+			conversation = "console:main"
+		}
+		if !s.consoleIdentity(w, r, conversation) {
+			return
+		}
+		if queue := s.console.Queue(conversation); queue != nil {
+			list = queue
+		}
 	}
 	// Clients must confirm support before submitting or retrying a command ID;
 	// older hubs accepted the field but did not preserve its identity.
@@ -103,11 +113,17 @@ func (s *Server) consoleDeleteQueued(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
 		return
 	}
+	if !s.consoleExchangeIdentity(w, r) {
+		return
+	}
 	queueResponse(w, map[string]bool{"ok": true}, s.console.DeleteQueued(r.PathValue("id")))
 }
 
 func (s *Server) consoleEditQueued(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
+		return
+	}
+	if !s.consoleExchangeIdentity(w, r) {
 		return
 	}
 	var req struct {
@@ -127,6 +143,9 @@ func (s *Server) consoleEditQueued(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) consoleSteer(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
+		return
+	}
+	if !s.consoleExchangeIdentity(w, r) {
 		return
 	}
 	exchange, err := s.console.Steer(r.Context(), r.PathValue("id"))

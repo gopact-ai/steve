@@ -81,6 +81,9 @@ type Service struct {
 	// reporting is left alone, one that hung is not. The child's own
 	// budget (MaxElapsed) stays the hard limit.
 	MaxSilence time.Duration
+	// SilenceSource, when supplied at startup, is sampled for each new
+	// delegation. Existing idle clocks retain their original duration.
+	SilenceSource func() time.Duration
 	// RecoveryQuiet is how long a child's recovery keeps rejoining its
 	// node on its own before the parent's owner is asked anything. A node
 	// restart or a dropped link lasts seconds while the child keeps
@@ -109,6 +112,7 @@ type Service struct {
 
 	mu                 sync.Mutex
 	pending            map[string]*child
+	inherited          inherited
 	bases              map[string]string
 	spends             map[string]view.Progress
 	recoveryQuestions  map[string]*recoveryNotice
@@ -170,6 +174,7 @@ func New(tasks *task.Store, r *roster.Roster, sessions Sessions, assembler *capa
 	return &Service{
 		tasks: tasks, roster: r, sessions: sessions, assembler: assembler, workspaces: workspaces, node: node,
 		InlineWait: defaultInlineWait, RecoveryQuiet: defaultRecoveryQuiet, pending: map[string]*child{},
+		inherited: inherited{rows: inheritedRows(tasks)},
 	}
 }
 
@@ -257,7 +262,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 	s.mu.Unlock()
 	// Register the child before Start can return: opening its session may
 	// take longer than the parent's remaining turn, even without progress.
-	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID,
+	s.report(Child{Transport: parent.Transport, Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID,
 		Agent: candidate.Agent.ID, Node: candidate.Node, Goal: req.Goal, State: task.StateRunning, Since: entry.started}, view.Progress{})
 
 	// Detached on purpose: the request that asked for this may be gone
@@ -445,7 +450,7 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	var last view.Progress
 	result, runErr := s.run(ctx, conversationID, agentID, parent, spawned, candidate, req, func(p view.Progress) {
 		last = p
-		s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
+		s.report(Child{Transport: parent.Transport, Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
 			Goal: req.Goal, State: task.StateRunning, Since: since, Elapsed: time.Since(since)}, p)
 	})
 
@@ -493,6 +498,9 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 				unresolved = runErr
 			}
 			entry.scope.Finish(unresolved)
+			if current, ok := s.tasks.Get(spawned.ID); ok {
+				s.resolveRecovered(retainedRecord, current)
+			}
 		}()
 	}
 	current, _ := s.tasks.Get(spawned.ID)
@@ -542,7 +550,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	close(entry.done)
 	slog.Info(fmt.Sprintf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(spawned.Node)),
 		"task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "agent", spawned.Member, "node", spawned.Node)
-	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: spawned.Member, Node: spawned.Node,
+	s.report(Child{Transport: parent.Transport, Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: spawned.Member, Node: spawned.Node,
 		Goal: description, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}, last)
 
 	// The parent is told now if no turn of it is running; a running turn
@@ -562,6 +570,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 
 // Child is a delegated task as an observer sees it.
 type Child struct {
+	Transport                      string
 	Conversation, ParentTask, Task string
 	Agent, Node, Goal              string
 	State                          task.State // running | done | failed, or a paused/cancelled task
@@ -609,34 +618,11 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	candidate roster.Candidate, req agentmcp.DelegateRequest, progress func(view.Progress)) (result agentmcp.DelegateResult, runErr error) {
 	result = agentmcp.DelegateResult{TaskID: child.ID, Agent: candidate.Agent.ID, Node: candidate.Node}
 
-	// The child's own token: bound to the child task, revoked when it ends.
-	var extras []capability.Extra
-	if s.gate != nil {
-		token, err := newToken()
-		if err != nil {
-			return result, err
-		}
-		endpoint := ""
-		if candidate.Node != "" && s.endpoints != nil {
-			endpoint, err = s.endpoints.MCPEndpoint(ctx, candidate.Node)
-			if err != nil {
-				// Losing milestone cards is a degradation; losing the
-				// delegation is not. The child runs without the send
-				// primitive.
-				slog.Warn(fmt.Sprintf("delegate: node %q messaging endpoint: %v", candidate.Node, err), "task", child.ID, "parent", parent.ID, "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
-				endpoint = ""
-			}
-		}
-		if candidate.Node == "" || endpoint != "" {
-			extras = s.gate.Delegated(conversationID, candidate.Agent.ID, child.ID, delegatedBy, token, endpoint)
-			defer func() {
-				var detached *execution.RetainedObserverDetached
-				if !errors.As(runErr, &detached) {
-					s.gate.Revoke(token)
-				}
-			}()
-		}
+	extras, revoke, err := s.childToken(ctx, conversationID, delegatedBy, parent, child, candidate)
+	if err != nil {
+		return result, err
 	}
+	defer func() { revoke(runErr) }()
 
 	caps, err := s.assembler.AssembleExtra(candidate.Agent, home.ModeGuest, extras)
 	if err != nil {
@@ -658,10 +644,14 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	defer cancel()
 	touch := func() {}
-	if s.MaxSilence > 0 {
+	silence := s.MaxSilence
+	if s.SilenceSource != nil {
+		silence = s.SilenceSource()
+	}
+	if silence > 0 {
 		var stop func()
 		var clock idle.Context
-		clock, stop, touch = idle.WithTimeout(ctx, s.MaxSilence)
+		clock, stop, touch = idle.WithTimeout(ctx, silence)
 		ctx = clock
 		defer stop()
 		if s.RegisterIdle != nil {
@@ -683,6 +673,11 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	s.rememberAttempt(child.ID, attemptID)
 	if err := s.tasks.BindAttempt(accountingToken, attemptID, turnID); err != nil {
+		// The row Begin opened is this run's to close: no attempt will be
+		// admitted against it, and open it keeps the tree from completing.
+		if _, closeErr := s.tasks.FinishUnstarted(child.ID, task.OutcomeError); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return result, fmt.Errorf("bind delegate accounting: %w", err)
 	}
 	prompt := payload.Render() + exec.ReportingContract + worktreeContract
@@ -722,6 +717,42 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantinesUnlessCancelled, CancelDetaches: true},
 	})
 	return d.settle(ctx, run, err)
+}
+
+// childToken is the child's own messaging token: bound to the child task,
+// reached through its node's loopback endpoint when it runs remotely, and
+// revoked by the returned func when the run ends — unless the run detached
+// from a session that is still using it.
+func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy string, parent, child task.Task, candidate roster.Candidate) ([]capability.Extra, func(runErr error), error) {
+	keep := func(error) {}
+	if s.gate == nil {
+		return nil, keep, nil
+	}
+	token, err := newToken()
+	if err != nil {
+		return nil, keep, err
+	}
+	endpoint := ""
+	if candidate.Node != "" && s.endpoints != nil {
+		endpoint, err = s.endpoints.MCPEndpoint(ctx, candidate.Node)
+		if err != nil {
+			// Losing milestone cards is a degradation; losing the
+			// delegation is not. The child runs without the send
+			// primitive.
+			slog.Warn(fmt.Sprintf("delegate: node %q messaging endpoint: %v", candidate.Node, err), "task", child.ID, "parent", parent.ID, "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
+			endpoint = ""
+		}
+	}
+	if candidate.Node != "" && endpoint == "" {
+		return nil, keep, nil
+	}
+	extras := s.gate.Delegated(conversationID, candidate.Agent.ID, child.ID, delegatedBy, token, endpoint)
+	return extras, func(runErr error) {
+		var detached *execution.RetainedObserverDetached
+		if !errors.As(runErr, &detached) {
+			s.gate.Revoke(token)
+		}
+	}, nil
 }
 
 func (s *Service) delegationContext(child task.Task, candidate roster.Candidate, req agentmcp.DelegateRequest) (ctxpack.Context, error) {

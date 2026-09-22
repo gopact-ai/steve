@@ -11,24 +11,49 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/execution"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
 func taskCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Store) {
 	t.Helper()
+	c, tasks, _ := taskCoordinatorBook(t, runner)
+	return c, tasks
+}
+
+func taskCoordinatorBook(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Store, *ledger.Ledger) {
+	t.Helper()
+	return taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": runner}})
+}
+
+// taskCoordinatorOn is taskCoordinatorBook with the runtime chosen: for a
+// test whose session must be more than a fakeRunner.
+func taskCoordinatorOn(t *testing.T, rt runtime) (*Coordinator, *task.Store, *ledger.Ledger) {
+	t.Helper()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	store, err := state.OpenLedger(book, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := task.OpenLedger(book, "")
 	if err != nil {
 		t.Fatalf("open tasks: %v", err)
 	}
-	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, book)
 	coordinator.SetTasks(tasks, "laptop")
-	return coordinator, tasks
+	registry := execution.New(t.Context(), tasks)
+	coordinator.SetExecution(registry)
+	coordinator.artifacts.SetExecution(registry)
+	return coordinator, tasks, book
 }
 
 func TestTurnOpensOneTaskAndKeepsUsingIt(t *testing.T) {

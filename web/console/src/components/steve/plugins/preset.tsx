@@ -39,9 +39,9 @@ export function PluginPresetEditor({ agents, installation, record, nodes, onClos
         <form className="flex min-w-0 flex-col gap-4" onSubmit={(event) => { event.preventDefault(); void run(); }}>
             <fieldset disabled={busy || submitted !== null} className="flex min-w-0 flex-col gap-4">
                 <Select size="sm" label={t("plugins.preset")} selectedKey={preset} onSelectionChange={(key) => edit(setPreset)(String(key))} items={presets.map((id) => ({ id, label: id }))}>{(item) => <Select.Item {...item} />}</Select>
-                <Input name="plugin-agent-id" autoComplete="off" spellCheck="false" label={t("plugins.agentId")} value={agent} onChange={(value) => { edit(setAgent)(value); if (adopt) setAdopt({}); }} isRequired />
+                <Input size="sm" name="plugin-agent-id" autoComplete="off" spellCheck="false" label={t("plugins.agentId")} value={agent} onChange={(value) => { edit(setAgent)(value); if (adopt) setAdopt({}); }} isRequired />
                 <Select size="sm" label={t("plugins.machines")} selectedKey={node || "@local"} onSelectionChange={(key) => edit(setNode)(key === "@local" ? "" : String(key))} items={targets.map((id) => ({ id: id || "@local", label: nodes.find((node) => node.id === id)?.label ?? id }))}>{(item) => <Select.Item {...item} />}</Select>
-                <Input name="plugin-model" autoComplete="off" spellCheck="false" label={t("plugins.model")} value={model} onChange={edit(setModel)} />
+                <Input size="sm" name="plugin-model" autoComplete="off" spellCheck="false" label={t("plugins.model")} value={model} onChange={edit(setModel)} />
                 <TextArea name="plugin-instructions" autoComplete="off" label={t("plugins.instructions")} value={instructions} onChange={edit(setInstructions)} rows={4} />
             </fieldset>
             {!submitted && existing && !existing.origin ? <div className="flex flex-col gap-3 rounded-lg border border-secondary p-3">

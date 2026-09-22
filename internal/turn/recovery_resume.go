@@ -62,7 +62,7 @@ func (c *Coordinator) RetainedChats(ctx context.Context) ([]RetainedChat, error)
 	seen := map[string]bool{}
 	var result []RetainedChat
 	for _, r := range append(live, closed...) {
-		if seen[r.ID] || r.Kind != attempt.KindChat || r.State == attempt.Superseded || (!strings.HasPrefix(r.Session, "ns_") && !attempt.Relocatable(r) && !attempt.PreparingRelocation(r) && !pendingChatOpen(r)) || (r.State != attempt.Running && !r.State.Terminal() && !attempt.Relocatable(r) && !attempt.PreparingRelocation(r) && !pendingChatOpen(r)) {
+		if seen[r.ID] || r.Kind != attempt.KindChat || r.State == attempt.Superseded || (r.State != attempt.Bound && !strings.HasPrefix(r.Session, "ns_") && !attempt.Relocatable(r) && !attempt.PreparingRelocation(r) && !pendingChatOpen(r)) || (r.State != attempt.Running && !r.State.Terminal() && !attempt.Relocatable(r) && !attempt.PreparingRelocation(r) && !pendingChatOpen(r)) {
 			continue
 		}
 		seen[r.ID] = true
@@ -223,6 +223,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	if cleanupFailure = c.finishRetainedTask(record, runErr, spent); cleanupFailure != nil {
 		return Result{}, cleanupFailure
 	}
+	c.notifyAccountedTurn(record.TaskID)
 	if runErr != nil {
 		return result, runErr
 	}
@@ -262,7 +263,7 @@ func (c *Coordinator) retainedChatRecord(parent context.Context, id string, req 
 	if pendingChatOpen(record) {
 		return attempt.Record{}, c.inspectPendingOpen(parent, record)
 	}
-	if !strings.HasPrefix(record.Session, "ns_") {
+	if record.State != attempt.Bound && !strings.HasPrefix(record.Session, "ns_") {
 		return attempt.Record{}, retainedBlocked("native-identity", "检查原节点会话标识", "尚未取得可接续的原生会话。", "恢复准备可能在建立会话前中断。", "建议重新检查已确认的恢复准备。", nil)
 	}
 	return record, nil
@@ -278,9 +279,10 @@ func (c *Coordinator) deliverRetainedChat(parent context.Context, req Request, r
 			return Result{}, retainedBlocked("result", "读取原执行的已提交结果", "原执行已经结束，但完整回复记录不可用。", "不能为了补回复而重新执行任务。", "建议检查已保存的产物与执行记录。", nil), true
 		}
 		result.Attempt = record.ID
-		if err := c.finishRetainedTask(record, nil, nil); err != nil {
+		if err := c.SettleChatAccounting(parent, record.ID); err != nil {
 			return Result{}, err, true
 		}
+		c.notifyAccountedTurn(record.TaskID)
 		result, err := c.gateDisclosure(parent, req, result)
 		return result, err, true
 	}

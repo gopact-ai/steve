@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 type fakeTaskMetaAdmin struct {
@@ -32,6 +33,15 @@ func (p taskMetaProjection) Snapshot(ctx context.Context) readmodel.Snapshot {
 	snapshot := p.Model.Snapshot(ctx)
 	snapshot.Tasks = p.tasks
 	return snapshot
+}
+
+func (p taskMetaProjection) TaskDetail(_ context.Context, id string) (readmodel.TaskDetail, error) {
+	for _, item := range p.tasks {
+		if item.ID == id {
+			return readmodel.TaskDetail{Task: item}, nil
+		}
+	}
+	return readmodel.TaskDetail{}, task.ErrTaskNotFound
 }
 
 func taskMetaServer(t *testing.T, admin consoleapi.Admin, tasks ...readmodel.Task) *Server {

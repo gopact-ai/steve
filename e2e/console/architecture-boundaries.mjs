@@ -45,3 +45,33 @@ test("data and shared components never import page composition", () => {
         }
     }
 });
+
+test("the standard console gate reaches every registered regression suite", () => {
+    const { scripts } = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+    const makefile = readFileSync(path.join(root, "../../Makefile"), "utf8");
+    const target = makefile.match(/^test-console:\s*\n((?:\t[^\n]*\n)+)/m);
+    assert.ok(target, "make test-console must remain the standard frontend gate");
+    const reached = new Set();
+    function visit(command) {
+        for (const match of command.matchAll(/\bnpm\s+(?:--prefix\s+\S+\s+)?run\s+([\w:-]+)/g)) {
+            const name = match[1];
+            assert.ok(Object.hasOwn(scripts, name), `gate invokes missing npm script ${name}`);
+            if (reached.has(name)) continue;
+            reached.add(name);
+            visit(scripts[name]);
+        }
+    }
+    visit(target[1]);
+    const missing = Object.keys(scripts).filter((name) => name.startsWith("test:") && !reached.has(name));
+    assert.deepEqual(missing, [], "registered regressions must not silently sit outside make test-console");
+});
+
+test("console CI invokes the complete standard gate instead of a separate suite list", () => {
+    const workflow = readFileSync(path.join(root, "../../.github/workflows/test.yml"), "utf8");
+    const job = workflow.split(/^  console:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];
+    assert.ok(job, "the console CI job must remain present");
+    assert.match(job, /^\s+(?:-\s+)?run:\s*make test-console\s*$/m);
+    assert.doesNotMatch(job, /\bnpm run test:/, "CI must not maintain a second regression list");
+    assert.match(job, /uses: actions\/setup-go@/, "Go wire fixtures need the repository toolchain");
+    assert.match(job, /go-version-file: go\.mod/);
+});

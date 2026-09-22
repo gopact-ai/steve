@@ -1,9 +1,8 @@
 package node
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -26,16 +25,42 @@ func resumedFixture(t *testing.T, command string) (ServerConfig, nodewire.Sessio
 	return cfg, req, record
 }
 
-func saveResumeFixture(t *testing.T, cfg ServerConfig, record sessionRecord) {
+func saveResumeFixture(t *testing.T, cfg ServerConfig, record sessionRecord) sessionRecord {
 	t.Helper()
-	dir := filepath.Join(cfg.StateDir, "node-sessions")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	store, err := openSessionRecords(filepath.Join(cfg.StateDir, "node-sessions", "sessions.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(record)
-	if err := os.WriteFile(filepath.Join(dir, record.State.ID+".json"), raw, 0600); err != nil {
+	defer store.close()
+	return saveSessionRecordsFixture(t, store, record)
+}
+
+func saveSessionRecordsFixture(t *testing.T, store *sessionRecords, record sessionRecord) sessionRecord {
+	t.Helper()
+	before, found, err := store.read(record.State.ID, "")
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !found {
+		before = sessionRecord{}
+	}
+	record.State.Sequence = before.State.Sequence + 1
+	for _, command := range record.Commands {
+		record.State.InputAccepted = max(record.State.InputAccepted, command.InputSequence)
+	}
+	for i := range record.State.Questions {
+		q := &record.State.Questions[i]
+		if q.ID == "" {
+			q.ID = fmt.Sprintf("fixture-question-%d", i)
+		}
+		if q.CommandID == "" {
+			q.CommandID = record.CurrentCommand
+		}
+	}
+	if err := store.save(before, record); err != nil {
+		t.Fatal(err)
+	}
+	return record
 }
 
 func TestSettledNativeContextResumesOnceAndPreservesOriginalReceipts(t *testing.T) {
@@ -273,12 +298,16 @@ func TestNativeResumeDoesNotFallBackToANewConversation(t *testing.T) {
 
 func TestNativeResumePreparationHasACancellableStoppedReceipt(t *testing.T) {
 	cfg, req, source := resumedFixture(t, buildMockAgent(t))
-	saveResumeFixture(t, cfg, source)
+	source = saveResumeFixture(t, cfg, source)
 	s := NewServer(cfg)
 	if err := s.startSessions(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.sessions.Close()
+	source, _, err := s.sessions.readRecord(source.State.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
 	broker, _ := permission.New("read")
 	s.sessions.mu.Lock()

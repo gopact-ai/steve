@@ -187,6 +187,11 @@ func (s *Store) FileDiff(ctx context.Context, projectID, from, to, path string) 
 }
 
 func (s *Store) reviewRepo(ctx context.Context, projectID, from, to string) (*Repo, error) {
+	limits, review := s.policy()
+	return s.reviewRepoWithPolicy(ctx, projectID, from, to, limits, review)
+}
+
+func (s *Store) reviewRepoWithPolicy(ctx context.Context, projectID, from, to string, limits Limits, review ReviewLimits) (*Repo, error) {
 	p, ok, err := s.projects.GetHistorical(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -205,9 +210,5 @@ func (s *Store) reviewRepo(ctx context.Context, projectID, from, to string) (*Re
 	if to == "" {
 		return nil, errors.New("no after-snapshot: nothing changed, or the change was not captured")
 	}
-	r, err := s.Repo(ctx, projectID)
-	if err == nil {
-		r.Review = s.Review.defaults()
-	}
-	return r, err
+	return s.repoWithPolicy(ctx, projectID, limits, review)
 }

@@ -196,11 +196,19 @@ type SkillShipper struct {
 	packed bool
 }
 
+// ErrSkillsPending means desired skills remain saved but a configured node
+// is offline. It is not an acknowledgement that the fleet applied the bundle.
+var ErrSkillsPending = errors.New("skill propagation pending")
+
 func (s *SkillShipper) Pack() (skills.Bundle, error) {
 	if s == nil || s.Live == nil || s.Live.Map == nil {
 		return skills.Bundle{}, errors.New("skills are not configured")
 	}
 	refs, err := s.Live.Map.Enabled()
+	if err != nil {
+		return skills.Bundle{}, err
+	}
+	refs, err = skills.ResolveRefs(refs)
 	if err != nil {
 		return skills.Bundle{}, err
 	}
@@ -237,40 +245,75 @@ func (s *SkillShipper) entries() ([]skills.Entry, bool) {
 	return s.bundle.Skills, s.packed
 }
 
-func (s *SkillShipper) Ship(ctx context.Context, name string) {
+// Ship returns propagation errors and also logs them for asynchronous node-up
+// callers. It never restarts harnesses; the caller owns that decision.
+func (s *SkillShipper) Ship(ctx context.Context, name string) error {
 	b, err := s.Pack()
 	if err != nil {
 		slog.Error(fmt.Sprintf("steve: skills for %s: %v", name, err), "node", name)
-		return
+		return fmt.Errorf("pack skills for node %q: %w", name, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	if err := s.Nodes.PushSkills(ctx, name, b); err != nil {
-		if strings.Contains(err.Error(), "does not take skill bundles") {
-			return
+	if s.Nodes != nil {
+		for _, st := range s.Nodes.Statuses() {
+			if st.Name == name {
+				return s.ship(ctx, st, b)
+			}
 		}
+	}
+	err = fmt.Errorf("skill destination node %q is not configured", name)
+	slog.Error("steve: skills could not be shipped", "node", name, "error", err)
+	return err
+}
+
+func (s *SkillShipper) ship(ctx context.Context, st node.Status, b skills.Bundle) error {
+	name := st.Name
+	err := ctx.Err()
+	if err == nil {
+		if !st.Up {
+			// Do not wait for connectivity while saving desired state.
+			err = fmt.Errorf("%w: node %q is offline; desired skills remain saved", ErrSkillsPending, name)
+		} else {
+			sctx, cancel := context.WithTimeout(ctx, time.Minute)
+			err = s.Nodes.PushSkills(sctx, name, b)
+			cancel()
+		}
+	}
+	if err != nil {
 		slog.Error(fmt.Sprintf("steve: skills to %s: %v", name, err), "node", name)
 		if s.Observe != nil {
 			// Keys: hash, error.
 			s.Observe("node.skills", name, fmt.Sprintf("%s: skills %s not materialized: %v", name, b.Hash[:12], err), map[string]string{"hash": b.Hash[:12], "error": err.Error()})
 		}
-		return
+		return fmt.Errorf("ship skills to node %q: %w", name, err)
 	}
 	if s.Observe != nil {
 		// Keys: hash, count.
 		s.Observe("node.skills", name, fmt.Sprintf("%s: skills %s materialized (%d skills)", name, b.Hash[:12], len(b.Skills)), map[string]string{"hash": b.Hash[:12], "count": strconv.Itoa(len(b.Skills))})
 	}
+	return nil
 }
 
-func (s *SkillShipper) ShipAll(ctx context.Context) {
-	if s == nil || s.Nodes == nil {
-		return
+// ShipAll sends one desired bundle to every online node, collecting failures
+// without skipping other nodes. Offline nodes remain pending, not applied.
+func (s *SkillShipper) ShipAll(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	b, err := s.Pack()
+	if err != nil {
+		slog.Error("steve: skills could not be packed for nodes", "error", err)
+		return fmt.Errorf("pack skills for nodes: %w", err)
+	}
+	if s.Nodes == nil {
+		return nil
+	}
+	var failures []error
 	for _, st := range s.Nodes.Statuses() {
-		if st.Up {
-			s.Ship(ctx, st.Name)
+		if err := s.ship(ctx, st, b); err != nil {
+			failures = append(failures, err)
 		}
 	}
+	return errors.Join(failures...)
 }
 
 // nodeName labels which machine ran a turn: the hub's own node name.

@@ -74,8 +74,8 @@ func (l *Ledger) ExportOperations(ctx context.Context, ids []string) (TransferFa
 // ImportFacts validates collisions before writing. Documents are prepared by
 // their owning domain and supplied as full merged values, together with exact
 // expected previous bytes to make the final multi-domain commit atomic.
-func (l *Ledger) ImportFacts(ctx context.Context, f TransferFacts, documents, expected map[string]json.RawMessage) error {
-	if err := l.validateImport(ctx, f, documents, expected); err != nil {
+func (l *Ledger) ImportFacts(ctx context.Context, f TransferFacts, documents, expected map[string]json.RawMessage, owners ...TransferOwner) error {
+	if err := l.validateImport(ctx, f, documents, expected, owners...); err != nil {
 		return err
 	}
 	// Journal identities are stable; importing the same evidence twice does not
@@ -103,10 +103,16 @@ func (l *Ledger) ImportFacts(ctx context.Context, f TransferFacts, documents, ex
 		}
 		seen[key] = e
 	}
-	return l.Update(ctx, func(tx *Tx) error { return importFactsTx(tx, f, documents, expected, false) })
+	return l.Update(ctx, func(tx *Tx) error { return importFactsTx(tx, f, documents, expected, false, owners...) })
 }
-func (l *Ledger) validateImport(ctx context.Context, f TransferFacts, docs, expected map[string]json.RawMessage) error {
-	return l.Update(ctx, func(tx *Tx) error { return importFactsTx(tx, f, docs, expected, true) })
+
+// TransferOwner validates or imports records owned by a domain. Validation
+// must be read-only. Apply must recheck its dependencies and write through tx;
+// an error rolls back all imported database facts, including earlier owners.
+type TransferOwner func(tx *Tx, validateOnly bool) error
+
+func (l *Ledger) validateImport(ctx context.Context, f TransferFacts, docs, expected map[string]json.RawMessage, owners ...TransferOwner) error {
+	return l.Update(ctx, func(tx *Tx) error { return importFactsTx(tx, f, docs, expected, true, owners...) })
 }
 func jsonEqual(a, b []byte) bool {
 	var x, y any
@@ -115,7 +121,7 @@ func jsonEqual(a, b []byte) bool {
 	}
 	return json.Unmarshal(a, &x) == nil && json.Unmarshal(b, &y) == nil && reflect.DeepEqual(x, y)
 }
-func importFactsTx(tx *Tx, f TransferFacts, docs, expected map[string]json.RawMessage, validate bool) error {
+func importFactsTx(tx *Tx, f TransferFacts, docs, expected map[string]json.RawMessage, validate bool, owners ...TransferOwner) error {
 	newOps, err := validateImportedOperations(tx, f.Operations)
 	if err != nil {
 		return err
@@ -123,10 +129,17 @@ func importFactsTx(tx *Tx, f TransferFacts, docs, expected map[string]json.RawMe
 	if err := validateImportedReferences(tx, f, docs, expected); err != nil {
 		return err
 	}
-	if validate {
-		return nil
+	if !validate {
+		if err := writeImportedFacts(tx, f, docs, newOps); err != nil {
+			return err
+		}
 	}
-	return writeImportedFacts(tx, f, docs, newOps)
+	for _, owner := range owners {
+		if err := owner(tx, validate); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateImportedOperations(tx *Tx, operations []Operation) (map[string]bool, error) {
@@ -279,8 +292,8 @@ func (d *StagedDocument) Save(raw []byte) error {
 func (d *StagedDocument) Check() error { return nil }
 
 // ValidateImport performs collision checks without changing durable facts.
-func (l *Ledger) ValidateImport(ctx context.Context, f TransferFacts, docs, expected map[string]json.RawMessage) error {
-	return l.validateImport(ctx, f, docs, expected)
+func (l *Ledger) ValidateImport(ctx context.Context, f TransferFacts, docs, expected map[string]json.RawMessage, owners ...TransferOwner) error {
+	return l.validateImport(ctx, f, docs, expected, owners...)
 }
 
 // StoreDocument writes a domain-prepared document in the owning transaction.

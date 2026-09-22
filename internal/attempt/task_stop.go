@@ -95,7 +95,7 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		if spend := stoppedUsage(st); spend != nil {
 			next.Usage = spend
 		}
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if errors.Is(err, errTaskStopRecorded) {
 		return s.Get(ctx, id)
@@ -139,19 +139,9 @@ func nativeTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 	if r.State == Superseded || r.Execution == nil || r.Execution.TaskID != r.TaskID || (!strings.HasPrefix(r.Session, "ns_") && !PendingSessionOpen(r)) {
 		return task.Task{}, errors.New("task stop requires an original node-owned execution")
 	}
-	raw, ok, err := tx.LoadDocument("tasks")
+	tracked, ok, err := task.GetTx(tx, r.TaskID)
 	if err != nil || !ok {
 		return task.Task{}, errors.Join(errors.New("task stop requires the original task record"), err)
-	}
-	var data struct {
-		Tasks map[string]task.Task `json:"tasks"`
-	}
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return task.Task{}, err
-	}
-	tracked, ok := data.Tasks[r.TaskID]
-	if !ok {
-		return task.Task{}, errors.New("task stop source is missing")
 	}
 	return tracked, nil
 }
@@ -205,7 +195,7 @@ func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation st
 			return fmt.Errorf("record pending native stop: %w", err)
 		}
 		next.Unsettled, next.Error, next.Revision = true, explanation, op.Revision+1
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if errors.Is(err, errTaskStopRecorded) {
 		return nil

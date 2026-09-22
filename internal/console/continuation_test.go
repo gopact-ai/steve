@@ -76,7 +76,7 @@ func TestProjectTransferRetainsRejectedContinuationAdmission(t *testing.T) {
 	if err := source.Save(raw); err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := ExportProject(source, "p", nil)
+	bundle, err := ExportProjectDocument(source, "p", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestProjectTransferRetainsRejectedContinuationAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := &memDoc{}
-	if err := ImportProject(dest, bundle); err != nil {
+	if err := ImportProjectDocument(dest, bundle); err != nil {
 		t.Fatal(err)
 	}
 	h := &queueHandler{started: make(chan *queueCall, 1)}

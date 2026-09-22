@@ -49,6 +49,10 @@ func (one *ownedSession) waitQuestion(ctx context.Context, question nodewire.Ses
 		return question, err
 	}
 	one.mu.Lock()
+	if question.CommandID != one.record.CurrentCommand || !one.runningLocked() {
+		one.mu.Unlock()
+		return question, sessionError("conflict", "question does not belong to the live original input")
+	}
 	if len(one.record.State.Questions) >= 256 {
 		one.mu.Unlock()
 		return question, sessionError("unavailable", "node session question retention limit reached")

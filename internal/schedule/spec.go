@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Kind string
@@ -92,7 +93,8 @@ func ParseAt(input string, now time.Time) (Spec, string, error) {
 // parse takes the longest leading run of words that forms a valid spec, up to
 // two. Longest-first matters: "every 周一 09:00" must not stop at "周一".
 func parse(input string, now time.Time, build func([]string, time.Time) (Spec, bool)) (Spec, string, error) {
-	fields := strings.Fields(strings.TrimSpace(input))
+	input = strings.TrimSpace(input)
+	fields, ends := wordsWithEnds(input)
 	if len(fields) == 0 {
 		return Spec{}, "", fmt.Errorf("empty schedule")
 	}
@@ -101,7 +103,7 @@ func parse(input string, now time.Time, build func([]string, time.Time) (Spec, b
 		if !ok {
 			continue
 		}
-		prompt := strings.TrimSpace(strings.Join(fields[width:], " "))
+		prompt := strings.TrimSpace(input[ends[width-1]:])
 		if prompt == "" {
 			return Spec{}, "", fmt.Errorf("nothing to run")
 		}
@@ -109,6 +111,34 @@ func parse(input string, now time.Time, build func([]string, time.Time) (Spec, b
 		return spec, prompt, nil
 	}
 	return Spec{}, "", fmt.Errorf("unrecognised schedule %q", fields[0])
+}
+
+// wordsWithEnds keeps the parser's small, whitespace-delimited spec grammar
+// while leaving the instruction byte-for-byte intact. Prompts are often
+// markdown, code, or a multi-line checklist; normalising them loses the work
+// the schedule is supposed to replay.
+func wordsWithEnds(input string) ([]string, []int) {
+	var words []string
+	var ends []int
+	start := -1
+	for index, r := range input {
+		if unicode.IsSpace(r) {
+			if start >= 0 {
+				words = append(words, input[start:index])
+				ends = append(ends, index)
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = index
+		}
+	}
+	if start >= 0 {
+		words = append(words, input[start:])
+		ends = append(ends, len(input))
+	}
+	return words, ends
 }
 
 func everySpec(words []string, now time.Time) (Spec, bool) {

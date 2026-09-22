@@ -1,8 +1,6 @@
 import { useEffect, type ReactNode } from "react";
-import { X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
-import { Button } from "@/components/base/buttons/button";
-import { Sheet } from "@/components/steve/drawer";
+import { Drawer } from "@/components/steve/drawer";
 import { useI18n } from "@/providers/locale-provider";
 import type { PluginManifest } from "@/lib/plugin-types";
 
@@ -15,10 +13,9 @@ export function PluginSheet({ title, dirty = false, busy = false, onClose, child
         return () => window.removeEventListener("beforeunload", before);
     }, [dirty, busy]);
     const close = () => { if (!busy && (!dirty || window.confirm(t("plugins.unsaved")))) onClose(); };
-    return <Sheet label={title} width={640} onClose={close}>
-        <div className="workbench-drawer-header"><h2 className="min-w-0 flex-1 text-base font-semibold text-primary">{title}</h2><Button size="sm" color="tertiary" iconLeading={X} aria-label={t("plugins.close")} isDisabled={busy} onClick={close} /></div>
-        <div className="workbench-drawer-body">{children}</div>
-    </Sheet>;
+    return <Drawer title={title} width={640} onClose={close} closeDisabled={busy} closeLabel={t("plugins.close")}>
+        {children}
+    </Drawer>;
 }
 export function PluginStatus({ state }: { state: string }) {
     const { t } = useI18n();

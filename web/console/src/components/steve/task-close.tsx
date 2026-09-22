@@ -3,6 +3,7 @@ import { useI18n } from "@/providers/locale-provider";
 import { send } from "@/lib/api/console";
 import { useFleet } from "@/lib/fleet";
 import type { Task } from "@/lib/types";
+import { consoleTaskConversation } from "@/lib/task-transport";
 import { ConfirmDialog } from "./confirm";
 
 // A task opened by a conversation has no natural end. The thread goes
@@ -15,7 +16,7 @@ export function useTaskClose(t: Task) {
     const open = !["done", "cancelled"].includes(t.lifecycle);
     // The command goes to the task's own conversation; a task that came
     // from somewhere else has to be ended there.
-    const here = !!t.channel?.startsWith("console:");
+    const here = consoleTaskConversation(t) !== null;
     return { closable: open && here, asking, ask: () => setAsking(true), dismiss: () => setAsking(false) };
 }
 
@@ -28,7 +29,9 @@ export function TaskCloseDialog({ t, onClose }: { t: Task; onClose: () => void }
     const { refresh } = useFleet();
     const accepted = t.can_complete === true;
     async function confirm() {
-        const reply = await send(t.channel!, `/tasks ${accepted ? "complete" : "cancel"} ${t.id}`);
+        const conversation = consoleTaskConversation(t);
+        if (conversation === null) throw new Error(tr("tasks.channelHint"));
+        const reply = await send(conversation, `/tasks ${accepted ? "complete" : "cancel"} ${t.id}`);
         refresh();
         if (reply.error) throw new Error(reply.error);
     }

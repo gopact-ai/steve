@@ -23,14 +23,15 @@ export function CallGraph({ roots, tasks, plans, liveSteps, onSelect }: { roots:
 function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Task; tasks: Task[]; plans: Plan[]; depth: number; liveSteps?: string[]; seen: Set<string>; onSelect?: (t: Task) => void }) {
     const { t: tr } = useI18n();
     if (seen.has(t.id) || depth > 6) return null;
-    seen.add(t.id);
+    const visited = new Set(seen);
+    visited.add(t.id);
     const plan = plans.find((p) => p.task_id === t.id);
     const children = tasks.filter((c) => c.parent === t.id);
     // An open task can be idle between turns, even with a retained session.
     const running = t.execution === "running";
     return (
         <div className="flex flex-col gap-1.5">
-            <div className={`flex min-w-0 flex-col gap-0.5 rounded-md ${onSelect ? "-mx-1.5 cursor-pointer px-1.5 py-0.5 hover:bg-secondary" : ""}`} onClick={onSelect ? () => onSelect(t) : undefined} role={onSelect ? "button" : undefined} title={onSelect ? tr("tasks.details") : undefined}>
+            <div className={`flex min-w-0 flex-col gap-0.5 rounded-md ${onSelect ? "-mx-1.5 cursor-pointer px-1.5 py-0.5 hover:bg-secondary" : ""}`} onClick={onSelect ? () => onSelect(t) : undefined} role={onSelect ? "button" : undefined} tabIndex={onSelect ? 0 : undefined} onKeyDown={onSelect ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(t); } } : undefined} title={onSelect ? tr("tasks.details") : undefined}>
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                     <Who agent={t.member || "steve"} node={t.member ? t.node : undefined} running={running} />
                     <span className="whitespace-nowrap text-xs text-tertiary">{kindOf(t, tr)}</span>
@@ -41,6 +42,7 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Ta
                 </div>
                 <div className="line-clamp-2 text-xs text-secondary" title={t.goal}>{chat(t) ? tr("tasks.firstMessage") : ""}{t.goal}</div>
             </div>
+            {t.children_complete === false && children.length < t.children_count && <p className="text-xs text-tertiary">{tr("workHistory.partialTree", { count: children.length, total: t.children_count })}</p>}
             {(plan?.steps?.length || children.length) ? (
                 <ul className="ml-3 flex flex-col gap-1.5 border-l border-secondary pl-3">
                     {(plan?.steps || []).map((s) => (
@@ -57,7 +59,7 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Ta
                     {children.map((c) => (
                         <li key={c.id} className="flex min-w-0 flex-col gap-1">
                             <div className="u-meta text-quaternary">{tr("tasks.delegatesTo", { agent: t.member || "steve" })}</div>
-                            <TaskNode t={c} tasks={tasks} plans={plans} depth={depth + 1} liveSteps={liveSteps} seen={seen} onSelect={onSelect} />
+                            <TaskNode t={c} tasks={tasks} plans={plans} depth={depth + 1} liveSteps={liveSteps} seen={visited} onSelect={onSelect} />
                         </li>
                     ))}
                 </ul>

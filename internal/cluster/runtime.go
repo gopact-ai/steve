@@ -247,7 +247,7 @@ func (r *Runtime) run() {
 		}
 		ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
 		state, err := r.ReadState(ctx)
-		if err == nil && (state.Coordinator.NodeID != r.config.Coordination.NodeID || state.Coordinator.Epoch == 0 || state.Voters[r.config.Coordination.NodeID] == "") {
+		if err == nil && (state.Coordinator.NodeID != r.config.Coordination.NodeID || state.Coordinator.Epoch == 0 || !state.IsActiveReplica(r.config.Coordination.NodeID) || (state.AutoFailover && state.Voters[r.config.Coordination.NodeID] == "")) {
 			err = coordination.ErrNotCoordinator
 		}
 		var version uint64

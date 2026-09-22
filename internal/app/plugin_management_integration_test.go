@@ -12,6 +12,14 @@ import (
 
 func checkPeerPluginTurn(t *testing.T, peer *cluster.Peer, conversation, command, version string) {
 	t.Helper()
+	result := peerPluginTurn(t, peer, conversation, command)
+	if !strings.Contains(result.Text, "PLUGIN_SKILL_github_"+version) || !strings.Contains(result.Text, "REVIEW_EVIDENCE/team-tools/"+version) {
+		t.Fatalf("manual review did not finish with the expected package version: %+v", result)
+	}
+}
+
+func peerPluginTurn(t *testing.T, peer *cluster.Peer, conversation, command string) consoleapi.Reply {
+	t.Helper()
 	var submitted consoleapi.Exchange
 	pluginPeerJSON(t, peer, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "plugincheck manual review", CommandID: command}, &submitted)
 	if submitted.ID == "" {
@@ -46,9 +54,10 @@ func checkPeerPluginTurn(t *testing.T, peer *cluster.Peer, conversation, command
 			result = reply
 		}
 	}
-	if finished.State != consoleapi.ExchangeDone || result.ID == "" || result.Error != "" || !strings.Contains(result.Text, "PLUGIN_SKILL_github_"+version) || !strings.Contains(result.Text, "REVIEW_EVIDENCE/team-tools/"+version) {
-		t.Fatalf("manual review did not finish with the expected package version: exchange=%s reply=%+v", submitted.ID, result)
+	if finished.State != consoleapi.ExchangeDone || result.ID == "" || result.Error != "" {
+		t.Fatalf("original plugin turn did not finish: exchange=%+v reply=%+v", finished, result)
 	}
+	return result
 }
 
 func checkPeerPluginProjectIsolation(t *testing.T, coordinator *cluster.Peer) {
@@ -56,12 +65,9 @@ func checkPeerPluginProjectIsolation(t *testing.T, coordinator *cluster.Peer) {
 	pluginPeerJSON(t, coordinator, http.MethodPost, "/console/projects", consoleapi.AddProjectRequest{ID: "unrelated", Path: "unrelated", Repo: "inplace", Level: "internal"}, nil)
 	conversation := "console:plugin-project-isolation"
 	pluginPeerJSON(t, coordinator, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use unrelated", CommandID: "isolation-project"}, nil)
-	var result struct {
-		Reply consoleapi.Reply `json:"reply"`
-	}
-	pluginPeerJSON(t, coordinator, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "plugincheck manual review", CommandID: "isolation-review"}, &result)
-	if result.Reply.Error != "" || !strings.Contains(result.Reply.Text, "[plugins: ]") || strings.Contains(result.Reply.Text, "PLUGIN_SKILL_") || strings.Contains(result.Reply.Text, "REVIEW_EVIDENCE") {
-		t.Fatalf("plugin capabilities crossed project scope: %+v", result.Reply)
+	result := peerPluginTurn(t, coordinator, conversation, "isolation-review")
+	if !strings.Contains(result.Text, "[plugins: ]") || strings.Contains(result.Text, "PLUGIN_SKILL_") || strings.Contains(result.Text, "REVIEW_EVIDENCE") {
+		t.Fatalf("plugin capabilities crossed project scope: %+v", result)
 	}
 }
 

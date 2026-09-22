@@ -2,7 +2,33 @@
 
 本文按当前代码说明配置、部署、门禁和排障。对象与权威边界见 [architecture.md](architecture.md)，首次使用见 [中文 README](../README.md) / [English README](../README.en.md)，旧方案保存在 [history/](history/)。
 
-桌面 App 的首次启动、完整节点接入、协调交接与容灾要求见 [桌面指南](desktop.md)。下方 `steve run` / `steve-node` 配置说明以独立部署为主；共享账本模式的机器身份与声明由 App 管理。
+桌面 App 的首次启动、完整节点接入、协调交接与容灾要求见 [桌面指南](desktop.md)。服务器上的集群首次初始化见[服务端集群初始化](#服务端集群初始化)。下方 `steve run` / `steve-node` 配置说明以独立部署为主。
+
+## 服务端集群初始化
+
+`peer-init` 有两种互斥输入：`--state-dir` 创建新安装；`--config` 初始化已有服务并保留其配置与账本，见[服务模式的集群初始化](#服务模式的集群初始化)。新目录模式不能同时传入 `--config`、`--storage-level` 或地址、节点标识选项。
+
+在部署用户自己的新目录中创建集群首节点，无需启动原生 App：
+
+```sh
+./steve peer-init --state-dir /home/me/steve-service
+```
+
+命令创建私有安装目录、稳定节点身份、集群 CA 与节点证书、控制台凭据、`config.json` 和 `config.json.cluster.json`。完整节点按 `restricted` 级别保存私有协作账本。JSON 输出包含 `config`、`cluster_config`、`cluster_id`、`node_id`、`token_file` 和 `endpoint_file`；凭据内容不写入输出。此命令只初始化文件，不启动服务、不监听端口。
+
+目录可以不存在或为权限 `0700` 的空目录。重复执行会校验已有安装并保留身份、凭据、配置和已绑定端口；并发初始化或运行中的服务会使它拒绝执行。未知的非空目录、符号链接、非私有目录、损坏的身份或凭据不会被覆盖。它不接收旧 hub 配置，也不迁移旧账本。共享桌面安装格式不要求安装桌面应用。
+
+首次启动前，可以在生成的 `config.json` 中配置 `nodes`、远端 `agents`、`projects` 等业务声明。保留生成的 `gateway.hub_id`、`state_path`、`read_model_addr` 和 `read_model_token`；不要用独立 hub 的配置文件覆盖它。然后交给服务管理器以前台进程运行：
+
+```sh
+./steve peer --config /home/me/steve-service/config.json
+```
+
+默认监听端口由系统分配，首次启动后持久保存，重启继续使用。控制台始终绑定 loopback；地址见日志 `UI available at` 或输出指定的 `endpoint_file`。从另一台机器访问时，用 SSH 本地端口转发连接该地址，并使用 `token_file` 中的本地访问凭据登录。Raft 和 peer 通信沿用集群证书验证；初始化不会开启自动容灾。
+
+独立执行节点的 owner 绑定使用初始化输出的 **`cluster_id`**，不是 `node_id` 或配置文件中的 `gateway.hub_id`。为新执行节点配置 `hubs` 时使用该集群 ID，并把节点地址及其访问凭据配置到 hub 的 `nodes` 中。已有节点更换 owner 应使用现有的 `steve-node adopt` 流程，先确认旧 owner 已停止；`peer-init` 不会接管或重启它们。完整副本节点继续按[桌面多机接入流程](desktop.md)加入。
+
+服务运行后，通过控制台管理共享声明。跨节点插件准备由已提交的协调者授权，操作入口见[插件指南](plugins-local.md#部署到节点需要协调者)。初始化若在发布集群 authority 后、写 sidecar 前中断，重试会验证并恢复原身份；已有 `cluster/raft` 数据却丢失 sidecar 时会拒绝恢复，应找回原配置，不能重新生成身份。
 
 ## 配置约定
 
@@ -161,7 +187,11 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 
 依据：[internal/approval/approval.go](../internal/approval/approval.go)。`gateway.default_approval` 是一份意图，而不是某个 AI 工具的模式名：Codex 把审批档位叫 `read-only` / `agent` / `agent-full-access`，Claude Code 叫 `default` / `acceptEdits` / `auto` / `bypassPermissions`，同一个意图在会话打开时才被换算成该 agent 自己的说法。`ask` 是每步都要人确认，`auto` 是工作区内自行动手、越界再问，`full` 是不再打断。规划类模式（如 Claude Code 的 `plan`）不属于审批档位，任何意图都不会把 agent 放进去。
 
-生效顺序是：会话里临时选的审批模式 > agent 自己钉的 `options.mode` > 这里的默认。它对新会话与之后的每一轮生效，保存后不需要重启 Hub；某个 AI 工具没有对应档位时保持它原样，并在日志里说明。`POST /console/agents/approval`（设置页的「同步到默认」）清掉每个 agent 自己钉的审批模式，让它们跟随这份默认，并回报哪些 agent 被改、哪些本来就跟随、哪些的工具没有对应档位。
+在「设置 → 审批与权限」设置全局默认，在「资源 → Agent → 默认审批模式」设置 Agent 默认。Agent 使用 AI 工具实际提供的审批选项；尚未取得选项或工具不提供该能力时，界面说明原因并保留已有配置，不猜测可选值。
+
+生效顺序是：会话单独设置 > Agent 的原生审批选项（如 `options.mode`）> 全局默认 > AI 工具默认。全局设置只是默认值，不强制覆盖 Agent 或会话。保存后不需要重启 Hub，在后续打开或恢复原生会话时应用，不打断正在执行的任务；工具没有对应档位时保持原样并记录日志。导入的原生会话保留其原有设置，不自动套用默认。
+
+「恢复 Agent 跟随」是独立操作，需要确认后才调用 `POST /console/agents/approval`，清除 Agent 单独设置的审批模式，并报告已修改、已跟随和没有对应档位的 Agent。此操作不清除会话单独设置；仅保存全局默认不会触发它。
 
 ### policies
 
@@ -358,6 +388,20 @@ steve run -config /home/me/steve-bin/config.json
 
 Console 始终启用，owner 在该接口只读。首次保存将原有效 Console owner 和默认语言固定为独立配置，之后修改 IM owner 或域不再改变它们。不可停用当前默认通道；先选择 Console。群聊 `open` 放行未被阻止的发送者，`allowlist` 仅放行名单命中者（空名单拒绝全部群聊），`disabled` 拒绝群聊，阻止名单优先，私聊不受群聊名单控制。旧配置若以 `open` 加非空名单表达限制，升级时应显式改为 `allowlist`，保持原限制。
 
+### 飞书 / Lark 会话卡片
+
+会话卡片不显示机器人标题栏。唤醒、执行和等待确认的状态在正文中显示；Agent 上报后可看到当前动作、回答、计划和执行详情，完成后过程默认折叠。底部展示已上报的模型、模式、上下文与 token 用量；耗时取最近一次事件或完成时刻，不是独立计时器。尚未上报的数据不会显示为估算值。
+
+正文和执行信息的变化合并刷新，普通进度更新间隔至少 3 秒，无变化不空刷；授权、提问和最终结果不等待普通进度的节流窗口。执行中提供紧凑的终止按钮，失败或取消后保留重试。长工具树、计划和字段受卡片大小限制，省略的详情会有提示。
+
+### 在 Console 查看 Channel 会话
+
+Steve 已接收并持久保存的飞书 / Lark 会话会出现在 Console 会话列表中，按原项目归组并标明渠道来源。打开后可查看已保存的输入、回答和当前执行状态，加载更早的记录；新消息和结果自动刷新。列表和正文读取保留原会话及话题身份，不重新执行历史输入，不新建替代会话，也不向 Lark 重发消息。
+
+渠道会话在 Console 中是只读视图。继续提问、审批、取消和重试仍在原渠道操作；此视图不提供发送、改 Agent、编辑或删除会话。原生 Console 会话的输入和队列不受影响。
+
+记录范围限于 Steve 已保存的数据，不等同于完整的 Lark 聊天记录。保存的回答与渠道投递回执分别判断：未确认发送、明确未投递或正文不可用会有提示。旧版本未保存的工具过程、流式片段及缺失正文不能通过查看操作补回；读取失败会明确报错，不显示为“没有历史”。
+
 ### 服务重启
 
 “节点与服务”列出 Hub 和 worker 的版本、可用性及重启结果。重启先关闭准入，释放缓存会话并等待进程退出；下一回合由新进程恢复会话。Hub 重启会短暂中断 Console。升级安装不在此入口提供。
@@ -441,7 +485,7 @@ ssh me@host-3 'bash -lc "nohup /home/me/steve-bin/steve-node -config /home/me/st
 
 node 要安装 Git；工作树物化和产物传输依赖它。默认 harness home 隔离在 `state_dir/runtimes/<harness>`，初始化时按工具规则引用认证、筛选配置，不会直接沿用用户的个人技能/MCP 清单。正常运行时 hub 下发启用的技能包，node 校验并物化；认证和必要的环境变量仍需在 node 本机准备。
 
-内置工具的隔离 home 各自引用部署用户的认证并复制筛选后的配置：Codex 链接 `~/.codex/auth.json` 并保留 `config.toml` 的模型与 provider；Claude Code 链接 `~/.claude/.credentials.json` 并只保留 `settings.json` 的 `env`；Grok 复制 `~/.grok/auth.json` 并关闭 compat；Kimi Code 链接 `~/.kimi-code/credentials`、`oauth`，并保留 `config.toml` 的 `default_model`、`[providers]`（含 OAuth 存储）、`[models]`、`[thinking]`、`[loop_control]` 等模型访问配置，去掉 hooks、MCP、skills、plugins、agents、cron 与终端偏好。部署用户没有 `~/.kimi-code/config.toml` 时不生成隔离配置，Kimi 使用自身默认值；用环境变量 `KIMI_MODEL_NAME` / `KIMI_API_KEY` 等配置的模型仍通过 harness `env` 传入。
+内置工具的隔离 home 各自引用部署用户的认证并复制筛选后的配置：Codex 链接 `~/.codex/auth.json` 并保留 `config.toml` 的模型与 provider；Claude Code 链接 `~/.claude/.credentials.json` 并保留 `settings.json` 里描述模型访问的键：`env`（base URL、自定义 header、token）与 `modelPicker`、`availableModels`、`modelOverrides`（该端点提供的模型目录），去掉默认模型、effort、权限、hooks 与终端偏好；隔离配置在 node 启动时生成，改动这些键后要重启才会生效；Grok 复制 `~/.grok/auth.json` 并关闭 compat；Kimi Code 链接 `~/.kimi-code/credentials`、`oauth`，并保留 `config.toml` 的 `default_model`、`[providers]`（含 OAuth 存储）、`[models]`、`[thinking]`、`[loop_control]` 等模型访问配置，去掉 hooks、MCP、skills、plugins、agents、cron 与终端偏好。部署用户没有 `~/.kimi-code/config.toml` 时不生成隔离配置，Kimi 使用自身默认值；用环境变量 `KIMI_MODEL_NAME` / `KIMI_API_KEY` 等配置的模型仍通过 harness `env` 传入。
 
 node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平台 MCP 能否注入）按二进制、参数、目录和环境缓存 1 小时，真实会话打开时以 agent 自己的回答刷新，打开失败则丢弃缓存。这意味着同一台机器上原地更换适配器二进制后，最迟在下一次会话打开时纠正；要立刻生效可重启 node。
 
@@ -538,7 +582,9 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 ### 隔离执行与复制操作
 
-`/tasks cancel ID` 撤销任务及子任务的执行授权并等待收尾；普通回合结束不会取消已派发子任务。若未能确认进程停止，隔离会继续阻止目录接管，租约到期也不会解除它。
+`/tasks cancel ID` 撤销任务及子任务的执行授权并等待收尾；普通回合结束不会取消已派发子任务。`/cancel`（Console 的“停止”）停止当前回合，并一并取消该 Agent 在此会话中持有的每个任务（不论由消息、计划还是定时任务发起）派发出去、仍在运行的子任务；任务本身保持可继续，但被置为 held：子任务的结果不再自动唤醒它，用户下一条消息的回合会先带上这些子任务的状态和结果，再处理用户的话。hold 持久化，重启后的补发也不会绕过它。停止未得到执行端确认的子任务没有结果，在任务 held 期间的回合中报告；之后它在任务列表里保持已取消，执行端事后确认并写入结果时按普通交接送达。hold 解除后，它不会让之后的 `/cancel` 再次 hold 任务；hold 尚未解除时，再次停止保持 hold。若未能确认进程停止，隔离会继续阻止目录接管，租约到期也不会解除它。
+
+切换项目或执行 `/new` 时，旧会话中失败或阻塞的任务会被置为暂停，而不是标为完成。预算和执行历史保留，原任务及子任务的执行授权被撤销；尚未确认的原生停止仍需核对回执。新项目的输入使用独立任务，不继承旧项目的执行授权。
 
 验收通过后，在主任务详情点击“完成任务” / “Complete task”，或发送 `/tasks complete ID`（别名 `done`、`完成`）。省略编号优先选择当前会话最新的运行中或待验收聊天主任务；重复完成同一编号返回稳定的已完成确认。完成不会重置会话或 native context；下一条新消息打开新主任务，旧 continuation 和 resume 不能重开已关闭任务。
 

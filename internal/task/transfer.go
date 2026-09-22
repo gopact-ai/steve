@@ -1,7 +1,6 @@
 package task
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -15,21 +14,27 @@ type ProjectTransfer struct {
 	Meta    map[string]Meta  `json:"meta"`
 }
 
-func ExportProject(doc ledger.Doc, project string) (ProjectTransfer, error) {
+// ExportProjectTx assembles complete task histories and metadata at one
+// committed boundary. Only the task owner knows the record layout.
+func ExportProjectTx(tx *ledger.Tx, project string) (ProjectTransfer, error) {
+	records, err := loadRecordSetTx(tx)
+	if err != nil {
+		return ProjectTransfer{}, err
+	}
+	d, _, err := decodeRecords(records)
+	if err != nil {
+		return ProjectTransfer{}, err
+	}
+	return exportProject(d, project)
+}
+
+func exportProject(d data, project string) (ProjectTransfer, error) {
 	out := ProjectTransfer{Project: project, Tasks: map[string]*Task{}, Meta: map[string]Meta{}}
-	raw, ok, err := doc.Load()
-	if err != nil || !ok {
-		return out, err
-	}
-	var d data
-	if err := json.Unmarshal(raw, &d); err != nil {
-		return out, err
-	}
 	for id, t := range d.Tasks {
 		if t.ProjectID == project {
-			out.Tasks[id] = t
-			if m, ok := d.Meta[id]; ok {
-				out.Meta[id] = m
+			out.Tasks[id] = t.clone()
+			if meta, ok := d.Meta[id]; ok {
+				out.Meta[id] = meta
 			}
 		}
 	}
@@ -40,50 +45,67 @@ func ExportProject(doc ledger.Doc, project string) (ProjectTransfer, error) {
 	}
 	return out, nil
 }
-func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
-	raw, ok, err := doc.Load()
+
+// ValidateProjectImportTx checks exactly the records ImportProjectTx will
+// merge, without publishing tasks during the import's filesystem phase.
+func ValidateProjectImportTx(tx *ledger.Tx, in ProjectTransfer) error {
+	_, _, _, err := projectImportChangesTx(tx, in)
+	return err
+}
+
+func ImportProjectTx(tx *ledger.Tx, in ProjectTransfer) error {
+	changes, nextID, revision, err := projectImportChangesTx(tx, in)
 	if err != nil {
 		return err
 	}
-	d := data{NextID: 1, Tasks: map[string]*Task{}, Meta: map[string]Meta{}}
-	if ok {
-		if err := json.Unmarshal(raw, &d); err != nil {
-			return err
-		}
+	if len(changes) == 0 {
+		return nil
 	}
-	if d.Tasks == nil {
-		d.Tasks = map[string]*Task{}
+	return writeRecordChangesTx(tx, changes, nextID, revision)
+}
+
+func projectImportChangesTx(tx *ledger.Tx, in ProjectTransfer) ([]recordChange, int, uint64, error) {
+	records, err := loadRecordSetTx(tx)
+	if err != nil {
+		return nil, 0, 0, err
 	}
-	if d.Meta == nil {
-		d.Meta = map[string]Meta{}
+	before, revision, err := decodeRecords(records)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	next := data{NextID: before.NextID, Tasks: make(map[string]*Task, len(before.Tasks)), Meta: make(map[string]Meta, len(before.Meta))}
+	for id, t := range before.Tasks {
+		next.Tasks[id] = t
+	}
+	for id, m := range before.Meta {
+		next.Meta[id] = m
 	}
 	for id, t := range in.Tasks {
-		if t == nil || t.ID != id || t.ProjectID != in.Project {
-			return fmt.Errorf("invalid project task %s", id)
+		if t == nil || id == "" || t.ID != id || t.ProjectID != in.Project {
+			return nil, 0, 0, fmt.Errorf("invalid project task %s", id)
 		}
-		if old, ok := d.Tasks[id]; ok && !reflect.DeepEqual(old, t) {
-			return fmt.Errorf("task ID collision %s", id)
+		if t.Parent != "" && in.Tasks[t.Parent] == nil {
+			return nil, 0, 0, fmt.Errorf("cross-project task ancestry %s", id)
 		}
-		d.Tasks[id] = t
-		n, err := strconv.Atoi(id)
-		if err == nil && n >= d.NextID {
-			d.NextID = n + 1
+		if old, ok := before.Tasks[id]; ok && !reflect.DeepEqual(old, t) {
+			return nil, 0, 0, fmt.Errorf("task ID collision %s", id)
+		}
+		next.Tasks[id] = t
+		if n, err := strconv.Atoi(id); err == nil && n >= next.NextID {
+			next.NextID = n + 1
 		}
 	}
 	for id, m := range in.Meta {
 		if in.Tasks[id] == nil {
-			return fmt.Errorf("orphan task metadata %s", id)
+			return nil, 0, 0, fmt.Errorf("orphan task metadata %s", id)
 		}
-		if old, ok := d.Meta[id]; ok && !reflect.DeepEqual(old, m) {
-			return fmt.Errorf("task metadata collision %s", id)
+		if old, ok := before.Meta[id]; ok && !old.equal(m) {
+			return nil, 0, 0, fmt.Errorf("task metadata collision %s", id)
 		}
-		d.Meta[id] = m
+		next.Meta[id] = m
 	}
-	raw, err = json.Marshal(d)
-	if err != nil {
-		return err
-	}
-	return doc.Save(raw)
+	changes, err := recordChanges(before, next)
+	return changes, next.NextID, revision, err
 }
 
 func (in *ProjectTransfer) Remap(m ledger.TransferIDs) {
@@ -91,6 +113,7 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs) {
 	meta := map[string]Meta{}
 	for id, t := range in.Tasks {
 		t.ID = m.Task(id)
+		t.ResumeGrant.Admission.TaskID = m.Task(t.ResumeGrant.Admission.TaskID)
 		t.Parent = m.Task(t.Parent)
 		t.Channel = m.Conversation(t.Channel)
 		t.Origin = m.Key(t.Origin)
@@ -110,26 +133,36 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs) {
 	in.Tasks, in.Meta = tasks, meta
 }
 
-// FreezeProject seals dispatchable source tasks after their pre-freeze state
-// has been bundled. Historical attempts, costs and results remain intact.
-func FreezeProject(doc ledger.Doc, project string) error {
-	raw, ok, err := doc.Load()
-	if err != nil || !ok {
-		return err
-	}
-	var d data
-	if err := json.Unmarshal(raw, &d); err != nil {
-		return err
-	}
-	for _, t := range d.Tasks {
-		if t.ProjectID == project && !t.State.Terminal() {
-			t.State = StateCancelled
-			t.ExecutionEpoch++
-		}
-	}
-	raw, err = json.Marshal(d)
+// FreezeProjectTx seals exactly the tasks included in the durable bundle.
+// A concurrent addition/change refuses release instead of leaving an exported
+// task writable or freezing a task whose latest records were never exported.
+func FreezeProjectTx(tx *ledger.Tx, exported ProjectTransfer) error {
+	records, err := loadRecordSetTx(tx)
 	if err != nil {
 		return err
 	}
-	return doc.Save(raw)
+	before, revision, err := decodeRecords(records)
+	if err != nil {
+		return err
+	}
+	current, err := exportProject(before, exported.Project)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(current, exported) {
+		return fmt.Errorf("%w: tasks changed during export", ledger.ErrConflict)
+	}
+	var changes []recordChange
+	for id, t := range current.Tasks {
+		if t.State.Terminal() {
+			continue
+		}
+		t.State = StateCancelled
+		t.ExecutionEpoch++
+		changes = append(changes, recordChange{kind: taskKind, id: id, value: headOf(t)})
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	return writeRecordChangesTx(tx, changes, before.NextID, revision)
 }

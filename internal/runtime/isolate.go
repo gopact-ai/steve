@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -180,18 +181,35 @@ func PrepareClaude(dest, userClaude string) error {
 	return nil
 }
 
-// FilterClaudeSettings keeps only the env block of the operator's
-// settings.json: model access (base URL, custom headers, tokens) must reach
-// the isolated harness, while permissions, hooks, model choice and UI
-// preferences stay the operator's own.
+// claudeModelAccessKeys are the top-level settings.json keys that say where
+// the model endpoint is and which models it offers: env carries base URL,
+// custom headers and tokens; modelPicker, availableModels and modelOverrides
+// are the catalogue behind that endpoint. Without the catalogue the isolated
+// harness offers Claude Code's built-in lineup, which a relay may not serve.
+var claudeModelAccessKeys = []string{"env", "modelPicker", "availableModels", "modelOverrides"}
+
+// FilterClaudeSettings keeps the model-access keys of the operator's
+// settings.json and nothing else: the default model, effort, permissions,
+// hooks and UI preferences stay the operator's own terminal. A key set to
+// null is dropped rather than forwarded, because Claude Code validates the
+// file and a null catalogue is an error, not an absence.
 func FilterClaudeSettings(src []byte) []byte {
-	var parsed struct {
-		Env map[string]json.RawMessage `json:"env"`
-	}
-	if err := json.Unmarshal(src, &parsed); err != nil || len(parsed.Env) == 0 {
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(src, &parsed); err != nil {
 		return []byte("{}\n")
 	}
-	out, err := json.MarshalIndent(map[string]any{"env": parsed.Env}, "", "  ")
+	kept := make(map[string]json.RawMessage, len(claudeModelAccessKeys))
+	for _, key := range claudeModelAccessKeys {
+		value, ok := parsed[key]
+		if !ok || string(bytes.TrimSpace(value)) == "null" {
+			continue
+		}
+		kept[key] = value
+	}
+	if len(kept) == 0 {
+		return []byte("{}\n")
+	}
+	out, err := json.MarshalIndent(kept, "", "  ")
 	if err != nil {
 		return []byte("{}\n")
 	}

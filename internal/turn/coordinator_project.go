@@ -53,17 +53,25 @@ func (c *Coordinator) resolveWorkspace(ctx context.Context, req Request, selecte
 	if err != nil {
 		return project.Binding{}, project.Workspace{}, err
 	}
-	if err := checkScheduledProject(req.ExpectedProject, binding.ProjectID); err != nil {
+	workspace, err := c.workspaceFor(ctx, req, selected, binding)
+	if err != nil {
 		return project.Binding{}, project.Workspace{}, err
 	}
+	return binding, workspace, nil
+}
+
+func (c *Coordinator) workspaceFor(ctx context.Context, req Request, selected agent.Agent, binding project.Binding) (project.Workspace, error) {
+	if err := checkScheduledProject(req.ExpectedProject, binding.ProjectID); err != nil {
+		return project.Workspace{}, err
+	}
 	if err := c.require(ctx, binding.ProjectID, req.SenderOpenID, project.RoleWrite); err != nil {
-		return project.Binding{}, project.Workspace{}, err
+		return project.Workspace{}, err
 	}
 	if c.tasks != nil {
 		if tracked, ok := c.tasks.RecoveryOn(req.ConversationID, selected.ID, req.Origin); ok {
 			recovered := tracked.RecoveryWorkspace
 			if recovered.ProjectID == binding.ProjectID && recovered.NodeID == selected.Node && recovered.HarnessID == selected.Harness {
-				return binding, project.Workspace{ID: recovered.ID, Project: recovered.ProjectID, Node: recovered.NodeID, Path: recovered.Path, Kind: project.KindWorktree, Base: recovered.Base}, nil
+				return project.Workspace{ID: recovered.ID, Project: recovered.ProjectID, Node: recovered.NodeID, Path: recovered.Path, Kind: project.KindWorktree, Base: recovered.Base}, nil
 			}
 		}
 	}
@@ -71,7 +79,7 @@ func (c *Coordinator) resolveWorkspace(ctx context.Context, req Request, selecte
 	if err != nil {
 		var notHome project.NotHomeError
 		if !errors.As(err, &notHome) {
-			return project.Binding{}, project.Workspace{}, err
+			return project.Workspace{}, err
 		}
 		// The project is not on this agent's machine yet. Give it a
 		// directory there rather than making the owner move the work by
@@ -80,22 +88,22 @@ func (c *Coordinator) resolveWorkspace(ctx context.Context, req Request, selecte
 		// which names where the project is, worth reading.
 		attached, attachErr := c.attachWorkspace(ctx, binding.ProjectID, selected.Node)
 		if attachErr != nil {
-			return project.Binding{}, project.Workspace{}, UserError{Text: attachErr.Error()}
+			return project.Workspace{}, UserError{Text: attachErr.Error()}
 		}
 		if !attached {
-			return project.Binding{}, project.Workspace{}, UserError{Text: c.text.T(i18n.ProjectNotHome,
+			return project.Workspace{}, UserError{Text: c.text.T(i18n.ProjectNotHome,
 				binding.ProjectID, notHome.PlaceList(), selected.ID, placeLabel(selected.Node), placeLabel(selected.Node), protocol.CommandProject)}
 		}
 		workspace, err = c.projects.Materialize(ctx, project.Request{Project: binding.ProjectID, Node: selected.Node})
 		if err != nil {
 			if errors.As(err, &notHome) {
-				return project.Binding{}, project.Workspace{}, UserError{Text: c.text.T(i18n.ProjectNotHome,
+				return project.Workspace{}, UserError{Text: c.text.T(i18n.ProjectNotHome,
 					binding.ProjectID, notHome.PlaceList(), selected.ID, placeLabel(selected.Node), placeLabel(selected.Node), protocol.CommandProject)}
 			}
-			return project.Binding{}, project.Workspace{}, err
+			return project.Workspace{}, err
 		}
 	}
-	return binding, workspace, nil
+	return workspace, nil
 }
 
 // attachWorkspace gives the project a directory on a machine that has

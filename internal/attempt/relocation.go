@@ -60,7 +60,7 @@ func (s *Service) RecoverRelocationPreparation(ctx context.Context, id string) (
 			return err
 		}
 		next.Leases, next.Unsettled, next.Error, next.Revision = leases, false, "", op.Revision+1
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	return next, err
 }
@@ -341,24 +341,17 @@ func relocationRecordsTx(tx *ledger.Tx, p RelocationIntent) (source Record, repl
 // relocationTaskTx is the task the source attempt runs for, which must
 // still hold work and, when it names a requester, be the plan owner's.
 func relocationTaskTx(tx *ledger.Tx, old Record, owner string) (*task.Task, error) {
-	taskRaw, ok, err := tx.LoadDocument("tasks")
+	tracked, ok, err := task.GetTx(tx, old.TaskID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, errors.New("task record missing")
 	}
-	var taskDocument struct {
-		Tasks map[string]*task.Task `json:"tasks"`
-	}
-	if err := json.Unmarshal(taskRaw, &taskDocument); err != nil {
-		return nil, err
-	}
-	tracked := taskDocument.Tasks[old.TaskID]
-	if tracked == nil || !tracked.State.Holds() || (tracked.Requester != "" && tracked.Requester != owner) {
+	if !tracked.State.Holds() || (tracked.Requester != "" && tracked.Requester != owner) {
 		return nil, errors.New("relocation task is no longer active or belongs to another requester")
 	}
-	return tracked, nil
+	return &tracked, nil
 }
 
 // checkReplacementSpec is the shape a replacement must have: the
@@ -430,6 +423,9 @@ func (s *Service) supersedeSourceTx(tx *ledger.Tx, old *Record, replacement, evi
 	if err != nil {
 		return err
 	}
+	if err := touchHistoryRevisionTx(tx, old.TaskID); err != nil {
+		return err
+	}
 	_, err = tx.Exec(`UPDATE operations SET state = ?, revision = ?, data = ?, updated_at = ? WHERE id = ?`, string(Superseded), old.Revision, string(data), old.EndedAt.Format(time.RFC3339Nano), old.ID)
 	return err
 }
@@ -476,6 +472,9 @@ func (s *Service) leaseReplacementTx(tx *ledger.Tx, spec Spec) ([]ledger.Lease, 
 func (s *Service) recordRelocationTx(tx *ledger.Tx, p RelocationIntent, approval RelocationApproval, old Record, oldPhase State, created Record) error {
 	data, err := json.Marshal(created)
 	if err != nil {
+		return err
+	}
+	if err := touchHistoryRevisionTx(tx, created.TaskID); err != nil {
 		return err
 	}
 	stamp := created.StartedAt.Format(time.RFC3339Nano)

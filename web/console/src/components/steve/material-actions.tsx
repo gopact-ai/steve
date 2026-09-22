@@ -1,6 +1,6 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { DotsHorizontal } from "@untitledui/icons";
-import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { captureMaterial } from "@/lib/api/material";
 import { getSubmissionSupport, subscribeSubmissionSupport, fetchContext } from "@/lib/api/console";
@@ -29,7 +29,7 @@ export function MaterialActions({ capture, material, selector, anchor }: { captu
         finally { pending.current = false; setBusy(false); }
     }
     return <div className="inline-flex max-w-full flex-wrap items-center gap-2">
-        <Dropdown.Root><AriaButton aria-label={t("materials.actions")} isDisabled={busy} className="workbench-icon-button"><DotsHorizontal aria-hidden="true" className="size-4" /></AriaButton><Dropdown.Popover className="w-56"><Dropdown.Menu onAction={(key) => void action(String(key))}>
+        <Dropdown.Root><IconButton label={t("materials.actions")} isDisabled={busy} icon={DotsHorizontal} /><Dropdown.Popover className="w-56"><Dropdown.Menu onAction={(key) => void action(String(key))}>
             <Dropdown.Item id="chat" label={store.target ? t("materials.addTarget", { title: store.target.title }) : t("materials.add")} />
             <Dropdown.Item id="side" label={t("materials.pin")} />
             <Dropdown.Item id="note" label={t("materials.annotate")} />

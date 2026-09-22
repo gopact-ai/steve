@@ -1,10 +1,9 @@
 import { useRef, useState } from "react";
-import { X } from "@untitledui/icons";
 import { Radio, RadioGroup } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
-import { Sheet } from "@/components/steve/drawer";
+import { Drawer } from "@/components/steve/drawer";
 import { request } from "@/lib/http";
 import { relative } from "@/lib/format";
 import type { Agent, Node, Project } from "@/lib/types";
@@ -61,12 +60,7 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
         } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
         finally { pending.current = false; setBusy(null); }
     }
-    return <Sheet label={t("nativeImport.open")} width={580} onClose={onClose}>
-        <div className="workbench-drawer-header">
-            <h2 className="flex-1 text-md font-semibold text-primary">{t("nativeImport.open")}</h2>
-            <Button color="tertiary" size="sm" iconLeading={X} aria-label={t("nativeImport.close")} onClick={onClose} />
-        </div>
-        <div className="workbench-drawer-body flex flex-col gap-4">
+    return <Drawer title={t("nativeImport.open")} width={580} onClose={onClose} closeLabel={t("nativeImport.close")}>
             <p className="text-sm text-tertiary">{t("nativeImport.hint")}</p>
             {!available.length ? <p role="status" className="text-sm text-tertiary">{t("nativeImport.unavailable")}</p> : <>
                 <Select label={t("nativeImport.agent")} selectedKey={effectiveAgentID} isDisabled={!!busy} onSelectionChange={(key) => { setAgentID(String(key)); reset(); }} items={available.map((a) => ({ id: a.id, label: `${a.id} · ${a.harness} · ${nodeLabelIn(nodes, a.node || "")}` }))}>
@@ -91,8 +85,7 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
                 <Button isDisabled={!entry || needsProjectChoice || !!busy} isLoading={busy === "import"} onClick={() => void importSession()}>{busy === "import" ? t("nativeImport.importing") : t("nativeImport.import")}</Button>
             </>}
             {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
-        </div>
-    </Sheet>;
+    </Drawer>;
 }
 
 // Native histories currently come from POSIX nodes; match filepath.Clean on

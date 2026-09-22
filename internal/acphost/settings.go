@@ -84,7 +84,10 @@ func (s *sessionState) settings() view.Settings {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return view.Settings{Model: s.modelLabel(), Models: s.modelNames(), Mode: s.modeLabel()}
+	return view.Settings{
+		Model: s.modelLabel(), Models: s.modelNames(), Mode: s.modeLabel(),
+		Options: optionsView(s.currentOptionsLocked()),
+	}
 }
 
 // modelLabel resolves the model selector to the name a human would recognise.
@@ -252,6 +255,10 @@ func (h *Host) Options(sid acp.SessionID) []acp.SessionConfigOption {
 func (s *sessionState) currentOptions() []acp.SessionConfigOption {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.currentOptionsLocked()
+}
+
+func (s *sessionState) currentOptionsLocked() []acp.SessionConfigOption {
 	out := append([]acp.SessionConfigOption(nil), s.options...)
 	if s.modeID == "" {
 		return out

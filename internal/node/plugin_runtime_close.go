@@ -29,7 +29,7 @@ func (s *Server) closePluginRuntime(ctx context.Context, req nodewire.PluginRequ
 		}
 		for _, one := range selected {
 			one.mu.Lock()
-			state := one.copyLocked().State
+			state := copySessionState(one.record.State)
 			one.mu.Unlock()
 			request := nodewire.SessionRequest{Action: nodewire.SessionActionClose, Authority: req.Authority, Binding: state.Binding, ID: state.ID}
 			// The plugin stream already checked coordinator authority and live

@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -653,14 +654,14 @@ func TestGatewayHandleQuestionAction(t *testing.T) {
 	}
 }
 
-// The card reports progress, it does not stream. Growing assistant text is
-// not news; a tool or a plan step changing is.
-func TestCardRepaintsOnMilestonesNotOnText(t *testing.T) {
+// Every changed snapshot can repaint; the timer, not the kind of update,
+// coalesces streaming bursts.
+func TestCardRepaintsOnChangedProgress(t *testing.T) {
 	base := card.Turn{
 		Plan:  []card.Step{{Text: "one", Status: card.StepInProgress}},
 		Tools: []card.Tool{{ID: "t1", Status: card.ToolRunning}},
 	}
-	quiet := []struct {
+	news := []struct {
 		name string
 		next card.Progress
 	}{
@@ -676,19 +677,6 @@ func TestCardRepaintsOnMilestonesNotOnText(t *testing.T) {
 			Usage: card.Usage{ContextTokens: 9000},
 			Plan:  base.Plan, Tools: base.Tools,
 		}},
-	}
-	for _, tc := range quiet {
-		t.Run(tc.name, func(t *testing.T) {
-			if isMilestone(base, tc.next) {
-				t.Fatal("repainted the card for something the user would not act on")
-			}
-		})
-	}
-
-	news := []struct {
-		name string
-		next card.Progress
-	}{
 		{"plan step advanced", card.Progress{
 			Plan:  []card.Step{{Text: "one", Status: card.StepCompleted}},
 			Tools: base.Tools,
@@ -718,8 +706,7 @@ func TestCardRepaintsOnMilestonesNotOnText(t *testing.T) {
 	}
 }
 
-// Settings arrive once and then repeat on every snapshot; only the first is
-// news, or the card would repaint forever.
+// Repeated settings must not keep the card repainting.
 func TestKnownSettingsAreNotRepeatedNews(t *testing.T) {
 	settled := card.Turn{Settings: card.Settings{Harness: "codex", Model: "GPT 5.6 Sol"}}
 	if isMilestone(settled, card.Progress{Settings: settled.Settings}) {
@@ -1057,20 +1044,33 @@ func TestGatewayAnchorsConversationBeforeTurn(t *testing.T) {
 }
 
 func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
 	p := &captureProcessor{req: make(chan turn.Request, 1)}
 	g := New(p)
 	ch := &recordingChannel{events: make(chan string, 8)}
 	g.BindChannel(ch)
 	revived := make(chan string, 1)
-	g.Revive([]Revival{{
+	if err := g.QueueRecovery(t.Context(), book, "restart-7", Revival{
 		TaskID: "7", Goal: "长任务目标", Member: "codex",
 		ConversationID: "omt_thread", ChatID: "oc_1", MessageID: "om_anchor",
 		Requester: "ou_user", ChatType: "group",
 		OpenCard: "om_dead_card", Interim: []string{"om_dead_1"},
-	}}, func(conversationID, member string) error {
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.req) != 0 || len(ch.events) != 0 {
+		t.Fatal("acceptance performed side effects before recovery dispatch")
+	}
+	if err := g.RecoverQueued(t.Context(), book, &recoveryProbe{}, func(conversationID, member string) error {
 		revived <- conversationID + ":" + member
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case got := <-revived:
 		if got != "omt_thread:codex" {

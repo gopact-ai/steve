@@ -33,13 +33,15 @@ type command struct {
 	Automatic                  bool                 `json:"automatic,omitempty"`
 	ExpectedAppVersion         uint64               `json:"expected_app_version,omitempty"`
 	ExpectedConfigurationIndex uint64               `json:"expected_configuration_index,omitempty"`
+	MemberControlProtocol      uint64               `json:"member_control_protocol,omitempty"`
 }
 
 type receipt struct {
-	Fingerprint string `json:"fingerprint"`
-	Result      Result `json:"result"`
-	Code        string `json:"code,omitempty"`
-	Message     string `json:"message,omitempty"`
+	Fingerprint        string  `json:"fingerprint"`
+	Result             Result  `json:"result"`
+	Code               string  `json:"code,omitempty"`
+	Message            string  `json:"message,omitempty"`
+	ApplicationVersion *uint64 `json:"application_version,omitempty"`
 }
 
 func (r receipt) err() error {
@@ -59,6 +61,8 @@ func (r receipt) err() error {
 		kind = ErrCommandConflict
 	case "application":
 		kind = ErrApplication
+	case "expired":
+		kind = ErrReceiptExpired
 	default:
 		kind = ErrInvalid
 	}
@@ -66,17 +70,18 @@ func (r receipt) err() error {
 }
 
 type machine struct {
-	mu                sync.RWMutex
-	state             State
-	receipts          map[string]receipt
-	app               Application
-	failure           error
-	failed            chan struct{}
-	membershipChanged chan struct{}
+	mu                 sync.RWMutex
+	state              State
+	receipts           map[string]receipt
+	app                Application
+	failure            error
+	failed             chan struct{}
+	membershipChanged  chan struct{}
+	snapshotGeneration uint64
 }
 
 func newMachine(clusterID string, app Application) *machine {
-	return &machine{state: State{ClusterID: clusterID, Members: map[string]Member{}, Replicas: map[string]string{}, Voters: map[string]string{}, Removing: map[string]bool{}, PendingAddresses: map[string]MemberAddressRequest{}}, receipts: map[string]receipt{}, app: app, failed: make(chan struct{}), membershipChanged: make(chan struct{}, 1)}
+	return &machine{state: State{ClusterID: clusterID, Members: map[string]Member{}, Replicas: map[string]string{}, Voters: map[string]string{}, Removing: map[string]bool{}, PendingAddresses: map[string]MemberAddressRequest{}, PendingJoins: map[string]bool{}, PendingVotes: map[string]VotingRequest{}}, receipts: map[string]receipt{}, app: app, failed: make(chan struct{}), membershipChanged: make(chan struct{}, 1)}
 }
 
 func (m *machine) read() State {
@@ -105,6 +110,8 @@ func cloneState(s State) State {
 	s.Voters = maps.Clone(s.Voters)
 	s.Removing = maps.Clone(s.Removing)
 	s.PendingAddresses = maps.Clone(s.PendingAddresses)
+	s.PendingJoins = maps.Clone(s.PendingJoins)
+	s.PendingVotes = maps.Clone(s.PendingVotes)
 	s.Audit = slices.Clone(s.Audit)
 	return s
 }
@@ -112,7 +119,7 @@ func cloneState(s State) State {
 func (m *machine) lookup(id, fingerprint string) (receipt, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	r, ok := m.receipts[id]
+	r, ok := m.receipts["control/"+id]
 	if ok && r.Fingerprint != fingerprint {
 		return receipt{Code: "command", Message: "command ID belongs to different input"}, true
 	}
@@ -153,7 +160,10 @@ func (m *machine) Apply(log *raft.Log) interface{} {
 		return m.fail(fmt.Errorf("committed command belongs to another cluster"))
 	}
 	m.state.AppliedIndex = log.Index
-	if old, ok := m.receipts[c.ID]; ok {
+	if c.Kind == "app" && c.App.ExpectedVersion < m.state.AppReplayFloor {
+		return expiredReceipt()
+	}
+	if old, ok := m.receipts[receiptKey(c)]; ok {
 		if old.Fingerprint != c.Fingerprint {
 			return receipt{Code: "command", Message: "command ID belongs to different input"}
 		}
@@ -161,11 +171,12 @@ func (m *machine) Apply(log *raft.Log) interface{} {
 		return old
 	}
 	r := receipt{Fingerprint: c.Fingerprint}
+	previousControlProtocol := m.state.RequiredControlProtocol
 	event, err := m.applyCommand(c, log.Index, &r)
 	if err != nil {
 		return m.fail(err)
 	}
-	return m.settle(c, log.Index, r, event)
+	return m.settle(c, log.Index, r, event, previousControlProtocol)
 }
 
 // applyCommand dispatches one committed command by kind. A rejection is
@@ -194,6 +205,8 @@ func (m *machine) applyCommand(c command, index uint64, r *receipt) (*AuditRecor
 		return applyEligibility(s, c, r), nil
 	case "rename":
 		return applyRename(s, c, r), nil
+	case "voting_prepare":
+		return applyVotingPrepare(s, c, r), nil
 	case "voting":
 		return applyVoting(s, c, r), nil
 	case "transfer":
@@ -213,14 +226,34 @@ func (m *machine) applyCommand(c command, index uint64, r *receipt) (*AuditRecor
 // failover loop when membership changed, and appends its audit record.
 // The receipt then carries the state's version numbers and is kept for
 // the next entry that reuses the command ID.
-func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord) receipt {
+func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord, previousControlProtocol uint64) receipt {
 	s := &m.state
+	if c.Kind == "app" {
+		version := c.App.ExpectedVersion
+		r.ApplicationVersion = &version
+	}
 	if r.Code == "" {
 		if bumpsRevision(c.Kind) {
 			s.Revision++
 		}
 		if changesMembership(c.Kind) {
 			m.notifyMembership()
+		}
+		// Keep a marker in the legacy audit shape when a new control
+		// protocol is activated. Older binaries ignore the additive state
+		// fields in a format-3 snapshot, but they preserve this known
+		// AuditRecord representation. A newer binary can therefore fail
+		// closed if an old binary rewrites a snapshot after activation
+		// instead of silently treating the activated state as legacy.
+		if previousControlProtocol < ControlProtocolVersion && s.RequiredControlProtocol >= ControlProtocolVersion {
+			s.Audit = append(s.Audit, AuditRecord{
+				CommandID: c.ID + "/control-protocol",
+				Index:     index,
+				Time:      c.Time,
+				Actor:     c.Actor,
+				Kind:      "control_protocol_required",
+				Reason:    fmt.Sprintf("protocol=%d", s.RequiredControlProtocol),
+			})
 		}
 		if event != nil {
 			event.CommandID = c.ID
@@ -235,7 +268,8 @@ func (m *machine) settle(c command, index uint64, r receipt, event *AuditRecord)
 	r.Result.Coordinator = s.Coordinator
 	r.Result.AppVersion = s.AppVersion
 	r.Result.WriterGeneration = s.WriterGeneration
-	m.receipts[c.ID] = r
+	m.receipts[receiptKey(c)] = r
+	m.advanceReplayFloor()
 	r.Result.Data = bytes.Clone(r.Result.Data)
 	return r
 }
@@ -252,7 +286,7 @@ func bumpsRevision(kind string) bool {
 // re-reads.
 func changesMembership(kind string) bool {
 	switch kind {
-	case "initialize", "join_prepare", "join", "remove", "address", "voting":
+	case "initialize", "join_prepare", "join", "remove", "address", "voting_prepare", "voting":
 		return true
 	}
 	return false
@@ -275,6 +309,10 @@ func applyInitialize(s *State, c command, r *receipt) *AuditRecord {
 // applyJoinPrepare admits a member before Raft adds it as a voter. A
 // repeated preparation of the same member is accepted as is.
 func applyJoinPrepare(s *State, c command, r *receipt) *AuditRecord {
+	if c.MemberControlProtocol < s.RequiredControlProtocol {
+		r.reject("invalid", "joining node control protocol is too old; downgrade is unsupported")
+		return nil
+	}
 	if c.Member.StorageLevel != "restricted" && c.Member.StorageLevel != "sealed" {
 		r.reject("invalid", "full ledger replica requires restricted storage authorization")
 		return nil
@@ -308,6 +346,10 @@ func applyJoinPrepare(s *State, c command, r *receipt) *AuditRecord {
 		}
 	}
 	s.Members[c.Member.NodeID] = c.Member
+	if s.PendingJoins == nil {
+		s.PendingJoins = map[string]bool{}
+	}
+	s.PendingJoins[c.Member.NodeID] = true
 	return nil
 }
 
@@ -320,6 +362,7 @@ func applyJoin(s *State, c command, r *receipt) *AuditRecord {
 		r.reject("conflict", "member has not joined the voting configuration")
 		return nil
 	}
+	delete(s.PendingJoins, c.Member.NodeID)
 	return &AuditRecord{Kind: "member_joined", To: c.Member.NodeID}
 }
 
@@ -330,6 +373,10 @@ func applyRemovePrepare(s *State, c command, r *receipt) *AuditRecord {
 	}
 	if _, ok := s.Members[c.Remove.NodeID]; !ok {
 		r.reject("invalid", "member does not exist")
+		return nil
+	}
+	if _, pending := s.PendingVotes[c.Remove.NodeID]; pending {
+		r.reject("conflict", "voting change is pending")
 		return nil
 	}
 	s.Removing[c.Remove.NodeID] = true
@@ -347,6 +394,7 @@ func applyRemove(s *State, c command, r *receipt) *AuditRecord {
 		return nil
 	}
 	delete(s.Members, c.Remove.NodeID)
+	delete(s.PendingJoins, c.Remove.NodeID)
 	delete(s.Removing, c.Remove.NodeID)
 	delete(s.PendingAddresses, c.Remove.NodeID)
 	return &AuditRecord{Kind: "member_removed", From: c.Remove.NodeID}
@@ -360,6 +408,10 @@ func applyAddressPrepare(s *State, c command, r *receipt) *AuditRecord {
 	}
 	if _, ok := s.Members[request.NodeID]; !ok || s.Replicas[request.NodeID] == "" || s.Removing[request.NodeID] {
 		r.reject("invalid", "address changes require an active member")
+		return nil
+	}
+	if _, pending := s.PendingVotes[request.NodeID]; pending {
+		r.reject("conflict", "voting change is pending")
 		return nil
 	}
 	if pending, ok := s.PendingAddresses[request.NodeID]; ok && pending.ID != request.ID {
@@ -398,6 +450,10 @@ func applyAddress(s *State, c command, r *receipt) *AuditRecord {
 func applyPolicy(s *State, c command, r *receipt) *AuditRecord {
 	if c.Policy.ExpectedRevision != s.Revision {
 		r.reject("conflict", "policy revision changed")
+		return nil
+	}
+	if c.Policy.Enabled && s.Voters[s.Coordinator.NodeID] == "" {
+		r.reject("invalid", "automatic failover requires the current coordinator to be a voter")
 		return nil
 	}
 	if c.Policy.Enabled && !s.CanAutoFailover() {
@@ -452,11 +508,53 @@ func applyRename(s *State, c command, r *receipt) *AuditRecord {
 	return &AuditRecord{Kind: "member_renamed", To: member.NodeID, Reason: fmt.Sprintf("%s -> %s", previous, name)}
 }
 
+// applyVotingPrepare retains the reviewed change across a lost response or
+// leadership change between the Raft configuration and its final receipt.
+func applyVotingPrepare(s *State, c command, r *receipt) *AuditRecord {
+	request := c.Voting
+	if request.ExpectedRevision != s.Revision {
+		r.reject("conflict", "membership revision changed")
+		return nil
+	}
+	if !s.IsActiveReplica(request.NodeID) {
+		r.reject("invalid", "node is not an active replica")
+		return nil
+	}
+	if _, pending := s.PendingAddresses[request.NodeID]; pending {
+		r.reject("conflict", "member address change is pending")
+		return nil
+	}
+	if !request.Voting && s.Coordinator.NodeID == request.NodeID {
+		r.reject("invalid", "the coordinator keeps its vote")
+		return nil
+	}
+	if s.PendingVotes == nil {
+		s.PendingVotes = map[string]VotingRequest{}
+	}
+	// A fresh, explicitly reviewed revision may replace an unfinished intent.
+	// Older retries retain their preparation receipt but cannot finalize it.
+	s.PendingVotes[request.NodeID] = request
+	s.RequiredControlProtocol = max(s.RequiredControlProtocol, ControlProtocolVersion)
+	return nil
+}
+
 // applyVoting records whether a member should hold a vote. Raft has already
 // changed the configuration when this commits; the flag is what survives a
 // restart and what tells the coordinator which members to keep demoted.
 func applyVoting(s *State, c command, r *receipt) *AuditRecord {
 	request := c.Voting
+	// Historical voting log entries predate preparation and have no fence.
+	// Newly submitted operations always carry a nonzero configuration index.
+	if c.ExpectedConfigurationIndex != 0 {
+		if pending, ok := s.PendingVotes[request.NodeID]; !ok || pending != request || c.ExpectedConfigurationIndex != s.ConfigurationIndex {
+			r.reject("conflict", "voting change preparation or configuration differs")
+			return nil
+		}
+		if !s.IsActiveReplica(request.NodeID) {
+			r.reject("invalid", "node is not an active replica")
+			return nil
+		}
+	}
 	member, ok := s.Members[request.NodeID]
 	if !ok || s.Removing[request.NodeID] {
 		r.reject("invalid", "node is not an active member")
@@ -478,6 +576,7 @@ func applyVoting(s *State, c command, r *receipt) *AuditRecord {
 	}
 	member.Voting = request.Voting
 	s.Members[request.NodeID] = member
+	delete(s.PendingVotes, request.NodeID)
 	event := &AuditRecord{Kind: "member_vote_revoked", To: request.NodeID}
 	if request.Voting {
 		event.Kind = "member_vote_granted"
@@ -495,8 +594,16 @@ func applyTransfer(s *State, c command, r *receipt) *AuditRecord {
 		return nil
 	}
 	member, ok := s.Members[c.Transfer.TargetNodeID]
-	if !ok || s.Voters[member.NodeID] == "" || s.Removing[member.NodeID] {
-		r.reject("invalid", "target is not a voting member")
+	if !ok || !s.IsActiveReplica(member.NodeID) {
+		r.reject("invalid", "target is not an active replica")
+		return nil
+	}
+	if _, pending := s.PendingVotes[member.NodeID]; pending {
+		r.reject("conflict", "target voting change is pending")
+		return nil
+	}
+	if (c.Automatic || s.AutoFailover) && s.Voters[member.NodeID] != member.Address {
+		r.reject("invalid", "automatic policy requires a voting coordinator")
 		return nil
 	}
 	if c.Automatic && (!s.AutoFailover || !s.CanAutoFailover() || !member.AutoEligible) {
@@ -508,6 +615,9 @@ func applyTransfer(s *State, c command, r *receipt) *AuditRecord {
 		return nil
 	}
 	event := &AuditRecord{Kind: "coordinator_transferred", From: s.Coordinator.NodeID, To: member.NodeID, Epoch: s.Coordinator.Epoch + 1, Reason: c.Transfer.Reason}
+	if s.Voters[member.NodeID] != member.Address {
+		s.RequiredControlProtocol = max(s.RequiredControlProtocol, ControlProtocolVersion)
+	}
 	s.Coordinator = Assignment{NodeID: member.NodeID, Epoch: s.Coordinator.Epoch + 1}
 	return event
 }
@@ -598,68 +708,141 @@ type snapshotData struct {
 	State          State              `json:"state"`
 	Receipts       map[string]receipt `json:"receipts"`
 	HasApplication bool               `json:"has_application"`
-	Application    []byte             `json:"application,omitempty"`
 }
 
+// Keep the existing envelope version during rolling upgrades. New state fields
+// are additive; new log semantics are gated separately before submission.
+const snapshotFormat = 3
+
 func (m *machine) Snapshot() (raft.FSMSnapshot, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.failure != nil {
-		return nil, fmt.Errorf("%w: replica stopped", ErrApplication)
-	}
-	data := snapshotData{Format: 1, State: m.state, Receipts: m.receipts, HasApplication: m.app != nil}
-	if m.app != nil {
-		var err error
-		data.Application, err = m.app.Snapshot()
-		if err != nil {
-			return nil, fmt.Errorf("snapshot application: %w", err)
-		}
-	}
-	encoded, err := json.Marshal(data)
+	data, application, persisted, err := m.captureSnapshot()
 	if err != nil {
 		return nil, err
 	}
-	return &encodedSnapshot{data: encoded}, nil
+	// Metadata is an owned copy. JSON work no longer blocks Apply, and the
+	// application's binary snapshot never passes through the JSON encoder.
+	metadata, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return &encodedSnapshot{metadata: metadata, application: application, persisted: persisted}, nil
+}
+
+func (m *machine) captureSnapshot() (snapshotData, []byte, func() error, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.failure != nil {
+		return snapshotData{}, nil, nil, fmt.Errorf("%w: replica stopped", ErrApplication)
+	}
+	data := snapshotData{Format: snapshotFormat, State: cloneState(m.state), Receipts: maps.Clone(m.receipts), HasApplication: m.app != nil}
+	// Result bytes may be owned by an application implementation. Do not
+	// retain aliases while snapshot persistence runs concurrently with Apply.
+	for id, receipt := range data.Receipts {
+		receipt.Result.Data = bytes.Clone(receipt.Result.Data)
+		data.Receipts[id] = receipt
+	}
+	var application []byte
+	var persisted func() error
+	if m.app != nil {
+		var err error
+		if owner, ok := m.app.(CheckpointApplication); ok {
+			application, persisted, err = owner.SnapshotCheckpoint(data.State.AppReplayFloor)
+		} else {
+			application, err = m.app.Snapshot()
+		}
+		if err != nil {
+			return snapshotData{}, nil, nil, fmt.Errorf("snapshot application: %w", err)
+		}
+	}
+	if persisted != nil {
+		prune, generation := persisted, m.snapshotGeneration
+		persisted = func() error {
+			m.mu.RLock()
+			defer m.mu.RUnlock()
+			if generation != m.snapshotGeneration {
+				return nil
+			}
+			return prune()
+		}
+	}
+	return data, application, persisted, nil
 }
 
 func (m *machine) Restore(reader io.ReadCloser) error {
 	defer reader.Close()
+	metadata, application, err := decodeSnapshot(reader)
+	if err != nil {
+		return err
+	}
 	var data snapshotData
-	if err := json.NewDecoder(reader).Decode(&data); err != nil {
+	if err := json.Unmarshal(metadata, &data); err != nil {
 		return fmt.Errorf("decode snapshot: %w", err)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if data.Format != 1 || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
+	if data.Format != snapshotFormat || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
 		return fmt.Errorf("%w: snapshot identity or format differs", ErrInvalid)
 	}
-	if data.HasApplication != (m.app != nil) {
+	if data.State.RequiredControlProtocol > ControlProtocolVersion {
+		return fmt.Errorf("%w: snapshot requires a newer control protocol; downgrade is unsupported", ErrInvalid)
+	}
+	var fields struct {
+		State struct {
+			PendingJoins json.RawMessage `json:"pending_joins"`
+			PendingVotes json.RawMessage `json:"pending_votes"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return fmt.Errorf("%w: decode snapshot membership state: %v", ErrInvalid, err)
+	}
+	controlProtocolMarker := false
+	for _, event := range data.State.Audit {
+		if event.Kind == "control_protocol_required" {
+			controlProtocolMarker = true
+			break
+		}
+	}
+	if controlProtocolMarker && data.State.RequiredControlProtocol < ControlProtocolVersion {
+		return fmt.Errorf("%w: activated control protocol state was lost; downgrade is unsupported", ErrInvalid)
+	}
+	if data.Format == 3 && len(fields.State.PendingJoins) == 0 && len(fields.State.PendingVotes) == 0 && data.State.RequiredControlProtocol == 0 {
+		// Only genuinely legacy snapshots omit BOTH fields. Administrative
+		// audit is retained and distinguishes completed joins from admission,
+		// including a member removed and then admitted again under the same ID.
+		completed := map[string]bool{}
+		for _, event := range data.State.Audit {
+			switch event.Kind {
+			case "coordinator_initialized", "member_joined":
+				completed[event.To] = true
+			case "member_removed":
+				delete(completed, event.From)
+			}
+		}
+		data.State.PendingJoins = map[string]bool{}
+		data.State.PendingVotes = map[string]VotingRequest{}
+		for id := range data.State.Members {
+			if !completed[id] {
+				data.State.PendingJoins[id] = true
+			}
+		}
+	} else if data.State.PendingJoins == nil || data.State.PendingVotes == nil {
+		return fmt.Errorf("%w: snapshot is missing pending membership state", ErrInvalid)
+	}
+	if data.HasApplication != (m.app != nil) || (!data.HasApplication && len(application) != 0) {
 		return fmt.Errorf("%w: snapshot application configuration differs", ErrInvalid)
 	}
+	if data.State.AppReplayFloor != applicationReplayFloor(data.State.AppVersion) {
+		return fmt.Errorf("%w: snapshot replay window differs", ErrInvalid)
+	}
+	m.snapshotGeneration++
 	if m.app != nil {
-		if err := m.app.Restore(data.Application); err != nil {
+		if err := m.app.Restore(application); err != nil {
 			m.fail(fmt.Errorf("restore application: %w", err))
 			return fmt.Errorf("restore application: %w", err)
 		}
-	}
-	if data.State.Replicas == nil {
-		// Snapshots written before non-voting members existed record only
-		// voters, and back then every member was one.
-		data.State.Replicas = maps.Clone(data.State.Voters)
 	}
 	m.state = data.State
 	m.receipts = data.Receipts
 	m.notifyMembership()
 	return nil
 }
-
-type encodedSnapshot struct{ data []byte }
-
-func (s *encodedSnapshot) Persist(sink raft.SnapshotSink) error {
-	if _, err := sink.Write(s.data); err != nil {
-		sink.Cancel()
-		return err
-	}
-	return sink.Close()
-}
-func (s *encodedSnapshot) Release() {}

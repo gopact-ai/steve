@@ -28,15 +28,15 @@ export function MarkdownDocument({ base, open, children }: DocumentLinks & { chi
 // Md renders a piece of markdown the way the transcript wants it: the
 // prose rules from globals.css, and every fenced block as a CodeBlock
 // with its language named and a copy button, like a chat app's.
-export const Md = memo(function Md({ text, size = "sm", className }: { text: string; size?: "sm" | "xs"; className?: string }) {
+export const Md = memo(function Md({ text, size = "sm", variant = "default", className }: { text: string; size?: "sm" | "xs"; variant?: "default" | "conversation"; className?: string }) {
     return (
-        <div className={`md prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${size === "xs" ? "text-xs prose-p:my-0.5 prose-strong:font-medium" : ""} ${className ?? ""}`}>
-            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[sourcePositions]} components={components}>{text}</Markdown>
+        <div className={`md prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${variant === "conversation" ? "md-conversation" : ""} ${size === "xs" ? "text-xs prose-p:my-0.5 prose-strong:font-medium" : ""} ${className ?? ""}`}>
+            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[sourcePositions]} components={variant === "conversation" ? conversationComponents : components}>{text}</Markdown>
         </div>
     );
 });
 
-const components: Components = {
+const markdownComponents = (conversation: boolean): Components => ({
     a: MdLink,
     pre: ({ children }) => {
         const el = children as ReactElement<{ className?: string; children?: ReactNode; "data-md-start"?: number; "data-md-end"?: number }> | undefined;
@@ -46,9 +46,11 @@ const components: Components = {
         // A diagram is worth drawing wherever it appears: an answer, a
         // report, a file. The block keeps its text one fold away.
         if (lang === "mermaid") return <Mermaid code={code} />;
-        return <CodeBlock lang={lang} code={code} sourceStart={el.props["data-md-start"]} sourceEnd={el.props["data-md-end"]} />;
+        return <CodeBlock lang={lang} code={code} density={conversation ? "reading" : "compact"} sourceStart={el.props["data-md-start"]} sourceEnd={el.props["data-md-end"]} />;
     },
-};
+});
+const components = markdownComponents(false);
+const conversationComponents = markdownComponents(true);
 
 // A link is followed where it leads somewhere this app can go: the web
 // opens in a new tab so the console stays put, a neighbouring file opens in

@@ -1,3 +1,4 @@
+import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
@@ -21,7 +22,7 @@ const eventually = async (predicate, message) => {
     assert.fail(message);
 };
 const conversation = "console:completion-test";
-const root = () => ({ id: "148", goal: "Accepted root task with a long title 验收完成的主任务，保留会话与原生上下文 ".repeat(3), channel: conversation, member: "worker", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, pending_results: 0, uncertain_results: 0, can_complete: true, turns: 2, max_turns: 0, updated_at: at });
+const root = () => ({ id: "148", goal: "Accepted root task with a long title 验收完成的主任务，保留会话与原生上下文 ".repeat(3), transport: "console", channel: conversation, member: "worker", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, pending_results: 0, uncertain_results: 0, can_complete: true, turns: 2, max_turns: 0, updated_at: at });
 const fixture = { task: root(), calls: [], errors: [], mode: "success", release: null, onHold: null, expect: "/tasks complete 148" };
 
 try {
@@ -40,7 +41,8 @@ try {
             const requestURL = new URL(request.url());
             if (requestURL.origin !== new URL(url).origin) { fixture.errors.push(`external ${requestURL.origin}`); return route.abort(); }
             const pathname = requestURL.pathname;
-            if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "local", version: "test" }, tasks: [fixture.task], nodes: [], agents: [], projects: [], plans: [], attempts: [], landings: [] } });
+            if (pathname === `/console/tasks/${fixture.task.id}`) return route.fulfill({ json: workDetail(fixture.task) });
+            if (pathname === "/state") return route.fulfill({ json: workState({ at, hub: { node: "local", version: "test" }, tasks: [fixture.task], nodes: [], agents: [], projects: [], plans: [], attempts: [], landings: [] }) });
             if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 1 } });
             if (pathname === "/console/queue") return route.fulfill({ json: { submission_keys: true, queue: [] } });
             if (pathname === "/console/send") {
@@ -52,8 +54,20 @@ try {
                 if (fixture.mode === "hold") await new Promise((resolve) => { fixture.release = resolve; fixture.onHold?.(); });
                 if (fixture.mode === "http-error") return route.fulfill({ status: 409, json: { error: "Execution is reserved; wait for settlement." } });
                 if (fixture.mode === "reply-error") return route.fulfill({ json: { reply: { kind: "reply", text: "Results await a parent-processing receipt.", error: "Results await a parent-processing receipt." } } });
-                fixture.task = { ...fixture.task, state: "done", lifecycle: "done", lane: "ended", can_complete: false };
-                return route.fulfill({ json: { reply: { kind: "reply", conversation, text: locale === "en" ? "Task #148 is completed. Context preserved." : "任务 #148 已完成。上下文保留。" } } });
+                // Commit the owner's actual result before acknowledging it.
+                // Detail and summary reads may both arrive immediately.
+                const command = body.input.split(" ")[1];
+                if (command === "handled" || command === "ignore") {
+                    fixture.task = { ...fixture.task, settlement: command === "handled" ? "handled" : "ignored", lane: "ended" };
+                } else if (command === "reopen") {
+                    fixture.task = { ...fixture.task, settlement: undefined, lane: "needs_you" };
+                } else {
+                    assert.ok(command === "complete" || command === "cancel");
+                    const state = command === "complete" ? "done" : "cancelled";
+                    fixture.task = { ...fixture.task, state, lifecycle: state, lane: "ended", can_complete: false };
+                }
+                const text = command === "complete" ? (locale === "en" ? "Task #148 is completed. Context preserved." : "任务 #148 已完成。上下文保留。") : `Task #148: ${command}`;
+                return route.fulfill({ json: { reply: { kind: "reply", conversation, text } } });
             }
             if (pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [] } });
             if (pathname.startsWith("/console/")) return route.fulfill({ json: { enabled: true, replies: [], verbs: [], suggestions: [], questions: [] } });
@@ -99,13 +113,23 @@ try {
             await complete.evaluate((element) => { element.click(); element.click(); });
             await held;
             assert.equal(fixture.calls.length, before + 1);
+            // Detail and Board summary are independent resources. Observe
+            // each post-mutation image without requiring either to win.
+            const ownerUpdated = page.waitForResponse(async (response) =>
+                new URL(response.url()).pathname === "/console/tasks/148" && response.status() === 200 &&
+                (await response.json()).task.lifecycle === "done");
+            const summaryUpdated = page.waitForResponse(async (response) =>
+                new URL(response.url()).pathname === "/state" && response.status() === 200 &&
+                (await response.json()).task_coverage.completed_roots === 1);
             fixture.release();
+            await Promise.all([ownerUpdated, summaryUpdated]);
             await dialog.getByRole("status").filter({ hasText: locale === "en" ? "completed" : "已完成" }).waitFor();
             await complete.waitFor({ state: "hidden" });
             assert.equal(await dialog.getByRole("alert").count(), 0);
             await page.screenshot({ path: path.join(artifacts, `completed-${locale}-${width}.png`) });
             await page.keyboard.press("Escape");
             const summary = page.getByRole("region", { name: locale === "en" ? "Root task summary" : "主任务统计" });
+            await summary.filter({ hasText: locale === "en" ? /Completed\s*1/ : /已完成\s*1/ }).waitFor();
             assert.match(await summary.innerText(), locale === "en" ? /Completed\s*1/ : /已完成\s*1/);
         }
         // A failed task is usually already dealt with by the time anyone
@@ -126,7 +150,8 @@ try {
             const settleCalls = fixture.calls.length;
             await dialog.getByRole("button", { name: command === "handled" ? settleName.handled : settleName.ignored, exact: true }).click();
             await eventually(() => fixture.calls.length === settleCalls + 1, "Settling must reach the server");
-            fixture.task = { ...failed, settlement, lane: "ended" };
+            assert.equal(fixture.task.lifecycle, "failed", "settling must preserve failure before acknowledging the command");
+            assert.equal(fixture.task.settlement, settlement);
             // The record still says it failed; it just stops asking.
             await dialog.getByText(shown, { exact: true }).first().waitFor();
             await dialog.getByRole("button", { name: settleName.reopen, exact: true }).waitFor();
@@ -137,7 +162,8 @@ try {
             const reopenCalls = fixture.calls.length;
             await dialog.getByRole("button", { name: settleName.reopen, exact: true }).click();
             await eventually(() => fixture.calls.length === reopenCalls + 1, "Reopening must reach the server");
-            fixture.task = failed;
+            assert.equal(fixture.task.lifecycle, "failed", "reopening clears attention settlement, not execution failure");
+            assert.equal(fixture.task.settlement, undefined);
             await dialog.getByRole("button", { name: settleName.retry, exact: true }).waitFor();
             await page.screenshot({ path: path.join(artifacts, `settled-${settlement}-${locale}.png`) });
             await page.keyboard.press("Escape");

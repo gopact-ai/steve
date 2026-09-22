@@ -82,6 +82,10 @@ func (b taskBudget) Reserve(taskID string) (int, time.Time, error) {
 // step. Both produce the same validated Plan and the executor cannot tell
 // which one did.
 func choosePlanner(cfg *config.Config, catalog *agent.Catalog, executor *agentexec.Runner) planner.Planner {
+	return choosePlannerWithSettings(cfg, catalog, executor, nil)
+}
+
+func choosePlannerWithSettings(cfg *config.Config, catalog *agent.Catalog, executor *agentexec.Runner, settings *config.RuntimeSettings) planner.Planner {
 	if cfg.Gateway.Planner == "" {
 		return planner.Rule{}
 	}
@@ -91,7 +95,14 @@ func choosePlanner(cfg *config.Config, catalog *agent.Catalog, executor *agentex
 		return planner.Rule{}
 	}
 	slog.Info(fmt.Sprintf("steve: /plan decomposes with %s", selected.ID), "agent", selected.ID)
-	return planner.LLM{
+	p := planner.LLM{
 		Agent: selected.ID, Executor: executor, Timeout: time.Duration(cfg.Policies.Planning.Timeout), Attempts: cfg.Policies.Planning.Attempts,
 	}
+	if settings != nil {
+		p.Policy = func() (time.Duration, int) {
+			p := settings.Load().Policies.Planning
+			return time.Duration(p.Timeout), p.Attempts
+		}
+	}
+	return p
 }

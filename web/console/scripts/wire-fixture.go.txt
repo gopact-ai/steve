@@ -1,0 +1,156 @@
+// Loaded into internal/httpapi by go test -overlay, never into a production
+// build (the .txt suffix also keeps it out of go test ./... package discovery).
+// The fixture uses the real handlers and JSON/SSE owners, no agent.
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gopact-ai/steve/internal/consoleapi"
+"github.com/gopact-ai/steve/internal/admin"
+"github.com/gopact-ai/steve/internal/attempt"
+"github.com/gopact-ai/steve/internal/ledger"
+"github.com/gopact-ai/steve/internal/nodewire"
+"github.com/gopact-ai/steve/internal/plan"
+"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/readmodel"
+)
+
+type wireConsole struct{ fakeConsole }
+
+func (*wireConsole) SubmissionCapabilities() (bool, bool) { return true, true }
+func (*wireConsole) EnqueueCommand(_ context.Context, conversation, input, commandID string, quotes []consoleapi.QuoteRef) (consoleapi.Exchange, error) {
+	return consoleapi.Exchange{
+		ID: "ack", Conversation: conversation, Input: input, Key: "client:" + commandID,
+		Quotes: quotes, State: consoleapi.ExchangeQueued, History: "private agent history",
+		EnqueuedAt: time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+type wireResponse struct {
+	Status int    `json:"status"`
+	Body   string `json:"body"`
+	Cache  string `json:"cache"`
+}
+
+func TestConsoleWireFixture(t *testing.T) {
+	destination := os.Getenv("CONSOLE_WIRE_FIXTURE")
+	if destination == "" {
+		t.Fatal("CONSOLE_WIRE_FIXTURE is required")
+	}
+	states := []consoleapi.ExchangeState{
+		consoleapi.ExchangeQueued, consoleapi.ExchangeRunning, consoleapi.ExchangeRecovering,
+		consoleapi.ExchangeAwaitingUser, consoleapi.ExchangeDone, consoleapi.ExchangeFailed, consoleapi.ExchangeCancelled,
+	}
+	at := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
+	conversation := "console:wire"
+	owner := &wireConsole{}
+	for _, state := range states {
+		owner.exchanges = append(owner.exchanges, consoleapi.Exchange{
+			ID: string(state), Conversation: conversation, Input: "wire input",
+			State: state, Key: "client:" + string(state), EnqueuedAt: at, StartedAt: at,
+		})
+	}
+	server := &Server{console: owner}
+	capture := func(method, path, body string, handler http.HandlerFunc) wireResponse {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return wireResponse{w.Code, w.Body.String(), w.Header().Get("Cache-Control")}
+	}
+	queue := capture("GET", "/console/queue?conversation="+conversation, "", server.consoleQueue)
+	ack := capture("POST", "/console/queue", `{"conversation":"console:wire","input":"wire input","command_id":"wire-command","quotes":[{"conversation":"console:source","reply_id":"r1"}]}`, server.consoleEnqueue)
+	// Optional capabilities and the nil -> [] normalization use the same route.
+	basic := &Server{console: &fakeConsole{}}
+	empty := capture("GET", "/console/queue", "", basic.consoleQueue)
+	unwired := &Server{}
+	plain := capture("GET", "/console/queue", "", unwired.consoleQueue)
+	errorResponses := map[string]wireResponse{"unwired": plain}
+	for name, err := range map[string]error{
+		"invalid": errors.New("invalid input"), "missing": consoleapi.ErrExchangeNotFound,
+		"not_queued": consoleapi.ErrExchangeNotQueued, "conflict": consoleapi.ErrCommandConflict,
+		"closing": consoleapi.ErrConsoleClosing, "rewound": consoleapi.ErrRewindTargetGone,
+	} {
+		errorResponses[name] = capture("GET", "/", "", func(w http.ResponseWriter, _ *http.Request) { queueResponse(w, nil, err) })
+	}
+	events := []readmodel.Event{
+		{At: at, Kind: "console.sent", Conversation: conversation, ExchangeID: "running", ReplyID: "sent", Text: "wire input"},
+		{At: at.Add(time.Second), Kind: "console.progress", Conversation: conversation, ExchangeID: "running", Progress: &consoleapi.Progress{Answer: "partial", Phase: "working"}},
+		{At: at.Add(2 * time.Second), Kind: "delegate.progress", Conversation: conversation, TaskID: "child", StepID: "#child",
+			Step: &consoleapi.StepProcess{ID: "#child", StepInfo: consoleapi.StepInfo{State: "running", Answer: "child partial"}}},
+		{At: at.Add(3 * time.Second), Kind: "console.step", Conversation: conversation, TaskID: "child",
+			Step: &consoleapi.StepProcess{ID: "#child", StepInfo: consoleapi.StepInfo{State: "done", Answer: "child done"}}},
+		{At: at.Add(4 * time.Second), Kind: "console.reply", Conversation: conversation, ExchangeID: "running", ReplyID: "reply", Text: "wire done", Format: "markdown"},
+		{At: at.Add(5 * time.Second), Kind: "console.queue", Conversation: conversation},
+		{At: at.Add(6 * time.Second), Kind: "console.notice", Conversation: conversation, ReplyID: "notice", Text: "temporary"},
+		{At: at.Add(7 * time.Second), Kind: "console.recalled", Conversation: conversation, ReplyID: "notice"},
+		{At: at.Add(8 * time.Second), Kind: "run.finished", RunID: "run", Seq: 7, TaskID: "child", Rev: 2, State: "done"},
+	}
+	stream := httptest.NewRecorder()
+	for _, event := range events {
+		writeEvent(stream, event)
+	}
+	out := map[string]any{
+		"queue": queue, "empty": empty, "ack": ack, "errors": errorResponses,
+		"events": events, "sse": stream.Body.String(),
+	}
+	// The owner keeps the old receipt when a keyed recovery-stop is retried.
+	// Exercise its actual wire identity, not an invented frontend attempt ID.
+	owner.exchanges = []consoleapi.Exchange{{
+		ID: "stop", Conversation: conversation, Input: "/cancel", Key: "client:stop",
+		State: consoleapi.ExchangeFailed, EnqueuedAt: at, StartedAt: at, ReplyID: "failed-stop",
+	}}
+	retry := map[string]wireResponse{}
+	for _, state := range []consoleapi.ExchangeState{consoleapi.ExchangeFailed, consoleapi.ExchangeRunning, consoleapi.ExchangeDone} {
+		owner.exchanges[0].State = state
+		if state == consoleapi.ExchangeDone {
+			owner.exchanges[0].ReplyID = "retry-done"
+		}
+		retry[string(state)] = capture("GET", "/console/queue?conversation="+conversation, "", server.consoleQueue)
+	}
+	out["retry"] = retry
+	out["retry_replies"] = []consoleapi.Reply{{ID: "failed-stop", ExchangeID: "stop", Conversation: conversation, Kind: "reply", At: at, Text: "old stop failure"}}
+	nano := httptest.NewRecorder()
+	for _, event := range []readmodel.Event{
+		{At: at, Kind: "console.sent", Conversation: conversation, ExchangeID: "nano"},
+		{At: at.Add(123900001 * time.Nanosecond), Kind: "console.progress", Conversation: conversation, ExchangeID: "nano", Progress: &consoleapi.Progress{Answer: "newer"}},
+		{At: at.Add(123900000 * time.Nanosecond).In(time.FixedZone("offset", 8*60*60)), Kind: "console.progress", Conversation: conversation, ExchangeID: "nano", Progress: &consoleapi.Progress{Answer: "older"}},
+	} {
+		writeEvent(nano, event)
+	}
+	out["nano_sse"] = nano.Body.String()
+ out["work"] = workWireFixture(t, at)
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func workWireFixture(t *testing.T, at time.Time) map[string]wireResponse {
+ book,err:=ledger.Open(t.TempDir(),ledger.Options{});if err!=nil{t.Fatal(err)};t.Cleanup(func(){book.Close()})
+ in:=task.ProjectTransfer{Project:"p",Tasks:map[string]*task.Task{"root":{ID:"root",ProjectID:"p",State:task.StateRunning,Transport:"console",Channel:"opaque",Attempts:[]task.Attempt{{Member:"fixture",StartedAt:at,EndedAt:at.Add(time.Second)},{Member:"fixture",StartedAt:at,EndedAt:at.Add(time.Second)}}},"child":{ID:"child",Parent:"root",ProjectID:"p",State:task.StateDone,Transport:"console",Channel:"delegate:root"}}}
+ if err:=book.Update(t.Context(),func(tx *ledger.Tx)error{return task.ImportProjectTx(tx,in)});err!=nil{t.Fatal(err)}
+ tasks,err:=task.OpenLedger(book,"");if err!=nil{t.Fatal(err)}
+ plans,err:=plan.OpenLedger(book,"");if err!=nil{t.Fatal(err)}
+ if _,err:=plans.Create(plan.Plan{TaskID:"root",ProjectID:"p",Goal:"Wire plan",Steps:[]plan.Step{{ID:"step",Goal:"fixture",Agent:"fixture",State:plan.StepDone,Verify:&plan.Verify{Kind:plan.VerifyNone,Why:"fixture"}}}});err!=nil{t.Fatal(err)}
+ native:=attempt.New(book)
+ for _,id:=range []string{"native-1","native-2"}{if _,err:=native.Open(t.Context(),attempt.Spec{ID:id,TaskID:"root",Scope:attempt.ScopeNone});err!=nil{t.Fatal(err)};if _,err:=native.Advance(t.Context(),id,attempt.Failed,"fixture",nil);err!=nil{t.Fatal(err)}}
+ server:=serve(t,readmodel.New(readmodel.Sources{Tasks:tasks,Plans:plans,Hub:readmodel.Hub{Advert:nodewire.Advert{Harnesses:[]nodewire.Harness{}}}}),ServerConfig{Token:"wire"})
+ server.SetAdmin(&admin.Service{Tasks:tasks,Attempts:attempt.New(book)})
+ out:=map[string]wireResponse{}
+ for name,path:=range map[string]string{"state":"/state","tasks":"/console/tasks?limit=1","detail":"/console/tasks/root","accounting":"/console/tasks/root/accounting?limit=1","plans":"/console/plans?task_id=root&limit=1","attempts":"/console/attempts?conversation=opaque&limit=1","invalid":"/console/tasks?cursor=legacy"}{
+ code,headers,body:=taskMetaRequest(t,server,"GET",path,"wire","");out[name]=wireResponse{Status:code,Body:string(body),Cache:headers.Get("Cache-Control")}
+ if name!="invalid"&&code!=200{t.Fatalf("work fixture %s: %d %s",name,code,body)}
+ }
+ return out
+}

@@ -19,6 +19,10 @@ func TestNativeResumeFollowsLongHistoryAndRejectsCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.sessions.Close()
+	store, err := s.sessions.recordsStore()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := range 80 {
 		old.State.ID = "ns_" + sessionHash(fmt.Sprint(i))
 		old.ResumeTarget = "ns_" + sessionHash(fmt.Sprint(i+1))
@@ -28,14 +32,14 @@ func TestNativeResumeFollowsLongHistoryAndRejectsCycles(t *testing.T) {
 		if i == 79 {
 			old.ResumeTarget = ""
 		}
-		saveResumeFixture(t, cfg, old)
+		saveSessionRecordsFixture(t, store, old)
 	}
 	got, err := s.sessions.resumeSourceLocked(req, "next-execution")
 	if err != nil || got.State.ID != old.State.ID {
 		t.Fatalf("valid long chain rejected: %+v %v", got, err)
 	}
 	old.ResumeTarget = req.ID
-	saveResumeFixture(t, cfg, old)
+	saveSessionRecordsFixture(t, store, old)
 	if _, err := s.sessions.resumeSourceLocked(req, "next-execution"); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("cycle accepted: %v", err)
 	}

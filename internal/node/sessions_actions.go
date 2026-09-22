@@ -42,15 +42,15 @@ func (s *SessionService) probeCapabilities(ctx context.Context, req nodewire.Ses
 }
 
 func (one *ownedSession) open(req nodewire.SessionRequest) (nodewire.SessionState, error) {
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) attach(req nodewire.SessionRequest) (nodewire.SessionState, error) {
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) settings(req nodewire.SessionRequest) (nodewire.SessionState, error) {
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) poll(ctx context.Context, principal string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
@@ -75,7 +75,7 @@ func (one *ownedSession) poll(ctx context.Context, principal string, req nodewir
 	if err := one.service.authorize(ctx, principal, req); err != nil {
 		return nodewire.SessionState{}, err
 	}
-	return one.state(req.CommandID), nil
+	return one.stateForRequest(req)
 }
 
 func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest) (nodewire.SessionState, error) {
@@ -109,7 +109,6 @@ func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest
 	optionErr := host.SetOption(ctx, acp.SessionID(id), generation, acp.SessionConfigID(req.OptionID), req.OptionValue)
 	one.mu.Lock()
 	next := one.copyLocked()
-	next.State.Settings = host.Settings(acp.SessionID(id))
 	if next.State.State == nodewire.SessionConfiguring {
 		next.State.State = nodewire.SessionIdle
 		if host.ProcessStopped(generation) {

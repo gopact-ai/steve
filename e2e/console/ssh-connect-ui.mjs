@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Source preview; all SSH, discovery and installation calls stay inside fixtures.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -23,7 +24,7 @@ const routeRequest = async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: f.coordinator, version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: f.coordinator, version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
     if (p === "/console/queue" && req.method() === "GET") return route.fulfill({ json: { queue: [], submission_keys: true } });
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });

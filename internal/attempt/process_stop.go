@@ -71,7 +71,7 @@ func (s *Service) ConfirmProcessStopped(ctx context.Context, id, actor string, p
 		if spend := stoppedUsage(st); spend != nil {
 			next.Usage = spend
 		}
-		return tx.SetData(op, next)
+		return setRecordDataTx(tx, op, next)
 	})
 	if errors.Is(err, errTaskStopRecorded) {
 		return s.Get(ctx, id)

@@ -23,7 +23,7 @@ type fakeGate struct {
 	endpoints []string
 }
 
-func (g *fakeGate) Extras(conversationID, agentID, token, endpoint string) []capability.Extra {
+func (g *fakeGate) PrepareExtras(conversationID, agentID, token, endpoint string) ([]capability.Extra, error) {
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:1/mcp"
 	}
@@ -31,6 +31,13 @@ func (g *fakeGate) Extras(conversationID, agentID, token, endpoint string) []cap
 	g.calls = append(g.calls, conversationID+":"+agentID+":"+token)
 	g.endpoints = append(g.endpoints, endpoint)
 	g.mu.Unlock()
+	return g.DescribeExtras(token, endpoint), nil
+}
+
+func (g *fakeGate) DescribeExtras(token, endpoint string) []capability.Extra {
+	if endpoint == "" {
+		endpoint = "http://127.0.0.1:1/mcp"
+	}
 	return []capability.Extra{{
 		Name: "feishu",
 		Server: capability.MCPServer{
@@ -188,10 +195,9 @@ func TestRemoteAgentGetsItsOwnNodeLoopback(t *testing.T) {
 	}
 }
 
-// TestUnreachableNodeMessagingCostsTheCapabilityNotTheTurn: a node that
-// cannot forward messaging loses the milestone cards, but the turn still
-// runs and still answers.
-func TestUnreachableNodeMessagingCostsTheCapabilityNotTheTurn(t *testing.T) {
+// Missing platform configuration must fail before a prompt, not silently
+// remove tools from the conversation.
+func TestUnreachableNodeMessagingBlocksWithoutDroppingTools(t *testing.T) {
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"lab": {Harness: "codex", Node: "host-3", Default: true},
 	})
@@ -206,10 +212,10 @@ func TestUnreachableNodeMessagingCostsTheCapabilityNotTheTurn(t *testing.T) {
 	coordinator.SetNodeEndpoints(fakeEndpoints{fail: errors.New("node down")})
 
 	result, err := handle(coordinator, t.Context(), "go")
-	if err != nil {
-		t.Fatalf("turn failed because messaging was unavailable: %v", err)
+	if err == nil {
+		t.Fatal("turn silently omitted required platform tools")
 	}
-	if result.Text != "still answered" {
+	if result.Text != "" || len(manager.opened) != 0 {
 		t.Fatalf("result = %q", result.Text)
 	}
 	if len(gate.endpoints) != 0 {

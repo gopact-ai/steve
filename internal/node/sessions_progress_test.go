@@ -1,9 +1,6 @@
 package node
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,20 +12,17 @@ import (
 func progressSession(t *testing.T) *ownedSession {
 	t.Helper()
 	server := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir()})
-	one := &ownedSession{service: &SessionService{server: server, ctx: t.Context()}, changed: make(chan struct{}), record: sessionRecord{Format: 1, State: nodewire.SessionState{ID: "ns_" + strings.Repeat("a", 64), State: "running"}, CurrentCommand: "input", Commands: map[string]nodewire.SessionCommand{"input": {ID: "input", State: "running", DispatchState: "dispatched"}}, CommandHashes: map[string]string{"input": "hash"}}}
+	one := &ownedSession{service: &SessionService{server: server, ctx: t.Context()}, changed: make(chan struct{}), record: sessionRecord{Format: 1, State: nodewire.SessionState{ID: "ns_" + strings.Repeat("a", 64), State: "running", InputAccepted: 1, Binding: nodeSessionRequest("prompt").Binding}, CurrentCommand: "input", Commands: map[string]nodewire.SessionCommand{"input": {ID: "input", InputSequence: 1, State: "running", DispatchState: "dispatched"}}, CommandHashes: map[string]string{"input": "hash"}}}
 	if err := one.commitLocked(one.record); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(one.service.closeRecords)
 	return one
 }
 func savedProgress(t *testing.T, one *ownedSession) sessionRecord {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(one.service.directory(), one.record.State.ID+".json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out sessionRecord
-	if err := json.Unmarshal(raw, &out); err != nil {
+	out, found, err := one.service.readRecord(one.record.State.ID)
+	if err != nil || !found {
 		t.Fatal(err)
 	}
 	return out
@@ -113,11 +107,11 @@ func TestNodeProgressPersistenceFailureQuarantinesSession(t *testing.T) {
 	if err := one.updateProgress("input", view.Progress{Answer: "first"}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(one.service.directory(), one.record.State.ID+".json")
-	if err := os.Remove(path); err != nil {
+	store, err := one.service.recordsStore()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(path, 0700); err != nil {
+	if _, err := store.db.Exec(`CREATE TRIGGER refuse_checkpoint BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'checkpoint failed'); END`); err != nil {
 		t.Fatal(err)
 	}
 	one.mu.Lock()

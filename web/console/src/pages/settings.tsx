@@ -1,6 +1,7 @@
+import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router";
-import { Globe01, Settings01, Server01, Sliders04 } from "@untitledui/icons";
+import { Globe01, Settings01, Server01, Sliders04, Palette, Shield01 } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -14,24 +15,19 @@ import { channelInputs, channelPatch, changedInputs, type ChannelDraft } from "@
 import { number } from "@/lib/format";
 import { HTTPError } from "@/lib/http";
 import { errorText, type LocalePreference } from "@/lib/i18n";
+import { registerBackNavigationGuard } from "@/lib/navigation-guard";
 import { settingGroups, settingValue, settingsInputs, settingsPatch, type SettingPath } from "@/lib/settings-values";
 import { useI18n } from "@/providers/locale-provider";
-import { PALETTES, type ThemeId } from "@/lib/themes";
-import { useTheme } from "@/providers/theme-provider";
+import { SettingsAppearance } from "@/components/steve/settings-appearance";
 
 type Group = "hub" | "channels";
-type Section = "general" | "channels" | "policies" | "services";
-const sections = ["general", "channels", "policies", "services"] as const;
+type Section = "approval" | "appearance" | "general" | "channels" | "policies" | "services";
+const sections = ["general", "appearance", "approval", "channels", "policies", "services"] as const;
 const servicesHref = "#/settings?section=services";
-const icons = { general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
-// HashRouter's listener can unmount the form synchronously. Register this
-// listener before the router mounts so a declined back navigation keeps drafts.
-let guardBack: ((event: PopStateEvent) => void) | undefined;
-window.addEventListener("popstate", (event) => guardBack?.(event), true);
+const icons = { approval: Shield01, appearance: Palette, general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
 
 export function SettingsPage() {
     const { t, locale, preference, setLocale } = useI18n();
-    const { theme, setTheme } = useTheme();
     const [params, setParams] = useSearchParams();
     const location = useLocation();
     const chosen = params.get("section");
@@ -43,6 +39,7 @@ export function SettingsPage() {
     const [stale, setStale] = useState<Record<Group, boolean>>({ hub: false, channels: false });
     const [notices, setNotices] = useState<Partial<Record<Group, "saved" | "review">>>({});
     const [saving, setSaving] = useState<Group | null>(null);
+    const [approvalSyncing, setApprovalSyncing] = useState(false);
     const [confirmRead, setConfirmRead] = useState<{ group: Group; keep: boolean } | null>(null);
     const requests = useRef<Record<Group, number>>({ hub: 0, channels: 0 }), alive = useRef(true), sending = useRef(false);
     const dirtyHub = !!hub && Object.keys(changedInputs(settingsInputs(hub), inputs)).length > 0;
@@ -71,9 +68,9 @@ export function SettingsPage() {
             event.stopImmediatePropagation();
             window.history.pushState(historyState, "", href);
         };
-        guardBack = pop;
+        const releaseBackGuard = registerBackNavigationGuard(pop);
         window.addEventListener("beforeunload", beforeUnload); document.addEventListener("click", click, true);
-        return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", click, true); if (guardBack === pop) guardBack = undefined; };
+        return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", click, true); releaseBackGuard(); };
     }, [location.key, t]);
 
     async function read(group: Group, keep = false) {
@@ -97,7 +94,13 @@ export function SettingsPage() {
         } catch (error) { if (alive.current && revision === requests.current[group]) setErrors((value) => ({ ...value, [group]: error })); }
         finally { if (alive.current && revision === requests.current[group]) setLoading((value) => ({ ...value, [group]: false })); }
     }
-    useEffect(() => { alive.current = true; void read("hub"); void read("channels"); return () => { alive.current = false; requests.current.hub++; requests.current.channels++; }; }, []);
+    const loadedServerSettings = useRef(false);
+    useEffect(() => { alive.current = true; return () => { alive.current = false; loadedServerSettings.current = false; requests.current.hub++; requests.current.channels++; }; }, []);
+    useEffect(() => {
+        if (section === "appearance" || loadedServerSettings.current) return;
+        loadedServerSettings.current = true;
+        void read("hub"); void read("channels");
+    }, [section]);
     async function save(group: Group) {
         if (sending.current || loading[group] || stale[group]) return;
         sending.current = true; setSaving(group); setErrors((all) => ({ ...all, [group]: null }));
@@ -121,100 +124,127 @@ export function SettingsPage() {
         } finally { sending.current = false; if (alive.current) setSaving(null); }
     }
     const fields = new Map((hub?.fields || []).map((field) => [field.path, field]));
-    const blocked = !!saving || loading.hub || loading.channels;
+    const blocked = !!saving || approvalSyncing || loading.hub || loading.channels;
+    const approvalSynced = () => {
+        for (const group of ["hub", "channels"] as const) {
+            if (group === "hub" ? latest.current.dirtyHub : latest.current.dirtyChannels) setStale(value => ({ ...value, [group]: true }));
+            else void read(group);
+        }
+    };
     const group: Group = section === "channels" ? "channels" : "hub";
     const dirtyGroup = group === "hub" ? dirtyHub : dirtyChannels;
     const requestRead = (keep = false) => dirtyGroup ? setConfirmRead({ group, keep }) : void read(group, keep);
-    // A saved server setting does nothing until the coordinator service
-    // restarts, and quitting the app is not that restart. Everywhere the
-    // page says so, it also links to the page that can do it.
+    // Only the server can say which saved changes still need a restart.
+    // Live defaults may already be published without changing work in progress.
     const openServices = (event: ReactMouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setParams({ section: "services" }); };
     const restartLink = <a className="settings-restart-link" href={servicesHref} onClick={openServices}>{t("settingsPage.goRestart")}</a>;
     const pendingGroup = group === "hub" ? !!hub?.pending_restart : !!channels?.pending_restart;
     const update = (path: string, value: string) => { setInputs((all) => ({ ...all, [path]: value })); setNotices((all) => ({ ...all, hub: undefined })); setErrors((all) => ({ ...all, hub: null })); };
     const rows = (paths: readonly SettingPath[]) => hub && paths.filter((path) => fields.has(path)).map((path) => <SettingRow key={path} path={path} field={fields.get(path)!} view={hub} value={inputs[path] ?? ""} disabled={blocked} restart={restartLink} onChange={(value) => update(path, value)} />);
-    const groupStatus = section !== "services" && <>
+    const groupStatus = section !== "services" && section !== "appearance" && <>
         {!!errors[group] && <p role="alert" className="settings-alert">{errorText(errors[group], locale)}</p>}
         {stale[group] && <div role="alert" className="settings-conflict"><p>{t("settingsPage.sharedRevision")}</p><div className="settings-actions"><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead(true)}>{t("settingsPage.reviewLatest")}</Button><Button size="sm" color="link-gray" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.discardReload")}</Button></div></div>}
-        {notices[group] && <p role="status" className="settings-note">{t(notices[group] === "saved" ? "settingsPage.savedNotice" : "settingsPage.reviewedNotice")}{notices[group] === "saved" && <> {restartLink}</>}</p>}
+        {notices[group] && <p role="status" className="settings-note">{t(notices[group] === "review" ? "settingsPage.reviewedNotice" : pendingGroup ? "settingsPage.savedPendingNotice" : group === "channels" ? "settingsPage.channelsSavedNotice" : "settingsPage.savedNotice")}{notices[group] === "saved" && pendingGroup && <> {restartLink}</>}</p>}
         {(group === "hub" ? hub?.warning : channels?.warning) && <p role="status" className="settings-conflict">{group === "hub" ? hub?.warning : channels?.warning}</p>}
     </>;
-    const saveBar = (hub || channels) && <div className="settings-savebar"><span>{t(dirtyGroup ? "settingsPage.unsaved" : "settingsPage.serverSettingsHint")}{!dirtyGroup && pendingGroup && section !== "services" && <> · {restartLink}</>}</span><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.reload")}</Button><Button size="sm" color="primary" isLoading={saving === group} isDisabled={!dirtyGroup || blocked || stale[group]} onClick={() => void save(group)}>{t(group === "hub" ? "settingsPage.saveHub" : "settingsPage.saveChannels")}</Button></div>;
+    const saveBar = (hub || channels) && <div className="settings-savebar"><span>{t(dirtyGroup ? "settingsPage.unsaved" : pendingGroup ? "settingsPage.pendingRestart" : "settingsPage.serverSettingsHint")}{!dirtyGroup && pendingGroup && section !== "services" && <> · {restartLink}</>}</span><Button size="sm" color="secondary" isDisabled={blocked} onClick={() => requestRead()}>{t("settingsPage.reload")}</Button><Button size="sm" color="primary" isLoading={saving === group} isDisabled={!dirtyGroup || blocked || stale[group]} onClick={() => void save(group)}>{t(group === "hub" ? "settingsPage.saveHub" : "settingsPage.saveChannels")}</Button></div>;
     return <div className="workbench-page settings-page">
         <header className="settings-header"><h1>{t("settingsPage.centerTitle")}</h1><div role="status">{dirty && <span>{t("settingsPage.unsaved")}</span>}{(hub?.pending_restart || channels?.pending_restart) && <a className="settings-pending-link" href={servicesHref} aria-label={t("settingsPage.pendingRestartAction")} title={t("settingsPage.pendingRestartAction")} onClick={openServices}><Badge size="sm" color="warning">{t("settingsPage.pendingRestart")}</Badge></a>}</div></header>
-        <div className="settings-layout"><nav aria-label={t("settingsPage.categories")} className="settings-nav">{sections.map((item) => { const Icon = icons[item]; return <a key={item} aria-label={t(`settingsPage.section.${item}`)} href={`#/settings?section=${item}`} aria-current={item === section ? "page" : undefined} onClick={(event) => { event.preventDefault(); setParams({ section: item }); }}><Icon aria-hidden="true" /><span className="settings-nav-label">{t(`settingsPage.section.${item}`)}</span>{(item === "channels" ? dirtyChannels : item === "policies" || item === "general" ? dirtyHub : false) && <span className="settings-dirty-dot" aria-label={t("settingsPage.unsaved")} />}</a>; })}</nav>
+        <div className="settings-layout"><nav aria-label={t("settingsPage.categories")} className="settings-nav">{sections.map((item) => { const Icon = icons[item]; return <a key={item} aria-label={t(`settingsPage.section.${item}`)} href={`#/settings?section=${item}`} aria-current={item === section ? "page" : undefined} onClick={(event) => { event.preventDefault(); setParams({ section: item }); }}><Icon aria-hidden="true" /><span className="settings-nav-label">{t(`settingsPage.section.${item}`)}</span>{(item === "channels" ? dirtyChannels : item === "policies" || item === "approval" || item === "general" ? dirtyHub : false) && <span className="settings-dirty-dot" aria-label={t("settingsPage.unsaved")} />}</a>; })}</nav>
         <main className="settings-content" aria-label={t(`settingsPage.section.${section}`)}>
             {groupStatus}
+            {section === "appearance" && <SettingsAppearance />}
             {section === "general" && <>
                 <div className="settings-section-heading"><div><h2>{t("settingsPage.section.general")}</h2><p>{t("settingsPage.localPreferences")}</p></div></div>
-                <div className="settings-field"><div><label>{t("settings.language")}</label><p>{t("settingsPage.localLanguageHint")}</p></div><Select size="sm" aria-label={t("settings.language")} selectedKey={preference} onSelectionChange={(key) => { if (key) setLocale(String(key) as LocalePreference); }} items={[{ id: "system", label: t("settings.system") }, { id: "zh", label: "简体中文" }, { id: "en", label: "English" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
-                <div className="settings-field"><label>{t("settings.appearance")}</label><Select size="sm" aria-label={t("settings.appearance")} selectedKey={theme} onSelectionChange={(key) => { if (key) setTheme(String(key) as ThemeId); }} items={[...(["system", "light", "dark"] as const).map((id) => ({ id: id as ThemeId, label: t(`settings.${id}`) })), ...PALETTES.map((p) => ({ id: p.id as ThemeId, label: p.name }))]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
+                <div className="settings-field"><div><label className="settings-field-label">{t("settings.language")}</label><p className="settings-field-description">{t("settingsPage.localLanguageHint")}</p></div><Select size="sm" aria-label={t("settings.language")} selectedKey={preference} onSelectionChange={(key) => { if (key) setLocale(String(key) as LocalePreference); }} items={[{ id: "system", label: t("settings.system") }, { id: "zh", label: "简体中文" }, { id: "en", label: "English" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
+                <a className="text-sm text-brand-secondary underline underline-offset-4" href="#/settings?section=appearance" onClick={event => { event.preventDefault(); setParams({ section: "appearance" }); }}>{t("settings.appearance")}</a>
                 <section className="settings-subsection"><h3>{t("settingsPage.hubDefaults")}</h3>{rows(["gateway.locale"])}</section>
                 <details className="settings-advanced"><summary>{t("settingsPage.identityDetails")}</summary><dl><dt>{t("settingsPage.owner")}</dt><dd><code>{hub ? settingValue(hub.effective, "gateway.owner_id") || "—" : "—"}</code></dd><dt>{t("settingsPage.revision")}</dt><dd><code>{hub?.revision || "—"}</code></dd></dl><p>{t("settingsPage.ownerHint")}</p></details>
                 {saveBar}
             </>}
             {section === "channels" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.channels")}</h2><p>{t("settingsPage.channelScopeHint")}</p></div></div>{channels && channelDraft ? <ChannelForm view={channels} draft={channelDraft} disabled={blocked} onChange={(next) => { setChannelDraft(next); setNotices((all) => ({ ...all, channels: undefined })); setErrors((all) => ({ ...all, channels: null })); }} /> : <p className="settings-note">{t(loading.channels ? "common.loading" : "settingsPage.channelsUnavailable")}</p>}{saveBar}</>}
-            {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section className="settings-subsection"><h3>{t("settingsPage.approval")}</h3><p className="settings-note">{t("settingsPage.approvalHint")}</p>{rows(settingGroups.approval)}<ApprovalSyncRow disabled={blocked} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review"] as const).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
+            {section === "approval" && <>
+                <div className="settings-section-heading"><div><h2>{t("settingsPage.section.approval")}</h2><p>{t("settingsPage.approvalHint")}</p></div></div>
+                <p className="settings-note">{t("settingsPage.approvalPrecedence")}</p>
+                {rows(settingGroups.approval)}
+                <a className="text-sm text-brand-secondary underline underline-offset-4" href="#/fleet?tab=agents">{t("settingsPage.agentApprovalSettings")}</a>
+                {saveBar}
+                <section className="settings-subsection"><ApprovalSyncRow onBusyChange={setApprovalSyncing} onSynced={approvalSynced} disabled={blocked || stale.hub || !!errors.hub} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section>
+            </>}
+            {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review", "landing"] as const).filter((name) => settingGroups[name].some((path) => fields.has(path))).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
             {section === "services" && <SettingsServices onRestarted={(service) => { if (service === "hub") { if (!latest.current.dirtyHub) void read("hub"); if (!latest.current.dirtyChannels) void read("channels"); } }} />}
-            {section !== "services" && !hub && <p role="status" className="settings-note">{t(loading.hub ? "common.loading" : "settingsPage.readFailed")}</p>}
+            {section !== "services" && section !== "appearance" && !hub && <p role="status" className="settings-note">{t(loading.hub ? "common.loading" : "settingsPage.readFailed")}</p>}
         </main></div>
-        {confirmRead && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirmRead(null); }}><Modal className="max-w-md"><Dialog aria-label={t(confirmRead.keep ? "settingsPage.reviewLatest" : "settingsPage.reloadTitle")}><div className="settings-dialog"><h2>{t(confirmRead.keep ? "settingsPage.reviewLatest" : "settingsPage.reloadTitle")}</h2><p>{t(confirmRead.keep ? "settingsPage.mergeHint" : "settingsPage.reloadHint")}</p><div className="settings-actions"><Button size="sm" color="secondary" onClick={() => setConfirmRead(null)}>{t("common.cancel")}</Button><Button size="sm" color="primary" onClick={() => { const action = confirmRead; setConfirmRead(null); void read(action.group, action.keep); }}>{t(confirmRead.keep ? "settingsPage.keepAndRead" : "settingsPage.confirmReload")}</Button></div></div></Dialog></Modal></ModalOverlay>}
+        {confirmRead && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirmRead(null); }}><Modal className="max-w-md"><Dialog aria-label={t(confirmRead.keep ? "settingsPage.reviewLatest" : "settingsPage.reloadTitle")}><DialogSurface><DialogBody><DialogHeader title={t(confirmRead.keep ? "settingsPage.reviewLatest" : "settingsPage.reloadTitle")} description={t(confirmRead.keep ? "settingsPage.mergeHint" : "settingsPage.reloadHint")} /><DialogFooter><Button size="sm" color="secondary" onClick={() => setConfirmRead(null)}>{t("common.cancel")}</Button><Button size="sm" color="primary" onClick={() => { const action = confirmRead; setConfirmRead(null); void read(action.group, action.keep); }}>{t(confirmRead.keep ? "settingsPage.keepAndRead" : "settingsPage.confirmReload")}</Button></DialogFooter></DialogBody></DialogSurface></Dialog></Modal></ModalOverlay>}
     </div>;
 }
 
 // The approval stance reads as what it lets an agent do, not as the word
 // the settings file stores.
 const approvalKeys = { "": "settingsPage.approval.none", ask: "settingsPage.approval.ask", auto: "settingsPage.approval.auto", full: "settingsPage.approval.full" } as const;
+const landingKeys = { agent: "settingsPage.landing.agent", manual: "settingsPage.landing.manual" } as const;
+const applyModeKeys = { live: "settingsPage.apply.live", next_operation: "settingsPage.apply.next_operation", next_task: "settingsPage.apply.next_task", deployment: "settingsPage.ownerHint", restart: "settingsPage.restartHint" } as const;
 
 function SettingRow({ path, field, view, value, disabled, restart, onChange }: { path: SettingPath; field: SettingsField; view: HubSettings; value: string; disabled: boolean; restart: ReactNode; onChange: (value: string) => void }) {
     const { t, locale } = useI18n();
     const id = "setting-" + path.replaceAll(".", "-"), label = t(`settingsPage.${path}`);
     const saved = settingValue(view.desired, path), effective = settingValue(view.effective, path), edited = value !== String(saved ?? "");
-    const choiceLabel = (option: string) => path === "gateway.default_approval" ? t(approvalKeys[option as keyof typeof approvalKeys] ?? "settingsPage.approval.none") : option === "" ? t("settingsPage.automaticLocale") : option === "zh" ? "简体中文" : option === "en" ? "English" : option;
+    const choiceLabel = (option: string) => path === "gateway.default_approval" ? t(approvalKeys[option as keyof typeof approvalKeys] ?? "settingsPage.approval.none") : path === "policies.landing.conflicts" && option in landingKeys ? t(landingKeys[option as keyof typeof landingKeys]) : option === "" ? t("settingsPage.automaticLocale") : option === "zh" ? "简体中文" : option === "en" ? "English" : option;
     const format = (item: string | number | undefined) => typeof item === "number" ? number(item, locale) : field.enum ? choiceLabel(String(item ?? "")) : item ?? "—";
+    // An automatic language is returned as "" in desired and zh/en in
+    // effective. Group-level pending cannot attribute that difference to this
+    // field; a pending reset to automatic still has the group restart action.
+    const inheritedLocale = path === "gateway.locale" && saved === "";
+    const pending = field.apply_mode === "restart" && view.pending_restart && saved !== effective && !inheritedLocale;
+    const applyHint = applyModeKeys[field.apply_mode];
     return <div className="settings-field" data-setting={path}>
-        <div><label htmlFor={id}>{label}</label>{path.startsWith("gateway.") && <p>{t(`settingsPage.${path as Extract<SettingPath, `gateway.${string}`>}.hint`)}</p>}{(saved !== effective || edited) && <p className="settings-difference">{t("settingsPage.saved")}: <span data-desired>{format(saved)}</span>{saved !== effective && <> · {t("settingsPage.effective")}: <span data-effective>{format(effective)}</span>{field.apply_mode !== "live" && <> · {restart}</>}</>}</p>}</div>
-        <div>{field.enum ? <Select size="sm" id={id} aria-label={label} selectedKey={value || "__default"} isDisabled={disabled} onSelectionChange={(key) => { if (key) onChange(key === "__default" ? "" : String(key)); }} items={field.enum.map((option) => ({ id: option || "__default", label: choiceLabel(option) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select> : <Input size="sm" id={id} aria-label={label} type="text" inputMode={field.type === "integer" ? "numeric" : "text"} autoComplete="off" spellCheck="false" value={value} isDisabled={disabled} onChange={onChange} />}
+        <div><label className="settings-field-label" htmlFor={id}>{label}</label>{path.startsWith("gateway.") && <p className="settings-field-description">{t(`settingsPage.${path as Extract<SettingPath, `gateway.${string}`>}.hint`)}</p>}{path === "policies.landing.conflicts" && <p className="settings-field-description">{t("settingsPage.landing.hint")}</p>}{applyHint && <p className="settings-field-description" data-apply-mode={field.apply_mode}>{t(applyHint)}</p>}{(saved !== effective || edited) && <p className="settings-field-description settings-difference">{t("settingsPage.saved")}: <span data-desired>{format(saved)}</span>{saved !== effective && <> · {t("settingsPage.effective")}: <span data-effective>{format(effective)}</span>{pending && <> · {restart}</>}</>}</p>}</div>
+        <div>{field.enum ? <Select size="sm" id={id} aria-label={label} selectedKey={value || "__default"} isDisabled={disabled || field.apply_mode === "deployment"} onSelectionChange={(key) => { if (key) onChange(key === "__default" ? "" : String(key)); }} items={field.enum.map((option) => ({ id: option || "__default", label: choiceLabel(option) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select> : <Input size="sm" id={id} aria-label={label} type="text" inputMode={field.type === "integer" ? "numeric" : "text"} autoComplete="off" spellCheck="false" value={value} isDisabled={disabled || field.apply_mode === "deployment"} onChange={onChange} />}
         <details className="settings-field-help"><summary>{t("settingsPage.fieldHelp")}</summary><p>{field.type === "duration" ? t(field.minimum === 0 ? "settingsPage.nonnegativeDuration" : "settingsPage.positiveDuration") : field.type === "integer" ? t("settingsPage.range", { minimum: number(field.minimum ?? 0, locale), maximum: field.maximum === undefined ? "—" : number(field.maximum, locale) }) : ""}{field.unit === "bytes" ? " · " + t("settingsPage.bytes") : ""}</p>{field.default !== undefined && <p>{t("settingsPage.default", { value: format(field.default) })}</p>}</details></div>
     </div>;
 }
 
-// ApprovalSyncRow hands the saved default to the whole fleet at once: the
-// agents that pinned an approval mode of their own let go of it, so the
-// setting above is the only place the stance is decided. It works from what
-// the hub has saved, so an edited draft has to be saved first.
-function ApprovalSyncRow({ disabled, dirty, intent }: { disabled: boolean; dirty: boolean; intent: string }) {
+// Clearing Agent overrides is a separate, confirmed action. Saving the
+// global default alone never changes Agent or conversation choices.
+function ApprovalSyncRow({ disabled, dirty, intent, onBusyChange, onSynced }: { disabled: boolean; dirty: boolean; intent: string; onBusyChange: (busy: boolean) => void; onSynced: () => void }) {
     const { t, locale } = useI18n();
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState<ApprovalSync | null>(null);
+    const [confirm, setConfirm] = useState(false);
     const [error, setError] = useState<unknown>(null);
     async function sync() {
-        setBusy(true); setError(null); setResult(null);
-        try { setResult(await syncApproval()); } catch (failure) { setError(failure); } finally { setBusy(false); }
+        if (busy || disabled || dirty || !intent) return;
+        setConfirm(false); setBusy(true); onBusyChange(true); setError(null); setResult(null);
+        try { setResult(await syncApproval()); onSynced(); } catch (failure) { setError(failure); } finally { setBusy(false); onBusyChange(false); }
     }
     const names = (items: string[]) => items.join("、");
     return <div className="settings-field" data-setting="approval-sync">
-        <div><label>{t("settingsPage.approvalSync")}</label><p>{t(dirty ? "settingsPage.approvalSyncSave" : intent ? "settingsPage.approvalSyncHint" : "settingsPage.approvalSyncNone")}</p>
-            {result && <p role="status" className="settings-note">{result.cleared?.length ? t("settingsPage.approvalSynced", { count: result.cleared.length, agents: names(result.cleared.map((item) => item.agent)) }) : t("settingsPage.approvalAlready")}{result.unmapped?.length ? " · " + t("settingsPage.approvalUnmapped", { agents: names(result.unmapped) }) : ""}</p>}
-            {!!error && <p role="alert" className="settings-alert">{errorText(error, locale)}</p>}</div>
-        <div><Button size="sm" color="secondary" isLoading={busy} isDisabled={disabled || dirty || !intent} onClick={() => void sync()}>{t("settingsPage.approvalSyncAction")}</Button></div>
+        <div><label className="settings-field-label">{t("settingsPage.approvalSync")}</label><p className="settings-field-description">{t(dirty ? "settingsPage.approvalSyncSave" : intent ? "settingsPage.approvalSyncHint" : "settingsPage.approvalSyncNone")}</p>
+            {result && <p role="status" className="settings-field-description settings-note">{result.cleared?.length ? t("settingsPage.approvalSynced", { count: result.cleared.length, agents: names(result.cleared.map((item) => item.agent)) }) : t("settingsPage.approvalAlready")}{result.unmapped?.length ? " · " + t("settingsPage.approvalUnmapped", { agents: names(result.unmapped) }) : ""}</p>}
+            {!!error && <p role="alert" className="settings-field-description settings-alert">{errorText(error, locale)}</p>}</div>
+        <div><Button size="sm" color="secondary" isLoading={busy} isDisabled={disabled || dirty || !intent} onClick={() => setConfirm(true)}>{t("settingsPage.approvalSyncAction")}</Button></div>
+        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={setConfirm}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.approvalResetTitle")}><DialogSurface><DialogBody>
+            <DialogHeader title={t("settingsPage.approvalResetTitle")} description={t("settingsPage.approvalSyncHint")} />
+            <DialogFooter><Button size="sm" color="secondary" onClick={() => setConfirm(false)}>{t("common.cancel")}</Button><Button size="sm" color="primary" isDisabled={disabled || dirty || !intent || busy} onClick={() => void sync()}>{t("settingsPage.approvalResetConfirm")}</Button></DialogFooter>
+        </DialogBody></DialogSurface></Dialog></Modal></ModalOverlay>}
     </div>;
 }
 
 function ChannelForm({ view, draft, disabled, onChange }: { view: ChannelSettings; draft: ChannelDraft; disabled: boolean; onChange: (value: ChannelDraft) => void }) {
     const { t } = useI18n();
     const update = (patch: Partial<ChannelDraft>) => onChange({ ...draft, ...patch });
-    const field = (name: "app_id" | "owner_open_id" | "allowed_senders" | "blocked_senders") => <div className="settings-field"><div><label htmlFor={`channel-${name}`}>{t(`settingsPage.channel.${name}`)}</label>{name.endsWith("senders") && <p>{t("settingsPage.senderHint")}</p>}</div>{name.endsWith("senders") ? <TextArea id={`channel-${name}`} aria-label={t(`settingsPage.channel.${name}`)} value={draft[name]} onChange={(value) => update({ [name]: value })} rows={3} isDisabled={disabled} /> : <Input id={`channel-${name}`} aria-label={t(`settingsPage.channel.${name}`)} value={draft[name]} onChange={(value) => update({ [name]: value })} size="sm" isDisabled={disabled} autoComplete="off" />}</div>;
+    const applyHint = (path: string) => <p className="settings-field-description" data-channel-apply={path}>{t(view.live_fields?.includes(path) ? "settingsPage.channelLiveHint" : "settingsPage.channelRestartHint")}</p>;
+    const field = (name: "app_id" | "owner_open_id" | "allowed_senders" | "blocked_senders") => <div className="settings-field"><div><label className="settings-field-label" htmlFor={`channel-${name}`}>{t(`settingsPage.channel.${name}`)}</label>{name.endsWith("senders") && <p className="settings-field-description">{t("settingsPage.senderHint")}</p>}{applyHint(`feishu.${name}`)}</div>{name.endsWith("senders") ? <TextArea id={`channel-${name}`} aria-label={t(`settingsPage.channel.${name}`)} value={draft[name]} onChange={(value) => update({ [name]: value })} rows={3} isDisabled={disabled} /> : <Input id={`channel-${name}`} aria-label={t(`settingsPage.channel.${name}`)} value={draft[name]} onChange={(value) => update({ [name]: value })} size="sm" isDisabled={disabled} autoComplete="off" />}</div>;
     return <>
         <div className="settings-channel-summary"><div><strong>Console</strong><p>{t("settingsPage.consoleAlways")}</p></div><Badge size="sm" color="gray">{t("settingsPage.enabled")}</Badge></div>
         {view.runtime_error && <div className="settings-conflict" role="alert"><p>{t("settingsPage.channelStartupFailed")}</p><details><summary>{t("settingsPage.errorDetails")}</summary><p>{view.runtime_error}</p></details></div>}
-        <div className="settings-field"><div><label>{t("settingsPage.defaultChannel")}</label><p>{t("settingsPage.defaultChannelHint")}</p></div><Select size="sm" aria-label={t("settingsPage.defaultChannel")} selectedKey={draft.default_channel} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ default_channel: String(key) as "console" | "feishu" }); }} items={[{ id: "console", label: "Console" }, { id: "feishu", label: "Feishu / Lark" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
-        <section className="settings-subsection"><div className="settings-channel-summary"><div><h3>Feishu / Lark</h3><p>{t(view.effective.feishu.enabled ? "settingsPage.channelEffectiveEnabled" : "settingsPage.channelEffectiveDisabled")}{view.desired.feishu.enabled !== view.effective.feishu.enabled && " · " + t("settingsPage.pendingRestart")}</p></div><Toggle size="sm" aria-label={t("settingsPage.enableFeishu")} isSelected={draft.enabled} isDisabled={disabled} onChange={(enabled) => update({ enabled })} /></div>
-        <div className="settings-field"><label>{t("settingsPage.channel.domain")}</label><Select size="sm" aria-label={t("settingsPage.channel.domain")} selectedKey={draft.domain} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ domain: String(key) as "feishu" | "lark" }); }} items={[{ id: "feishu", label: "Feishu · open.feishu.cn" }, { id: "lark", label: "Lark · open.larksuite.com" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
+        <div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.defaultChannel")}</label><p className="settings-field-description">{t("settingsPage.defaultChannelHint")}</p>{applyHint("default_channel")}</div><Select size="sm" aria-label={t("settingsPage.defaultChannel")} selectedKey={draft.default_channel} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ default_channel: String(key) as "console" | "feishu" }); }} items={[{ id: "console", label: "Console" }, { id: "feishu", label: "Feishu / Lark" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
+        <section className="settings-subsection"><div className="settings-channel-summary"><div><h3>Feishu / Lark</h3><p>{t(view.effective.feishu.enabled ? "settingsPage.channelEffectiveEnabled" : "settingsPage.channelEffectiveDisabled")}{view.pending_restart && view.desired.feishu.enabled !== view.effective.feishu.enabled && " · " + t("settingsPage.pendingRestart")}</p>{applyHint("feishu.enabled")}</div><Toggle size="sm" aria-label={t("settingsPage.enableFeishu")} isSelected={draft.enabled} isDisabled={disabled} onChange={(enabled) => update({ enabled })} /></div>
+        <div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.channel.domain")}</label>{applyHint("feishu.domain")}</div><Select size="sm" aria-label={t("settingsPage.channel.domain")} selectedKey={draft.domain} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ domain: String(key) as "feishu" | "lark" }); }} items={[{ id: "feishu", label: "Feishu · open.feishu.cn" }, { id: "lark", label: "Lark · open.larksuite.com" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
         {field("app_id")}
-        <div className="settings-field"><div><label htmlFor="channel-secret">App Secret</label><p>{t(view.desired.feishu.app_secret_configured ? "settingsPage.secretConfigured" : "settingsPage.secretMissing")}</p><p>{t("settingsPage.secretHint")}</p></div><div><Input id="channel-secret" aria-label="App Secret" size="sm" type="password" value={draft.secret} isDisabled={disabled || draft.clearSecret} onChange={(secret) => update({ secret })} autoComplete="new-password" /><Toggle size="sm" className="mt-3" label={t("settingsPage.clearSecret")} isSelected={draft.clearSecret} isDisabled={disabled || !view.desired.feishu.app_secret_configured} onChange={(clearSecret) => update({ clearSecret, secret: "" })} /></div></div>
+        <div className="settings-field"><div><label className="settings-field-label" htmlFor="channel-secret">App Secret</label><p className="settings-field-description">{t(view.desired.feishu.app_secret_configured ? "settingsPage.secretConfigured" : "settingsPage.secretMissing")}</p><p className="settings-field-description">{t("settingsPage.secretHint")}</p>{applyHint("feishu.app_secret")}</div><div><Input id="channel-secret" aria-label="App Secret" size="sm" type="password" value={draft.secret} isDisabled={disabled || draft.clearSecret} onChange={(secret) => update({ secret })} autoComplete="new-password" /><Toggle size="sm" className="mt-3" label={t("settingsPage.clearSecret")} isSelected={draft.clearSecret} isDisabled={disabled || !view.desired.feishu.app_secret_configured} onChange={(clearSecret) => update({ clearSecret, secret: "" })} /></div></div>
         {field("owner_open_id")}
-        <details className="settings-advanced"><summary>{t("settingsPage.accessRules")}</summary><div className="settings-field"><label>{t("settingsPage.channel.group_policy")}</label><Select size="sm" aria-label={t("settingsPage.channel.group_policy")} selectedKey={draft.group_policy} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ group_policy: String(key) as ChannelDraft["group_policy"] }); }} items={(["open", "allowlist", "disabled"] as const).map((id) => ({ id, label: t(`settingsPage.groupPolicy.${id}`) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div><div className="settings-field"><div><label>{t("settingsPage.allowUnmentioned")}</label><p>{t("settingsPage.unmentionedHint")}</p></div><Toggle size="sm" aria-label={t("settingsPage.allowUnmentioned")} isSelected={draft.allow_unmentioned} isDisabled={disabled} onChange={(allow_unmentioned) => update({ allow_unmentioned })} /></div>{field("allowed_senders")}{field("blocked_senders")}</details>
+        <details className="settings-advanced"><summary>{t("settingsPage.accessRules")}</summary><div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.channel.group_policy")}</label>{applyHint("feishu.group_policy")}</div><Select size="sm" aria-label={t("settingsPage.channel.group_policy")} selectedKey={draft.group_policy} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ group_policy: String(key) as ChannelDraft["group_policy"] }); }} items={(["open", "allowlist", "disabled"] as const).map((id) => ({ id, label: t(`settingsPage.groupPolicy.${id}`) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div><div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.allowUnmentioned")}</label><p className="settings-field-description">{t("settingsPage.unmentionedHint")}</p>{applyHint("feishu.allow_unmentioned")}</div><Toggle size="sm" aria-label={t("settingsPage.allowUnmentioned")} isSelected={draft.allow_unmentioned} isDisabled={disabled} onChange={(allow_unmentioned) => update({ allow_unmentioned })} /></div>{field("allowed_senders")}{field("blocked_senders")}</details>
         </section>
     </>;
 }

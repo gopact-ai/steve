@@ -33,12 +33,15 @@ type Service struct {
 	fsm          *machine
 	opMu         sync.Mutex
 	membershipMu sync.Mutex
-	closed       atomic.Bool
-	closeOnce    sync.Once
-	closeErr     error
-	ctx          context.Context
-	cancel       context.CancelFunc
-	workers      sync.WaitGroup
+	// admissionMu serializes Join preparation with new-control capability
+	// checks and activation. Never acquire opMu while holding this lock.
+	admissionMu sync.Mutex
+	closed      atomic.Bool
+	closeOnce   sync.Once
+	closeErr    error
+	ctx         context.Context
+	cancel      context.CancelFunc
+	workers     sync.WaitGroup
 }
 
 // addressTransport keeps RPC source addresses consistent with live listener
@@ -225,7 +228,7 @@ func checkIdentity(c Config) error {
 func (s *Service) Status() Status {
 	address, id := s.raft.LeaderWithID()
 	healthy := !s.closed.Load() && s.fsm.healthy() && s.raft.State() != raft.Shutdown
-	return Status{State: s.fsm.read(), NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
+	return Status{State: s.fsm.read(), ControlProtocol: ControlProtocolVersion, NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
 }
 
 // TransportPeers reads Raft's durable latest membership before FSM replay has
@@ -333,7 +336,7 @@ func (s *Service) submit(ctx context.Context, c command) (Result, error) {
 	if err := s.barrier(ctx); err != nil {
 		return Result{}, err
 	}
-	if r, ok := s.fsm.lookup(c.ID, c.Fingerprint); ok {
+	if r, ok := s.fsm.lookupCommand(c); ok {
 		return r.Result, r.err()
 	}
 	c.ClusterID = s.config.ClusterID
@@ -393,29 +396,21 @@ func (s *Service) SetEligibility(ctx context.Context, request EligibilityRequest
 func (s *Service) SetVoting(ctx context.Context, request VotingRequest) (Result, error) {
 	s.membershipMu.Lock()
 	defer s.membershipMu.Unlock()
-	if request.ID == "" || request.Actor == "" || request.NodeID == "" {
+	if strings.TrimSpace(request.ID) == "" || strings.TrimSpace(request.Actor) == "" || request.NodeID == "" {
 		return Result{}, ErrInvalid
+	}
+	if err := s.barrier(ctx); err != nil {
+		return Result{}, err
 	}
 	fp := fingerprint("voting", request)
 	if old, ok := s.fsm.lookup(request.ID, fp); ok {
 		return old.Result, old.err()
 	}
-	state := s.fsm.read()
-	member, ok := state.Members[request.NodeID]
-	if !ok || state.Removing[request.NodeID] {
-		return Result{}, fmt.Errorf("%w: node is not an active member", ErrInvalid)
-	}
-	if !request.Voting && state.Coordinator.NodeID == request.NodeID {
-		return Result{}, fmt.Errorf("%w: the coordinator keeps its vote", ErrInvalid)
-	}
-	// The Raft configuration change below bumps the revision itself, so the
-	// caller's expectation is checked here rather than when the command applies.
-	if request.ExpectedRevision != state.Revision {
-		return Result{}, fmt.Errorf("%w: membership revision changed", ErrConflict)
-	}
-	if err := s.barrier(ctx); err != nil {
+	if err := s.prepareVoting(ctx, request, fp); err != nil {
 		return Result{}, err
 	}
+	state := s.fsm.read()
+	member := state.Members[request.NodeID]
 	if request.Voting {
 		if err := s.waitForProgress(ctx, member, state); err != nil {
 			return Result{}, err
@@ -426,18 +421,38 @@ func (s *Service) SetVoting(ctx context.Context, request VotingRequest) (Result,
 			}
 		}
 	}
-	configuration := s.raft.GetConfiguration()
-	if err := s.wait(ctx, configuration); err != nil {
+	// Slow network verification does not block application writes. Serialize
+	// assignment/policy with the final configuration change on this leader.
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if err := s.barrier(ctx); err != nil {
 		return Result{}, err
 	}
-	change := s.raft.DemoteVoter(raft.ServerID(request.NodeID), configuration.Index(), s.config.ApplyTimeout)
+	state = s.fsm.read()
+	if state.PendingVotes[request.NodeID] != request || !state.IsActiveReplica(request.NodeID) {
+		return Result{}, fmt.Errorf("%w: voting preparation changed", ErrConflict)
+	}
 	if request.Voting {
-		change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(member.Address), configuration.Index(), s.config.ApplyTimeout)
+		if err := s.waitForProgress(ctx, member, state); err != nil {
+			return Result{}, err
+		}
 	}
-	if err := s.wait(ctx, change); err != nil {
-		return Result{}, err
+	// The committed FSM index supplies the actual CAS. GetConfiguration's
+	// latest configuration can be uncommitted and its Index may be zero.
+	configurationIndex := state.ConfigurationIndex
+	if (state.Voters[request.NodeID] != "") != request.Voting {
+		var change raft.IndexFuture
+		if request.Voting {
+			change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(member.Address), state.ConfigurationIndex, s.config.ApplyTimeout)
+		} else {
+			change = s.raft.DemoteVoter(raft.ServerID(request.NodeID), state.ConfigurationIndex, s.config.ApplyTimeout)
+		}
+		if err := s.wait(ctx, change); err != nil {
+			return Result{}, err
+		}
+		configurationIndex = change.Index()
 	}
-	return s.submit(ctx, command{Kind: "voting", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Voting: request})
+	return s.submit(ctx, command{Kind: "voting", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Voting: request, ExpectedConfigurationIndex: configurationIndex})
 }
 
 // Rename records a member's display name. The command is validated again
@@ -458,6 +473,8 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Result
 }
 
 func (s *Service) transfer(ctx context.Context, request TransferRequest, automatic bool) (Result, error) {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	if err := s.barrier(ctx); err != nil {
 		return Result{}, err
 	}
@@ -476,8 +493,19 @@ func (s *Service) transfer(ctx context.Context, request TransferRequest, automat
 		return Result{}, fmt.Errorf("%w: target already coordinates this cluster", ErrInvalid)
 	}
 	member, ok := state.Members[request.TargetNodeID]
-	if !ok || state.Voters[member.NodeID] == "" || state.Removing[member.NodeID] {
-		return Result{}, fmt.Errorf("%w: target is not a voting member", ErrInvalid)
+	if !ok || !state.IsActiveReplica(member.NodeID) {
+		return Result{}, fmt.Errorf("%w: target is not an active replica", ErrInvalid)
+	}
+	if _, pending := state.PendingVotes[member.NodeID]; pending {
+		return Result{}, fmt.Errorf("%w: target voting change is pending", ErrConflict)
+	}
+	if (automatic || state.AutoFailover) && state.Voters[member.NodeID] != member.Address {
+		return Result{}, fmt.Errorf("%w: automatic policy requires a voting coordinator", ErrInvalid)
+	}
+	if state.Voters[member.NodeID] != member.Address {
+		if err := s.requireControlProtocol(ctx, state); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := s.waitForProgress(ctx, member, state); err != nil {
 		return Result{}, err
@@ -559,24 +587,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 	if old, ok := s.fsm.lookup(request.ID, fp); ok {
 		return old.Result, old.err()
 	}
-	progress, err := s.probe(ctx, request.Member)
-	if err != nil {
-		return Result{}, fmt.Errorf("verify joining node: %w", err)
-	}
-	request.Member.FailureDomain = progress.FailureDomain
-	request.Member.StorageLevel = progress.StorageLevel
-	if request.Member.StorageLevel != "restricted" && request.Member.StorageLevel != "sealed" {
-		return Result{}, fmt.Errorf("%w: a full ledger replica requires explicit restricted storage authorization", ErrInvalid)
-	}
-	if request.Member.FailureDomain == "" {
-		return Result{}, fmt.Errorf("%w: joining node has no verified physical failure domain", ErrInvalid)
-	}
-	if s.config.AuthorizeReplica != nil {
-		if err := s.config.AuthorizeReplica(ctx, request.Member); err != nil {
-			return Result{}, fmt.Errorf("%w: ledger replica authorization: %v", ErrInvalid, err)
-		}
-	}
-	if _, err := s.submit(ctx, command{Kind: "join_prepare", ID: request.ID + "/prepare", Actor: request.Actor, Fingerprint: fp, Member: request.Member}); err != nil {
+	if err := s.prepareJoin(ctx, &request, fp); err != nil {
 		return Result{}, err
 	}
 	if s.config.Application != nil {
@@ -682,7 +693,13 @@ func (s *Service) UpdateMemberAddress(ctx context.Context, request MemberAddress
 	if err := s.wait(ctx, configuration); err != nil {
 		return Result{}, err
 	}
-	if err := s.wait(ctx, s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
+	var change raft.IndexFuture
+	if prepared.Voters[request.NodeID] != "" {
+		change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
+	} else {
+		change = s.raft.AddNonvoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
+	}
+	if err := s.wait(ctx, change); err != nil {
 		return Result{}, err
 	}
 	return s.submit(ctx, command{Kind: "address", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Address: request})

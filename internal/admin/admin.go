@@ -57,6 +57,7 @@ type Service struct {
 	Lifetime           context.Context
 	Mu                 sync.Mutex
 	Cfg                *config.Config
+	RuntimeSettings    *config.RuntimeSettings
 	Path               string
 	WriteConfig        func(string, *config.Config) error
 	WriteConfigContext func(context.Context, string, *config.Config) error

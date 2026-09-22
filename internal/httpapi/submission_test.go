@@ -32,7 +32,7 @@ func TestHTTPSubmissionKeyIsSharedByQueueSendAndRestart(t *testing.T) {
 	t.Cleanup(func() { book.Close() })
 	handler := &submissionHandler{}
 	service := console.New(handler, "owner", nil)
-	if err := service.Persist(book.Document("console")); err != nil {
+	if err := service.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	server, err := NewServer(readmodel.New(readmodel.Sources{}), ServerConfig{Addr: "127.0.0.1:0", Token: "test-token"})
@@ -84,7 +84,7 @@ func TestHTTPSubmissionKeyIsSharedByQueueSendAndRestart(t *testing.T) {
 	}
 	restoredHandler := &submissionHandler{}
 	restored := console.New(restoredHandler, "owner", nil)
-	if err := restored.Persist(book.Document("console")); err != nil {
+	if err := restored.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	server.SetConsole(restored)

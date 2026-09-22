@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cx } from "@/utils/cx";
 
 // One skeleton for every page, so titles, descriptions, actions and
 // key-value blocks look the same wherever they appear.
@@ -27,19 +28,32 @@ export function PageBody({ children, className }: { children: ReactNode; classNa
     return <div className={`workbench-page-body flex min-w-0 flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 ${className ?? ""}`}>{children}</div>;
 }
 
-export function Panel({ title, description, badge, aside, children, className }: { title?: ReactNode; description?: ReactNode; badge?: ReactNode; aside?: ReactNode; children: ReactNode; className?: string }) {
+export type PanelVariant = "card" | "section";
+
+// A panel's presentation belongs here, not to an ancestor's CSS. Section
+// panels are divider-separated facts; flush cards contain lists or tables
+// whose rows own their spacing. className is for placement in the parent.
+export function Panel({ title, label, description, badge, aside, toolbar, footer, variant = "card", padding = "padded", children, className }: {
+    label?: string;
+    title?: ReactNode; description?: ReactNode; badge?: ReactNode; aside?: ReactNode;
+    toolbar?: ReactNode; footer?: ReactNode; variant?: PanelVariant; padding?: "padded" | "flush";
+    children: ReactNode; className?: string;
+}) {
+    const section = variant === "section";
     return (
-        <section className={`workbench-panel flex min-w-0 flex-col rounded-lg bg-primary ring-1 ring-secondary ${className ?? ""}`}>
+        <section aria-label={label} data-panel-variant={variant} className={cx("workbench-panel flex min-w-0 flex-col text-sm text-primary", section ? "border-b border-secondary py-4" : "rounded-lg border border-secondary bg-primary", className)}>
             {title && (
-                <header className="workbench-panel-header flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2 border-b border-secondary px-4 py-3">
+                <header className={cx("workbench-panel-header flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2", section ? "pb-3" : "border-b border-secondary px-4 py-3")}>
                     <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold text-primary">{title}</h2>{badge}</div>
-                        {description && <p className="mt-1 text-xs text-tertiary">{description}</p>}
+                        <div className="flex min-w-0 flex-wrap items-center gap-2"><h2 className="min-w-0 text-sm font-semibold break-words text-primary [overflow-wrap:anywhere]">{title}</h2>{badge}</div>
+                        {description && <p className="mt-1 text-xs break-words text-tertiary">{description}</p>}
                     </div>
                     {aside && <div className="flex max-w-full flex-wrap items-center gap-2">{aside}</div>}
                 </header>
             )}
-            <div className="flex min-w-0 flex-col gap-3 px-4 py-4">{children}</div>
+            {toolbar && <div className="workbench-panel-toolbar flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-secondary px-4 py-3">{toolbar}</div>}
+            <div className={cx("workbench-panel-body min-w-0", padding === "padded" && "flex flex-col gap-3", !section && padding === "padded" && "p-4")}>{children}</div>
+            {footer && <footer className="workbench-panel-footer min-w-0 border-t border-secondary px-4 py-3">{footer}</footer>}
         </section>
     );
 }

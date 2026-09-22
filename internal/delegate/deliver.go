@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
@@ -25,6 +26,7 @@ import (
 // child that ended since the parent last heard: what each was asked,
 // what it said, what it left, and whether that has landed.
 type Delivery struct {
+	Transport    string
 	Conversation string
 	ParentTask   string
 	Member       string
@@ -38,12 +40,12 @@ type Delivery struct {
 	Key string
 }
 
-// Delivered is one child in a delivery.
+// Delivered is one child in a delivery, or in a turn's preface.
 type Delivered struct {
 	Task    string
 	Agent   string
 	Node    string
-	State   task.State // done | failed
+	State   task.State // done | failed | cancelled
 	Elapsed time.Duration
 	Goal    string
 	Answer  string
@@ -52,6 +54,9 @@ type Delivered struct {
 	// Landing says where the child's files are: landed, queued (with why),
 	// conflict, or empty when it changed nothing.
 	Landing string
+	// Stopping says the child was stopped but its execution has not
+	// confirmed stopping: there is no result, only the stop on record.
+	Stopping bool
 }
 
 // Notice is the line the person sees.
@@ -68,22 +73,32 @@ func (d Delivery) Prompt() string {
 	var b strings.Builder
 	b.WriteString("[steve: 你委派的子任务已结束，结果如下；这是平台送来的消息，不是用户说的]\n")
 	for _, c := range d.Children {
-		fmt.Fprintf(&b, "\n## 子任务 #%s · %s@%s · %s · 用时 %s\n", c.Task, c.Agent, nodeLabel(c.Node), stateWord(c.State), c.Elapsed.Round(time.Second))
-		if g := strings.TrimSpace(c.Goal); g != "" {
-			fmt.Fprintf(&b, "目标：%s\n", text.Clip(g, 300))
-		}
-		if c.Landing != "" {
-			fmt.Fprintf(&b, "改动：%s\n", c.Landing)
-		}
-		if len(c.Refs) > 0 {
-			fmt.Fprintf(&b, "refs：%s\n", strings.Join(c.Refs, "；"))
-		}
-		if a := strings.TrimSpace(c.Answer); a != "" {
-			fmt.Fprintf(&b, "回答：\n%s\n", text.Clip(a, 4000))
-		}
+		writeChild(&b, c)
 	}
 	b.WriteString("\n继续你的任务。还在跑的子任务结束后会再送来，不必用 steve_await 等；都齐了就汇总回复。")
 	return b.String()
+}
+
+// writeChild is one child's section, the same in a delivery and in a
+// preface: what it was asked, how it ended, where its files are, and
+// what it said.
+func writeChild(b *strings.Builder, c Delivered) {
+	fmt.Fprintf(b, "\n## 子任务 #%s · %s@%s · %s · 用时 %s\n", c.Task, c.Agent, nodeLabel(c.Node), stateWord(c.State), c.Elapsed.Round(time.Second))
+	if c.Stopping {
+		b.WriteString("停止已记录，但执行端还没有确认停下；没有结果。\n")
+	}
+	if g := strings.TrimSpace(c.Goal); g != "" {
+		fmt.Fprintf(b, "目标：%s\n", text.Clip(g, 300))
+	}
+	if c.Landing != "" {
+		fmt.Fprintf(b, "改动：%s\n", c.Landing)
+	}
+	if len(c.Refs) > 0 {
+		fmt.Fprintf(b, "refs：%s\n", strings.Join(c.Refs, "；"))
+	}
+	if a := strings.TrimSpace(c.Answer); a != "" {
+		fmt.Fprintf(b, "回答：\n%s\n", text.Clip(a, 4000))
+	}
 }
 
 func stateWord(state task.State) string {
@@ -134,15 +149,10 @@ func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
 }
 
 // flushIfIdle delivers what a parent has waiting, unless a turn of the
-// parent is running: that turn's end delivers instead, so a child that
-// ends mid-turn is never announced twice.
+// parent is running: that turn delivers instead — in its preface, or at
+// its end — so a child that ends mid-turn is never announced twice.
 func (s *Service) flushIfIdle(ctx context.Context, parentID string) {
-	if s.attempts != nil {
-		if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
-			return
-		}
-	}
-	s.Flush(ctx, parentID)
+	s.flush(ctx, parentID, time.Now(), nil, true)
 }
 
 // Flush sends the parent every finished child it has not been told
@@ -150,10 +160,13 @@ func (s *Service) flushIfIdle(ctx context.Context, parentID string) {
 // child ends while no turn runs. Safe to call twice: a child is
 // delivered once.
 func (s *Service) Flush(ctx context.Context, parentID string) {
-	s.flush(ctx, parentID, time.Now(), nil)
+	s.flush(ctx, parentID, time.Now(), nil, false)
 }
 
-func (s *Service) flush(ctx context.Context, parentID string, due time.Time, waiting []task.Task) {
+// flush is the one delivery path. unlessLive makes it yield to a turn of
+// the parent: checked under the dispatch lock, so a turn composing its
+// preface at this moment is seen, and what it composes is not sent again.
+func (s *Service) flush(ctx context.Context, parentID string, due time.Time, waiting []task.Task, unlessLive bool) {
 	s.mu.Lock()
 	deliver, replaySafe, receipt := s.deliver, s.replaySafeDelivery, s.deliveryReceipt
 	s.mu.Unlock()
@@ -162,6 +175,11 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	}
 	s.deliverMu.Lock()
 	defer s.deliverMu.Unlock()
+	if unlessLive && s.attempts != nil {
+		if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
+			return
+		}
+	}
 	if waiting == nil {
 		waiting = s.tasks.Undelivered()[parentID]
 	}
@@ -207,6 +225,12 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	if parent.State != task.StateRunning {
 		return
 	}
+	if parent.Held() {
+		// The user stopped the task: a delivery would start its next turn
+		// on its own. What the children left waits for the user's next
+		// turn, which opens with it (Preface).
+		return
+	}
 	ids := make([]string, 0, len(waiting))
 	for _, child := range waiting {
 		ids = append(ids, child.ID)
@@ -216,7 +240,7 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 		slog.Error("delegate: prepare result delivery", "parent", parentID, "error", err)
 		return
 	}
-	landing := s.landFor(ctx, parent)
+	landing := s.landFor(ctx, parent, nil)
 	for _, batch := range batches {
 		if ctx.Err() != nil {
 			return
@@ -226,7 +250,7 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 }
 
 func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context, Delivery) error, parent task.Task, waiting []task.Task, landing func(task.Task) string, replaySafe bool) {
-	d := Delivery{Conversation: parent.Channel, ParentTask: parent.ID, Member: parent.Member, ChatID: parent.ChatID,
+	d := Delivery{Transport: parent.Transport, Conversation: parent.Channel, ParentTask: parent.ID, Member: parent.Member, ChatID: parent.ChatID,
 		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType, Key: waiting[0].Delivery.Key}
 	ids := make([]string, 0, len(waiting))
 	for _, c := range waiting {
@@ -259,15 +283,22 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 }
 
 // landFor lands what the project has queued — the parent holds no lock
-// between turns, so this is the moment — and answers, per child, where
-// its files are. The message must not say "landed" for a child whose
-// landing is still queued behind someone else's lock.
-func (s *Service) landFor(ctx context.Context, parent task.Task) func(task.Task) string {
+// between turns, so this is the moment; a turn composing its prompt lends
+// its own lease — and answers, per child, where its files are. The
+// message must not say "landed" for a child whose landing is still queued
+// behind someone else's lock.
+func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.Lease) func(task.Task) string {
 	byArtifact := map[string]string{}
 	held := ""
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
-			landed, lerr := s.artifacts.LandPending(ctx, p)
+			var landed []artifact.Landing
+			var lerr error
+			if lease != nil {
+				landed, lerr = s.artifacts.LandPendingUnder(ctx, p, *lease)
+			} else {
+				landed, lerr = s.artifacts.LandPending(ctx, p)
+			}
 			for _, l := range landed {
 				switch l.State {
 				case "committed":
@@ -312,6 +343,11 @@ func (s *Service) landFor(ctx context.Context, parent task.Task) func(task.Task)
 		if held != "" {
 			return held
 		}
+		if c.State == task.StateCancelled {
+			// A stop revokes the child's permission to land; what it
+			// published stays an artifact.
+			return "未落地：任务已停止，落地授权已撤销"
+		}
 		return "已在此前落地或无改动"
 	}
 }
@@ -334,12 +370,7 @@ func (s *Service) reconcileDeliveries(ctx context.Context, now time.Time) {
 		if ctx.Err() != nil {
 			return
 		}
-		if s.attempts != nil {
-			if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
-				continue
-			}
-		}
-		s.flush(ctx, parentID, now, waiting)
+		s.flush(ctx, parentID, now, waiting, true)
 	}
 }
 

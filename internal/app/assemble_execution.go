@@ -10,6 +10,7 @@ import (
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -41,6 +42,11 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),
 	)
 	catalogText := i18n.New(i18n.FromLang(cfg.EffectiveLocale()))
+	if settings := boot.Settings(); settings != nil {
+		coordinator.TimeoutSource = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
+		coordinator.AutoResolveSource = func() bool { return settings.Load().Policies.Landing.Conflicts != config.ConflictsManual }
+		catalogText = i18n.Dynamic(func() i18n.Locale { return i18n.FromLang(settings.Load().Gateway.Locale) })
+	}
 	coordinator.SetIdentity(cfg.EffectiveOwnerID(), profile.Home)
 	if cfg.FeishuEnabled() {
 		if err := coordinator.SetChannelOwner("feishu", cfg.Feishu.OwnerOpenID); err != nil {
@@ -66,6 +72,13 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	artifacts.Direct = cfg.Gateway.DirectTransfer
 	artifacts.Limits = artifact.Limits{MaxFiles: cfg.Policies.Snapshot.MaxFiles, MaxBytes: cfg.Policies.Snapshot.MaxBytes, MaxFileBytes: cfg.Policies.Snapshot.MaxFileBytes}
 	artifacts.Review = artifact.ReviewLimits{MaxChanges: cfg.Policies.Review.MaxChanges, MaxDiffBytes: cfg.Policies.Review.MaxDiffBytes, MaxFileBytes: cfg.Policies.Review.MaxFileBytes, MaxEntries: cfg.Policies.Review.MaxEntries, Timeout: time.Duration(cfg.Policies.Review.Timeout)}
+	if settings := boot.Settings(); settings != nil {
+		artifacts.Policy = func() (artifact.Limits, artifact.ReviewLimits) {
+			p := settings.Load().Policies
+			return artifact.Limits{MaxFiles: p.Snapshot.MaxFiles, MaxBytes: p.Snapshot.MaxBytes, MaxFileBytes: p.Snapshot.MaxFileBytes},
+				artifact.ReviewLimits{MaxChanges: p.Review.MaxChanges, MaxDiffBytes: p.Review.MaxDiffBytes, MaxFileBytes: p.Review.MaxFileBytes, MaxEntries: p.Review.MaxEntries, Timeout: time.Duration(p.Review.Timeout)}
+		}
+	}
 	coordinator.SetArtifacts(artifacts)
 	// Side effects agents ask for are intents: claimed, journaled, and
 	// blocked across attempts until a person resolves an unknown outcome.
@@ -88,6 +101,12 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	coordinator.SetExecution(executions)
 	artifacts.SetExecution(executions)
 	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
+	if settings := boot.Settings(); settings != nil {
+		tasks.BudgetSource = func() (int, time.Duration) {
+			p := settings.Load().Gateway
+			return p.TaskMaxTurns, time.Duration(p.TaskMaxElapsed)
+		}
+	}
 	coordinator.SetTasks(tasks, adminsvc.NodeName())
 	schedules, err := schedule.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "schedules.json"))
 	if err != nil {

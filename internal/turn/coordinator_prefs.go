@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
@@ -18,8 +18,8 @@ import (
 
 // Preferences are what the owner chose for an agent in a conversation:
 // the model under "model", every other selector by its option id. They
-// sit over the agent's configured defaults and are applied when a fresh
-// session opens.
+// sit over the agent's configured defaults and are applied when the
+// native context is opened or resumed.
 
 // preferred merges the conversation's choices over the agent's
 // configuration: what to pass to ApplyPreferences.
@@ -44,18 +44,11 @@ func (c *Coordinator) Preferences(conversationID, agentID string) map[string]str
 	return c.store.Preferences(conversationID, agentID)
 }
 
-// SetPreferences records the owner's choices and applies them. Between
-// turns the agent's session is rolled over — the current one archived,
-// the next opened with the choices applied — so the task goes on and only
-// the upstream session changes.
-//
-// A turn in flight does not refuse the change either. Every selector an
-// agent exposes can be set on a live session, and approval mode is the
-// one that has to be: someone tired of approving each command wants the
-// asking to stop now, not after this turn. So the running session is
-// asked first; live reports whether it took the change. An agent that
-// refuses mid-turn falls back to renewal, and the turn finishes on the
-// session it started with.
+// SetPreferences saves choices for this conversation, not a request to replace
+// its native context. A live runner may take them now; otherwise open reapplies
+// them on the same context before the next user input.
+// A reset selects the current declared default explicitly. Without a declared
+// default the owner must choose a value; guessing must not reset native history.
 func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentID string, patch map[string]string) (bool, error) {
 	if c.catalog == nil {
 		return false, errors.New("no agent catalog")
@@ -64,21 +57,51 @@ func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentI
 	if !ok {
 		return false, errors.New("no agent " + agentID)
 	}
-	if err := c.store.SetPreferences(conversationID, selected.ID, patch); err != nil {
+	unlock := c.lockPreferences(conversationID, selected.ID)
+	defer unlock()
+	previous := c.store.Preferences(conversationID, selected.ID)
+	changed := map[string]string{}
+	for id, value := range patch {
+		if value == "" {
+			if previous[id] == "" {
+				continue
+			}
+			value = selected.Options[id]
+			if id == "model" {
+				value = selected.Model
+			}
+			if value == "" {
+				return false, fmt.Errorf("cannot reset preference %q without a declared default; choose an explicit value", id)
+			}
+		}
+		if previous[id] != value {
+			changed[id] = value
+		}
+	}
+	if len(changed) == 0 {
+		return false, nil
+	}
+	if err := c.store.SetPreferences(conversationID, selected.ID, changed); err != nil {
 		return false, err
 	}
 	if !c.turnInFlight(conversationID, selected.ID) {
-		return false, c.renewSession(ctx, conversationID, selected.ID)
+		return false, nil
 	}
-	if c.applyLive(ctx, conversationID, selected.ID, patch) {
-		return true, nil
-	}
-	return false, c.store.SetRenew(conversationID, selected.ID, true)
+	return c.applyLive(ctx, conversationID, selected.ID, changed), nil
+}
+
+// Persisting a choice and applying its native RPC must have one ordering.
+// Otherwise an older full-access RPC can overwrite a newer read-only choice.
+func (c *Coordinator) lockPreferences(conversationID, agentID string) func() {
+	lock, _ := c.preferenceLocks.LoadOrStore(sessionKey(conversationID, agentID), &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // applyLive sets the owner's choices on the session answering right now.
 // It reports true only when every one of them landed: a partial change
-// still needs the next session opened fresh, which renewal does.
+// is reapplied and verified before the next prompt on the retained context.
 func (c *Coordinator) applyLive(ctx context.Context, conversationID, agentID string, patch map[string]string) bool {
 	c.mu.Lock()
 	runner := c.active[sessionKey(conversationID, agentID)]
@@ -89,7 +112,7 @@ func (c *Coordinator) applyLive(ctx context.Context, conversationID, agentID str
 	}
 	// An agent that is busy answering may not take a selector change
 	// until its turn ends, and the owner is waiting on this request. Give
-	// it a short while and fall back to renewal rather than hanging.
+	// it a short while and defer application to the next turn rather than hanging.
 	ctx, done := context.WithTimeout(ctx, 10*time.Second)
 	defer done()
 	for id, value := range patch {
@@ -114,30 +137,14 @@ func (c *Coordinator) applyLive(ctx context.Context, conversationID, agentID str
 	return true
 }
 
-// renewSession ends the agent's upstream session and archives the record,
-// so the next turn opens a fresh one with whatever is now preferred. Same
-// as a reset's session half, without its task half: the agent's upstream
-// session ends, the work it was on does not.
-func (c *Coordinator) renewSession(ctx context.Context, conversationID, agentID string) error {
-	if saved, ok := c.store.Conversation(conversationID).Sessions[agentID]; ok && saved.UpstreamID != "" {
-		if err := c.runtime.CloseSession(ctx, harness.Placement{Node: saved.NodeID, Harness: saved.HarnessID}, saved.UpstreamID); err != nil {
-			slog.Error(fmt.Sprintf("turn: close %s session for new preferences: %v", agentID, err), "conversation", conversationID, "agent", agentID, "node", saved.NodeID)
-		}
-		if err := c.store.ArchiveSession(conversationID, agentID, time.Now().UTC().Format(time.RFC3339)); err != nil {
-			return err
-		}
-	}
-	return c.store.SetRenew(conversationID, agentID, false)
-}
-
-// renewIfAsked opens the next session fresh when a selector was changed
-// while the agent was answering. It runs before a turn or a command takes
-// the agent's session, which is the first moment the exchange is safe.
+// renewIfAsked consumes the older preference-renewal marker without discarding
+// context. Preferences are reapplied in open; an upgrade must not turn a pending
+// selector update into an implicit conversation reset.
 func (c *Coordinator) renewIfAsked(ctx context.Context, conversationID, agentID string) error {
 	if !c.store.Conversation(conversationID).Renew[agentID] {
 		return nil
 	}
-	return c.renewSession(ctx, conversationID, agentID)
+	return c.store.SetRenew(conversationID, agentID, false)
 }
 
 // Selectors are what the agent's harness offers to choose from, read
@@ -167,7 +174,7 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 		return Selectors{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	req := Request{ConversationID: conversationID, ChatType: protocol.ChatP2P, SenderOpenID: c.ownerOpenID}
-	ctx, cancel := context.WithTimeout(parent, c.timeout)
+	ctx, cancel := context.WithTimeout(parent, c.promptTimeout())
 	defer cancel()
 	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
 	if err != nil {
@@ -236,13 +243,5 @@ func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected 
 	if err != nil {
 		return nil, err
 	}
-	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
-	if err != nil && saved.UpstreamID != "" && !strings.HasPrefix(saved.UpstreamID, "ns_") {
-		// Same fallback as a prompt: a session the agent no longer holds is
-		// replaced rather than reported as a failure.
-		saved.UpstreamID = ""
-		saved.InstructionsApplied = false
-		runner, err = c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
-	}
-	return runner, err
+	return c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
 }

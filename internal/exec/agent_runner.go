@@ -49,6 +49,9 @@ type AgentRunner struct {
 	roster   *roster.Roster
 	// Timeout bounds one step. Zero takes the default.
 	Timeout time.Duration
+	// TimeoutSource supplies a snapshot for each new step; nil uses Timeout.
+	// Install before use, never replace while running, and read atomic state.
+	TimeoutSource func() time.Duration
 	// observe sees each step's progress as it streams: what the agent is
 	// thinking and calling, for whoever is watching the plan run.
 	observe func(StepRequest, view.Progress)
@@ -64,6 +67,13 @@ func NewAgentRunner(sessions Sessions, caps Capabilities, r *roster.Roster) *Age
 const DefaultStepTimeout = 15 * time.Minute
 
 func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan.StepResult, runErr error) {
+	timeout := a.Timeout
+	if a.TimeoutSource != nil {
+		timeout = a.TimeoutSource()
+	}
+	if timeout <= 0 {
+		timeout = DefaultStepTimeout
+	}
 	ctx = harness.WithPluginProfile(ctx, req.PluginRuntime)
 	candidate, ok := a.find(ctx, req.Agent)
 	if !ok {
@@ -81,10 +91,6 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 		}
 	}
 
-	timeout := a.Timeout
-	if timeout <= 0 {
-		timeout = DefaultStepTimeout
-	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

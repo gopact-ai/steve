@@ -204,7 +204,7 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
                     </div>
                 </header>}
                 {mode === "diff" && diff?.truncated && <p role="status" className="review-notice">{t("console.partialDiff")}</p>}
-                <div ref={content} className="review-code-scroll" data-mode={mode} tabIndex={0} aria-label={mode === "diff" ? t("console.diffContent") : mode === "preview" ? t("console.previewLabel", { path: activePath }) : t("console.sourceContent")}>
+                <div ref={content} className="review-code-scroll" data-mode={mode} data-preview={mode === "preview" ? rendered ?? "markdown" : undefined} tabIndex={0} aria-label={mode === "diff" ? t("console.diffContent") : mode === "preview" ? t("console.previewLabel", { path: activePath }) : t("console.sourceContent")}>
                     {!activePath ? <div className="review-empty"><Code02 aria-hidden="true" className="size-8 text-fg-tertiary" /><h2 className="font-medium text-primary">{t("console.chooseFile")}</h2><p>{t("console.chooseFileHint")}</p></div>
                         : contentError?.key === contentKey ? <div role="alert" className="review-empty"><p>{contentError.text}</p>{retryButton}</div>
                             : mode === "preview" ? repository ? <div className="review-empty">{t("console.nestedSourceUnavailable")}</div> : source ? <FilePreview file={source} kind={rendered ?? "markdown"} onOpenPath={openLinked} /> : <div role="status" className="review-empty">{t("console.readingSource")}</div>

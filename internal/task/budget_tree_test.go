@@ -145,3 +145,56 @@ func TestTreeBudgetWriteFailureDoesNotPartiallyCharge(t *testing.T) {
 		t.Fatalf("retry did not charge once: %+v", root.Budget)
 	}
 }
+
+// An attempt closed before it ever ran ends when it began: the turn its
+// Begin reserved stays charged to the tree, the time since it does not —
+// that was the process being down, not work.
+func TestFinishUnstartedChargesNoElapsed(t *testing.T) {
+	s, clock := newStore(t)
+	r, _ := s.Create(Task{Member: "root"})
+	c, _ := s.Spawn(r.ID, Task{Member: "child"})
+	if _, err := s.Begin(c.ID, "child", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	*clock = clock.Add(time.Hour)
+	closed, err := s.FinishUnstarted(c.ID, OutcomeInterrupted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := closed.Attempts[0]
+	if row.Open() || row.Outcome != OutcomeInterrupted || !row.EndedAt.Equal(row.StartedAt) {
+		t.Fatalf("row = %+v", row)
+	}
+	for _, id := range []string{r.ID, c.ID} {
+		x, _ := s.Get(id)
+		if x.Budget.Turns != 1 || x.Budget.Elapsed != 0 {
+			t.Fatalf("%s charged for time that never ran: %+v", id, x.Budget)
+		}
+	}
+	if _, err := s.FinishUnstarted(c.ID, OutcomeInterrupted); err == nil {
+		t.Fatal("closed the same row twice")
+	}
+}
+
+// A row bound to an execution is that execution's to settle, by its receipt.
+func TestFinishUnstartedLeavesABoundRowToItsExecution(t *testing.T) {
+	s, _ := newStore(t)
+	r, _ := s.Create(Task{Member: "root"})
+	if _, err := s.Begin(r.ID, "root", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.ExecutionToken(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BindAttempt(token, "att-1", "turn-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FinishUnstarted(r.ID, OutcomeInterrupted); err == nil {
+		t.Fatal("closed a row an execution is bound to")
+	}
+	bound, _ := s.Get(r.ID)
+	if !bound.Attempts[0].Open() {
+		t.Fatalf("row = %+v", bound.Attempts[0])
+	}
+}

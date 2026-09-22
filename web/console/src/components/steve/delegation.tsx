@@ -10,6 +10,7 @@ import { plain } from "@/lib/plain";
 import { useNodeLabel, whoIs } from "@/lib/node-name";
 import { when } from "@/lib/format";
 import { useSplitPane } from "./split-pane";
+import { DeferredDetails } from "./deferred-details";
 
 // DelegationCard is one delegated child as the transcript shows it: a
 // folding line — who is on it and where, when it was handed over, its
@@ -19,8 +20,11 @@ import { useSplitPane } from "./split-pane";
 // the card is worth a glance. Folding a finished child never removes
 // its reasoning.
 
-const tones: Record<string, "brand" | "success" | "error" | "gray"> = { running: "brand", done: "success", failed: "error" };
-const labels = { running: "status.inProgress", done: "status.done", failed: "status.failed" } as const;
+// A stopped child wears the same words as any task: cancelled is a stop
+// the user asked for (nothing resumes a delegation), paused is a parent
+// set aside and not yet continued.
+const tones: Record<string, "brand" | "success" | "error" | "warning" | "gray"> = { running: "brand", done: "success", failed: "error", cancelled: "error", paused: "warning" };
+const labels = { running: "status.inProgress", done: "status.done", failed: "status.failed", cancelled: "status.cancelled", paused: "status.paused" } as const;
 
 export function DelegationCard({ id, info, progress, live, open }: {
     id: string; info: StepInfo; progress?: Progress; live?: boolean; open?: boolean;
@@ -30,14 +34,11 @@ export function DelegationCard({ id, info, progress, live, open }: {
     const state = info.state || (live ? "running" : "done");
     const label = labels[state as keyof typeof labels];
     const running = state === "running";
-    // The body is a window, not a well: a long child scrolls inside it,
-    // following its tail while it runs until the reader scrolls.
-    const { followTail: _follow, ...bodyScroll } = useFollowTail(`${progress?.timeline?.length ?? 0}:${progress?.tools?.length ?? 0}:${(progress?.reasoning || "").length}`, running);
     const who = whoIs(nodeLabelOf, progress?.agent, progress?.node);
     const goal = (info.goal || "").trim().split("\n")[0];
     const split = useSplitPane();
     return (
-        <details data-task-id={id} open={open || running || state === "failed"} className={`delegation-row group/child my-1 min-w-0 rounded-lg border ${running ? "border-brand bg-brand-primary_alt/40" : state === "failed" ? "border-error" : "border-secondary"}`}>
+        <DeferredDetails data-task-id={id} open={open || running || state === "failed"} className={`delegation-row group/child my-1 min-w-0 rounded-lg border ${running ? "border-brand bg-brand-primary_alt/40" : state === "failed" ? "border-error" : "border-secondary"}`} summary={
             <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-secondary/60">
                 {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : null}
                 <span className="shrink-0 font-medium text-primary">{t("consoleChrome.delegation", { id })}</span>
@@ -52,11 +53,18 @@ export function DelegationCard({ id, info, progress, live, open }: {
                     <ChevronDown className="size-3.5 transition group-open/child:rotate-180" />
                 </span>
             </summary>
-            <div {...bodyScroll} tabIndex={0} className="flex max-h-[60vh] min-w-0 flex-col gap-2 overflow-y-auto border-t border-secondary px-3 py-2 [overflow-anchor:none]">
-                <DelegationBody info={info} progress={progress} running={running} />
-            </div>
-        </details>
+        }>
+            <DelegationWindow info={info} progress={progress} running={running} />
+        </DeferredDetails>
     );
+}
+
+function DelegationWindow({ info, progress, running }: { info: StepInfo; progress?: Progress; running: boolean }) {
+    // Mount the tail observer with its deferred scroll container.
+    const { followTail: _, ...bodyScroll } = useFollowTail(`${progress?.timeline?.length ?? 0}:${progress?.tools?.length ?? 0}:${(progress?.reasoning || "").length}`, running);
+    return <div {...bodyScroll} tabIndex={0} className="flex max-h-[60vh] min-w-0 flex-col gap-2 overflow-y-auto border-t border-secondary px-3 py-2 [overflow-anchor:none]">
+        <DelegationBody info={info} progress={progress} running={running} />
+    </div>;
 }
 
 // DelegationBody is what a delegated child left behind — its goal, the

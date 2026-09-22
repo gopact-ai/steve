@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // The desktop onboarding uses source modules and isolated API fixtures only.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -53,7 +54,7 @@ async function fixture(enabled = true, step = "identity", done = false) {
             if (f.reset) { f.reset = false; return route.abort("connectionreset"); }
             return route.fulfill({ json: f.status });
         }
-        if (p === "/state") return route.fulfill({ json: { at, hub: { node: "my-desktop", version: "test" }, nodes: [{ name: "my-desktop", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+        if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "my-desktop", version: "test" }, nodes: [{ name: "my-desktop", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
         if (p === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, agents: [] } } });
         if (p === "/console/conversations") return route.fulfill({ json: { conversations: [{ id: conversation, title: "First conversation", count: 1, last_at: at, running: false }] } });
         if (p === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [] } });
@@ -145,6 +146,9 @@ try {
     await dialog.getByRole("button", { name: "Skip for now", exact: true }).click();
     await dialog.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
     await dialog.getByText("Dark", { exact: true }).click();
+    // Local preferences commit under a cross-window lock, then React paints.
+    // No reload or backend operation should be needed to apply the choice.
+    await page.waitForFunction(() => document.documentElement.classList.contains("dark-mode"), null, { timeout: 2000 });
     assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark-mode")), true, "appearance applies at once");
     await dialog.getByText("English", { exact: true }).click();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();

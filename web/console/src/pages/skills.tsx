@@ -5,7 +5,7 @@ import { ChevronDown, Download01, Folder, Plus, Zap, RefreshCw01, Server01, Tras
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
-import { ButtonUtility } from "@/components/base/buttons/button-utility";
+import { IconButton } from "@/components/steve/icon-button";
 import { Input } from "@/components/base/input/input";
 import { Toggle } from "@/components/base/toggle/toggle";
 import { Drawer } from "@/components/steve/drawer";
@@ -17,6 +17,7 @@ import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { nodeLabelIn } from "@/lib/node-name";
 import { useResourceRead } from "@/hooks/use-resource-read";
+import { useManagementRefresh } from "@/hooks/use-management-refresh";
 import type { MachineSkills, SkillDoc, SkillView, SkillsView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
@@ -43,7 +44,7 @@ export function SkillsPage() {
     const loadMachines = useResourceRead("machine-skills", fetchMachineSkills, (next) => { setMachines(next.machines); setMachinesError(""); }, (error) => setMachinesError(fail(error)));
     const [rescanning, setRescanning] = useState(false);
     const rescan = () => { setRescanning(true); void refreshMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))).finally(() => setRescanning(false)); };
-    useEffect(() => { load(); }, [load, snap.at]);
+    useManagementRefresh("skills", load);
     useEffect(() => { loadMachines(); }, [loadMachines]);
     async function run(key: string, op: () => Promise<unknown>) {
         if (pending.current) return;
@@ -124,7 +125,7 @@ export function SkillsPage() {
                                         <Folder aria-hidden="true" className="size-5 shrink-0 text-fg-tertiary" />
                                         <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold break-words text-primary">{repository}</h3><p className="mt-1 text-xs text-tertiary">{tr("skills.enabledRatio", { enabled, total: src.skills.length })}{src.fetched_at ? tr("skills.updatedAt", { time: when(src.fetched_at, locale) }) : ""}</p></div>
                                         {src.error && <Badge type="pill-color" size="sm" color="error">{tr("skills.updateFailed")}</Badge>}
-                                        <ButtonUtility size="sm" color="tertiary" icon={Trash01} tooltip={tr("skills.removeSourceHint")} aria-label={tr("skills.removeSource", { repository })} isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
+                                        <IconButton size="sm" color="tertiary" icon={Trash01} tooltip={tr("skills.removeSourceHint")} label={tr("skills.removeSource", { repository })} isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
                                     </header>
                                     {src.error && <p role="alert" className="px-4 pb-3 text-sm text-error-primary">{src.error}</p>}
                                     <details className="skill-source-skills group/source">
@@ -197,7 +198,7 @@ export function SkillsPage() {
                                     <Folder aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" />
                                     <div className="min-w-0 flex-1"><div className="text-sm font-medium text-primary">{p === view?.builtin_root ? tr("skills.builtinSkills") : p.split("/").filter(Boolean).at(-1) || "/"}</div><Mono className="mt-1 block break-words text-tertiary [overflow-wrap:anywhere]">{p}</Mono></div>
                                     {p === view?.builtin_root ? <span className="shrink-0 text-xs text-tertiary">{tr("skills.updatedWithRelease")}</span>
-                                        : <ButtonUtility size="sm" color="tertiary" icon={Trash01} tooltip={tr("skills.removeDirectory")} aria-label={tr("skills.removeDirectoryName", { path: p })} isDisabled={busy !== ""} onClick={() => void run("rm:" + p, () => removeSkillPath(p))} />}
+                                        : <IconButton size="sm" color="tertiary" icon={Trash01} tooltip={tr("skills.removeDirectory")} label={tr("skills.removeDirectoryName", { path: p })} isDisabled={busy !== ""} onClick={() => void run("rm:" + p, () => removeSkillPath(p))} />}
                                 </li>
                             ))}
                             {view && localPaths.length === 0 && <li className="py-4 text-sm text-tertiary">{tr("skills.noDirectories")}</li>}
@@ -226,7 +227,7 @@ export function SkillsPage() {
                     </Panel>
                 </div>
                 {opened && (
-                    <Drawer width={640} title={<><span className="text-base font-semibold text-primary">{opened.name}</span><Badge type="modern" size="sm" color="gray">SKILL.md</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary"><Mono>{opened.path}</Mono></div></>} onClose={() => setOpened(null)}>
+                    <Drawer width={640} title={opened.name} badges={<Badge type="modern" size="sm" color="gray">SKILL.md</Badge>} subtitle={<Mono>{opened.path}</Mono>} onClose={() => setOpened(null)}>
                     <SkillBody content={opened.content} />
                 </Drawer>
                 )}

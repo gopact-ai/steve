@@ -6,6 +6,8 @@ package task
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/channel"
 )
 
 type State string
@@ -207,12 +209,14 @@ type PreparedPlan struct {
 }
 
 type Task struct {
+	ResumeGrant       ResumeGrant        `json:"resume_grant,omitzero"`
 	PreparedPlan      *PreparedPlan      `json:"prepared_plan,omitempty"`
 	ExecutionEpoch    uint64             `json:"execution_epoch"`
 	RecoveryWorkspace *RecoveryWorkspace `json:"recovery_workspace,omitempty"`
 	ID                string             `json:"id"`
 	Goal              string             `json:"goal"`
 	Requester         string             `json:"requester,omitempty"`
+	Transport         string             `json:"transport"`
 	Channel           string             `json:"channel"`
 	Member            string             `json:"member,omitempty"`
 	Node              string             `json:"node,omitempty"`
@@ -243,6 +247,11 @@ type Task struct {
 	Delivery        *Delivery `json:"delivery,omitempty"`
 	State           State     `json:"state"`
 	CompletedByUser bool      `json:"completed_by_user,omitempty"`
+	// HeldAt says the user stopped the task — its turn and its delegated
+	// children — and has not spoken to it since. While it is set, nothing
+	// a child leaves may start a turn on its own: the next turn is the
+	// user's, and it opens with what the children left. See Store.Hold.
+	HeldAt time.Time `json:"held_at,omitzero"`
 	// Settlement and SettledAt are a person closing a failed task by hand:
 	// see Settlement. Clearing them puts the task back in front of them.
 	Settlement Settlement `json:"settlement,omitempty"`
@@ -251,4 +260,9 @@ type Task struct {
 	Attempts   []Attempt  `json:"attempts,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// Address projects the task's one persisted destination. Channel remains the conversation ID.
+func (t Task) Address() channel.Address {
+	return channel.Address{Channel: t.Transport, Conversation: t.Channel, Message: t.AnchorMessage}
 }

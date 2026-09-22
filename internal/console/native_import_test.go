@@ -18,7 +18,7 @@ func TestNativeImportReceiptSurvivesTranscriptPruningAndRestart(t *testing.T) {
 	}
 	defer book.Close()
 	s := New(&echo{}, "owner", nil)
-	if err := s.Persist(book.Document("console")); err != nil {
+	if err := s.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	origin := consoleapi.ImportedSession{Node: "worker", Project: "p", Agent: "agent", Reference: nativehistory.Reference{ID: "selected", Harness: "codex", NativeID: "native"}}
@@ -46,7 +46,7 @@ func TestNativeImportReceiptSurvivesTranscriptPruningAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := New(&echo{}, "owner", nil)
-	if err := restored.Persist(book.Document("console")); err != nil {
+	if err := restored.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	second, err := restored.EnsureImportedConversation(t.Context(), "key", origin, func(string) error { bound++; return nil })

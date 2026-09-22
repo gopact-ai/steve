@@ -14,7 +14,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -25,7 +24,6 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
-	"log/slog"
 	"sync"
 	"time"
 )
@@ -55,7 +53,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// And it is an idle clock: it runs out after c.timeout of silence,
 	// not of work, so a turn that awaits other agents is not cut short
 	// while they are still answering.
-	idleCtx, expire, touch := idle.WithTimeout(turnCtx, c.timeout)
+	idleCtx, expire, touch := idle.WithTimeout(turnCtx, c.promptTimeout())
 	var ctx context.Context = idleCtx
 	defer expire()
 	if c.RegisterIdle != nil {
@@ -65,25 +63,18 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, context.Canceled
 	}
 	t := &chatTurn{c: c, req: req, selected: selected, clock: clock, prompt: prompt}
-	if c.executions != nil {
-		taskID := ""
-		if c.tasks != nil {
-			if previous, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin); ok {
-				taskID = previous.ID
-			}
-		}
-		scope, scopeErr := c.executions.Begin(ctx, execution.Key{TaskID: taskID, InstanceID: req.MessageID})
-		if scopeErr != nil {
-			return Result{}, scopeErr
-		}
+	binding, scope, scopeErr := c.beginTurnScope(ctx, req, selected.ID)
+	if scopeErr != nil {
+		return Result{}, scopeErr
+	}
+	if scope != nil {
 		t.scope = scope
 		defer func() { scope.Finish(t.unresolved(err)) }()
 		ctx = scope.Context()
 	}
 	// The directory is settled before the task opens: a turn that has
 	// nowhere to run has not started and spends nothing.
-	req.stage(view.StageWorkspace)
-	binding, workspace, err := c.resolveWorkspace(ctx, req, selected)
+	workspace, err := c.workspaceFor(ctx, req, selected, binding)
 	if err != nil {
 		return Result{}, err
 	}
@@ -112,7 +103,19 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			if t.managed && errors.Is(finishErr, harness.ErrStopUnconfirmed) {
 				return
 			}
-			c.finishTask(tracked, finishErr, spent.tokens(), spent.model())
+			accountingCtx, cancelAccounting := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+			defer cancelAccounting()
+			if accountingErr := c.finishChatAccounting(accountingCtx, tracked, t.run.Record, finishErr, spent.tokens(), spent.model()); accountingErr != nil {
+				result = Result{}
+				err = retainedBlocked("accounting", "提交原执行的任务记账", "结果已保留，但记账尚未提交。",
+					accountingErr.Error(), "将重试原结果的记账，不会重新发送原任务。", errors.Join(err, accountingErr))
+				return
+			}
+			var step *lifecycle.StepError
+			errors.As(finishErr, &step)
+			if t.run.Record.ID != "" && (step == nil || step.Step >= lifecycle.StepArm) {
+				c.notifyAccountedTurn(tracked)
+			}
 			c.offlineReminder(req, tracked, started, finishErr)
 		}()
 	}
@@ -154,11 +157,15 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	conversation := c.store.Conversation(req.ConversationID)
 	saved := conversation.Sessions[selected.ID]
 	saved.ConversationID = req.ConversationID
-	extras, agentToken, err := c.gateExtras(ctx, req.ConversationID, selected, saved)
+	if saved.HarnessID != "" && saved.HarnessID != selected.Harness {
+		return fmt.Errorf("session belongs to harness %q, not %q", saved.HarnessID, selected.Harness)
+	}
+	extras, agentToken, endpoint, err := c.describeGateExtras(ctx, selected, saved)
 	if err != nil {
 		return err
 	}
 	saved.AgentToken = agentToken
+	gateEnabled := len(extras) > 0
 	t.clock.mark("gate")
 	extras = append(extras, c.projectMemory(ctx, req.ConversationID, req)...)
 	var capabilities capability.Capabilities
@@ -197,6 +204,13 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	if saved.HarnessID != "" && sessionDrifted(saved, t.binding, t.workspace.Path) {
 		return UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
 	}
+	// Check the complete previous configuration before changing any credential.
+	// An authorization rejection is not permission to change tools or workspace.
+	if gateEnabled {
+		if saved, capabilities, err = t.prepareCredentials(ctx, saved, capabilities, extras, endpoint); err != nil {
+			return err
+		}
+	}
 	t.saved, t.capabilities, t.contextChanged = saved, capabilities, contextChanged
 	return nil
 }
@@ -222,20 +236,17 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 	if err != nil {
 		return nil, err
 	}
-	// The owner's choices for this conversation sit over the agent's
-	// configured defaults. The agent is the authority on what it offers, so
-	// a preference it cannot honour is logged and skipped rather than
-	// failing the turn. A configured model preference applies to a fresh
-	// session only: a resumed one keeps whatever the user last chose with
-	// /model. Other selectors are re-applied on resume too, because the host
-	// moves every loaded session back into the mode its permission policy
-	// implies, and an approval mode chosen here must survive a restart.
+	// Resume the native conversation first, then apply its current preferences.
+	// Defaults do not override an existing model, but an explicit conversation
+	// choice (including /model) must survive process replacement.
 	if saved.NativeImport != nil {
 		return runner, nil
 	}
+	unlock := c.lockPreferences(saved.ConversationID, selected.ID)
+	defer unlock()
 	model, options := c.preferred(saved.ConversationID, selected)
 	if saved.UpstreamID != "" {
-		model = ""
+		model = c.store.Preferences(saved.ConversationID, selected.ID)["model"]
 	}
 	harness.ApplyPreferences(ctx, runner, selected.ID, model, options, selected.Approval)
 	return runner, nil
@@ -252,39 +263,45 @@ func (c *Coordinator) assemble(selected agent.Agent, req Request, extras []capab
 // MCP. The token is minted once per session and persisted with it, so the
 // capability fingerprint stays stable across turns and gateway restarts.
 func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, selected agent.Agent, saved state.Session) ([]capability.Extra, string, error) {
+	extras, token, endpoint, err := c.describeGateExtras(ctx, selected, saved)
+	if err != nil || len(extras) == 0 {
+		return extras, token, err
+	}
+	extras, err = c.gate.PrepareExtras(conversationID, selected.ID, token, endpoint)
+	return extras, token, err
+}
+
+// describeGateExtras is side-effect free: drift must be checked before any
+// credential is prepared or an existing binding is revoked.
+func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Agent, saved state.Session) ([]capability.Extra, string, string, error) {
 	if c.gate == nil {
-		return nil, saved.AgentToken, nil
+		return nil, saved.AgentToken, "", nil
 	}
 	supported, err := c.runtime.SupportsHTTPMCP(ctx, placement(selected))
 	if err != nil {
-		return nil, saved.AgentToken, err
+		return nil, saved.AgentToken, "", err
 	}
 	if !supported {
-		return nil, saved.AgentToken, nil
+		return nil, saved.AgentToken, "", nil
 	}
 	token := saved.AgentToken
 	if token == "" {
 		token, err = newAgentToken()
 		if err != nil {
-			return nil, "", err
+			return nil, "", "", err
 		}
 	}
 	endpoint := ""
 	if selected.Node != "" {
 		if c.endpoints == nil {
-			slog.Warn(fmt.Sprintf("turn: agent %q is on node %q with no endpoint resolver; messaging disabled", selected.ID, selected.Node), "conversation", conversationID, "agent", selected.ID, "node", selected.Node)
-			return nil, saved.AgentToken, nil
+			return nil, saved.AgentToken, "", fmt.Errorf("turn: no MCP endpoint resolver for node %q", selected.Node)
 		}
 		endpoint, err = c.endpoints.MCPEndpoint(ctx, selected.Node)
 		if err != nil {
-			// Losing the send primitive costs milestone cards, not the
-			// turn. The fingerprint changes, so the drift is visible
-			// rather than a capability that quietly stopped working.
-			slog.Warn(fmt.Sprintf("turn: node %q messaging endpoint: %v", selected.Node, err), "conversation", conversationID, "agent", selected.ID, "node", selected.Node)
-			return nil, saved.AgentToken, nil
+			return nil, saved.AgentToken, "", fmt.Errorf("turn: resolve node %q MCP endpoint: %w", selected.Node, err)
 		}
 	}
-	return c.gate.Extras(conversationID, selected.ID, token, endpoint), token, nil
+	return c.gate.DescribeExtras(token, endpoint), token, endpoint, nil
 }
 
 // clearSettledTaint lets a conversation carry on after an interrupted turn.

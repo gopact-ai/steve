@@ -15,8 +15,8 @@ import (
 	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
-// Every field in this first settings service is restart-applied. The boot
-// snapshot stays separate from the desired file and is never rewritten here.
+// Desired values are published only after persistence commits. Deployments
+// without runtime policy consumers retain an honest restart-applied snapshot.
 type hubSettingsService struct {
 	admin     *Service
 	applied   config.SettingsValues
@@ -51,7 +51,28 @@ func (s *hubSettingsService) viewLocked() (consoleapi.SettingsView, error) {
 	if err != nil {
 		return consoleapi.SettingsView{}, err
 	}
-	return consoleapi.SettingsView{Revision: s.admin.settingsRevision(), Desired: d, Effective: e, PendingRestart: !reflect.DeepEqual(desired, s.applied), ApplyMode: "restart", Fields: fields}, nil
+	mode := "restart"
+	pending := !reflect.DeepEqual(desired, s.applied)
+	if s.admin.RuntimeSettings != nil {
+		mode = "live"
+		// Channel edits pin implicit locale/owner defaults without changing
+		// their meaning. Compare effective values, not their file spelling.
+		comparable := desired
+		comparable.Gateway.Locale = s.admin.Cfg.EffectiveLocale()
+		comparable.Gateway.OwnerID = s.admin.Cfg.EffectiveOwnerID()
+		pending = !reflect.DeepEqual(comparable, s.effective)
+		for i := range fields {
+			switch fields[i].Path {
+			case "gateway.owner_id":
+				fields[i].ApplyMode = "deployment"
+			case "gateway.task_max_turns", "gateway.task_max_elapsed":
+				fields[i].ApplyMode = "next_task"
+			default:
+				fields[i].ApplyMode = "next_operation"
+			}
+		}
+	}
+	return consoleapi.SettingsView{Revision: s.admin.settingsRevision(), Desired: d, Effective: e, PendingRestart: pending, ApplyMode: mode, Fields: fields}, nil
 }
 
 func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.SettingsUpdate) (consoleapi.SettingsView, error) {
@@ -87,11 +108,20 @@ func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.
 		return consoleapi.SettingsView{}, saveErr
 	}
 	*s.admin.Cfg = *candidate
-	// The approval stance is the one setting here that does not wait for a
-	// restart: it is read at session open through the agent catalog, so
-	// republishing the catalog is all it takes, and the owner who just
-	// turned approvals off is not asked to restart before it counts.
+	// Approval is read at session open through the agent catalog. Publish it
+	// separately from policies sampled at operation boundaries.
 	s.applyApproval(previous)
+	if s.admin.RuntimeSettings != nil {
+		s.admin.RuntimeSettings.Publish(candidate)
+		// Approval has a separate catalog publication boundary. Keep a failed
+		// publication pending rather than claiming the new catalog is in use.
+		approvalApplied := s.applied.Gateway.DefaultApproval
+		approvalEffective := s.effective.Gateway.DefaultApproval
+		s.applied = candidate.SettingsValues()
+		s.effective = s.admin.RuntimeSettings.Load()
+		s.applied.Gateway.DefaultApproval = approvalApplied
+		s.effective.Gateway.DefaultApproval = approvalEffective
+	}
 	view, err := s.viewLocked()
 	if err != nil {
 		return consoleapi.SettingsView{}, err
@@ -105,8 +135,7 @@ func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.
 // applyApproval publishes a catalog carrying the new approval stance, then
 // records it as both applied and effective so nothing asks for a restart it
 // does not need and the console reads back the stance now in force. A
-// catalog that will not build is left alone: the stance then waits for the
-// restart, which is the same place every other setting here waits.
+// catalog that will not build is left alone and remains visibly pending.
 func (s *hubSettingsService) applyApproval(previous string) {
 	if s.admin.Cfg.Gateway.DefaultApproval == previous || s.admin.Catalog == nil {
 		return
@@ -132,6 +161,7 @@ func (a *Service) settingsRevision() string {
 func settingsFields() ([]consoleapi.SettingsField, error) {
 	zero, one, maxSafe := int64(0), int64(1), int64(9_007_199_254_740_991)
 	fields := []consoleapi.SettingsField{{Path: "gateway.locale", Type: "string", Enum: []string{"", "zh", "en"}, ApplyMode: "restart"}, {Path: "gateway.default_approval", Type: "string", Enum: approval.Intents(), ApplyMode: "live"}, {Path: "gateway.owner_id", Type: "string", ApplyMode: "restart"}, {Path: "gateway.task_max_turns", Type: "integer", Minimum: &zero, Maximum: &maxSafe, ApplyMode: "restart"}, {Path: "gateway.task_max_elapsed", Type: "duration", Unit: "duration", Minimum: &zero, ApplyMode: "restart"}}
+	fields = append(fields, consoleapi.SettingsField{Path: "policies.landing.conflicts", Type: "string", Enum: []string{config.ConflictsByAgent, config.ConflictsManual}, ApplyMode: "restart"})
 	for _, path := range []string{"gateway.prompt_timeout", "policies.execution.step_timeout", "policies.execution.verify_timeout", "policies.planning.timeout", "policies.review.timeout"} {
 		fields = append(fields, consoleapi.SettingsField{Path: path, Type: "duration", Unit: "duration", Minimum: &one, ApplyMode: "restart"})
 	}

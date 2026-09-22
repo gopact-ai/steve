@@ -1,5 +1,5 @@
 import type { Conversation, ConversationContext, Exchange, MaterialRef, QuoteRef, Reply, Selectors, SessionSetup, Suggestion, Verb } from "../types";
-import { request, UnsentRequestError } from "../http";
+import { HTTPError, request, UnsentRequestError } from "../http";
 
 async function write<T>(path: string, options: { method: string; body?: unknown }): Promise<T> {
     await requireSubmissionSupport();
@@ -29,10 +29,13 @@ function publishSupport(patch: Partial<SubmissionSupport>) {
     submissionSupport = next;
     for (const listener of supportListeners) listener();
 }
-export async function fetchQueue(conversation: string, signal?: AbortSignal): Promise<{ queue: Exchange[]; submission_keys?: boolean; material_refs?: boolean; interactive_requests?: boolean }> {
+export function fetchQueue(conversation: string, signal?: AbortSignal) {
+    return fetchQueueResponse(channelQuery(conversation), signal);
+}
+async function fetchQueueResponse(query: string, signal?: AbortSignal): Promise<{ queue: Exchange[]; submission_keys?: boolean; material_refs?: boolean; interactive_requests?: boolean }> {
     const generation = ++supportGeneration;
     try {
-        const data = await request<{ queue: Exchange[]; submission_keys?: boolean; material_refs?: boolean; interactive_requests?: boolean }>(`/console/queue?${channelQuery(conversation)}`, { signal, cache: "no-store" });
+        const data = await request<{ queue: Exchange[]; submission_keys?: boolean; material_refs?: boolean; interactive_requests?: boolean }>(`/console/queue?${query}`, { signal, cache: "no-store" });
         if (generation === supportGeneration) publishSupport({ state: data.submission_keys === true ? "supported" : "unsupported", error: "", material_refs: data.material_refs === true, interactive_requests: data.interactive_requests === true });
         return data;
     } catch (error) {
@@ -45,7 +48,7 @@ export function checkSubmissionSupport(): Promise<SubmissionSupport> {
     publishSupport({ checking: true });
     // A write depends on its own preflight response, never another poll's
     // mutable display state, even when their completions share a microtask batch.
-    supportCheck = fetchQueue("console:main").then(
+    supportCheck = fetchQueueResponse("capabilities=1").then(
         (data): SubmissionSupport => ({ state: data.submission_keys === true ? "supported" : "unsupported", checking: false, error: "", material_refs: data.material_refs === true, interactive_requests: data.interactive_requests === true }),
         (error): SubmissionSupport => ({ state: "unknown", checking: false, error: error instanceof Error ? error.message : String(error) }),
     ).finally(() => { supportCheck = null; publishSupport({ checking: false }); });
@@ -82,6 +85,43 @@ export async function send(conversation: string, input: string, quotes?: QuoteRe
     await requireSubmissionSupport();
     const data = await request<{ reply: Reply }>("/console/send", { method: "POST", body: { conversation, input, command_id: id, quotes: quotes?.map(({ conversation, reply_id }) => ({ conversation, reply_id })) } });
     return data.reply;
+}
+
+// Read only: a changed project must not turn receipt recovery into a fresh
+// submission. Correlate all three identities before accepting a terminal reply.
+export async function readScheduleReceipt(conversation: string, id: string): Promise<Reply | null> {
+    const { queue } = await fetchQueue(conversation);
+    const exchange = queue.find(e => e.key === `client:${id}` && e.conversation === conversation);
+    if (!exchange || !["done", "failed", "cancelled"].includes(exchange.state) || !exchange.reply_id) return null;
+    const result = await fetchReplies(conversation);
+    if (!result.enabled) return null;
+    return result.replies.find(reply => reply.id === exchange.reply_id && reply.exchange_id === exchange.id
+        && reply.conversation === conversation && reply.kind === "reply" && typeof reply.text === "string"
+        && !!(reply.text || reply.error)) || null;
+}
+
+// Schedule commands can finish with HTTP 502 and a durable failure receipt.
+// Other send callers deliberately retain their existing error semantics.
+export async function sendSchedule(conversation: string, input: string, id: string, expectedProject?: string): Promise<Reply> {
+    await requireSubmissionSupport();
+    try {
+        const { reply } = await request<{ reply: Reply }>("/console/send", {
+            method: "POST", body: { conversation, input, command_id: id, expected_project: expectedProject },
+        });
+        if (!reply || reply.conversation !== conversation || !reply.id || !reply.exchange_id
+            || reply.kind !== "reply" || typeof reply.text !== "string" || !(reply.text || reply.error)) {
+            throw new Error("Invalid schedule receipt");
+        }
+        return reply;
+    } catch (error) {
+        if (error instanceof HTTPError && error.status === 502) {
+            try {
+                const receipt = await readScheduleReceipt(conversation, id);
+                if (receipt) return receipt;
+            } catch { /* Recovery failure is still uncertain; keep the original ID. */ }
+        }
+        throw error;
+    }
 }
 export async function enqueue(conversation: string, input: string, quotes?: QuoteRef[], id = commandID(), refs?: MaterialRef[], locale?: string, rewindTo?: string): Promise<Exchange> {
     const support = await requireSubmissionSupport();

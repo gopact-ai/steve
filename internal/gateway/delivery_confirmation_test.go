@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -42,18 +43,53 @@ func TestDeliveryConfirmationWaitsForParentAndBindsTask(t *testing.T) {
 }
 
 func TestManualResumeRetainsExpectedTask(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	tasks, err := task.OpenLedger(book, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := tasks.Create(task.Task{Transport: "feishu", Channel: "chat", Member: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.SetAside(row.ID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	row, _ = tasks.Get(row.ID)
+	admission := task.ResumeAdmission{ID: "manual-control", TaskID: row.ID, Epoch: row.ExecutionEpoch + 1}
 	processor := scheduledProcessor{started: make(chan turn.Request, 1), finish: make(chan struct{})}
 	gateway := New(processor)
 	gateway.BindChannel(&scheduledNotice{id: "resume-notice"})
-	defer close(processor.finish)
-	gateway.ResumeTask(Revival{TaskID: "closed-root", Member: "worker", ConversationID: "chat", ChatID: "chat", MessageID: "anchor", Requester: "owner", ChatType: "p2p", Manual: true}, func(string, string) error { return nil })
+	if err := gateway.QueueTaskResume(t.Context(), book, admission.ID, Revival{TaskID: row.ID, Member: "worker", ConversationID: "chat", ChatID: "chat", MessageID: "anchor", Requester: "owner", ChatType: "p2p", Manual: true}, admission); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case request := <-processor.started:
-		if request.ExpectedTask != "closed-root" {
+		t.Fatalf("acceptance prematurely dispatched input: %+v", request)
+	default:
+	}
+	if _, err := tasks.Resume(row.ID, row.ExecutionEpoch, row.State, admission); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- gateway.RecoverQueued(t.Context(), book, &recoveryProbe{}, func(string, string) error { return nil })
+	}()
+	select {
+	case request := <-processor.started:
+		if request.ExpectedTask != row.ID || request.ResumeAdmission != admission {
 			t.Fatalf("resume lost task binding: %+v", request)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("resume was not dispatched")
+	}
+	close(processor.finish)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

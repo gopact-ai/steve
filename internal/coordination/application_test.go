@@ -50,7 +50,8 @@ func (c *durableCounter) Apply(command AppliedCommand) ([]byte, error) {
 	if c.fail {
 		return nil, errors.New("disk unavailable")
 	}
-	if result, ok := c.results[command.ID]; ok {
+	key := fmt.Sprintf("%d:%s", command.Version, command.ID)
+	if result, ok := c.results[key]; ok {
 		return bytes.Clone(result), nil
 	}
 	var increment int
@@ -59,7 +60,7 @@ func (c *durableCounter) Apply(command AppliedCommand) ([]byte, error) {
 	}
 	c.count += increment
 	result := []byte(fmt.Sprint(c.count))
-	c.results[command.ID] = result
+	c.results[key] = result
 	if err := c.persist(); err != nil {
 		return nil, err
 	}

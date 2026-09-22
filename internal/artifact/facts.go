@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -46,8 +47,9 @@ func (s *Store) Attest(ctx context.Context, a Attestation) (Attestation, error) 
 		a.ID = a.Artifact + "/" + a.By
 	}
 	if a.At.IsZero() {
-		a.At = s.now().UTC()
+		a.At = s.now()
 	}
+	a.At = a.At.UTC()
 	a.Receipts = []Receipt{{Place: "", At: s.now().UTC()}}
 	return a, s.ledger.PutBinding(ctx, attestationKind, a.ID, a)
 }
@@ -64,20 +66,26 @@ func (s *Store) Attested(ctx context.Context, artifactID, by string) (bool, erro
 }
 
 // Attestations lists every attestation of an artifact, oldest first.
+// Corrupt records are reported with their binding IDs alongside the valid results.
 func (s *Store) Attestations(ctx context.Context, artifactID string) ([]Attestation, error) {
 	raw, err := s.ledger.Bindings(ctx, attestationKind)
 	if err != nil {
 		return nil, err
 	}
 	var out []Attestation
-	for _, data := range raw {
+	var failures []error
+	for id, data := range raw {
 		var a Attestation
-		if err := json.Unmarshal(data, &a); err == nil && (artifactID == "" || a.Artifact == artifactID) {
+		if err := json.Unmarshal(data, &a); err != nil {
+			failures = append(failures, fmt.Errorf("read attestation %s: %w", id, err))
+			continue
+		}
+		if artifactID == "" || a.Artifact == artifactID {
 			out = append(out, a)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
-	return out, nil
+	return out, errors.Join(failures...)
 }
 
 // Replica is where a copy of an artifact's objects is, and what the hub
@@ -118,20 +126,26 @@ func (s *Store) setReplica(ctx context.Context, artifactID, node string, generat
 }
 
 // Replicas lists every replica record, optionally of one artifact.
+// Corrupt records are reported with their binding IDs alongside the valid results.
 func (s *Store) Replicas(ctx context.Context, artifactID string) ([]Replica, error) {
 	raw, err := s.ledger.Bindings(ctx, replicaKind)
 	if err != nil {
 		return nil, err
 	}
 	var out []Replica
-	for _, data := range raw {
+	var failures []error
+	for id, data := range raw {
 		var r Replica
-		if err := json.Unmarshal(data, &r); err == nil && (artifactID == "" || r.Artifact == artifactID) {
+		if err := json.Unmarshal(data, &r); err != nil {
+			failures = append(failures, fmt.Errorf("read replica %s: %w", id, err))
+			continue
+		}
+		if artifactID == "" || r.Artifact == artifactID {
 			out = append(out, r)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
-	return out, nil
+	return out, errors.Join(failures...)
 }
 
 // generationNodes is a registry that numbers a node's incarnations: the

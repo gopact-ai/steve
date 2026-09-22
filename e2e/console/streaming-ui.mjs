@@ -1,7 +1,10 @@
+import { workState } from "./work-fixture.mjs";
 // Isolated browser regression against the real React source. Every API is
 // intercepted; this test never starts an agent or contacts an existing node.
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 
@@ -13,6 +16,12 @@ const server = await createServer({
     plugins: [{ name: "streaming-render-measurements", enforce: "pre", transform(source, id) {
         if (id.endsWith("/components/steve/markdown.tsx")) return source.replace('const raw = String(file.value);', 'const raw = String(file.value); globalThis.__markdownParses ??= {}; globalThis.__markdownParses[raw] = (globalThis.__markdownParses[raw] || 0) + 1;');
         if (id.endsWith("/src/app.tsx")) return source.replace('function Shell() {', 'function Shell() { globalThis.__shellRenders = (globalThis.__shellRenders || 0) + 1;');
+        if (id.endsWith("/src/lib/delegations.ts")) {
+            const open = 'const out: { reply?: Reply; child?: StepProcess }[] = [];';
+            assert.ok(source.includes(open), "Transcript instrumentation must observe the real projection");
+            return source.replace('if (!children.length) return replies.map((reply) => ({ reply }));',
+                'globalThis.__historyProjections = (globalThis.__historyProjections || 0) + 1; if (!children.length) return replies.map((reply) => ({ reply }));');
+        }
         // The columns either side of the transcript show nothing that a
         // fragment of streamed text can change. Counting their renders is
         // how that stays true.
@@ -26,13 +35,12 @@ const server = await createServer({
             assert.ok(source.includes(open), "Session list instrumentation must wrap the real list");
             return source.replace(open, "globalThis.__sessionRenders = (globalThis.__sessionRenders || 0) + 1;\n    " + open);
         }
-        if (id.endsWith("/src/pages/console.tsx")) {
+        if (id.endsWith("/src/lib/conversation-controller.ts")) {
             // A completion barrier for held HTTP/lock races, including rejected
             // snapshots. No wall-clock delay can establish this boundary.
-            const start = "const loadQueue = useCallback(async () => {";
-            const end = "}, [conversation]);\n    const loadReplies";
-            assert.ok(source.includes(start) && source.includes(end), "Queue completion instrumentation must wrap the real loadQueue");
-            return source.replace(start, `${start} try {`).replace(end, "} finally { globalThis.__queueReadsSettled = (globalThis.__queueReadsSettled || 0) + 1; }\n    " + end);
+            const start = 'loadQueue = async () => { await this.read("queue"); };';
+            assert.ok(source.includes(start), "Queue completion instrumentation must wrap the real loadQueue");
+            return source.replace(start, 'loadQueue = async () => { try { await this.read("queue"); } finally { globalThis.__queueReadsSettled = (globalThis.__queueReadsSettled || 0) + 1; } };');
         }
     } }], server: { host: "127.0.0.1", port: 0 },
 });
@@ -86,7 +94,7 @@ async function fixture() {
         if (req.method() !== "GET") { f.errors.push(`Unexpected write: ${pathname}`); return route.abort(); }
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-        if (pathname === "/state") { f.stateReads++; return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [project], attempts: [], landings: [] } }); }
+        if (pathname === "/state") { f.stateReads++; return route.fulfill({ json: workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [project], attempts: [], landings: [] }) }); }
         if (pathname === "/console/replies") { f.replyReads++; return route.fulfill({ json: { enabled: true, replies: f.replies.filter((item) => item.conversation === url.searchParams.get("conversation")) } }); }
         if (pathname === "/console/queue") {
             f.queueReads++;
@@ -179,7 +187,14 @@ try {
     await f.emit({ kind: "console.sent", exchange_id: "stream-turn", text: "Streaming test" });
     await page.clock.runFor(500);
     await delay(100);
-    const before = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders }));
+    const execution = page.locator(".transcript-messages > [role=status]");
+    await execution.getByText("正在执行", { exact: true }).waitFor();
+    assert.equal(await execution.count(), 1, "One execution indicator belongs at the transcript tail, above the composer");
+    assert.equal(await execution.evaluate((el) => el === el.parentElement.lastElementChild), true);
+    assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), "steve-breathe");
+    assert.equal(await execution.locator("svg").count(), 0, "The execution hint is text, not a spinner");
+    assert.equal(await execution.evaluate((el) => getComputedStyle(el, "::before").content), "none", "No decorative status dot");
+    const before = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders, projections: window.__historyProjections }));
     assert.ok(Object.keys(before.parses).filter((text) => text.startsWith("Conversation A history")).length === 35, "Instrumentation must observe the actual Markdown parser");
     assert.ok(before.shell > 0, "Instrumentation must observe the actual shell renderer");
     const reads = f.stateReads;
@@ -187,12 +202,13 @@ try {
     for (let index = 1; index <= 12; index++) {
         await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { agent: "test-agent", phase: "running", answer: `Streaming answer ${index}`, timeline: [{ kind: "text", text: `Streaming answer ${index}`, at }] } });
         await page.getByText(`Streaming answer ${index}`, { exact: true }).first().waitFor();
+        assert.equal(await execution.textContent(), "正在执行", "Answer fragments must not hide the running hint");
         assert.equal(await page.getByText(`Streaming answer ${index}`, { exact: true }).count(), 1, "A live answer must appear once, not again inside its timeline");
         assert.equal(await page.locator("summary").getByText("过程", { exact: true }).count(), 0, "A plain text stream must not create an empty or duplicate process disclosure");
         await page.clock.runFor(300);
     }
     await delay(100);
-    const after = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders }));
+    const after = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders, projections: window.__historyProjections }));
     const historyParses = Object.entries(after.parses).filter(([text]) => text.startsWith("Conversation A history")).reduce((sum, [text, count]) => sum + count - (before.parses[text] || 0), 0);
     const measurements = { streamMilliseconds: Math.round(performance.now() - start), stateReads: f.stateReads - reads, historicalMarkdownParses: historyParses, shellRenders: after.shell - before.shell, composerRenders: after.composer - before.composer, sessionRenders: after.sessions - before.sessions };
     console.log(JSON.stringify(measurements));
@@ -203,6 +219,11 @@ try {
         assert.ok(before.composer > 0 && before.sessions > 0, "Instrumentation must observe the real composer and session list");
         assert.equal(measurements.composerRenders, 0, "Streaming text must not rerender the composer");
         assert.equal(measurements.sessionRenders, 0, "Streaming text must not rerender the session list");
+        assert.ok(before.projections > 0, "Instrumentation must observe the real historical transcript projection");
+        assert.equal(after.projections - before.projections, 0, "Streaming text must not traverse unchanged historical replies");
+        await page.locator(".cm-content").fill("Draft edits do not traverse retained history");
+        await page.clock.runFor(300);
+        assert.equal(await page.evaluate(() => window.__historyProjections), after.projections, "Typing must not traverse retained historical replies");
     }
     const intermediate = "I will inspect the configuration.";
     const thought = "Checking the selected workspace.";
@@ -210,6 +231,7 @@ try {
     const timeline = [{ kind: "text", text: intermediate, at }, { kind: "thought", text: thought, at }, { kind: "tool", tool: "config-read", at }, { kind: "text", text: finalAnswer, at }];
     await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: intermediate + finalAnswer, reasoning: thought, tools: [{ id: "config-read", kind: "read", name: "Read configuration", status: "completed", output: "Configuration content" }], timeline } });
     await page.getByText(finalAnswer, { exact: true }).waitFor();
+    assert.equal(await execution.textContent(), "正在执行", "Completed tools do not mean the turn has finished");
     assert.equal(await page.getByText(finalAnswer, { exact: true }).count(), 1, "The final narration must not be repeated in the process");
     assert.equal(await page.getByText(intermediate, { exact: true }).count(), 1, "Earlier narration must remain once in its timeline");
     await page.locator('[data-span-kind="thought"]').getByText(thought, { exact: true }).waitFor();
@@ -240,6 +262,7 @@ try {
     assert.equal(await page.getByText("Answer with empty trace", { exact: true }).count(), 1, "A trace without text spans must not hide the answer snapshot");
     await f.emit({ kind: "console.reply", exchange_id: "stream-turn", text: "Streaming test completed" });
     await page.getByText("Streaming test completed", { exact: true }).waitFor();
+    await eventually(async () => await execution.count() === 0, "A completed reply removes the execution hint");
     // Task/node lifecycle events still invalidate state.
     for (const kind of ["task.changed", "node.updated", "console.reply", "delegate.progress"]) {
         const previous = f.stateReads;
@@ -273,11 +296,35 @@ try {
         assert.equal(await page.getByText("正在保存结果…", { exact: true }).count(), 0, "The terminal result must close the progress indicator");
         await f.emit({ kind: "console.sent", exchange_id: "narrow-turn", text: "Narrow window status" });
         await f.emit({ kind: "console.progress", exchange_id: "narrow-turn", progress: { phase: "saving", agent: "test-agent-with-a-long-name", model: "a-long-model-name-to-check-wrapping", answer: "Generated reply" } });
-        for (const width of [1600, 1000, 780]) {
+        for (const width of [1600, 1000, 780, 390]) {
             await page.setViewportSize({ width, height: 650 });
             await page.getByText("正在保存结果…", { exact: true }).waitFor();
+            await execution.scrollIntoViewIfNeeded();
+            assert.equal(await execution.isVisible(), true, "The tail hint remains readable in narrow windows");
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Phase feedback must not overflow the window");
+            if (process.env.ARTIFACT_DIR && [1600, 390].includes(width)) {
+                await mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+                for (const dark of [false, true]) {
+                    await page.evaluate((dark) => document.documentElement.classList.toggle("dark-mode", dark), dark);
+                    await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `execution-${width}-${dark ? "dark" : "light"}.png`) });
+                }
+            }
         }
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), "none", "Reduced motion keeps static status text");
+        assert.equal(await execution.textContent(), "正在执行");
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        const active = f.queue.find((entry) => entry.id === "narrow-turn");
+        let queueTime = Date.parse(at);
+        for (const [state, label, animation] of [["awaiting-user", "等你回答", "none"], ["recovering", "正在恢复执行…", "steve-breathe"]]) {
+            active.state = state;
+            await f.emit({ kind: "console.queue", at: new Date(++queueTime).toISOString() });
+            await execution.getByText(label, { exact: true }).waitFor();
+            assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), animation, "Waiting is not active execution");
+        }
+        active.state = "running";
+        await f.emit({ kind: "console.queue", at: new Date(++queueTime).toISOString() });
+        await execution.getByText("正在执行", { exact: true }).waitFor();
         // Keep recovery in this active turn. An older queue snapshot from a
         // reconnect/poll must not be raced against an unrelated new test turn.
         const beforeReconnect = { state: f.stateReads, queue: f.queueReads, replies: f.replyReads };

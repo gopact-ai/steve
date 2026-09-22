@@ -35,6 +35,10 @@ type Store struct {
 }
 
 func Open(cfg Config) (*Store, error) {
+	return open(cfg, false)
+}
+
+func open(cfg Config, retained bool) (*Store, error) {
 	cfg.Limits = cfg.Limits.defaults()
 	if cfg.Dir == "" || !validID(cfg.NodeID) || cfg.Policy == nil {
 		return nil, fmt.Errorf("%w: directory, stable node ID and placement policy are required", ErrInvalid)
@@ -66,10 +70,13 @@ func Open(cfg Config) (*Store, error) {
 			_ = root.Close()
 		}
 	}()
+	fresh := false
 	if info, err := root.Lstat("store.lock"); err == nil && !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: invalid lock file", ErrInvalid)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
+	} else if errors.Is(err, os.ErrNotExist) {
+		fresh = true
 	}
 	s.lock, err = root.OpenFile("store.lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -78,7 +85,7 @@ func Open(cfg Config) (*Store, error) {
 	if err := lockStore(s.lock); err != nil {
 		return nil, fmt.Errorf("checkpoint: store is already open: %w", err)
 	}
-	for _, name := range []string{"blobs", "prepared", "manifests", "tmp"} {
+	for _, name := range []string{"blobs", "prepared", "manifests", "tmp", "retained", "retired"} {
 		if err := root.MkdirAll(name, 0o700); err != nil {
 			return nil, err
 		}
@@ -116,6 +123,9 @@ func Open(cfg Config) (*Store, error) {
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := s.openRetentionFloor(retained, fresh); err != nil {
 		return nil, err
 	}
 	if err := s.syncDir("."); err != nil {

@@ -91,26 +91,22 @@ func (t applicationMCPTx) check(binding agentmcp.Binding, scope agentmcp.GrantSc
 		}
 		return err
 	}
-	raw, ok, err := t.tx.LoadDocument("tasks")
+	work, ok, err := task.GetTx(t.tx, scope.TaskID)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return agentmcp.ErrGrantDenied
 	}
-	var document struct {
-		Tasks map[string]*task.Task `json:"tasks"`
-	}
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return err
-	}
-	work := document.Tasks[scope.TaskID]
-	if work == nil || !work.State.Holds() || work.Channel != binding.ConversationID || work.Member != binding.AgentID {
+	if !work.State.Holds() || work.Channel != binding.ConversationID || work.Member != binding.AgentID {
 		return agentmcp.ErrGrantDenied
 	}
 	if binding.TaskID != "" {
-		parent := document.Tasks[work.Parent]
-		if binding.TaskID != scope.TaskID || record.Kind != attempt.KindDelegate || parent == nil || binding.DelegatedBy != parent.Member || parent.Channel != binding.ConversationID {
+		parent, found, err := task.GetTx(t.tx, work.Parent)
+		if err != nil {
+			return err
+		}
+		if binding.TaskID != scope.TaskID || record.Kind != attempt.KindDelegate || !found || binding.DelegatedBy != parent.Member || parent.Channel != binding.ConversationID {
 			return agentmcp.ErrGrantDenied
 		}
 	} else if record.Kind != attempt.KindChat || binding.DelegatedBy != "" {

@@ -214,21 +214,35 @@ func TestContentRepairReportsUnavailableAndContinuesIndependentObjects(t *testin
 		t.Fatal(err)
 	}
 	recordRepairManifest(t, active.Ledger, good)
-	missing := good
+	missingObject := good.Object
+	var lost []byte
 	for i := 0; ; i++ {
-		other := checkpoint.Reference([]byte(fmt.Sprintf("lost-bytes-%d", i)))
-		missing.Object.Blob = other
-		missing.Object.Key = other.SHA256
-		missing.ID = missing.Object.ID()
-		if missing.ID < good.ID {
+		lost = []byte(fmt.Sprintf("lost-bytes-%d", i))
+		other := checkpoint.Reference(lost)
+		missingObject.Blob = other
+		missingObject.Key = other.SHA256
+		if missingObject.ID() < good.ID {
 			break
 		}
 	}
-	missing.Receipts = append([]contentreplica.Receipt(nil), good.Receipts...)
-	for i := range missing.Receipts {
-		missing.Receipts[i].ObjectID = missing.ID
+	missing, err := client.Prepare(t.Context(), "workspace", contentreplica.Material, missingObject.Key, missingObject.Blob, bytes.NewReader(lost))
+	if err != nil {
+		t.Fatal(err)
 	}
 	recordRepairManifest(t, active.Ledger, missing)
+	// Lose the actual acknowledged copies, not fabricate receipts belonging
+	// to another upload. Independent content must still be repaired.
+	for _, peer := range peers {
+		files, err := filepath.Glob(filepath.Join(peer.Config.DataDir, "content", "blobs", "*", missing.Object.Blob.SHA256))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range files {
+			if err := os.Remove(file); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	for _, peer := range peers[1:] {
 		for _, receipt := range good.Receipts {
 			if receipt.NodeID == peer.Config.NodeID {
@@ -269,8 +283,15 @@ func TestContentRepairRejectsUnclassifiedScopeWithoutCopying(t *testing.T) {
 	data := []byte("unknown scope")
 	ref := checkpoint.Reference(data)
 	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "unknown", Level: "public", HomeNodeID: peers[0].Config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
-	manifest := contentreplica.Manifest{ID: object.ID(), Object: object, RequiredCopies: 1, Protection: contentreplica.SingleNode, Receipts: []contentreplica.Receipt{{ObjectID: object.ID(), NodeID: peers[0].Config.NodeID, FailureDomain: peers[0].Config.FailureDomain, StoredAt: time.Now().UTC()}}}
-	recordRepairManifest(t, active.Ledger, manifest)
+	manifest := contentreplica.Manifest{ID: object.ID(), Object: object, RequiredCopies: 1, Protection: contentreplica.SingleNode, Receipts: []contentreplica.Receipt{{UploadID: strings.Repeat("1", 64), ObjectID: object.ID(), NodeID: peers[0].Config.NodeID, FailureDomain: peers[0].Config.FailureDomain, StoredAt: time.Now().UTC()}}}
+	if !manifest.Complete() {
+		t.Fatal("fixture must have a structurally valid receipt")
+	}
+	// An unclassified imported row cannot use normal preparation. Inject
+	// only this fixture and verify repair refuses it before copying bytes.
+	if err := active.Ledger.PutBinding(t.Context(), contentreplica.ManifestKind, manifest.ID, manifest); err != nil {
+		t.Fatal(err)
+	}
 	worker, err := peers[0].newContentRepair(active, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -185,18 +185,7 @@
     self.serviceURL = parts.URL;
     self.accessToken = token;
 
-    WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
-    configuration.websiteDataStore = WKWebsiteDataStore.defaultDataStore;
-    NSData *serialized = [NSJSONSerialization dataWithJSONObject:@[token] options:0 error:nil];
-    NSString *literal = [[NSString alloc] initWithData:serialized encoding:NSUTF8StringEncoding];
-    NSString *script = [NSString stringWithFormat:@"sessionStorage.setItem('steve.token', (%@)[0]);", literal];
-    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
-    // The console asks this shell for things a page cannot do itself, such
-    // as choosing a directory by its absolute path. window.steveDesktop is
-    // the page's side of that conversation.
-    NSString *bridge = @"window.steveDesktop = { pending: {}, pickDirectory(directory) { const id = String(Math.random()).slice(2); return new Promise((resolve) => { this.pending[id] = resolve; window.webkit.messageHandlers.steve.postMessage({ action: 'pickDirectory', id, directory: directory || '' }); }); }, onDirectory(id, path) { const resolve = this.pending[id]; delete this.pending[id]; if (resolve) resolve(path); } };";
-    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:bridge injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
-    [configuration.userContentController addScriptMessageHandler:self name:@"steve"];
+    WKWebViewConfiguration *configuration = [self workspaceConfiguration];
     self.webView = [[WKWebView alloc] initWithFrame:self.window.contentView.bounds configuration:configuration];
     self.webView.navigationDelegate = self;
     self.webView.UIDelegate = self;
@@ -212,6 +201,22 @@
     [request setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
     [self.webView loadRequest:request];
     return YES;
+}
+
+- (WKWebViewConfiguration *)workspaceConfiguration {
+    WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+    configuration.websiteDataStore = WKWebsiteDataStore.defaultDataStore;
+    NSData *serialized = [NSJSONSerialization dataWithJSONObject:@[self.accessToken] options:0 error:nil];
+    NSString *literal = [[NSString alloc] initWithData:serialized encoding:NSUTF8StringEncoding];
+    NSString *script = [NSString stringWithFormat:@"sessionStorage.setItem('steve.token', (%@)[0]);", literal];
+    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    // The console asks this shell for things a page cannot do itself, such
+    // as choosing a directory by its absolute path. window.steveDesktop is
+    // the page's side of that conversation.
+    NSString *bridge = @"window.steveDesktop = { pending: {}, pickDirectory(directory) { const id = String(Math.random()).slice(2); return new Promise((resolve) => { this.pending[id] = resolve; window.webkit.messageHandlers.steve.postMessage({ action: 'pickDirectory', id, directory: directory || '' }); }); }, onDirectory(id, path) { const resolve = this.pending[id]; delete this.pending[id]; if (resolve) resolve(path); } };";
+    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:bridge injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    [configuration.userContentController addScriptMessageHandler:self name:@"steve"];
+    return configuration;
 }
 
 - (void)beginWorkspaceLoad {
@@ -303,12 +308,51 @@
         [url.host isEqualToString:self.serviceURL.host] && [url.port isEqualToNumber:self.serviceURL.port];
 }
 
+- (BOOL)isWorkspaceFrame:(WKFrameInfo *)frame {
+    if (!frame.isMainFrame || ![self isServiceURL:frame.request.URL]) return NO;
+    WKSecurityOrigin *origin = frame.securityOrigin;
+    // WKSecurityOrigin may omit IPv6 brackets; compare canonical URLs.
+    NSURLComponents *parts = [[NSURLComponents alloc] init];
+    parts.scheme = origin.protocol;
+    parts.host = origin.host;
+    parts.port = @(origin.port);
+    return [self isServiceURL:parts.URL];
+}
+
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    if (webView != self.webView) { decisionHandler(WKNavigationActionPolicyCancel); return; }
     NSURL *url = action.request.URL;
+    if (action.targetFrame && !action.targetFrame.isMainFrame) {
+        // Inline previews keep their opaque sandbox origin. Do not give
+        // them service navigations, credentials or arbitrary URL schemes.
+        NSString *address = url.absoluteString;
+        BOOL inlineDocument = [address isEqualToString:@"about:srcdoc"] || [address hasPrefix:@"about:srcdoc#"] ||
+            [address isEqualToString:@"about:blank"] || [address hasPrefix:@"about:blank#"];
+        decisionHandler(inlineDocument ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+        return;
+    }
     if ([self isServiceURL:url]) {
+        // Keep trusted target=_blank service links on the existing workspace
+        // via the UI delegate instead of opening an unauthenticated browser.
+        if (!action.targetFrame) {
+            BOOL workspaceLink = [self isWorkspaceFrame:action.sourceFrame] &&
+                action.navigationType == WKNavigationTypeLinkActivated;
+            decisionHandler(workspaceLink ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+            return;
+        }
+        // A child frame must never use main-document reload authentication.
+        // The first native load already carries a header; subsequent page
+        // navigations must originate in the trusted workspace.
+        BOOL nativeLoad = action.sourceFrame.isMainFrame &&
+            [[action.request valueForHTTPHeaderField:@"Authorization"]
+                isEqualToString:[@"Bearer " stringByAppendingString:self.accessToken]];
+        if (![self isWorkspaceFrame:action.sourceFrame] && !nativeLoad) {
+            decisionHandler(WKNavigationActionPolicyCancel);
+            return;
+        }
         // Main-document navigation does not inherit the initial request's
         // header. Keep reloads authenticated without putting tokens in URLs.
-        if (action.targetFrame.isMainFrame && ![action.request valueForHTTPHeaderField:@"Authorization"].length) {
+        if (![action.request valueForHTTPHeaderField:@"Authorization"].length) {
             NSMutableURLRequest *request = [action.request mutableCopy];
             [request setValue:[@"Bearer " stringByAppendingString:self.accessToken] forHTTPHeaderField:@"Authorization"];
             decisionHandler(WKNavigationActionPolicyCancel);
@@ -318,7 +362,7 @@
         decisionHandler(WKNavigationActionPolicyAllow);
         return;
     }
-    if (action.navigationType == WKNavigationTypeLinkActivated &&
+    if ([self isWorkspaceFrame:action.sourceFrame] && action.navigationType == WKNavigationTypeLinkActivated &&
         ([url.scheme isEqualToString:@"https"] || [url.scheme isEqualToString:@"http"])) {
         [NSWorkspace.sharedWorkspace openURL:url];
     }
@@ -326,7 +370,8 @@
 }
 
 - (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)windowFeatures {
-    if (!action.targetFrame && action.navigationType == WKNavigationTypeLinkActivated) {
+    if (webView == self.webView && [self isWorkspaceFrame:action.sourceFrame] &&
+        !action.targetFrame && action.navigationType == WKNavigationTypeLinkActivated) {
         if ([self isServiceURL:action.request.URL]) [webView loadRequest:action.request];
         else if ([action.request.URL.scheme isEqualToString:@"https"] || [action.request.URL.scheme isEqualToString:@"http"]) [NSWorkspace.sharedWorkspace openURL:action.request.URL];
     }
@@ -334,6 +379,7 @@
 }
 
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (message.webView != self.webView || ![self isWorkspaceFrame:message.frameInfo]) return;
     if (![message.name isEqualToString:@"steve"] || ![message.body isKindOfClass:[NSDictionary class]]) return;
     NSDictionary *body = message.body;
     NSString *action = body[@"action"], *identifier = body[@"id"];
@@ -378,6 +424,7 @@
 }
 
 - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> *))completionHandler {
+    if (webView != self.webView || ![self isWorkspaceFrame:frame]) { completionHandler(nil); return; }
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.canChooseFiles = YES;
     panel.canChooseDirectories = parameters.allowsDirectories;

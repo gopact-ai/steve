@@ -115,7 +115,7 @@ func TestApplyReplayIsDeterministic(t *testing.T) {
 	apply(command{Kind: "app", ID: "app-1", App: AppCommand{ID: "app-1", CallerNodeID: "n1", CoordinatorEpoch: 1, WriterGeneration: 1, ExpectedVersion: 0, Payload: payload}})
 	apply(command{Kind: "app", ID: "app-2", App: AppCommand{ID: "app-2", CallerNodeID: "n1", CoordinatorEpoch: 1, WriterGeneration: 1, ExpectedVersion: 1, Payload: payload}})
 	apply(command{Kind: "app", ID: "app-1", App: AppCommand{ID: "app-1", CallerNodeID: "n1", CoordinatorEpoch: 1, WriterGeneration: 1, ExpectedVersion: 0, Payload: payload}})
-	apply(command{Kind: "app", ID: "app-1", Fingerprint: "other-input", App: AppCommand{ID: "app-1", CallerNodeID: "n1", CoordinatorEpoch: 1, WriterGeneration: 1, ExpectedVersion: 2, Payload: payload}})
+	apply(command{Kind: "app", ID: "app-1", Fingerprint: "other-input", App: AppCommand{ID: "app-1", CallerNodeID: "n1", CoordinatorEpoch: 1, WriterGeneration: 1, ExpectedVersion: 0, Payload: payload}})
 
 	apply(command{Kind: "address_prepare", ID: "addr-stale", Address: MemberAddressRequest{ID: "addr-stale", NodeID: "n2", Address: moved.Address, ExpectedRevision: 1}})
 	apply(command{Kind: "address_prepare", ID: "addr-stranger", Address: MemberAddressRequest{ID: "addr-stranger", NodeID: "n9", Address: moved.Address, ExpectedRevision: rev()}})

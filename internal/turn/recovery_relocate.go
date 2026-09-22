@@ -332,6 +332,7 @@ func (c *Coordinator) relocateChat(ctx context.Context, planID, choice string, r
 	if cleanupFailure = t.finishRelocation(session, runErr); cleanupFailure != nil {
 		return Result{}, cleanupFailure
 	}
+	c.notifyAccountedTurn(r.TaskID)
 	if runErr != nil {
 		return result, runErr
 	}
@@ -349,8 +350,12 @@ func (c *Coordinator) verifyRelocationWorkspace(ctx context.Context, p attempt.R
 }
 
 func (c *Coordinator) completedRelocation(ctx context.Context, req Request, r attempt.Record) (Result, error) {
+	if err := c.SettleChatAccounting(ctx, r.ID); err != nil {
+		return Result{}, err
+	}
 	var result Result
 	if r.Result != nil && json.Unmarshal(r.Result.Output, &result) == nil {
+		c.notifyAccountedTurn(r.TaskID)
 		return c.gateDisclosure(ctx, req, result)
 	}
 	return Result{}, errors.New("completed relocation has no recoverable result")

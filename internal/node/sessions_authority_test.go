@@ -3,8 +3,6 @@ package node
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -92,9 +90,15 @@ func TestStandaloneSessionRequiresCoordinatorAuthorityAndFreshStartAdmission(t *
 			if mode == "wrong-cluster" && len(calls) != 0 {
 				t.Fatal("unrelated cluster reached coordinator verification")
 			}
-			entries, err := os.ReadDir(filepath.Join(root, "node-sessions"))
-			if err != nil || len(entries) != 0 {
-				t.Fatalf("rejected authority created durable native execution: %v %v", entries, err)
+			store, err := server.sessions.recordsStore()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, table := range []string{"sessions", "session_commands", "session_questions", "session_progress"} {
+				var count int
+				if err := store.db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("rejected authority created durable %s records: %d %v", table, count, err)
+				}
 			}
 		})
 	}

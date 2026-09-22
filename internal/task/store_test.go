@@ -2,6 +2,7 @@ package task
 
 import (
 	"fmt"
+	"github.com/gopact-ai/steve/internal/channel"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -275,7 +276,7 @@ func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
 	if _, err := store.Begin(created.ID, "codex", "node", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetAnchor(created.ID, "oc_1", "om_1", "group", "om_card_0"); err != nil {
+	if err := store.SetAnchor(created.ID, channel.Address{Conversation: created.Channel, Message: "om_1"}, "oc_1", "group", "om_card_0"); err != nil {
 		t.Fatal(err)
 	}
 	interrupted := store.Interrupted()
@@ -331,7 +332,7 @@ func TestInterimJournalFollowsTheTurn(t *testing.T) {
 	if _, err := store.Begin(created.ID, "codex", "n", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetAnchor(created.ID, "oc_1", "om_1", "group", "om_card_1"); err != nil {
+	if err := store.SetAnchor(created.ID, channel.Address{Conversation: created.Channel, Message: "om_1"}, "oc_1", "group", "om_card_1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AddInterim("chat", "codex", "om_i1"); err != nil {
@@ -345,7 +346,7 @@ func TestInterimJournalFollowsTheTurn(t *testing.T) {
 		t.Fatalf("journal = %+v", got)
 	}
 	// The next turn wipes the slate: last turn's leftovers are not stale.
-	if err := store.SetAnchor(created.ID, "oc_1", "om_2", "group", "om_card_2"); err != nil {
+	if err := store.SetAnchor(created.ID, channel.Address{Conversation: created.Channel, Message: "om_2"}, "oc_1", "group", "om_card_2"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = store.Get(created.ID)

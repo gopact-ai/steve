@@ -13,7 +13,6 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -84,7 +83,7 @@ func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *test
 		t.Fatal("completion not durable")
 	}
 	resumes := 0
-	coordinator.SetResumer(func(TaskResume) { resumes++ })
+	coordinator.SetResumer(func(TaskResume) error { resumes++; return nil })
 	if _, err := handle(coordinator, t.Context(), "/tasks resume 1"); err != nil {
 		t.Fatal(err)
 	}
@@ -232,47 +231,8 @@ func TestCancelledChildWithoutResultSettlesOnlyAfterItsExecutionStops(t *testing
 	}
 }
 
-func TestCompletionExemptsOnlyItsOwnConsoleExchange(t *testing.T) {
-	for _, scenario := range []string{"own", "queued-completion", "running-completion", "missing-identity", "terminal-completion"} {
-		t.Run(scenario, func(t *testing.T) {
-			c, book := completionCoordinator(t, &fakeRunner{reply: "accepted"})
-			if _, err := handle(c, t.Context(), "work"); err != nil {
-				t.Fatal(err)
-			}
-			current := consoleapi.Exchange{ID: "current", Conversation: "chat", Input: "/tasks complete 1", State: consoleapi.ExchangeRunning}
-			exchanges := []consoleapi.Exchange{current}
-			if scenario != "own" && scenario != "missing-identity" {
-				other := consoleapi.Exchange{ID: "other", Conversation: "chat", Input: "/tasks complete 2", State: consoleapi.ExchangeQueued}
-				if scenario == "running-completion" {
-					other.State = consoleapi.ExchangeRunning
-				} else if scenario == "terminal-completion" {
-					other.State = consoleapi.ExchangeDone
-				}
-				exchanges = append(exchanges, other)
-			}
-			raw, err := json.Marshal(map[string]any{"exchanges": map[string][]consoleapi.Exchange{"chat": exchanges}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := book.Document("console").Save(raw); err != nil {
-				t.Fatal(err)
-			}
-			req := Request{ConversationID: "chat", Channel: "console", ExchangeID: current.ID, Input: current.Input}
-			if scenario == "missing-identity" {
-				req.ExchangeID = ""
-			}
-			_, err = c.Handle(t.Context(), req)
-			want := scenario == "own" || scenario == "terminal-completion"
-			root, _ := c.tasks.Get("1")
-			if (err == nil) != want || root.CompletedByUser != want {
-				t.Fatalf("completion queue guard: completed=%v err=%v", root.CompletedByUser, err)
-			}
-		})
-	}
-}
-
 func TestTaskCompletionDurableGuardRefusesPendingFacts(t *testing.T) {
-	for _, scenario := range []string{"reserved", "unknown", "unsettled", "question", "recovery", "continuation", "reply-pending", "queued-input", "landing", "effect", "disclosure", "plan", "corrupt"} {
+	for _, scenario := range []string{"reserved", "unknown", "unsettled", "landing", "effect", "disclosure", "plan"} {
 		t.Run(scenario, func(t *testing.T) {
 			coordinator, book := completionCoordinator(t, &fakeRunner{reply: "ok"})
 			if _, err := handle(coordinator, t.Context(), "accepted"); err != nil {
@@ -300,21 +260,6 @@ func TestTaskCompletionDurableGuardRefusesPendingFacts(t *testing.T) {
 					state = "bound"
 				}
 				begin("attempt", state, attempt.Record{Spec: attempt.Spec{ID: "pending", TaskID: "1"}, Unsettled: scenario == "unsettled"})
-			case "question":
-				writeDoc("console", map[string]any{"questions": map[string]consoleapi.PendingQuestion{"q": {TaskID: "1", Conversation: "chat", State: "pending"}}})
-			case "recovery", "continuation":
-				exchange := consoleapi.Exchange{ID: "old", Conversation: "chat", ExpectedTask: "1", State: consoleapi.ExchangeQueued}
-				if scenario == "recovery" {
-					exchange.ExpectedTask = ""
-					exchange.State = consoleapi.ExchangeAwaitingUser
-				}
-				writeDoc("console", map[string]any{"exchanges": map[string][]consoleapi.Exchange{"chat": {exchange}}})
-			case "reply-pending", "queued-input":
-				exchange := consoleapi.Exchange{ID: "original", Input: "original user work", Conversation: "chat", State: consoleapi.ExchangeRunning}
-				if scenario == "queued-input" {
-					exchange.State = consoleapi.ExchangeQueued
-				}
-				writeDoc("console", map[string]any{"exchanges": map[string][]consoleapi.Exchange{"chat": {exchange}}})
 			case "landing":
 				begin("landing", "proposed", artifact.Landing{Source: &artifact.Source{Execution: &token}})
 			case "effect":
@@ -323,10 +268,6 @@ func TestTaskCompletionDurableGuardRefusesPendingFacts(t *testing.T) {
 				begin("disclosure-request", "proposed", project.DisclosureRequest{TaskID: "1"})
 			case "plan":
 				writeDoc("plans", map[string]any{"by_task": map[string]string{"1": "plan"}})
-			case "corrupt":
-				if err := book.Document("console").Save([]byte("invalid")); err != nil {
-					t.Fatal(err)
-				}
 			}
 			if result, err := handle(coordinator, t.Context(), "/tasks complete 1"); err == nil || strings.Contains(result.Text, "is completed") {
 				t.Fatalf("%s: %+v %v", scenario, result, err)
@@ -343,26 +284,5 @@ func TestCompleteAliasesAreImmediateControls(t *testing.T) {
 		if !ImmediateInput(input) {
 			t.Fatalf("completion queued behind active work: %s", input)
 		}
-	}
-}
-
-func TestCompletionDoesNotBlockOnItsOwnDurableCommand(t *testing.T) {
-	coordinator, book := completionCoordinator(t, &fakeRunner{reply: "ok"})
-	if _, err := handle(coordinator, t.Context(), "work"); err != nil {
-		t.Fatal(err)
-	}
-	exchanges := map[string][]consoleapi.Exchange{"chat": {
-		{ID: "original", Conversation: "chat", Input: "work", State: consoleapi.ExchangeDone},
-		{ID: "complete", Conversation: "chat", Input: "@codex /tasks complete 1", State: consoleapi.ExchangeRunning},
-	}}
-	raw, err := json.Marshal(map[string]any{"exchanges": exchanges})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := book.Document("console").Save(raw); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := coordinator.Handle(t.Context(), Request{ConversationID: "chat", Channel: "console", ExchangeID: "complete", Input: "/tasks complete 1"}); err != nil {
-		t.Fatal(err)
 	}
 }

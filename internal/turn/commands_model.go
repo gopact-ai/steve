@@ -18,7 +18,7 @@ import (
 // open, and a change has to land on the session the next turn will use.
 func (c commands) modelCmd(parent context.Context, req Request, selected agent.Agent, want string) (Result, error) {
 	conversationID := req.ConversationID
-	ctx, cancel := context.WithTimeout(parent, c.timeout)
+	ctx, cancel := context.WithTimeout(parent, c.promptTimeout())
 	// Take the turn lock: switching model under a running turn would change
 	// the agent out from under it.
 	if !c.beginTurn(conversationID, selected.ID, cancel) {
@@ -31,6 +31,8 @@ func (c commands) modelCmd(parent context.Context, req Request, selected agent.A
 	if err != nil {
 		return Result{}, err
 	}
+	unlock := c.lockPreferences(conversationID, selected.ID)
+	defer unlock()
 	configurable, ok := runner.(harness.Configurable)
 	if !ok {
 		return Result{}, UserError{Text: c.text.T(i18n.ModelUnsupported, selected.ID)}

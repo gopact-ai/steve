@@ -28,11 +28,10 @@ func (s *Server) consoleTaskMeta(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	for _, updated := range s.model.Snapshot(r.Context()).Tasks {
-		if updated.ID == r.PathValue("task") {
-			writeJSON(w, updated)
-			return
-		}
+	updated, err := s.model.TaskDetail(r.Context(), r.PathValue("task"))
+	if err != nil {
+		writeWorkQueryError(w, err)
+		return
 	}
-	http.Error(w, "task "+r.PathValue("task")+" not found", http.StatusBadRequest)
+	writeJSON(w, updated.Task)
 }

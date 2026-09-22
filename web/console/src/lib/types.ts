@@ -1,6 +1,6 @@
 // Mirrors internal/readmodel: the snapshot the hub serves at /state and the
 // events it streams at /events. Every list is present, empty or not.
-export interface Advert { node?: string; build_version?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
+export interface Advert { version?: number; node?: string; build_version?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
 export interface Hub { node: string; started: string; capabilities?: string[]; level?: string; version?: string; advert?: Advert }
 export interface Harness { id: string; command?: string; version?: string; model?: string; models?: string[]; missing?: string; slots?: number }
 export interface Evidence { kind: "declared" | "observed" | "derived"; method?: string; result?: string; ok: boolean; at?: string }
@@ -33,7 +33,11 @@ export interface Selector { id: string; name: string; category?: string; current
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
 export interface ResultDelivery { state: "pending" | "queued" | "delivered" | "suppressed" | "uncertain"; key?: string; at: string; attempts?: number; error?: string; next_attempt_at?: string }
+export interface WorkPage<T> { items: T[]; total?: number; next_cursor?: string }
+export interface TaskCounts { total: number; live: number; closed: number; roots: number; completed_roots: number; cancelled_roots: number; paused_roots: number }
+export interface TaskCoverage extends TaskCounts { included: number; recent_limit: number; recent_closed: number; has_more_closed: boolean; missing?: string[] }
 export interface Task {
+    children_count: number; children_complete: boolean; attempt_count: number;
     result_delivery?: ResultDelivery; pending_results?: number; uncertain_results?: number;
     can_complete?: boolean;
     id: string; goal: string; state: string; lifecycle: string; execution: string; attention: number; lane: string;
@@ -41,7 +45,7 @@ export interface Task {
     // not matter. The task still reads as failed; this says nobody waits on it.
     settlement?: "handled" | "ignored";
     title?: string; priority?: "high" | "normal" | "low" | ""; labels?: string[]; archived_at?: string;
-    member?: string; node?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
+    member?: string; node?: string; transport?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
     turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; updated_at?: string; plan_id?: string;
     tokens?: Tokens; seconds?: number; model?: string; attempt_rows?: AttemptRow[];
 }
@@ -85,10 +89,10 @@ export interface Grant { project: string; principal: string; role: string; by: s
 export interface Facts {
     reservations: Reservation[]; attestations: Attestation[]; replicas: Replica[]; disclosures: Disclosure[]; effects: Effect[]; grants: Grant[];
 }
-export interface Choice { label: string; command: string; danger?: boolean }
+export interface HumanRequestChoice { label: string; command: string; danger?: boolean }
 export interface HumanRequest {
     conversation?: string;
-    id: string; type: string; source: string; project_id?: string; task_id?: string; attempt_id?: string; node?: string; workspace?: string; summary: string; choices: Choice[]; created_at: string; resolvable: boolean;
+    id: string; type: string; source: string; project_id?: string; task_id?: string; attempt_id?: string; node?: string; workspace?: string; summary: string; choices: HumanRequestChoice[]; created_at: string; resolvable: boolean;
 }
 export interface Schedule { id: string; conversation: string; agent?: string; prompt: string; spec: string; next_at: string; last_at?: string; runs: number; state?: string; error?: string; pending_key?: string }
 export interface SourceHealth { name: string; wired: boolean; error?: string }
@@ -99,8 +103,10 @@ export interface UsageThroughput { window_tpm: number; active_tpm: number; peak_
 export type UsageRange = "1d" | "7d" | "30d";
 export interface UsagePeriod { from: string; to: string; interval: "hour" | "day"; series: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; by_harness?: UsageRow[]; by_trigger?: UsageRow[]; by_project?: UsageRow[]; tasks?: TaskDurationStats; by_task?: TaskUsageRow[]; throughput?: UsageThroughput; total: UsageRow }
 export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow; timezone?: string; periods?: Partial<Record<UsageRange, UsagePeriod>> }
+export interface UsageResponse { at: string; usage?: Usage; sources: SourceHealth[] }
 export interface Repo { path: string; branch?: string; head?: string; subject?: string; at?: string; dirty: boolean; remote?: string; agents_md: boolean; missing?: boolean }
 export interface Project {
+    task_counts: TaskCounts | null;
     id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[];
     repos?: Repo[]; home?: boolean; default?: boolean;
     // Where the project is: its home first, then its copies.
@@ -142,7 +148,9 @@ export interface AttemptView { id: string; kind: string; state: string; agent?: 
 export interface TreeEntry { name: string; path: string; kind: "file" | "dir" | "link" | "repo"; size?: number; mode?: string }
 export interface TreeView { attempt: string; commit: string; which: "result" | "base"; dir: string; entries: TreeEntry[]; truncated?: boolean }
 export interface FileView { attempt: string; commit: string; path: string; text: string; size: number; binary?: boolean; truncated?: boolean }
-export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempts: AttemptView[] }
+export interface AccountingItem extends AttemptRow { index: number; execution_id?: string }
+export interface NativeAttempt extends AttemptView { task_id: string; project?: string; files_known: boolean; files_truncated?: boolean; files_error?: string }
+export interface TaskDetail { task: Task; plan?: Plan; children: WorkPage<Task>; accounting: WorkPage<AccountingItem> }
 // QuoteRef points at a line of some thread to carry along with a message;
 // the server reads the text, the page only keeps a preview.
 export interface Exchange {
@@ -151,19 +159,19 @@ export interface Exchange {
     enqueued_at: string; started_at?: string; reply_id?: string;
 }
 export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }
-export interface Choice { Value: string; Label: string; Detail?: string }
-export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices?: Choice[] | null }
-export interface Selectors { model?: string; models?: Choice[]; options?: SelectorOption[]; preferred?: Record<string, string> }
+export interface SelectorChoice { Value: string; Label: string; Detail?: string }
+export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices?: SelectorChoice[] | null }
+export interface Selectors { model?: string; models?: SelectorChoice[]; options?: SelectorOption[]; preferred?: Record<string, string> }
 export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }
 export interface Event {
-    at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
+    at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string; rev?: number;
     state?: string; conversation?: string; text?: string; format?: "markdown" | "text"; title?: string; detail?: string; data?: Record<string, string>; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string; silent?: boolean;
     // n is the page's own arrival counter, so a reader can keep a cursor
     // over a buffer that is trimmed from the front.
     n?: number;
 }
-export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean; questions?: number }
+export interface Conversation { transport?: "console" | "feishu"; read_only?: boolean; execution?: "running" | "idle" | "unknown"; id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean; questions?: number }
 export interface Injected {
     project?: string; workspace?: string; agent: string; node?: string; harness: string; model?: string; options?: Record<string, string>;
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;
@@ -180,6 +188,7 @@ export interface SessionSetup {
     instructions?: string; sections?: InstructionSection[]; mcp_servers?: string[]; applied: boolean;
 }
 export interface Reply {
+    delivery?: "confirmed" | "unconfirmed" | "suppressed" | "unavailable";
     id?: string; exchange_id?: string; at: string; conversation: string; input?: string; title?: string; text: string; format?: "markdown" | "text"; error?: string; kind: string; process?: Process; injected?: Injected;
     changes?: ChangeSummary; project_id?: string; revision?: string; refs?: MaterialRef[]; materials?: FrozenMaterial[];
     // A silent line is kept by the server but never drawn: stopping a turn
@@ -190,8 +199,9 @@ export interface Reply {
     relayed?: boolean;
 }
 export interface Snapshot {
+    task_coverage: TaskCoverage; plan_coverage: { total: number; included: number; has_more: boolean };
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
-    attempts: Attempt[]; landings: Landing[]; conflicts: Conflict[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[]; usage: Usage;
+    attempts: Attempt[]; landings: Landing[]; conflicts: Conflict[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[];
 }
 
 // Skills: what the hub can hand its agents, and what it does.

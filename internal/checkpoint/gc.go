@@ -17,7 +17,14 @@ func (s *Store) GC(ctx context.Context) (GCResult, error) {
 	if err := s.checkOpenLocked(); err != nil {
 		return GCResult{}, err
 	}
+	return s.gcLocked(ctx, nil)
+}
+
+func (s *Store) gcKeepLocked(ctx context.Context) (map[string]bool, error) {
 	keep := map[string]bool{}
+	if err := s.retainedKeepLocked(ctx, keep); err != nil {
+		return nil, err
+	}
 	for name := range s.pins {
 		keep[name] = true
 	}
@@ -27,46 +34,54 @@ func (s *Store) GC(ctx context.Context) (GCResult, error) {
 	for _, directory := range []string{"prepared", "manifests"} {
 		entries, err := fs.ReadDir(s.root.FS(), directory)
 		if err != nil {
-			return GCResult{}, err
+			return nil, err
 		}
 		for _, entry := range entries {
 			if err := ctx.Err(); err != nil {
-				return GCResult{}, err
+				return nil, err
 			}
 			name := directory + "/" + entry.Name()
 			var snapshot Snapshot
 			if directory == "prepared" {
 				var pending prepared
 				if _, err := s.readJSONLocked(name, &pending); err != nil {
-					return GCResult{}, err
+					return nil, err
 				}
 				_, id, _, err := canonical(pending.Snapshot, s.cfg.Limits)
 				if err != nil || entry.Name() != id+".json" || pending.Receipt.SnapshotID != id {
-					return GCResult{}, ErrIntegrity
+					return nil, ErrIntegrity
 				}
 				snapshot = pending.Snapshot
 			} else {
 				var m Manifest
 				if _, err := s.readJSONLocked(name, &m); err != nil {
-					return GCResult{}, err
+					return nil, err
 				}
 				validated, err := validateManifest(m, s.cfg.Limits)
 				if err != nil || entry.Name() != validated.ID+".json" {
-					return GCResult{}, ErrIntegrity
+					return nil, ErrIntegrity
 				}
 				snapshot = validated.Snapshot
 			}
 			_, _, refs, err := canonical(snapshot, s.cfg.Limits)
 			if err != nil {
-				return GCResult{}, err
+				return nil, err
 			}
 			for _, ref := range refs {
 				keep[blobName(snapshot.Scope, ref)] = true
 			}
 		}
 	}
+	return keep, nil
+}
+
+func (s *Store) gcLocked(ctx context.Context, allowed map[string]bool) (GCResult, error) {
+	keep, err := s.gcKeepLocked(ctx)
+	if err != nil {
+		return GCResult{}, err
+	}
 	var remove []string
-	err := fs.WalkDir(s.root.FS(), "blobs", func(name string, entry fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(s.root.FS(), "blobs", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -80,7 +95,7 @@ func (s *Store) GC(ctx context.Context) (GCResult, error) {
 		if len(parts) != 3 || !validDigest(parts[1]) || !validDigest(parts[2]) || !entry.Type().IsRegular() {
 			return fmt.Errorf("%w: invalid content-store entry", ErrIntegrity)
 		}
-		if !keep[name] {
+		if !keep[name] && (allowed == nil || allowed[name]) {
 			remove = append(remove, name)
 		}
 		return nil

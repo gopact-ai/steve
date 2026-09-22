@@ -1,12 +1,13 @@
+import { IconButton } from "@/components/steve/icon-button";
 import { CoordinationProvider, useCoordination } from "@/lib/coordination";
 import { DesktopOnboarding } from "@/components/steve/desktop-onboarding";
 import { SelectionProvider } from "@/providers/selection-provider";
 import { SideChatProvider } from "@/providers/side-chat-provider";
 import { CloseStackProvider } from "@/providers/close-stack";
-import { lazy, Suspense, useState } from "react";
+import { lazy, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { BarChartSquare02, BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
-import appIcon from "../../../desktop/macos/Assets/AppIcon.png";
+import appIcon from "@/assets/app-icon.png";
 import { Sheet } from "@/components/steve/drawer";
 import { PaneResizer } from "@/components/steve/pane-resizer";
 import { usePaneWidth } from "@/hooks/use-pane-width";
@@ -16,16 +17,10 @@ import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { ConsolePage } from "@/pages/console";
-import { FleetPage } from "@/pages/fleet";
-import { DashboardPage } from "@/pages/dashboard";
-import { InboxPage } from "@/pages/inbox";
-import { ProjectsPage } from "@/pages/projects";
-import { SkillsPage } from "@/pages/skills";
-import { MCPPage } from "@/pages/mcp";
-import { HomePage } from "@/pages/home";
-import { SettingsPage } from "@/pages/settings";
 import { MaterialProvider } from "@/providers/material-provider";
 import { ReviewProvider } from "@/components/steve/review-context";
+import { LazyRegion } from "@/components/steve/lazy-region";
+import { conversationURL } from "@/lib/conversation-identity";
 
 // The menu is narrow by default and stays readable down to an icon-and-
 // label minimum; past that the compact rail is the better answer.
@@ -34,16 +29,32 @@ const NAV_MIN = 168;
 const NAV_MAX = 360;
 
 const PluginsPage = lazy(() => import("@/pages/plugins").then((module) => ({ default: module.PluginsPage })));
+const FleetPage = lazy(() => import("@/pages/fleet").then((module) => ({ default: module.FleetPage })));
+const DashboardPage = lazy(() => import("@/pages/dashboard").then((module) => ({ default: module.DashboardPage })));
+const SkillsPage = lazy(() => import("@/pages/skills").then((module) => ({ default: module.SkillsPage })));
+const MCPPage = lazy(() => import("@/pages/mcp").then((module) => ({ default: module.MCPPage })));
+const SettingsPage = lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })));
+const InboxPage = lazy(() => import("@/pages/inbox").then((module) => ({ default: module.InboxPage })));
+const ProjectsPage = lazy(() => import("@/pages/projects").then((module) => ({ default: module.ProjectsPage })));
+const HomePage = lazy(() => import("@/pages/home").then((module) => ({ default: module.HomePage })));
 
 export function App() {
     const navigate = useNavigate();
-    return <CloseStackProvider><FleetProvider><CoordinationProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /><DesktopOnboarding /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></CoordinationProvider></FleetProvider></CloseStackProvider>;
+    const location = useLocation();
+    const navigateIntent = () => {
+        // An explicit action from another page must not inherit a channel's
+        // read-only address. In-channel commands remain disabled and consumed.
+        const fromChannel = location.pathname !== "/console" && sessionStorage.getItem("steve.conversation.transport") === "feishu";
+        navigate(fromChannel ? conversationURL(`console:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`) : "/console");
+    };
+    return <CloseStackProvider><FleetProvider><CoordinationProvider><IntentProvider onNavigate={navigateIntent}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /><DesktopOnboarding /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></CoordinationProvider></FleetProvider></CloseStackProvider>;
 }
 
 function Shell() {
     const { snap, live } = useFleet();
     const { view: coordination, error: coordinationError } = useCoordination();
     const location = useLocation();
+    const navigate = useNavigate();
     const { locale, t } = useI18n();
     const desktop = useBreakpoint("xl");
     const tablet = useBreakpoint("sm");
@@ -84,7 +95,7 @@ function Shell() {
             {groups.map((group) => <div key={group.id} className="app-nav-group">
                 {!small && <span className="app-nav-label">{group.title}</span>}
                 {group.items.map((item) => <a key={item.href} href={"#" + item.href} aria-label={small ? item.label : undefined}
-                    aria-current={(item.href === "/home" ? location.pathname === "/home" : item.href === "/console?view=board" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") === "board" : selected === item.href) ? "page" : undefined} title={small ? item.label : undefined}
+                    aria-current={(item.href === "/home" ? location.pathname === "/home" : item.href === "/console?view=board" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") === "board" : item.href === "/console" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") !== "board" : selected === item.href) ? "page" : undefined} title={small ? item.label : undefined}
                     className="app-nav-item" onClick={() => setMobileNav(false)}>
                     <item.icon aria-hidden="true" />
                     {!small && <span>{item.label}</span>}
@@ -107,7 +118,7 @@ function Shell() {
             <div className="app-sidebar-tools">
                 <a href="#/settings?section=general" className="app-settings-link" aria-label={t("settingsPage.centerTitle")} title={small ? t("settingsPage.centerTitle") : undefined} aria-current={location.pathname === "/settings" ? "page" : undefined} onClick={() => setMobileNav(false)}><Settings01 aria-hidden="true" />{!small && <span>{t("settingsPage.centerTitle")}</span>}</a>
                 {!small && <span className="app-version" title={nodeLabelIn(snap.nodes, snap.hub.node)}>{snap.hub.version || "—"}</span>}
-                {desktop && <button type="button" className="workbench-icon-button app-collapse" aria-label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }}><ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" /></button>}
+                {desktop && <IconButton size={small ? "lg" : "sm"} className="app-collapse" label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }} icon={<ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" />} />}
             </div>
         </div>
     </>;
@@ -117,10 +128,10 @@ function Shell() {
             {navigation(compact)}
             {!compact && <PaneResizer width={navWidth} onChange={setNavWidth} min={NAV_MIN} max={NAV_MAX} initial={NAV_WIDTH} label={t("nav.resize")} />}
         </aside>}
-        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
-        {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("nav.close")} onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
+        {!tablet && <div className="app-mobile-bar"><IconButton label={t("nav.menu")} onClick={() => setMobileNav(true)} icon={Menu01} /><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
+        {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><IconButton className="sheet-close" label={t("nav.close")} onClick={() => setMobileNav(false)} icon={X} /><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
-            <Routes>
+            <LazyRegion resetKey={location.pathname + location.search} onClose={() => navigate("/console")}><Routes>
                 <Route path="/" element={<Navigate to="/console" replace />} />
                 <Route path="/console" element={<ConsolePage />} />
                 <Route path="/tasks" element={<Navigate to="/console?view=board" replace />} />
@@ -129,7 +140,7 @@ function Shell() {
                 <Route path="/fleet" element={<FleetPage />} />
                 <Route path="/skills" element={<SkillsPage />} />
                 <Route path="/mcp" element={<MCPPage />} />
-                <Route path="/plugins" element={<Suspense fallback={<div role="status" className="p-6 text-sm text-tertiary">{t("common.loading")}</div>}><PluginsPage /></Suspense>} />
+                <Route path="/plugins" element={<PluginsPage />} />
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/inbox" element={<InboxPage />} />
@@ -137,7 +148,7 @@ function Shell() {
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/history" element={<Navigate to="/dashboard?tab=timeline" replace />} />
                 <Route path="/activity" element={<Navigate to="/dashboard" replace />} />
-            </Routes>
+            </Routes></LazyRegion>
         </main>
     </div>;
 }

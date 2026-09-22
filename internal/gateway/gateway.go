@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -80,10 +82,14 @@ type agentAnchor interface {
 const thinkingEmoji = "THINKING"
 
 type Gateway struct {
-	processor processor
-	ch        replier
-	text      i18n.Catalog
-	gate      agentAnchor
+	recoveryLedger *ledger.Ledger
+	recoveryAfter  string
+	ingressContext context.Context
+	ingressWorkers RecoveryWorkers
+	processor      processor
+	ch             replier
+	text           i18n.Catalog
+	gate           agentAnchor
 
 	// slots bounds how many conversations are served at once. A turn spends
 	// almost all of its time waiting on an agent subprocess rather than on
@@ -100,7 +106,8 @@ type Gateway struct {
 	lastCard []byte
 	// serving counts the messages in flight per conversation, so a second
 	// one can tell that its conversation already holds a slot.
-	serving map[string]int
+	serving        map[string]int
+	durableRunning map[string]bool
 }
 
 // PoolSize is the ceiling on concurrently served conversations.
@@ -125,23 +132,21 @@ func (g *Gateway) SetAgentGate(gate agentAnchor) { g.gate = gate }
 
 func (g *Gateway) SetCatalog(cat i18n.Catalog) { g.text = cat }
 
-// HandleMessage starts every message immediately instead of queueing it
-// behind whatever the chat is already doing.
-//
-// A per-conversation queue was the wrong shape once a new message means
-// "stop that, do this": a message that waits for the turn it is meant to
-// interrupt can never interrupt it. Serialising is now the coordinator's
-// job, and it does it by taking the turn away from the running prompt
-// rather than by making the user wait.
-func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
-	g.handleTaskMessage(msg, "")
+// HandleMessage waits for durable acceptance, not native execution. Serving
+// shares bounded conversation capacity with recovery; a control message joins
+// its conversation's existing owner rather than waiting for the turn it stops.
+func (g *Gateway) HandleMessage(msg feishu.InboundMessage) error {
+	return g.handleTaskMessage(msg, "")
 }
 
-func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask string) {
+func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask string) error {
+	if g.recoveryLedger != nil {
+		return g.acceptAndWake("gateway-input/"+msg.MessageID, gatewayInput{Message: msg, ExpectedTask: expectedTask})
+	}
 	g.mu.Lock()
 	if _, duplicate := g.seen[msg.MessageID]; msg.MessageID != "" && duplicate {
 		g.mu.Unlock()
-		return
+		return nil
 	}
 	g.rememberLocked(msg.MessageID)
 	g.mu.Unlock()
@@ -149,6 +154,7 @@ func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask stri
 	// own id during setup.
 	slog.Info(fmt.Sprintf("gateway: message conversation=%s sender=%s", conversationID(msg), msg.SenderOpenID), "conversation", conversationID(msg), "sender", msg.SenderOpenID)
 	go g.serveTask(msg, conversationID(msg), expectedTask)
+	return nil
 }
 
 // serve runs one message against the pool.
@@ -171,18 +177,7 @@ func (g *Gateway) serveTask(msg feishu.InboundMessage, conversation, expectedTas
 	if first {
 		g.slots <- struct{}{}
 	}
-	defer func() {
-		g.mu.Lock()
-		g.serving[conversation]--
-		last := g.serving[conversation] == 0
-		if last {
-			delete(g.serving, conversation)
-		}
-		g.mu.Unlock()
-		if last {
-			<-g.slots
-		}
-	}()
+	defer g.releaseConversation(conversation)
 	return g.processTask(msg, expectedTask)
 }
 
@@ -264,37 +259,44 @@ func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) er
 		g.seedTopic(msg, rest)
 		return nil
 	}
-	if g.gate != nil && msg.MessageID != "" {
+	if g.gate != nil && msg.MessageID != "" && !g.scheduleControl(msg.Text) {
 		g.gate.Anchor(conversationID, channel.Address{Channel: "feishu", Conversation: conversationID, Message: msg.MessageID})
 	}
 	ui := g.newTurnUI(msg, listen)
-	result, err := g.processor.Handle(context.Background(), turn.Request{
+	result, err := g.processor.Handle(context.Background(), g.taskRequest(msg, expectedTask, ui))
+	if err != nil {
+		slog.Error(fmt.Sprintf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err), "conversation", conversationID, "chat", msg.ChatID, "message", msg.MessageID)
+	}
+	_, deliveryErr := ui.finish(result, err)
+	return errors.Join(err, deliveryErr)
+}
+
+func (g *Gateway) taskRequest(msg feishu.InboundMessage, expectedTask string, ui *turnUI) turn.Request {
+	req := turn.Request{
 		Channel:        "feishu",
-		ConversationID: conversationID,
+		ConversationID: conversationID(msg),
 		Input:          g.promptText(msg),
 		ExpectedTask:   expectedTask,
 		Origin:         msg.Origin,
 		MessageID:      msg.MessageID,
 		ChatID:         msg.ChatID,
-		CardID:         ui.cardID,
 		SenderOpenID:   msg.SenderOpenID,
 		ChatType:       protocol.ParseChatType(string(msg.ChatType)),
 		Mentioned:      msg.Mentioned,
 		Images:         inboundImages(msg),
-		OnProgress:     ui.progress,
-		OnPhase:        ui.setPhase,
-		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
-			return g.askQuestion(ctx, ui, q)
-		},
-		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
-			return g.askPermission(ctx, ui, ask)
-		},
-	})
-	if err != nil {
-		slog.Error(fmt.Sprintf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err), "conversation", conversationID, "chat", msg.ChatID, "message", msg.MessageID)
 	}
-	ui.finish(result, err)
-	return err
+	if ui != nil {
+		req.CardID = ui.cardID
+		req.OnProgress = ui.progress
+		req.OnPhase = ui.setPhase
+		req.OnAskUser = func(ctx context.Context, q view.Question) (view.Answer, error) {
+			return g.askQuestion(ctx, ui, q)
+		}
+		req.OnAsk = func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+			return g.askPermission(ctx, ui, ask)
+		}
+	}
+	return req
 }
 
 // maxReplyRunes keeps replies under the Feishu text message size limit so a
@@ -402,6 +404,9 @@ func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.
 func (g *Gateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
 	slog.Info(fmt.Sprintf("gateway: card action=%q request=%s decision=%s user=%s message=%s",
 		action.Action, action.RequestID, action.Decision, action.OpenID, action.MessageID), "action", action.Action, "request", action.RequestID, "decision", action.Decision, "user", action.OpenID, "message", action.MessageID)
+	if g.recoveryLedger != nil && (action.Action == "turn_cancel" || action.Action == "turn_retry" || action.Action == "history_restore") {
+		return g.handleDurableAction(action)
+	}
 	switch action.Action {
 	case "tool_approval":
 		return g.handleApprovalAction(action)
@@ -540,20 +545,21 @@ func (g *Gateway) handleRecoverAction(action feishu.CardAction) feishu.CardToast
 func (g *Gateway) handleRetryAction(action feishu.CardAction) feishu.CardToast {
 	g.mu.Lock()
 	entry := g.turns[action.RequestID]
-	if entry != nil && !entry.running {
-		delete(g.turns, action.RequestID)
-	}
-	g.mu.Unlock()
 	if entry == nil || entry.running {
+		g.mu.Unlock()
 		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.TurnActionExpired)}
 	}
 	if entry.msg.SenderOpenID != "" && action.OpenID != entry.msg.SenderOpenID {
+		g.mu.Unlock()
 		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
 	}
+	current := *entry
+	delete(g.turns, action.RequestID)
+	g.mu.Unlock()
 	go func() {
 		// Recall first so the failed card does not linger next to its replacement.
-		g.recall(entry.cardID)
-		g.process(entry.msg)
+		g.recall(current.cardID)
+		g.process(current.msg)
 	}()
 	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnRetryStarted)}
 }

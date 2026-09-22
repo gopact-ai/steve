@@ -18,18 +18,27 @@ test-console:
 	npm --prefix web/console run test:boundaries
 	npm --prefix web/console run test:unit
 	npm --prefix web/console run build
+	npm --prefix web/console run test:styles
+	npm --prefix web/console run test:performance
 	npm --prefix web/console run test:ui
 	npm --prefix web/console run test:task-completion
 	npm --prefix web/console run test:architecture
+	npm --prefix web/console run test:appearance
 	npm --prefix web/console run test:settings
 	npm --prefix web/console run test:materials
 	npm --prefix web/console run test:questions
+	npm --prefix web/console run test:durable-drafts
+	npm --prefix web/console run test:streaming
 	npm --prefix web/console run test:desktop
 	npm --prefix web/console run test:ssh
 	npm --prefix web/console run test:coordination
 	npm --prefix web/console run test:node-agents
 	npm --prefix web/console run test:plugins
 	npm --prefix web/console run test:selection
+	npm --prefix web/console run test:projects
+	npm --prefix web/console run test:delete
+	npm --prefix web/console run test:conflicts
+	npm --prefix web/console run test:close-layers
 
 .PHONY: desktop test-desktop
 desktop:

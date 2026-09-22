@@ -10,8 +10,8 @@ import (
 )
 
 func TestPluginLibraryRestoresExactPackageAfterCoordinatorLoss(t *testing.T) {
-	_, transport, client := newCluster(t, "restricted", "a", "b", "c")
 	book := openBook(t)
+	_, transport, client := newCluster(t, book, "restricted", "a", "b", "c")
 	bundle, err := plugins.ReadDirectory(t.Context(), filepath.Join("..", "..", "examples/plugins/github"))
 	if err != nil {
 		t.Fatal(err)
@@ -47,9 +47,9 @@ func TestPluginLibraryRestoresExactPackageAfterCoordinatorLoss(t *testing.T) {
 }
 
 func TestPluginLibraryDoesNotPublishWhenRequiredReplicaIsOffline(t *testing.T) {
-	_, transport, client := newCluster(t, "restricted", "a", "b")
-	transport.offline["b"] = true
 	book := openBook(t)
+	_, transport, client := newCluster(t, book, "restricted", "a", "b")
+	transport.offline["b"] = true
 	bundle, err := plugins.ReadDirectory(t.Context(), filepath.Join("..", "..", "examples/plugins/github"))
 	if err != nil {
 		t.Fatal(err)

@@ -202,15 +202,25 @@ type attemptRow struct {
 	Reported bool   `json:"reported"`
 }
 
+type usageRow struct {
+	Key        string `json:"key"`
+	Attempts   int    `json:"attempts"`
+	Unreported int    `json:"unreported"`
+	Tokens     tokens `json:"tokens"`
+}
+
+type usageSummary struct {
+	ByAgent []usageRow `json:"by_agent"`
+}
+
 type task struct {
-	ID             string       `json:"id"`
-	Parent         string       `json:"parent"`
-	State          string       `json:"state"`
-	Member         string       `json:"member"`
-	Node           string       `json:"node"`
-	Project        string       `json:"project_id"`
-	Channel        string       `json:"channel"`
-	AttemptRows    []attemptRow `json:"attempt_rows"`
+	ID             string `json:"id"`
+	Parent         string `json:"parent"`
+	State          string `json:"state"`
+	Member         string `json:"member"`
+	Node           string `json:"node"`
+	Project        string `json:"project_id"`
+	Channel        string `json:"channel"`
 	ResultDelivery *struct {
 		State string `json:"state"`
 	} `json:"result_delivery"`
@@ -253,12 +263,14 @@ type reply struct {
 }
 
 type attempt struct {
-	ID       string `json:"id"`
-	Kind     string `json:"kind"`
-	State    string `json:"state"`
-	Agent    string `json:"agent"`
-	Node     string `json:"node"`
-	Artifact string `json:"artifact"`
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	State     string    `json:"state"`
+	Agent     string    `json:"agent"`
+	Node      string    `json:"node"`
+	Artifact  string    `json:"artifact"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
 }
 
 type gate struct {
@@ -283,6 +295,18 @@ func (g *gate) log(format string, args ...any) {
 		line = strings.ReplaceAll(line, g.token, "[REDACTED]")
 	}
 	fmt.Fprintln(g.out, line)
+}
+
+// attempts lists a task's native attempts. The task detail carries the
+// task and a page of its children; the attempts are a page of their own.
+func (g *gate) attempts(ctx context.Context, taskID string) ([]attempt, error) {
+	var page struct {
+		Items []attempt `json:"items"`
+	}
+	if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(taskID)+"/attempts", nil, &page); err != nil {
+		return nil, err
+	}
+	return page.Items, nil
 }
 
 func (g *gate) request(ctx context.Context, method, path string, body, result any) error {
@@ -417,8 +441,11 @@ func (g *gate) run(ctx context.Context) error {
 	g.log("PASS reply=%s step=%s kind=delegate state=done agent=%s node=%s attempt=%s", final.ID, child.ID, child.Agent, child.Node, child.Attempt)
 
 	var detail struct {
-		Task     task      `json:"task"`
-		Attempts []attempt `json:"attempts"`
+		Task       task `json:"task"`
+		Accounting struct {
+			Items []attemptRow `json:"items"`
+			Total int          `json:"total"`
+		} `json:"accounting"`
 	}
 	if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(g.taskID), nil, &detail); err != nil {
 		return err
@@ -426,14 +453,18 @@ func (g *gate) run(ctx context.Context) error {
 	if err := g.checkTask(detail.Task); err != nil {
 		return err
 	}
+	attempts, err := g.attempts(ctx, g.taskID)
+	if err != nil {
+		return err
+	}
 	var matched bool
-	for _, a := range detail.Attempts {
+	for _, a := range attempts {
 		if a.ID == g.attemptID && a.Kind == "delegate" && a.Agent == g.targetAgent && a.Node == g.targetNode && a.Artifact != "" {
 			matched = true
 		}
 	}
 	if !matched {
-		return fmt.Errorf("task #%s: delegate attempt %s missing or has wrong agent/node/artifact: %+v", g.taskID, g.attemptID, detail.Attempts)
+		return fmt.Errorf("task #%s: delegate attempt %s missing or has wrong agent/node/artifact: %+v", g.taskID, g.attemptID, attempts)
 	}
 	g.log("PASS task=#%s parent=#%s project=%s attempt=%s", g.taskID, detail.Task.Parent, detail.Task.Project, g.attemptID)
 	var index struct {
@@ -459,12 +490,15 @@ func (g *gate) run(ctx context.Context) error {
 		return fmt.Errorf("attempt %s: changes index must contain A %s in project %s; got %+v", g.attemptID, g.filename, g.project, index)
 	}
 	g.log("PASS changes attempt=%s status=A path=%s", g.attemptID, g.filename)
-	var current state
-	if err := g.request(ctx, http.MethodGet, "/state", nil, &current); err != nil {
+	usage, err := g.usage(detail.Task, detail.Accounting.Items)
+	if err != nil {
 		return err
 	}
-	usage, err := g.usage(current)
+	summary, err := g.readUsage(ctx)
 	if err != nil {
+		return err
+	}
+	if err := summary.checkReported(g.targetAgent, usage); err != nil {
 		return err
 	}
 	g.log("PASS usage task=#%s agent=%s node=%s reported=true input=%d output=%d cached_read=%d cached_write=%d total=%d", g.taskID, g.targetAgent, g.targetNode, usage.Input, usage.Output, usage.CachedRead, usage.CachedWrite, usage.Total)
@@ -544,22 +578,59 @@ func (g *gate) checkTask(t task) error {
 	return nil
 }
 
-func (g *gate) usage(s state) (tokens, error) {
-	for _, t := range s.Tasks {
-		if t.ID != g.taskID {
+func (g *gate) usage(t task, rows []attemptRow) (tokens, error) {
+	if err := g.checkTask(t); err != nil {
+		return tokens{}, err
+	}
+	for _, row := range rows {
+		if row.Agent == g.targetAgent && row.Node == g.targetNode && row.Outcome == "ok" && row.Reported && row.Tokens.present() {
+			return row.Tokens, nil
+		}
+	}
+	return tokens{}, fmt.Errorf("/console/tasks/%s attempt=%s: expected successful accounting row with tokens and reported=true on %s/%s; got %+v", g.taskID, g.attemptID, g.targetNode, g.targetAgent, rows)
+}
+
+// /usage aggregates root task trees, not individual child attempts. Validate
+// its source and agent totals separately from child evidence in task detail.
+func (g *gate) readUsage(ctx context.Context) (usageSummary, error) {
+	var response struct {
+		Usage   *usageSummary `json:"usage"`
+		Sources []struct {
+			Name  string `json:"name"`
+			Wired bool   `json:"wired"`
+			Error string `json:"error"`
+		} `json:"sources"`
+	}
+	if err := g.request(ctx, http.MethodGet, "/usage", nil, &response); err != nil {
+		return usageSummary{}, err
+	}
+	for _, source := range response.Sources {
+		if source.Name != "ledger-usage" {
 			continue
 		}
-		if err := g.checkTask(t); err != nil {
-			return tokens{}, err
+		if source.Error != "" {
+			return usageSummary{}, fmt.Errorf("/usage: %s", source.Error)
 		}
-		for _, row := range t.AttemptRows {
-			if row.Agent == g.targetAgent && row.Node == g.targetNode && row.Outcome == "ok" && row.Reported && row.Tokens.present() {
-				return row.Tokens, nil
-			}
+		if !source.Wired {
+			return usageSummary{}, errors.New("/usage: ledger-usage is not wired")
 		}
-		return tokens{}, fmt.Errorf("/state task #%s attempt=%s: expected successful attempt_rows with tokens and reported=true on %s/%s; got %+v", g.taskID, g.attemptID, g.targetNode, g.targetAgent, t.AttemptRows)
+		if response.Usage == nil {
+			return usageSummary{}, errors.New("/usage: missing usage")
+		}
+		return *response.Usage, nil
 	}
-	return tokens{}, fmt.Errorf("/state: task #%s attempt=%s is missing", g.taskID, g.attemptID)
+	return usageSummary{}, errors.New("/usage: missing ledger-usage source")
+}
+
+func (u usageSummary) checkReported(agent string, child tokens) error {
+	for _, row := range u.ByAgent {
+		if row.Key == agent && row.Attempts > row.Unreported && row.Tokens.present() &&
+			row.Tokens.Input >= child.Input && row.Tokens.Output >= child.Output &&
+			row.Tokens.CachedRead >= child.CachedRead && row.Tokens.CachedWrite >= child.CachedWrite && row.Tokens.Total >= child.Total {
+			return nil
+		}
+	}
+	return fmt.Errorf("/usage: missing reported tokens for agent %s (child evidence: %+v)", agent, child)
 }
 
 // A failed send can still have created a task. Report only this run's IDs,
@@ -580,14 +651,12 @@ func (g *gate) diagnostics(ctx context.Context) {
 			continue
 		}
 		g.log("DIAG task=#%s parent=%s state=%s agent=%s node=%s", t.ID, t.Parent, t.State, t.Member, t.Node)
-		var detail struct {
-			Attempts []attempt `json:"attempts"`
-		}
-		if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(t.ID), nil, &detail); err != nil {
+		attempts, err := g.attempts(ctx, t.ID)
+		if err != nil {
 			g.log("DIAG task=#%s: %v", t.ID, err)
 			continue
 		}
-		for _, a := range detail.Attempts {
+		for _, a := range attempts {
 			g.log("DIAG task=#%s attempt=%s kind=%s state=%s agent=%s node=%s", t.ID, a.ID, a.Kind, a.State, a.Agent, a.Node)
 		}
 	}

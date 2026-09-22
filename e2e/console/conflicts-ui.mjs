@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Whether two machines are stuck on the same files is a question about the
 // whole workspace, so it is answered in one place, and both ways out of a
 // conflict are offered there: hand it to an agent, or write the
@@ -31,7 +32,7 @@ await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "node-linux", version: "test" }, nodes, agents: [], projects: [], tasks: [], plans: [], attempts: [], landings: [], conflicts, inbox: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "node-linux", version: "test" }, nodes, agents: [], projects: [], tasks: [], plans: [], attempts: [], landings: [], conflicts, inbox: [] }) });
     if (p === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });
     if (p === "/console/conflicts" && req.method() === "POST") { f.all++; return route.fulfill({ json: { started: 2 } }); }
     if (p.endsWith("/agent") && req.method() === "POST") { f.agent.push(p); return route.fulfill({ json: { started: 1 } }); }

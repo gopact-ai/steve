@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/channel"
 	"strings"
 	"testing"
 
@@ -53,11 +54,11 @@ func (s *retainedPlanSupervisor) OpenRuns(context.Context) ([]exec.RunRecord, er
 func retainedPlanFixture(t *testing.T) (*Coordinator, *retainedPlanSupervisor, RetainedPlan, Request) {
 	t.Helper()
 	c, _, book, _, _ := retainedChatFixture(t)
-	tracked, err := c.tasks.Create(task.Task{Origin: "plan", Goal: "original plan goal", ProjectID: "p", Channel: "console:plan", Requester: "owner"})
+	tracked, err := c.tasks.Create(task.Task{Transport: "console", Origin: "plan", Goal: "original plan goal", ProjectID: "p", Channel: "console:plan", Requester: "owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.tasks.SetAnchor(tracked.ID, "console", "web-original-plan", "p2p", ""); err != nil {
+	if err := c.tasks.SetAnchor(tracked.ID, channel.Address{Channel: "console", Conversation: tracked.Channel, Message: "web-original-plan"}, "console", "p2p", ""); err != nil {
 		t.Fatal(err)
 	}
 	token, err := c.tasks.ExecutionToken(tracked.ID)

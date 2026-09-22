@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Server) consoleInitializeConversation(w http.ResponseWriter, r *http.Request) {
+	if !s.consoleIdentity(w, r, r.PathValue("id")) {
+		return
+	}
 	initializer, ok := s.console.(consoleapi.ConversationInitializer)
 	if !ok {
 		http.Error(w, "conversation initialization is not supported", http.StatusNotImplemented)

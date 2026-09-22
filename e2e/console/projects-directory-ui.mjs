@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // A project's directory is named under the workspace of the machine it
 // belongs to, never picked as a path of its own; every API call stays
 // inside the fixture.
@@ -29,7 +30,7 @@ await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "node-linux", version: "test" }, nodes, agents: [], projects: [existing], tasks: [], plans: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: workState({ at, hub: { node: "node-linux", version: "test" }, nodes, agents: [], projects: [existing], tasks: [], plans: [], attempts: [], landings: [] }) });
     if (p === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: true, node_id: "node-mac", setup_required: false, agent_count: 1 } });
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: true, cluster_id: "cluster-test", node_id: "node-mac", coordinator_id: "node-linux", epoch: 1, revision: 1, authoritative: true, observed_at: at, auto_failover: false, ready: true, nodes: [], events: [] } });

@@ -1,20 +1,20 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { IconButton } from "@/components/steve/icon-button";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Loading01, X } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { useSideChat, type SideSession } from "@/providers/side-chat-provider";
 import { useI18n } from "@/providers/locale-provider";
-import { isStreamingProgress, useConsoleEvents, useFleet } from "@/lib/fleet";
-import { useResourceRead } from "@/hooks/use-resource-read";
-import { fetchQueue, fetchReplies, enqueue, send, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
-import { useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useMaterials, useSubmission, updateDraft, removeDraftMaterial, beginSubmission, retrySubmission, finishSubmission, failSubmission, reconcileSubmission, restoreSubmission, submissionRefs, useStops, beginStop, finishStop, isStopPending, type Submission } from "@/lib/drafts";
+import { useConversationController } from "@/hooks/use-conversation-controller";
+import { enqueue, send, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useMaterials, useSubmission, updateDraft, removeDraftMaterial, beginSubmission, retrySubmission, finishSubmission, failSubmission, restoreSubmission, submissionRefs, useStops, beginStop, finishStop, isStopPending, type Submission } from "@/lib/drafts";
 import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { refKey } from "@/lib/material-ref";
-import type { Exchange, Reply } from "@/lib/types";
 import { Md } from "./markdown";
 import { StageLine, Trace, finalTextIndex, hasTraceContent } from "./progress-view";
-import { applyLive, type Live } from "@/lib/live";
+import type { Live } from "@/lib/live";
 import { QuestionPanel } from "./question-panel";
+import { DeferredDetails } from "./deferred-details";
 import "@/styles/side-chat.css";
 
 // SideLive is the side conversation's running turn: its phase, the process
@@ -31,8 +31,8 @@ function SideLive({ live }: { live: Live }) {
     return <article className="side-chat-answer flex min-w-0 flex-col gap-2">
         <p role="status" className="flex items-center gap-2 text-xs text-tertiary"><Loading01 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none text-fg-brand-primary" />{label}{turn?.agent ? ` · ${turn.agent}` : ""}</p>
         {phase === "waking" && <StageLine stage={turn?.stage} />}
-        {turn && hasTraceContent(turn, finalText) && <details className="text-xs text-tertiary"><summary className="cursor-pointer">{t("console.trace")}</summary><Trace p={turn} live omitText={finalText} /></details>}
-        {answer && <Md text={answer} />}
+        {turn && hasTraceContent(turn, finalText) && <DeferredDetails className="text-xs text-tertiary" summary={<summary className="cursor-pointer">{t("console.trace")}</summary>}><Trace p={turn} live omitText={finalText} /></DeferredDetails>}
+        {answer && <Md variant="conversation" text={answer} />}
     </article>;
 }
 
@@ -40,28 +40,17 @@ function SideLive({ live }: { live: Live }) {
 // holds it, so it keeps only the line saying which thread it came from.
 export function SideChatPanel({ onOpenMain, embedded }: { onOpenMain?: () => void; embedded?: boolean } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} embedded={embedded} /> : null; }
 function SideConversation({ session, onOpenMain, embedded }: { session: SideSession; onOpenMain?: () => void; embedded?: boolean }) {
-    const { t, locale } = useI18n(); const side = useSideChat(); const { live } = useFleet();
+    const { t, locale } = useI18n(); const side = useSideChat();
     const draftIssue = useDraftIssue(session.id);
     const savedDraft = useSavedDraft(session.id);
     const text = useDraft(session.id), refs = useMaterials(session.id), pending = useSubmission(session.id), stops = useStops(), stop = stops[session.id];
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
-    const [replies, setReplies] = useState<Reply[]>([]), [queue, setQueue] = useState<Exchange[]>([]), [readError, setReadError] = useState(""), [loaded, setLoaded] = useState(false);
-    const [turn, setTurn] = useState<Live | null>(null);
+    const { entries: replies, exchanges: queue, live: turn, loadingReplies, replyError, queueError, busy, reload: load } = useConversationController(session.id, 3000);
+    const error = replyError || queueError;
+    const readError = error ? error instanceof Error ? error.message : String(error) : "";
+    const loaded = !loadingReplies;
     const input = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), follow = useRef(true);
-    const load = useResourceRead(`side:${session.id}`, async (signal) => Promise.all([fetchReplies(session.id, signal), fetchQueue(session.id, signal)]), ([history, exchanges]) => { setReplies(history.replies || []); setQueue(exchanges.queue || []); reconcileSubmission(session.id, exchanges.queue || []); setReadError(""); setLoaded(true); }, (error) => { setReadError(error instanceof Error ? error.message : String(error)); setLoaded(true); });
-    useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 3000); return () => window.clearInterval(timer); }, [load, live]);
-    // The side conversation streams like the main one: its progress events
-    // fold into a live view that the reply replaces. The buffer is trimmed
-    // from the front, so the cursor is an arrival number, not an index.
-    useConsoleEvents((fresh) => {
-        const mine = fresh.filter((entry) => entry.conversation === session.id);
-        if (!mine.length) return;
-        setTurn((current) => mine.reduce(applyLive, current));
-        if (mine.some((entry) => !isStreamingProgress(entry))) void load();
-    });
     useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [replies, queue, turn]);
-    useEffect(() => { if (stop && !stop.active) void load(); }, [stop, load]);
-    const busy = queue.some((entry) => ["running", "recovering", "awaiting-user"].includes(entry.state));
     const blocked = support.state !== "supported" || (refs.length > 0 && !support.material_refs);
     const focused = useRef(false);
     // Enter sends here too, so the same guard against an input method's
@@ -91,11 +80,11 @@ function SideConversation({ session, onOpenMain, embedded }: { session: SideSess
         finally { void load(); }
     }
     return <section data-side-chat className="side-chat" role="region" aria-label={t("sideChat.region")}>
-        <header className="side-chat-header"><div className="min-w-0 flex-1">{!embedded && <h2 className="text-sm font-semibold">{t("sideChat.title")}</h2>}<p className="truncate text-xs text-tertiary" title={session.title}>{session.project} · {session.title}</p></div>{!embedded && <button type="button" className="workbench-icon-button" aria-label={t("sideChat.close")} onClick={side.close}><X aria-hidden="true" /></button>}</header>
+        <header className="side-chat-header"><div className="min-w-0 flex-1">{!embedded && <h2 className="text-sm font-semibold">{t("sideChat.title")}</h2>}<p className="truncate text-xs text-tertiary" title={session.title}>{session.project} · {session.title}</p></div>{!embedded && <IconButton label={t("sideChat.close")} onClick={side.close} icon={X} />}</header>
         <a href={`#/console?conversation=${encodeURIComponent(session.id)}`} className="mx-4 mb-2 self-start text-xs text-tertiary underline" onClick={() => { side.close(); onOpenMain?.(); }}>{t("sideChat.openMain")}</a>
         <div ref={transcript} className="side-chat-transcript" onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 48; }}>
             {session.excerpt && <details className="mb-3 rounded-lg bg-secondary p-3 text-xs"><summary className="cursor-pointer text-tertiary">{t("sideChat.source")}</summary><p className="mt-2 whitespace-pre-wrap break-words">{session.excerpt}</p></details>}
-            {replies.filter((reply) => !reply.silent).map((reply, index) => <article key={reply.id || index} className={reply.kind === "sent" ? "side-chat-user" : "side-chat-answer"}>{reply.kind === "sent" ? <Md text={reply.input || ""} /> : reply.format === "text" ? <p className="whitespace-pre-wrap break-words">{reply.text}</p> : <Md text={reply.text} />}{reply.error && <p className="mt-1 text-xs text-error-primary">{reply.error}</p>}</article>)}
+            {replies.filter((reply) => !reply.silent).map((reply, index) => <article key={reply.id || index} className={reply.kind === "sent" ? "side-chat-user" : "side-chat-answer"}>{reply.kind === "sent" ? <Md variant="conversation" text={reply.input || ""} /> : reply.format === "text" ? <p className="conversation-text whitespace-pre-wrap break-words">{reply.text}</p> : <Md variant="conversation" text={reply.text} />}{reply.error && <p className="mt-1 text-xs text-error-primary">{reply.error}</p>}</article>)}
             {queue.filter((entry) => entry.state === "queued" && !replies.some((reply) => reply.exchange_id === entry.id && reply.kind === "sent")).map((entry) => <article key={entry.id} className="side-chat-user"><p className="whitespace-pre-wrap break-words">{entry.input || t("sideChat.materialCount", { count: entry.refs?.length || 0 })}</p><span className="mt-1 block text-xs text-tertiary">{t("sideChat.queued")}</span></article>)}
             {!replies.length && !queue.length && <p className="py-4 text-xs leading-5 text-tertiary">{t(loaded ? "sideChat.empty" : "sideChat.loading")}</p>}
             {turn ? <SideLive live={turn} /> : busy && <p role="status" className="text-xs text-tertiary">{t("sideChat.running")}</p>}

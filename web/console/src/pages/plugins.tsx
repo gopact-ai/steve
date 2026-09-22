@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Package, Plus, RefreshCw01 } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
@@ -11,6 +11,7 @@ import { PluginConfigure } from "@/components/steve/plugins/configure";
 import { PluginPresetEditor } from "@/components/steve/plugins/preset";
 import { CapabilitySummary, ManifestDetails, PluginStatus, pluginError } from "@/components/steve/plugins/shared";
 import { useResourceRead } from "@/hooks/use-resource-read";
+import { useManagementRefresh } from "@/hooks/use-management-refresh";
 import { fetchPlugins, preparePlugin, savePlugin } from "@/lib/api/plugins";
 import { useFleet } from "@/lib/fleet";
 import { useCoordination } from "@/lib/coordination";
@@ -25,7 +26,7 @@ export function PluginsPage() {
     const [readError, setReadError] = useState(""); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
     const [busy, setBusy] = useState(""); const pending = useRef(false);
     const load = useResourceRead("plugins", fetchPlugins, (next) => { setView(next); setReadError(""); }, (error) => setReadError(pluginError(error)));
-    useEffect(() => { void load(); }, [load, snap.at]);
+    useManagementRefresh("plugins", load);
     const records = view?.packages ?? []; const installations = view?.installations ?? [];
     const nodeMap = new Map<string, string>();
     if (!coordination?.enabled) nodeMap.set("", `${t("plugins.local")} · ${nodeLabelIn(snap.nodes, snap.hub.node) || "hub"}`);

@@ -22,19 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
-type nativeImportFailDoc struct {
-	ledger.Doc
-	fail bool
-}
-
-func (d *nativeImportFailDoc) Save(raw []byte) error {
-	if d.fail {
-		return errors.New("receipt save unavailable")
-	}
-	return d.Doc.Save(raw)
-}
-
-func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store, consoleapi.NativeImportRequest, string, *nativeImportFailDoc) {
+func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store, consoleapi.NativeImportRequest, string, *ledger.Ledger) {
 	t.Helper()
 	a, book := projectAdminFixture(t)
 	server := startNativeImportNode(t, bin)
@@ -55,8 +43,7 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 	a.Coordinator.SetProjects(a.Projects, "p", "")
 	a.Coordinator.SetIdentity("owner", nil)
 	a.Console = console.New(nil, "owner", nil)
-	doc := &nativeImportFailDoc{Doc: book.Document("console")}
-	if err := a.Console.Persist(doc); err != nil {
+	if err := a.Console.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	source, work := t.TempDir(), t.TempDir()
@@ -74,7 +61,7 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 		t.Fatalf("node source list=%+v %v", list, err)
 	}
 	req := consoleapi.NativeImportRequest{CommandID: "import-command", Agent: "importer", Source: src, NativeID: list[0].NativeID, Revision: list[0].Revision}
-	return a, store, req, history, doc
+	return a, store, req, history, book
 }
 
 func TestNativeImportAutoAssociationRecoversAfterSourceDisappears(t *testing.T) {
@@ -85,11 +72,13 @@ func TestNativeImportAutoAssociationRecoversAfterSourceDisappears(t *testing.T) 
 	}
 	for _, failure := range []string{"project-save", "receipt-save"} {
 		t.Run(failure, func(t *testing.T) {
-			a, store, req, history, doc := nativeImportAdminFixture(t, bin)
+			a, store, req, history, book := nativeImportAdminFixture(t, bin)
 			if failure == "project-save" {
 				a.WriteConfig = func(string, *config.Config) error { return errors.New("project save unavailable") }
 			} else {
-				doc.fail = true
+				if _, err := book.DB().Exec(`CREATE TRIGGER reject_console_receipt BEFORE UPDATE ON bindings WHEN new.kind='console-store' BEGIN SELECT RAISE(ABORT, 'receipt save unavailable'); END`); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if _, err := a.ImportNativeHistory(t.Context(), "node-test", req); err == nil {
 				t.Fatal("injected failure did not fail import")
@@ -109,7 +98,9 @@ func TestNativeImportAutoAssociationRecoversAfterSourceDisappears(t *testing.T) 
 				t.Fatal(err)
 			}
 			a.WriteConfig = nil
-			doc.fail = false
+			if _, err := book.DB().Exec(`DROP TRIGGER IF EXISTS reject_console_receipt`); err != nil {
+				t.Fatal(err)
+			}
 			got, err := a.ImportNativeHistory(t.Context(), "node-test", req)
 			if err != nil {
 				t.Fatalf("source-free retry failed: %v", err)

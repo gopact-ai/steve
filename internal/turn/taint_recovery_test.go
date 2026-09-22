@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,10 +14,8 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
-	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
-	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -27,22 +26,68 @@ import (
 // instead of asking the owner to start a new session by hand.
 func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
 	c, runner, _, old, req := retainedChatFixture(t)
-	req.Input = "继续"
-	taint := c.text.T(i18n.Tainted, protocol.CommandNew)
-	if _, err := c.Handle(t.Context(), req); err == nil || err.Error() != taint {
-		t.Fatalf("live attempt did not hold the session: %v", err)
+	req.Input, req.MessageID = "继续", "web-next"
+	selected := c.catalog.Default()
+	binding, _, err := c.resolveWorkspace(t.Context(), req, selected)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !c.store.Conversation(req.ConversationID).Sessions["worker"].Tainted {
-		t.Fatal("taint cleared while the original attempt was still live")
+	caps, err := c.assemble(selected, req, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := c.attempts.ConfirmStopped(t.Context(), old.ID, "test", "node confirmed the original command ended"); err != nil {
+	saved := c.store.Conversation(req.ConversationID).Sessions["worker"]
+	saved.ProjectVersion, saved.CapabilityHash = binding.Version, caps.Fingerprint
+	if err := c.store.SaveSession(saved); err != nil {
+		t.Fatal(err)
+	}
+	manager := c.runtime.(retainedTestManager).fakeManager
+	manager.runners = map[string]*fakeRunner{selected.Harness: runner.fakeRunner}
+	assertBlocked := func(stage string) {
+		t.Helper()
+		before, _ := c.tasks.Get(old.TaskID)
+		record, err := c.attempts.Get(t.Context(), old.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Handle(t.Context(), req); err == nil {
+			t.Fatalf("%s: unadmitted turn was accepted", stage)
+		}
+		after, _ := c.tasks.Get(old.TaskID)
+		if !reflect.DeepEqual(before, after) || after.Budget.Turns != 1 || !after.Attempts[0].Open() {
+			t.Fatalf("%s: refused admission changed original accounting: %+v", stage, after)
+		}
+		current, err := c.attempts.Get(t.Context(), old.ID)
+		if err != nil || !reflect.DeepEqual(record, current) {
+			t.Fatalf("%s: refused admission changed original execution: %+v %v", stage, current, err)
+		}
+		if len(runner.seen()) != 0 || len(manager.opened) != 0 || !c.store.Conversation(req.ConversationID).Sessions["worker"].Tainted {
+			t.Fatalf("%s: refused admission opened, prompted or cleared the uncertain session", stage)
+		}
+	}
+	assertBlocked("native execution still live")
+	stopped, err := c.attempts.ConfirmStopped(t.Context(), old.ID, "test", "node confirmed the original command ended")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A durable stop alone does not settle the task's original accounting.
+	assertBlocked("stopped execution awaiting accounting")
+	if err := c.tasks.SettleAttempt(stopped.TaskID, stopped.ID, stopped.TurnID, stopped.EndedAt, task.OutcomeCancelled, task.RecoveryUsage{}); err != nil {
 		t.Fatal(err)
 	}
 	if left, err := c.attempts.Live(t.Context()); err != nil || len(left) != 0 {
 		t.Fatalf("settled attempt still counts as live: %+v %v", left, err)
 	}
-	if _, err := c.Handle(t.Context(), req); err != nil && err.Error() == taint {
-		t.Fatal("ended attempt still sent the owner to /new")
+	result, err := c.Handle(t.Context(), req)
+	if err != nil || result.Text != runner.reply || result.Attempt == "" || result.Attempt == old.ID {
+		t.Fatalf("new turn did not execute after complete settlement: %+v %v", result, err)
+	}
+	if len(runner.seen()) != 1 || len(manager.opened) != 1 || manager.opened[0] != "test:ns_original" || runner.resumeCalls != 0 {
+		t.Fatalf("continuation replayed old input or replaced the native session: prompts=%v opened=%v resume=%d", runner.seen(), manager.opened, runner.resumeCalls)
+	}
+	tracked, _ := c.tasks.Get(old.TaskID)
+	if tracked.Budget.Turns != 2 || len(tracked.Attempts) != 2 || tracked.Attempts[0].Open() || tracked.Attempts[1].Open() || tracked.Attempts[1].ExecutionID != result.Attempt {
+		t.Fatalf("new turn was not accounted exactly once: %+v", tracked)
 	}
 	if c.store.Conversation(req.ConversationID).Sessions["worker"].Tainted {
 		t.Fatal("taint survived an attempt that is over")

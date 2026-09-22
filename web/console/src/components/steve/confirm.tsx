@@ -1,3 +1,4 @@
+import { DialogSurface, DialogBody, DialogFooter } from "@/components/steve/dialog-surface";
 import { useState, type ReactNode } from "react";
 import { AlertTriangle, HelpCircle } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
@@ -29,7 +30,7 @@ export function ConfirmDialog({ title, body, confirmLabel, tone = "destructive",
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open && !busy) onClose(); }} isDismissable={!busy}>
             <Modal className="max-w-lg">
                 <Dialog aria-label={title}>
-                    <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-5 shadow-xl ring-1 ring-secondary">
+                    <DialogSurface><DialogBody density="compact">
                         <div className="flex items-start gap-3">
                             <span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full ${tone === "primary" ? "bg-brand-secondary text-fg-brand-primary" : "bg-error-secondary text-fg-error-primary"}`}>{tone === "primary" ? <HelpCircle className="size-4" /> : <AlertTriangle className="size-4" />}</span>
                             <div className="min-w-0 flex-1">
@@ -38,11 +39,11 @@ export function ConfirmDialog({ title, body, confirmLabel, tone = "destructive",
                             </div>
                         </div>
                         {error && <div role="alert" className="text-xs text-error-primary">{error}</div>}
-                        <div className="flex justify-end gap-2">
+                        <DialogFooter>
                             <Button size="sm" color="secondary" isDisabled={busy} onClick={onClose}>{tr("common.cancel")}</Button>
                             <Button size="sm" color={tone === "primary" ? "primary" : "primary-destructive"} isLoading={busy} onClick={() => void confirm()}>{confirmLabel}</Button>
-                        </div>
-                    </div>
+                        </DialogFooter>
+                    </DialogBody></DialogSurface>
                 </Dialog>
             </Modal>
         </ModalOverlay>

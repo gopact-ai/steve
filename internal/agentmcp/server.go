@@ -169,6 +169,7 @@ type Server struct {
 	informer            Informer
 	fleeter             Fleeter
 	memorizer           Memorizer
+	scheduler           Scheduler
 	journal             func(conversationID, agentID, taskID string, receipt channel.Address)
 	tokens              map[string]binding
 	byBind              map[binding]string
@@ -320,29 +321,17 @@ func (s *Server) SetDelegator(d Delegator) {
 // Delegated mints the capability for a child task: its own token, bound to
 // the child, so nothing it sends can be mistaken for the parent's, and its
 // milestone cards carry the attribution.
+// Use PrepareDelegated when the caller must handle preparation errors.
 func (s *Server) Delegated(conversationID, agentID, taskID, delegatedBy, token, endpoint string) []capability.Extra {
-	if s == nil || token == "" || conversationID == "" {
-		return nil
-	}
-	if endpoint == "" {
-		endpoint = s.URL()
-	}
+	extras, _ := s.PrepareDelegated(conversationID, agentID, taskID, delegatedBy, token, endpoint)
+	return extras
+}
+
+// PrepareDelegated is Delegated with explicit preparation errors. Authorization
+// rejection does not fence the gate; durable store failures do.
+func (s *Server) PrepareDelegated(conversationID, agentID, taskID, delegatedBy, token, endpoint string) ([]capability.Extra, error) {
 	b := binding{conversationID: conversationID, agentID: agentID, taskID: taskID, delegatedBy: delegatedBy}
-	s.mu.Lock()
-	err := s.prepareLocked(b, token)
-	s.mu.Unlock()
-	if err != nil {
-		return nil
-	}
-	return []capability.Extra{{
-		Name: ServerName,
-		Server: capability.MCPServer{
-			Type:    "http",
-			URL:     endpoint,
-			Headers: map[string]string{"Authorization": "Bearer " + token},
-		},
-		Instructions: Instructions,
-	}}
+	return s.prepareCapability(b, token, endpoint)
 }
 
 // Revoke forgets a token once the work it authorised is over. A child task
@@ -420,20 +409,52 @@ func (s *Server) Interim(conversationID string) bool {
 // the connection it already has. Either way the agent only ever talks to
 // 127.0.0.1 on its own machine, so "loopback only, one bearer token per
 // session" survives the move to another host.
+// Use PrepareExtras when the caller must handle preparation errors.
 func (s *Server) Extras(conversationID, agentID, token, endpoint string) []capability.Extra {
-	if s == nil || token == "" || conversationID == "" {
+	extras, _ := s.PrepareExtras(conversationID, agentID, token, endpoint)
+	return extras
+}
+
+// PrepareExtras prepares the session capability like Extras, but returns
+// ErrGrantDenied when the token cannot be registered. A denied token never
+// revives a revoked grant or fences other sessions. Store failures still fence
+// the gate. A nil server has no capability to prepare and returns nil, nil.
+func (s *Server) PrepareExtras(conversationID, agentID, token, endpoint string) ([]capability.Extra, error) {
+	return s.prepareCapability(binding{conversationID: conversationID, agentID: agentID}, token, endpoint)
+}
+
+func (s *Server) prepareCapability(b binding, token, endpoint string) ([]capability.Extra, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if token == "" || b.conversationID == "" {
+		return nil, ErrGrantDenied
+	}
+	s.mu.Lock()
+	err := s.prepareLocked(b, token)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return s.DescribeExtras(token, endpoint), nil
+}
+
+// DescribeExtras constructs the session capability without registering or
+// authorizing its token or accessing the store. Callers can compare a retained
+// configuration before deciding whether to prepare a grant.
+func (s *Server) DescribeExtras(token, endpoint string) []capability.Extra {
+	if s == nil || token == "" {
 		return nil
 	}
 	if endpoint == "" {
 		endpoint = s.URL()
 	}
-	b := binding{conversationID: conversationID, agentID: agentID}
+	instructions := Instructions
 	s.mu.Lock()
-	err := s.prepareLocked(b, token)
-	s.mu.Unlock()
-	if err != nil {
-		return nil
+	if s.scheduler != nil {
+		instructions += "\n\n" + scheduleInstructions
 	}
+	s.mu.Unlock()
 	return []capability.Extra{{
 		Name: ServerName,
 		Server: capability.MCPServer{
@@ -441,7 +462,7 @@ func (s *Server) Extras(conversationID, agentID, token, endpoint string) []capab
 			URL:     endpoint,
 			Headers: map[string]string{"Authorization": "Bearer " + token},
 		},
-		Instructions: Instructions,
+		Instructions: instructions,
 	}}
 }
 
@@ -531,7 +552,7 @@ type PlatformTool struct {
 // the channel messaging set always, delegation when a delegator is wired.
 func PlatformTools(delegating bool) []PlatformTool {
 	var out []PlatformTool
-	for _, t := range toolList(delegating, true, true, true) {
+	for _, t := range toolList(delegating, true, true, true, true) {
 		name, _ := t["name"].(string)
 		desc, _ := t["description"].(string)
 		out = append(out, PlatformTool{Name: name, Description: desc})
@@ -543,8 +564,9 @@ func (s *Server) toolList() []map[string]any {
 	s.mu.Lock()
 	informing, fleeting, remembering := s.informer != nil, s.fleeter != nil, s.memorizer != nil
 	delegating := s.delegator != nil
+	scheduling := s.scheduler != nil
 	s.mu.Unlock()
-	return toolList(delegating, informing, fleeting, remembering)
+	return toolList(delegating, informing, fleeting, remembering, scheduling)
 }
 
 // titles are the short labels the console shows for the platform's own
@@ -554,6 +576,7 @@ var titles = map[string]string{
 	"steve_context": "看当前上下文", "steve_help": "查平台用法", "steve_projects": "查项目", "steve_fleet": "查名册",
 	"steve_delegate": "委派子任务", "steve_await": "等子任务",
 	"steve_remember": "记一条记忆", "steve_recall": "查记忆", "steve_forget": "忘一条记忆",
+	"steve_schedule": "创建定时任务", "steve_schedules": "查定时任务", "steve_schedule_cancel": "取消定时任务",
 	"channel_send": "发进度消息", "channel_update": "改进度消息", "channel_recall": "撤回消息",
 	"steve_nodes": "查机器", "steve_node_add": "登记机器", "steve_node_refresh": "刷新机器", "steve_node_remove": "移除机器",
 }
@@ -563,7 +586,7 @@ var titles = map[string]string{
 // harness's naming. A tool without a label is still recognised, by name.
 func ToolTitles() map[string]string {
 	out := map[string]string{}
-	for _, t := range toolList(true, true, true, true) {
+	for _, t := range toolList(true, true, true, true, true) {
 		name, _ := t["name"].(string)
 		if name == "" {
 			continue
@@ -577,7 +600,7 @@ func ToolTitles() map[string]string {
 	return out
 }
 
-func toolList(delegating, informing, fleeting, remembering bool) []map[string]any {
+func toolList(delegating, informing, fleeting, remembering, scheduling bool) []map[string]any {
 	tools := baseTools()
 	if delegating {
 		tools = append(tools, delegationTools()...)
@@ -591,6 +614,9 @@ func toolList(delegating, informing, fleeting, remembering bool) []map[string]an
 	}
 	if remembering {
 		tools = append(tools, memoryTools()...)
+	}
+	if scheduling {
+		tools = append(tools, scheduleTools()...)
 	}
 	return tools
 }
@@ -775,6 +801,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.steveRecall(ctx, bind, call.Arguments)
 	case "steve_forget":
 		out, err = s.steveForget(ctx, bind, call.Arguments)
+	case "steve_schedule", "steve_schedules", "steve_schedule_cancel":
+		out, err = s.scheduleCall(ctx, bind, call.Name, call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}

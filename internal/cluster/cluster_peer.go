@@ -16,7 +16,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -511,7 +510,7 @@ func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 		p.serveDesktopLocal(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/console/") && r.URL.Path != "/state" && r.URL.Path != "/events" && r.URL.Path != "/history" && !strings.HasPrefix(r.URL.Path, "/bootstrap/") && !strings.HasPrefix(r.URL.Path, "/dist/") {
+	if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/console/") && r.URL.Path != "/state" && r.URL.Path != "/usage" && r.URL.Path != "/events" && r.URL.Path != "/history" && !strings.HasPrefix(r.URL.Path, "/bootstrap/") && !strings.HasPrefix(r.URL.Path, "/dist/") {
 		p.staticPage(w, r)
 		return
 	}
@@ -732,43 +731,7 @@ func (p *Peer) Coordination(ctx context.Context) (consoleapi.CoordinationView, e
 	if !authoritative {
 		view.Reason = "暂时无法与多数节点确认状态，显示本机最后同步的记录。"
 	}
-	var ids []string
-	for id := range state.Members {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		member := state.Members[id]
-		item := consoleapi.CoordinatorNode{ID: id, Name: member.Name, Local: id == p.Config.NodeID, Voter: state.Voters[id] != "", AutoEligible: member.AutoEligible}
-		if item.Name == "" {
-			item.Name = id
-		}
-		var progress coordination.Progress
-		var probeErr error
-		offline := "暂时无法连接"
-		if item.Local {
-			status := runtime.Status()
-			progress = status.Progress()
-			if !status.Healthy {
-				// This machine is right here; saying it cannot be reached
-				// hides that its own cluster service stopped.
-				probeErr = coordination.ErrUnavailable
-				offline = "本机的集群服务已停止，重启 App 后恢复"
-			}
-		} else {
-			probeCtx, cancel := context.WithTimeout(ctx, time.Second)
-			progress, probeErr = p.client.Probe(probeCtx, member)
-			cancel()
-		}
-		item.Online = probeErr == nil
-		item.Ready = item.Online && progress.AppliedIndex >= state.AppliedIndex && progress.AppVersion >= state.AppVersion && !state.Removing[id]
-		if !item.Online {
-			item.Reason = offline
-		} else if !item.Ready {
-			item.Reason = "正在同步协作记录"
-		}
-		view.Nodes = append(view.Nodes, item)
-	}
+	view.Nodes = coordinationNodes(ctx, state, p.Config.NodeID, runtime.Status(), p.client.Probe)
 	live := 0
 	eligibleTarget := false
 	for _, node := range view.Nodes {
@@ -1223,8 +1186,8 @@ func (p *Peer) SetCoordinatorEligibility(ctx context.Context, request consoleapi
 }
 
 // SetNodeVoting gives a machine a vote in the cluster, or takes it back.
-// Machines join without one, so this is what a machine needs before it can
-// be handed the coordinator role.
+// This is separate from manually choosing the coordinator when automatic
+// failover is disabled.
 func (p *Peer) SetNodeVoting(ctx context.Context, request consoleapi.CoordinatorVoting) (consoleapi.CoordinationView, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {

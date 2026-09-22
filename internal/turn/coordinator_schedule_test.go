@@ -33,6 +33,36 @@ func schedRequest(input string) Request {
 	}
 }
 
+func TestScheduledCommandsCannotCreateMoreSchedules(t *testing.T) {
+	for _, command := range []string{"/every 1m check CI", "@codex /at 1m check CI"} {
+		t.Run(command, func(t *testing.T) {
+			c, store := scheduleCoordinator(t)
+			req := schedRequest(command)
+			req.Origin = "schedule:original"
+			result, err := c.Handle(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(store.List("")) != 0 || !strings.Contains(result.Text, "自动") {
+				t.Fatalf("unattended command created standing work: %+v", result)
+			}
+		})
+	}
+}
+
+func TestScheduleCreationHonorsReviewedProject(t *testing.T) {
+	c, store := scheduleCoordinator(t)
+	req := schedRequest("/every 1h check CI")
+	req.ExpectedProject = "previous-project"
+	result, err := c.Handle(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.List("")) != 0 || !strings.Contains(result.Text, "未创建") {
+		t.Fatalf("schedule followed a different project: %+v", result)
+	}
+}
+
 // The stored prompt has to be exactly what the user would have typed, because
 // that is what gets replayed: the schedule is a message, not a special mode.
 func TestEveryStoresTheInstructionAndItsAnchor(t *testing.T) {

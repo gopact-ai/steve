@@ -94,7 +94,7 @@ func TestReservedExecutionBudgetAndIdentityRollbackTogether(t *testing.T) {
 	}
 	token, _ := s.ExecutionToken(tracked.ID)
 	if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
-		_, err := tx.Exec(`CREATE TRIGGER reject_accounting BEFORE UPDATE ON bindings WHEN NEW.kind='document' AND NEW.id='tasks' BEGIN SELECT RAISE(FAIL,'unavailable'); END`)
+		_, err := tx.Exec(`CREATE TRIGGER reject_accounting BEFORE UPDATE ON bindings WHEN NEW.kind='task-store' AND NEW.id='state' BEGIN SELECT RAISE(FAIL,'unavailable'); END`)
 		return err
 	}); err != nil {
 		t.Fatal(err)

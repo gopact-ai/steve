@@ -82,26 +82,49 @@ func (s *Service) run() {
 // The coordinator never demotes itself, and members recorded before the flag
 // existed decode as non-voting, which is how an older cluster converges.
 func (s *Service) demoteNonVoters(state State) {
+	// Do not append a quorum barrier on every probe tick when there is no
+	// reconciliation work. The fresh read below still authorizes each change.
+	if len(s.demotionCandidates(state)) == 0 {
+		return
+	}
 	if !s.membershipMu.TryLock() {
 		return
 	}
 	defer s.membershipMu.Unlock()
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, s.config.ApplyTimeout)
+	defer cancel()
+	if err := s.barrier(ctx); err != nil {
+		return
+	}
+	// Observations captured before taking the lock may precede a vote grant.
+	state = s.fsm.read()
+	for _, id := range s.demotionCandidates(state) {
+		ctx, cancel := context.WithTimeout(s.ctx, s.config.ApplyTimeout)
+		// A failure here is not fatal: the member keeps its vote and the next
+		// pass tries again.
+		if s.barrier(ctx) == nil {
+			s.wait(ctx, s.raft.DemoteVoter(raft.ServerID(id), s.fsm.read().ConfigurationIndex, s.config.ApplyTimeout))
+		}
+		cancel()
+	}
+}
+
+func (s *Service) demotionCandidates(state State) []string {
 	ids := make([]string, 0, len(state.Voters))
 	for id := range state.Voters {
 		member, ok := state.Members[id]
+		if _, pending := state.PendingVotes[id]; pending {
+			continue
+		}
 		if !ok || member.Voting || id == s.config.NodeID || id == state.Coordinator.NodeID {
 			continue
 		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	for _, id := range ids {
-		ctx, cancel := context.WithTimeout(s.ctx, s.config.ApplyTimeout)
-		// A failure here is not fatal: the member keeps its vote and the next
-		// pass tries again.
-		s.wait(ctx, s.raft.DemoteVoter(raft.ServerID(id), 0, s.config.ApplyTimeout))
-		cancel()
-	}
+	return ids
 }
 
 func (s *Service) initialize() {

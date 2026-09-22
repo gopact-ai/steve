@@ -697,3 +697,57 @@ func TestAutomaticCoordinatorFailureActivatesReconstructedLedgerOnSurvivor(t *te
 		t.Fatalf("automatic transfer lacks audit provenance: %+v", last)
 	}
 }
+
+func TestManualNonvoterHubWritesAndFencesOldHub(t *testing.T) {
+	nodes := testNodes(t, 2)
+	first := openNode(t, nodes[0])
+	old := ready(t, first)
+	if err := old.Ledger.Document("before-transfer").Save([]byte("preserved")); err != nil {
+		t.Fatal(err)
+	}
+	second := openNode(t, nodes[1])
+	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-replica", Actor: "owner", Member: member}); err != nil {
+		t.Fatal(err)
+	}
+	request := coordination.TransferRequest{ID: "to-nonvoter", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}
+	if _, err := second.Transfer(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	active := ready(t, second)
+	if active.WriterGeneration <= old.WriterGeneration {
+		t.Fatal("writer fence did not advance")
+	}
+	if raw, ok, err := active.Ledger.Document("before-transfer").Load(); err != nil || !ok || string(raw) != "preserved" {
+		t.Fatalf("baseline lost: %s %v %v", raw, ok, err)
+	}
+	if err := active.Ledger.Document("after-transfer").Save([]byte("nonvoter-write")); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Ledger.Document("old-hub").Save([]byte("unsafe")); err == nil {
+		t.Fatal("old hub retained write authority")
+	}
+	state, err := second.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Coordinator.NodeID != "node-2" || len(state.Voters) != 1 || state.Voters["node-2"] != "" || state.AutoFailover || second.Status().IsLeader {
+		t.Fatalf("business transfer changed consensus: %+v", state)
+	}
+	if _, err := first.service.ApplyApp(t.Context(), coordination.AppCommand{ID: "late-old-hub", CallerNodeID: "node-1", CoordinatorEpoch: 1, WriterGeneration: old.WriterGeneration, ExpectedVersion: state.AppVersion}); !errors.Is(err, coordination.ErrStaleEpoch) {
+		t.Fatalf("old epoch crossed durable fence: %v", err)
+	}
+	if raw, ok, err := first.Ledger().Document("after-transfer").Load(); err != nil || !ok || string(raw) != "nonvoter-write" {
+		t.Fatalf("consensus leader lacks nonvoter write: %s %v %v", raw, ok, err)
+	}
+	// Nonvoter Hub cannot commit alone when its voter quorum disappears.
+	if err := nodes[0].runtime.Swap(nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := active.Ledger.Document("without-quorum").Save([]byte("unsafe")); err == nil {
+		t.Fatal("nonvoter hub bypassed quorum")
+	}
+	if _, ok, _ := second.Ledger().Document("without-quorum").Load(); ok {
+		t.Fatal("uncommitted write became visible")
+	}
+}

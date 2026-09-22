@@ -1,3 +1,4 @@
+import { Button } from "@/components/base/buttons/button";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertCircle, ChevronDown, Loading01 } from "@untitledui/icons";
 import { useI18n } from "@/providers/locale-provider";
@@ -41,12 +42,12 @@ export function SetupPanel({ conversation, agent, node }: { conversation: string
         return () => stop.abort();
     }, [conversation, agent, key, attempt]);
     return (
-        <Panel title={t("setup.title")} description={t("setup.hint")}
+        <Panel variant="section" title={t("setup.title")} description={t("setup.hint")}
             badge={setup ? <span className={`text-xs ${setup.applied ? "text-success-primary" : "text-tertiary"}`} title={t("setup.appliedHint")}>{setup.applied ? t("setup.applied") : t("setup.pending")}</span> : undefined}>
             {error && !setup ? (
                 <div className="flex min-w-0 flex-col items-start gap-2 text-xs">
                     <span className="flex min-w-0 items-start gap-1.5 text-error-primary"><AlertCircle aria-hidden="true" className="mt-px size-3.5 shrink-0" /><span className="min-w-0 break-words [overflow-wrap:anywhere]">{t("setup.failed", { error })}</span></span>
-                    <button type="button" className="rounded-md px-1.5 py-0.5 text-tertiary ring-1 ring-secondary hover:text-primary" onClick={() => setAttempt((n) => n + 1)}>{t("setup.retry")}</button>
+                    <Button size="xs" color="secondary" onClick={() => setAttempt((n) => n + 1)}>{t("setup.retry")}</Button>
                 </div>
             ) : !setup ? (
                 <span className="flex items-center gap-1.5 text-xs text-tertiary"><Loading01 aria-hidden="true" className="size-3 animate-spin motion-reduce:animate-none" />{t("setup.loading")}</span>

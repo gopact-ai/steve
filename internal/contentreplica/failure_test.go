@@ -33,8 +33,8 @@ type corruptTransport struct {
 func TestArtifactRepairsMissingAndCorruptObjectsWithinAnExistingCommit(t *testing.T) {
 	for _, damage := range []string{"missing-blob", "missing-tree", "corrupt-blob"} {
 		t.Run(damage, func(t *testing.T) {
-			_, r, client := newCluster(t, "internal", "a", "b", "c")
 			book := openBook(t)
+			_, r, client := newCluster(t, book, "internal", "a", "b", "c")
 			projects := project.Open(book)
 			work := t.TempDir()
 			if err := os.WriteFile(filepath.Join(work, "answer.txt"), []byte("original bytes\n"), 0600); err != nil {
@@ -109,8 +109,8 @@ func TestArtifactRepairsMissingAndCorruptObjectsWithinAnExistingCommit(t *testin
 }
 
 func TestGitHistoryVerificationHasItsOwnBudget(t *testing.T) {
-	_, _, client := newCluster(t, "internal", "a", "b")
 	book := openBook(t)
+	_, _, client := newCluster(t, book, "internal", "a", "b")
 	projects := project.Open(book)
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "answer.txt"), []byte("small file\n"), 0600); err != nil {
@@ -135,8 +135,8 @@ func TestGitHistoryVerificationHasItsOwnBudget(t *testing.T) {
 }
 
 func TestArtifactRepairsCorruptPackWithoutDiscardingItsOtherObjects(t *testing.T) {
-	_, r, client := newCluster(t, "internal", "a", "b", "c")
 	book := openBook(t)
+	_, r, client := newCluster(t, book, "internal", "a", "b", "c")
 	projects := project.Open(book)
 	work := t.TempDir()
 	for i := range 150 {
@@ -279,12 +279,12 @@ func corruptCompressedObject(t *testing.T, original []byte) []byte {
 }
 
 func TestPublicProtectionReadsFollowRepairsAndCannotBeDowngraded(t *testing.T) {
-	p, r, client := newCluster(t, "internal", "a", "b")
-	single, err := contentreplica.New(contentreplica.Config{NodeID: "a", Local: r.stores["a"], Remote: r, Policy: p, Scope: func(context.Context, string) (contentreplica.Scope, error) { return p.scope, nil }, Members: func(context.Context) ([]string, error) { return []string{"a"}, nil }})
+	book := openBook(t)
+	p, r, client := newCluster(t, book, "internal", "a", "b")
+	single, err := contentreplica.New(contentreplica.Config{Ledger: r.book, NodeID: "a", Local: r.stores["a"], Remote: r, Policy: p, Scope: func(context.Context, string) (contentreplica.Scope, error) { return p.scope, nil }, Members: func(context.Context) ([]string, error) { return []string{"a"}, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	book := openBook(t)
 	store, err := material.Open(t.TempDir(), book)
 	if err != nil {
 		t.Fatal(err)
@@ -321,8 +321,8 @@ func TestPublicProtectionReadsFollowRepairsAndCannotBeDowngraded(t *testing.T) {
 	}
 }
 
-func (r corruptTransport) Put(ctx context.Context, node string, object contentreplica.Object, source io.Reader) (contentreplica.Receipt, error) {
-	receipt, err := r.base.Put(ctx, node, object, source)
+func (r corruptTransport) Put(ctx context.Context, node string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
+	receipt, err := r.base.Put(ctx, node, upload, source)
 	if err == nil && r.wrongReceipt {
 		receipt.NodeID = "forged-node"
 	}
@@ -338,7 +338,7 @@ func (r corruptTransport) Get(ctx context.Context, node string, object contentre
 
 func customClient(t *testing.T, p *places, r *transport, node string, remote contentreplica.Transport) *contentreplica.Client {
 	t.Helper()
-	c, err := contentreplica.New(contentreplica.Config{NodeID: node, Local: r.stores[node], Remote: remote, Policy: p, Scope: func(context.Context, string) (contentreplica.Scope, error) { return p.scope, nil }, Members: func(context.Context) ([]string, error) { return []string{"a", "b", "c"}, nil }})
+	c, err := contentreplica.New(contentreplica.Config{Ledger: r.book, NodeID: node, Local: r.stores[node], Remote: remote, Policy: p, Scope: func(context.Context, string) (contentreplica.Scope, error) { return p.scope, nil }, Members: func(context.Context) ([]string, error) { return []string{"a", "b", "c"}, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func customClient(t *testing.T, p *places, r *transport, node string, remote con
 }
 
 func TestCorruptReplicaCannotLeakPartialBytesOrFakeCompletion(t *testing.T) {
-	p, r, client := newCluster(t, "internal", "a", "b", "c")
+	p, r, client := newCluster(t, openBook(t), "internal", "a", "b", "c")
 	data := []byte("complete validated content")
 	ref := checkpoint.Reference(data)
 	m, err := client("a").Prepare(t.Context(), "p", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data))
@@ -366,7 +366,7 @@ func TestCorruptReplicaCannotLeakPartialBytesOrFakeCompletion(t *testing.T) {
 }
 
 func TestPlacementChecksPrecedeTransferAndRequireIndependentMachines(t *testing.T) {
-	p, r, client := newCluster(t, "restricted", "a", "b", "c")
+	p, r, client := newCluster(t, openBook(t), "restricted", "a", "b", "c")
 	p.denied["b"] = true
 	p.domains["c"] = p.domains["a"]
 	calls := 0
@@ -386,7 +386,7 @@ func TestPlacementChecksPrecedeTransferAndRequireIndependentMachines(t *testing.
 }
 
 func TestWrongReceiptTruncationAndReceiverLimitAreRejected(t *testing.T) {
-	p, r, client := newCluster(t, "internal", "a", "b", "c")
+	p, r, client := newCluster(t, openBook(t), "internal", "a", "b", "c")
 	data := []byte("declared bytes")
 	ref := checkpoint.Reference(data)
 	c := customClient(t, p, r, "a", corruptTransport{base: r, wrongReceipt: true})
@@ -401,7 +401,7 @@ func TestWrongReceiptTruncationAndReceiverLimitAreRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.Put(t.Context(), contentreplica.Object{Scope: p.scope, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrTooLarge) {
+	if _, err := store.Put(t.Context(), contentreplica.Upload{ID: strings.Repeat("a", 64), Object: contentreplica.Object{Scope: p.scope, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}}, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrTooLarge) {
 		t.Fatalf("receiver byte limit bypassed: %v", err)
 	}
 }
@@ -417,7 +417,7 @@ func TestAcknowledgedContentSurvivesStoreReopen(t *testing.T) {
 	data := []byte("durable")
 	ref := checkpoint.Reference(data)
 	object := contentreplica.Object{Scope: p.scope, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
-	receipt, err := store.Put(t.Context(), object, bytes.NewReader(data))
+	receipt, err := store.Put(t.Context(), contentreplica.Upload{ID: strings.Repeat("a", 64), Object: object}, bytes.NewReader(data))
 	if err != nil || receipt.ObjectID != object.ID() {
 		t.Fatalf("receipt=%+v %v", receipt, err)
 	}
@@ -436,8 +436,8 @@ func TestAcknowledgedContentSurvivesStoreReopen(t *testing.T) {
 }
 
 func TestRestoreDoesNotPublishCacheBeforeRepairReceiptCommits(t *testing.T) {
-	_, r, client := newCluster(t, "internal", "a", "b", "c")
 	book := openBook(t)
+	_, r, client := newCluster(t, book, "internal", "a", "b", "c")
 	a, err := material.Open(t.TempDir(), book)
 	if err != nil {
 		t.Fatal(err)
@@ -478,9 +478,9 @@ func TestRestoreDoesNotPublishCacheBeforeRepairReceiptCommits(t *testing.T) {
 }
 
 func TestArtifactWithoutSecondReceiptCannotMoveCanonicalReference(t *testing.T) {
-	_, r, client := newCluster(t, "internal", "a", "b")
-	r.offline["b"] = true
 	book := openBook(t)
+	_, r, client := newCluster(t, book, "internal", "a", "b")
+	r.offline["b"] = true
 	projects := project.Open(book)
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "x"), []byte("candidate"), 0600); err != nil {

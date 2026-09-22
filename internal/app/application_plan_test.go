@@ -106,7 +106,13 @@ func testPlanHandover(t *testing.T, llm bool) {
 	if status != http.StatusOK {
 		t.Fatalf("submit plan: %d %s", status, body)
 	}
-	original := awaitPeerQuestion(t, first, conversation, "")
+	var submitted consoleapi.Exchange
+	if err := json.Unmarshal(body, &submitted); err != nil || submitted.ID == "" {
+		t.Fatalf("plan admission lacks its exchange identity: %s (%v)", body, err)
+	}
+	// This wait includes replicated admission, snapshots and native startup;
+	// it is not the HTTP admission deadline or a turn latency assertion.
+	original := awaitPeerExchangeQuestion(t, first, conversation, "", submitted.ID, time.Minute)
 	if original.Kind == "recovery" || original.TaskID == "" || original.AttemptID == "" || !strings.HasPrefix(original.SessionID, "ns_") {
 		t.Fatalf("plan lacks exact native question binding: %+v", original)
 	}
@@ -119,7 +125,7 @@ func testPlanHandover(t *testing.T, llm bool) {
 		t.Fatal(err)
 	}
 	WaitPeerReady(t, second)
-	resumed := awaitPeerQuestion(t, first, conversation, original.AttemptID)
+	resumed := awaitPeerExchangeQuestion(t, first, conversation, original.AttemptID, submitted.ID, time.Minute)
 	if resumed.Kind == "recovery" || resumed.SessionID != original.SessionID || resumed.TaskID != original.TaskID || resumed.ExchangeID != original.ExchangeID {
 		t.Fatalf("plan changed execution or exchange: %+v -> %+v", original, resumed)
 	}

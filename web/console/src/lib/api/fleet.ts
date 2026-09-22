@@ -1,18 +1,18 @@
-import type { Snapshot, Usage } from "../types";
+import type { Snapshot } from "../types";
 import { request } from "../http";
 import { LocalizedError, translate } from "../i18n";
 export const emptySnapshot: Snapshot = {
+    task_coverage: { total: 0, live: 0, closed: 0, roots: 0, completed_roots: 0, cancelled_roots: 0, paused_roots: 0, included: 0, recent_limit: 20, recent_closed: 0, has_more_closed: false },
+    plan_coverage: { total: 0, included: 0, has_more: false },
     at: "", hub: { node: "", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [], conflicts: [],
     facts: { reservations: [], attestations: [], replicas: [], disclosures: [], effects: [], grants: [] },
-    inbox: [], schedules: [], sources: [], usage: emptyUsage(),
+    inbox: [], schedules: [], sources: [],
 };
-
-export function emptyUsage(): Usage { return { by_day: [], by_agent: [], by_model: [], total: { key: "total", tokens: {}, seconds: 0, attempts: 0 } }; }
 
 export async function fetchState(signal?: AbortSignal): Promise<Snapshot> {
     const s = await request<Snapshot>("/state", { signal });
     s.nodes ??= []; s.agents ??= []; s.tasks ??= []; s.plans ??= []; s.projects ??= []; for (const p of s.projects) p.workspaces ??= []; s.inbox ??= []; s.schedules ??= []; s.sources ??= [];
-    s.usage ??= emptyUsage(); s.usage.by_day ??= []; s.usage.by_agent ??= []; s.usage.by_model ??= []; s.attempts ??= []; s.landings ??= [];
+    s.attempts ??= []; s.landings ??= [];
     s.facts ??= { ...emptySnapshot.facts };
     for (const k of ["reservations", "attestations", "replicas", "disclosures", "effects", "grants"] as const) s.facts[k] ??= [];
     for (const p of s.plans) p.steps ??= [];

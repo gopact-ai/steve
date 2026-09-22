@@ -43,6 +43,7 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	nodes := node.NewRegistry(cfg.Gateway.HubID, nodeConfigs)
 	if environment != nil {
 		nodes.SetSessionAuthorizer(environment.SessionAuthorizer)
+		nodes.SetNodeReceiptAuthorizer(environment.ReceiptAuthorizer)
 		nodes.SetPluginAuthorizer(environment.PluginAuthorizer)
 	}
 	life.Defer(func() { nodes.Close() })

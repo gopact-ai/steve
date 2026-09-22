@@ -2,6 +2,7 @@ package debugapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,9 +16,16 @@ import (
 type fakeGateway struct {
 	msgs   chan feishu.InboundMessage
 	action chan feishu.CardAction
+	err    error
 }
 
-func (f *fakeGateway) HandleMessage(msg feishu.InboundMessage) { f.msgs <- msg }
+func (f *fakeGateway) HandleMessage(msg feishu.InboundMessage) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.msgs <- msg
+	return nil
+}
 
 func (f *fakeGateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
 	f.action <- action
@@ -104,5 +112,15 @@ func TestServeRejectsNonLoopback(t *testing.T) {
 	}
 	if err := checkLoopback("127.0.0.1:7788"); err != nil {
 		t.Fatalf("loopback rejected: %v", err)
+	}
+}
+
+func TestInjectMessageDoesNotAcknowledgeRejectedAcceptance(t *testing.T) {
+	gw := &fakeGateway{err: errors.New("durable acceptance refused")}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/message", strings.NewReader(`{"text":"hi","message_id":"original"}`))
+	Handler(gw, Defaults{ChatID: "chat", SenderOpenID: "owner"}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "original") {
+		t.Fatalf("rejected input was accepted or lost retry identity: %d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -25,6 +25,8 @@ type Commands interface {
 // or a second agent asked to check the first one's. Neither takes the
 // working agent's word for anything — that is the whole point.
 type AgentVerifier interface {
+	// Prompt owns the agent deadline: new work uses Spec.Timeout, while
+	// retained work must select its durable timeout under admission fencing.
 	Prompt(context.Context, agentexec.Spec, string, func(string) error) (agentexec.Result, error)
 }
 
@@ -32,6 +34,9 @@ type Verifiers struct {
 	commands Commands
 	executor AgentVerifier
 	Timeout  time.Duration
+	// TimeoutSource supplies a snapshot for each Verify call; nil uses Timeout.
+	// Install before use, never replace while running, and read atomic state.
+	TimeoutSource func() time.Duration
 }
 
 func NewVerifiers(commands Commands, executor AgentVerifier) *Verifiers {
@@ -42,16 +47,22 @@ const DefaultVerifyTimeout = 10 * time.Minute
 
 func (v *Verifiers) Verify(ctx context.Context, req StepRequest, check plan.Verify, result plan.StepResult) error {
 	timeout := v.Timeout
+	if v.TimeoutSource != nil {
+		timeout = v.TimeoutSource()
+	}
 	if timeout <= 0 {
 		timeout = DefaultVerifyTimeout
+	}
+	if check.Kind == plan.VerifyAgent {
+		// The executor must identify retained work before creating its timer.
+		// An outer timer based on live policy would truncate the old deadline.
+		return v.byAgent(ctx, req, check, result, timeout)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	switch check.Kind {
 	case plan.VerifyCommand:
 		return v.byCommand(ctx, req, check)
-	case plan.VerifyAgent:
-		return v.byAgent(ctx, req, check, result)
 	case plan.VerifyNone:
 		return nil
 	default:
@@ -78,14 +89,14 @@ func (v *Verifiers) byCommand(ctx context.Context, req StepRequest, check plan.V
 
 // byAgent asks a different agent whether the work holds up. The answer is
 // held to one word so it cannot be hedged into a pass.
-func (v *Verifiers) byAgent(ctx context.Context, req StepRequest, check plan.Verify, result plan.StepResult) error {
+func (v *Verifiers) byAgent(ctx context.Context, req StepRequest, check plan.Verify, result plan.StepResult, timeout time.Duration) error {
 	if v.executor == nil {
 		return fmt.Errorf("agent verification execution is not configured")
 	}
 	if check.Agent == req.Agent {
 		return fmt.Errorf("a step cannot be verified by the agent that did it")
 	}
-	_, err := v.executor.Prompt(ctx, agentexec.Spec{TaskID: req.TaskID, TurnID: req.PlanID + "/" + req.StepID + "/verify", Agent: check.Agent, Project: req.Project, Base: result.Artifact, Kind: attempt.KindVerify, Timeout: v.Timeout}, verifyBrief(req, result), func(answer string) error {
+	_, err := v.executor.Prompt(ctx, agentexec.Spec{TaskID: req.TaskID, TurnID: req.PlanID + "/" + req.StepID + "/verify", Agent: check.Agent, Project: req.Project, Base: result.Artifact, Kind: attempt.KindVerify, Timeout: timeout}, verifyBrief(req, result), func(answer string) error {
 		verdict, reason := parseVerdict(answer)
 		switch verdict {
 		case "PASS":

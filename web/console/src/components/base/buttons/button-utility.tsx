@@ -7,10 +7,12 @@ import { Tooltip } from "@/components/base/tooltip/tooltip";
 import { cx } from "@/utils/cx";
 import { isReactComponent } from "@/utils/is-react-component";
 
+const interactiveStyles =
+    "hover:bg-primary_hover hover:text-fg-quaternary_hover aria-pressed:bg-primary_hover aria-pressed:text-fg-quaternary_hover";
+
 export const styles = {
-    secondary:
-        "bg-primary text-fg-quaternary shadow-xs-skeuomorphic ring-1 ring-primary ring-inset hover:bg-primary_hover hover:text-fg-quaternary_hover disabled:shadow-xs",
-    tertiary: "text-fg-quaternary hover:bg-primary_hover hover:text-fg-quaternary_hover",
+    secondary: `bg-primary text-fg-quaternary shadow-xs-skeuomorphic ring-1 ring-primary ring-inset disabled:shadow-xs ${interactiveStyles}`,
+    tertiary: `text-fg-quaternary ${interactiveStyles}`,
 };
 
 /**
@@ -20,7 +22,7 @@ export interface CommonProps {
     /** Disables the button and shows a disabled state */
     isDisabled?: boolean;
     /** The size variant of the button */
-    size?: "xs" | "sm";
+    size?: "xs" | "sm" | "lg";
     /** The color variant of the button */
     color?: "secondary" | "tertiary";
     /** The icon to display in the button */
@@ -95,7 +97,8 @@ export const ButtonUtility = ({
 
                 // Icon styles
                 "*:data-icon:pointer-events-none *:data-icon:shrink-0 *:data-icon:text-current *:data-icon:transition-inherit-all",
-                size === "xs" ? "p-1 *:data-icon:size-4" : "p-1.5 *:data-icon:size-4",
+                "*:data-icon:size-4",
+                size === "xs" ? "p-1" : size === "lg" ? "p-3" : "p-1.5",
 
                 className,
             )}

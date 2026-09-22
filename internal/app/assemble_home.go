@@ -19,7 +19,7 @@ func assembleHome(input inputAssembly, boot runtimeAssembly) (homeAssembly, erro
 	if environment != nil {
 		sharedMemoryBook = book
 	}
-	profile, err := prepareApplicationMemory(ctx, cfg, sharedMemoryBook)
+	profile, err := prepareApplicationMemoryWithSettings(ctx, cfg, sharedMemoryBook, boot.Settings())
 	if err != nil {
 		return nil, err
 	}
@@ -34,6 +34,10 @@ func assembleHome(input inputAssembly, boot runtimeAssembly) (homeAssembly, erro
 		if err != nil {
 			return nil, err
 		}
+		assembler.SetHome(profile.Home)
+	}
+	if settings := boot.Settings(); settings != nil {
+		assembler.SetLocaleSource(func() home.Locale { return home.Locale(settings.Load().Gateway.Locale) })
 	}
 	warnHome(cfg)
 	for _, selected := range catalog.List() {

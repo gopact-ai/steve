@@ -166,8 +166,8 @@ func (c *Coordinator) relocationPreparation(ctx context.Context, p attempt.Reloc
 		if existing.Recovery == nil || existing.Recovery.PlanID != p.ID {
 			return nil, nil, false, errors.New("replacement attempt belongs to another plan")
 		}
-		if old.State == attempt.Superseded && !old.Unsettled && old.SupersededBy == existing.ID && c.executions != nil {
-			c.executions.Resolve(old.ID)
+		if err := c.resolveRelocationSource(ctx, p, existing); err != nil {
+			return nil, nil, false, err
 		}
 		if existing.State == attempt.Running || existing.State == attempt.Bound {
 			return nil, nil, true, nil
@@ -235,13 +235,29 @@ func (c *Coordinator) openRelocationAttempt(ctx context.Context, p attempt.Reloc
 	if err != nil {
 		return attempt.Record{}, err
 	}
-	// The source's exact leases and stop decision committed together.
-	// Its ended observer is now resolved; keeping it quarantined would
-	// make a later task stop report an already retired execution.
-	if c.executions != nil {
-		c.executions.Resolve(old.ID)
+	if err := c.resolveRelocationSource(ctx, p, r); err != nil {
+		return attempt.Record{}, err
 	}
 	return r, nil
+}
+
+func (c *Coordinator) resolveRelocationSource(ctx context.Context, p attempt.RelocationIntent, replacement attempt.Record) error {
+	// Opening the replacement retires the source durably, but does not settle
+	// task accounting. Reload that committed source rather than trusting the
+	// pre-open snapshot, including on retries after the workspace was bound.
+	source, err := c.attempts.Get(ctx, p.SourceID)
+	if err != nil {
+		return err
+	}
+	if replacement.ID != p.Target.ID || replacement.Recovery == nil ||
+		replacement.Recovery.PlanID != p.ID || replacement.Recovery.AttemptID != source.ID ||
+		source.State != attempt.Superseded || source.SupersededBy != replacement.ID ||
+		source.TaskID != replacement.TaskID || source.TurnID != replacement.TurnID ||
+		source.Execution == nil || replacement.Execution == nil ||
+		*source.Execution != *replacement.Execution || source.Execution.Epoch != p.TaskEpoch {
+		return errors.New("relocation resolution does not match the committed source and replacement")
+	}
+	return c.resolveStoppedExecution(source)
 }
 
 // bindRelocation prepares the replacement and binds its workspace to the

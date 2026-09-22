@@ -44,6 +44,9 @@ func validateObject(object Object, limit int64) error {
 	if object.Blob.Size > limit {
 		return ErrTooLarge
 	}
+	if object.Base != "" && (object.Kind != GitBundle || !digest(object.Base, 64)) {
+		return ErrInvalid
+	}
 	switch object.Kind {
 	case Material, PluginPackage:
 		if object.Key != object.Blob.SHA256 {
@@ -101,7 +104,7 @@ func validateManifest(m Manifest, limit int64) error {
 	}
 	nodes, domains := map[string]bool{}, map[string]bool{}
 	for _, receipt := range m.Receipts {
-		if receipt.ObjectID != m.ID || !validID(receipt.NodeID) || !validID(receipt.FailureDomain) || receipt.StoredAt.IsZero() || nodes[receipt.NodeID] {
+		if uploadSequence(receipt.UploadID) == 0 || receipt.ObjectID != m.ID || !validID(receipt.NodeID) || !validID(receipt.FailureDomain) || receipt.StoredAt.IsZero() || nodes[receipt.NodeID] {
 			return ErrIntegrity
 		}
 		if m.Object.Scope.Level == "sealed" && receipt.NodeID != m.Object.Scope.HomeNodeID {

@@ -49,14 +49,19 @@ func (s *Server) mcpProbe(ctx context.Context, stream *nodewire.Stream) {
 	defer probeMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+	broker := s.currentBroker()
+	if broker == nil {
+		reply(nodewire.MCPProbeReply{Error: "this node has no MCP broker"})
+		return
+	}
 	attempt := "probe:" + fmt.Sprint(time.Now().UnixNano())
-	binding, err := s.broker.Bind(ctx, name, attempt, "probe")
+	binding, err := broker.Bind(ctx, name, attempt, "probe")
 	if err != nil {
 		reply(nodewire.MCPProbeReply{Error: "bind: " + err.Error()})
 		return
 	}
 	defer func() {
-		if _, err := s.broker.Release(context.Background(), attempt); err != nil {
+		if _, err := broker.Release(context.Background(), attempt); err != nil {
 			slog.Error(fmt.Sprintf("steve-node: mcp probe: release %s: %v", name, err), "mcp", name)
 		}
 	}()
@@ -210,11 +215,12 @@ func (s *Server) releaseAttempt(stream *nodewire.Stream) {
 	}
 	defer stream.Close()
 	attempt := strings.TrimSpace(stream.Request().Command)
-	if attempt == "" || s.broker == nil {
+	broker := s.currentBroker()
+	if attempt == "" || broker == nil {
 		closeStream(stream, nodewire.ExitPrefix+"2")
 		return
 	}
-	n, err := s.broker.Release(context.Background(), attempt)
+	n, err := broker.Release(context.Background(), attempt)
 	if err != nil {
 		slog.Error(fmt.Sprintf("steve-node: release %s: %v", attempt, err), "attempt", attempt)
 		closeStream(stream, nodewire.ExitPrefix+"1")

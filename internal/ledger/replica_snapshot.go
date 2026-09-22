@@ -12,12 +12,6 @@ import (
 	"modernc.org/sqlite"
 )
 
-type replicaSnapshot struct {
-	Format      int    `json:"format"`
-	Incarnation uint64 `json:"incarnation"`
-	Database    []byte `json:"database"`
-}
-
 // backupSource is the side of a driver connection that copies the open
 // database into another file through SQLite's online backup API. modernc's
 // connection offers it; the driver interface itself does not promise it,
@@ -39,24 +33,41 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 	if l.replicaWriter {
 		return nil, ErrReplicaWriteBypass
 	}
-	l.applyMu.Lock()
-	defer l.applyMu.Unlock()
-	if _, err := l.replicationState(); err != nil {
-		return nil, err
-	}
-	path, cleanup, err := l.replicaTemp(nil)
+	path, incarnation, _, cleanup, err := l.captureReplicaDatabase()
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
+	// The private backup is detached from the live database. Preparing its
+	// read schema and framing it need not hold the apply lock; only the
+	// SQLite backup defines the committed boundary.
+	return encodeReplicaSnapshot(path, incarnation)
+}
+
+func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error) {
+	l.applyMu.Lock()
+	defer l.applyMu.Unlock()
+	if _, err := l.replicationState(); err != nil {
+		return "", 0, 0, nil, err
+	}
+	path, cleanup, err := l.replicaTemp(nil)
+	if err != nil {
+		return "", 0, 0, nil, err
+	}
+	complete := false
+	defer func() {
+		if !complete {
+			cleanup()
+		}
+	}()
 	conn, err := l.db.Conn(context.Background())
 	if err != nil {
-		return nil, err
+		return "", 0, 0, nil, err
 	}
 	defer conn.Close()
 	var incarnation uint64
 	if err := conn.QueryRowContext(context.Background(), `SELECT value FROM meta WHERE key = 'incarnation'`).Scan(&incarnation); err != nil {
-		return nil, err
+		return "", 0, 0, nil, err
 	}
 	if err := conn.Raw(func(raw any) error {
 		provider, ok := raw.(backupSource)
@@ -70,13 +81,10 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 		_, stepErr := backup.Step(-1)
 		return errors.Join(stepErr, backup.Finish())
 	}); err != nil {
-		return nil, fmt.Errorf("snapshot ledger: %w", err)
+		return "", 0, 0, nil, fmt.Errorf("snapshot ledger: %w", err)
 	}
-	database, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(replicaSnapshot{Format: 1, Incarnation: incarnation, Database: database})
+	complete = true
+	return path, incarnation, l.snapshotGeneration, cleanup, nil
 }
 
 // RestoreReplica durably replaces application state through SQLite's atomic
@@ -86,25 +94,25 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 	if l.replicaWriter {
 		return ErrReplicaWriteBypass
 	}
-	var snapshot replicaSnapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		return fmt.Errorf("decode ledger snapshot: %w", err)
+	incarnation, database, err := decodeReplicaSnapshot(raw)
+	if err != nil {
+		return err
 	}
-	if snapshot.Format != 1 || snapshot.Incarnation == 0 || len(snapshot.Database) == 0 {
-		return errors.New("ledger: invalid replica snapshot")
-	}
-	path, cleanup, err := l.replicaTemp(snapshot.Database)
+	path, cleanup, err := l.replicaTemp(database)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	if err := validateReplicaSnapshot(path, snapshot.Incarnation); err != nil {
+	if err := validateReplicaSnapshot(path, incarnation); err != nil {
 		return err
 	}
 	l.applyMu.Lock()
 	defer l.applyMu.Unlock()
-	if snapshot.Incarnation < l.Incarnation() {
-		return fmt.Errorf("ledger: snapshot incarnation %d predates local %d", snapshot.Incarnation, l.Incarnation())
+	// A captured checkpoint can finish persisting concurrently with Restore.
+	// Invalidate its physical-pruning callback before replacing any live facts.
+	l.snapshotGeneration++
+	if incarnation < l.Incarnation() {
+		return fmt.Errorf("ledger: snapshot incarnation %d predates local %d", incarnation, l.Incarnation())
 	}
 	if err := (&FileDocument{Path: filepath.Join(l.dir, replicaMarker)}).Save([]byte("1\n")); err != nil {
 		return err
@@ -112,7 +120,7 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 	l.mu.Lock()
 	l.replicationRequired = true
 	l.mu.Unlock()
-	intent, err := json.Marshal(replicaRestoreIntent{From: l.Incarnation(), To: snapshot.Incarnation})
+	intent, err := json.Marshal(replicaRestoreIntent{From: l.Incarnation(), To: incarnation})
 	if err != nil {
 		return err
 	}
@@ -141,17 +149,17 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 	if err != nil {
 		return l.failReplica(fmt.Errorf("restore ledger: %w", err))
 	}
-	if err := writeIncarnation(filepath.Join(l.dir, incarnationFile), snapshot.Incarnation); err != nil {
+	if err := writeIncarnation(filepath.Join(l.dir, incarnationFile), incarnation); err != nil {
 		return l.failReplica(err)
 	}
 	if err := removeReplicaRestoreIntent(l.dir); err != nil {
 		return l.failReplica(err)
 	}
 	l.mu.Lock()
-	l.incarnation = snapshot.Incarnation
+	l.incarnation = incarnation
 	l.mu.Unlock()
 	l.journal.mu.Lock()
-	l.journal.incarnation = snapshot.Incarnation
+	l.journal.incarnation = incarnation
 	l.journal.mu.Unlock()
 	if err := l.replaceEffectsJournal(); err != nil {
 		return l.failReplica(err)
@@ -214,20 +222,25 @@ func removeReplicaRestoreIntent(dir string) error {
 }
 
 func validateReplicaSnapshot(path string, incarnation uint64) error {
-	db, err := sql.Open("sqlite", path+"?mode=ro")
+	// This is a private staging database, not the live replica. Rebuild only
+	// derived read indexes before accepting it, including on writer handles.
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	if err := validateReplicaSchema(db); err != nil {
+		return err
+	}
+	if err := ensureReadIndexes(db); err != nil {
+		return err
+	}
 	var integrity string
 	if err := db.QueryRow(`PRAGMA quick_check`).Scan(&integrity); err != nil {
 		return fmt.Errorf("check ledger snapshot: %w", err)
 	}
 	if integrity != "ok" {
 		return errors.New("ledger: snapshot integrity check failed")
-	}
-	if err := validateReplicaSchema(db); err != nil {
-		return err
 	}
 	actual, err := metaUint(db, "incarnation")
 	if err != nil || actual != incarnation {
@@ -237,16 +250,8 @@ func validateReplicaSnapshot(path string, incarnation uint64) error {
 	if err != nil || schema != schemaVersion {
 		return errors.New("ledger: snapshot schema mismatch")
 	}
-	version, err := replicaVersion(db)
-	if err != nil {
+	if err := validateReplicaReceipts(db); err != nil {
 		return err
-	}
-	var first, latest, count uint64
-	if err := db.QueryRow(`SELECT COALESCE(MIN(version), 0), COALESCE(MAX(version), 0), COUNT(*) FROM replica_commands`).Scan(&first, &latest, &count); err != nil {
-		return err
-	}
-	if latest != version || count != version || (version > 0 && first != 1) {
-		return errors.New("ledger: snapshot replay receipts do not match application version")
 	}
 	var effects int64
 	return db.QueryRow(`SELECT COUNT(*) FROM effect_entries`).Scan(&effects)

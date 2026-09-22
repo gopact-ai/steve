@@ -32,6 +32,7 @@ type queuedExchange struct {
 	RecoveryStop         *consoleapi.Reply   `json:"recovery_stop,omitempty"`
 	RecoveryStopPending  string              `json:"recovery_stop_pending,omitempty"`
 	ContinuationRejected bool                `json:"continuation_rejected,omitempty"`
+	RecoveryPending      bool                `json:"recovery_pending,omitempty"`
 	recoveryStopping     chan struct{}
 	ctx                  context.Context
 	cancel               context.CancelFunc
@@ -109,8 +110,12 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
 type enqueueOptions struct {
-	Prompt, Key string
-	Front       bool
+	ResumeAdmission task.ResumeAdmission
+	Prompt, Key     string
+	Front           bool
+	// Deferred accepts recovery input durably without starting it before
+	// the caller has reconciled the original execution's accounting.
+	Deferred bool
 	// RewindTo names a line already sent that this one replaces: the
 	// thread goes back to just before it and carries what was said
 	// earlier into the prompt. See rewind.go.
@@ -146,14 +151,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		aliases = maps.Clone(previous.QuoteAliases)
 	}
 	if options.Locale == "" {
-		if previous != nil {
-			options.Locale = previous.Locale
-		} else {
-			options.Locale = string(i18n.ContextLocale(ctx))
-			if options.Locale == "" {
-				options.Locale = s.defaultLocale
-			}
-		}
+		options.Locale = s.submissionLocaleLocked(ctx, previous)
 	}
 	s.mu.Unlock()
 	if len(aliases) > 0 {
@@ -170,6 +168,11 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	if len(options.Refs) > 0 || options.Locale != "" {
 		hash = extendedSubmissionHash(hash, options.Refs, options.Locale)
+	}
+	// Only an explicitly supplied project changes client request identity.
+	// Existing callers without it keep their established receipt hashes.
+	if options.ExpectedProject != "" && strings.HasPrefix(key, "client:") {
+		hash = projectSubmissionHash(hash, options.ExpectedProject)
 	}
 	s.mu.Lock()
 	existing, err := s.submittedLocked(conversation, key, hash)
@@ -190,6 +193,9 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	frozen, project, err := s.freezeMaterials(ctx, conversation, options.Refs)
 	if err != nil {
+		return nil, Exchange{}, err
+	}
+	if project, err = s.confirmExpectedProject(ctx, conversation, key, options.ExpectedProject, project); err != nil {
 		return nil, Exchange{}, err
 	}
 	if len(options.Refs) > 0 {
@@ -214,9 +220,11 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	e := &queuedExchange{
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
-			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
+			ResumeAdmission: options.ResumeAdmission,
+			Refs:            copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),
+		RecoveryPending: options.Deferred && options.ResumeAdmission == (task.ResumeAdmission{}),
 	}
 	if !strings.HasPrefix(key, "client:") {
 		e.PayloadHash = ""
@@ -224,7 +232,45 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if options.RewindTo != "" {
 		return s.acceptRewoundLocked(e, options.RewindTo, options.Front)
 	}
-	return s.acceptExchangeLocked(e, options.Front)
+	return s.acceptExchange(e, options.Front, options.Deferred)
+}
+
+// submissionLocaleLocked is the locale a line without one is answered in:
+// the one its earlier submission had, else the request's, else the
+// console's default.
+func (s *Service) submissionLocaleLocked(ctx context.Context, previous *queuedExchange) string {
+	if previous != nil {
+		return previous.Locale
+	}
+	if locale := string(i18n.ContextLocale(ctx)); locale != "" {
+		return locale
+	}
+	if s.DefaultLocaleSource != nil {
+		return s.DefaultLocaleSource()
+	}
+	return s.defaultLocale
+}
+
+// confirmExpectedProject returns the project the line runs under. A client
+// that named one is refused when the conversation is bound elsewhere; the
+// binding is read only when the materials did not already settle it.
+func (s *Service) confirmExpectedProject(ctx context.Context, conversation, key, expected, project string) (string, error) {
+	if expected == "" {
+		return project, nil
+	}
+	if project == "" {
+		state, err := s.Context(ctx, conversation)
+		if err != nil {
+			return "", err
+		}
+		if state.Project != nil {
+			project = state.Project.ID
+		}
+	}
+	if strings.HasPrefix(key, "client:") && expected != project {
+		return "", fmt.Errorf("expected project %s, but conversation is bound to %s", expected, project)
+	}
+	return project, nil
 }
 
 // resumeLocked replays a submission this conversation has already
@@ -239,6 +285,10 @@ func (s *Service) resumeLocked(existing *queuedExchange) (*queuedExchange, Excha
 }
 
 func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedExchange, Exchange, error) {
+	return s.acceptExchange(e, front, false)
+}
+
+func (s *Service) acceptExchange(e *queuedExchange, front, deferred bool) (*queuedExchange, Exchange, error) {
 	conversation := e.Conversation
 	if s.sealed[conversation] {
 		return nil, Exchange{}, fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
@@ -258,7 +308,12 @@ func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedEx
 	copy(list[at+1:], list[at:])
 	list[at] = e
 	s.exchanges[conversation] = list
-	if s.immediate(e.Input) {
+	if deferred {
+		err = s.save()
+		if err == nil {
+			s.publishQueue(conversation)
+		}
+	} else if s.immediate(e.Input) {
 		err = s.startLocked(e)
 	} else if s.running[conversation] == 0 {
 		err = s.startNextLocked(conversation)
@@ -395,6 +450,14 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		return consoleapi.ErrConsoleClosing
 	}
+	if e.RecoveryPending {
+		return fmt.Errorf("%w: original task accounting is pending", consoleapi.ErrBusy)
+	}
+	if e.ResumeAdmission != (task.ResumeAdmission{}) {
+		if err := s.checkResumeLocked(e); err != nil {
+			return err
+		}
+	}
 	s.bindRecoveryStopTargetLocked(e)
 	conversation := e.Conversation
 	previous := s.replies[conversation]
@@ -442,7 +505,7 @@ func (s *Service) startNextLocked(conversation string) error {
 		return nil
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser {
+		if e.RecoveryPending || e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser {
 			err := s.save()
 			if err == nil {
 				s.publishQueue(conversation)
@@ -452,6 +515,20 @@ func (s *Service) startNextLocked(conversation string) error {
 	}
 	for _, e := range s.exchanges[conversation] {
 		if e.State == consoleapi.ExchangeQueued {
+			if e.ResumeAdmission != (task.ResumeAdmission{}) {
+				if err := s.checkResumeLocked(e); err != nil {
+					if errors.Is(err, task.ErrResumePending) {
+						continue
+					}
+					if errors.Is(err, task.ErrExecutionStopped) || errors.Is(err, task.ErrResumeConsumed) {
+						if err := s.rejectResumeLocked(e, err); err != nil {
+							return err
+						}
+						continue
+					}
+					return err
+				}
+			}
 			return s.startLocked(e)
 		}
 	}
@@ -517,7 +594,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	}
 	e.ContinuationRejected = e.ExpectedTask != "" && errors.Is(err, task.ErrContinuationUnavailable)
 	e.outcome = outcome{reply: reply, err: err}
-	if e.Key != "" {
+	if e.Key != "" || reply.AttemptID != "" {
 		e.Receipt = &reply
 	}
 	s.trimExchangesLocked(e.Conversation)
@@ -561,7 +638,7 @@ func (s *Service) trimExchangesLocked(conversation string) {
 	out := make([]*queuedExchange, 0, len(list))
 	for i := len(list) - 1; i >= 0; i-- {
 		e := list[i]
-		if e.State.Terminal() && e.Key == "" {
+		if e.State.Terminal() && e.Key == "" && (e.Receipt == nil || e.Receipt.AttemptID == "") {
 			if remaining == 0 {
 				continue
 			}
@@ -628,6 +705,23 @@ func (s *Service) restoreQueueLocked() error {
 func (s *Service) Drain() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var pending []*queuedExchange
+	for _, list := range s.exchanges {
+		for _, e := range list {
+			if e.RecoveryPending {
+				pending = append(pending, e)
+				e.RecoveryPending = false
+			}
+		}
+	}
+	if len(pending) > 0 {
+		if err := s.save(); err != nil {
+			for _, e := range pending {
+				e.RecoveryPending = true
+			}
+			return err
+		}
+	}
 	for conversation := range s.exchanges {
 		if err := s.startNextLocked(conversation); err != nil {
 			return err

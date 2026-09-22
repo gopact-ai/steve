@@ -33,9 +33,16 @@ type Reader struct {
 	ReadFiles func() (map[string]string, error)
 	Label     string
 	Locale    Locale
+	// LocaleSource overrides Locale when set. Inject it before use; the
+	// callback must be safe for concurrent calls and is sampled once per Load.
+	LocaleSource func() Locale
 }
 
 func (r Reader) Load(mode Mode) (Snapshot, error) {
+	locale := r.Locale
+	if r.LocaleSource != nil {
+		locale = r.LocaleSource()
+	}
 	if mode == ModeNone {
 		return Snapshot{Mode: ModeNone}, nil
 	}
@@ -61,11 +68,11 @@ func (r Reader) Load(mode Mode) (Snapshot, error) {
 		label = "shared profile"
 	}
 	snapshot := Snapshot{Path: label, Mode: mode, Soul: files[FileSoul]}
-	wrapper := guestWrapper(r.Locale)
+	wrapper := guestWrapper(locale)
 	if mode == ModeOwner {
 		snapshot.User, snapshot.Memory = files[FileUser], files[FileMemory]
 		wrapper = "# Steve 共享档案\n\n身份与记忆由 Steve 保存并随协调节点同步。在档案页修改身份，使用记忆工具维护长期事实。新会话会读取最新内容。"
-		if r.Locale == LocaleEN {
+		if locale == LocaleEN {
 			wrapper = "# Steve shared profile\n\nSteve stores this identity and memory across coordinator changes. Edit identity in the profile page and use memory tools for durable facts. New sessions read the latest content."
 		}
 	}

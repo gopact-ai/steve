@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
@@ -65,7 +66,8 @@ type Request struct {
 	// ExpectedProject fences an unattended submission to its creation-time project.
 	ExpectedProject string
 	// ExpectedTask binds an automatic continuation to its original task.
-	ExpectedTask string
+	ExpectedTask    string
+	ResumeAdmission task.ResumeAdmission
 	// Queue makes this prompt wait for the running turn instead of
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool
@@ -105,7 +107,8 @@ type runtime interface {
 // and token it returns the capability to inject, binding the token to that
 // conversation so the agent can never write anywhere else.
 type AgentGate interface {
-	Extras(conversationID, agentID, token, endpoint string) []capability.Extra
+	PrepareExtras(conversationID, agentID, token, endpoint string) ([]capability.Extra, error)
+	DescribeExtras(token, endpoint string) []capability.Extra
 }
 
 // NodeEndpoints resolves the messaging URL an agent on a given node must
@@ -162,22 +165,29 @@ type Coordinator struct {
 // coordinatorState owns shared execution state. Request-local views replace
 // the owner and text catalog; mutexes and runtime state are never copied.
 type coordinatorState struct {
-	requestMu     sync.RWMutex
-	maintaining   bool
-	executions    *execution.Registry
-	catalog       *agent.Catalog
-	store         *state.Store
-	assembler     *capability.Assembler
-	runtime       runtime
-	timeout       time.Duration
-	channelOwners map[string]string
-	home          home.Loader
-	homePath      string
-	skills        *skills.Live
-	gate          AgentGate
-	endpoints     NodeEndpoints
-	RegisterIdle  idle.Registrar
-	tasks         *task.Store
+	requestMu   sync.RWMutex
+	maintaining bool
+	executions  *execution.Registry
+	catalog     *agent.Catalog
+	store       *state.Store
+	assembler   *capability.Assembler
+	runtime     runtime
+	timeout     time.Duration
+	// Runtime policy sources are installed before serving and read only at
+	// operation boundaries; a saved setting never interrupts a live turn.
+	TimeoutSource     func() time.Duration
+	AutoResolveSource func() bool
+	channelOwners     map[string]string
+	home              home.Loader
+	homePath          string
+	skills            *skills.Live
+	gate              AgentGate
+	endpoints         NodeEndpoints
+	RegisterIdle      idle.Registrar
+	tasks             *task.Store
+
+	consoleCompletionGuard ConsoleCompletionGuard
+
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
 	modes map[string]home.Mode
@@ -210,20 +220,23 @@ type coordinatorState struct {
 	defaultProject    string
 	homeProject       string
 	node              string
-	resumer           func(TaskResume)
+	resumer           func(TaskResume) error
+	resumeDispatcher  func(TaskResume)
 	notifier          func(TaskNotice)
 	afterTurn         func(taskID string)
+	turnPreface       func(ctx context.Context, taskID string) Preface
 	planRecoveryOwner func(task.Task) bool
 	// offlineAfter is how long a turn runs before its completion also earns
 	// a plain-text ping; zero keeps Steve quiet.
 	offlineAfter time.Duration
 
-	mu            sync.Mutex
-	lastSeen      map[string]time.Time
-	active        map[string]harness.Runner
-	cancels       map[string]*turnEntry
-	cancelPending map[string]time.Time
-	skillsLock    int
+	mu              sync.Mutex
+	preferenceLocks sync.Map // conversation/agent -> *sync.Mutex
+	lastSeen        map[string]time.Time
+	active          map[string]harness.Runner
+	cancels         map[string]*turnEntry
+	cancelPending   map[string]time.Time
+	skillsLock      int
 }
 
 func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {
@@ -309,6 +322,13 @@ func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
 // is handed to an agent without anyone asking.
 func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
 
+func (c *Coordinator) promptTimeout() time.Duration {
+	if c.TimeoutSource != nil {
+		return c.TimeoutSource()
+	}
+	return c.timeout
+}
+
 func (c *Coordinator) SetTasks(store *task.Store, node string) {
 	c.tasks = store
 	c.node = node
@@ -348,6 +368,9 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	if req.Locale != "" {
 		c = c.localized(i18n.FromLang(req.Locale))
 	}
+	// Freeze the default language for this request as well as explicitly
+	// localized requests. A settings update must not switch it mid-reply.
+	c = c.localized(c.text.Locale())
 	if c.maintaining {
 		return Result{}, UserError{Text: c.text.T(i18n.HubMaintenance)}
 	}
@@ -409,4 +432,8 @@ func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, st
 		return agent.Agent{}, "", false, err
 	}
 	return selected, strings.TrimSpace(input), false, nil
+}
+
+func (r Request) Address() channel.Address {
+	return channel.Address{Channel: r.Channel, Conversation: r.ConversationID, Message: r.MessageID}
 }

@@ -114,17 +114,13 @@ func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID stri
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanDisabled))
 	}
 	created, err := c.tasks.Create(task.Task{
+		Transport: req.Channel, ChatID: req.ChatID, AnchorMessage: req.MessageID, ChatType: string(req.ChatType), OpenCard: req.CardID,
 		Goal: goal, Requester: req.SenderOpenID, Channel: req.ConversationID,
 		Node: c.node, Origin: "plan", ProjectID: projectID,
 		PreparedPlan: prepared,
 	})
 	if err != nil {
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanFailed, err))
-	}
-	if req.MessageID != "" {
-		if err := c.tasks.SetAnchor(created.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
-			return task.Task{}, fmt.Errorf("persist plan task anchor: %w", err)
-		}
 	}
 	return created, nil
 }
@@ -333,6 +329,6 @@ func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracke
 		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + c.landingSummary(outcome)
 	}
 	if c.notifier != nil && tracked.AnchorMessage != "" {
-		c.notifier(TaskNotice{TaskID: tracked.ID, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Conversation: tracked.Channel, Text: text})
+		c.notifier(TaskNotice{TaskID: tracked.ID, Transport: tracked.Transport, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Conversation: tracked.Channel, Text: text})
 	}
 }

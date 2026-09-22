@@ -8,6 +8,7 @@ export const settingGroups = {
     planning: ["policies.planning.timeout", "policies.planning.attempts"],
     snapshot: ["policies.snapshot.max_files", "policies.snapshot.max_bytes", "policies.snapshot.max_file_bytes"],
     review: ["policies.review.max_changes", "policies.review.max_diff_bytes", "policies.review.max_file_bytes", "policies.review.max_entries", "policies.review.timeout"],
+    landing: ["policies.landing.conflicts"],
 } as const;
 export type SettingPath = (typeof settingGroups)[keyof typeof settingGroups][number];
 export const editableSettings = new Set<string>(Object.values(settingGroups).flat());

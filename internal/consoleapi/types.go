@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -667,6 +668,11 @@ type HomeFile struct {
 // line of it runs.
 type Conversation struct {
 	ID string `json:"id"`
+	// Transport owns the opaque ID. Channel histories have no Console commands.
+	Transport string `json:"transport,omitempty"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
+	// Execution is channel processing, not task lifetime: running, idle, unknown.
+	Execution string `json:"execution,omitempty"`
 	// Title stays empty until non-command input or an explicit name supplies it.
 	// Clients display a localized "New conversation" without persisting that placeholder.
 	Title   string `json:"title"`
@@ -696,8 +702,11 @@ type ConversationPatch struct {
 type Reply struct {
 	// ID names the line for good: a quote of it, a comment on it, a
 	// process fetched for it later all point here rather than at a time.
-	ID           string    `json:"id,omitempty"`
-	ExchangeID   string    `json:"exchange_id,omitempty"`
+	ID         string `json:"id,omitempty"`
+	ExchangeID string `json:"exchange_id,omitempty"`
+	// AttemptID is assigned from the server's execution result, never from a
+	// submitted command. Durable delivery proofs use it independently of UI history.
+	AttemptID    string    `json:"attempt_id,omitempty"`
 	At           time.Time `json:"at"`
 	Conversation string    `json:"conversation"`
 	ProjectID    string    `json:"project_id,omitempty"`
@@ -718,6 +727,9 @@ type Reply struct {
 	// a delegated task reporting back. It reads like a message but it is
 	// a record of something that happened, so it cannot be rewritten.
 	Relayed bool `json:"relayed,omitempty"`
+	// Delivery distinguishes a retained channel result from confirmed delivery.
+	// Values are confirmed, unconfirmed, suppressed, or unavailable.
+	Delivery string `json:"delivery,omitempty"`
 	// Process is how the reply was made, for the page to unfold; Injected
 	// what the agent was given for the turn.
 	Process  *Process  `json:"process,omitempty"`
@@ -789,11 +801,12 @@ type Exchange struct {
 	// because the agent's own session no longer holds it: a thread rewound
 	// to an edited message answers from a session that never saw the turns
 	// that were removed.
-	History         string `json:"history,omitempty"`
-	Origin          string `json:"origin,omitempty"`
-	Requester       string `json:"requester,omitempty"`
-	ExpectedProject string `json:"expected_project,omitempty"`
-	ExpectedTask    string `json:"expected_task,omitempty"`
+	History         string               `json:"history,omitempty"`
+	Origin          string               `json:"origin,omitempty"`
+	Requester       string               `json:"requester,omitempty"`
+	ExpectedProject string               `json:"expected_project,omitempty"`
+	ExpectedTask    string               `json:"expected_task,omitempty"`
+	ResumeAdmission task.ResumeAdmission `json:"resume_admission,omitzero"`
 	// Key is the durable submission identity within this conversation.
 	// Client command IDs and platform deliveries have separate namespaces.
 	Key        string            `json:"key,omitempty"`

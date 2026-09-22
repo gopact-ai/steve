@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +46,10 @@ type Snapshot struct {
 	Agents []Agent `json:"agents"`
 	Tasks  []Task  `json:"tasks"`
 	Plans  []Plan  `json:"plans"`
+	// Base state is live work plus ancestor closure and recent closed work,
+	// not a complete historical inventory. Query/detail APIs expose the rest.
+	TaskCoverage task.Coverage `json:"task_coverage"`
+	PlanCoverage PlanCoverage  `json:"plan_coverage"`
 	// Attempts are the executions in flight right now: what holds which
 	// lease, where.
 	Attempts []Attempt `json:"attempts"`
@@ -64,7 +67,6 @@ type Snapshot struct {
 	// outcome, and grants.
 	Facts     Facts          `json:"facts"`
 	Projects  []Project      `json:"projects"`
-	Usage     Usage          `json:"usage"`
 	Inbox     []HumanRequest `json:"inbox"`
 	Schedules []Schedule     `json:"schedules"`
 	Sources   []SourceHealth `json:"sources"`
@@ -342,17 +344,22 @@ type Task struct {
 	Parent     string     `json:"parent,omitempty"`
 	// Children makes the tree explicit so a renderer does not have to build
 	// it — the tree is the whole debugging story for delegated work.
-	Children  []string  `json:"children,omitempty"`
-	Turns     int       `json:"turns"`
-	MaxTurns  int       `json:"max_turns"`
-	Elapsed   string    `json:"elapsed"`
-	MaxElapse string    `json:"max_elapsed"`
-	UpdatedAt time.Time `json:"updated_at"`
-	PlanID    string    `json:"plan_id,omitempty"`
+	Children         []string  `json:"children,omitempty"`
+	ChildrenCount    int       `json:"children_count"`
+	ChildrenComplete bool      `json:"children_complete"`
+	Turns            int       `json:"turns"`
+	MaxTurns         int       `json:"max_turns"`
+	Elapsed          string    `json:"elapsed"`
+	MaxElapse        string    `json:"max_elapsed"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	PlanID           string    `json:"plan_id,omitempty"`
 	// Tokens and Seconds are what the task has spent across attempts.
 	Tokens  Tokens `json:"tokens"`
 	Seconds int64  `json:"seconds"`
 	Model   string `json:"model,omitempty"`
+	// Transport owns the opaque conversation in Channel; its prefix does
+	// not identify the transport or authorize a control request.
+	Transport string `json:"transport,omitempty"`
 	// Channel, ProjectID and Origin say where the task was asked, in
 	// which project, and by what (chat, plan, schedule, delegate).
 	Channel   string `json:"channel,omitempty"`
@@ -361,7 +368,9 @@ type Task struct {
 	Requester string `json:"requester,omitempty"`
 	// AttemptRows are the task's turns as the task store caches them; the
 	// ledger's attempt records are the authority for what they cost.
-	AttemptRows []AttemptRow `json:"attempt_rows,omitempty"`
+	AttemptRows  []AttemptRow `json:"attempt_rows,omitempty"`
+	AttemptCount int          `json:"attempt_count"`
+	planInTree   bool
 	// Four axes, decided here and rolled up from every descendant task:
 	// Lifecycle is the task's own state; Execution says whether an
 	// attempt is live (idle|running|unknown); Attention counts known requests
@@ -475,9 +484,9 @@ type LedgerSource interface {
 	// ProjectList lists every project, for the page and the context bar.
 	ProjectList(ctx context.Context) ([]project.Project, error)
 	// ClosedAttempts are every attempt that reached a terminal state: the
-	// authority on spend. Events pages the journal for history.
+	// authority on spend. HistoryEvents pages the journal chronologically.
 	ClosedAttempts(ctx context.Context) ([]attempt.Record, error)
-	Events(ctx context.Context, before int64, limit int) ([]ledger.Event, error)
+	HistoryEvents(ctx context.Context, before *ledger.EventPosition, through *int64, limit int) ([]ledger.Event, int64, error)
 }
 
 type NodeSource interface {
@@ -485,7 +494,12 @@ type NodeSource interface {
 }
 
 type PlanSource interface {
-	List() []plan.Plan
+	Live() []plan.Plan
+	ForTasks([]string) []plan.Plan
+	Latest(string) (plan.Plan, bool)
+	Count() int
+	Query(plan.Query) (plan.Page, error)
+	SetTaskProjection(func([]string))
 }
 
 // Model serves snapshots and a change stream.
@@ -504,6 +518,10 @@ type Model struct {
 	throttle     map[string]throttled
 	activity     map[string]Activity
 	observations []Observation
+
+	// observeMu orders observation updates and document I/O. mu protects
+	// the in-memory list and event subscribers, never the slow I/O.
+	observeMu sync.Mutex
 }
 
 // Event is one change worth waking a renderer for.
@@ -547,6 +565,9 @@ type Event struct {
 const recentKept = 200
 
 func New(src Sources) *Model {
+	if src.Plans != nil && src.Tasks != nil {
+		src.Plans.SetTaskProjection(src.Tasks.SetPlanBindings)
+	}
 	return &Model{src: src, subs: map[int]chan Event{}}
 }
 
@@ -776,13 +797,14 @@ type Observation struct {
 // level and a repo mode, and the agents that could work it right now —
 // judged by the same rule a turn is judged by.
 type Project struct {
-	ID          string   `json:"id"`
-	Node        string   `json:"node"`
-	Path        string   `json:"path"`
-	Level       string   `json:"level"`
-	Repo        string   `json:"repo"`
-	DefaultRole string   `json:"default_role,omitempty"`
-	Agents      []string `json:"agents"`
+	TaskCounts  *task.Counts `json:"task_counts"`
+	ID          string       `json:"id"`
+	Node        string       `json:"node"`
+	Path        string       `json:"path"`
+	Level       string       `json:"level"`
+	Repo        string       `json:"repo"`
+	DefaultRole string       `json:"default_role,omitempty"`
+	Agents      []string     `json:"agents"`
 	// Repos are the git repositories inside the project's home directory,
 	// as its machine last reported them; Node, Path and Repos describe the
 	// home, Agents is the union over every workspace. Home marks Steve's
@@ -942,12 +964,12 @@ func FromStepProgress(id string, p consoleapi.Progress, info consoleapi.StepInfo
 
 // DelegateProgress publishes what a delegated child is doing, as a step
 // of its parent's conversation: the page shows it as a card under the
-// parent's delegate call. A terminal state is never throttled — the
-// last word must land.
+// parent's delegate call. Only a running child is throttled — the state
+// it ends in, finished or stopped, is its last word and must land.
 func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleapi.StepInfo, p view.Progress) {
 	stepID := "#" + childTaskID
 	key := "delegate/" + stepID
-	terminal := info.State == task.StateDone || info.State == task.StateFailed
+	terminal := info.State != task.StateRunning
 	if terminal {
 		m.mu.Lock()
 		delete(m.throttle, key)
@@ -1040,7 +1062,7 @@ func (m *Model) conversationOf(taskID string) string {
 	if taskID == "" || m.src.Tasks == nil {
 		return ""
 	}
-	if t, ok := m.src.Tasks.Get(taskID); ok {
+	if t, ok := m.src.Tasks.Header(taskID); ok {
 		return t.Channel
 	}
 	return ""
@@ -1051,10 +1073,8 @@ func (m *Model) taskOfPlan(planID string) string {
 	if planID == "" || m.src.Plans == nil {
 		return ""
 	}
-	for _, p := range m.src.Plans.List() {
-		if p.ID == planID {
-			return p.TaskID
-		}
+	if p, ok := m.src.Plans.Latest(planID); ok {
+		return p.TaskID
 	}
 	return ""
 }
@@ -1106,9 +1126,12 @@ func (m *Model) Publish(ev Event) {
 }
 
 // Observe records a connectivity fact and tells the page. The list is
-// kept in the ledger document so a restart does not forget it.
+// kept in the ledger document so a restart does not forget it. A failed
+// save leaves the fact live; the next Observe retries the retained list.
 func (m *Model) Observe(kind, subject, text string, data map[string]string) {
 	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text, Data: data}
+	m.observeMu.Lock()
+	defer m.observeMu.Unlock()
 	m.mu.Lock()
 	m.observations = append(m.observations, obs)
 	if len(m.observations) > observationsKept {
@@ -1130,6 +1153,8 @@ const observationsKept = 1000
 
 // LoadObservations brings back what an earlier process observed.
 func (m *Model) LoadObservations() error {
+	m.observeMu.Lock()
+	defer m.observeMu.Unlock()
 	if m.src.Observations == nil {
 		return nil
 	}
@@ -1145,53 +1170,6 @@ func (m *Model) LoadObservations() error {
 	m.observations = list
 	m.mu.Unlock()
 	return nil
-}
-
-// History pages what happened, newest first: ledger transitions in
-// words, merged with connectivity observations. before is the ledger
-// sequence to page from (0 = the end).
-func (m *Model) History(ctx context.Context, before int64, limit int) ([]HistoryEntry, int64, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 60
-	}
-	var out []HistoryEntry
-	var next int64
-	if m.src.Ledger != nil {
-		events, err := m.src.Ledger.Events(ctx, before, limit)
-		if err != nil {
-			return nil, 0, err
-		}
-		for _, ev := range events {
-			out = append(out, HistoryEntry{
-				At: ev.At, Seq: ev.Seq, Kind: "ledger", Subject: ev.OperationID, Operation: ev.OperationID,
-				From: ev.From, To: ev.To, Actor: ev.Actor, Text: describeEvent(ev),
-			})
-			next = ev.Seq
-		}
-	}
-	// Observations have no sequence; they slot in by time. The first page
-	// takes everything newer than its oldest ledger entry; a later page
-	// takes what falls between its oldest and its newest.
-	var floor, ceiling time.Time
-	if len(out) > 0 {
-		floor = out[len(out)-1].At
-		if before > 0 {
-			ceiling = out[0].At
-		}
-	}
-	m.mu.Lock()
-	for _, o := range m.observations {
-		if !o.At.After(floor) && !floor.IsZero() {
-			continue
-		}
-		if !ceiling.IsZero() && o.At.After(ceiling) {
-			continue
-		}
-		out = append(out, HistoryEntry{At: o.At, Kind: "observe." + o.Kind, Subject: o.Subject, Text: o.Text, Data: o.Data})
-	}
-	m.mu.Unlock()
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
-	return out, next, nil
 }
 
 // describeEvent puts a ledger transition into words. The operation id's

@@ -22,7 +22,7 @@ export function restoreDelegations(cur: Delegations, replies: Reply[], cursor: n
 }
 
 export function withDelegations(reply: Reply, children: Delegations): Reply {
-    if (!reply.process?.steps?.some((s) => children[s.id])) return reply;
+    if (!reply.process?.steps?.some((s) => children[s.id] && children[s.id].step !== s)) return reply;
     return { ...reply, process: { ...reply.process, steps: reply.process.steps.map((s) => children[s.id]?.step ?? s) } };
 }
 

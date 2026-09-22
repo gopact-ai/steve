@@ -60,6 +60,9 @@ func (s *Service) RecordRelocationSession(ctx context.Context, id string, config
 		if err := task.CheckExecutionTx(tx, current.Execution); err != nil {
 			return err
 		}
+		if err := touchHistoryRevisionTx(tx, current.TaskID); err != nil {
+			return err
+		}
 		var previous string
 		if err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, relocationSessionKind, id).Scan(&previous); err == nil {
 			if previous != string(raw) {

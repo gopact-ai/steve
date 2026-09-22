@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -57,13 +56,12 @@ func TestMaterialsDoNotCrossHubDataLevelOrPendingOwnerChange(t *testing.T) {
 
 func TestReplyCaptureUsesOriginalProjectAndRevision(t *testing.T) {
 	a, book := materialsAdmin(t, project.LevelPublic)
-	replies := map[string]any{"replies": map[string][]consoleapi.Reply{"console:one": {{ID: "reply", Conversation: "console:one", ProjectID: "p", Text: "original", Kind: "reply"}}}}
-	data, _ := json.Marshal(replies)
-	if err := book.Document("console").Save(data); err != nil {
+	replies := console.DurableState{Replies: map[string][]consoleapi.Reply{"console:one": {{ID: "reply", Conversation: "console:one", ProjectID: "p", Text: "original", Kind: "reply"}}}}
+	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, replies) }); err != nil {
 		t.Fatal(err)
 	}
 	a.Console = console.New(nil, "owner", nil)
-	if err := a.Console.Persist(book.Document("console")); err != nil {
+	if err := a.Console.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	reply := a.Console.Replies("console:one")[0]

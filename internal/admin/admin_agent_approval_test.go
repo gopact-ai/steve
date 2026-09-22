@@ -5,7 +5,28 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 )
+
+func TestAgentApprovalOverrideAndResetPreserveGlobalDefault(t *testing.T) {
+	admin := approvalAdminFixture(t, "ask")
+	for _, mode := range []string{"agent-full-access", ""} {
+		options := map[string]string{"effort": "high"}
+		if mode != "" {
+			options["mode"] = mode
+		}
+		if err := admin.UpdateAgent(t.Context(), "pinned", consoleapi.AgentSpec{Harness: "mock", Options: options}); err != nil {
+			t.Fatal(err)
+		}
+		selected := admin.Catalog.Default()
+		if selected.Approval != "ask" || admin.Cfg.Gateway.DefaultApproval != "ask" {
+			t.Fatal("an Agent override changed the global default")
+		}
+		if selected.Options["mode"] != mode || selected.Options["effort"] != "high" {
+			t.Fatalf("Agent approval was not published independently: %v", selected.Options)
+		}
+	}
+}
 
 // Syncing the fleet lets every agent go of the approval mode it pinned for
 // itself, so the hub's default is the one place the stance is decided; the

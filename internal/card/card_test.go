@@ -28,7 +28,7 @@ func testCopy() Copy {
 	}
 }
 
-func TestRunningReplyCarriesColoredHeader(t *testing.T) {
+func TestConversationCardsHaveNoHeader(t *testing.T) {
 	raw := Render(Turn{
 		Status:    StatusRunning,
 		Answer:    "hello <world>",
@@ -47,17 +47,8 @@ func TestRunningReplyCarriesColoredHeader(t *testing.T) {
 	if cfg["update_multi"] != true {
 		t.Fatal("update_multi missing")
 	}
-	// The header is the state made scannable: a running card is blue with a
-	// 进行中 tag, readable from the chat list without opening it.
-	header, ok := payload["header"].(map[string]any)
-	if !ok {
-		t.Fatalf("running reply lost its header: %s", raw)
-	}
-	if header["template"] != "blue" {
-		t.Fatalf("running template = %v", header["template"])
-	}
-	if header["title"].(map[string]any)["content"] != "Steve" {
-		t.Fatalf("untitled running card should borrow the product name: %s", raw)
+	if _, ok := payload["header"]; ok {
+		t.Fatalf("conversation should not have a title banner: %s", raw)
 	}
 	// A finished plain answer is an archive with no state left to announce.
 	done := Render(Turn{
@@ -83,7 +74,7 @@ func TestRunningReplyCarriesColoredHeader(t *testing.T) {
 	}
 }
 
-func TestRenderFailedHighlightsErrorAndTitledCardKeepsHeader(t *testing.T) {
+func TestRenderFailedHighlightsErrorAndKeepsBusinessTitleInBody(t *testing.T) {
 	raw := Render(Turn{
 		Status: StatusFailed, Error: "boom",
 		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
@@ -92,8 +83,8 @@ func TestRenderFailedHighlightsErrorAndTitledCardKeepsHeader(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if h, ok := payload["header"].(map[string]any); !ok || h["template"] != "red" {
-		t.Fatalf("failed reply should carry a red header: %s", raw)
+	if _, ok := payload["header"]; ok {
+		t.Fatalf("failed reply should not regain a title banner: %s", raw)
 	}
 
 	titled := Render(Turn{
@@ -103,12 +94,11 @@ func TestRenderFailedHighlightsErrorAndTitledCardKeepsHeader(t *testing.T) {
 	if err := json.Unmarshal(titled, &payload); err != nil {
 		t.Fatal(err)
 	}
-	header := payload["header"].(map[string]any)
-	if header["title"].(map[string]any)["content"] != "状态" {
-		t.Fatalf("titled card lost its header: %s", titled)
+	if _, ok := payload["header"]; ok {
+		t.Fatalf("business title must not create a banner: %s", titled)
 	}
-	if header["template"] != "red" {
-		t.Fatalf("failed template = %v", header["template"])
+	if !strings.Contains(string(titled), "状态") {
+		t.Fatalf("business title missing from body: %s", titled)
 	}
 	body := string(raw)
 	if !strings.Contains(body, `"background_style":"red-50"`) || !strings.Contains(body, "boom") {
@@ -136,26 +126,19 @@ func TestRenderStatusUsesMetricCards(t *testing.T) {
 	if cfg["width_mode"] != "compact" {
 		t.Fatalf("status width = %v", cfg["width_mode"])
 	}
-	header := payload["header"].(map[string]any)
-	if header["title"].(map[string]any)["content"] != "状态" {
-		t.Fatalf("title = %#v", header["title"])
-	}
-	if header["subtitle"].(map[string]any)["content"] != "grok" {
-		t.Fatalf("subtitle = %#v", header["subtitle"])
-	}
 	body := payload["body"].(map[string]any)
 	elements := body["elements"].([]any)
-	if len(elements) != 3 {
+	if len(elements) != 4 {
 		t.Fatalf("elements = %#v", elements)
 	}
-	if elements[0].(map[string]any)["tag"] != "column_set" {
+	if elements[1].(map[string]any)["tag"] != "column_set" {
 		t.Fatalf("metrics missing: %#v", elements[0])
 	}
-	if elements[1].(map[string]any)["tag"] != "interactive_container" {
+	if elements[2].(map[string]any)["tag"] != "interactive_container" {
 		t.Fatalf("details missing: %#v", elements[1])
 	}
-	if elements[2].(map[string]any)["element_id"] != "meta" {
-		t.Fatalf("footer missing: %#v", elements[2])
+	if elements[3].(map[string]any)["element_id"] != "meta" {
+		t.Fatalf("footer missing: %#v", elements[3])
 	}
 	rawStr := string(raw)
 	if !strings.Contains(rawStr, "color='green'") || !strings.Contains(rawStr, "grok") {
@@ -399,7 +382,7 @@ func TestFooterLeadsWithHarnessAndModel(t *testing.T) {
 		UpdatedAt: time.Unix(12, 0),
 	}
 	got := footerText(turn, testCopy())
-	want := "codex · GPT 5.6 Sol · Agent · 完成"
+	want := "codex · GPT 5.6 Sol · Agent · 完成 · 12.0s · Ctx 11K/272K (4%)"
 	if got != want {
 		t.Fatalf("footer = %q, want %q", got, want)
 	}
@@ -417,11 +400,11 @@ func TestFooterOmitsUnreportedSettings(t *testing.T) {
 		StartedAt: time.Unix(0, 0),
 		UpdatedAt: time.Unix(1, 0),
 	}
-	if got, want := footerText(turn, testCopy()), "codex · 进行中"; got != want {
+	if got, want := footerText(turn, testCopy()), "codex · 进行中 · 1.0s"; got != want {
 		t.Fatalf("footer = %q, want %q", got, want)
 	}
 	bare := Turn{Status: StatusRunning, StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0)}
-	if got, want := footerText(bare, testCopy()), "进行中"; got != want {
+	if got, want := footerText(bare, testCopy()), "进行中 · 1.0s"; got != want {
 		t.Fatalf("footer = %q, want %q", got, want)
 	}
 }
@@ -473,8 +456,8 @@ func TestPlanRendersAboveExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	elements := payload["body"].(map[string]any)["elements"].([]any)
-	if elements[0].(map[string]any)["element_id"] != "plan" {
-		t.Fatalf("plan should lead the body, got %v", elements[0])
+	if elements[1].(map[string]any)["element_id"] != "plan" {
+		t.Fatalf("plan should follow the live status, got %v", elements[0])
 	}
 }
 
@@ -684,10 +667,8 @@ func TestRecoverRowOnlyOnCompletedCardsThatAskForIt(t *testing.T) {
 	}
 }
 
-// Execution detail — tools, reasoning, token telemetry — no longer renders.
-// The card is the answer, not a console; what the agent did along the way
-// stays in the transcript, not on the chat surface.
-func TestExecutionDetailIsNotRendered(t *testing.T) {
+// Progress already reported by the agent must be visible in the conversation.
+func TestExecutionDetailIsRendered(t *testing.T) {
 	body := string(Render(Turn{
 		Status:    StatusRunning,
 		Reasoning: "先读文件\n再改卡片",
@@ -698,9 +679,9 @@ func TestExecutionDetailIsNotRendered(t *testing.T) {
 		Usage:     Usage{InputTokens: 1200, ContextTokens: 1600, ContextWindow: 128000},
 		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(2, 0),
 	}, testCopy()))
-	for _, gone := range []string{"执行过程", "go test", "先读文件", "Ctx", "1.2K", "2.0s", `"element_id":"exec"`} {
-		if strings.Contains(body, gone) {
-			t.Fatalf("execution detail %q leaked onto the card: %s", gone, body)
+	for _, want := range []string{"执行过程", "go test", "先读文件", "Ctx", "1.2K", "2.0s", `"element_id":"exec"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("execution detail %q missing from the card: %s", want, body)
 		}
 	}
 }

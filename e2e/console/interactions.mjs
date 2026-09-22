@@ -1,3 +1,4 @@
+import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
 // Build web/console first. Uses an existing Playwright installation;
 // PLAYWRIGHT_MODULE accepts its absolute module path. CHECK selects comma-
 // separated scenarios. Every API is mocked; no request reaches a real hub.
@@ -8,7 +9,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { draftOf } from "./composer.mjs";
 import { preview } from "../childcard/preview.mjs";
-import { usageDurationFixture, usageFixture, usageState } from "./usage-fixture.mjs";
+import { usageDurationFixture, usageFixture, usageState, usageResponse } from "./usage-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || new URL("../../web/console/node_modules/playwright/index.mjs", import.meta.url).href);
 const output = process.env.OUTPUT_DIR || path.join(os.tmpdir(), "steve-console-interactions");
@@ -18,17 +19,25 @@ const browser = await chromium.launch({ headless: process.env.HEADED !== "1", ch
 const at = "2026-09-06T10:00:00Z";
 const A = "console:interaction-a", B = "console:interaction-b";
 const project = (id) => ({ id, node: "test-node", path: `/test/${id}`, repo: "inplace", level: "public", home: id === "home", agents: [], workspaces: [] });
-const task = (id, channel, projectID) => ({ id, channel, project_id: projectID, goal: `Task ${id}`, state: "running", lifecycle: "running", execution: "running", lane: "running", attention: 0, turns: 1, max_turns: 10, member: "test-agent", node: "test-node", updated_at: at });
+const task = (id, channel, projectID) => ({ id, transport: "console", channel, project_id: projectID, goal: `Task ${id}`, state: "running", lifecycle: "running", execution: "running", lane: "running", attention: 0, turns: 1, max_turns: 10, member: "test-agent", node: "test-node", updated_at: at });
 const gate = () => { let release; const promise = new Promise((resolve) => { release = resolve; }); return { promise, release }; };
 async function eventually(predicate, message) {
     for (let i = 0; i < 80; i++) { if (await predicate()) return; await delay(25); }
     assert.fail(message);
 }
 
-async function fixture({ history = false, running = false } = {}) {
-    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: "block" });
+async function fixture({ history = false, running = false, sandboxed = false } = {}) {
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: sandboxed ? "allow" : "block" });
+    // Playwright's serviceWorkers:"block" init script reads this getter without
+    // a guard and throws in opaque-origin previews. Keep registration blocked
+    // without masking application pageerrors or changing the frame's sandbox.
+    if (sandboxed) await context.addInitScript(() => {
+        let workers;
+        try { workers = navigator.serviceWorker; } catch (error) { if (error.name !== "SecurityError") throw error; }
+        if (workers) workers.register = async () => { throw new Error("Service workers are blocked in interaction fixtures"); };
+    });
     const page = await context.newPage();
-    await page.addInitScript(() => localStorage.setItem("steve.ui.locale", "zh"));
+    await page.addInitScript(() => { if (window === window.top) localStorage.setItem("steve.ui.locale", "zh"); });
     page.setDefaultTimeout(2500);
     await page.clock.install();
     const f = { page, context, calls: [], errors: [], releases: [], binding: null, enqueue: null, cancel: null, failBinding: false, failEnqueue: false, replyReads: 0 };
@@ -49,16 +58,25 @@ async function fixture({ history = false, running = false } = {}) {
     await page.route("**/*", async (route) => {
         const req = route.request(), url = new URL(req.url()), pathname = url.pathname;
         if (url.origin !== app.url) { f.errors.push(`Unexpected external request: ${url.origin}`); return route.abort(); }
-        if (!["/state", "/events", "/history"].includes(pathname) && !pathname.startsWith("/console/")) return route.continue();
+        if (!["/state", "/usage", "/events", "/history"].includes(pathname) && !pathname.startsWith("/console/")) return route.continue();
         const input = req.postDataJSON();
         const call = { method: req.method(), path: pathname, ...input };
         if (req.method() !== "GET") f.calls.push(call);
         const initialization = pathname.match(/^\/console\/conversations\/([^/]+)\/initialize$/);
         const conversation = initialization ? decodeURIComponent(initialization[1]) : input?.conversation || url.searchParams.get("conversation") || A;
         let current = conversations.find((c) => c.id === conversation);
+        if (pathname === "/usage") return route.fulfill({ json: usageResponse() });
+        if (/^\/console\/tasks\/[^/]+$/.test(pathname)) {
+            const id = decodeURIComponent(pathname.split("/")[3]);
+            const task = f.snapshot?.tasks.find((task) => task.id === id);
+            return task ? route.fulfill({ json: workDetail(task, f.snapshot.tasks, f.snapshot.plans) }) : route.fulfill({ status:404,body:"task not found" });
+        }
+        if (pathname === "/console/tasks") return route.fulfill({ json: { items: f.snapshot?.tasks || [], total: f.snapshot?.tasks.length || 0 } });
+        if (pathname === "/console/plans") return route.fulfill({ json: { items: [], total: 0 } });
+
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-        if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] } });
+        if (pathname === "/state") return route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] }) });
         if (initialization && req.method() === "PUT") {
             if (f.binding) await f.binding;
             if (f.failBinding) return route.fulfill({ status: 503, json: { error: "Project binding unavailable" } });
@@ -96,6 +114,7 @@ async function fixture({ history = false, running = false } = {}) {
         return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
     });
     await page.addInitScript((conversation) => {
+        if (window !== window.top) return;
         if (!sessionStorage.getItem("steve.conversation")) sessionStorage.setItem("steve.conversation", conversation);
         window.sources = [];
         window.EventSource = class {
@@ -789,7 +808,7 @@ checks["design-mobile-current-session"] = async (f) => {
 
 checks["design-mobile-child"] = async (f) => {
     const tasks = [task("11", A, "scratch"), { ...task("33", A, "scratch"), parent: "11" }];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.route("**/console/replies?*", (route) => route.fulfill({ json: { enabled: true, replies: [{ id: "parent-reply", kind: "reply", conversation: A, at, text: "Parent reply", process: { steps: [{ id: "#33", kind: "delegate", goal: "Delegated work", state: "done", answer: "Child answer" }] } }] } }));
     await f.page.reload();
     await f.box.waitFor();
@@ -848,7 +867,7 @@ checks["relationship-execution-state"] = async (f) => {
         { ...task("14", A, "scratch"), lifecycle: "done", execution: "idle" },
         { ...task("15", A, "scratch"), parent: "12", origin: "delegate", execution: "idle" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload(); await f.box.waitFor();
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await f.page.getByRole("tab", { name: "关系", exact: true }).click();
@@ -875,7 +894,7 @@ checks["narrow-relationships-layout"] = async (f) => {
     const node = "node-0123456789abcdef0123456789abcdef";
     const tasks = ["11", "12", "13"].map((id) => ({ ...task(id, A, "scratch"), member: "reviewer", node, lifecycle: "done", execution: "done" }));
     tasks.push({ ...task("14", A, "scratch"), member: "helper", node, parent: "11", origin: "delegate", lifecycle: "done", execution: "done" });
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     await f.box.waitFor();
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
@@ -975,9 +994,9 @@ checks["session-setup-view"] = async (f) => {
         platform: [{ name: "steve", description: "Session tools", tools: [{ name: "steve_context", description: "Read the current workspace." }] }],
         deployments: [], machines: [],
     } }));
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" },
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" },
         nodes: [{ name: "test-node", up: true, snapshot: { schema: "v1", node: "test-node", generation: 1, sequence: 1, generated_at: at, coverage: {}, offers: [{ kind: "tool", id: "ripgrep", availability: "available" }, { kind: "harness", id: "test", availability: "available" }, { kind: "skill", id: "skill-creator", scope: "test", availability: "available" }, { kind: "skill", id: "other-harness-skill", scope: "elsewhere", availability: "available" }] } }],
-        agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+        agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, agents: [], project: { ...project("scratch"), bound: true }, agent: { id: "test-agent", node: "test-node", harness: "test", model: "model-one", ready: true, usable: true } } } }));
     await f.page.reload();
     await f.box.waitFor();
@@ -1045,8 +1064,9 @@ checks["mcp-tool-details"] = async (f) => {
     await summary.click();
     await noHorizontalOverflow(f.page);
     await f.page.getByRole("row").filter({ hasText: "example-service" }).click();
-    const drawer = f.page.getByRole("dialog", { name: "详细信息", exact: true });
+    const drawer = f.page.getByRole("dialog", { name: "example-service", exact: true });
     await drawer.waitFor();
+    assert.equal(await drawer.getByRole("heading", { name: "example-service", exact: true, level: 2 }).count(), 1, "Entity drawers expose their actual name as a heading");
     await drawer.locator("summary").filter({ hasText: externalName }).click();
     assert.equal(await drawer.getByRole("paragraph").filter({ hasText: description }).isVisible(), true, "Installed tools must also expose the full description beyond the preview");
     await drawer.getByText("输入参数", { exact: true }).waitFor();
@@ -1199,7 +1219,7 @@ checks["inspector-resize"] = async (f) => {
     await noHorizontalOverflow(f.page);
 };
 
-async function reviewFixture(f, { open = true } = {}) {
+async function reviewFixture(f, { open = true, files = {} } = {}) {
     const changes = [
         { path: "src/main.ts", status: "M", added: 1, deleted: 1 },
         { path: "removed.txt", status: "D", added: 0, deleted: 1 },
@@ -1208,7 +1228,7 @@ async function reviewFixture(f, { open = true } = {}) {
         { path: "script.sh", status: "M", added: 0, deleted: 0 },
     ];
     const state = { reads: [], hold: null, holdIndex: null, holdFile: null, failDiff: false, failIndex: false };
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => route.fulfill({ json: [{ id: "review-attempt", kind: "turn", state: "done", agent: "test-agent", node: "test-node", base: "before", artifact: "after", started_at: at, files: 5 }, { id: "review-other", kind: "turn", state: "done", agent: "other-agent", node: "test-node", base: "older-before", artifact: "older-after", started_at: "2026-09-05T10:00:00Z", files: 1 }] }));
+    await f.page.route(/\/console\/attempts\?/, (route) => route.fulfill({ json: nativeHistory([{ id: "review-attempt", kind: "turn", state: "done", agent: "test-agent", node: "test-node", base: "before", artifact: "after", started_at: at, files: 5 }, { id: "review-other", kind: "turn", state: "done", agent: "other-agent", node: "test-node", base: "older-before", artifact: "older-after", started_at: "2026-09-05T10:00:00Z", files: 1 }]) }));
     await f.page.route(/\/console\/attempts\/review-other\//, (route) => {
         const url = new URL(route.request().url());
         const body = url.pathname.endsWith("/changes") ? { attempt: "review-other", base: "older-before", artifact: "older-after", changes: [{ path: "other.txt", status: "A", added: 1, deleted: 0 }] }
@@ -1226,10 +1246,10 @@ async function reviewFixture(f, { open = true } = {}) {
             if (state.failIndex) return route.fulfill({ status: 400, body: "Index unavailable" });
             return route.fulfill({ json: { attempt: "review-attempt", project: "scratch", base: "before", artifact: "after", changes } });
         }
-        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", dir: file, entries: file === "src" ? [{ name: "main.ts", path: "src/main.ts", kind: "file", size: 48 }, { name: "helper.ts", path: "src/helper.ts", kind: "file", size: 22 }] : [{ name: "src", path: "src", kind: "dir" }, { name: "README.md", path: "README.md", kind: "file", size: 36 }, { name: "empty.txt", path: "empty.txt", kind: "file", size: 0 }, { name: "new.txt", path: "new.txt", kind: "file", size: 10 }, { name: "linked", path: "linked", kind: "link" }, { name: "vendor", path: "vendor", kind: "repo" }, { name: "large.txt", path: "large.txt", kind: "file", size: 40000 }] } });
+        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", dir: file, entries: file === "src" ? [{ name: "main.ts", path: "src/main.ts", kind: "file", size: 48 }, { name: "helper.ts", path: "src/helper.ts", kind: "file", size: 22 }] : [{ name: "src", path: "src", kind: "dir" }, { name: "README.md", path: "README.md", kind: "file", size: 36 }, { name: "empty.txt", path: "empty.txt", kind: "file", size: 0 }, { name: "new.txt", path: "new.txt", kind: "file", size: 10 }, { name: "linked", path: "linked", kind: "link" }, { name: "vendor", path: "vendor", kind: "repo" }, { name: "large.txt", path: "large.txt", kind: "file", size: 40000 }, ...Object.entries(files).map(([path, text]) => ({ name: path, path, kind: "file", size: Buffer.byteLength(text) }))] } });
         if (url.pathname.endsWith("/file")) {
             if (state.holdFile && file === "README.md") await state.holdFile;
-            const text = file === "README.md" ? "# Project\n\nUnchanged project guide.\n\nSee [the helper](./src/helper.ts), [outside](../outside.txt), [the site](https://example.com/docs) and [top](#project).\n" : file === "src/main.ts" ? "const shared = true;\nconst after = 2;\n" : file === "empty.txt" ? "" : file === "large.txt" ? Array.from({ length: 1501 }, (_, i) => `line ${i + 1}`).join("\n") : file === "linked" ? "README.md" : "export const helper = 1;";
+            const text = files[file] ?? (file === "README.md" ? "# Project\n\nUnchanged project guide.\n\nSee [the helper](./src/helper.ts), [outside](../outside.txt), [the site](https://example.com/docs) and [top](#project).\n" : file === "src/main.ts" ? "const shared = true;\nconst after = 2;\n" : file === "empty.txt" ? "" : file === "large.txt" ? Array.from({ length: 1501 }, (_, i) => `line ${i + 1}`).join("\n") : file === "linked" ? "README.md" : "export const helper = 1;");
             return route.fulfill({ json: { attempt: "review-attempt", path: file, commit: "after", text, size: text.length } });
         }
         if (state.hold && file === "src/main.ts") await state.hold;
@@ -1255,31 +1275,31 @@ async function reviewFixture(f, { open = true } = {}) {
 checks["code-all-conversation-tasks"] = async (f) => {
     const tasks = Array.from({ length: 9 }, (_, i) => ({ ...task(String(i + 1), A, "scratch"), updated_at: `2026-09-06T10:00:0${8 - i}Z` }));
     for (let i = 10; i < 16; i++) tasks.push({ ...task(String(i), "child-channel", "scratch"), parent: String(i - 1) });
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch")], attempts: [], landings: [] }) }));
     const readTasks = [];
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => {
-        const id = new URL(route.request().url()).pathname.split("/")[3]; readTasks.push(id);
-        return route.fulfill({ json: id === "15" ? [{ id: "old-output", kind: "turn", state: "bound", agent: "older-agent", base: "old-base", artifact: "old-result", started_at: at }] : [] });
+    await f.page.route(/\/console\/attempts\?/, (route) => {
+        const id = new URL(route.request().url()).searchParams.get("conversation"); readTasks.push(id);
+        return route.fulfill({ json: nativeHistory(id === A ? [{ task_id: "15", id: "old-output", kind: "turn", state: "bound", agent: "older-agent", base: "old-base", artifact: "old-result", started_at: at }] : []) });
     });
     await f.page.reload(); await f.box.waitFor();
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await f.page.getByRole("tab", { name: "产物", exact: true }).click();
     await f.page.getByRole("button", { name: "浏览文件", exact: true }).waitFor();
-    assert.equal(new Set(readTasks).size, 15, "Unified files include older roots and deep delegated results");
+    assert.ok(readTasks.length > 0 && readTasks.every((id) => id === A), "Unified files use one conversation query, including hidden deep descendants");
     await f.page.getByText(/older-agent/).first().waitFor();
 };
 
 checks["code-latest-result"] = async (f) => {
     const waiting = gate(); f.releases.push(waiting.release);
     let readOnlyResult = false;
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, async (route) => {
-        if (route.request().url().includes("/22/")) { await waiting.promise; return route.fulfill({ json: [] }); }
-        return route.fulfill({ json: [
+    await f.page.route(/\/console\/attempts\?/, async (route) => {
+        if (new URL(route.request().url()).searchParams.get("conversation") === B) { await waiting.promise; return route.fulfill({ json: nativeHistory([]) }); }
+        return route.fulfill({ json: nativeHistory([
             ...(readOnlyResult ? [{ id: "latest-read-only", agent: "reader", kind: "turn", state: "bound", base: "latest", started_at: "2026-09-06T10:02:00Z", ended_at: "2026-09-06T10:02:30Z" }] : []),
             { id: "new-base", agent: "new-agent", kind: "turn", state: "running", base: "new-start", started_at: "2026-09-06T10:03:00Z", ended_at: "0001-01-01T00:00:00Z" },
             { id: "newer-start", agent: "early-finish", kind: "turn", state: "done", base: "before", artifact: "early", started_at: "2026-09-06T10:01:00Z", ended_at: "2026-09-06T10:01:30Z" },
             { id: "latest-result", agent: "late-finish", kind: "turn", state: "done", base: "before", artifact: "latest", started_at: at, ended_at: "2026-09-06T10:02:00Z" },
-        ] });
+        ]) });
     });
     const reads = [];
     await f.page.route(/\/console\/attempts\/[^/]+\//, (route) => {
@@ -1479,10 +1499,10 @@ checks["code-workspace-files"] = async (f) => {
 
 checks["code-snapshot-states"] = async (f) => {
     const state = { commit: "snapshot", failIndex: false, fileReads: 0 };
-    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => route.fulfill({ json: [
+    await f.page.route(/\/console\/attempts\?/, (route) => route.fulfill({ json: nativeHistory([
         { id: "unchanged", kind: "turn", state: "done", base: "snapshot", artifact: "snapshot", started_at: at },
         { id: "base-only", kind: "turn", state: "running", agent: "base-agent", base: "start", started_at: "2026-09-05T10:00:00Z" },
-    ] }));
+    ]) }));
     await f.page.route(/\/console\/attempts\/(unchanged|base-only)\//, (route) => {
         const url = new URL(route.request().url()), base = url.pathname.includes("base-only"), commit = base ? "start" : state.commit;
         assert.equal(route.request().method(), "GET");
@@ -1563,6 +1583,206 @@ checks["preview-document-links"] = async (f) => {
     assert.equal(f.page.url(), before, "Following a document link keeps the console on its own page");
     await workspace.getByRole("button", { name: "阅读 README.md", exact: true }).click();
     await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    assert.equal(f.calls.length, 0);
+};
+
+// These documents exist only in mocked snapshot responses, never in a user's
+// project. Exercise the real file tree and FilePreview, not a hand-built iframe.
+const previewFiles = {
+    "static.html": `<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>body { margin: 12px; } h1 { color: rgb(12, 34, 56); }</style></head>
+<body><h1>Static preview report</h1><p>Snapshot HTML content</p></body></html>`,
+    "interactive.html": `<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>
+body { margin: 12px; background-color: rgb(1, 2, 3) !important; color: white; }
+button { color: rgb(4, 5, 6) !important; }
+.review-file-header { display: none !important; }
+</style></head><body>
+<h1>Interactive preview</h1><button id="increment">Increment</button><output id="count">0</output>
+<p id="ready">Script pending</p><pre id="isolation"></pre>
+<script>
+const count = document.getElementById("count");
+document.getElementById("increment").addEventListener("click", () => { count.textContent = String(Number(count.textContent) + 1); });
+const results = {};
+for (const [name, probe] of Object.entries({
+    parentDOM: () => { parent.document.body.dataset.previewEscaped = "yes"; },
+    localStorage: () => { localStorage.setItem("preview-sentinel", "escaped"); },
+    sessionStorage: () => { sessionStorage.setItem("preview-sentinel", "escaped"); },
+    parentStorage: () => { parent.localStorage.setItem("preview-sentinel", "escaped"); }
+})) {
+    try { probe(); results[name] = "allowed"; } catch (error) { results[name] = error.name; }
+}
+document.getElementById("isolation").textContent = JSON.stringify(results);
+document.getElementById("ready").textContent = "Inline script ready";
+</script></body></html>`,
+    "diagram.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 140" width="100%"
+onload="document.getElementById('load-state').textContent = 'Load handler ran'">
+<title>Script-free diagram</title><rect width="320" height="140" fill="#eef"/>
+<text id="script-state" x="12" y="30">SVG script pending</text>
+<text id="load-state" x="12" y="60">SVG load pending</text>
+<text id="click-state" x="12" y="100" onclick="this.textContent = 'Click handler ran'">Click SVG probe</text>
+<script>document.getElementById('script-state').textContent = 'SVG script ran';</script>
+</svg>`,
+    "report.html": `<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>body { margin: 0; } header { position: sticky; top: 0; height: 48px; background: rgb(20, 40, 80); color: white; } h1, h2 { margin: 0; padding: 12px; font-size: 20px; line-height: 24px; } section { height: 400px; border-bottom: 1px solid #ccc; }</style>
+</head><body><header><h1>Report bar</h1></header>
+${Array.from({ length: 12 }, (_, i) => `<section id="s${i + 1}"><h2>Section ${i + 1}</h2></section>`).join("\n")}
+</body></html>`,
+};
+
+async function filePreviewFixture(f) {
+    const state = await reviewFixture(f, { open: false, files: previewFiles });
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).click();
+    const workspace = f.page.getByRole("dialog", { name: "产物工作区", exact: true });
+    const tree = workspace.getByRole("navigation", { name: "项目文件", exact: true });
+    await tree.waitFor();
+    const iframe = workspace.locator("iframe.file-preview-frame");
+    const frame = workspace.frameLocator("iframe.file-preview-frame");
+    const open = async (file) => {
+        if (!await tree.isVisible()) await workspace.getByRole("button", { name: "文件导航", exact: true }).click();
+        await tree.getByRole("button", { name: file, exact: true }).click();
+        await workspace.getByRole("heading", { name: file, exact: true }).waitFor();
+        await eventually(async () => await iframe.getAttribute("srcdoc") === previewFiles[file], `FilePreview must load ${file} from the mocked snapshot`);
+    };
+    return { state, workspace, tree, iframe, frame, open };
+}
+
+checks["preview-html-interaction-isolation"] = async (f) => {
+    const { workspace, iframe, frame, open } = await filePreviewFixture(f);
+    await open("static.html");
+    await frame.getByRole("heading", { name: "Static preview report", exact: true }).waitFor();
+    await frame.getByText("Snapshot HTML content", { exact: true }).waitFor();
+    assert.equal(await frame.locator("h1").evaluate((element) => getComputedStyle(element).color), "rgb(12, 34, 56)", "Static HTML must render its own CSS");
+    const parentStyle = () => f.page.evaluate(() => ({
+        background: getComputedStyle(document.body).backgroundColor,
+        headerDisplay: getComputedStyle(document.querySelector(".review-file-header")).display,
+        buttonColor: getComputedStyle(document.querySelector(".review-file-actions button")).color,
+    }));
+    const beforeStyle = await parentStyle(), beforeURL = f.page.url();
+    await f.page.evaluate(() => {
+        localStorage.setItem("preview-sentinel", "parent-local");
+        sessionStorage.setItem("preview-sentinel", "parent-session");
+    });
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    assert.deepEqual(JSON.parse(await frame.locator("#isolation").innerText()), {
+        parentDOM: "SecurityError", localStorage: "SecurityError", sessionStorage: "SecurityError", parentStorage: "SecurityError",
+    }, "Running inline JS must be unable to access the parent DOM or browser storage");
+    assert.equal(await iframe.getAttribute("sandbox"), "allow-scripts", "HTML allows scripts but no same-origin or navigation privileges");
+    assert.equal(await iframe.getAttribute("referrerpolicy"), "no-referrer");
+    assert.equal(await frame.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(1, 2, 3)", "The isolation probe's CSS must actually apply inside the preview");
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    assert.equal(await frame.locator("#count").innerText(), "2", "Inline event listeners must work repeatedly");
+    assert.deepEqual(await parentStyle(), beforeStyle, "Artifact CSS must not restyle or hide console controls");
+    assert.deepEqual(await f.page.evaluate(() => ({
+        escaped: document.body.dataset.previewEscaped ?? null,
+        local: localStorage.getItem("preview-sentinel"), session: sessionStorage.getItem("preview-sentinel"),
+    })), { escaped: null, local: "parent-local", session: "parent-session" }, "The parent document and its storage must remain untouched");
+    assert.equal(f.page.url(), beforeURL);
+    await workspace.getByRole("button", { name: "源码", exact: true }).click();
+    await workspace.getByRole("region", { name: "源码 interactive.html", exact: true }).waitFor();
+    assert.equal(f.calls.length, 0, "Preview interactions must not submit console work");
+};
+
+async function assertInertSVG(frame) {
+    await frame.locator("svg").waitFor();
+    await eventually(() => frame.locator("svg").evaluate((element) => element.ownerDocument.readyState === "complete"), "SVG must finish loading before testing blocked scripts");
+    assert.equal(await frame.locator("#script-state").textContent(), "SVG script pending", "SVG script elements must not execute");
+    assert.equal(await frame.locator("#load-state").textContent(), "SVG load pending", "SVG onload must not execute");
+    await frame.locator("#click-state").click();
+    assert.equal(await frame.locator("#click-state").textContent(), "Click SVG probe", "SVG click handlers must not execute");
+}
+
+checks["preview-svg-scripts-disabled"] = async (f) => {
+    const { iframe, frame, open } = await filePreviewFixture(f);
+    // Transition from a script-enabled HTML frame: SVG must not inherit it.
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    await open("diagram.svg");
+    await assertInertSVG(frame);
+    assert.equal(await iframe.getAttribute("sandbox"), "", "SVG must retain an empty sandbox, not omit the attribute");
+    assert.equal(await frame.locator("h1").count(), 0, "Switching to SVG must remove the previous HTML document");
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    assert.equal(await frame.locator("#count").innerText(), "1", "Returning to HTML must restore script-enabled interaction");
+    assert.equal(f.calls.length, 0);
+};
+
+// A page is read in its own viewport: the frame takes the whole reading
+// area and the document scrolls inside it, the way its author laid it out
+// — a sticky bar stays put, a 100vh section fills the pane, a scroll-spy
+// index follows the reader. A fixed-height box with the pane empty below
+// it is neither a viewport nor a document.
+checks["preview-html-viewport"] = async (f) => {
+    const { workspace, iframe, frame, open } = await filePreviewFixture(f);
+    await open("report.html");
+    await frame.getByRole("heading", { name: "Section 12", exact: true }).waitFor();
+    const pane = workspace.locator(".review-code-scroll");
+    const layout = async () => {
+        const [frameBox, paneBox] = await Promise.all([iframe.boundingBox(), pane.boundingBox()]);
+        const overflow = await pane.evaluate((element) => element.scrollHeight - element.clientHeight);
+        return { frameBox, paneBox, overflow };
+    };
+    const fits = async (when) => {
+        const { frameBox, paneBox, overflow } = await layout();
+        assert.ok(overflow <= 0, `${when}: the reading pane must not scroll around the frame (overflow ${overflow}px)`);
+        const slack = paneBox.y + paneBox.height - (frameBox.y + frameBox.height);
+        assert.ok(slack >= 0 && slack <= 40, `${when}: the frame must reach the bottom of the reading area, not stop ${slack}px above it`);
+        return frameBox.height;
+    };
+    const tall = await fits("1000px window");
+    assert.ok(tall > 700, `The frame must use the reading area it is given, not a fixed share of the window (${tall}px)`);
+    await f.page.screenshot({ path: path.join(output, "preview-html-viewport.png") });
+    // The document scrolls inside the frame and its sticky bar keeps its place.
+    const bar = frame.locator("header");
+    const frameTop = (await iframe.boundingBox()).y + 1;
+    assert.ok(Math.abs((await bar.boundingBox()).y - frameTop) <= 1, "The page starts at the top of its frame");
+    await frame.locator("body").evaluate((body) => body.ownerDocument.defaultView.scrollTo(0, 1600));
+    await eventually(async () => (await frame.locator("#s5").boundingBox()).y < frameTop + 200, "The page must scroll inside its frame");
+    assert.ok(Math.abs((await bar.boundingBox()).y - frameTop) <= 1, "A sticky bar stays at the top of the frame while the page scrolls");
+    await f.page.setViewportSize({ width: 1600, height: 700 });
+    const short = await fits("700px window");
+    assert.ok(tall - short >= 250, `The frame must follow the window height: ${tall}px then ${short}px`);
+    await open("diagram.svg");
+    await assertInertSVG(frame);
+    await fits("SVG in a 700px window");
+    assert.equal(f.calls.length, 0);
+};
+
+checks["preview-html-source-switch-narrow"] = async (f) => {
+    const { state, workspace, iframe, frame, open } = await filePreviewFixture(f);
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await open("interactive.html");
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    await frame.getByRole("button", { name: "Increment", exact: true }).press("Enter");
+    assert.equal(await frame.locator("#count").innerText(), "1", "Preview interaction must remain keyboard-accessible in a narrow window");
+    await workspace.getByRole("button", { name: "源码", exact: true }).click();
+    const source = workspace.getByRole("region", { name: "源码 interactive.html", exact: true });
+    await source.waitFor();
+    assert.ok((await source.innerText()).includes('document.getElementById("increment").addEventListener'), "Source mode must show the literal inline script");
+    assert.equal(await iframe.count(), 0, "Source mode must unmount the executable preview");
+    await open("static.html");
+    await frame.getByRole("heading", { name: "Static preview report", exact: true }).waitFor();
+    await workspace.getByRole("button", { name: "阅读 interactive.html", exact: true }).click();
+    await source.waitFor();
+    assert.equal(await iframe.count(), 0, "Returning to a file must remember its source mode");
+    await workspace.getByRole("button", { name: "预览", exact: true }).click();
+    await frame.getByText("Inline script ready", { exact: true }).waitFor();
+    assert.equal(await frame.locator("#count").innerText(), "0", "Reopening preview must render a fresh document rather than stale interactive state");
+    await frame.getByRole("button", { name: "Increment", exact: true }).click();
+    assert.equal(await frame.locator("#count").innerText(), "1");
+    await noHorizontalOverflow(f.page);
+    const bounds = await iframe.boundingBox();
+    assert.ok(bounds && bounds.width > 100 && bounds.x >= 0 && bounds.x + bounds.width <= 391, `HTML preview must fit the narrow reading pane: ${JSON.stringify(bounds)}`);
+    await visibleControl(workspace.getByRole("button", { name: "源码", exact: true }), "Source switch");
+    await f.page.screenshot({ path: path.join(output, "preview-html-narrow.png") });
+    await open("diagram.svg");
+    await assertInertSVG(frame);
+    await noHorizontalOverflow(f.page);
+    await f.page.screenshot({ path: path.join(output, "preview-svg-narrow.png") });
+    assert.equal(state.reads.filter((read) => read.endpoint === "file" && read.file === "interactive.html").length, 1, "File and mode switches must reuse the loaded snapshot source");
     assert.equal(f.calls.length, 0);
 };
 
@@ -1733,14 +1953,12 @@ checks["skill-toggle-layout"] = async (f) => {
 };
 
 checks["readmodel-unknown"] = async (f) => {
-    const usage = usageFixture();
-    const state = { ...usageState(usage), tasks: [{ ...task("11", A, "scratch"), execution: "unknown", lane: "unknown" }], agents: [{ id: "test-agent", harness: "mock", eligible: true, activity_known: false, busy: 0, activities: [] }], sources: [
+    const state = { ...usageState(), tasks: [{ ...task("11", A, "scratch"), execution: "unknown", lane: "unknown" }], agents: [{ id: "test-agent", harness: "mock", eligible: true, activity_known: false, busy: 0, activities: [] }], sources: [
         { name: "ledger", wired: true, error: "partial ledger read" },
         { name: "ledger-live", wired: true, error: "activity unavailable" },
         { name: "ledger-attention", wired: true, error: "attention unavailable" },
-        { name: "ledger-usage", wired: true },
     ] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     await f.page.getByText("Task 11", { exact: true }).waitFor();
     await f.page.getByText("状态未知", { exact: true }).first().waitFor();
@@ -1954,9 +2172,9 @@ checks["composer-columns"] = async (f) => {
 checks["fleet-live-activity"] = async (f) => {
     // The activity column follows streamed progress, ahead of the 10 s
     // snapshot floor, and without re-reading /state per chunk.
-    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
+    const state = { ...usageState(), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
     let stateReads = 0;
-    await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: state }); });
+    await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: f.snapshot = workState(state) }); });
     await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
     await f.page.getByText("test-agent", { exact: true }).first().waitFor();
     await f.page.getByText("空闲", { exact: true }).first().waitFor();
@@ -1976,10 +2194,10 @@ checks["fleet-display-name"] = async (f) => {
         { name: "node-4bbf207fa8525645ba6935bd07d227a7", display_name: "Steve's MacBook", role: "hub", up: true, version: "test", capabilities: ["gpu", "office"], harnesses: [] },
         { name: "node-77aa11bb22cc33dd44ee55ff66aa77bb", role: "node", up: true, version: "test", harnesses: [] },
     ];
-    const state = { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes };
+    const state = { ...usageState(), hub: { node: nodes[0].name, version: "test", started: at }, nodes };
     const view = { enabled: true, cluster_id: "cluster-one", node_id: nodes[0].name, coordinator_id: nodes[0].name, epoch: 1, revision: 4, authoritative: true, observed_at: at, auto_failover: false, ready: true, nodes: [{ id: nodes[0].name, name: "Steve's MacBook", local: true, online: true, voter: true, auto_eligible: true, ready: true }], events: [] };
     const renames = [];
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.route("**/console/coordination", (route) => route.fulfill({ json: view }));
     await f.page.route("**/console/coordination/name", (route) => {
         const body = route.request().postDataJSON(); renames.push({ method: route.request().method(), body });
@@ -2026,7 +2244,7 @@ checks["audit-space-by-machine"] = async (f) => {
         { name: "node-99cc88dd77ee66ff55aa44bb33cc22dd", role: "node", up: true, version: "test", harnesses: [], health: { disk_free: 5 * (1 << 30), disk_total: 50 * (1 << 30), load1: 0, worktrees: 0, at, root: "/opt/steve" } },
         { name: "node-11223344556677889900aabbccddeeff", role: "node", up: false, version: "test", harnesses: [] },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(), hub: { node: nodes[0].name, version: "test", started: at }, nodes } }));
     await f.page.goto(`${app.url}/#/dashboard?tab=audit`);
     await f.page.reload();
     const table = f.page.getByRole("grid", { name: "各节点占用", exact: true });
@@ -2055,7 +2273,7 @@ checks["audit-table-paging"] = async (f) => {
     const replicas = Array.from({ length: 40 }, (_, i) => ({ artifact: `artifact-${String(i + 1).padStart(2, "0")}`, node: "node-4bbf207fa8525645ba6935bd07d227a7", generation: 1, state: "verified", at }));
     const nodes = [{ name: "node-4bbf207fa8525645ba6935bd07d227a7", display_name: "Steve's MacBook", role: "hub", up: true, version: "test", harnesses: [] }];
     const facts = { reservations: [], attestations: [], replicas, disclosures: [], effects: [], grants: [] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes, facts } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(), hub: { node: nodes[0].name, version: "test", started: at }, nodes, facts } }));
     await f.page.goto(`${app.url}/#/dashboard?tab=audit`);
     await f.page.reload();
     const table = f.page.getByRole("grid", { name: "副本", exact: true });
@@ -2096,7 +2314,8 @@ checks["audit-table-paging"] = async (f) => {
 
 checks["usage-dashboard-ranges"] = async (f) => {
     const usage = usageFixture();
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview`);
     await f.page.reload();
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
@@ -2128,7 +2347,8 @@ checks["usage-dashboard-unreported"] = async (f) => {
     const period = usage.periods["1d"];
     period.series = [{ key: period.from, tokens: { context: 65000 }, seconds: 120, attempts: 2, unreported: 2 }];
     period.total = { ...period.series[0], key: "total" }; period.by_agent = []; period.by_model = [];
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     await f.page.getByText("未上报 Token 按 0 绘制。", { exact: false }).waitFor();
     assert.equal(await f.page.getByRole("region", { name: "区间用量汇总", exact: true }).getByText("0", { exact: true }).count(), 1, "Unreported token usage is rendered as zero");
@@ -2147,7 +2367,8 @@ checks["usage-dashboard-gaps"] = async (f) => {
     ];
     period.total = { key: "total", tokens: { input: 100, output: 20, total: 120 }, seconds: 360, attempts: 3, unreported: 2 };
     period.by_agent = []; period.by_model = [];
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     await f.page.locator(".recharts-line-dot").first().waitFor();
     assert.equal(await f.page.locator(".recharts-line-dot").count(), 3, "Unreported buckets must be zero-valued points on the continuous line");
@@ -2161,7 +2382,8 @@ checks["usage-dashboard-gaps"] = async (f) => {
 
 checks["usage-dashboard-dimensions"] = async (f) => {
     const usage = usageFixture();
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=7d`); await f.page.reload();
     await f.page.getByRole("heading", { name: "任务平均耗时", exact: true }).waitFor();
     for (const [name, row] of [["按模型", "Demo Model"], ["按 Harness", "codex-acp"], ["按触发来源", "定时任务"], ["按项目", "scratch"]]) {
@@ -2185,7 +2407,8 @@ checks["usage-dashboard-dimensions"] = async (f) => {
 
 checks["usage-dashboard-duration-coverage"] = async (f) => {
     let usage = usageDurationFixture("missing");
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     const cardValue = (label) => f.page.locator(".usage-metric").filter({ has: f.page.getByRole("heading", { name: label, exact: true }) }).locator("strong");
     await f.page.getByRole("heading", { name: "任务平均耗时", exact: true }).waitFor();
@@ -2249,7 +2472,8 @@ checks["usage-dashboard-task-details-lazy"] = async (f) => {
     const sample = period.by_task[0];
     period.by_task = Array.from({ length: 1000 }, (_, i) => ({ ...sample, key: String(i), task_id: String(i), title: `Task detail ${i}` }));
     period.tasks.count = period.by_task.length;
-    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState() }));
+    await f.page.route("**/usage", (route) => route.fulfill({ json: usageResponse(usage) }));
     await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=7d`); await f.page.reload();
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
     const taskRows = f.page.locator('table[aria-label="任务消耗明细"] tbody tr');
@@ -2291,7 +2515,7 @@ checks["design-delegation-stream"] = async (f) => {
         { id: "sent-2", kind: "sent", conversation: A, at: minute(54), input: "继续下一轮。" },
         { id: "reply-2", kind: "reply", conversation: A, at: minute(58), text: "第二轮结果已汇总。" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const recorded = f.page.locator('[data-task-id="#41"]');
     await recorded.waitFor();
@@ -2404,7 +2628,7 @@ checks["process-content"] = async (f) => {
     f.replies[A] = [{ id: "trace", kind: "reply", conversation: A, at, text: "Checked answer", process }];
     // People know a machine by the name they gave it. Every attribution
     // shows that name; the node ID is only the tooltip.
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const message = f.page.locator(".message-assistant");
     await message.getByText("Checked answer", { exact: true }).waitFor();
@@ -2441,19 +2665,22 @@ checks["board-overview"] = async (f) => {
         { ...root("22", "done", "needs_you"), parent: "11", origin: "delegate:11", result_delivery: { state: "uncertain", attempts: 1, error: "Receipt lost: " + "long-unbroken-detail".repeat(20), at } },
         { ...root("16", "paused", "set_aside"), parent: "15" },
     ];
-    const state = { ...usageState(usageFixture()), tasks: rows, projects: [project("scratch")] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    const state = { ...usageState(), tasks: rows, projects: [project("scratch")] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     const summary = f.page.getByRole("region", { name: "主任务统计" });
     await summary.getByText("主任务", { exact: true }).waitFor();
     assert.match(await summary.innerText(), /主任务\s+5/);
-    assert.match(await summary.innerText(), /已完成\s+1/);
+    // Owner summary counts all roots, including archived roots. A paused
+    // child of an archived root is not a new root when that root is hidden.
+    assert.match(await summary.innerText(), /已完成\s+2/);
     assert.match(await summary.innerText(), /已取消\s+1/);
-    assert.match(await summary.innerText(), /已暂停\s+2/);
+    assert.match(await summary.innerText(), /已暂停\s+1/);
     await f.page.getByText("2 个结果待交接 · 1 个交接待确认", { exact: true }).waitFor();
     await f.page.getByRole("switch", { name: "显示已归档" }).press("Space");
     assert.match(await summary.innerText(), /主任务\s+5/);
     assert.match(await summary.innerText(), /已完成\s+2/);
+    assert.match(await summary.innerText(), /已暂停\s+1/);
     await f.page.screenshot({ path: path.join(output, "board-overview-wide.png"), fullPage: true });
     const open = f.page.getByRole("button", { name: "打开任务 #11 Task 11", exact: true });
     await open.focus(); await open.press("Enter");
@@ -2485,8 +2712,8 @@ checks["board-overview"] = async (f) => {
 
 checks["child-handoff"] = async (f) => {
     const child = { ...task("22", A, "scratch"), state: "done", lifecycle: "done", execution: "idle", lane: "needs_you", parent: "11", result_delivery: { state: "uncertain", error: "Child receipt was lost", attempts: 2, at } };
-    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch"), child] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    const state = { ...usageState(), tasks: [task("11", A, "scratch"), child] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board&tab=all`); await f.page.reload();
     await f.page.getByRole("row").filter({ hasText: "Task 22" }).click();
     const dialog = f.page.getByRole("dialog");
@@ -2503,8 +2730,8 @@ checks["fleet-version-drift"] = async (f) => {
         { name: "worker-unknown", role: "node", up: true, harnesses: [] },
         { name: "worker-offline", role: "node", up: false, version: "old", harnesses: [] },
     ];
-    const state = { ...usageState(usageFixture()), hub: { node: "hub", version: "abc1234", started: at }, nodes };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    const state = { ...usageState(), hub: { node: "hub", version: "abc1234", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
     await f.page.getByText(/1 台机器与协调节点版本不同/).waitFor();
     assert.equal(await f.page.getByText("版本不同", { exact: true }).count(), 1);
@@ -2524,7 +2751,7 @@ async function checkNativeHistoryImport(f, autoProject = false) {
     ];
     const state = { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [node], agents: [{ id: "test-agent", node: "test-node", harness: "codex", eligible: true }], tasks: [], plans: [], projects: [{ ...project("scratch"), workspaces: [{ id: "scratch-work", node: "test-node", path: "/test//scratch/./", kind: "canonical", agents: ["test-agent"] }] }], attempts: [], landings: [] };
     const pendingState = gate();
-    await f.page.route("**/state", async (route) => { await pendingState.promise; return route.fulfill({ json: state }); });
+    await f.page.route("**/state", async (route) => { await pendingState.promise; return route.fulfill({ json: f.snapshot = workState(state) }); });
     const posts = []; let failRead = true, loseReceipt = true;
     await f.page.route("**/console/nodes/test-node/native-history**", async (route) => {
         if (route.request().method() === "GET") {
@@ -2591,6 +2818,32 @@ checks["native-history-auto-project"] = (f) => checkNativeHistoryImport(f, true)
 // is that machine busy with" — grouping by machine or Agent, ordering by
 // time, attention or name. The arrangement is the reader's and it is
 // remembered; arranging never submits anything.
+checks["shared-sidebar-icon-actions"] = async (f) => {
+    const sidebar = f.page.locator(".conversation-sidebar");
+    await sidebar.getByRole("button", { name: "收起会话栏", exact: true }).click();
+    await f.page.locator(".conversation-sidebar.is-collapsed").waitFor();
+    const expand = sidebar.getByRole("button", { name: "展开会话栏", exact: true });
+    const newConversation = sidebar.getByRole("button", { name: "新会话", exact: true });
+    for (const button of [expand, newConversation]) {
+        const box = await button.boundingBox(), rail = await sidebar.boundingBox();
+        assert.equal(box.width, 28, "Dense sidebar actions use the explicit shared sm size");
+        assert.equal(box.height, 28);
+        assert.ok(box.x >= rail.x && box.x + box.width <= rail.x + rail.width, "Icon actions fit the unchanged narrow rail");
+    }
+    await expand.focus(); await f.page.keyboard.press("Enter");
+    await sidebar.getByRole("button", { name: "收起会话栏", exact: true }).waitFor();
+    const disclosure = sidebar.locator(".conversation-project button[aria-expanded]").first();
+    const before = await disclosure.getAttribute("aria-expanded");
+    await disclosure.focus(); await f.page.keyboard.press("Space");
+    assert.equal(await disclosure.getAttribute("aria-expanded"), String(before !== "true"), "Keyboard toggles the group exactly once");
+    const arrange = sidebar.getByRole("button", { name: /^排列/ });
+    await arrange.focus(); await f.page.keyboard.press("Enter");
+    await f.page.getByRole("menuitemradio", { name: "按机器", exact: true }).waitFor();
+    await f.page.keyboard.press("Escape");
+    await f.page.waitForFunction((element) => element === document.activeElement, await arrange.elementHandle());
+    assert.equal(f.calls.length, 0, "Presentation and grouping do not submit work");
+};
+
 checks["sessions-arrangement"] = async (f) => {
     const threads = [
         { id: A, title: "Conversation A", project: "scratch", agent: "builder", place: { workspace: "w-a", kind: "canonical", node: "node-one" }, last_at: "2026-09-06T09:00:00Z", count: 1, running: false, questions: 2 },
@@ -2599,7 +2852,7 @@ checks["sessions-arrangement"] = async (f) => {
     ];
     const nodes = [{ name: "node-one", display_name: "树莓派" }, { name: "node-two", display_name: "工作站" }];
     await f.page.route("**/console/conversations", (route) => route.fulfill({ json: { enabled: true, conversations: threads } }));
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "node-one" }, nodes, agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "node-one" }, nodes, agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
     const titles = () => sidebar.locator(".conversation-row .u-title").allInnerTexts();
@@ -2653,7 +2906,7 @@ checks["conversation-work-disclosure"] = async (f) => {
         { ...task("12", A, "scratch"), parent: "11", execution: "idle" },
         { ...task("22", B, "home"), execution: "idle", plan_id: "plan" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.addInitScript((id) => localStorage.setItem("steve.work.open." + id, "1"), A);
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
@@ -2692,7 +2945,7 @@ checks["thread-work-rows-align"] = async (f) => {
         { ...task("9", A, "scratch"), parent: "7", origin: "delegate", member: "gpu-claude", lifecycle: "failed", execution: "idle" },
         { ...task("12", A, "scratch"), parent: "7", origin: "delegate", member: "reviewer", node: other, execution: "running" },
     ];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [{ name: other, display_name: "另一台", online: true }], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node" }, nodes: [{ name: other, display_name: "另一台", online: true }], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] }) }));
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
     await sidebar.getByRole("button", { name: "展开 Conversation A 的任务", exact: true }).click();
@@ -2783,7 +3036,7 @@ checks["preferences-during-a-turn"] = async (f) => {
 // same move, and the default order can always be had back.
 checks["project-drag-reorder"] = async (f) => {
     const projects = [project("alpha"), project("beta"), project("gamma"), project("home")];
-    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [], agents: [], tasks: [], plans: [], projects, attempts: [], landings: [] } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ at, hub: { node: "test-node" }, nodes: [], agents: [], tasks: [], plans: [], projects, attempts: [], landings: [] }) }));
     await f.page.reload();
     const sidebar = f.page.locator(".conversation-sidebar");
     const rows = sidebar.locator('.conversation-project[draggable="true"]');
@@ -2848,7 +3101,7 @@ let failed = 0;
 try {
     for (const name of selected) {
         assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
-        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn" });
+        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn", sandboxed: name.startsWith("preview-html-") || name === "preview-svg-scripts-disabled" });
         try {
             await checks[name](f);
             assert.deepEqual(f.errors, [], "Browser and mocked API errors");

@@ -6,6 +6,7 @@ export interface TransferCommand { command_id: string; expected_epoch: number; t
 export interface PolicyCommand { command_id: string; expected_revision: number; enabled: boolean }
 export interface EligibilityCommand { command_id: string; expected_revision: number; node_id: string; eligible: boolean }
 export interface RenameCommand { command_id: string; expected_revision: number; node_id: string; name: string }
-export type CoordinationCommand = { kind: "transfer"; body: TransferCommand } | { kind: "policy"; body: PolicyCommand } | { kind: "eligibility"; body: EligibilityCommand } | { kind: "name"; body: RenameCommand };
+export interface VotingCommand { command_id: string; expected_revision: number; node_id: string; voting: boolean }
+export type CoordinationCommand = { kind: "transfer"; body: TransferCommand } | { kind: "policy"; body: PolicyCommand } | { kind: "eligibility"; body: EligibilityCommand } | { kind: "name"; body: RenameCommand } | { kind: "voting"; body: VotingCommand };
 export const fetchCoordination = (signal?: AbortSignal) => request<CoordinationView>("/console/coordination", { signal, cache: "no-store" });
 export const executeCoordination = (command: CoordinationCommand) => request<CoordinationView>(`/console/coordination/${command.kind}`, { method: command.kind === "transfer" ? "POST" : "PUT", body: command.body });

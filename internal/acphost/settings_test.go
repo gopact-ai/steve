@@ -2,6 +2,7 @@ package acphost
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/gopact-ai/acp"
@@ -229,6 +230,42 @@ func TestSettingsReachProgressOverTheWire(t *testing.T) {
 		if got.Model != "Mock Fast" {
 			t.Fatalf("snapshot %d model = %q, want %q", i, got.Model, "Mock Fast")
 		}
+		if !reflect.DeepEqual(got, h.Settings(sid)) {
+			t.Fatalf("snapshot %d lost the complete session selectors: %+v", i, got)
+		}
+	}
+}
+
+func TestSettingsSnapshotRejectsUnknownGeneration(t *testing.T) {
+	state := stateFrom(t, codexNewSession)
+	state.setMode("read-only")
+	h := &Host{generation: 7, adapter: "fixture", sessions: map[acp.SessionID]*sessionState{"native": state, "empty": {}}}
+	for _, tc := range []struct {
+		id         acp.SessionID
+		generation uint64
+		known      bool
+	}{
+		{"native", 7, true}, {"native", 6, false}, {"native", 0, false},
+		{"missing", 7, false}, {"empty", 7, true},
+	} {
+		got, known := h.SettingsForGeneration(tc.id, tc.generation)
+		if known != tc.known {
+			t.Fatalf("%s generation %d: known=%t", tc.id, tc.generation, known)
+		}
+		if tc.id == "native" && known {
+			if !reflect.DeepEqual(got, h.Settings(tc.id)) || got.Mode != "Read-only" {
+				t.Fatalf("inconsistent configuration snapshot: %+v", got)
+			}
+			for _, option := range got.Options {
+				if option.ID == "mode" && option.Current != "read-only" {
+					t.Fatal("mode notification disagrees with selector")
+				}
+			}
+		}
+	}
+	delete(h.sessions, "native") // The monitor forgets sessions after exit.
+	if _, known := h.SettingsForGeneration("native", 7); known {
+		t.Fatal("process exit invented an empty known configuration")
 	}
 }
 

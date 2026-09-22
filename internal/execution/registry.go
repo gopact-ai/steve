@@ -294,23 +294,6 @@ func (s *Scope) SetAttempt(id string) {
 	s.key.AttemptID = id
 }
 
-// Resolve forgets a finished, quarantined scope after durable stop evidence
-// was accepted by the attempt service. It cannot finish a still-running owner.
-func (r *Registry) Resolve(attemptID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for s := range r.entries {
-		if s.key.AttemptID != attemptID {
-			continue
-		}
-		select {
-		case <-s.done:
-			delete(r.entries, s)
-		default:
-		}
-	}
-}
-
 // BindTask attaches an admitted chat turn once task creation is durable.
 // It shares the registry lock with Stop and rechecks the persisted epoch.
 func (s *Scope) BindTask(id string) error {

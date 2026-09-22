@@ -393,7 +393,11 @@ func TestRichProjectTransferPreservesMaterialsQuestionsReceiptsAndArtifacts(t *t
 	now := time.Now().UTC()
 	transcript := map[string]any{"replies": map[string][]consoleapi.Reply{"console:a": {{ID: "r1", Conversation: "console:a", ProjectID: "p", At: now, Kind: "reply", Text: "task #1 is original prose", Refs: []material.Ref{{ID: captured.ID}}}}}, "exchanges": map[string][]console.TransferExchange{"console:a": {{Exchange: consoleapi.Exchange{ID: "e1", Conversation: "console:a", ExpectedProject: "p", Input: "next", State: "queued", Key: "client:stable", EnqueuedAt: now}, PayloadHash: "originalhash"}}}, "questions": map[string]consoleapi.PendingQuestion{"q1": {ID: "q1", Project: "p", TaskID: "1", Conversation: "console:a", ExchangeID: "e1", Principal: "owner", State: "pending", CreatedAt: now, Deadline: now.Add(time.Hour)}}}
 	raw, _ := json.Marshal(transcript)
-	if err := book.Document("console").Save(raw); err != nil {
+	var state console.DurableState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, state) }); err != nil {
 		t.Fatal(err)
 	}
 	art := artifact.New(filepath.Join(source, "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
@@ -450,7 +454,7 @@ func TestRichProjectTransferPreservesMaterialsQuestionsReceiptsAndArtifacts(t *t
 	if err != nil || len(frozen) != 1 || frozen[0].Material.Source.Conversation != "console:a" {
 		t.Fatalf("immutable provenance changed: %+v %v", frozen, err)
 	}
-	moved, err := console.ExportProject(targetBook.Document("console"), "p", nil)
+	moved, err := console.ExportProject(targetBook, "p", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

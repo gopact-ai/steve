@@ -62,7 +62,7 @@ const (
 	incarnationFile = "incarnation"
 	databaseFile    = "ledger.db"
 	journalFile     = "effects.log"
-	schemaVersion   = 1
+	schemaVersion   = 2
 )
 
 // Ledger is one open authority.
@@ -77,6 +77,7 @@ type Ledger struct {
 	recovery            bool
 	writerMu            sync.Mutex
 	applyMu             sync.Mutex
+	snapshotGeneration  uint64
 	replication         Replicator
 	replicaFailure      error
 	replicationRequired bool
@@ -139,6 +140,10 @@ func Open(dir string, opts Options) (*Ledger, error) {
 			db.Close()
 			return nil, err
 		}
+	}
+	if err := ensureReadIndexes(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	seen, err := metaUint(db, "incarnation")
 	if err != nil {
@@ -257,7 +262,8 @@ func migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS commands (
 			id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT NOT NULL,
-			received_at TEXT NOT NULL, finished_at TEXT, result TEXT, error TEXT)`,
+			received_at TEXT NOT NULL, finished_at TEXT, result TEXT, error TEXT,
+			acknowledged_by TEXT)`,
 		`CREATE TABLE IF NOT EXISTS operations (
 			id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL,
 			revision INTEGER NOT NULL, incarnation INTEGER NOT NULL,
@@ -278,9 +284,9 @@ func migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS bindings (
 			kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
 			updated_at TEXT NOT NULL, PRIMARY KEY (kind, id))`,
-		`CREATE TABLE IF NOT EXISTS replica_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), version INTEGER NOT NULL)`,
-		`INSERT OR IGNORE INTO replica_state(singleton, version) VALUES (1, 0)`,
-		`CREATE TABLE IF NOT EXISTS replica_commands (id TEXT PRIMARY KEY, version INTEGER NOT NULL UNIQUE, fingerprint TEXT NOT NULL, result BLOB NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS replica_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), version INTEGER NOT NULL, replay_floor INTEGER NOT NULL)`,
+		`INSERT OR IGNORE INTO replica_state(singleton, version, replay_floor) VALUES (1, 0, 0)`,
+		`CREATE TABLE IF NOT EXISTS replica_commands (id TEXT NOT NULL, version INTEGER NOT NULL UNIQUE, fingerprint TEXT NOT NULL, result BLOB NOT NULL, PRIMARY KEY(id, version))`,
 		`CREATE TABLE IF NOT EXISTS effect_entries (seq INTEGER PRIMARY KEY, data TEXT NOT NULL)`,
 	}
 	for _, stmt := range stmts {

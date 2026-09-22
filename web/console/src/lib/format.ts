@@ -1,6 +1,31 @@
 import { intlLocale, translate, type Locale } from "./i18n.ts";
 
-export const number = (value: number, locale: Locale = "zh", options?: Intl.NumberFormatOptions) => new Intl.NumberFormat(intlLocale(locale), options).format(value);
+const numberFormats = new Map<string, Intl.NumberFormat>();
+const relativeFormats = new Map<Locale, Intl.RelativeTimeFormat>();
+const NUMBER_FORMAT_LIMIT = 32;
+
+function numberFormat(locale: Locale, options?: Intl.NumberFormatOptions): Intl.NumberFormat {
+    const entries = Object.entries(Object.getOwnPropertyDescriptors(options || {}));
+    const prototype = options && Object.getPrototypeOf(options);
+    // UI options are scalar data. Leave accessors/inherited options to Intl
+    // rather than changing their semantics while deriving a cache key.
+    if ((prototype && prototype !== Object.prototype) || entries.some(([, descriptor]) => !("value" in descriptor)
+        || (descriptor.value !== undefined && !["string", "number", "boolean"].includes(typeof descriptor.value))
+        || (typeof descriptor.value === "number" && !Number.isFinite(descriptor.value)))) {
+        return new Intl.NumberFormat(intlLocale(locale), options);
+    }
+    const key = JSON.stringify([locale, entries.filter(([, descriptor]) => descriptor.value !== undefined)
+        .map(([name, descriptor]) => [name, descriptor.value]).sort(([a], [b]) => String(a).localeCompare(String(b)))]);
+    let formatter = numberFormats.get(key);
+    if (!formatter) {
+        formatter = new Intl.NumberFormat(intlLocale(locale), options);
+        if (numberFormats.size >= NUMBER_FORMAT_LIMIT) numberFormats.delete(numberFormats.keys().next().value!);
+        numberFormats.set(key, formatter);
+    }
+    return formatter;
+}
+
+export const number = (value: number, locale: Locale = "zh", options?: Intl.NumberFormatOptions) => numberFormat(locale, options).format(value);
 export const dateTime = (value: string | Date, locale: Locale, options: Intl.DateTimeFormatOptions = {}) => {
     const date = value instanceof Date ? value : new Date(value);
     return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat(intlLocale(locale), options).format(date);
@@ -14,7 +39,12 @@ export const relative = (t?: string, locale: Locale = "zh", now = Date.now()) =>
     const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
     if (seconds < 5) return translate(locale, "format.now");
     const [amount, unit]: [number, Intl.RelativeTimeFormatUnit] = seconds < 60 ? [seconds, "second"] : seconds < 3600 ? [Math.round(seconds / 60), "minute"] : seconds < 86400 ? [Math.round(seconds / 3600), "hour"] : [Math.round(seconds / 86400), "day"];
-    return new Intl.RelativeTimeFormat(intlLocale(locale), { numeric: "auto", style: "short" }).format(-amount, unit);
+    let formatter = relativeFormats.get(locale);
+    if (!formatter) {
+        formatter = new Intl.RelativeTimeFormat(intlLocale(locale), { numeric: "auto", style: "short" });
+        relativeFormats.set(locale, formatter);
+    }
+    return formatter.format(-amount, unit);
 };
 
 // bytes reads a size the way a person would say it: three significant

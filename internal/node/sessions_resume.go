@@ -23,6 +23,9 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 			return nil, err
 		}
 		if record.State.Binding == req.Binding {
+			if req.MCPAuthorizationRefresh != nil {
+				return nil, sessionError("forbidden", "MCP authorization refresh requires a new admitted execution")
+			}
 			if record.OpenID != req.CommandID {
 				return nil, sessionError("conflict", "archived observation must identify the original open")
 			}
@@ -37,15 +40,12 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 		// cancelled turn left the native context exactly as consistent as
 		// a completed one, and refusing it would strand the conversation
 		// on this node for good.
-		for _, command := range record.Commands {
-			if !command.Settled || !command.State.Settled() {
-				return nil, sessionError("uncertain", "original native inputs must be settled before resuming context")
-			}
+		store, err := s.recordsStore()
+		if err != nil {
+			return nil, err
 		}
-		for _, question := range record.State.Questions {
-			if !question.State.Settled() || (question.State == nodewire.SessionQuestionAnswered && question.Answer == nil) {
-				return nil, sessionError("uncertain", "original native question requires reconciliation")
-			}
+		if err := store.resumable(id); err != nil {
+			return nil, err
 		}
 		if record.ResumeTarget == "" || record.ResumeTarget == target {
 			return &record, nil
@@ -74,7 +74,15 @@ func validateResumeSource(req nodewire.SessionRequest, record sessionRecord) err
 		return sessionError("forbidden", "stale native context authority")
 	}
 	before, after := record.State.Binding, req.Binding
-	if before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || record.State.Harness != req.Harness || record.ConfigHash != sessionConfigHash(req) {
+	configMatches := record.ConfigHash == sessionConfigHash(req)
+	if req.MCPAuthorizationRefresh != nil {
+		previous, err := previousMCPConfigHash(req)
+		if err != nil {
+			return err
+		}
+		configMatches = configMatches || record.ConfigHash == previous
+	}
+	if before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || record.State.Harness != req.Harness || !configMatches {
 		return sessionError("forbidden", "native context differs from the admitted session or configuration")
 	}
 	return nil

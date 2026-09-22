@@ -12,12 +12,13 @@ import (
 // FileContent reads the exact immutable blob at a snapshot. It never follows
 // a worktree path or symlink, and refuses truncation for captured references.
 func (s *Store) FileContent(ctx context.Context, projectID, commit, name string, maxBytes int64) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.Review.defaults().Timeout)
+	limits, review := s.policy()
+	ctx, cancel := context.WithTimeout(ctx, review.defaults().Timeout)
 	defer cancel()
 	if name == "" || path.IsAbs(name) || strings.Contains(name, "\\") || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") || maxBytes <= 0 {
 		return nil, errors.New("invalid snapshot file reference")
 	}
-	r, err := s.reviewRepo(ctx, projectID, "", commit)
+	r, err := s.reviewRepoWithPolicy(ctx, projectID, "", commit, limits, review)
 	if err != nil {
 		return nil, err
 	}

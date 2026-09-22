@@ -26,11 +26,12 @@ type applicationOpenRecovery interface {
 }
 
 type applicationStops struct {
-	mu       sync.Mutex
-	attempts *attempt.Service
-	tasks    *task.Store
-	sessions applicationStopSessions
-	after    string
+	mu         sync.Mutex
+	attempts   *attempt.Service
+	tasks      *task.Store
+	sessions   applicationStopSessions
+	executions *execution.Registry
+	after      string
 }
 
 func newApplicationStops(attempts *attempt.Service, tasks *task.Store, sessions applicationStopSessions) *applicationStops {
@@ -66,6 +67,11 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 		}
 		seen[r.ID] = true
 		if r.State.Terminal() && !r.Unsettled && r.SessionSettled != nil && *r.SessionSettled && (r.StopEvidence != "task-stop/"+r.ID || !s.accountingPending(r)) {
+			if r.StopEvidence == "task-stop/"+r.ID {
+				// The durable projection may have completed before the local
+				// owner or its stop handler joined. Retry only memory cleanup.
+				s.resolveStopped(r)
+			}
 			continue
 		}
 		if _, ok := s.tasks.Get(r.TaskID); ok && errors.Is(s.tasks.CheckExecution(*r.Execution), task.ErrExecutionStopped) {
@@ -149,7 +155,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 	if err != nil {
 		return failed(err)
 	}
-	expected := nodewire.SessionBinding{PluginRuntimeID: r.PluginRuntimeID(), ProjectID: r.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, r.Agent), TaskID: r.TaskID, AttemptID: r.ID, NodeID: r.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(r), TaskEpoch: r.Execution.Epoch}
+	expected := sessionBinding(r, tracked)
 	if state.ID != r.Session || state.Harness != r.Harness || state.Binding != expected || state.Command != nil && state.Command.ID != attempt.InputCommandID(r) {
 		return failed(errors.New("node observation belongs to another execution"))
 	}
@@ -180,7 +186,14 @@ func (s *applicationStops) projectStopped(r attempt.Record) error {
 	if err := s.tasks.SettleAttempt(r.TaskID, r.ID, r.TurnID, r.EndedAt, task.OutcomeCancelled, stoppedAccounting(r)); err != nil {
 		return fmt.Errorf("task %s attempt %s: native stop confirmed; original usage accounting remains pending: %w", r.TaskID, r.ID, err)
 	}
+	s.resolveStopped(r)
 	return nil
+}
+
+func (s *applicationStops) resolveStopped(r attempt.Record) {
+	if s.executions != nil && r.Execution != nil {
+		s.executions.ResolveStopped(r.ID, *r.Execution)
+	}
 }
 
 func (s *applicationStops) accountingPending(r attempt.Record) bool {

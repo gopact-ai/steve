@@ -1,3 +1,4 @@
+import { workState } from "./work-fixture.mjs";
 // Pure request lifecycle checks; browser scenarios below use only mocked APIs.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -42,8 +43,20 @@ async function submissionSupportChecks() {
         const request = gate(); requests.push({ ...request, path }); return request.promise;
     };
     try {
-        const source = readFileSync(new URL("../../web/console/src/lib/api/console.ts", import.meta.url), "utf8").replace('import { request, UnsentRequestError } from "../http";', 'const request = globalThis.__supportRequest; class UnsentRequestError extends Error {}');
-        const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+        // The stub covers whatever the module takes from ../http: a name it
+        // starts importing without a stub here fails loudly instead of
+        // leaving a relative import no data: URL can resolve.
+        const stubs = {
+            request: "const request = globalThis.__supportRequest;",
+            UnsentRequestError: "class UnsentRequestError extends Error {}",
+            HTTPError: "class HTTPError extends Error { constructor(message, status) { super(message); this.status = status; } }",
+        };
+        const source = readFileSync(new URL("../../web/console/src/lib/api/console.ts", import.meta.url), "utf8");
+        const boundary = source.match(/^import \{([^}]*)\} from "\.\.\/http";$/m);
+        assert.ok(boundary, "console.ts must import its HTTP boundary from ../http");
+        const names = boundary[1].split(",").map((name) => name.trim()).filter(Boolean);
+        assert.deepEqual(names.filter((name) => !stubs[name]), [], "Stub every name console.ts imports from ../http");
+        const code = ts.transpileModule(source.replace(boundary[0], names.map((name) => stubs[name]).join(" ")), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
         const api = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
         for (const outcome of ["unsupported", "failed"]) {
             const offset = requests.length;
@@ -160,7 +173,7 @@ if (process.env.PURE_ONLY !== "1") {
             const channel = url.searchParams.get("conversation") || A;
             if (url.pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
             if (url.pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-            if (url.pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", version: "test", started: at }, nodes: [{ name: "test-node", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [project], inbox: f.inbox, attempts: [], landings: [] } });
+            if (url.pathname === "/state") return route.fulfill({ json: workState({ at, hub: { node: "test-node", version: "test", started: at }, nodes: [{ name: "test-node", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [project], inbox: f.inbox, attempts: [], landings: [] }) });
             if (url.pathname === "/console/context") {
                 const agent = channel === B ? "agent-b" : f.agent;
                 f.contextReads.push(channel);
@@ -196,7 +209,7 @@ if (process.env.PURE_ONLY !== "1") {
                 if (req.method() === "PUT") { f.settings = req.postDataJSON(); f.writes.push(f.settings); }
                 return route.fulfill({ json: { settings: f.settings } });
             }
-            if (url.pathname === "/history") { f.historyReads++; return route.fulfill({ json: { entries: [], next: 0 } }); }
+            if (url.pathname === "/history") { f.historyReads++; return route.fulfill({ json: { entries: [], next: "" } }); }
             f.errors.push(`Unmocked API ${url.pathname}`);
             return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
         });

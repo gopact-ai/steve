@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -8,23 +9,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-// Store persists tasks with the same durable-replace discipline as the session
-// state file. It stays JSON on purpose: the gateway is the only writer, and the
-// data that would outgrow a single file — transcripts and tree snapshots — is
-// meant to land in a sharded archive on disk, not in here.
+// Store serves tasks from memory. Production writes changed ledger records;
+// the file backend preserves whole-document replacement for isolated tests.
 type Store struct {
-	book *ledger.Ledger
-	doc  ledger.Doc
-	mu   sync.Mutex
-	data data
-	now  func() time.Time
+	book      *ledger.Ledger
+	revision  uint64
+	doc       ledger.Doc
+	mu        sync.Mutex
+	data      data
+	readIndex readIndex
+	now       func() time.Time
 	// Default budgets for new tasks; configurable so long-running work is
 	// a deployment decision, not a code change.
 	maxTurns   int
 	maxElapsed time.Duration
+	// BudgetSource is wired once before serving. Each new task captures its
+	// defaults; retained tasks keep their durable budget.
+	BudgetSource func() (int, time.Duration)
 	// observe is told each task id a write changed, after the write
 	// landed; it runs off the store's lock.
 	observe func(id string)
@@ -49,25 +54,12 @@ func Open(path string) (*Store, error) {
 	return openWith(&ledger.FileDocument{Path: path})
 }
 
-// OpenLedger keeps the store in the ledger. legacy names the JSON file an
-// earlier deployment used; it is imported once and retired.
-func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
-	doc := l.Document("tasks")
-	if _, err := doc.Import(legacy); err != nil {
-		return nil, err
-	}
-	s, err := openWith(doc)
-	if err == nil {
-		s.book = l
-	}
-	return s, err
-}
-
 func openWith(doc ledger.Doc) (*Store, error) {
 	s := &Store{
 		doc: doc, data: data{NextID: 1, Tasks: map[string]*Task{}, Meta: map[string]Meta{}}, now: time.Now,
 		maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed,
 	}
+	s.rebuildReadIndexLocked()
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read tasks: %w", err)
@@ -89,6 +81,7 @@ func openWith(doc ledger.Doc) (*Store, error) {
 		loaded.NextID = 1
 	}
 	s.data = loaded
+	s.rebuildReadIndexLocked()
 	return s, nil
 }
 
@@ -109,11 +102,15 @@ func (s *Store) Create(t Task) (Task, error) {
 	}
 	t.CreatedAt = now
 	t.UpdatedAt = now
+	maxTurns, maxElapsed := s.maxTurns, s.maxElapsed
+	if s.BudgetSource != nil {
+		maxTurns, maxElapsed = s.BudgetSource()
+	}
 	if t.Budget.MaxTurns == 0 {
-		t.Budget.MaxTurns = s.maxTurns
+		t.Budget.MaxTurns = maxTurns
 	}
 	if t.Budget.MaxElapsed == 0 {
-		t.Budget.MaxElapsed = s.maxElapsed
+		t.Budget.MaxElapsed = maxElapsed
 	}
 	next := s.clone()
 	next.NextID = s.data.NextID + 1
@@ -256,10 +253,7 @@ func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {
 
 // SetAnchor records where the task's latest turn is anchored in the chat,
 // so a restarted gateway can deliver into the right conversation.
-func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error {
-	if messageID == "" {
-		return nil
-	}
+func (s *Store) SetAnchor(id string, address channel.Address, chatID, chatType, cardID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.clone()
@@ -267,8 +261,11 @@ func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error 
 	if !ok {
 		return fmt.Errorf("task %s not found", id)
 	}
+	if address.Channel != stored.Transport || address.Conversation != stored.Channel {
+		return fmt.Errorf("task %s destination cannot be rebound", id)
+	}
 	stored.ChatID = chatID
-	stored.AnchorMessage = messageID
+	stored.AnchorMessage = address.Message
 	stored.ChatType = chatType
 	// A new turn starts a clean leftover slate.
 	stored.OpenCard = cardID
@@ -352,7 +349,7 @@ func (s *Store) Interrupted() []Task {
 // ancestor in the same durable write. Concurrent siblings share the same
 // ancestor budget; a task may have only one open attempt of its own.
 func (s *Store) Begin(id, member, node, session string) (Task, error) {
-	return s.begin(id, member, node, session, "")
+	return s.begin(id, member, node, session, "", nil)
 }
 
 // BeginContinuation cannot reopen a paused/failed parent or charge a different
@@ -361,10 +358,10 @@ func (s *Store) BeginContinuation(id, channel, member, node string) (Task, error
 	if channel == "" {
 		return Task{}, fmt.Errorf("continuation requires a conversation")
 	}
-	return s.begin(id, member, node, "", channel)
+	return s.begin(id, member, node, "", channel, nil)
 }
 
-func (s *Store) begin(id, member, node, session, channel string) (Task, error) {
+func (s *Store) begin(id, member, node, session, conversation string, input *TurnInput) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.clone()
@@ -372,8 +369,30 @@ func (s *Store) begin(id, member, node, session, channel string) (Task, error) {
 	if !ok {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
-	if channel != "" && (stored.Channel != channel || stored.Member != member || stored.State != StateRunning) {
+	if input != nil && input.ResumeAdmission != (ResumeAdmission{}) {
+		if err := checkResumeAdmission(*stored, input.ResumeAdmission); err != nil {
+			return Task{}, err
+		}
+		if err := checkExecution(next.Tasks, ExecutionToken{TaskID: id, Epoch: input.ResumeAdmission.Epoch}); err != nil {
+			return Task{}, err
+		}
+		if !input.Continuation || input.TurnID == "" || stored.Member != member {
+			return Task{}, fmt.Errorf("%w: resume input binding changed", ErrExecutionStopped)
+		}
+		stored.ResumeGrant.Consumed, stored.ResumeGrant.TurnID = true, input.TurnID
+	} else if stored.ResumeGrant.Admission.Valid() && !stored.ResumeGrant.Consumed &&
+		stored.ResumeGrant.Admission.Epoch == stored.ExecutionEpoch {
+		return Task{}, fmt.Errorf("%w: task %s requires its accepted resume input", ErrExecutionStopped, id)
+	}
+	if conversation != "" && (stored.Channel != conversation || stored.Member != member || stored.State != StateRunning) {
 		return Task{}, fmt.Errorf("%w: task %s is no longer available", ErrContinuationUnavailable, id)
+	}
+	if input != nil {
+		if input.Address.Channel != stored.Transport || input.Address.Conversation != stored.Channel {
+			return Task{}, fmt.Errorf("task %s destination cannot be rebound", id)
+		}
+		stored.ChatID, stored.AnchorMessage, stored.ChatType = input.ChatID, input.Address.Message, input.ChatType
+		stored.OpenCard, stored.Interim = input.CardID, nil
 	}
 	if row := stored.primaryAttempt(); row != nil && row.Open() {
 		return Task{}, fmt.Errorf("task %s already has an open attempt", id)
@@ -391,6 +410,9 @@ func (s *Store) begin(id, member, node, session, channel string) (Task, error) {
 	stored.Attempts = append(stored.Attempts, Attempt{
 		Member: member, Node: node, Session: session, StartedAt: now, ExecutionEpoch: stored.ExecutionEpoch,
 	})
+	if input != nil {
+		stored.Attempts[len(stored.Attempts)-1].TurnID = input.Address.Message
+	}
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err
 	}
@@ -485,6 +507,40 @@ func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls in
 	return *stored.clone(), nil
 }
 
+// FinishUnstarted closes an open attempt that never ran, ending it when it
+// began: the turn its Begin reserved stays charged to the tree, the time
+// since it does not — that was the process being down, not work. A row
+// bound to an execution is that execution's to settle, by its receipt.
+func (s *Store) FinishUnstarted(id string, outcome Outcome) (Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.clone()
+	stored, ok := next.Tasks[id]
+	if !ok {
+		return Task{}, fmt.Errorf("task %s not found", id)
+	}
+	attempt := stored.primaryAttempt()
+	if attempt == nil || !attempt.Open() {
+		return Task{}, fmt.Errorf("task %s has no open attempt", id)
+	}
+	if attempt.ExecutionID != "" {
+		return Task{}, fmt.Errorf("task %s attempt is bound to execution %s", id, attempt.ExecutionID)
+	}
+	lineage, err := taskLineage(next.Tasks, id)
+	if err != nil {
+		return Task{}, err
+	}
+	attempt.EndedAt, attempt.Outcome = attempt.StartedAt, outcome
+	now := s.now()
+	for _, member := range lineage {
+		member.UpdatedAt = now
+	}
+	if err := s.replaceLocked(next); err != nil {
+		return Task{}, err
+	}
+	return *stored.clone(), nil
+}
+
 func (s *Store) Advance(id string, to State) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -562,6 +618,13 @@ func (s *Store) clone() data {
 }
 
 func (s *Store) replaceLocked(next data) error {
+	if s.book != nil {
+		return s.replaceRecordsLocked(context.Background(), next, nil)
+	}
+	changes, err := recordChanges(s.data, next)
+	if err != nil {
+		return err
+	}
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tasks: %w", err)
@@ -569,20 +632,22 @@ func (s *Store) replaceLocked(next data) error {
 	if err := s.doc.Save(raw); err != nil {
 		return fmt.Errorf("save tasks: %w", err)
 	}
-	s.installLocked(next)
+	s.installLocked(next, changes)
 	return nil
 }
 
-func (s *Store) installLocked(next data) {
+func (s *Store) installLocked(next data, changes []recordChange) {
 	if s.observe != nil {
 		var changed []string
-		for id, t := range next.Tasks {
-			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) || !sameDelivery(prev.Delivery, t.Delivery) {
-				changed = append(changed, id)
+		seen := map[string]bool{}
+		for _, change := range changes {
+			if change.kind != taskKind && change.kind != taskMetaKind || seen[change.id] {
+				continue
 			}
-		}
-		for id := range s.data.Tasks {
-			if _, ok := next.Tasks[id]; !ok {
+			id := change.id
+			seen[id] = true
+			t, prev := next.Tasks[id], s.data.Tasks[id]
+			if t == nil || prev == nil || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) || !sameDelivery(prev.Delivery, t.Delivery) {
 				changed = append(changed, id)
 			}
 		}
@@ -595,5 +660,6 @@ func (s *Store) installLocked(next data) {
 			}()
 		}
 	}
+	s.updateReadIndexLocked(next, changes)
 	s.data = next
 }

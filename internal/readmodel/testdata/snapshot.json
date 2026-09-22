@@ -450,6 +450,8 @@
       "member": "builder",
       "node": "node-a",
       "parent": "1",
+      "children_count": 0,
+      "children_complete": true,
       "turns": 0,
       "max_turns": 24,
       "elapsed": "0s",
@@ -458,6 +460,7 @@
       "tokens": {},
       "seconds": 0,
       "channel": "chat",
+      "attempt_count": 0,
       "lifecycle": "draft",
       "execution": "running",
       "attention": 0,
@@ -472,6 +475,8 @@
       "children": [
         "2"
       ],
+      "children_count": 1,
+      "children_complete": true,
       "turns": 0,
       "max_turns": 24,
       "elapsed": "0s",
@@ -481,6 +486,7 @@
       "tokens": {},
       "seconds": 0,
       "channel": "chat",
+      "attempt_count": 0,
       "lifecycle": "draft",
       "execution": "running",
       "attention": 4,
@@ -508,6 +514,24 @@
       ]
     }
   ],
+  "task_coverage": {
+    "total": 2,
+    "live": 2,
+    "closed": 0,
+    "roots": 1,
+    "completed_roots": 0,
+    "cancelled_roots": 0,
+    "paused_roots": 0,
+    "included": 2,
+    "recent_limit": 20,
+    "recent_closed": 0,
+    "has_more_closed": false
+  },
+  "plan_coverage": {
+    "total": 1,
+    "included": 1,
+    "has_more": false
+  },
   "attempts": [
     {
       "id": "live",
@@ -614,6 +638,15 @@
   },
   "projects": [
     {
+      "task_counts": {
+        "total": 0,
+        "live": 0,
+        "closed": 0,
+        "roots": 0,
+        "completed_roots": 0,
+        "cancelled_roots": 0,
+        "paused_roots": 0
+      },
       "id": "p",
       "node": "hub-1",
       "path": "/work/p",
@@ -652,6 +685,15 @@
       ]
     },
     {
+      "task_counts": {
+        "total": 0,
+        "live": 0,
+        "closed": 0,
+        "roots": 0,
+        "completed_roots": 0,
+        "cancelled_roots": 0,
+        "paused_roots": 0
+      },
       "id": "q",
       "node": "hub-1",
       "path": "/work/q",
@@ -689,40 +731,6 @@
       ]
     }
   ],
-  "usage": {
-    "by_day": null,
-    "by_agent": null,
-    "by_model": null,
-    "total": {
-      "key": "",
-      "tokens": {},
-      "seconds": 0,
-      "attempts": 0
-    },
-    "timezone": "",
-    "periods": null,
-    "by_harness": null,
-    "by_trigger": null,
-    "by_project": null,
-    "tasks": {
-      "count": 0,
-      "measured": 0,
-      "min_seconds": 0,
-      "max_seconds": 0,
-      "average_seconds": 0,
-      "total_seconds": 0
-    },
-    "by_task": null,
-    "throughput": {
-      "window_tpm": 0,
-      "active_tpm": 0,
-      "peak_tpm": 0,
-      "estimated": false,
-      "measured_tokens": 0,
-      "unmeasured_tokens": 0,
-      "active_seconds": 0
-    }
-  },
   "inbox": [
     {
       "id": "disclosure",
@@ -846,10 +854,6 @@
     },
     {
       "name": "ledger-attention",
-      "wired": true
-    },
-    {
-      "name": "ledger-usage",
       "wired": true
     }
   ]

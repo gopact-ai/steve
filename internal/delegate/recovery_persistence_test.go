@@ -91,15 +91,14 @@ func TestRetainedDelegateWaitsForBudgetStateAndResultDurabilityBeforeReportingDo
 	for _, phase := range []string{"budget", "state", "result"} {
 		t.Run(phase, func(t *testing.T) {
 			w, db, parent, child := boundDelegatePersistenceFixture(t)
-			base := fmt.Sprintf(`$.tasks."%s"`, child.ID)
-			condition := fmt.Sprintf("json_extract(NEW.data, '%s.budget.tokens.total') > 0", base)
+			condition := "json_extract(NEW.data, '$.budget.tokens.total') > 0"
 			if phase == "state" {
-				condition = fmt.Sprintf("json_extract(NEW.data, '%s.state') = 'done'", base)
+				condition = "json_extract(NEW.data, '$.state') = 'done'"
 			}
 			if phase == "result" {
-				condition = fmt.Sprintf("json_type(NEW.data, '%s.result') IS NOT NULL", base)
+				condition = "json_type(NEW.data, '$.result') IS NOT NULL"
 			}
-			if _, err := db.Exec("CREATE TRIGGER reject_task_write BEFORE UPDATE OF data ON bindings WHEN NEW.kind = 'document' AND NEW.id = 'tasks' AND " + condition + " BEGIN SELECT RAISE(FAIL, 'task write unavailable'); END"); err != nil {
+			if _, err := db.Exec(fmt.Sprintf("CREATE TRIGGER reject_task_write BEFORE UPDATE OF data ON bindings WHEN NEW.kind = 'task' AND NEW.id = '%s' AND %s BEGIN SELECT RAISE(FAIL, 'task write unavailable'); END", child.ID, condition)); err != nil {
 				t.Fatal(err)
 			}
 			service := recoveredDelegateService(t, w, w.sessions)

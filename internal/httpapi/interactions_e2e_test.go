@@ -23,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -44,7 +45,7 @@ type interactionE2E struct {
 	client    *http.Client
 }
 
-func newInteractionE2E(t *testing.T, bin string, noMedia bool) *interactionE2E {
+func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...console.DurableState) *interactionE2E {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -56,7 +57,7 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool) *interactionE2E {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { materials.Close() })
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(book, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,12 +82,16 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool) *interactionE2E {
 	coordinator.SetIdentity("owner", nil)
 	coordinator.SetProjects(projects, "scratch", "")
 	coordinator.SetAttempts(attempt.New(book))
-	coordinator.SetArtifacts(artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()}))
+	artifacts := artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
+	coordinator.SetArtifacts(artifacts)
 	tasks, err := task.OpenLedger(book, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	coordinator.SetTasks(tasks, "")
+	registry := execution.New(t.Context(), tasks)
+	coordinator.SetExecution(registry)
+	artifacts.SetExecution(registry)
 	service := console.New(coordinator, "owner", nil)
 	service.SetMaterials(materials, func(ctx context.Context, conversation, principal, projectID string) error {
 		if principal != "owner" || projectID != "scratch" {
@@ -101,7 +106,12 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool) *interactionE2E {
 		}
 		return nil
 	})
-	if err := service.Persist(book.Document("console")); err != nil {
+	for _, saved := range checkpoint {
+		if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, saved) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
 	server, err := NewServer(readmodel.New(readmodel.Sources{}), ServerConfig{Addr: "127.0.0.1:0", Token: "test-token"})
@@ -331,19 +341,13 @@ func TestConsoleMaterialsAndQuestionsACPIntegration(t *testing.T) {
 		first := newInteractionE2E(t, bin, false)
 		e := first.submit(t, "console:e2e", "askme", "before-crash")
 		q := first.pending(t, e.ID)
-		checkpoint, _, err := first.book.Document("console").Load()
+		checkpoint, err := console.LoadState(first.book)
 		if err != nil {
 			t.Fatal(err)
 		}
 		first.json(t, "/console/questions/"+q.ID+"/answer", consoleapi.QuestionAnswer{CommandID: "cleanup", Decision: "cancel"}, 200)
 		_ = first.reply(t, e)
-		restarted := newInteractionE2E(t, bin, false)
-		if err := restarted.book.Document("console").Save(checkpoint); err != nil {
-			t.Fatal(err)
-		}
-		if err := restarted.service.Persist(restarted.book.Document("console")); err != nil {
-			t.Fatal(err)
-		}
+		restarted := newInteractionE2E(t, bin, false, checkpoint)
 		list := restarted.service.Questions("")
 		if len(list) != 1 || list[0].State != "interrupted" {
 			t.Fatalf("restart guessed a live callback: %+v", list)

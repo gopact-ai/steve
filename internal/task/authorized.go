@@ -1,9 +1,7 @@
 package task
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -43,38 +41,14 @@ func (s *Store) replaceAuthorizedLocked(ctx context.Context, token ExecutionToke
 	if s.book == nil {
 		return errors.New("authorized task operation requires the ledger")
 	}
-	raw, err := json.MarshalIndent(next, "", "  ")
-	if err != nil {
-		return err
-	}
-	expected, err := json.MarshalIndent(s.data, "", "  ")
-	if err != nil {
-		return err
-	}
-	err = s.book.Update(ctx, func(tx *ledger.Tx) error {
+	return s.replaceRecordsLocked(ctx, next, func(tx *ledger.Tx) error {
 		if guard != nil {
 			if err := guard(tx); err != nil {
 				return err
 			}
 		}
-		if err := CheckExecutionTx(tx, &token); err != nil {
-			return err
-		}
-		actual, found, err := tx.LoadDocument("tasks")
-		if err != nil {
-			return err
-		}
-		var currentJSON, expectedJSON bytes.Buffer
-		if !found || json.Compact(&currentJSON, actual) != nil || json.Compact(&expectedJSON, expected) != nil || !bytes.Equal(currentJSON.Bytes(), expectedJSON.Bytes()) {
-			return ledger.ErrConflict
-		}
-		return tx.StoreDocument("tasks", raw)
+		return CheckExecutionTx(tx, &token)
 	})
-	if err != nil {
-		return err
-	}
-	s.installLocked(next)
-	return nil
 }
 
 // SetDeliveryAuthorized records consumption under the original parent's grant.

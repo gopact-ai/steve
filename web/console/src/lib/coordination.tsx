@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useResourceRead } from "@/hooks/use-resource-read";
+import { useEventCallback } from "@/hooks/use-event-callback";
 import { useI18n } from "@/providers/locale-provider";
-import { useFleet } from "./fleet";
+import { useFleet, useFleetEvents } from "./fleet";
 import { HTTPError } from "./http";
 import { executeCoordination, fetchCoordination, type CoordinationCommand, type CoordinationView } from "./api/coordination";
 
@@ -21,7 +22,8 @@ function validView(value: CoordinationView) { return value && typeof value.enabl
 
 export function CoordinationProvider({ children }: { children: ReactNode }) {
     const { t } = useI18n();
-    const { live, events } = useFleet();
+    const { live } = useFleet();
+    const events = useFleetEvents();
     const [view, setView] = useState<CoordinationView | null>(null);
     const currentView = useRef<CoordinationView | null>(null);
     const [error, setError] = useState("");
@@ -51,7 +53,7 @@ export function CoordinationProvider({ children }: { children: ReactNode }) {
     useEffect(() => { void load(); }, [live, changed, load]);
     useEffect(() => { if (!view?.enabled) return; const timer = window.setInterval(() => void load(), 5000); return () => window.clearInterval(timer); }, [view?.enabled, load]);
 
-    async function execute(command?: CoordinationCommand) {
+    const execute = useEventCallback(async (command?: CoordinationCommand) => {
         if (acting.current) return false;
         let current = currentView.current;
         const stored = currentOperations.current.pending;
@@ -80,12 +82,17 @@ export function CoordinationProvider({ children }: { children: ReactNode }) {
             await load();
             return !currentOperations.current.pending;
         } finally { acting.current = false; setBusy(false); }
-    }
-    function acknowledgeRejection() {
+    });
+    const retry = useEventCallback(() => execute());
+    const acknowledgeRejection = useEventCallback(() => {
         const current = currentOperations.current;
         if (current.pending?.state !== "rejected" || acting.current) return;
         if (persist({ history: [...current.history, current.pending] })) { setError(""); setNotice(""); }
-    }
-    return <CoordinationContext.Provider value={{ view, error, busy, notice, pending: operations.pending, history: operations.history, refresh: load, run: execute, retry: () => execute(), acknowledgeRejection }}>{children}</CoordinationContext.Provider>;
+    });
+    const value = useMemo(() => ({
+        view, error, busy, notice, pending: operations.pending, history: operations.history,
+        refresh: load, run: execute, retry, acknowledgeRejection,
+    }), [view, error, busy, notice, operations.pending, operations.history, load, execute, retry, acknowledgeRejection]);
+    return <CoordinationContext.Provider value={value}>{children}</CoordinationContext.Provider>;
 }
 export function useCoordination() { const value = useContext(CoordinationContext); if (!value) throw new Error("useCoordination outside CoordinationProvider"); return value; }

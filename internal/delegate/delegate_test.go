@@ -85,6 +85,7 @@ func (fakeEndpoints) MCPEndpoint(_ context.Context, nodeName string) (string, er
 // --- fixture -----------------------------------------------------------
 
 type world struct {
+	book     *ledger.Ledger
 	tasks    *task.Store
 	sessions *fakeSessions
 	gate     *agentmcp.Server

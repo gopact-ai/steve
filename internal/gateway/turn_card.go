@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/card"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -20,17 +23,20 @@ type cardPoster interface {
 	PatchCard(context.Context, string, []byte) error
 }
 
-// cardMinInterval is the floor between patches. The card is not a live view
-// of the agent's output — it reports progress at the points where something
-// actually changed — so this only smooths bursts of real events.
+// cardMinInterval coalesces changed progress snapshots into at most one
+// ordinary patch per interval. No timer runs when there is nothing new.
 var cardMinInterval = 3 * time.Second
 
 type turnUI struct {
-	g      *Gateway
-	msg    feishu.InboundMessage
-	listen bool
-	copy   card.Copy
+	g          *Gateway
+	msg        feishu.InboundMessage
+	listen     bool
+	resultOnly bool
+	copy       card.Copy
 
+	// sendMu serializes card delivery. Acquire it before mu when both are
+	// needed, and render only after admission so queued sends use fresh state.
+	sendMu    sync.Mutex
 	mu        sync.Mutex
 	state     card.Turn
 	cardID    string
@@ -39,7 +45,6 @@ type turnUI struct {
 	dirty     bool
 	lastPatch time.Time
 	timer     *time.Timer
-	wg        sync.WaitGroup
 	reaction  string
 	turnID    string
 	style     string
@@ -58,6 +63,7 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			Failed:         g.text.T(i18n.CardFailed),
 			Cancelled:      g.text.T(i18n.CardCancelled),
 			EarlierTools:   g.text.T(i18n.CardEarlierTools),
+			Partial:        g.text.T(i18n.CardPartial),
 			Execution:      g.text.T(i18n.CardExecution),
 			Plan:           g.text.T(i18n.CardPlan),
 			EarlierSteps:   g.text.T(i18n.CardEarlierSteps),
@@ -70,6 +76,8 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			Write:          g.text.T(i18n.CardWrite),
 			Awaiting:       g.text.T(i18n.CardAwaiting),
 			Waking:         g.text.T(i18n.CardWaking),
+			Finishing:      g.text.T(i18n.CardFinishing),
+			Saving:         g.text.T(i18n.CardSaving),
 			Stop:           g.text.T(i18n.CardStop),
 			Retry:          g.text.T(i18n.CardRetry),
 			ApprovalTitle:  g.text.T(i18n.CardApprovalTitle),
@@ -113,6 +121,32 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 	return ui
 }
 
+// A retained result has no new live turn. Render only its final delivery,
+// without an opener, reaction or native-progress worker.
+func (g *Gateway) newResultUI(msg feishu.InboundMessage) *turnUI {
+	ui := g.newTurnUI(msg, true)
+	ui.listen, ui.resultOnly = silentListen(msg), true
+	return ui
+}
+
+func (u *turnUI) closeProgress() {
+	u.stopProgress()
+	// A queued flush checks closed after acquiring sendMu; it cannot admit
+	// another patch after this barrier, even if its timer already fired.
+	u.sendMu.Lock()
+	u.sendMu.Unlock()
+}
+
+func (u *turnUI) stopProgress() {
+	u.mu.Lock()
+	u.closed = true
+	if u.timer != nil {
+		u.timer.Stop()
+		u.timer = nil
+	}
+	u.mu.Unlock()
+}
+
 func (u *turnUI) setPhase(p card.Phase) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -139,7 +173,7 @@ func (u *turnUI) setApproval(a *card.Approval) {
 		u.timer = nil
 	}
 	u.mu.Unlock()
-	u.flush()
+	u.flushProgress(true)
 }
 
 func (u *turnUI) setQuestion(q *card.Question) {
@@ -156,14 +190,12 @@ func (u *turnUI) setQuestion(q *card.Question) {
 		u.timer = nil
 	}
 	u.mu.Unlock()
-	u.flush()
+	u.flushProgress(true)
 }
 
-// progress records every snapshot but only repaints on the ones that carry
-// news. Streaming each token turned the card into a live terminal and cost a
-// patch per chunk; what a person wants from a card they are not staring at is
-// "what has it got done", which changes when a step or a tool changes — not
-// when the answer grows by a word.
+// progress records every snapshot and schedules changed card content.
+// Streaming text uses the same coalescing timer as tools and plans, so it
+// reaches the card before finish without requiring a patch for every token.
 func (u *turnUI) progress(p card.Progress) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -171,6 +203,14 @@ func (u *turnUI) progress(p card.Progress) {
 		return
 	}
 	news := isMilestone(u.state, p)
+	// Some execution paths report content without a phase callback. Content
+	// proves execution has started; configuration and usage alone do not.
+	// Never demote an explicit later phase such as finishing or saving.
+	if u.state.Phase == card.PhaseWaking &&
+		(p.Answer != "" || p.Reasoning != "" || len(p.Tools) > 0 || len(p.Plan) > 0) {
+		u.state.Phase = card.PhaseRunning
+		news = true
+	}
 	u.state.Answer = p.Answer
 	u.state.Reasoning = p.Reasoning
 	u.state.Tools = append([]card.Tool(nil), p.Tools...)
@@ -191,35 +231,31 @@ func (u *turnUI) progress(p card.Progress) {
 	}
 	u.state.UpdatedAt = time.Now()
 	if !news {
-		// Kept, not drawn: it rides along with the next real change, and
-		// with the final render either way.
 		return
 	}
 	u.dirty = true
 	u.scheduleLocked()
 }
 
-// isMilestone answers "is there anything new to tell the user". A plan step
-// moving, a tool starting or finishing, or the model becoming known are all
-// things a person would want a notification for. More assistant text is not.
+// isMilestone detects changed card content, not just tool/plan transitions.
+// Compare settings as rendered: selector metadata is not visible, and an
+// empty settings snapshot retains the identity already stored by progress.
 func isMilestone(state card.Turn, next card.Progress) bool {
-	if len(state.Plan) != len(next.Plan) {
+	if state.Answer != next.Answer || state.Reasoning != next.Reasoning ||
+		!slices.Equal(state.Plan, next.Plan) ||
+		!slices.EqualFunc(state.Tools, next.Tools, sameCardTool) ||
+		!reflect.DeepEqual(state.Usage, next.Usage) {
 		return true
 	}
-	for i := range next.Plan {
-		if state.Plan[i] != next.Plan[i] {
-			return true
-		}
-	}
-	if len(state.Tools) != len(next.Tools) {
-		return true
-	}
-	for i := range next.Tools {
-		if state.Tools[i].Status != next.Tools[i].Status || state.Tools[i].ID != next.Tools[i].ID {
-			return true
-		}
-	}
-	return state.Settings.Empty() && !next.Settings.Empty()
+	return !next.Settings.Empty() && card.SettingsLine(state.Settings) != card.SettingsLine(next.Settings)
+}
+
+func sameCardTool(a, b card.Tool) bool {
+	return a.ID == b.ID && a.Status == b.Status &&
+		a.Kind == b.Kind && a.Name == b.Name && a.Detail == b.Detail &&
+		a.Input == b.Input && a.Output == b.Output &&
+		a.StartedAt.Equal(b.StartedAt) && a.UpdatedAt.Equal(b.UpdatedAt) &&
+		slices.EqualFunc(a.Children, b.Children, sameCardTool)
 }
 
 func (u *turnUI) scheduleLocked() {
@@ -234,9 +270,26 @@ func (u *turnUI) scheduleLocked() {
 }
 
 func (u *turnUI) flush() {
+	u.flushProgress(false)
+}
+
+func (u *turnUI) flushProgress(immediate bool) {
+	u.sendMu.Lock()
+	defer u.sendMu.Unlock()
+
 	u.mu.Lock()
-	u.timer = nil
+	if u.timer != nil {
+		u.timer.Stop()
+		u.timer = nil
+	}
 	if u.closed || u.fallback || u.cardID == "" || !u.dirty {
+		u.mu.Unlock()
+		return
+	}
+	// A timer may have fired before a newer control patch acquired sendMu.
+	// Recheck the floor at admission instead of sending that stale timer now.
+	if !immediate && time.Since(u.lastPatch) < cardMinInterval {
+		u.scheduleLocked()
 		u.mu.Unlock()
 		return
 	}
@@ -245,13 +298,11 @@ func (u *turnUI) flush() {
 	id := u.cardID
 	u.dirty = false
 	u.lastPatch = time.Now()
-	u.wg.Add(1)
 	u.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	err := u.g.ch.(cardPoster).PatchCard(ctx, id, payload)
 	cancel()
-	u.wg.Done()
 
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -265,24 +316,18 @@ func (u *turnUI) flush() {
 	}
 }
 
-func (u *turnUI) finish(result turn.Result, err error) {
+func (u *turnUI) finish(result turn.Result, err error) (string, error) {
+	u.stopProgress()
+	u.sendMu.Lock()
+	defer u.sendMu.Unlock()
+	// Closing admission before waiting prevents late timers/control flushes
+	// from sending after final. In-flight failures also settle fallback before
+	// finalText and the delivery choice read it.
 	if u.listen && (err != nil || result.Text == "") {
-		u.mu.Lock()
-		u.closed = true
-		if u.timer != nil {
-			u.timer.Stop()
-			u.timer = nil
-		}
-		u.mu.Unlock()
-		return
+		return "silent-listen", nil
 	}
 	text, status := u.finalText(result, err)
 	u.mu.Lock()
-	u.closed = true
-	if u.timer != nil {
-		u.timer.Stop()
-		u.timer = nil
-	}
 	u.state.Approval = nil
 	u.state.Question = nil
 	u.state.Status = status
@@ -307,7 +352,7 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	cardID := u.cardID
 	fallback := u.fallback || cardID == ""
 	u.mu.Unlock()
-	u.wg.Wait()
+	defer u.g.unack(u.msg.MessageID, u.reaction)
 	// Retry needs the card to keep its button, so a failed turn stays live.
 	retryable := status == card.StatusFailed || status == card.StatusCancelled
 	if !retryable {
@@ -320,33 +365,67 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	// it. Post the final card at the bottom instead and drop the opener:
 	// the chat then reads in the order things actually happened.
 	if !fallback && u.g.gate != nil && u.g.gate.Interim(conversationID(u.msg)) {
-		if newID := u.repostFinal(); newID != "" {
+		if newID, repostErr := u.repostFinal(); repostErr == nil && newID != "" {
 			u.g.setTurnCard(u.turnID, newID)
 			u.g.finishTurn(u.turnID, retryable)
 			u.g.recall(cardID)
-			u.g.unack(u.msg.MessageID, u.reaction)
-			return
+			return newID, nil
+		} else if errors.Is(repostErr, channel.ErrOutcomeUnknown) {
+			return "", repostErr
 		}
 	}
 	u.g.finishTurn(u.turnID, retryable)
+	if u.resultOnly && !u.listen {
+		if _, ok := u.g.ch.(cardPoster); ok {
+			if id, err := u.repostFinal(); err == nil {
+				return id, nil
+			} else if errors.Is(err, channel.ErrOutcomeUnknown) {
+				return "", err
+			}
+		}
+	}
 
-	if !fallback && u.patchFinal() {
-		u.g.unack(u.msg.MessageID, u.reaction)
-		return
+	if !fallback {
+		if patchErr := u.patchFinal(); patchErr == nil {
+			return cardID, nil
+		} else if errors.Is(patchErr, channel.ErrOutcomeUnknown) {
+			return "", patchErr
+		}
 	}
 	if text != "" {
-		u.g.reply(u.msg.MessageID, text)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if sender, ok := u.g.ch.(textReplier); ok && (u.g.recoveryLedger != nil || u.resultOnly) {
+			id, err := sender.ReplyText(ctx, u.msg.MessageID, text)
+			if err != nil {
+				return "", noticeError(err)
+			}
+			if id != "" {
+				return id, nil
+			}
+			return "", channel.ErrOutcomeUnknown
+		}
+		if u.g.ch == nil {
+			return "", errors.New("gateway reply channel is not available")
+		}
+		if u.g.recoveryLedger != nil || u.resultOnly {
+			return "", errors.New("gateway durable reply requires a channel message receipt")
+		}
+		if err := u.g.ch.Reply(ctx, u.msg.MessageID, text); err != nil {
+			return "", noticeError(err)
+		}
+		return "reply:" + u.msg.MessageID, nil
 	}
-	u.g.unack(u.msg.MessageID, u.reaction)
+	return "", errors.New("gateway final reply has no content")
 }
 
 // repostFinal sends the finished card as a new message and returns its id,
 // or "" when the channel refused it — the caller then patches in place,
 // which is worse-ordered but never loses the answer.
-func (u *turnUI) repostFinal() string {
+func (u *turnUI) repostFinal() (string, error) {
 	poster, ok := u.g.ch.(cardPoster)
 	if !ok || u.msg.MessageID == "" {
-		return ""
+		return "", errors.New("gateway card repost is unavailable")
 	}
 	u.mu.Lock()
 	payload := card.Render(u.state, u.copy)
@@ -357,18 +436,21 @@ func (u *turnUI) repostFinal() string {
 	id, err := poster.ReplyCard(ctx, u.msg.MessageID, payload)
 	if err != nil || id == "" {
 		slog.Error(fmt.Sprintf("gateway: final card repost failed: %v", err), "conversation", conversationID(u.msg), "message", u.msg.MessageID)
-		return ""
+		if err == nil {
+			err = channel.ErrOutcomeUnknown
+		}
+		return "", noticeError(err)
 	}
 	u.mu.Lock()
 	u.cardID = id
 	u.mu.Unlock()
-	return id
+	return id, nil
 }
 
-func (u *turnUI) patchFinal() bool {
+func (u *turnUI) patchFinal() error {
 	poster, ok := u.g.ch.(cardPoster)
 	if !ok || u.cardID == "" {
-		return false
+		return errors.New("gateway card patch is unavailable")
 	}
 	u.mu.Lock()
 	payload := card.Render(u.state, u.copy)
@@ -379,9 +461,9 @@ func (u *turnUI) patchFinal() bool {
 	defer cancel()
 	if err := poster.PatchCard(ctx, id, payload); err != nil {
 		slog.Error(fmt.Sprintf("gateway: card finish failed: %v", err), "conversation", conversationID(u.msg), "card", id)
-		return false
+		return noticeError(err)
 	}
-	return true
+	return nil
 }
 
 func (u *turnUI) finalText(result turn.Result, err error) (string, card.Status) {

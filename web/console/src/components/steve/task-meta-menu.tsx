@@ -1,7 +1,7 @@
 import { useI18n } from "@/providers/locale-provider";
 import { useEffect, useRef, useState } from "react";
 import { Archive, DotsHorizontal, Edit05, XCircle } from "@untitledui/icons";
-import { Button as AriaButton } from "react-aria-components";
+import { IconButton } from "@/components/steve/icon-button";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { patchTaskMeta } from "@/lib/api/work";
 import { useFleet } from "@/lib/fleet";
@@ -45,9 +45,7 @@ export function TaskMetaMenu({ t, pending, onRename, onPatch, onEnd }: { t: Task
     const priority = t.priority || "normal";
     return (
         <Dropdown.Root>
-            <AriaButton isDisabled={pending} aria-label={tr("tasks.moreActions", { id: t.id })} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary outline-focus-ring transition hover:bg-primary_hover hover:text-fg-quaternary_hover focus-visible:outline-2 disabled:opacity-50">
-                <DotsHorizontal className="size-4" />
-            </AriaButton>
+            <IconButton size="xs" isDisabled={pending} label={tr("tasks.moreActions", { id: t.id })} className="shrink-0" icon={DotsHorizontal} />
             <Dropdown.Popover placement="bottom end" className="w-44">
                 <Dropdown.Menu aria-label={tr("tasks.menu")} onAction={(key) => {
                     if (key === "rename") onRename();

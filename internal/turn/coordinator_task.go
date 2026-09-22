@@ -23,11 +23,44 @@ import (
 // belongs to the archive, which records every turn verbatim.
 const goalLimit = 120
 
+// beginTurnScope inherits authority only from work on the current project.
+// A leftover task from another project is retired during admission; its
+// revocation must stop the old work without cancelling this new turn. Capture
+// the candidate before callbacks or I/O so a concurrent pause/resume cannot
+// replace its original authorization with an empty or newer one.
+func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID string) (project.Binding, *execution.Scope, error) {
+	var previous task.Task
+	if c.tasks != nil {
+		previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
+	}
+	req.stage(view.StageWorkspace)
+	binding, err := c.bindingFor(ctx, req)
+	if err != nil || c.executions == nil {
+		return binding, nil, err
+	}
+	taskID := ""
+	if previous.ProjectID == "" || previous.ProjectID == binding.ProjectID {
+		taskID = previous.ID
+	}
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: taskID, InstanceID: req.MessageID})
+	if err != nil {
+		return binding, nil, err
+	}
+	if taskID != "" && scope.Token().Epoch != previous.ExecutionEpoch {
+		scope.Finish(nil)
+		return binding, nil, fmt.Errorf("%w: task %s changed during workspace preparation", task.ErrExecutionStopped, taskID)
+	}
+	return binding, scope, nil
+}
+
 // beginTask opens or continues the member's task on this channel and charges a
 // turn to it. It returns an empty id when task tracking is disabled, and a
-// UserError when the budget is spent — that error is the brake, so it has to
-// reach the user rather than be swallowed.
+// UserError when the budget is spent. When tracking is configured, admission
+// must be durable before any native execution can start.
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
+	if req.ResumeAdmission != (task.ResumeAdmission{}) && req.ExpectedTask != req.ResumeAdmission.TaskID {
+		return "", fmt.Errorf("%w: resume input requires its original task", task.ErrExecutionStopped)
+	}
 	if c.tasks == nil {
 		if req.ExpectedTask != "" {
 			return "", fmt.Errorf("task continuation requires a task store")
@@ -59,8 +92,8 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		// switch, a crash between the two): the task stays with its
 		// project, and this turn opens its own.
 		slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID), "task", tracked.ID, "conversation", req.ConversationID, "project", binding.ProjectID)
-		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
+		if err := c.releaseConversationTask(tracked); err != nil {
+			return "", fmt.Errorf("close previous project task %s: %w", tracked.ID, err)
 		}
 		ok = false
 	}
@@ -69,6 +102,8 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Goal:      goal(prompt),
 			Requester: req.SenderOpenID,
 			Channel:   req.ConversationID,
+			Transport: req.Channel,
+			ChatID:    req.ChatID, AnchorMessage: req.MessageID, ChatType: string(req.ChatType), OpenCard: req.CardID,
 			Member:    selected.ID,
 			Node:      executionNode,
 			Origin:    req.Origin,
@@ -76,18 +111,17 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Workspace: workspace,
 		})
 		if err != nil {
-			// Losing the task record must not cost the user their turn.
-			slog.Error(fmt.Sprintf("turn: create task: %v", err), "conversation", req.ConversationID, "agent", selected.ID, "node", executionNode)
-			return "", nil
+			return "", fmt.Errorf("create task for conversation %s: %w", req.ConversationID, err)
 		}
 		tracked = created
 	}
-	var beginErr error
-	if req.ExpectedTask != "" {
-		_, beginErr = c.tasks.BeginContinuation(tracked.ID, req.ConversationID, selected.ID, executionNode)
-	} else {
-		_, beginErr = c.tasks.Begin(tracked.ID, selected.ID, executionNode, "")
+	if tracked.Transport != req.Channel {
+		return "", fmt.Errorf("task %s transport changed", tracked.ID)
 	}
+	_, beginErr := c.tasks.BeginTurn(tracked.ID, selected.ID, executionNode, task.TurnInput{
+		Address: req.Address(), ChatID: req.ChatID, ChatType: string(req.ChatType), CardID: req.CardID, Continuation: req.ExpectedTask != "",
+		ResumeAdmission: req.ResumeAdmission, TurnID: req.MessageID,
+	})
 	if err := beginErr; err != nil {
 		if req.ExpectedTask != "" {
 			return "", err
@@ -95,16 +129,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		if text, spent := c.budgetStop(tracked); spent {
 			return "", UserError{Text: text}
 		}
-		slog.Error(fmt.Sprintf("turn: begin task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID, "node", executionNode)
-		return "", nil
-	}
-	// The anchor is what a restarted gateway replies to when it resumes
-	// this task; refresh it every turn so delivery lands by the newest
-	// exchange (and inside the right topic).
-	if req.MessageID != "" {
-		if err := c.tasks.SetAnchor(tracked.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
-			slog.Error(fmt.Sprintf("turn: anchor task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
-		}
+		return "", fmt.Errorf("admit turn for task %s: %w", tracked.ID, err)
 	}
 	return tracked.ID, nil
 }
@@ -120,20 +145,37 @@ func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, m
 	}
 }
 
-// closeTask ends the member's tasks on a session reset. /new means "start
-// over", and a task that survived the session it was attempted through would
-// silently keep charging turns against work nobody is doing any more. Every
-// lineage goes, unattended ones included: they all ran through the session
-// that has just been archived.
+// closeTask releases the member's tasks when their session is archived.
+// Ordinary work closes; failed or blocked work is set aside for a deliberate
+// resume, not reported as completed. Every lineage leaves the conversation
+// slot, including unattended work, so new inputs cannot charge old work.
 func (c *Coordinator) closeTask(conversationID, agentID string) {
 	if c.tasks == nil {
 		return
 	}
 	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
-		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
+		if err := c.releaseConversationTask(tracked); err != nil {
 			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
 		}
 	}
+}
+
+func (c *Coordinator) releaseConversationTask(tracked task.Task) error {
+	// Resetting or switching projects cannot turn blocked or failed work into a
+	// success. Keep it available to resume, with its original history,
+	// but revoke its old execution and release the conversation slot.
+	if tracked.State == task.StateBlocked || tracked.State == task.StateFailed {
+		ids, err := c.tasks.SetAside(tracked.ID, task.StatePaused)
+		if err != nil {
+			return err
+		}
+		if c.executions != nil {
+			c.executions.Stop(ids, task.ErrExecutionStopped)
+		}
+		return nil
+	}
+	_, err := c.tasks.Advance(tracked.ID, task.StateDone)
+	return err
 }
 
 func outcome(err error) task.Outcome {
@@ -209,6 +251,8 @@ func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
 // whoever owns the chat: post a notice at the task's anchor and replay it as
 // a real message, and the resumed turn renders a card like any other turn.
 type TaskResume struct {
+	Admission      task.ResumeAdmission
+	Transport      string
 	TaskID         string
 	Goal           string
 	Member         string
@@ -219,15 +263,21 @@ type TaskResume struct {
 	ChatType       string
 }
 
-// SetResumer wires that re-entry. Without it /tasks resume still un-pauses the
-// task; the user's next message is what continues it.
-func (c *Coordinator) SetResumer(fn func(TaskResume)) { c.resumer = fn }
+// SetResumer wires durable acceptance of a dormant input. It must not start
+// Handle: the task owner has not yet granted this input execution authority.
+// Without a resumer, the user's next message continues the unpaused task.
+func (c *Coordinator) SetResumer(fn func(TaskResume) error) { c.resumer = fn }
+
+// SetResumeDispatcher wakes accepted inputs after the owner CAS and turn-slot
+// release. A failed wake does not undo acceptance; recovery reads the same grant.
+func (c *Coordinator) SetResumeDispatcher(fn func(TaskResume)) { c.resumeDispatcher = fn }
 
 // TaskNotice is a line Steve pushes into the chat on its own, outside any
 // turn's card. It exists because delivery is a platform promise here: a task
 // that ran for an hour and then ended must say so, whether or not the person
 // who asked is still watching.
 type TaskNotice struct {
+	Transport string
 	TaskID    string
 	ChatID    string
 	MessageID string
@@ -289,7 +339,7 @@ func (c *Coordinator) offlineReminder(req Request, id string, started time.Time,
 		return
 	}
 	c.notifier(TaskNotice{
-		TaskID: id, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID, Conversation: req.ConversationID,
+		TaskID: id, Transport: req.Channel, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID, Conversation: req.ConversationID,
 		Text: c.text.T(i18n.TaskOfflineDone, id, elapsed.Round(time.Minute)),
 	})
 }
@@ -316,34 +366,7 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 		if err != nil {
 			return Result{Title: title, Text: err.Error()}, err
 		}
-		if c.attempts != nil {
-			for _, id := range ids {
-				if records, err := c.attempts.ForTask(ctx, id); err == nil {
-					for _, record := range records {
-						if !record.Unsettled && record.StopEvidence != "" {
-							c.executions.Resolve(record.ID)
-						}
-					}
-				}
-			}
-		}
-		waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
-		stopErr = c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx)
-		finishWait()
-		if c.attempts != nil {
-			for _, id := range ids {
-				records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
-				if err != nil {
-					stopErr = errors.Join(stopErr, err)
-					continue
-				}
-				for _, record := range records {
-					if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
-						stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
-					}
-				}
-			}
-		}
+		stopErr = c.stopExecutions(ctx, ids, confirmSettlement)
 	} else {
 		if _, err := c.tasks.Advance(tracked.ID, to); err != nil {
 			return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}, err
@@ -365,6 +388,45 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 	return Result{Title: title, Text: c.text.T(i18n.TaskCancelled, moved.ID) + "\n\n" + c.taskDetail(moved)}, nil
 }
 
+// stopExecutions stops what is running under tasks whose execution has
+// just been revoked by SetAside, and waits for the stop to be confirmed.
+// An error says the stop is recorded but some writer has not been seen to
+// stop; with confirmSettlement, an attempt still open counts as that.
+func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmSettlement bool) error {
+	var stopErr error
+	if c.attempts != nil {
+		for _, id := range ids {
+			if records, err := c.attempts.ForTask(ctx, id); err == nil {
+				for _, record := range records {
+					if !record.Unsettled && record.StopEvidence != "" {
+						stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
+					}
+				}
+			} else {
+				stopErr = errors.Join(stopErr, err)
+			}
+		}
+	}
+	waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
+	stopErr = errors.Join(stopErr, c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx))
+	finishWait()
+	if c.attempts != nil {
+		for _, id := range ids {
+			records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
+			if err != nil {
+				stopErr = errors.Join(stopErr, err)
+				continue
+			}
+			for _, record := range records {
+				if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
+					stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
+				}
+			}
+		}
+	}
+	return stopErr
+}
+
 // stopTurnFor stops the turn a task is running through, if any. The task's own
 // member identifies that turn — by the time the user sets work aside they may
 // well be talking to a different agent.
@@ -379,7 +441,7 @@ func (c *Coordinator) stopTurnFor(ctx context.Context, tracked task.Task) {
 	if !running {
 		return
 	}
-	if _, err := c.cancel(ctx, tracked.Channel, member); err != nil {
+	if _, err := c.cancelTurn(ctx, tracked.Channel, member); err != nil {
 		slog.Error(fmt.Sprintf("turn: stop turn for task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", member.ID)
 	}
 }

@@ -54,10 +54,12 @@ bash -lc 'go run ./e2e/fleet -hub http://127.0.0.1:7710 -project scratch -agent 
 Each run creates a fresh console conversation, binds the project and coordinator,
 and asks the remote agent to add a unique timestamped `e2e-fleet-*.txt` file with
 one line. It checks the persisted reply's completed delegation card, the child's
-attempt and change index, `/state` token reporting, and the landed file's exact
-contents. The file and conversation remain as evidence. Failures exit nonzero
-with the failing check and available IDs; a local write cannot satisfy the remote
-attempt check.
+attempt and change index, child token evidence in `/console/tasks/{task}`,
+healthy `/usage` reporting and agent totals, and the landed file's exact
+contents. `/usage` task rows aggregate root task trees; they do not by themselves
+prove that a particular child reported tokens. The file and conversation remain
+as evidence. Failures exit nonzero with the failing check and available IDs;
+a local write cannot satisfy the remote attempt check.
 
 Expect about three minutes for this small task. The entire run has a ten-minute
 client deadline, including the synchronous `/console/send` request. `-timeout`

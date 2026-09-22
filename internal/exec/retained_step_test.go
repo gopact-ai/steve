@@ -241,7 +241,7 @@ func TestRetainedStepStorageFailureResumesWithoutNativeReplay(t *testing.T) {
 			deps.Verifier = verifyFunc(func(StepRequest) error { verifyCalls++; return nil })
 			cut := fmt.Sprintf(`CREATE TRIGGER cut BEFORE UPDATE OF state ON operations WHEN NEW.kind='attempt' AND NEW.state='%s' AND OLD.state!=NEW.state BEGIN SELECT RAISE(FAIL,'phase write unavailable'); END`, phase)
 			if phase == "accounting" {
-				cut = fmt.Sprintf(`CREATE TRIGGER cut BEFORE UPDATE OF data ON bindings WHEN NEW.kind='document' AND NEW.id='tasks' AND json_extract(NEW.data,'$.tasks."%s".budget.tokens.total')>0 BEGIN SELECT RAISE(FAIL,'accounting unavailable'); END`, p.TaskID)
+				cut = fmt.Sprintf(`CREATE TRIGGER cut BEFORE UPDATE OF data ON bindings WHEN NEW.kind='task' AND NEW.id='%s' AND json_extract(NEW.data,'$.budget.tokens.total')>0 BEGIN SELECT RAISE(FAIL,'accounting unavailable'); END`, p.TaskID)
 			}
 			if err := sessions.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec(cut); return err }); err != nil {
 				t.Fatal(err)

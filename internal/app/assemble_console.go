@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"sync"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/project"
@@ -63,6 +63,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
 	cons := console.New(coordinator, cfg.EffectiveOwnerID(), view)
+	coordinator.SetConsoleCompletionGuard(console.CheckTaskCompletionTx)
 	cons.SetRecoveryQuiet(time.Duration(cfg.Gateway.RecoveryQuiet))
 	if environment != nil {
 		cons.EnableRetainedRecovery(ctx)
@@ -73,6 +74,9 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	view.SetInteractions(cons)
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
+	dashboard.SetChannelHistory(&channelConversations{
+		ChannelHistory: gateway.NewChannelHistory(book), contexts: coordinator, tasks: tasks, activity: work.Gateway(),
+	})
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.
 	projects.Levels = func(node string) project.Level {
@@ -84,6 +88,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	}
 	admin := &adminsvc.Service{Lifetime: ctx, Cfg: cfg, Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, View: view,
 		LiveSkills: live, Shipper: shipper, Observation: observation, Coordinator: coordinator, HomePath: cfg.Gateway.HomePath, Memory: memories, Artifacts: artifacts}
+	admin.RuntimeSettings = boot.Settings()
 	life.Defer(func() { admin.CloseSSH() })
 	if environment != nil {
 		admin.WriteConfig = environment.WriteConfig
@@ -105,8 +110,8 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 		return nil, fmt.Errorf("open materials: %w", err)
 	}
 	life.Defer(func() { materials.Close() })
-	reconciliations := &sync.WaitGroup{}
-	life.Defer(func() { stop(); reconciliations.Wait() })
+	reconciliations := &reconciliationWorkers{}
+	life.Defer(func() { stop(); reconciliations.Close() })
 	if environment != nil {
 		materials.SetReplication(environment.Content)
 	}
@@ -138,7 +143,7 @@ type consoleAssembly interface {
 	Console() *console.Service
 	Dashboard() *httpapi.Server
 	Materials() *material.Store
-	Reconciliations() *sync.WaitGroup
+	Reconciliations() *reconciliationWorkers
 }
 
 type consoleValues struct {
@@ -146,7 +151,7 @@ type consoleValues struct {
 	cons            *console.Service
 	dashboard       *httpapi.Server
 	materials       *material.Store
-	reconciliations *sync.WaitGroup
+	reconciliations *reconciliationWorkers
 }
 
 func (v *consoleValues) Admin() *adminsvc.Service { return v.admin }
@@ -157,4 +162,4 @@ func (v *consoleValues) Dashboard() *httpapi.Server { return v.dashboard }
 
 func (v *consoleValues) Materials() *material.Store { return v.materials }
 
-func (v *consoleValues) Reconciliations() *sync.WaitGroup { return v.reconciliations }
+func (v *consoleValues) Reconciliations() *reconciliationWorkers { return v.reconciliations }

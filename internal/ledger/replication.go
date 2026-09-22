@@ -380,16 +380,7 @@ func (w *writeTx) Commit() error {
 	if err != nil {
 		return err
 	}
-	var version uint64
-	var fingerprint string
-	if err := w.l.db.QueryRow(`SELECT version, fingerprint FROM replica_commands WHERE id = ?`, commandID).Scan(&version, &fingerprint); err != nil {
-		return w.l.failReplica(fmt.Errorf("proposal acknowledged before local apply: %w", err))
-	}
-	hash := sha256.Sum256(payload)
-	if version != w.position.Version+1 || fingerprint != hex.EncodeToString(hash[:]) {
-		return w.l.failReplica(errors.New("proposal acknowledgement does not match the validated batch"))
-	}
-	return nil
+	return w.l.confirmReplicaWrite(commandID, w.position.Version+1, payload)
 }
 
 func (l *Ledger) execWrite(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -433,10 +424,17 @@ func (l *Ledger) ApplyReplicated(id string, version uint64, payload []byte) ([]b
 		return nil, l.failReplica(err)
 	}
 	defer tx.Rollback()
+	var floor uint64
+	if err := tx.QueryRow(`SELECT replay_floor FROM replica_state WHERE singleton=1`).Scan(&floor); err != nil {
+		return nil, l.failReplica(err)
+	}
+	if version <= floor {
+		return nil, l.failReplica(fmt.Errorf("%w: committed version %d is at or below checkpoint %d", ErrReplayExpired, version, floor))
+	}
 	var oldVersion uint64
 	var oldFingerprint string
 	var oldResult []byte
-	err = tx.QueryRow(`SELECT version, fingerprint, result FROM replica_commands WHERE id = ?`, id).Scan(&oldVersion, &oldFingerprint, &oldResult)
+	err = tx.QueryRow(`SELECT version, fingerprint, result FROM replica_commands WHERE id = ? AND version = ?`, id, version).Scan(&oldVersion, &oldFingerprint, &oldResult)
 	if err == nil {
 		if oldVersion != version || oldFingerprint != fingerprint {
 			return nil, l.failReplica(errors.New("committed command ID reused"))

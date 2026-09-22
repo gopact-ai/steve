@@ -337,14 +337,15 @@ func TestUsageSnapshotCountsClosedLedgerAttemptsOnce(t *testing.T) {
 	if _, err := tasks.Create(task.Task{Goal: "cached duplicate", Channel: "test", Attempts: []task.Attempt{{StartedAt: now, EndedAt: now, Tokens: task.Tokens{Input: 3, Output: 4, Total: 7}}}}); err != nil {
 		t.Fatal(err)
 	}
-	snap := New(Sources{Tasks: tasks, Ledger: Ledger{Book: book, Attempts: attempts}}).Snapshot(t.Context())
-	if len(snap.Attempts) != 1 || snap.Usage.Total.Attempts != 1 || snap.Usage.Total.Tokens.Total != 7 || snap.Usage.Periods["1d"].Total.Attempts != 1 {
-		t.Fatalf("running or cached attempt affected usage: %+v", snap.Usage)
+	model := New(Sources{Tasks: tasks, Ledger: Ledger{Book: book, Attempts: attempts}})
+	snap, summary := model.Snapshot(t.Context()), model.UsageSummary(t.Context())
+	if len(snap.Attempts) != 1 || summary.Usage.Total.Attempts != 1 || summary.Usage.Total.Tokens.Total != 7 || summary.Usage.Periods["1d"].Total.Attempts != 1 {
+		t.Fatalf("running or cached attempt affected usage: %+v", summary.Usage)
 	}
 }
 
 func TestUsageEmptySnapshotStillHasCurrentCalendarBuckets(t *testing.T) {
-	snap := New(Sources{}).Snapshot(t.Context())
+	snap := New(Sources{Ledger: &usageLedgerFixture{}}).UsageSummary(t.Context())
 	if len(snap.Usage.Periods) != 3 || snap.Usage.Timezone == "" {
 		t.Fatalf("missing empty dashboard: %+v", snap.Usage)
 	}

@@ -96,7 +96,7 @@ func (s *Service) RecordSession(ctx context.Context, id, actor, session string) 
 		}
 		saved.Session = session
 		saved.Revision = op.Revision + 1
-		return tx.SetData(op, saved)
+		return setRecordDataTx(tx, op, saved)
 	})
 	return saved, err
 }
@@ -139,21 +139,14 @@ func (s *Service) RecoverRetained(ctx context.Context, id string, evidence Retai
 		if err := task.CheckExecutionTx(tx, result.Execution); err != nil {
 			return err
 		}
-		raw, ok, err := tx.LoadDocument("tasks")
+		tracked, ok, err := task.GetTx(tx, result.TaskID)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return errors.New("retained task record is missing")
 		}
-		var tasks struct {
-			Tasks map[string]*task.Task `json:"tasks"`
-		}
-		if err := json.Unmarshal(raw, &tasks); err != nil {
-			return err
-		}
-		tracked := tasks.Tasks[result.TaskID]
-		if tracked == nil || binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, result.Agent) {
+		if binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, result.Agent) {
 			return errors.New("retained logical session identity differs")
 		}
 		own := false
@@ -191,7 +184,7 @@ func (s *Service) RecoverRetained(ctx context.Context, id string, evidence Retai
 		result.Error = ""
 		result.SessionSettled = &settled
 		result.Revision = op.Revision + 1
-		return tx.SetData(op, result)
+		return setRecordDataTx(tx, op, result)
 	})
 	return result, err
 }

@@ -16,6 +16,31 @@ type hubChannelsService struct {
 	applied       config.ChannelSettings
 	appliedSecret string
 	runtimeError  string
+	accessUpdater func(config.Feishu)
+}
+
+// BindAccessUpdater binds a successfully initialized runtime channel and
+// immediately publishes its applied startup policy, not pending declarations.
+// The callback runs synchronously under ConfigMu to preserve publication order;
+// it must be nonblocking and must not call back into administration services.
+// Its payload contains only the four access fields, never channel credentials.
+// Passing nil removes the consumer and restores restart-only semantics.
+func (s *hubChannelsService) BindAccessUpdater(update func(config.Feishu)) {
+	ConfigMu.Lock()
+	defer ConfigMu.Unlock()
+	s.accessUpdater = update
+	if update != nil {
+		update(channelAccess(s.applied.Feishu))
+	}
+}
+
+func channelAccess(f config.FeishuChannelSetting) config.Feishu {
+	return config.Feishu{
+		GroupPolicy:      f.GroupPolicy,
+		AllowUnmentioned: f.AllowUnmentioned,
+		AllowedSenders:   append([]string{}, f.AllowedSenders...),
+		BlockedSenders:   append([]string{}, f.BlockedSenders...),
+	}
 }
 
 func (s *hubChannelsService) SetRuntimeError(message string) {
@@ -39,7 +64,13 @@ func (s *hubChannelsService) viewLocked() consoleapi.ChannelsView {
 	// A secret rotation is pending even if configured stays true in both
 	// public views. Compare privately without returning a secret digest.
 	pending := !reflect.DeepEqual(desired, s.applied) || s.admin.Cfg.Feishu.AppSecret != s.appliedSecret
-	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: "restart", RuntimeError: s.runtimeError}
+	mode := "restart"
+	var liveFields []string
+	if s.accessUpdater != nil {
+		mode = "mixed"
+		liveFields = []string{"feishu.group_policy", "feishu.allow_unmentioned", "feishu.allowed_senders", "feishu.blocked_senders"}
+	}
+	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError}
 }
 
 func cloneChannelSettings(in config.ChannelSettings) config.ChannelSettings {
@@ -75,6 +106,16 @@ func (s *hubChannelsService) UpdateChannels(ctx context.Context, req consoleapi.
 		return consoleapi.ChannelsView{}, saveErr
 	}
 	*s.admin.Cfg = *candidate
+	if s.accessUpdater != nil {
+		next := candidate.ChannelSettings().Feishu
+		s.accessUpdater(channelAccess(next))
+		// Connection, credentials and identity remain the startup snapshot.
+		// Only the policy accepted by the runtime consumer becomes applied.
+		s.applied.Feishu.GroupPolicy = next.GroupPolicy
+		s.applied.Feishu.AllowUnmentioned = next.AllowUnmentioned
+		s.applied.Feishu.AllowedSenders = next.AllowedSenders
+		s.applied.Feishu.BlockedSenders = next.BlockedSenders
+	}
 	view := s.viewLocked()
 	if saveErr != nil {
 		view.Warning = saveErr.Error()
