@@ -247,6 +247,11 @@ type Task struct {
 	Delivery        *Delivery `json:"delivery,omitempty"`
 	State           State     `json:"state"`
 	CompletedByUser bool      `json:"completed_by_user,omitempty"`
+	// HeldAt says the user stopped the task — its turn and its delegated
+	// children — and has not spoken to it since. While it is set, nothing
+	// a child leaves may start a turn on its own: the next turn is the
+	// user's, and it opens with what the children left. See Store.Hold.
+	HeldAt time.Time `json:"held_at,omitzero"`
 	// Settlement and SettledAt are a person closing a failed task by hand:
 	// see Settlement. Clearing them puts the task back in front of them.
 	Settlement Settlement `json:"settlement,omitempty"`
