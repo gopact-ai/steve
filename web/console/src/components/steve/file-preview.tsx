@@ -46,7 +46,7 @@ export function FilePreview({ file, kind, onOpenPath }: { file: FileView; kind: 
     if (!file.text.trim()) return <div className="file-preview-empty">{t("console.emptyFile")}</div>;
     const measured = kind === "markdown" || kind === "mermaid";
     return (
-        <div className="file-preview" data-width={width} aria-label={t("console.previewLabel", { path: file.path })}>
+        <div className="file-preview" data-kind={kind} data-width={width} aria-label={t("console.previewLabel", { path: file.path })}>
             {file.truncated && <p role="status" className="file-preview-notice">{t("console.previewPartial")}</p>}
             {measured && <div className="file-preview-toolbar"><span className="workbench-segmented" role="group" aria-label={t("console.previewWidth")}>
                 {widths.map((option) => <button key={option} type="button" aria-pressed={width === option} onClick={() => chooseWidth(option)}>{t(widthLabels[option])}</button>)}
@@ -63,6 +63,9 @@ export function FilePreview({ file, kind, onOpenPath }: { file: FileView; kind: 
 // A file is not trusted content: an artifact can be anything a run wrote.
 // It is shown in a sandboxed frame with no access to this page, no
 // same-origin privileges, and — for SVG, which needs none — no scripts.
+// The frame is the document's viewport: it fills the reading area and the
+// page scrolls inside it, so a sticky bar, a 100vh section or a scroll-spy
+// index behave as they would in a browser window.
 function Sandboxed({ file, kind }: { file: FileView; kind: PreviewKind }) {
     const { t } = useI18n();
     return (

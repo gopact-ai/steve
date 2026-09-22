@@ -44,6 +44,10 @@
 .review-file-actions { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; max-width: 100%; gap: 12px; }
 .review-code-scroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; }
 .review-code-scroll[data-mode=source] { display: flex; flex-direction: column; overflow: hidden; }
+/* A page or a drawing is read in its own viewport: the frame takes the
+   whole reading area and the document scrolls inside it, as its author laid
+   it out. Prose keeps scrolling with the pane. */
+.review-code-scroll[data-preview=html], .review-code-scroll[data-preview=svg] { display: flex; flex-direction: column; overflow: hidden; }
 .review-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 240px; padding: 32px; text-align: center; color: var(--color-text-tertiary); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .review-notice { margin: 0; padding: 10px 24px; color: var(--color-text-warning-primary); background: var(--color-bg-warning-primary); font-size: calc(var(--ui-font-size) * 13 / 14); line-height: 1.6; }
 .review-source { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 24px; border-top: 1px solid var(--color-border-secondary); color: var(--color-text-tertiary); font-size: calc(var(--ui-font-size) * 11 / 14); }

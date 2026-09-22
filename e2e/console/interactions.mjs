@@ -1623,6 +1623,11 @@ onload="document.getElementById('load-state').textContent = 'Load handler ran'">
 <text id="click-state" x="12" y="100" onclick="this.textContent = 'Click handler ran'">Click SVG probe</text>
 <script>document.getElementById('script-state').textContent = 'SVG script ran';</script>
 </svg>`,
+    "report.html": `<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>body { margin: 0; } header { position: sticky; top: 0; height: 48px; background: rgb(20, 40, 80); color: white; } h1, h2 { margin: 0; padding: 12px; font-size: 20px; line-height: 24px; } section { height: 400px; border-bottom: 1px solid #ccc; }</style>
+</head><body><header><h1>Report bar</h1></header>
+${Array.from({ length: 12 }, (_, i) => `<section id="s${i + 1}"><h2>Section ${i + 1}</h2></section>`).join("\n")}
+</body></html>`,
 };
 
 async function filePreviewFixture(f) {
@@ -1702,6 +1707,47 @@ checks["preview-svg-scripts-disabled"] = async (f) => {
     await frame.getByText("Inline script ready", { exact: true }).waitFor();
     await frame.getByRole("button", { name: "Increment", exact: true }).click();
     assert.equal(await frame.locator("#count").innerText(), "1", "Returning to HTML must restore script-enabled interaction");
+    assert.equal(f.calls.length, 0);
+};
+
+// A page is read in its own viewport: the frame takes the whole reading
+// area and the document scrolls inside it, the way its author laid it out
+// — a sticky bar stays put, a 100vh section fills the pane, a scroll-spy
+// index follows the reader. A fixed-height box with the pane empty below
+// it is neither a viewport nor a document.
+checks["preview-html-viewport"] = async (f) => {
+    const { workspace, iframe, frame, open } = await filePreviewFixture(f);
+    await open("report.html");
+    await frame.getByRole("heading", { name: "Section 12", exact: true }).waitFor();
+    const pane = workspace.locator(".review-code-scroll");
+    const layout = async () => {
+        const [frameBox, paneBox] = await Promise.all([iframe.boundingBox(), pane.boundingBox()]);
+        const overflow = await pane.evaluate((element) => element.scrollHeight - element.clientHeight);
+        return { frameBox, paneBox, overflow };
+    };
+    const fits = async (when) => {
+        const { frameBox, paneBox, overflow } = await layout();
+        assert.ok(overflow <= 0, `${when}: the reading pane must not scroll around the frame (overflow ${overflow}px)`);
+        const slack = paneBox.y + paneBox.height - (frameBox.y + frameBox.height);
+        assert.ok(slack >= 0 && slack <= 40, `${when}: the frame must reach the bottom of the reading area, not stop ${slack}px above it`);
+        return frameBox.height;
+    };
+    const tall = await fits("1000px window");
+    assert.ok(tall > 700, `The frame must use the reading area it is given, not a fixed share of the window (${tall}px)`);
+    await f.page.screenshot({ path: path.join(output, "preview-html-viewport.png") });
+    // The document scrolls inside the frame and its sticky bar keeps its place.
+    const bar = frame.locator("header");
+    const frameTop = (await iframe.boundingBox()).y + 1;
+    assert.ok(Math.abs((await bar.boundingBox()).y - frameTop) <= 1, "The page starts at the top of its frame");
+    await frame.locator("body").evaluate((body) => body.ownerDocument.defaultView.scrollTo(0, 1600));
+    await eventually(async () => (await frame.locator("#s5").boundingBox()).y < frameTop + 200, "The page must scroll inside its frame");
+    assert.ok(Math.abs((await bar.boundingBox()).y - frameTop) <= 1, "A sticky bar stays at the top of the frame while the page scrolls");
+    await f.page.setViewportSize({ width: 1600, height: 700 });
+    const short = await fits("700px window");
+    assert.ok(tall - short >= 250, `The frame must follow the window height: ${tall}px then ${short}px`);
+    await open("diagram.svg");
+    await assertInertSVG(frame);
+    await fits("SVG in a 700px window");
     assert.equal(f.calls.length, 0);
 };
 
