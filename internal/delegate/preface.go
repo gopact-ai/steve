@@ -75,21 +75,32 @@ func (s *Service) Preface(ctx context.Context, taskID string) (text string, told
 	return b.String(), func() {
 		s.deliverMu.Lock()
 		defer s.deliverMu.Unlock()
-		for _, c := range ended {
+		// Told acts on the child as it is now, not as it was composed: a
+		// paused child the user resumed meanwhile has moved on, and the
+		// result it ends with is still to reach the parent. An ended
+		// child is terminal, so a changed state can only be that.
+		for _, composed := range ended {
+			c, ok := s.tasks.Get(composed.ID)
+			if !ok || c.State != composed.State {
+				continue
+			}
 			if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
 				slog.Error(fmt.Sprintf("delegate: mark task #%s told in preface: %v", c.ID, err), "task", c.ID, "parent", taskID)
 			}
 			s.closePaused(c)
 		}
-		for _, c := range stopping {
-			s.closePaused(c)
+		for _, composed := range stopping {
+			if c, ok := s.tasks.Get(composed.ID); ok {
+				s.closePaused(c)
+			}
 		}
 	}
 }
 
 // closePaused ends a child a pause left paused. Nothing resumes a
 // delegation, so paused would only ever be a promise the platform cannot
-// keep; the parent has been given what the child left.
+// keep; the parent has been given what the child left. c is the child as
+// it is now: one no longer paused is left alone.
 func (s *Service) closePaused(c task.Task) {
 	if c.State != task.StatePaused {
 		return

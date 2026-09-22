@@ -185,6 +185,40 @@ func TestPrefaceLandsQueuedFilesUnderTheTurnsLease(t *testing.T) {
 	}
 }
 
+// Between composing and telling, the user may resume a paused child by
+// hand. Told then acts on what the child is now: one running again is
+// neither closed nor marked delivered — the result it ends with is still
+// to reach the parent.
+func TestPrefaceToldLeavesAChildResumedMeanwhileAlone(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	child, err := w.tasks.Spawn(parent.ID, task.Task{Goal: "review the API", Member: "builder", Node: "node-a", Origin: "delegate:" + parent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.tasks.SetAside(child.ID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.tasks.SetResult(child.ID, task.Result{Outcome: task.OutcomeCancelled, Answer: "read half of it"}); err != nil {
+		t.Fatal(err)
+	}
+	text, told := w.service.Preface(t.Context(), parent.ID)
+	if !strings.Contains(text, "#"+child.ID) {
+		t.Fatalf("preface lacks the paused child:\n%s", text)
+	}
+	if _, err := w.tasks.Advance(child.ID, task.StateRunning); err != nil {
+		t.Fatal(err)
+	}
+	told()
+	got, _ := w.tasks.Get(child.ID)
+	if got.State != task.StateRunning {
+		t.Fatalf("child = %s once told; want the resumed child left running", got.State)
+	}
+	if got.Delivery != nil && got.Delivery.State == task.DeliveryDelivered {
+		t.Fatal("told marked the resumed child delivered: the result it ends with would never reach the parent")
+	}
+}
+
 func waitForResult(t *testing.T, w *world, childID string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
