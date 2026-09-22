@@ -14,15 +14,16 @@ import (
 // the delegated children that ended, or were stopped, since the task
 // last heard. It is the in-turn counterpart of a delivery — the same
 // facts, composed into the prompt instead of sent as a message. told,
-// called once the agent has the prompt, marks them delivered so nothing
-// is sent again; a turn that never reached the agent leaves them to the
-// next one. Children a pause left paused are closed here: nothing
-// resumes a delegation, and the parent decides again with their partial
-// answers in hand.
+// called once the prompt has settled with the agent, marks them
+// delivered so nothing is sent again, and closes the children a pause
+// left paused: nothing resumes a delegation, and the parent decides
+// again with their partial answers in hand. A turn that never settled
+// changes nothing, and the next one says the same things.
 //
 // A child stopped without its execution confirming the stop has no
-// result. It is reported while the task is held — in the turn right
-// after the stop — and left to the recovery flow afterwards.
+// result. One the user's stop cancelled is reported while the task is
+// held — in the turn right after the stop — and left to the recovery
+// flow afterwards; one a pause left paused is reported until told.
 func (s *Service) Preface(ctx context.Context, taskID string) (text string, told func()) {
 	s.deliverMu.Lock()
 	defer s.deliverMu.Unlock()
@@ -70,12 +71,6 @@ func (s *Service) Preface(ctx context.Context, taskID string) (text string, told
 			Elapsed: c.UpdatedAt.Sub(c.CreatedAt), Goal: c.Goal, Stopping: true})
 	}
 	b.WriteString("\n已取消的子任务是被停止的，不会自行继续；仍需要就重新 steve_delegate。结合以上状态处理用户下面的消息。")
-	for _, c := range ended {
-		s.closePaused(c)
-	}
-	for _, c := range stopping {
-		s.closePaused(c)
-	}
 	slog.Info(fmt.Sprintf("delegate: prefaced task #%s's turn with %d ended and %d stopping child(ren)", taskID, len(ended), len(stopping)), "parent", taskID, "conversation", parent.Channel)
 	return b.String(), func() {
 		s.deliverMu.Lock()
@@ -84,13 +79,17 @@ func (s *Service) Preface(ctx context.Context, taskID string) (text string, told
 			if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
 				slog.Error(fmt.Sprintf("delegate: mark task #%s told in preface: %v", c.ID, err), "task", c.ID, "parent", taskID)
 			}
+			s.closePaused(c)
+		}
+		for _, c := range stopping {
+			s.closePaused(c)
 		}
 	}
 }
 
 // closePaused ends a child a pause left paused. Nothing resumes a
 // delegation, so paused would only ever be a promise the platform cannot
-// keep; the parent has just been given what the child left.
+// keep; the parent has been given what the child left.
 func (s *Service) closePaused(c task.Task) {
 	if c.State != task.StatePaused {
 		return

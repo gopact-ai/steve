@@ -149,15 +149,10 @@ func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
 }
 
 // flushIfIdle delivers what a parent has waiting, unless a turn of the
-// parent is running: that turn's end delivers instead, so a child that
-// ends mid-turn is never announced twice.
+// parent is running: that turn delivers instead — in its preface, or at
+// its end — so a child that ends mid-turn is never announced twice.
 func (s *Service) flushIfIdle(ctx context.Context, parentID string) {
-	if s.attempts != nil {
-		if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
-			return
-		}
-	}
-	s.Flush(ctx, parentID)
+	s.flush(ctx, parentID, time.Now(), nil, true)
 }
 
 // Flush sends the parent every finished child it has not been told
@@ -165,10 +160,13 @@ func (s *Service) flushIfIdle(ctx context.Context, parentID string) {
 // child ends while no turn runs. Safe to call twice: a child is
 // delivered once.
 func (s *Service) Flush(ctx context.Context, parentID string) {
-	s.flush(ctx, parentID, time.Now(), nil)
+	s.flush(ctx, parentID, time.Now(), nil, false)
 }
 
-func (s *Service) flush(ctx context.Context, parentID string, due time.Time, waiting []task.Task) {
+// flush is the one delivery path. unlessLive makes it yield to a turn of
+// the parent: checked under the dispatch lock, so a turn composing its
+// preface at this moment is seen, and what it composes is not sent again.
+func (s *Service) flush(ctx context.Context, parentID string, due time.Time, waiting []task.Task, unlessLive bool) {
 	s.mu.Lock()
 	deliver, replaySafe, receipt := s.deliver, s.replaySafeDelivery, s.deliveryReceipt
 	s.mu.Unlock()
@@ -177,6 +175,11 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	}
 	s.deliverMu.Lock()
 	defer s.deliverMu.Unlock()
+	if unlessLive && s.attempts != nil {
+		if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
+			return
+		}
+	}
 	if waiting == nil {
 		waiting = s.tasks.Undelivered()[parentID]
 	}
@@ -367,12 +370,7 @@ func (s *Service) reconcileDeliveries(ctx context.Context, now time.Time) {
 		if ctx.Err() != nil {
 			return
 		}
-		if s.attempts != nil {
-			if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
-				continue
-			}
-		}
-		s.flush(ctx, parentID, now, waiting)
+		s.flush(ctx, parentID, now, waiting, true)
 	}
 }
 

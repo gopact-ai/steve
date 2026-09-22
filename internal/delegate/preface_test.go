@@ -21,7 +21,8 @@ func TestFlushDeliversNothingWhileTheParentIsHeld(t *testing.T) {
 	box := &mailbox{}
 	w.service.SetDeliverer(box.deliver)
 	first, release := startBlocked(t, w, "codex")
-	if _, err := w.tasks.Hold(parent.ID); err != nil {
+	held, err := w.tasks.Hold(parent.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -37,7 +38,7 @@ func TestFlushDeliversNothingWhileTheParentIsHeld(t *testing.T) {
 	}
 	// The user speaks again: from then on the child's result travels as
 	// it always did.
-	if _, err := w.tasks.ReleaseHold(parent.ID); err != nil {
+	if _, err := w.tasks.ReleaseHold(parent.ID, held.HeldAt); err != nil {
 		t.Fatal(err)
 	}
 	w.service.Flush(t.Context(), parent.ID)
@@ -80,7 +81,8 @@ func TestPrefaceReportsStoppedChildrenOnceAndClosesPausedOnes(t *testing.T) {
 	finished := spawn("write the tests", task.StateDone, &task.Result{Outcome: task.OutcomeOK, Answer: "tests are green"})
 	paused := spawn("review the API", task.StatePaused, &task.Result{Outcome: task.OutcomeCancelled, Answer: "read half of it"})
 	unconfirmed := spawn("migrate the data", task.StateCancelled, nil)
-	if _, err := w.tasks.Hold(parent.ID); err != nil {
+	held, err := w.tasks.Hold(parent.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,15 +101,16 @@ func TestPrefaceReportsStoppedChildrenOnceAndClosesPausedOnes(t *testing.T) {
 	if strings.Contains(text, "已暂停") || strings.Contains(text, "paused") {
 		t.Fatalf("a paused child was presented as resumable:\n%s", text)
 	}
-	if c, _ := w.tasks.Get(paused.ID); c.State != task.StateCancelled {
-		t.Fatalf("paused child = %s; want closed as cancelled", c.State)
-	}
 	// Composed is not yet told: until the agent has the prompt, the
-	// children still owe their parent, and a repeat says the same things.
+	// children still owe their parent, the paused one is still paused,
+	// and a repeat says the same things.
 	for _, id := range []string{stopped.ID, finished.ID, paused.ID} {
 		if c, _ := w.tasks.Get(id); c.Delivery != nil && c.Delivery.State == task.DeliveryDelivered {
 			t.Fatalf("child #%s was marked delivered before the agent had the prompt", id)
 		}
+	}
+	if c, _ := w.tasks.Get(paused.ID); c.State != task.StatePaused {
+		t.Fatalf("paused child = %s before the agent had the prompt; want still paused", c.State)
 	}
 	if repeat, _ := w.service.Preface(t.Context(), parent.ID); !strings.Contains(repeat, "#"+stopped.ID) || !strings.Contains(repeat, "#"+paused.ID) {
 		t.Fatalf("an untold preface was not repeated:\n%s", repeat)
@@ -119,12 +122,15 @@ func TestPrefaceReportsStoppedChildrenOnceAndClosesPausedOnes(t *testing.T) {
 			t.Fatalf("child #%s delivery = %+v; want delivered once told", id, c.Delivery)
 		}
 	}
+	if c, _ := w.tasks.Get(paused.ID); c.State != task.StateCancelled {
+		t.Fatalf("paused child = %s once told; want closed as cancelled", c.State)
+	}
 	if c, _ := w.tasks.Get(unconfirmed.ID); c.Result != nil || c.Delivery != nil {
 		t.Fatalf("an unconfirmed stop was given a result or a delivery: %+v", c)
 	}
 	// Told once: the hold lifts, and neither a later preface nor a flush
 	// repeats any of it.
-	if _, err := w.tasks.ReleaseHold(parent.ID); err != nil {
+	if _, err := w.tasks.ReleaseHold(parent.ID, held.HeldAt); err != nil {
 		t.Fatal(err)
 	}
 	if again, _ := w.service.Preface(t.Context(), parent.ID); again != "" {
