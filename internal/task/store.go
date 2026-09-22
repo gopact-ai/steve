@@ -507,6 +507,40 @@ func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls in
 	return *stored.clone(), nil
 }
 
+// FinishUnstarted closes an open attempt that never ran, ending it when it
+// began: the turn its Begin reserved stays charged to the tree, the time
+// since it does not — that was the process being down, not work. A row
+// bound to an execution is that execution's to settle, by its receipt.
+func (s *Store) FinishUnstarted(id string, outcome Outcome) (Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.clone()
+	stored, ok := next.Tasks[id]
+	if !ok {
+		return Task{}, fmt.Errorf("task %s not found", id)
+	}
+	attempt := stored.primaryAttempt()
+	if attempt == nil || !attempt.Open() {
+		return Task{}, fmt.Errorf("task %s has no open attempt", id)
+	}
+	if attempt.ExecutionID != "" {
+		return Task{}, fmt.Errorf("task %s attempt is bound to execution %s", id, attempt.ExecutionID)
+	}
+	lineage, err := taskLineage(next.Tasks, id)
+	if err != nil {
+		return Task{}, err
+	}
+	attempt.EndedAt, attempt.Outcome = attempt.StartedAt, outcome
+	now := s.now()
+	for _, member := range lineage {
+		member.UpdatedAt = now
+	}
+	if err := s.replaceLocked(next); err != nil {
+		return Task{}, err
+	}
+	return *stored.clone(), nil
+}
+
 func (s *Store) Advance(id string, to State) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -112,6 +112,7 @@ type Service struct {
 
 	mu                 sync.Mutex
 	pending            map[string]*child
+	inherited          inherited
 	bases              map[string]string
 	spends             map[string]view.Progress
 	recoveryQuestions  map[string]*recoveryNotice
@@ -173,6 +174,7 @@ func New(tasks *task.Store, r *roster.Roster, sessions Sessions, assembler *capa
 	return &Service{
 		tasks: tasks, roster: r, sessions: sessions, assembler: assembler, workspaces: workspaces, node: node,
 		InlineWait: defaultInlineWait, RecoveryQuiet: defaultRecoveryQuiet, pending: map[string]*child{},
+		inherited: inherited{rows: inheritedRows(tasks)},
 	}
 }
 
@@ -671,6 +673,11 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	s.rememberAttempt(child.ID, attemptID)
 	if err := s.tasks.BindAttempt(accountingToken, attemptID, turnID); err != nil {
+		// The row Begin opened is this run's to close: no attempt will be
+		// admitted against it, and open it keeps the tree from completing.
+		if _, closeErr := s.tasks.FinishUnstarted(child.ID, task.OutcomeError); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return result, fmt.Errorf("bind delegate accounting: %w", err)
 	}
 	prompt := payload.Render() + exec.ReportingContract + worktreeContract

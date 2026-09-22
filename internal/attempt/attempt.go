@@ -238,6 +238,10 @@ func (n NoSlot) Error() string {
 var (
 	ErrLost     = errors.New("attempt: lease lost")
 	ErrBadState = errors.New("attempt: transition not allowed")
+	// ErrNotFound is a read that found no attempt under the id, as opposed
+	// to one that failed: a caller settling what an absent attempt left
+	// must not mistake a broken read for absence.
+	ErrNotFound = errors.New("attempt: not found")
 )
 
 const (
@@ -889,7 +893,7 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		return Record{}, err
 	}
 	if !ok {
-		return Record{}, fmt.Errorf("attempt %s not found", id)
+		return Record{}, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	return decode(op)
 }

@@ -165,7 +165,7 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 		s.rememberAttempt(tracked.ID, record.ID)
 		go s.recoverChild(s.executions.Detached(ctx), parent, tracked, record, entry)
 	}
-	return nil
+	return s.settleUnrecordedChildren(ctx)
 }
 
 // recoveryPending reports one way a child could not be joined: a question
