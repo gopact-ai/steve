@@ -451,7 +451,9 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 // repositories, and which repositories they fall in. Both lists are
 // slash-separated and relative to the canonical workspace. Case is
 // ignored: on a case-insensitive file system, as macOS has by default,
-// Inner/x is written into inner/.
+// Inner/x is written into inner/. The home's file system is not asked, so
+// on a case-sensitive one a path differing from a nested repository only
+// in case is refused too; refusing is the side that loses no data.
 func pathsInsideNested(paths, nested []string) (inside, repos []string) {
 	hit := map[string]bool{}
 	for _, path := range paths {
@@ -482,8 +484,7 @@ func nestedReason(repos []string) string {
 // applyLanding writes the merged tree into the canonical workspace, every
 // path journaled before and confirmed after, so a landing cut off here is
 // recovered per path. A write that fails may have written some paths
-// first, so it is recovered the same way, at once; a durable landing is
-// recovered by its own caller.
+// first, so it is recovered the same way, at once, durable or not.
 func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landing, repo *Repo) error {
 	journal := s.ledger.Journal()
 	for _, path := range land.Paths {
@@ -498,9 +499,6 @@ func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landi
 		err = s.applyOnNode(ctx, p, land.Now, land.Merged)
 	}
 	if err != nil {
-		if land.Recoverable {
-			return err
-		}
 		return s.recoverFailedApply(ctx, p, land, err)
 	}
 	for _, path := range land.Paths {
@@ -523,7 +521,7 @@ func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landi
 func (s *Store) recoverFailedApply(ctx context.Context, p project.Project, land *Landing, applyErr error) error {
 	slog.Warn(fmt.Sprintf("artifact: landing %s into %s: apply failed, recovering it path by path: %v", land.ID, land.Project, applyErr),
 		"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "error", applyErr.Error())
-	if err := s.move(ctx, land, LandApplying, LandRecoveryPending, map[string]any{"apply_error": applyErr.Error()}); err != nil {
+	if err := s.move(context.WithoutCancel(ctx), land, LandApplying, LandRecoveryPending, map[string]any{"apply_error": applyErr.Error()}); err != nil {
 		return fmt.Errorf("apply: %w; recording it for recovery: %v", applyErr, err)
 	}
 	recovered, err := s.finishRecovery(ctx, p, *land, *land.Lease)
@@ -532,7 +530,8 @@ func (s *Store) recoverFailedApply(ctx context.Context, p project.Project, land 
 	}
 	if err != nil || land.State == LandRecoveryPending {
 		if err == nil {
-			err = errors.New("the landing record changed underneath")
+			// finishRecovery logged why its outcome was not recorded.
+			err = errors.New("its outcome could not be recorded")
 		}
 		return fmt.Errorf("%w: landing %s: apply failed (%v) and recovering it failed: %v", ErrRecoveryPending, land.ID, applyErr, err)
 	}
@@ -686,13 +685,20 @@ func (s *Store) move(ctx context.Context, land *Landing, from, to string, effect
 	return err
 }
 
+// fail ends a landing in a failure state. A failure that cannot be
+// recorded leaves the landing in hand as the record has it.
 func (s *Store) fail(ctx context.Context, land *Landing, from, to, cause string, paths []string) error {
+	previous := *land
 	land.Error = cause
 	if paths != nil {
 		land.Paths = paths
 	}
 	land.EndedAt = s.now().UTC()
-	return s.move(context.WithoutCancel(ctx), land, from, to, map[string]any{"paths": paths})
+	if err := s.move(context.WithoutCancel(ctx), land, from, to, map[string]any{"paths": paths}); err != nil {
+		*land = previous
+		return err
+	}
+	return nil
 }
 
 // failed records a failure whose cause the caller is already returning. A

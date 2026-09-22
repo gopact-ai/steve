@@ -3,12 +3,14 @@ package artifact
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -39,11 +41,12 @@ func nodeLanding(t *testing.T) (*Store, project.Project, *failingNode, string, s
 func TestApplyThatFailsPartWayIsFinished(t *testing.T) {
 	ctx := t.Context()
 	store, p, nodes, canonical, artifact := nodeLanding(t)
+	// The node writes a, then refuses the rest of the apply.
 	nodes.fail = ops.Apply
 	nodes.before = func(req ops.Request) {
 		if req.Op == ops.Apply {
 			write(t, canonical, "a", "a1")
-			nodes.before, nodes.fail = nil, ""
+			nodes.before = nil
 		}
 	}
 	land, err := store.Land(ctx, p, artifact, "test")
@@ -219,5 +222,124 @@ func TestPathsInsideNestedIgnoreCase(t *testing.T) {
 	inside, repos := pathsInsideNested([]string{"Inner/x.go", "inner", "innerx/y", "top.md"}, []string{"inner"})
 	if fmt.Sprint(inside) != "[Inner/x.go inner]" || fmt.Sprint(repos) != "[inner]" {
 		t.Fatalf("inside = %v repos = %v", inside, repos)
+	}
+}
+
+// A sweep that comes by while a failed apply is being recovered in place
+// finds the lock held and leaves the landing alone: two recoveries of one
+// landing never run at once, and the lock is not released under it.
+func TestRetryLeavesARecoveryInProgressAlone(t *testing.T) {
+	ctx := t.Context()
+	store, p, nodes, canonical, artifact := nodeLanding(t)
+	nodes.fail = ops.Apply
+	swept := false
+	nodes.before = func(req ops.Request) {
+		switch {
+		case req.Op == ops.Apply:
+			write(t, canonical, "a", "a1")
+		case req.Op == ops.PathState && !swept:
+			swept = true
+			held, _, _ := store.ledger.LeaseOf(ctx, "canonical:p")
+			recovered, err := store.RetryRecoveries(ctx)
+			if err != nil || len(recovered) != 0 {
+				t.Errorf("a sweep during the recovery recovered %+v err=%v", recovered, err)
+			}
+			if after, _, _ := store.ledger.LeaseOf(ctx, "canonical:p"); after != held {
+				t.Errorf("lock during the recovery went from %+v to %+v", held, after)
+			}
+		}
+	}
+	land, err := store.Land(ctx, p, artifact, "test")
+	if !swept || err != nil || land.State != LandCommitted {
+		t.Fatalf("swept=%v land=%+v err=%v", swept, land, err)
+	}
+	if read(t, canonical, "b") != "b1" {
+		t.Fatalf("b=%q", read(t, canonical, "b"))
+	}
+}
+
+// A result that turns a file into a directory cannot be finished path by
+// path. When its apply fails, the landing ends apply-conflicted with the
+// reason, instead of waiting for a recovery that can never succeed while
+// the project refuses every other landing.
+func TestFailedApplyThatTurnsAFileIntoADirectoryEnds(t *testing.T) {
+	ctx := t.Context()
+	local := &localNode{root: t.TempDir(), state: t.TempDir()}
+	canonical := filepath.Join(local.root, "proj")
+	write(t, canonical, "a", "a0")
+	write(t, canonical, "x", "x0")
+	store, p := newStore(t, local, project.Home{Node: "node-a", Path: canonical})
+	nodes := &failingNode{localNode: local}
+	store.nodes = nodes
+	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	if err := os.Remove(filepath.Join(ws.Path, "a")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, ws.Path, "a/b", "b1")
+	result, _, err := store.Publish(ctx, ws, ws.Base, "att-1", "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Someone edits x as the apply starts, and git refuses it.
+	nodes.before = func(req ops.Request) {
+		if req.Op == ops.Apply {
+			write(t, canonical, "x", "x-by-hand")
+			nodes.before = nil
+		}
+	}
+	land, err := store.Land(ctx, p, result.ID, "test")
+	var conflict Conflict
+	if !errors.As(err, &conflict) || land.State != LandApplyConflicted || !strings.Contains(land.Error, "between files and directories") {
+		t.Fatalf("land = %+v err=%v", land, err)
+	}
+	if err := store.checkNoRecoveryPending(ctx, p, ""); err != nil {
+		t.Fatalf("the project still refuses landings: %v", err)
+	}
+	if read(t, canonical, "a") != "a0" {
+		t.Fatalf("a=%q", read(t, canonical, "a"))
+	}
+}
+
+// A durable landing whose apply fails is recovered in place like any
+// other: it does not stay applying, where nothing would keep the next
+// landing off the half-written workspace.
+func TestDurableApplyFailureIsRecovered(t *testing.T) {
+	ctx := t.Context()
+	store, p, nodes, canonical, artifact := nodeLanding(t)
+	nodes.fail = ops.Apply
+	nodes.before = func(req ops.Request) {
+		if req.Op == ops.Apply {
+			write(t, canonical, "a", "a1")
+			nodes.down, nodes.before = true, nil
+		}
+	}
+	if _, err := store.LandOnce(ctx, "durable-1", p, artifact, "plan"); !errors.Is(err, ErrRecoveryPending) {
+		t.Fatalf("land once = %v, want ErrRecoveryPending", err)
+	}
+	if state := landingState(t, store, "durable-1"); state != LandRecoveryPending {
+		t.Fatalf("state = %s, want %s", state, LandRecoveryPending)
+	}
+	if err := store.checkNoRecoveryPending(ctx, p, ""); !errors.Is(err, ErrRecoveryPending) {
+		t.Fatalf("a new landing over the half-written workspace = %v, want ErrRecoveryPending", err)
+	}
+	nodes.down, nodes.fail = false, ""
+	land, err := store.LandOnce(ctx, "durable-1", p, artifact, "plan")
+	if err != nil || land.State != LandCommitted || read(t, canonical, "b") != "b1" {
+		t.Fatalf("resumed land = %+v err=%v b=%q", land, err, read(t, canonical, "b"))
+	}
+}
+
+// A merge conflict is resolved, not retried, even one whose marked tree
+// was never recorded: the result is blocked until the canonical changes.
+func TestUnblockRefusesAMergeConflictWithoutATree(t *testing.T) {
+	ctx := t.Context()
+	store, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
+	item := Pending{Project: "p", Artifact: "art", By: "test", At: time.Now().UTC(),
+		Blocked: &Blocked{Landing: "land-m", State: LandMergeConflicted, Canonical: "c0", At: time.Now().UTC()}}
+	if err := store.ledger.Update(ctx, func(tx *ledger.Tx) error { return tx.PutBinding(pendingKind, "p/art", item) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Unblock(ctx, "p", "art", "land-m"); !errors.Is(err, ErrNotBlocked) {
+		t.Fatalf("unblock of a merge conflict = %v, want ErrNotBlocked", err)
 	}
 }

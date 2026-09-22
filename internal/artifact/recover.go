@@ -227,7 +227,10 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		return land, err
 	}
 	// Nothing may be written before the lock is held again.
-	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
+	// The recovery holds the lock under a name of its own. The landing's
+	// own name would re-enter a lock the landing still holds while it
+	// recovers its failed apply in place, and the two would run at once.
+	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, "recovery:"+land.ID+":"+attempt.NewID()), landTTL)
 	if err != nil {
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
@@ -285,30 +288,20 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	if err != nil {
 		return land, fmt.Errorf("landing %s: snapshot before recovery: %w", land.ID, err)
 	}
-	var written, stale, conflicted []string
-	for _, path := range land.Paths {
-		state, err := s.pathState(ctx, p, land, path)
-		if err != nil {
-			return land, err
-		}
-		switch state {
-		case "merged":
-			written = append(written, path)
-		case "old":
-			stale = append(stale, path)
-		default:
-			conflicted = append(conflicted, path)
-		}
-	}
 	// A path inside a nested repository was never in any snapshot, so it
-	// reads as "old" and would be written into the user's repository. It
-	// is refused here as a new landing refuses it.
+	// would read as "old" and be written into the user's repository. It is
+	// refused before anything is inspected, as a new landing refuses it.
 	if inside, repos := pathsInsideNested(land.Paths, nested); len(inside) > 0 {
+		written, _, _, _ := s.inspectPaths(ctx, p, land, outside(land.Paths, inside))
 		s.conflictedRecovery(ctx, p, &land, inside, nestedReason(repos)+partlyWritten(written, len(land.Paths)))
 		return land, nil
 	}
+	written, stale, conflicted, err := s.inspectPaths(ctx, p, land, land.Paths)
+	if err != nil {
+		return land, err
+	}
 	if len(conflicted) > 0 {
-		s.conflictedRecovery(ctx, p, &land, conflicted, "these paths were changed by someone else while the landing was being written"+partlyWritten(written, len(land.Paths)))
+		s.conflictedRecovery(ctx, p, &land, conflicted, "these paths were changed by someone else while the landing was being written, or it turns them between files and directories, which cannot be finished path by path"+partlyWritten(written, len(land.Paths)))
 		return land, nil
 	}
 	land.Round++
@@ -346,6 +339,43 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 		return land, err
 	}
 	return land, nil
+}
+
+// inspectPaths sorts a landing's paths by what the canonical workspace
+// holds: already at the merged content, still at the old content, or
+// something else. It stops at the first path it cannot inspect, returning
+// what it sorted so far.
+func (s *Store) inspectPaths(ctx context.Context, p project.Project, land Landing, paths []string) (written, stale, conflicted []string, err error) {
+	for _, path := range paths {
+		state, err := s.pathState(ctx, p, land, path)
+		if err != nil {
+			return written, stale, conflicted, err
+		}
+		switch state {
+		case "merged":
+			written = append(written, path)
+		case "old":
+			stale = append(stale, path)
+		default:
+			conflicted = append(conflicted, path)
+		}
+	}
+	return written, stale, conflicted, nil
+}
+
+// outside is paths without those in skip.
+func outside(paths, skip []string) []string {
+	skipped := make(map[string]bool, len(skip))
+	for _, path := range skip {
+		skipped[path] = true
+	}
+	var out []string
+	for _, path := range paths {
+		if !skipped[path] {
+			out = append(out, path)
+		}
+	}
+	return out
 }
 
 // partlyWritten says, for a recovery that stops, how much of the landing

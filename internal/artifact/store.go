@@ -1031,7 +1031,7 @@ func (s *Store) Unblock(ctx context.Context, projectID, artifactID, landingID st
 		if item.Blocked == nil || item.Blocked.Landing != landingID {
 			return fmt.Errorf("%w: artifact %s, landing %s", ErrNotBlocked, short(artifactID), landingID)
 		}
-		if item.Blocked.Marked != "" {
+		if item.Blocked.State != LandApplyConflicted {
 			return fmt.Errorf("%w: landing %s stopped on a merge conflict, which is resolved rather than retried", ErrNotBlocked, landingID)
 		}
 		item.Blocked = nil

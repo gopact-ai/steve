@@ -180,7 +180,7 @@ func (a *Service) conflict(ctx context.Context, artifactID string) (artifact.Stu
 		return artifact.Stuck{}, project.Project{}, err
 	}
 	if !ok {
-		return artifact.Stuck{}, project.Project{}, fmt.Errorf("nothing is stuck on a conflict for %s", artifactID)
+		return artifact.Stuck{}, project.Project{}, fmt.Errorf("%w: nothing is stuck on a conflict for %s", artifact.ErrNotBlocked, artifactID)
 	}
 	p, ok, err := a.Projects.Get(ctx, stuck.Project)
 	if err != nil {

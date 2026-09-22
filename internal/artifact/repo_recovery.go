@@ -3,13 +3,18 @@ package artifact
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 type treeEntry struct{ mode, sha string }
+
+// errNotAFile is a path a tree holds as a directory or a submodule.
+var errNotAFile = errors.New("artifact: not a file")
 
 func (r *Repo) entry(ctx context.Context, commit, path string) (treeEntry, error) {
 	out, err := r.git(ctx, []string{"GIT_LITERAL_PATHSPECS=1"}, "ls-tree", "--full-tree", "-z", commit, "--", path)
@@ -19,7 +24,7 @@ func (r *Repo) entry(ctx context.Context, commit, path string) (treeEntry, error
 	meta, _, ok := strings.Cut(out, "\t")
 	fields := strings.Fields(meta)
 	if !ok || len(fields) != 3 || fields[1] != "blob" {
-		return treeEntry{}, fmt.Errorf("artifact: %s is not a file in %s", path, commit)
+		return treeEntry{}, fmt.Errorf("%w: %s in %s", errNotAFile, path, commit)
 	}
 	return treeEntry{fields[0], fields[2]}, nil
 }
@@ -32,6 +37,10 @@ func (r *Repo) pathState(ctx context.Context, dir, from, to, path string) (strin
 	defer root.Close()
 	var current treeEntry
 	info, err := root.Lstat(path)
+	if errors.Is(err, syscall.ENOTDIR) {
+		// A file stands where the path needs a directory.
+		return "other", nil
+	}
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
@@ -67,11 +76,19 @@ func (r *Repo) pathState(ctx context.Context, dir, from, to, path string) (strin
 		}
 		current.sha = strings.TrimSpace(sha)
 	}
+	// A path that is a directory on either side is turned between a file
+	// and a directory; that is not finished path by path.
 	merged, err := r.entry(ctx, to, path)
+	if errors.Is(err, errNotAFile) {
+		return "other", nil
+	}
 	if err != nil {
 		return "", err
 	}
 	old, err := r.entry(ctx, from, path)
+	if errors.Is(err, errNotAFile) {
+		return "other", nil
+	}
 	if err != nil {
 		return "", err
 	}
