@@ -165,6 +165,14 @@ func (c *Coordinator) turnInFlight(conversationID, agentID string) bool {
 // turn was running yet — long enough to cover the dequeue-to-beginTurn gap.
 const pendingCancelWindow = 5 * time.Second
 
+// clearPendingCancel disarms the window a stop armed while no turn was
+// running, once the stop has done what it was for.
+func (c *Coordinator) clearPendingCancel(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.cancelPending, key)
+}
+
 func (c *Coordinator) consumePendingCancel(key string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

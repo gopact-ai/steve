@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -37,120 +38,147 @@ func (c *Coordinator) SetTurnPreface(fn func(ctx context.Context, taskID string)
 	c.turnPreface = fn
 }
 
-// delegation is a task the stop has to account for, with the children
-// still running on its behalf.
-type delegation struct {
-	task    task.Task
-	running []task.Task
-}
-
 func (c *Coordinator) cancel(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
-	held := c.holdDelegations(conversationID, selected.ID)
+	// The hold comes first: the turn cancelled next ends by delivering
+	// what its children left, and a child stopped after that ends the same
+	// way — neither may wake the task.
+	covered := c.coveredTasks(conversationID, selected.ID)
+	c.holdDelegating(covered)
 	running := c.turnInFlight(conversationID, selected.ID)
 	result, turnErr := c.cancelTurn(ctx, conversationID, selected)
-	stopped, stopErr := c.stopDelegations(ctx, held)
-	if turnErr != nil {
-		return Result{}, errors.Join(turnErr, stopErr)
+	stopped, stopErr := c.stopDelegations(ctx, covered)
+	// Stamped again now that the children are stopped: a turn composed
+	// while that was under way accounted for less than this stop, and its
+	// settling must not lift it.
+	c.holdDelegating(covered)
+	if !running && len(stopped) > 0 {
+		// The reply invites the next message; the window armed against a
+		// turn that was just starting must not swallow it.
+		c.clearPendingCancel(sessionKey(conversationID, selected.ID))
 	}
 	names := make([]string, 0, len(stopped))
 	for _, child := range stopped {
 		names = append(names, fmt.Sprintf("#%s %s@%s", child.ID, child.Member, nodewire.Name(child.Node)))
 	}
-	if stopErr != nil {
-		return Result{AgentID: selected.ID, Text: fmt.Sprintf("stop recorded for %s, execution has not confirmed stopping: %v", strings.Join(names, ", "), stopErr)}, stopErr
-	}
 	var lines []string
-	if running || len(stopped) == 0 {
+	if turnErr == nil && (running || len(stopped) == 0) {
 		lines = append(lines, result.Text)
 	}
 	if len(stopped) > 0 {
-		lines = append(lines, c.text.T(i18n.CancelStoppedChildren, strings.Join(names, "、")))
+		lines = append(lines, c.text.T(i18n.CancelStoppedChildren, strings.Join(names, c.text.T(i18n.ListSeparator))))
 	}
-	return Result{AgentID: selected.ID, Text: strings.Join(lines, "\n")}, nil
+	if stopErr != nil {
+		lines = append(lines, fmt.Sprintf("stop recorded for %s, execution has not confirmed stopping: %v", strings.Join(names, ", "), stopErr))
+	}
+	return Result{AgentID: selected.ID, Text: strings.Join(lines, "\n")}, errors.Join(turnErr, stopErr)
 }
 
-// holdDelegations puts every task the agent holds in the conversation on
-// hold if a child of it is still running or still owes it a result, and
-// says which children have to be stopped. The hold comes first: the turn
-// cancelled next ends by delivering what its children left, and a child
-// stopped after that ends the same way — neither may wake the task.
-func (c *Coordinator) holdDelegations(conversationID, agentID string) []delegation {
+// coveredTasks is what a stop in this conversation reaches: every task
+// the agent holds there, whatever started it — the same scope as the turn
+// it cancels, which runs for any of them.
+func (c *Coordinator) coveredTasks(conversationID, agentID string) []task.Task {
 	if c.tasks == nil {
 		return nil
 	}
-	var held []delegation
-	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
-		var running []task.Task
+	return c.tasks.Holding(conversationID, agentID)
+}
+
+// atWork says a delegated child is still running on its parent's behalf.
+func atWork(child task.Task) bool {
+	return child.Delegated() && child.State.Holds() && !child.Finished()
+}
+
+// owing says the task's next turn has a child to account for: one at
+// work, one that ended with a result the task was not given, or one
+// stopped without its execution confirming the stop.
+func owing(child task.Task) bool {
+	if !child.Delegated() {
+		return false
+	}
+	return atWork(child) || child.Undelivered() || (child.Finished() && child.Result == nil)
+}
+
+// holdDelegating stamps a hold on each covered task with a child to
+// account for. A task with nothing delegated is not held: its stop is
+// what it always was.
+func (c *Coordinator) holdDelegating(covered []task.Task) {
+	for _, tracked := range covered {
 		owed := false
 		for _, child := range c.tasks.Children(tracked.ID) {
-			if !child.Delegated() {
-				continue
-			}
-			if child.State.Holds() {
-				running = append(running, child)
-			} else if child.Undelivered() {
+			if owing(child) {
 				owed = true
+				break
 			}
 		}
-		if len(running) == 0 && !owed {
+		if !owed {
 			continue
 		}
 		if _, err := c.tasks.Hold(tracked.ID); err != nil {
-			slog.Error(fmt.Sprintf("turn: hold task #%s at stop: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
-			continue
+			slog.Error(fmt.Sprintf("turn: hold task #%s at stop: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", tracked.Member)
 		}
-		held = append(held, delegation{task: tracked, running: running})
 	}
-	return held
 }
 
-// stopDelegations cancels the running children of the held tasks — each
-// with its own subtree — and waits for their executions to confirm.
-func (c *Coordinator) stopDelegations(ctx context.Context, held []delegation) ([]task.Task, error) {
+// stopDelegations cancels the children of the covered tasks that are at
+// work now — each with its own subtree — and waits once for their
+// executions to confirm. Read after the turn ended, not before: the agent
+// may have delegated while it was being stopped.
+func (c *Coordinator) stopDelegations(ctx context.Context, covered []task.Task) ([]task.Task, error) {
 	var stopped []task.Task
+	var ids []string
 	var stopErr error
-	for _, d := range held {
-		for _, child := range d.running {
-			ids, err := c.tasks.SetAside(child.ID, task.StateCancelled)
+	for _, tracked := range covered {
+		for _, child := range c.tasks.Children(tracked.ID) {
+			if !atWork(child) {
+				continue
+			}
+			aside, err := c.tasks.SetAside(child.ID, task.StateCancelled)
 			if err != nil {
 				stopErr = errors.Join(stopErr, err)
 				continue
 			}
 			stopped = append(stopped, child)
-			if c.executions != nil {
-				stopErr = errors.Join(stopErr, c.stopExecutions(ctx, ids, false))
-			}
-			slog.Info(fmt.Sprintf("turn: stopped delegated task #%s with task #%s", child.ID, d.task.ID), "task", child.ID, "parent", d.task.ID, "conversation", d.task.Channel, "agent", child.Member, "node", child.Node)
+			ids = append(ids, aside...)
+			slog.Info(fmt.Sprintf("turn: stopped delegated task #%s with task #%s", child.ID, tracked.ID), "task", child.ID, "parent", tracked.ID, "conversation", tracked.Channel, "agent", child.Member, "node", child.Node)
 		}
+	}
+	if len(ids) > 0 && c.executions != nil {
+		stopErr = errors.Join(stopErr, c.stopExecutions(ctx, ids, false))
 	}
 	return stopped, stopErr
 }
 
 // preface is what the turn's task is told before the user's message, and
-// told is what the turn calls once the agent has it: that lifts the hold —
-// from then on a child ending is delivered as it ends — and records the
-// account as given. With nothing to tell, the hold lifts at once.
+// told is what the turn calls once the agent has it: that records the
+// account as given and lifts the hold the turn composed under — from then
+// on a child ending is delivered as it ends. A hold stamped since is a
+// later stop's, and stays.
 func (c *Coordinator) preface(ctx context.Context, taskID string) (text string, told func()) {
 	if taskID == "" || c.tasks == nil {
 		return "", nil
+	}
+	// The stamp is read before the account is composed: a stop between
+	// the two re-stamps, and this turn must not lift what it did not see.
+	var seen time.Time
+	if tracked, ok := c.tasks.Get(taskID); ok {
+		seen = tracked.HeldAt
 	}
 	var p Preface
 	if c.turnPreface != nil {
 		p = c.turnPreface(ctx, taskID)
 	}
-	release := func() {
-		if _, err := c.tasks.ReleaseHold(taskID); err != nil {
-			slog.Error(fmt.Sprintf("turn: release hold on task #%s: %v", taskID, err), "task", taskID)
-		}
-	}
-	if p.Text == "" {
-		release()
+	if p.Text == "" && seen.IsZero() {
 		return "", nil
 	}
 	return p.Text, func() {
 		if p.Told != nil {
 			p.Told()
 		}
-		release()
+		if seen.IsZero() {
+			return
+		}
+		if _, err := c.tasks.ReleaseHold(taskID, seen); err != nil {
+			slog.Error(fmt.Sprintf("turn: release hold on task #%s: %v", taskID, err), "task", taskID)
+		}
 	}
 }

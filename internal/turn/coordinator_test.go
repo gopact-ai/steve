@@ -77,6 +77,13 @@ type fakeRunner struct {
 	cancels  atomic.Int32
 	aborts   atomic.Int32
 	stop     sync.Once
+	// cancelSettles answers a cancel the way a harness does: the prompt
+	// settles with ErrTurnCanceled, the agent having acknowledged the stop.
+	// Without it a cancel is a local context.Canceled, never settled.
+	cancelSettles bool
+	// onCancel runs inside Cancel, before the prompt is let go: what the
+	// agent manages to do while the stop is under way.
+	onCancel func()
 	// start fires once per runner; a turn can now be interrupted by the
 	// next one, so Prompt is reached more than once with the same runner.
 	start sync.Once
@@ -105,6 +112,9 @@ func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(view.Prog
 		}
 	}
 	if r.canceled.Load() {
+		if r.cancelSettles {
+			return "", nil, harness.ErrTurnCanceled
+		}
 		return "", nil, context.Canceled
 	}
 	if r.reply != "" {
@@ -114,6 +124,9 @@ func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(view.Prog
 }
 func (r *fakeRunner) Cancel(context.Context) error {
 	r.cancels.Add(1)
+	if r.onCancel != nil {
+		r.onCancel()
+	}
 	r.canceled.Store(true)
 	if r.done != nil {
 		r.stop.Do(func() { close(r.done) })
