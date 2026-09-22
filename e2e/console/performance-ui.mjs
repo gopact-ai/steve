@@ -121,12 +121,14 @@ try {
             async function progress(n) {
                 const answer = markdown("Live answer", n * 3) + `\n\nSTREAM_MARKER_${n}`;
                 // Measure in the page, not Playwright's selector polling/network
-                // round-trip. The observer watches only the active turn.
+                // round-trip. The observer watches only the active turn: the last
+                // message, above the execution hint that closes the transcript.
                 return page.evaluate(({ event, marker }) => new Promise((resolve, reject) => {
                     const start = performance.now(), root = document.querySelector(".transcript-messages");
+                    const live = () => { let el = root.lastElementChild; while (el?.matches("[role=status]")) el = el.previousElementSibling; return el; };
                     const timeout = setTimeout(() => { observer.disconnect(); reject(new Error(`Stream did not paint ${marker}`)); }, 10000);
                     const observer = new MutationObserver(() => {
-                        if (root.lastElementChild?.textContent.includes(marker)) {
+                        if (live()?.textContent.includes(marker)) {
                             observer.disconnect(); clearTimeout(timeout); requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - start)));
                         }
                     });
