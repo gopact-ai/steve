@@ -151,17 +151,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		aliases = maps.Clone(previous.QuoteAliases)
 	}
 	if options.Locale == "" {
-		if previous != nil {
-			options.Locale = previous.Locale
-		} else {
-			options.Locale = string(i18n.ContextLocale(ctx))
-			if options.Locale == "" {
-				options.Locale = s.defaultLocale
-				if s.DefaultLocaleSource != nil {
-					options.Locale = s.DefaultLocaleSource()
-				}
-			}
-		}
+		options.Locale = s.submissionLocaleLocked(ctx, previous)
 	}
 	s.mu.Unlock()
 	if len(aliases) > 0 {
@@ -205,17 +195,8 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if err != nil {
 		return nil, Exchange{}, err
 	}
-	if options.ExpectedProject != "" && project == "" {
-		state, err := s.Context(ctx, conversation)
-		if err != nil {
-			return nil, Exchange{}, err
-		}
-		if state.Project != nil {
-			project = state.Project.ID
-		}
-	}
-	if options.ExpectedProject != "" && strings.HasPrefix(key, "client:") && options.ExpectedProject != project {
-		return nil, Exchange{}, fmt.Errorf("expected project %s, but conversation is bound to %s", options.ExpectedProject, project)
+	if project, err = s.confirmExpectedProject(ctx, conversation, key, options.ExpectedProject, project); err != nil {
+		return nil, Exchange{}, err
 	}
 	if len(options.Refs) > 0 {
 		if _, parsed := s.parseInput(input); parsed.Control() {
@@ -252,6 +233,44 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		return s.acceptRewoundLocked(e, options.RewindTo, options.Front)
 	}
 	return s.acceptExchange(e, options.Front, options.Deferred)
+}
+
+// submissionLocaleLocked is the locale a line without one is answered in:
+// the one its earlier submission had, else the request's, else the
+// console's default.
+func (s *Service) submissionLocaleLocked(ctx context.Context, previous *queuedExchange) string {
+	if previous != nil {
+		return previous.Locale
+	}
+	if locale := string(i18n.ContextLocale(ctx)); locale != "" {
+		return locale
+	}
+	if s.DefaultLocaleSource != nil {
+		return s.DefaultLocaleSource()
+	}
+	return s.defaultLocale
+}
+
+// confirmExpectedProject returns the project the line runs under. A client
+// that named one is refused when the conversation is bound elsewhere; the
+// binding is read only when the materials did not already settle it.
+func (s *Service) confirmExpectedProject(ctx context.Context, conversation, key, expected, project string) (string, error) {
+	if expected == "" {
+		return project, nil
+	}
+	if project == "" {
+		state, err := s.Context(ctx, conversation)
+		if err != nil {
+			return "", err
+		}
+		if state.Project != nil {
+			project = state.Project.ID
+		}
+	}
+	if strings.HasPrefix(key, "client:") && expected != project {
+		return "", fmt.Errorf("expected project %s, but conversation is bound to %s", expected, project)
+	}
+	return project, nil
 }
 
 // resumeLocked replays a submission this conversation has already

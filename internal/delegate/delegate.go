@@ -616,34 +616,11 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	candidate roster.Candidate, req agentmcp.DelegateRequest, progress func(view.Progress)) (result agentmcp.DelegateResult, runErr error) {
 	result = agentmcp.DelegateResult{TaskID: child.ID, Agent: candidate.Agent.ID, Node: candidate.Node}
 
-	// The child's own token: bound to the child task, revoked when it ends.
-	var extras []capability.Extra
-	if s.gate != nil {
-		token, err := newToken()
-		if err != nil {
-			return result, err
-		}
-		endpoint := ""
-		if candidate.Node != "" && s.endpoints != nil {
-			endpoint, err = s.endpoints.MCPEndpoint(ctx, candidate.Node)
-			if err != nil {
-				// Losing milestone cards is a degradation; losing the
-				// delegation is not. The child runs without the send
-				// primitive.
-				slog.Warn(fmt.Sprintf("delegate: node %q messaging endpoint: %v", candidate.Node, err), "task", child.ID, "parent", parent.ID, "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
-				endpoint = ""
-			}
-		}
-		if candidate.Node == "" || endpoint != "" {
-			extras = s.gate.Delegated(conversationID, candidate.Agent.ID, child.ID, delegatedBy, token, endpoint)
-			defer func() {
-				var detached *execution.RetainedObserverDetached
-				if !errors.As(runErr, &detached) {
-					s.gate.Revoke(token)
-				}
-			}()
-		}
+	extras, revoke, err := s.childToken(ctx, conversationID, delegatedBy, parent, child, candidate)
+	if err != nil {
+		return result, err
 	}
+	defer func() { revoke(runErr) }()
 
 	caps, err := s.assembler.AssembleExtra(candidate.Agent, home.ModeGuest, extras)
 	if err != nil {
@@ -733,6 +710,42 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantinesUnlessCancelled, CancelDetaches: true},
 	})
 	return d.settle(ctx, run, err)
+}
+
+// childToken is the child's own messaging token: bound to the child task,
+// reached through its node's loopback endpoint when it runs remotely, and
+// revoked by the returned func when the run ends — unless the run detached
+// from a session that is still using it.
+func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy string, parent, child task.Task, candidate roster.Candidate) ([]capability.Extra, func(runErr error), error) {
+	keep := func(error) {}
+	if s.gate == nil {
+		return nil, keep, nil
+	}
+	token, err := newToken()
+	if err != nil {
+		return nil, keep, err
+	}
+	endpoint := ""
+	if candidate.Node != "" && s.endpoints != nil {
+		endpoint, err = s.endpoints.MCPEndpoint(ctx, candidate.Node)
+		if err != nil {
+			// Losing milestone cards is a degradation; losing the
+			// delegation is not. The child runs without the send
+			// primitive.
+			slog.Warn(fmt.Sprintf("delegate: node %q messaging endpoint: %v", candidate.Node, err), "task", child.ID, "parent", parent.ID, "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
+			endpoint = ""
+		}
+	}
+	if candidate.Node != "" && endpoint == "" {
+		return nil, keep, nil
+	}
+	extras := s.gate.Delegated(conversationID, candidate.Agent.ID, child.ID, delegatedBy, token, endpoint)
+	return extras, func(runErr error) {
+		var detached *execution.RetainedObserverDetached
+		if !errors.As(runErr, &detached) {
+			s.gate.Revoke(token)
+		}
+	}, nil
 }
 
 func (s *Service) delegationContext(child task.Task, candidate roster.Candidate, req agentmcp.DelegateRequest) (ctxpack.Context, error) {

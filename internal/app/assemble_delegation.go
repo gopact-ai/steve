@@ -17,7 +17,6 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/delegate"
-	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
@@ -97,25 +96,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		delegation.RegisterIdle = nodes.RegisterIdle
 		delegation.SetObserver(delegateObserver(ctx, admin, view, cons))
 		gate.SetDelegator(delegation)
-		// A child's result goes back into its parent's conversation as a
-		// message — the page's queue or the chat — instead of the parent
-		// polling for it; a turn's end delivers what ended meanwhile.
-		delegation.SetReplaySafeDelivery(func(parent task.Task) bool {
-			return parent.Transport == "console"
-		})
-		delegation.SetDeliveryReceipt(func(parent task.Task, key string) (bool, error) {
-			if parent.Transport == "console" {
-				return cons.ContinuationReceipt(parent.Channel, parent.ID, key)
-			}
-			return false, nil
-		})
-		delegation.SetDeliverer(func(ctx context.Context, d delegate.Delivery) error {
-			return routeTask(d.Transport, func() error {
-				return cons.ContinueTask(ctx, d.Conversation, d.ParentTask, d.Key, d.Member, d.Notice(), d.Prompt())
-			}, func() error {
-				return gw.DeliverConfirmed(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation, ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt(), func(err error) { delegation.ConfirmDelivery(d, err) })
-			})
-		})
+		wireDelegateDelivery(delegation, cons, gw)
 		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
 		coordinator.SetTurnPreface(func(ctx context.Context, taskID string) turn.Preface {
 			text, told := delegation.Preface(ctx, taskID)

@@ -82,16 +82,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 		s.mu.Unlock()
 		return turn.Result{}, true, errors.New("the original recovery task is already stopping")
 	}
-	target.recoveryStopping = make(chan struct{})
-	var released sync.Once
-	release := func() {
-		released.Do(func() {
-			s.mu.Lock()
-			close(target.recoveryStopping)
-			target.recoveryStopping = nil
-			s.mu.Unlock()
-		})
-	}
+	release := s.beginRecoveryStopLocked(target)
 	defer release()
 	original := copyExchange(target.Exchange)
 	s.mu.Unlock()
@@ -144,6 +135,22 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	return result, true, err
 }
 
+// beginRecoveryStopLocked marks the exchange as stopping, so a second stop
+// is refused while this one runs, and returns the release that clears the
+// mark once; the mark's channel lets finishing the stop wait on it.
+func (s *Service) beginRecoveryStopLocked(target *queuedExchange) (release func()) {
+	target.recoveryStopping = make(chan struct{})
+	var released sync.Once
+	return func() {
+		released.Do(func() {
+			s.mu.Lock()
+			close(target.recoveryStopping)
+			target.recoveryStopping = nil
+			s.mu.Unlock()
+		})
+	}
+}
+
 // cancelRecovering is the same stop the console's stop control performs,
 // reached from the recovery question instead. It runs beside the recovery
 // worker, never inside it: finishing a stop waits for that worker to
@@ -167,16 +174,7 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 		return errors.New("original stop target has already finished without a stop receipt")
 	}
 	driver := s.recoveryDriver
-	target.recoveryStopping = make(chan struct{})
-	var released sync.Once
-	release := func() {
-		released.Do(func() {
-			s.mu.Lock()
-			close(target.recoveryStopping)
-			target.recoveryStopping = nil
-			s.mu.Unlock()
-		})
-	}
+	release := s.beginRecoveryStopLocked(target)
 	defer release()
 	original := copyExchange(target.Exchange)
 	s.mu.Unlock()
