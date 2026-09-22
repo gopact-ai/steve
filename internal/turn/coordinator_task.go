@@ -67,12 +67,6 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		}
 		return "", nil
 	}
-	// An onboarding turn runs under a synthetic conversation that is
-	// relocated afterwards; a task opened there would be orphaned as
-	// forever-running, because task channels do not follow the relocation.
-	if strings.HasPrefix(req.ConversationID, onboard.PendingPrefix) {
-		return "", nil
-	}
 	executionNode := selected.Node
 	if executionNode == "" {
 		executionNode = c.node
@@ -98,8 +92,12 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		ok = false
 	}
 	if !ok {
+		title := goal(prompt)
+		if onboarding(req) {
+			title = onboard.TaskGoal(c.text.Locale())
+		}
 		created, err := c.tasks.Create(task.Task{
-			Goal:      goal(prompt),
+			Goal:      title,
 			Requester: req.SenderOpenID,
 			Channel:   req.ConversationID,
 			Transport: req.Channel,
@@ -142,6 +140,29 @@ func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, m
 	}
 	if _, err := c.tasks.FinishAs(id, outcome(turnErr), tokens, 0, model); err != nil {
 		slog.Error(fmt.Sprintf("turn: finish task %s: %v", id, err), "task", id)
+	}
+}
+
+// onboarding reports a turn running under the synthetic conversation the
+// first introduction uses before it is relocated into the real chat.
+func onboarding(req Request) bool {
+	return strings.HasPrefix(req.ConversationID, onboard.PendingPrefix)
+}
+
+// closeOnboardingTask ends the onboarding turn's task once the turn is
+// accounted. The turn needs a task of its own, because a node authorizes a
+// native session only for an attempt carrying a task execution token, but
+// the task must not outlive the turn: its channel is the synthetic
+// conversation, which the relocation into the real chat does not carry
+// along. A failed turn leaves the task running, so the next onboarding
+// attempt continues it instead of opening another, and the idle sweep
+// closes it if onboarding never runs again.
+func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error) {
+	if c.tasks == nil || id == "" || turnErr != nil || !onboarding(req) {
+		return
+	}
+	if _, err := c.tasks.Advance(id, task.StateDone); err != nil {
+		slog.Error(fmt.Sprintf("turn: close onboarding task %s: %v", id, err), "task", id, "conversation", req.ConversationID)
 	}
 }
 

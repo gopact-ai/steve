@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -188,7 +190,12 @@ func TestCrashResumeE2E(t *testing.T) {
 	}
 }
 
-func TestOnboardingTurnOpensNoTask(t *testing.T) {
+// The onboarding turn runs under a synthetic conversation that is relocated
+// afterwards, yet its native session is authorized like any other: a node
+// only opens a session for an attempt carrying a task execution token. The
+// turn therefore runs under a task of its own, which is closed as soon as the
+// turn is accounted so nothing is left running under the synthetic channel.
+func TestOnboardingTurnRunsUnderAClosedTaskWithAnExecutionToken(t *testing.T) {
 	runner := &fakeRunner{reply: "ok"}
 	coordinator, tasks := taskCoordinator(t, runner)
 	if _, err := coordinator.Handle(t.Context(), Request{
@@ -197,8 +204,50 @@ func TestOnboardingTurnOpensNoTask(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if all := tasks.List(""); len(all) != 0 {
-		t.Fatalf("onboarding opened a task: %+v", all)
+	all := tasks.List("")
+	if len(all) != 1 {
+		t.Fatalf("onboarding tasks = %+v; want exactly one", all)
+	}
+	tracked := all[0]
+	if tracked.State != task.StateDone || tracked.Goal != onboard.TaskGoal(coordinator.text.Locale()) {
+		t.Fatalf("onboarding task = %+v; want a done task named for onboarding", tracked)
+	}
+	if len(tracked.Attempts) != 1 || tracked.Attempts[0].Open() || tracked.Attempts[0].Outcome != task.OutcomeOK {
+		t.Fatalf("onboarding attempts = %+v; want one closed ok row", tracked.Attempts)
+	}
+	records, err := coordinator.attempts.ForTask(t.Context(), tracked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Execution == nil || records[0].Execution.TaskID != tracked.ID {
+		t.Fatalf("onboarding attempt records = %+v; want one carrying the task's execution token", records)
+	}
+	if _, ok := tasks.Active("steve:onboard:ou_x", "codex", ""); ok {
+		t.Fatal("onboarding task still holds the synthetic conversation")
+	}
+}
+
+// A failed introduction is retried on the next start. The retry continues
+// the task the failed turn opened rather than leaving one abandoned task per
+// restart, and only the successful turn closes it.
+func TestFailedOnboardingTurnKeepsItsTaskForTheRetry(t *testing.T) {
+	runner := &fakeRunner{err: errors.New("agent unavailable")}
+	coordinator, tasks := taskCoordinator(t, runner)
+	req := Request{ConversationID: "steve:onboard:ou_x", Input: "自我介绍", SenderOpenID: "ou_x", ChatType: protocol.ChatP2P}
+	if _, err := coordinator.Handle(t.Context(), req); err == nil {
+		t.Fatal("expected the onboarding turn to fail")
+	}
+	first := tasks.List("")
+	if len(first) != 1 || first[0].State != task.StateRunning {
+		t.Fatalf("after failure tasks = %+v; want one running task", first)
+	}
+	runner.err, runner.reply = nil, "ok"
+	if _, err := coordinator.Handle(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	all := tasks.List("")
+	if len(all) != 1 || all[0].ID != first[0].ID || all[0].State != task.StateDone || len(all[0].Attempts) != 2 {
+		t.Fatalf("after retry tasks = %+v; want the same task, done, with both attempts", all)
 	}
 }
 

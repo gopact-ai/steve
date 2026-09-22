@@ -116,6 +116,12 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			if t.run.Record.ID != "" && (step == nil || step.Step >= lifecycle.StepArm) {
 				c.notifyAccountedTurn(tracked)
 			}
+			if onboarding(req) {
+				// The introduction is delivered by onboarding itself, not as
+				// a task notice into a chat that does not exist yet.
+				c.closeOnboardingTask(req, tracked, finishErr)
+				return
+			}
 			c.offlineReminder(req, tracked, started, finishErr)
 		}()
 	}

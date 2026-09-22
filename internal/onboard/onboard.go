@@ -40,6 +40,16 @@ func PendingID(owner string) string {
 	return PendingPrefix + owner
 }
 
+// TaskGoal names the task the onboarding turn runs under. The turn's prompt
+// is an instruction to the agent, not something the owner asked for, so the
+// task list shows what the work was instead of the prompt's first line.
+func TaskGoal(locale i18n.Locale) string {
+	if locale == i18n.LocaleEN {
+		return "First private introduction (onboarding)"
+	}
+	return "首次私聊自我介绍（系统引导）"
+}
+
 // initReporter is a home reader that knows itself whether the identity
 // still needs setting up. The shared (ledger-backed) reader is one; a
 // plain directory is judged from what it loads instead.
