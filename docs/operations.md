@@ -485,7 +485,7 @@ ssh me@host-3 'bash -lc "nohup /home/me/steve-bin/steve-node -config /home/me/st
 
 node 要安装 Git；工作树物化和产物传输依赖它。默认 harness home 隔离在 `state_dir/runtimes/<harness>`，初始化时按工具规则引用认证、筛选配置，不会直接沿用用户的个人技能/MCP 清单。正常运行时 hub 下发启用的技能包，node 校验并物化；认证和必要的环境变量仍需在 node 本机准备。
 
-内置工具的隔离 home 各自引用部署用户的认证并复制筛选后的配置：Codex 链接 `~/.codex/auth.json` 并保留 `config.toml` 的模型与 provider；Claude Code 链接 `~/.claude/.credentials.json` 并只保留 `settings.json` 的 `env`；Grok 复制 `~/.grok/auth.json` 并关闭 compat；Kimi Code 链接 `~/.kimi-code/credentials`、`oauth`，并保留 `config.toml` 的 `default_model`、`[providers]`（含 OAuth 存储）、`[models]`、`[thinking]`、`[loop_control]` 等模型访问配置，去掉 hooks、MCP、skills、plugins、agents、cron 与终端偏好。部署用户没有 `~/.kimi-code/config.toml` 时不生成隔离配置，Kimi 使用自身默认值；用环境变量 `KIMI_MODEL_NAME` / `KIMI_API_KEY` 等配置的模型仍通过 harness `env` 传入。
+内置工具的隔离 home 各自引用部署用户的认证并复制筛选后的配置：Codex 链接 `~/.codex/auth.json` 并保留 `config.toml` 的模型与 provider；Claude Code 链接 `~/.claude/.credentials.json` 并保留 `settings.json` 里描述模型访问的键：`env`（base URL、自定义 header、token）与 `modelPicker`、`availableModels`、`modelOverrides`（该端点提供的模型目录），去掉默认模型、effort、权限、hooks 与终端偏好；隔离配置在 node 启动时生成，改动这些键后要重启才会生效；Grok 复制 `~/.grok/auth.json` 并关闭 compat；Kimi Code 链接 `~/.kimi-code/credentials`、`oauth`，并保留 `config.toml` 的 `default_model`、`[providers]`（含 OAuth 存储）、`[models]`、`[thinking]`、`[loop_control]` 等模型访问配置，去掉 hooks、MCP、skills、plugins、agents、cron 与终端偏好。部署用户没有 `~/.kimi-code/config.toml` 时不生成隔离配置，Kimi 使用自身默认值；用环境变量 `KIMI_MODEL_NAME` / `KIMI_API_KEY` 等配置的模型仍通过 harness `env` 传入。
 
 node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平台 MCP 能否注入）按二进制、参数、目录和环境缓存 1 小时，真实会话打开时以 agent 自己的回答刷新，打开失败则丢弃缓存。这意味着同一台机器上原地更换适配器二进制后，最迟在下一次会话打开时纠正；要立刻生效可重启 node。
 
