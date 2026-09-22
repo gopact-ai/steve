@@ -208,11 +208,13 @@ func TestRecoverRetainedLeavesAPausedChildToItsOwner(t *testing.T) {
 	}
 }
 
-// A child its owner resumed while the old row was still open got no
-// further than that: the resumed turn cannot open its own row past it,
-// and the resume was reported as failed. The child ends as interrupted so
-// its parent is told, and a turn still queued for it opens from there.
-func TestRecoverRetainedFailsAChildWhoseResumeTheOldRowRefused(t *testing.T) {
+// A child its owner resumed while the old row was still open opens its
+// resumed turn past it: the stop revoked the old row's epoch, so Begin
+// closes it as a turn that never ran. When the hub dies before that turn's
+// attempt is admitted, its own row is the one left behind; the child ends
+// as interrupted so its parent is told, and a turn still queued for it
+// opens from there.
+func TestRecoverRetainedFailsAResumedChildWhoseTurnNeverRan(t *testing.T) {
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	spawned := unrecordedChild(t, w, parent, false)
@@ -223,8 +225,12 @@ func TestRecoverRetainedFailsAChildWhoseResumeTheOldRowRefused(t *testing.T) {
 	if _, err := w.tasks.Resume(spawned.ID, paused.ExecutionEpoch, task.StatePaused, task.ResumeAdmission{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.tasks.Begin(spawned.ID, "builder", "node-a", ""); err == nil {
-		t.Fatal("the old row did not stand in the way of the resumed turn")
+	resumed, err := w.tasks.Begin(spawned.ID, "builder", "node-a", "")
+	if err != nil {
+		t.Fatalf("the revoked row stood in the way of the resumed turn: %v", err)
+	}
+	if len(resumed.Attempts) != 2 || resumed.Attempts[0].Open() || !resumed.Attempts[0].EndedAt.Equal(resumed.Attempts[0].StartedAt) {
+		t.Fatalf("revoked row = %+v", resumed.Attempts)
 	}
 
 	service := recoveredDelegateService(t, w, w.sessions)

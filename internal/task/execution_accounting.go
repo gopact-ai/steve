@@ -24,7 +24,9 @@ func (s *Store) BindAttempt(token ExecutionToken, attemptID, turnID string) erro
 	if row == nil {
 		return errors.New("task has no execution accounting row")
 	}
-	if !row.Open() || row.ExecutionID != "" && (row.ExecutionID != attemptID || row.TurnID != turnID || row.ExecutionEpoch != token.Epoch) {
+	// A row keeps the epoch it was opened under: a token of a later epoch
+	// cannot adopt one a stop has revoked.
+	if !row.Open() || row.ExecutionEpoch != token.Epoch || row.ExecutionID != "" && (row.ExecutionID != attemptID || row.TurnID != turnID) {
 		return errors.New("task accounting row belongs to another execution")
 	}
 	row.ExecutionID, row.TurnID, row.ExecutionEpoch = attemptID, turnID, token.Epoch

@@ -395,7 +395,14 @@ func (s *Store) begin(id, member, node, session, conversation string, input *Tur
 		stored.OpenCard, stored.Interim = input.CardID, nil
 	}
 	if row := stored.primaryAttempt(); row != nil && row.Open() {
-		return Task{}, fmt.Errorf("task %s already has an open attempt", id)
+		if !row.unbindable(stored.ExecutionEpoch) {
+			return Task{}, fmt.Errorf("task %s already has an open attempt", id)
+		}
+		// A stop revoked the epoch this row was opened under before any
+		// execution was bound to it, and no token can bind it now: it is a
+		// turn that never ran. It ends when it began, charged its turn and
+		// no time, and the new turn opens past it.
+		row.EndedAt, row.Outcome = row.StartedAt, OutcomeInterrupted
 	}
 	if !stored.State.Holds() || !stored.State.CanMoveTo(StateRunning) {
 		return Task{}, fmt.Errorf("task %s cannot run from %s", id, stored.State)

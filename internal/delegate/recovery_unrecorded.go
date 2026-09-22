@@ -87,10 +87,11 @@ func (s *Service) settleUnrecordedChildren(ctx context.Context) error {
 // settleUnrecorded closes the row, and ends the child unless its ending was
 // already decided: a run that failed after opening the row recorded its
 // own result, an owner who paused or cancelled the child had the last
-// word. One who resumed it since did not get far — the resumed turn could
-// not open its row past this one — and is told the same way as any other
-// failure; a turn still queued opens its row from failed. No time is
-// charged for a row that never ran.
+// word. A resumed child opened its turn past the row the stop revoked
+// (Begin closes such a row as never run); when that turn's own row is the
+// one left here, it got no further, and the child is told the same way as
+// any other failure; a turn still queued opens its row from failed. No
+// time is charged for a row that never ran.
 func (s *Service) settleUnrecorded(tracked task.Task, row task.Attempt) error {
 	if row.ExecutionID == "" {
 		if _, err := s.tasks.FinishUnstarted(tracked.ID, task.OutcomeInterrupted); err != nil {

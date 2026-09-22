@@ -183,6 +183,13 @@ func FromUsage(input, output, cachedRead, cachedWrite uint64) Tokens {
 
 func (a Attempt) Open() bool { return a.EndedAt.IsZero() }
 
+// unbindable reports an open row no execution can ever settle: none was
+// bound to it, and the epoch it was opened under has since been revoked,
+// so no execution token can bind one to it any more.
+func (a Attempt) unbindable(epoch uint64) bool {
+	return a.Open() && a.ExecutionID == "" && a.ExecutionEpoch != epoch
+}
+
 func (t Task) HasOpenExecution() bool {
 	for _, row := range t.Attempts {
 		if row.Open() && (row.ExecutionEpoch == 0 || row.ExecutionEpoch == t.ExecutionEpoch) {
