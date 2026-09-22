@@ -279,10 +279,13 @@ type Admin interface {
 	// ResolveConflictWithAgent one conflict named by the artifact behind
 	// it. ConflictFile reads a conflicted file as git left it, and
 	// ResolveConflictByHand lands a person's own resolution of it.
+	// RetryConflict lands a result that stopped with no merge to work on
+	// again, once its owner has dealt with what stopped it.
 	ResolveAllConflicts(ctx context.Context) (ResolveConflictsResult, error)
 	ResolveConflictWithAgent(ctx context.Context, artifactID string) (ResolveConflictsResult, error)
 	ConflictFile(ctx context.Context, artifactID, path string) (ConflictFileView, error)
 	ResolveConflictByHand(ctx context.Context, artifactID string, edits []artifact.Edit) error
+	RetryConflict(ctx context.Context, artifactID string) error
 	// NodeSettings reads what a machine offers; SetNodeSettings rewrites
 	// it and answers what is in force. The hub machine is one of them.
 	NodeSettings(ctx context.Context, name string) (nodewire.Settings, error)

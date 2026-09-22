@@ -141,11 +141,13 @@ func (c *Coordinator) ResolveOneConflict(ctx context.Context, p project.Project,
 // canonical name, so a later one in the same pass merges onto what the
 // earlier one produced rather than onto a snapshot that is already stale.
 // auto skips a conflict that has already had its automatic try: whatever
-// stopped it would stop it again, and each try costs an agent run.
+// stopped it would stop it again, and each try costs an agent run. It also
+// skips one with no conflicted tree to work in, which only the owner can
+// settle; failing on it every pass would only repeat the same report.
 func (c *Coordinator) resolveAll(ctx context.Context, p project.Project, stuck []artifact.Stuck, req Request, auto bool) []Resolution {
 	var out []Resolution
 	for _, s := range stuck {
-		if auto && s.Attempt != "" {
+		if auto && (s.Attempt != "" || !s.Resolvable()) {
 			continue
 		}
 		if !c.claimResolution(p.ID, s.Artifact) {

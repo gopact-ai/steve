@@ -5,7 +5,7 @@ import { GitBranch01 } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Panel } from "@/components/steve/page";
-import { conflictFile, resolveAllConflicts, resolveConflictByHand, resolveConflictWithAgent } from "@/lib/api/projects";
+import { conflictFile, resolveAllConflicts, resolveConflictByHand, resolveConflictWithAgent, retryConflict } from "@/lib/api/projects";
 import { relative, short } from "@/lib/format";
 import { nodeLabelIn } from "@/lib/node-name";
 import type { Conflict, Node } from "@/lib/types";
@@ -87,6 +87,13 @@ function ConflictRow({ conflict, nodes, locale, onEdit }: { conflict: Conflict; 
             setNote(r.started > 0 ? t("conflicts.startedOne") : t("conflicts.noTree"));
         } catch (e) { setNote(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
+    async function retry() {
+        setBusy(true); setNote("");
+        try {
+            await retryConflict(conflict.artifact);
+            setNote(t("conflicts.retried"));
+        } catch (e) { setNote(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
+    }
     return (
         <li className="flex min-w-0 flex-col items-start gap-3 px-5 py-4 sm:flex-row">
             <div className="min-w-0 flex-1">
@@ -98,13 +105,14 @@ function ConflictRow({ conflict, nodes, locale, onEdit }: { conflict: Conflict; 
                 </div>
                 <p className="mt-1 text-xs text-secondary">{t("conflicts.machine")}：<span className="font-mono">{nodeLabelIn(nodes, conflict.node || "")}</span></p>
                 {!!conflict.files?.length && <p className="mt-0.5 break-all text-xs text-quaternary">{t("conflicts.files")}：{conflict.files.join(" · ")}</p>}
-                {!conflict.resolvable && <p className="mt-1 text-xs text-warning-primary">{t("conflicts.noTree")}</p>}
+                {!conflict.resolvable && <p className="mt-1 text-xs text-warning-primary">{conflict.reason ? t("conflicts.stopped", { reason: conflict.reason }) : t("conflicts.noTree")}</p>}
                 {conflict.resolvable && !conflict.editable && <p className="mt-1 text-xs text-tertiary">{t("conflicts.sealed")}</p>}
                 {note && <p role="status" className="mt-1 text-xs text-tertiary">{note}</p>}
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
                 {conflict.editable && <Button size="sm" color="secondary" onClick={onEdit}>{t("conflicts.resolveByHand")}</Button>}
                 {conflict.resolvable && <Button size="sm" color="primary" isDisabled={busy} onClick={hand}>{t("conflicts.resolveOne")}</Button>}
+                {!conflict.resolvable && conflict.reason && <Button size="sm" color="secondary" isDisabled={busy} onClick={retry}>{t("conflicts.retry")}</Button>}
             </div>
         </li>
     );

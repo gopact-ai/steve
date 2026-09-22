@@ -6,5 +6,6 @@ export const resolveConflicts = (project: string) => request<{ started: number; 
 export const resolveAllConflicts = () => request<{ started: number; skipped?: string[] }>("/console/conflicts", { method: "POST" });
 export const resolveConflictWithAgent = (artifact: string) => request<{ started: number; skipped?: string[] }>(`/console/conflicts/${encodeURIComponent(artifact)}/agent`, { method: "POST" });
 export const conflictFile = (artifact: string, path: string) => request<{ path: string; text: string; size: number; binary?: boolean; truncated?: boolean }>(`/console/conflicts/${encodeURIComponent(artifact)}/file?path=${encodeURIComponent(path)}`);
+export const retryConflict = (artifact: string) => request<{ ok: boolean }>(`/console/conflicts/${encodeURIComponent(artifact)}/retry`, { method: "POST" });
 export const resolveConflictByHand = (artifact: string, files: { path: string; text: string }[]) => request<{ ok: boolean }>(`/console/conflicts/${encodeURIComponent(artifact)}/manual`, { method: "POST", body: { files } });
 export const removeProject = (id: string) => request<{ ok: boolean }>(`/console/projects/${encodeURIComponent(id)}`, { method: "DELETE" });

@@ -182,6 +182,9 @@ type Conflict struct {
 	// Editable says the conflict can be resolved in the console. A sealed
 	// project's data never leaves its home machine, so it cannot be.
 	Editable bool `json:"editable,omitempty"`
+	// Reason says in words why a result with no merge to work on stopped,
+	// such as writing into a nested repository.
+	Reason string `json:"reason,omitempty"`
 	// Attempt is the task of a resolution already running, if one is.
 	Attempt string    `json:"attempt,omitempty"`
 	At      time.Time `json:"at"`

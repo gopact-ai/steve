@@ -180,6 +180,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/conflicts/{artifact}/agent", s.guard(s.consoleResolveConflictWithAgent))
 	mux.HandleFunc("GET /console/conflicts/{artifact}/file", s.guard(s.consoleConflictFile))
 	mux.HandleFunc("POST /console/conflicts/{artifact}/manual", s.guard(s.consoleResolveConflictByHand))
+	mux.HandleFunc("POST /console/conflicts/{artifact}/retry", s.guard(s.consoleRetryConflict))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("PUT /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
@@ -526,6 +527,17 @@ func (s *Server) consoleResolveConflictByHand(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := s.admin.ResolveConflictByHand(r.Context(), r.PathValue("artifact"), req.Files); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) consoleRetryConflict(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	if err := s.admin.RetryConflict(r.Context(), r.PathValue("artifact")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

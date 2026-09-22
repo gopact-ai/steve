@@ -78,7 +78,7 @@ export interface Landing { id: string; project: string; state: string; artifact:
 // same files. Landings are recent history; this is the standing list.
 export interface Conflict {
     project: string; artifact: string; landing: string; node?: string; files?: string[];
-    resolvable?: boolean; editable?: boolean; attempt?: string; at: string;
+    resolvable?: boolean; editable?: boolean; reason?: string; attempt?: string; at: string;
 }
 export interface Reservation { id: string; key: string; node: string; harness: string; slots: number; for: string; by: string; expires_at: string }
 export interface Attestation { artifact: string; verdict: string; by: string; note?: string; at: string }

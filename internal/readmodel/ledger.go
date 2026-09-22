@@ -199,7 +199,7 @@ func (l Ledger) Conflicts(ctx context.Context) ([]Conflict, error) {
 		p, known := homes[item.Project]
 		entry := Conflict{
 			Project: item.Project, Artifact: item.Artifact, Landing: item.Landing,
-			Files: item.Paths, Resolvable: item.Resolvable(), Attempt: item.Attempt, At: item.At,
+			Files: item.Paths, Resolvable: item.Resolvable(), Reason: item.Reason, Attempt: item.Attempt, At: item.At,
 		}
 		if known {
 			entry.Node = p.Home.Node
