@@ -84,6 +84,9 @@ type fakeRunner struct {
 	// onCancel runs inside Cancel, before the prompt is let go: what the
 	// agent manages to do while the stop is under way.
 	onCancel func()
+	// cancelErr is what Cancel answers: an agent that did not accept the
+	// stop. The prompt is still let go.
+	cancelErr error
 	// start fires once per runner; a turn can now be interrupted by the
 	// next one, so Prompt is reached more than once with the same runner.
 	start sync.Once
@@ -131,7 +134,7 @@ func (r *fakeRunner) Cancel(context.Context) error {
 	if r.done != nil {
 		r.stop.Do(func() { close(r.done) })
 	}
-	return nil
+	return r.cancelErr
 }
 func (r *fakeRunner) Abort() { r.aborts.Add(1) }
 

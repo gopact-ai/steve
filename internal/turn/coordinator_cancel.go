@@ -60,15 +60,21 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 	for _, child := range stopped {
 		names = append(names, fmt.Sprintf("#%s %s@%s", child.ID, child.Member, nodewire.Name(child.Node)))
 	}
+	named := strings.Join(names, c.text.T(i18n.ListSeparator))
+	// The turn's line reads as it always did — what the stop did to the
+	// turn, or why it could not — with the children's lines after it.
 	var lines []string
-	if turnErr == nil && (running || len(stopped) == 0) {
+	switch {
+	case turnErr != nil:
+		lines = append(lines, turnErr.Error())
+	case running || len(stopped) == 0:
 		lines = append(lines, result.Text)
 	}
 	if len(stopped) > 0 {
-		lines = append(lines, c.text.T(i18n.CancelStoppedChildren, strings.Join(names, c.text.T(i18n.ListSeparator))))
+		lines = append(lines, c.text.T(i18n.CancelStoppedChildren, named))
 	}
 	if stopErr != nil {
-		lines = append(lines, fmt.Sprintf("stop recorded for %s, execution has not confirmed stopping: %v", strings.Join(names, ", "), stopErr))
+		lines = append(lines, c.text.T(i18n.CancelStopUnconfirmed, named, stopErr))
 	}
 	return Result{AgentID: selected.ID, Text: strings.Join(lines, "\n")}, errors.Join(turnErr, stopErr)
 }

@@ -466,6 +466,35 @@ func TestAPrefaceLiftsOnlyTheHoldItWasComposedUnder(t *testing.T) {
 	}
 }
 
+// A turn that could not be stopped as asked is still reported first: the
+// reply leads with why, as it always did, and the children stopped after
+// it are named below. The error alone does not reach the transcript.
+func TestCancelReplyLeadsWithTheTurnsErrorBeforeTheStoppedChildren(t *testing.T) {
+	refused := errors.New("agent refused the stop")
+	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelErr: refused}
+	coordinator, tasks := taskCoordinator(t, runner)
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "a long job")
+		first <- err
+	}()
+	<-runner.started
+	child := delegateChild(t, coordinator, tasks, "child")
+	result, err := handle(coordinator, t.Context(), "/cancel")
+	if !errors.Is(err, refused) {
+		t.Fatalf("/cancel: %v; want the agent's refusal", err)
+	}
+	lines := strings.Split(result.Text, "\n")
+	if lines[0] != refused.Error() {
+		t.Fatalf("reply = %q; want it to lead with why the turn was not stopped", result.Text)
+	}
+	if !strings.Contains(result.Text, "#"+child.ID) {
+		t.Fatalf("reply = %q; want the stopped child named", result.Text)
+	}
+	<-first
+	child.stopped(t, tasks)
+}
+
 // A child whose stop was never confirmed — cancelled, with no result — is
 // reported while the stop that cancelled it holds the task, then left to
 // the recovery flow. It does not make every later stop hold the task
