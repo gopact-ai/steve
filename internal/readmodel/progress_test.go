@@ -39,6 +39,26 @@ func TestDelegateProgressPreservesReasoningPlanAndModel(t *testing.T) {
 	}
 }
 
+// A stopped child's last word lands like a finished one's: the state it
+// ends in is never held back by the throttle on its token stream.
+func TestDelegateProgressPublishesAStoppedChildAtOnce(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	p := view.Progress{Tools: []view.Tool{{ID: "t1", Status: view.ToolRunning}}}
+	m.DelegateProgress("60", "builder", "node-a", consoleapi.StepInfo{State: "running"}, p)
+	<-events
+	m.DelegateProgress("60", "builder", "node-a", consoleapi.StepInfo{State: "cancelled", Answer: "half done"}, p)
+	select {
+	case ev := <-events:
+		if ev.Step == nil || ev.Step.State != "cancelled" || ev.Step.Answer != "half done" {
+			t.Fatalf("stopped child published as %+v", ev.Step)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stopped child's final state was throttled away")
+	}
+}
+
 func TestTimelineSurvivesProjectionWithEveryToolReference(t *testing.T) {
 	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	p := view.Progress{Timeline: []view.Span{{Kind: "text", Text: "first", At: at}}}

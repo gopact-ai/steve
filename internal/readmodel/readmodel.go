@@ -964,12 +964,12 @@ func FromStepProgress(id string, p consoleapi.Progress, info consoleapi.StepInfo
 
 // DelegateProgress publishes what a delegated child is doing, as a step
 // of its parent's conversation: the page shows it as a card under the
-// parent's delegate call. A terminal state is never throttled — the
-// last word must land.
+// parent's delegate call. Only a running child is throttled — the state
+// it ends in, finished or stopped, is its last word and must land.
 func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleapi.StepInfo, p view.Progress) {
 	stepID := "#" + childTaskID
 	key := "delegate/" + stepID
-	terminal := info.State == task.StateDone || info.State == task.StateFailed
+	terminal := info.State != task.StateRunning
 	if terminal {
 		m.mu.Lock()
 		delete(m.throttle, key)
