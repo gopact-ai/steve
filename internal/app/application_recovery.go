@@ -39,9 +39,20 @@ type applicationRecovery struct {
 func newApplicationRecovery(book *ledger.Ledger, attempts *attempt.Service, tasks *task.Store, coordinator *turn.Coordinator, gateway *gateway.Gateway, console *console.Service, text i18n.Catalog, retained bool) *applicationRecovery {
 	r := &applicationRecovery{book: book, attempts: attempts, tasks: tasks, coordinator: coordinator, gateway: gateway, console: console, text: text, retained: retained, orphaned: map[string]bool{}, workers: &reconciliationWorkers{}}
 	for _, candidate := range tasks.OpenPrimaryAccounting() {
-		r.orphaned[primaryRecoveryKey(candidate)] = true
+		if conversationDriven(candidate.Task) {
+			r.orphaned[primaryRecoveryKey(candidate)] = true
+		}
 	}
 	return r
+}
+
+// conversationDriven reports whether a task's open accounting is settled by
+// continuing its conversation. A plan resumes through the coordinator and a
+// delegated child through the delegate service's retained-execution
+// recovery; their rows belong to a different attempt kind and are never a
+// chat exchange to reconcile or re-prompt.
+func conversationDriven(t task.Task) bool {
+	return t.Origin != "plan" && !t.Delegated()
 }
 
 func primaryRecoveryKey(candidate task.RecoveryCandidate) string {
@@ -59,7 +70,7 @@ func (r *applicationRecovery) reconcile(ctx context.Context, deliver bool) error
 	defer r.mu.Unlock()
 	var failures error
 	for _, candidate := range r.tasks.OpenPrimaryAccounting() {
-		if candidate.Task.Origin == "plan" {
+		if !conversationDriven(candidate.Task) {
 			continue
 		}
 		if err := r.reconcileTask(ctx, candidate); err != nil {
