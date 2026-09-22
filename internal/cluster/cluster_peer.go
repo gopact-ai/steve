@@ -608,8 +608,9 @@ func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, pr
 	// copied. Without full duplex, starting the answer makes this server take
 	// the rest of the inbound body for itself and close it, and the transport
 	// still forwarding that body then tears down the upstream connection: the
-	// console is left with a 200 and half of its answer.
-	if err := http.NewResponseController(w).EnableFullDuplex(); err != nil {
+	// console is left with a 200 and half of its answer. HTTP/2 streams are
+	// full duplex already and refuse the call, which is not worth a warning.
+	if err := http.NewResponseController(w).EnableFullDuplex(); err != nil && r.ProtoMajor == 1 {
 		p.duplexWarning.Do(func() {
 			slog.Warn(fmt.Sprintf("cluster: proxied answers can be cut short: %v", err))
 		})
