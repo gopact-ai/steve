@@ -162,8 +162,16 @@ try {
     await page.evaluate(() => document.documentElement.dataset.theme),
     "dracula",
   );
-  const second = await context.newPage();
-  await second.goto(origin + "/#/settings?section=appearance");
+  // A second window opened from the first shares its renderer, so both read
+  // one localStorage cache. Pages created separately live in separate
+  // processes whose caches converge asynchronously; a lock cannot order
+  // that, so a truly simultaneous edit there may still read a stale value.
+  const [second] = await Promise.all([
+    context.waitForEvent("page"),
+    page.evaluate((url) => {
+      window.open(url);
+    }, origin + "/#/settings?section=appearance"),
+  ]);
   await second.getByRole("heading", { name: "外观", exact: true }).waitFor();
   await page.evaluate(() =>
     window.changeAppearance((a) => ({

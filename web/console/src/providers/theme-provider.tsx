@@ -64,6 +64,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
           try {
             // The storage event may be delayed in a background window. Read
             // and update under the shared lock rather than overwriting its snapshot.
+            // Windows in separate renderer processes see the store converge
+            // asynchronously; the lock orders the saves, not that propagation,
+            // so two saves within the same few milliseconds may still lose one.
             localStorage.getItem(APPEARANCE_KEY);
             base = readAppearance(localStorage);
             for (const retry of pending.current)
