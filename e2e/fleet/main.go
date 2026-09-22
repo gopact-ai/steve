@@ -264,12 +264,14 @@ type reply struct {
 }
 
 type attempt struct {
-	ID       string `json:"id"`
-	Kind     string `json:"kind"`
-	State    string `json:"state"`
-	Agent    string `json:"agent"`
-	Node     string `json:"node"`
-	Artifact string `json:"artifact"`
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	State     string    `json:"state"`
+	Agent     string    `json:"agent"`
+	Node      string    `json:"node"`
+	Artifact  string    `json:"artifact"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
 }
 
 type gate struct {
@@ -294,6 +296,18 @@ func (g *gate) log(format string, args ...any) {
 		line = strings.ReplaceAll(line, g.token, "[REDACTED]")
 	}
 	fmt.Fprintln(g.out, line)
+}
+
+// attempts lists a task's native attempts. The task detail carries the
+// task and a page of its children; the attempts are a page of their own.
+func (g *gate) attempts(ctx context.Context, taskID string) ([]attempt, error) {
+	var page struct {
+		Items []attempt `json:"items"`
+	}
+	if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(taskID)+"/attempts", nil, &page); err != nil {
+		return nil, err
+	}
+	return page.Items, nil
 }
 
 func (g *gate) request(ctx context.Context, method, path string, body, result any) error {
@@ -428,8 +442,7 @@ func (g *gate) run(ctx context.Context) error {
 	g.log("PASS reply=%s step=%s kind=delegate state=done agent=%s node=%s attempt=%s", final.ID, child.ID, child.Agent, child.Node, child.Attempt)
 
 	var detail struct {
-		Task     task      `json:"task"`
-		Attempts []attempt `json:"attempts"`
+		Task task `json:"task"`
 	}
 	if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(g.taskID), nil, &detail); err != nil {
 		return err
@@ -437,14 +450,18 @@ func (g *gate) run(ctx context.Context) error {
 	if err := g.checkTask(detail.Task); err != nil {
 		return err
 	}
+	attempts, err := g.attempts(ctx, g.taskID)
+	if err != nil {
+		return err
+	}
 	var matched bool
-	for _, a := range detail.Attempts {
+	for _, a := range attempts {
 		if a.ID == g.attemptID && a.Kind == "delegate" && a.Agent == g.targetAgent && a.Node == g.targetNode && a.Artifact != "" {
 			matched = true
 		}
 	}
 	if !matched {
-		return fmt.Errorf("task #%s: delegate attempt %s missing or has wrong agent/node/artifact: %+v", g.taskID, g.attemptID, detail.Attempts)
+		return fmt.Errorf("task #%s: delegate attempt %s missing or has wrong agent/node/artifact: %+v", g.taskID, g.attemptID, attempts)
 	}
 	g.log("PASS task=#%s parent=#%s project=%s attempt=%s", g.taskID, detail.Task.Parent, detail.Task.Project, g.attemptID)
 	var index struct {
@@ -631,14 +648,12 @@ func (g *gate) diagnostics(ctx context.Context) {
 			continue
 		}
 		g.log("DIAG task=#%s parent=%s state=%s agent=%s node=%s", t.ID, t.Parent, t.State, t.Member, t.Node)
-		var detail struct {
-			Attempts []attempt `json:"attempts"`
-		}
-		if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(t.ID), nil, &detail); err != nil {
+		attempts, err := g.attempts(ctx, t.ID)
+		if err != nil {
 			g.log("DIAG task=#%s: %v", t.ID, err)
 			continue
 		}
-		for _, a := range detail.Attempts {
+		for _, a := range attempts {
 			g.log("DIAG task=#%s attempt=%s kind=%s state=%s agent=%s node=%s", t.ID, a.ID, a.Kind, a.State, a.Agent, a.Node)
 		}
 	}

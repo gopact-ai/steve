@@ -13,6 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/readmodel"
+	tasks "github.com/gopact-ai/steve/internal/task"
 )
 
 // Exercise the whole client against the HTTP contract. Only the fake remote
@@ -55,20 +59,23 @@ func TestGate(t *testing.T) {
 			var usageReads int
 			var stored reply
 			used := make(map[string]bool)
-			child := func() task {
+			// The task detail and the attempt page are served as the hub
+			// serves them — the read model's own types — so the client is
+			// checked against the contract, not against a copy of it.
+			child := func() readmodel.TaskDetail {
 				taskID := "child"
 				if tc.name == "wrong_task" {
 					taskID = "unrelated"
 				}
-				row := attemptRow{Agent: "shipper", Node: "node-b", Outcome: "ok", Reported: tc.name != "unreported", Tokens: tokens{Input: 10, Output: 2, Total: 12}}
+				row := readmodel.AttemptRow{Agent: "shipper", Node: "node-b", Outcome: "ok", Reported: tc.name != "unreported", Tokens: readmodel.Tokens{Input: 10, Output: 2, Total: 12}}
 				if tc.name == "empty_tokens" {
-					row.Tokens = tokens{}
+					row.Tokens = readmodel.Tokens{}
 				}
-				tsk := task{ID: taskID, Parent: "parent", State: "done", Member: "shipper", Node: "node-b", Project: "scratch", Channel: g.conversation, AttemptRows: []attemptRow{row}}
+				tsk := readmodel.Task{ID: taskID, Parent: "parent", State: tasks.StateDone, Member: "shipper", NodeID: "node-b", ProjectID: "scratch", Channel: g.conversation, AttemptRows: []readmodel.AttemptRow{row}}
 				if tc.name == "parent_tokens_only" {
 					tsk.AttemptRows = nil
 				}
-				return tsk
+				return readmodel.TaskDetail{Task: tsk, Children: readmodel.TaskPage{Items: []readmodel.Task{}}, Accounting: readmodel.AccountingPage{Items: []readmodel.AccountingItem{}}}
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer secret-token" || r.URL.Query().Has("token") {
@@ -196,11 +203,14 @@ func TestGate(t *testing.T) {
 					milestone.ID, milestone.Kind = "milestone", "milestone"
 					response = map[string]any{"replies": []reply{milestone, stored}}
 				case "GET /console/tasks/child":
-					attempts := []attempt{{ID: "child-attempt", Kind: "delegate", State: "bound", Agent: "shipper", Node: "node-b", Artifact: "snapshot"}}
+					response = child()
+				case "GET /console/tasks/child/attempts":
+					page := consoleapi.AttemptHistoryPage{Items: []consoleapi.AttemptHistoryItem{{TaskID: "child", Project: "scratch",
+						AttemptView: consoleapi.AttemptView{ID: "child-attempt", Kind: "delegate", State: "bound", Agent: "shipper", Node: "node-b", Artifact: "snapshot"}}}}
 					if tc.name == "no_attempt" {
-						attempts = nil
+						page.Items = nil
 					}
-					response = map[string]any{"task": child(), "attempts": attempts}
+					response = page
 				case "GET /console/attempts/child-attempt/changes":
 					name, status, attemptID := g.filename, "A", "child-attempt"
 					switch tc.name {
@@ -284,8 +294,8 @@ func TestFailureDiagnosticsStayInThisConversationAndDeadline(t *testing.T) {
 				{ID: "own-task", Channel: g.conversation, Member: "claude", State: "running"},
 				{ID: "other-task", Channel: "console:someone-else"},
 			}}
-		case "/console/tasks/own-task":
-			response = map[string]any{"attempts": []attempt{{ID: "own-attempt", State: "failed"}}}
+		case "/console/tasks/own-task/attempts":
+			response = consoleapi.AttemptHistoryPage{Items: []consoleapi.AttemptHistoryItem{{TaskID: "own-task", AttemptView: consoleapi.AttemptView{ID: "own-attempt", State: "failed"}}}}
 		case "/console/replies":
 			response = map[string]any{"replies": []reply{{ID: "own-reply", Conversation: g.conversation, Kind: "reply", Error: "private-token rejected"}}}
 		default:

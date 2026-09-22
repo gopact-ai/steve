@@ -39,19 +39,15 @@ type fleetState struct {
 	Tasks    []task    `json:"tasks"`
 }
 
+// taskDetail is the task with the first page of its children. The gate's
+// tasks have a handful, so one page must be all of them; a page short of
+// the total is a failure, not fewer children.
 type taskDetail struct {
-	Task     task   `json:"task"`
-	Children []task `json:"children"`
-	Attempts []struct {
-		ID        string    `json:"id"`
-		Kind      string    `json:"kind"`
-		State     string    `json:"state"`
-		Agent     string    `json:"agent"`
-		Node      string    `json:"node"`
-		Artifact  string    `json:"artifact"`
-		StartedAt time.Time `json:"started_at"`
-		EndedAt   time.Time `json:"ended_at"`
-	} `json:"attempts"`
+	Task     task `json:"task"`
+	Children struct {
+		Items []task `json:"items"`
+		Total int    `json:"total"`
+	} `json:"children"`
 }
 
 type toolCall struct {
@@ -150,13 +146,16 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 		if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(root.ID), nil, &detail); err != nil {
 			return err
 		}
-		if childrenDelivered(detail.Children) && g.quiet(ctx) {
+		if childrenDelivered(detail.Children.Items) && g.quiet(ctx) {
 			break
 		}
 		time.Sleep(10 * time.Second)
 	}
-	g.log("PASS children ended count=%d", len(detail.Children))
-	g.log("PASS parent processing receipts children=%d", len(detail.Children))
+	if detail.Children.Total != len(detail.Children.Items) {
+		return fmt.Errorf("task #%s: %d children, only %d on the first page", root.ID, detail.Children.Total, len(detail.Children.Items))
+	}
+	g.log("PASS children ended count=%d", len(detail.Children.Items))
+	g.log("PASS parent processing receipts children=%d", len(detail.Children.Items))
 
 	replies, err := g.transcript(ctx)
 	if err != nil {
@@ -189,22 +188,22 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 		start, end                 time.Time
 	}
 	var runs []run
-	for _, c := range detail.Children {
+	for _, c := range detail.Children.Items {
 		if c.State != "done" {
 			return fmt.Errorf("child task #%s ended %s, not done", c.ID, c.State)
 		}
-		var cd taskDetail
-		if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(c.ID), nil, &cd); err != nil {
+		attempts, err := g.attempts(ctx, c.ID)
+		if err != nil {
 			return err
 		}
-		for _, a := range cd.Attempts {
+		for _, a := range attempts {
 			if a.Kind == "delegate" && !a.StartedAt.IsZero() {
 				runs = append(runs, run{task: c.ID, agent: a.Agent, node: a.Node, attempt: a.ID, start: a.StartedAt, end: a.EndedAt})
 			}
 		}
 	}
 	if len(runs) < 2 {
-		return fmt.Errorf("expected at least two delegated children with attempts; got %d (children=%d)", len(runs), len(detail.Children))
+		return fmt.Errorf("expected at least two delegated children with attempts; got %d (children=%d)", len(runs), len(detail.Children.Items))
 	}
 	remote := false
 	for _, r := range runs {
