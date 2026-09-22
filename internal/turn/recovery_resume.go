@@ -263,10 +263,19 @@ func (c *Coordinator) retainedChatRecord(parent context.Context, id string, req 
 	if pendingChatOpen(record) {
 		return attempt.Record{}, c.inspectPendingOpen(parent, record)
 	}
-	if record.State != attempt.Bound && !strings.HasPrefix(record.Session, "ns_") {
+	if record.State != attempt.Bound && !strings.HasPrefix(record.Session, "ns_") && !endedBeforeSession(record) {
 		return attempt.Record{}, retainedBlocked("native-identity", "检查原节点会话标识", "尚未取得可接续的原生会话。", "恢复准备可能在建立会话前中断。", "建议重新检查已确认的恢复准备。", nil)
 	}
 	return record, nil
+}
+
+// endedBeforeSession is an attempt that is over, whose stop is settled, and
+// that never recorded a native session: nothing of it is retained on any
+// node, so a missing native identity is not something to wait for. What it
+// recorded is delivered instead. An attempt still live, an unconfirmed stop,
+// or any recorded session keeps the identity requirement.
+func endedBeforeSession(record attempt.Record) bool {
+	return record.State.Terminal() && record.State != attempt.Bound && !record.Unsettled && record.Session == ""
 }
 
 // deliverRetainedChat delivers what an already ended attempt committed: a

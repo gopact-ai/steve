@@ -14,9 +14,17 @@ import (
 
 const nodeReceiptPendingKind = "attempt-node-receipt-pending"
 
+// ErrNodeReceiptTaskDeleted is an exact receipt whose task was deleted with
+// its conversation. It cannot be checked against that conversation any more,
+// and nothing of the task is left to account or deliver: the receipt may be
+// released, but never recorded as new evidence.
+var ErrNodeReceiptTaskDeleted = errors.New("attempt node receipt belongs to a deleted task")
+
 // CheckNodeReceiptTx binds a node's original terminal receipt to its committed
 // attempt and logical conversation. It does not check current execution grants:
 // cleanup of an original result must survive a later task epoch or idle rebind.
+// A task proved deleted reports ErrNodeReceiptTaskDeleted, which only release
+// paths accept.
 func CheckNodeReceiptTx(tx ledger.Reader, record Record, receipt nodewire.SessionReceipt) error {
 	if err := receipt.Validate(); err != nil {
 		return err
@@ -32,6 +40,15 @@ func CheckNodeReceiptTx(tx ledger.Reader, record Record, receipt nodewire.Sessio
 	tracked, found, err := task.GetTx(tx, record.TaskID)
 	if err != nil {
 		return err
+	}
+	if !found {
+		deleted, err := task.DeletedTx(tx, record.TaskID)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			return ErrNodeReceiptTaskDeleted
+		}
 	}
 	if !found || b.SessionID != RetainedSessionID(tracked.Channel, record.TaskID, record.Agent) {
 		return errors.New("attempt node receipt differs from the original conversation")
@@ -104,7 +121,7 @@ func (s *Service) AcknowledgeNodeReceipt(ctx context.Context, receipt nodewire.S
 		if record.NodeReceipt == nil || *record.NodeReceipt != receipt || !record.State.Terminal() || record.Unsettled {
 			return errors.New("node acknowledgement differs from durable terminal evidence")
 		}
-		if err := CheckNodeReceiptTx(tx, record, receipt); err != nil {
+		if err := CheckNodeReceiptTx(tx, record, receipt); err != nil && !errors.Is(err, ErrNodeReceiptTaskDeleted) {
 			return err
 		}
 		var raw []byte

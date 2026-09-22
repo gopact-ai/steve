@@ -22,6 +22,12 @@ type nodeReceiptReconciler struct {
 	nodes     receiptAcknowledger
 	authority nodewire.SessionAuthority
 	after     string
+	// reported is the failure last returned for each pending receipt, and
+	// seen the receipts met since the cursor last wrapped. The reconciler
+	// runs every few seconds; a receipt failing the same way again is the
+	// same state, so it is returned when it appears or changes, not per pass.
+	reported map[string]string
+	seen     map[string]bool
 }
 
 // Reconcile examines only one page of pending receipts, never Closed history.
@@ -38,10 +44,14 @@ func (r *nodeReceiptReconciler) Reconcile(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		r.after = receipt.Binding.AttemptID
+		id := receipt.Binding.AttemptID
+		r.after = id
+		r.markSeen(id)
 		if err := cluster.ReadNodeReceiptProof(ctx, r.book, receipt); err != nil {
-			if !errors.Is(err, cluster.ErrNodeReceiptPending) {
-				failures = errors.Join(failures, fmt.Errorf("read receipt %s: %w", receipt.Binding.AttemptID, err))
+			if errors.Is(err, cluster.ErrNodeReceiptPending) {
+				r.report(id, nil)
+			} else {
+				failures = errors.Join(failures, r.report(id, fmt.Errorf("read receipt %s: %w", id, err)))
 			}
 			continue
 		}
@@ -52,13 +62,51 @@ func (r *nodeReceiptReconciler) Reconcile(ctx context.Context) error {
 		}
 		cancel()
 		if err != nil {
-			failures = errors.Join(failures, fmt.Errorf("ack receipt %s: %w", receipt.Binding.AttemptID, err))
+			err = fmt.Errorf("ack receipt %s: %w", id, err)
 		}
+		failures = errors.Join(failures, r.report(id, err))
 	}
 	if len(pending) < 32 {
 		r.after = ""
+		r.forgetUnseen()
 	}
 	return failures
+}
+
+// report returns err only when it differs from what was last returned for
+// the receipt; nil forgets the receipt's last failure.
+func (r *nodeReceiptReconciler) report(id string, err error) error {
+	if err == nil {
+		delete(r.reported, id)
+		return nil
+	}
+	if r.reported[id] == err.Error() {
+		return nil
+	}
+	if r.reported == nil {
+		r.reported = map[string]string{}
+	}
+	r.reported[id] = err.Error()
+	return err
+}
+
+func (r *nodeReceiptReconciler) markSeen(id string) {
+	if r.seen == nil {
+		r.seen = map[string]bool{}
+	}
+	r.seen[id] = true
+}
+
+// forgetUnseen drops failures of receipts that are no longer pending once a
+// full pass over the pending index is complete, so a receipt that returns
+// later is reported afresh.
+func (r *nodeReceiptReconciler) forgetUnseen() {
+	for id := range r.reported {
+		if !r.seen[id] {
+			delete(r.reported, id)
+		}
+	}
+	r.seen = nil
 }
 
 func assembleNodeReceipts(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, machines fleetAssembly) {

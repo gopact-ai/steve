@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 
 	"github.com/gopact-ai/steve/internal/channel"
@@ -62,8 +61,8 @@ func (g *Gateway) acceptAndWake(key string, input gatewayInput) error {
 	}
 	if g.ingressWorkers == nil || !g.ingressWorkers.Go(func() {
 		defer release()
-		if err := run(); err != nil && ctx.Err() == nil {
-			slog.Error("gateway accepted input remains pending", "input", key, "error", err)
+		if err := run(); ctx.Err() == nil {
+			g.reportPending("gateway accepted input remains pending", key, err)
 		}
 	}) {
 		release()

@@ -170,6 +170,7 @@ func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driv
 	if err != nil {
 		return err
 	}
+	g.forgetSettledReasons(inputs)
 	// A failed/unknown head receipt remains pending. Rotate opportunities so
 	// it cannot monopolize every available slot on every runtime pass.
 	g.mu.Lock()
@@ -194,8 +195,8 @@ func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driv
 		}
 		if !workers.Go(func() {
 			defer release()
-			if err := run(); err != nil && ctx.Err() == nil {
-				slog.Error("gateway recovery remains pending", "input", receipt.ID, "error", err)
+			if err := run(); ctx.Err() == nil {
+				g.reportPending("gateway recovery remains pending", receipt.ID, err)
 			}
 		}) {
 			release()
@@ -210,6 +211,46 @@ func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driv
 		}
 	}
 	return nil
+}
+
+// reportPending logs why an accepted input is still pending when the reason
+// changes, and forgets it once the input goes through.
+func (g *Gateway) reportPending(message, id string, err error) {
+	g.mu.Lock()
+	if err == nil {
+		delete(g.pendingReasons, id)
+		g.mu.Unlock()
+		return
+	}
+	reason := err.Error()
+	repeated := g.pendingReasons[id] == reason
+	if g.pendingReasons == nil {
+		g.pendingReasons = map[string]string{}
+	}
+	g.pendingReasons[id] = reason
+	g.mu.Unlock()
+	if !repeated {
+		slog.Error(message, "input", id, "error", err)
+	}
+}
+
+// forgetSettledReasons drops reasons remembered for inputs that are no
+// longer pending, whichever path settled them.
+func (g *Gateway) forgetSettledReasons(pending []ledger.CommandRecord) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.pendingReasons) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(pending))
+	for _, receipt := range pending {
+		live[receipt.ID] = true
+	}
+	for id := range g.pendingReasons {
+		if !live[id] {
+			delete(g.pendingReasons, id)
+		}
+	}
 }
 
 func (g *Gateway) recoverQueuedInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error) error {
