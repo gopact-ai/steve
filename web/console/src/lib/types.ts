@@ -47,7 +47,7 @@ export interface Task {
     title?: string; priority?: "high" | "normal" | "low" | ""; labels?: string[]; archived_at?: string;
     member?: string; node?: string; transport?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
     turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; updated_at?: string; plan_id?: string;
-    tokens?: Tokens; seconds?: number; model?: string; attempt_rows?: AttemptRow[];
+    tokens?: Tokens; seconds?: number; model?: string;
 }
 export interface TaskMetaPatch { title?: string; priority?: Task["priority"]; labels?: string[]; archived?: boolean }
 export interface StepContext { goal: string; ancestry?: string[]; refs?: string[]; findings?: string[]; facts?: string[]; bytes?: number }

@@ -369,10 +369,9 @@ type Task struct {
 	ProjectID string `json:"project_id,omitempty"`
 	Origin    string `json:"origin,omitempty"`
 	Requester string `json:"requester,omitempty"`
-	// AttemptRows are the task's turns as the task store caches them; the
-	// ledger's attempt records are the authority for what they cost.
-	AttemptRows  []AttemptRow `json:"attempt_rows,omitempty"`
-	AttemptCount int          `json:"attempt_count"`
+	// AttemptCount is how many turns the task has had; the rows themselves
+	// are read page by page from its accounting (TaskDetail.Accounting).
+	AttemptCount int `json:"attempt_count"`
 	planInTree   bool
 	// Four axes, decided here and rolled up from every descendant task:
 	// Lifecycle is the task's own state; Execution says whether an
