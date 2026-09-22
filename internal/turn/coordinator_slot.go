@@ -19,8 +19,9 @@ import (
 // turnEntry tracks one in-flight prompt turn. The blocked prompt goroutine
 // owns session cleanup; done is closed by clearActive once it has finished,
 // so /cancel can confirm the turn ended before deciding to force-kill.
-// stopped says a user's stop cancelled this turn: however it settles, it
-// is the turn the stop ended, and it must not lift the stop's hold.
+// stopped says the user stopped this turn — with /cancel, or by pausing
+// or cancelling its task: however it settles, it is the turn the stop
+// ended, and it must not lift a stop's hold.
 type turnEntry struct {
 	err     error
 	cancel  context.CancelFunc
@@ -151,8 +152,8 @@ func (c *Coordinator) beginTurn(conversationID, agentID string, cancel context.C
 	return true
 }
 
-// stoppedTurn reports whether a user's stop cancelled the turn holding
-// this agent's slot. The turn asks about itself, before it lets the slot
+// stoppedTurn reports whether the user stopped the turn holding this
+// agent's slot. The turn asks about itself, before it lets the slot
 // go: the entry is its own until clearActive.
 func (c *Coordinator) stoppedTurn(conversationID, agentID string) bool {
 	c.mu.Lock()

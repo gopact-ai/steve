@@ -333,6 +333,52 @@ func TestCancelStopsAChildDelegatedWhileTheTurnWasStopping(t *testing.T) {
 	}
 }
 
+// A child the agent delegates while its turn is being stopped may end on
+// its own before the stop reaches it. The task is held from the moment
+// the stop begins, so the cancelled turn's own delivery pass finds it
+// held, and the child's result waits for the user's next message.
+func TestAChildEndingOnItsOwnDuringTheStopFindsTheTaskHeld(t *testing.T) {
+	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
+	coordinator, tasks := taskCoordinator(t, runner)
+	runner.onCancel = func() {
+		quick, err := tasks.Spawn("1", task.Task{Member: "quick", Node: "dev", Origin: "delegate:1", Goal: "a small part"})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for _, to := range []task.State{task.StateRunning, task.StateDone} {
+			if _, err := tasks.Advance(quick.ID, to); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+		if err := tasks.SetResult(quick.ID, task.Result{Outcome: task.OutcomeOK, Answer: "done already"}); err != nil {
+			t.Error(err)
+		}
+	}
+	heldAtEnd := make(chan bool, 1)
+	coordinator.SetAfterTurn(func(taskID string) {
+		parent, _ := tasks.Get(taskID)
+		heldAtEnd <- parent.Held()
+	})
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "a long job")
+		first <- err
+	}()
+	<-runner.started
+	if _, err := handle(coordinator, t.Context(), "/cancel"); err != nil {
+		t.Fatalf("/cancel: %v", err)
+	}
+	<-first
+	if held := <-heldAtEnd; !held {
+		t.Fatal("the cancelled turn's delivery pass found the task unheld: the child's result would have woken it")
+	}
+	if parent, _ := tasks.Get("1"); !parent.Held() {
+		t.Fatal("a task with a child's result to account for is not held after the stop")
+	}
+}
+
 // composingRunner is a session whose settings are read as the turn is
 // armed: once the session is reachable for /cancel, before the prompt is
 // composed. One read can be made to wait, which is where a stop lands
