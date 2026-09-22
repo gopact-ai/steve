@@ -129,6 +129,44 @@
     self.showingFailure = NO;
     self.launching = YES;
     [self showStarting];
+    [self runLauncher:^(NSString *address, NSString *detail) {
+        self.launching = NO;
+        if (!address || ![self openService:address]) {
+            [self showConnectionFailure:detail ?: @"本机服务未返回可用的工作台地址。"];
+        }
+    }];
+}
+
+// The service is detached from this window. When the page's live connection
+// stays down it asks the shell to make sure the service runs: one that has
+// exited is started again, and one answering at the same address is left
+// for the page to reconnect to by itself, keeping everything on screen.
+- (void)ensureService {
+    if (self.launching || !self.serviceURL) return;
+    self.launching = YES;
+    [self runLauncher:^(NSString *address, NSString *detail) {
+        self.launching = NO;
+        if (!address) {
+            NSLog(@"Steve service check failed: %@", detail ?: @"no address");
+            return;
+        }
+        if ([self isCurrentService:address]) return;
+        [self openService:address];
+    }];
+}
+
+- (BOOL)isCurrentService:(NSString *)address {
+    NSURLComponents *parts = [NSURLComponents componentsWithString:address];
+    NSString *token = nil;
+    for (NSURLQueryItem *item in parts.queryItems) if ([item.name isEqualToString:@"token"]) token = item.value;
+    parts.queryItems = nil;
+    parts.fragment = nil;
+    return self.serviceURL && parts.URL && [parts.URL isEqual:self.serviceURL] && [token isEqualToString:self.accessToken];
+}
+
+// runLauncher asks the bundled launcher for the service address, starting
+// the service when it is not running, and answers on the main queue.
+- (void)runLauncher:(void (^)(NSString *address, NSString *detail))completion {
     NSString *binary = [NSBundle.mainBundle pathForResource:@"steve" ofType:nil];
     NSString *stateDir = NSProcessInfo.processInfo.environment[@"STEVE_DESKTOP_STATE_DIR"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -155,13 +193,9 @@
                 detail = [[NSString alloc] initWithData:errorData encoding:NSUTF8StringEncoding];
             }
         }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self.launching = NO;
-            NSString *address = [result[@"authenticated_url"] isKindOfClass:NSString.class] ? result[@"authenticated_url"] : nil;
-            if (!address || ![self openService:address]) {
-                [self showConnectionFailure:detail ?: failure.localizedDescription ?: @"本机服务未返回可用的工作台地址。"];
-            }
-        });
+        NSString *address = [result[@"authenticated_url"] isKindOfClass:NSString.class] ? result[@"authenticated_url"] : nil;
+        NSString *reason = detail ?: failure.localizedDescription;
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(address, reason); });
     });
 }
 
@@ -213,7 +247,7 @@
     // The console asks this shell for things a page cannot do itself, such
     // as choosing a directory by its absolute path. window.steveDesktop is
     // the page's side of that conversation.
-    NSString *bridge = @"window.steveDesktop = { pending: {}, pickDirectory(directory) { const id = String(Math.random()).slice(2); return new Promise((resolve) => { this.pending[id] = resolve; window.webkit.messageHandlers.steve.postMessage({ action: 'pickDirectory', id, directory: directory || '' }); }); }, onDirectory(id, path) { const resolve = this.pending[id]; delete this.pending[id]; if (resolve) resolve(path); } };";
+    NSString *bridge = @"window.steveDesktop = { pending: {}, ensureService() { window.webkit.messageHandlers.steve.postMessage({ action: 'ensureService', id: '' }); }, pickDirectory(directory) { const id = String(Math.random()).slice(2); return new Promise((resolve) => { this.pending[id] = resolve; window.webkit.messageHandlers.steve.postMessage({ action: 'pickDirectory', id, directory: directory || '' }); }); }, onDirectory(id, path) { const resolve = this.pending[id]; delete this.pending[id]; if (resolve) resolve(path); } };";
     [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:bridge injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     [configuration.userContentController addScriptMessageHandler:self name:@"steve"];
     return configuration;
@@ -384,6 +418,10 @@
     NSDictionary *body = message.body;
     NSString *action = body[@"action"], *identifier = body[@"id"];
     if (![action isKindOfClass:[NSString class]] || ![identifier isKindOfClass:[NSString class]]) return;
+    if ([action isEqualToString:@"ensureService"]) {
+        [self ensureService];
+        return;
+    }
     if (![action isEqualToString:@"pickDirectory"]) return;
     // One chooser at a time: a second request while the sheet is up is
     // answered as cancelled instead of queuing another sheet.

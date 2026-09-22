@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { desktopEnsureService } from "./api/desktop";
 import { emptySnapshot, fetchState } from "./api/fleet";
 import { eventsURL, HTTPError } from "./http";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import type { Event, Snapshot } from "./types";
 import { NodeNamesContext, useNodeNames } from "./node-name";
+import { serviceWatch } from "./service-watch";
 
 export type Live = "connecting" | "live" | "reconnecting" | "unauthorized";
 
@@ -127,9 +129,11 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         let source: EventSource | null = null;
         let retry: number | null = null;
         let reconnecting = false;
+        const watch = serviceWatch({ now: Date.now, ensure: desktopEnsureService(), after: 10_000, every: 30_000 });
         const connect = () => {
             source = new EventSource(eventsURL());
             source.onopen = () => {
+                watch.up();
                 setLive("live");
                 if (reconnecting) { reconnecting = false; void load(); }
             };
@@ -144,6 +148,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
                 if (!isStreamingProgress(ev)) refresh();
             };
             source.onerror = () => {
+                watch.down();
                 reconnecting = true;
                 setLive("reconnecting");
                 source?.close();

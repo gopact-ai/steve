@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
@@ -113,7 +115,11 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 		}
 	}()
 	stop := func(context.Context) error {
+		started := time.Now()
 		stopRepair()
+		if took := time.Since(started); took >= defaultSlowStep {
+			slog.Warn("app: content repair stop is slow", "generation", activation.Generation, "took", took.Round(time.Millisecond))
+		}
 		<-done
 		var restart *adminsvc.RestartExit
 		if errors.Is(runErr, context.Canceled) || errors.As(runErr, &restart) || ctx.Err() != nil && cluster.ApplicationAuthorityError(runErr) {

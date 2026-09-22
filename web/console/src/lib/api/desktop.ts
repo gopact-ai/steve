@@ -13,7 +13,12 @@ export const enrollDesktopAgents = (agents: DesktopEnrollAgent[]) => request<Des
 export const saveDesktopSetup = (step: SetupStep, done = false) => request<DesktopStatus>("/console/desktop/setup", { method: "PUT", body: done ? { step, done } : { step } });
 export const saveDesktopWorkspace = (path: string) => request<DesktopStatus>("/console/desktop/workspace", { method: "PUT", body: { path } });
 
-// The macOS shell offers a native directory chooser; browsers do not.
-declare global { interface Window { steveDesktop?: { pickDirectory?: (directory?: string) => Promise<string | null> } } }
+// The macOS shell offers a native directory chooser and can start the local
+// service again when it has exited; browsers do neither.
+declare global { interface Window { steveDesktop?: { pickDirectory?: (directory?: string) => Promise<string | null>; ensureService?: () => void } } }
+export const desktopEnsureService = (): (() => void) | undefined => {
+    const shell = typeof window !== "undefined" ? window.steveDesktop : undefined;
+    return typeof shell?.ensureService === "function" ? () => shell.ensureService!() : undefined;
+};
 export const canPickDirectory = () => typeof window !== "undefined" && typeof window.steveDesktop?.pickDirectory === "function";
 export const pickDirectory = (directory?: string) => window.steveDesktop!.pickDirectory!(directory);

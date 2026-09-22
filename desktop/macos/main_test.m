@@ -6,9 +6,20 @@
 @property(nonatomic, assign) NSUInteger failures;
 @property(nonatomic, assign) NSUInteger connections;
 @property(nonatomic, assign) NSUInteger windowCloses;
+@property(nonatomic, copy) NSString *launcherAddress;
+@property(nonatomic, assign) NSUInteger launches;
+@property(nonatomic, assign) NSUInteger opens;
+@property(nonatomic, assign) BOOL holdLauncher;
+@property(nonatomic, copy) void (^heldLauncher)(NSString *, NSString *);
 @end
 
 @implementation TestApplication
+- (void)runLauncher:(void (^)(NSString *, NSString *))completion {
+    self.launches++;
+    if (self.holdLauncher) { self.heldLauncher = completion; return; }
+    completion(self.launcherAddress, self.launcherAddress ? nil : @"launcher failed");
+}
+- (BOOL)openService:(NSString *)address { self.opens++; return YES; }
 - (void)showConnectionFailure:(NSString *)detail { self.failures++; }
 - (void)showWindow {}
 - (void)connectService { self.connections++; }
@@ -155,6 +166,34 @@ static void checkNavigationIsolation(TestApplication *app, TestWebView *web) {
     check([web.loadedRequest.URL isEqual:app.serviceURL], @"Trusted service link was not kept in the workspace");
 }
 
+// The page asks the shell to make sure the service runs while its live
+// connection is down. A service back at the same address keeps the view;
+// a new address replaces it; a failed check never covers the workspace.
+static void checkServiceWatch(void) {
+    TestApplication *app = [[TestApplication alloc] init];
+    NSString *token = [@"" stringByPaddingToLength:48 withString:@"a" startingAtIndex:0];
+    app.serviceURL = [NSURL URLWithString:@"http://127.0.0.1:4100"];
+    app.accessToken = token;
+    app.launcherAddress = [NSString stringWithFormat:@"http://127.0.0.1:4100?token=%@", token];
+    [app ensureService];
+    check(app.launches == 1 && app.opens == 0 && app.failures == 0 && !app.launching, @"A service back at the same address replaced the workspace");
+    app.launcherAddress = [NSString stringWithFormat:@"http://127.0.0.1:4200?token=%@", token];
+    [app ensureService];
+    check(app.opens == 1, @"A service at a new address was not opened");
+    app.launcherAddress = nil;
+    [app ensureService];
+    check(app.failures == 0 && !app.launching, @"A failed service check covered the workspace");
+    app.holdLauncher = YES;
+    [app ensureService];
+    [app ensureService];
+    check(app.launches == 4, @"Service checks were not serialized");
+    app.heldLauncher(nil, @"still starting");
+    check(!app.launching, @"A finished service check stayed in progress");
+    TestApplication *fresh = [[TestApplication alloc] init];
+    [fresh ensureService];
+    check(fresh.launches == 0, @"A service check ran before any workspace was opened");
+}
+
 int main(void) {
     @autoreleasepool {
         TestApplication *app = [[TestApplication alloc] init];
@@ -218,6 +257,7 @@ int main(void) {
         check(content.closeRequests == 2 && app.windowCloses == 2, @"An empty workspace did not let the window close");
 
         checkNavigationIsolation(app, content);
+        checkServiceWatch();
         puts("Desktop navigation recovery passed");
     }
     return 0;
