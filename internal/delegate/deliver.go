@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
@@ -39,12 +40,12 @@ type Delivery struct {
 	Key string
 }
 
-// Delivered is one child in a delivery.
+// Delivered is one child in a delivery, or in a turn's preface.
 type Delivered struct {
 	Task    string
 	Agent   string
 	Node    string
-	State   task.State // done | failed
+	State   task.State // done | failed | cancelled
 	Elapsed time.Duration
 	Goal    string
 	Answer  string
@@ -53,6 +54,9 @@ type Delivered struct {
 	// Landing says where the child's files are: landed, queued (with why),
 	// conflict, or empty when it changed nothing.
 	Landing string
+	// Stopping says the child was stopped but its execution has not
+	// confirmed stopping: there is no result, only the stop on record.
+	Stopping bool
 }
 
 // Notice is the line the person sees.
@@ -69,22 +73,32 @@ func (d Delivery) Prompt() string {
 	var b strings.Builder
 	b.WriteString("[steve: 你委派的子任务已结束，结果如下；这是平台送来的消息，不是用户说的]\n")
 	for _, c := range d.Children {
-		fmt.Fprintf(&b, "\n## 子任务 #%s · %s@%s · %s · 用时 %s\n", c.Task, c.Agent, nodeLabel(c.Node), stateWord(c.State), c.Elapsed.Round(time.Second))
-		if g := strings.TrimSpace(c.Goal); g != "" {
-			fmt.Fprintf(&b, "目标：%s\n", text.Clip(g, 300))
-		}
-		if c.Landing != "" {
-			fmt.Fprintf(&b, "改动：%s\n", c.Landing)
-		}
-		if len(c.Refs) > 0 {
-			fmt.Fprintf(&b, "refs：%s\n", strings.Join(c.Refs, "；"))
-		}
-		if a := strings.TrimSpace(c.Answer); a != "" {
-			fmt.Fprintf(&b, "回答：\n%s\n", text.Clip(a, 4000))
-		}
+		writeChild(&b, c)
 	}
 	b.WriteString("\n继续你的任务。还在跑的子任务结束后会再送来，不必用 steve_await 等；都齐了就汇总回复。")
 	return b.String()
+}
+
+// writeChild is one child's section, the same in a delivery and in a
+// preface: what it was asked, how it ended, where its files are, and
+// what it said.
+func writeChild(b *strings.Builder, c Delivered) {
+	fmt.Fprintf(b, "\n## 子任务 #%s · %s@%s · %s · 用时 %s\n", c.Task, c.Agent, nodeLabel(c.Node), stateWord(c.State), c.Elapsed.Round(time.Second))
+	if c.Stopping {
+		b.WriteString("停止已记录，但执行端还没有确认停下；没有结果。\n")
+	}
+	if g := strings.TrimSpace(c.Goal); g != "" {
+		fmt.Fprintf(b, "目标：%s\n", text.Clip(g, 300))
+	}
+	if c.Landing != "" {
+		fmt.Fprintf(b, "改动：%s\n", c.Landing)
+	}
+	if len(c.Refs) > 0 {
+		fmt.Fprintf(b, "refs：%s\n", strings.Join(c.Refs, "；"))
+	}
+	if a := strings.TrimSpace(c.Answer); a != "" {
+		fmt.Fprintf(b, "回答：\n%s\n", text.Clip(a, 4000))
+	}
 }
 
 func stateWord(state task.State) string {
@@ -208,6 +222,12 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	if parent.State != task.StateRunning {
 		return
 	}
+	if parent.Held() {
+		// The user stopped the task: a delivery would start its next turn
+		// on its own. What the children left waits for the user's next
+		// turn, which opens with it (Preface).
+		return
+	}
 	ids := make([]string, 0, len(waiting))
 	for _, child := range waiting {
 		ids = append(ids, child.ID)
@@ -217,7 +237,7 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 		slog.Error("delegate: prepare result delivery", "parent", parentID, "error", err)
 		return
 	}
-	landing := s.landFor(ctx, parent)
+	landing := s.landFor(ctx, parent, nil)
 	for _, batch := range batches {
 		if ctx.Err() != nil {
 			return
@@ -260,15 +280,22 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 }
 
 // landFor lands what the project has queued — the parent holds no lock
-// between turns, so this is the moment — and answers, per child, where
-// its files are. The message must not say "landed" for a child whose
-// landing is still queued behind someone else's lock.
-func (s *Service) landFor(ctx context.Context, parent task.Task) func(task.Task) string {
+// between turns, so this is the moment; a turn composing its prompt lends
+// its own lease — and answers, per child, where its files are. The
+// message must not say "landed" for a child whose landing is still queued
+// behind someone else's lock.
+func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.Lease) func(task.Task) string {
 	byArtifact := map[string]string{}
 	held := ""
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
-			landed, lerr := s.artifacts.LandPending(ctx, p)
+			var landed []artifact.Landing
+			var lerr error
+			if lease != nil {
+				landed, lerr = s.artifacts.LandPendingUnder(ctx, p, *lease)
+			} else {
+				landed, lerr = s.artifacts.LandPending(ctx, p)
+			}
 			for _, l := range landed {
 				switch l.State {
 				case "committed":
@@ -312,6 +339,11 @@ func (s *Service) landFor(ctx context.Context, parent task.Task) func(task.Task)
 		}
 		if held != "" {
 			return held
+		}
+		if c.State == task.StateCancelled {
+			// A stop revokes the child's permission to land; what it
+			// published stays an artifact.
+			return "未落地：任务已停止，落地授权已撤销"
 		}
 		return "已在此前落地或无改动"
 	}

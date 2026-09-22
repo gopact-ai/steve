@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
@@ -116,6 +117,10 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 			})
 		})
 		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
+		coordinator.SetTurnPreface(func(ctx context.Context, taskID string) turn.Preface {
+			text, told := delegation.Preface(ctx, taskID)
+			return turn.Preface{Text: text, Told: told}
+		})
 		reconcileDeliveries = delegation.ReconcileDeliveries
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the
