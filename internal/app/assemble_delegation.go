@@ -86,8 +86,11 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 			delegation.SetSpawnGuard(func(ctx context.Context, tx *ledger.Tx) error {
 				return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx})
 			})
-			recoverRetainedDelegates = delegation.RecoverRetained
 		}
+		// Children an earlier process left behind have no other owner, with
+		// or without a cluster: a standalone hub restarts too, and a child
+		// row it opened before dying stays open until this pass settles it.
+		recoverRetainedDelegates = delegation.RecoverRetained
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
 		if settings := boot.Settings(); settings != nil {
 			delegation.SilenceSource = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
