@@ -214,14 +214,13 @@ type usageSummary struct {
 }
 
 type task struct {
-	ID             string       `json:"id"`
-	Parent         string       `json:"parent"`
-	State          string       `json:"state"`
-	Member         string       `json:"member"`
-	Node           string       `json:"node"`
-	Project        string       `json:"project_id"`
-	Channel        string       `json:"channel"`
-	AttemptRows    []attemptRow `json:"attempt_rows"`
+	ID             string `json:"id"`
+	Parent         string `json:"parent"`
+	State          string `json:"state"`
+	Member         string `json:"member"`
+	Node           string `json:"node"`
+	Project        string `json:"project_id"`
+	Channel        string `json:"channel"`
 	ResultDelivery *struct {
 		State string `json:"state"`
 	} `json:"result_delivery"`
@@ -442,7 +441,11 @@ func (g *gate) run(ctx context.Context) error {
 	g.log("PASS reply=%s step=%s kind=delegate state=done agent=%s node=%s attempt=%s", final.ID, child.ID, child.Agent, child.Node, child.Attempt)
 
 	var detail struct {
-		Task task `json:"task"`
+		Task       task `json:"task"`
+		Accounting struct {
+			Items []attemptRow `json:"items"`
+			Total int          `json:"total"`
+		} `json:"accounting"`
 	}
 	if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(g.taskID), nil, &detail); err != nil {
 		return err
@@ -487,7 +490,7 @@ func (g *gate) run(ctx context.Context) error {
 		return fmt.Errorf("attempt %s: changes index must contain A %s in project %s; got %+v", g.attemptID, g.filename, g.project, index)
 	}
 	g.log("PASS changes attempt=%s status=A path=%s", g.attemptID, g.filename)
-	usage, err := g.usage(detail.Task)
+	usage, err := g.usage(detail.Task, detail.Accounting.Items)
 	if err != nil {
 		return err
 	}
@@ -575,16 +578,16 @@ func (g *gate) checkTask(t task) error {
 	return nil
 }
 
-func (g *gate) usage(t task) (tokens, error) {
+func (g *gate) usage(t task, rows []attemptRow) (tokens, error) {
 	if err := g.checkTask(t); err != nil {
 		return tokens{}, err
 	}
-	for _, row := range t.AttemptRows {
+	for _, row := range rows {
 		if row.Agent == g.targetAgent && row.Node == g.targetNode && row.Outcome == "ok" && row.Reported && row.Tokens.present() {
 			return row.Tokens, nil
 		}
 	}
-	return tokens{}, fmt.Errorf("/console/tasks/%s attempt=%s: expected successful attempt_rows with tokens and reported=true on %s/%s; got %+v", g.taskID, g.attemptID, g.targetNode, g.targetAgent, t.AttemptRows)
+	return tokens{}, fmt.Errorf("/console/tasks/%s attempt=%s: expected successful accounting row with tokens and reported=true on %s/%s; got %+v", g.taskID, g.attemptID, g.targetNode, g.targetAgent, rows)
 }
 
 // /usage aggregates root task trees, not individual child attempts. Validate

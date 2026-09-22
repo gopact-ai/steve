@@ -34,9 +34,9 @@ func TestGate(t *testing.T) {
 		{"no_change", "changes index must contain A"},
 		{"deleted_file", "changes index must contain A"},
 		{"wrong_index", "changes index must contain A"},
-		{"unreported", "expected successful attempt_rows"},
-		{"empty_tokens", "expected successful attempt_rows"},
-		{"parent_tokens_only", "expected successful attempt_rows"},
+		{"unreported", "expected successful accounting row"},
+		{"empty_tokens", "expected successful accounting row"},
+		{"parent_tokens_only", "expected successful accounting row"},
 		{"usage_failed", "/usage: ledger offline"},
 		{"usage_partial", "/usage: incomplete history"},
 		{"usage_unwired", "/usage: ledger-usage is not wired"},
@@ -71,11 +71,12 @@ func TestGate(t *testing.T) {
 				if tc.name == "empty_tokens" {
 					row.Tokens = readmodel.Tokens{}
 				}
-				tsk := readmodel.Task{ID: taskID, Parent: "parent", State: tasks.StateDone, Member: "shipper", NodeID: "node-b", ProjectID: "scratch", Channel: g.conversation, AttemptRows: []readmodel.AttemptRow{row}}
+				tsk := readmodel.Task{ID: taskID, Parent: "parent", State: tasks.StateDone, Member: "shipper", NodeID: "node-b", ProjectID: "scratch", Channel: g.conversation}
+				accounting := readmodel.AccountingPage{Items: []readmodel.AccountingItem{{AttemptRow: row}}, Total: 1}
 				if tc.name == "parent_tokens_only" {
-					tsk.AttemptRows = nil
+					accounting = readmodel.AccountingPage{Items: []readmodel.AccountingItem{}}
 				}
-				return readmodel.TaskDetail{Task: tsk, Children: readmodel.TaskPage{Items: []readmodel.Task{}}, Accounting: readmodel.AccountingPage{Items: []readmodel.AccountingItem{}}}
+				return readmodel.TaskDetail{Task: tsk, Children: readmodel.TaskPage{Items: []readmodel.Task{}}, Accounting: accounting}
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer secret-token" || r.URL.Query().Has("token") {

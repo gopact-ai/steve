@@ -39,15 +39,21 @@ type fleetState struct {
 	Tasks    []task    `json:"tasks"`
 }
 
-// taskDetail is the task with the first page of its children. The gate's
-// tasks have a handful, so one page must be all of them; a page short of
-// the total is a failure, not fewer children.
+// taskDetail is the task with the first page of its children and the
+// first page of its accounting rows. The gate's tasks have a handful of
+// children, so one page must be all of them; a page short of the total
+// is a failure, not fewer children. The accounting page only has to
+// carry the child's own settled row.
 type taskDetail struct {
 	Task     task `json:"task"`
 	Children struct {
 		Items []task `json:"items"`
 		Total int    `json:"total"`
 	} `json:"children"`
+	Accounting struct {
+		Items []attemptRow `json:"items"`
+		Total int          `json:"total"`
+	} `json:"accounting"`
 }
 
 type toolCall struct {
@@ -304,15 +310,15 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 		}
 		var row *attemptRow
 		if current.Task.ID == r.task {
-			for i := range current.Task.AttemptRows {
-				candidate := &current.Task.AttemptRows[i]
+			for i := range current.Accounting.Items {
+				candidate := &current.Accounting.Items[i]
 				if candidate.Outcome == "ok" && candidate.Agent == r.agent && candidate.Node == r.node {
 					row = candidate
 				}
 			}
 		}
 		if row == nil {
-			return fmt.Errorf("task #%s: no successful attempt row", r.task)
+			return fmt.Errorf("task #%s: no successful accounting row on %s/%s; got %+v", r.task, r.node, r.agent, current.Accounting.Items)
 		}
 		if row.Reported && row.Tokens.present() {
 			if err := summary.checkReported(r.agent, row.Tokens); err != nil {
