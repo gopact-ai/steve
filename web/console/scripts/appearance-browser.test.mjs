@@ -298,20 +298,15 @@ try {
     /Hiragino Sans GB/,
   );
   await page.getByRole("button", { name: "恢复默认字体", exact: true }).click();
-  assert.equal(
-    await page
-      .getByRole("textbox", { name: "阅读正文本地字体名称", exact: true })
-      .count(),
-    0,
-  );
+  await page
+    .getByRole("textbox", { name: "阅读正文本地字体名称", exact: true })
+    .waitFor({ state: "detached" });
   // Edit with actual controls, keyboard selection, scoped preview and JSON roundtrip.
   await page.setViewportSize({ width: 1200, height: 1000 });
   await page.getByRole("button", { name: /阅读正文字号/ }).click();
   await page.getByRole("option", { name: "20 px", exact: true }).click();
-  assert.equal(
-    await page.evaluate(() => window.appearance.fonts.reading.size),
-    20,
-  );
+  // Saves commit under the appearance lock, after the click has returned.
+  await page.waitForFunction(() => window.appearance.fonts.reading.size === 20);
   await page
     .getByRole("button", { name: "复制并编辑", exact: true })
     .nth(1)
@@ -445,10 +440,7 @@ try {
   await page.waitForFunction(() => window.appearance.custom.length === 1);
   assert.equal(await page.evaluate(() => window.appearance.light), "light");
   await page.getByRole("button", { name: "恢复默认字体", exact: true }).click();
-  assert.equal(
-    await page.evaluate(() => window.appearance.fonts.reading.size),
-    16,
-  );
+  await page.waitForFunction(() => window.appearance.fonts.reading.size === 16);
   // Keyboard navigation reaches the same appearance page via toolbar shortcut.
   await page.getByRole("button", { name: /^主题/ }).click();
   await page.getByRole("menuitem", { name: "外观", exact: true }).focus();
