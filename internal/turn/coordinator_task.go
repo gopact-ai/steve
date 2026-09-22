@@ -366,36 +366,7 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 		if err != nil {
 			return Result{Title: title, Text: err.Error()}, err
 		}
-		if c.attempts != nil {
-			for _, id := range ids {
-				if records, err := c.attempts.ForTask(ctx, id); err == nil {
-					for _, record := range records {
-						if !record.Unsettled && record.StopEvidence != "" {
-							stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
-						}
-					}
-				} else {
-					stopErr = errors.Join(stopErr, err)
-				}
-			}
-		}
-		waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
-		stopErr = errors.Join(stopErr, c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx))
-		finishWait()
-		if c.attempts != nil {
-			for _, id := range ids {
-				records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
-				if err != nil {
-					stopErr = errors.Join(stopErr, err)
-					continue
-				}
-				for _, record := range records {
-					if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
-						stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
-					}
-				}
-			}
-		}
+		stopErr = c.stopExecutions(ctx, ids, confirmSettlement)
 	} else {
 		if _, err := c.tasks.Advance(tracked.ID, to); err != nil {
 			return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}, err
@@ -417,6 +388,45 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 	return Result{Title: title, Text: c.text.T(i18n.TaskCancelled, moved.ID) + "\n\n" + c.taskDetail(moved)}, nil
 }
 
+// stopExecutions stops what is running under tasks whose execution has
+// just been revoked by SetAside, and waits for the stop to be confirmed.
+// An error says the stop is recorded but some writer has not been seen to
+// stop; with confirmSettlement, an attempt still open counts as that.
+func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmSettlement bool) error {
+	var stopErr error
+	if c.attempts != nil {
+		for _, id := range ids {
+			if records, err := c.attempts.ForTask(ctx, id); err == nil {
+				for _, record := range records {
+					if !record.Unsettled && record.StopEvidence != "" {
+						stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
+					}
+				}
+			} else {
+				stopErr = errors.Join(stopErr, err)
+			}
+		}
+	}
+	waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
+	stopErr = errors.Join(stopErr, c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx))
+	finishWait()
+	if c.attempts != nil {
+		for _, id := range ids {
+			records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
+			if err != nil {
+				stopErr = errors.Join(stopErr, err)
+				continue
+			}
+			for _, record := range records {
+				if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
+					stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
+				}
+			}
+		}
+	}
+	return stopErr
+}
+
 // stopTurnFor stops the turn a task is running through, if any. The task's own
 // member identifies that turn — by the time the user sets work aside they may
 // well be talking to a different agent.
@@ -431,7 +441,7 @@ func (c *Coordinator) stopTurnFor(ctx context.Context, tracked task.Task) {
 	if !running {
 		return
 	}
-	if _, err := c.cancel(ctx, tracked.Channel, member); err != nil {
+	if _, err := c.cancelTurn(ctx, tracked.Channel, member); err != nil {
 		slog.Error(fmt.Sprintf("turn: stop turn for task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", member.ID)
 	}
 }

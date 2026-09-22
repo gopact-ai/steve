@@ -1,5 +1,5 @@
 // The turn slot: one prompt runs per conversation and agent at a time. A
-// new message queues behind or interrupts the running turn, /cancel stops
+// new message queues behind or interrupts the running turn, a stop cancels
 // it, and the slot bookkeeping is what lets the two agree on who owns the
 // session cleanup.
 
@@ -25,7 +25,10 @@ type turnEntry struct {
 	done   chan struct{}
 }
 
-func (c *Coordinator) cancel(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
+// cancelTurn stops the turn running for this agent in this conversation.
+// It is the turn half of a stop; cancel, which the /cancel command runs,
+// also reaches the children the turn's task delegated.
+func (c *Coordinator) cancelTurn(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
 	key := sessionKey(conversationID, selected.ID)
 	c.mu.Lock()
 	runner, entry := c.active[key], c.cancels[key]

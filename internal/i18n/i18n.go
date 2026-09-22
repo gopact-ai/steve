@@ -90,6 +90,7 @@ const (
 	BudgetTurns            Key = "budget_turns"
 	BudgetElapsed          Key = "budget_elapsed"
 	CancelRequested        Key = "cancel_requested"
+	CancelStoppedChildren  Key = "cancel_stopped_children"
 	SkillsOwnerOnly        Key = "skills_owner_only"
 	SkillsUnconfigured     Key = "skills_unconfigured"
 	SkillsEnabled          Key = "skills_enabled"

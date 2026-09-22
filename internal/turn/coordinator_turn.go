@@ -36,6 +36,8 @@ type chatTurn struct {
 	scope    *execution.Scope
 	tracked  string
 	prompt   string
+	// told records the task's preface as given, once the prompt settles.
+	told func()
 
 	binding           project.Binding
 	workspace         project.Workspace
@@ -232,10 +234,14 @@ func (t *chatTurn) arm(ctx context.Context, e *lifecycle.Execution) (func(*attem
 }
 
 // started composes what the agent is given and binds its tools to the
-// running attempt.
+// running attempt. The task's preface is read here, with the turn admitted
+// and the prompt about to be fixed: a child that ends before this moment
+// is in the prompt, one that ends after it is delivered when the turn ends.
 func (t *chatTurn) started(ctx context.Context, e *lifecycle.Execution) error {
 	c, req := t.c, t.req
-	if err := t.compose(e); err != nil {
+	preface, told := c.preface(ctx, t.tracked)
+	t.told = told
+	if err := t.compose(e, preface); err != nil {
 		return err
 	}
 	if err := c.bindExecutionGate(ctx, req.ConversationID, e.Record.ID); err != nil {
@@ -245,10 +251,10 @@ func (t *chatTurn) started(ctx context.Context, e *lifecycle.Execution) error {
 	return nil
 }
 
-// compose is the prompt with the speaker, the listening prefix, the
-// onboarding continuation and the assembled instructions in front of it,
-// kept on the record of what the agent saw.
-func (t *chatTurn) compose(e *lifecycle.Execution) error {
+// compose is the prompt with the speaker, the task's preface, the
+// listening prefix, the onboarding continuation and the assembled
+// instructions in front of it, kept on the record of what the agent saw.
+func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 	c, req, selected, capabilities := t.c, t.req, t.selected, t.capabilities
 	user := t.prompt
 	if req.SenderOpenID != "" || req.ChatType != "" {
@@ -261,6 +267,9 @@ func (t *chatTurn) compose(e *lifecycle.Execution) error {
 			ownerFlag = "true"
 		}
 		user = fmt.Sprintf("[steve: speaker=%s owner=%s chat=%s]\n%s", speaker, ownerFlag, req.ChatType, t.prompt)
+	}
+	if preface != "" {
+		user = preface + "\n\n" + user
 	}
 	if prefix := c.listenPrefix(req); prefix != "" {
 		user = prefix + user
@@ -309,6 +318,9 @@ func (t *chatTurn) ended(e *lifecycle.Execution) {
 	t.clock.mark("prompt")
 	if e.Outcome.PromptSettled {
 		t.req.phase(view.PhaseFinishing)
+		if t.told != nil {
+			t.told()
+		}
 	}
 }
 

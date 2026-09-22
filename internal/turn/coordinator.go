@@ -224,6 +224,7 @@ type coordinatorState struct {
 	resumeDispatcher  func(TaskResume)
 	notifier          func(TaskNotice)
 	afterTurn         func(taskID string)
+	turnPreface       func(ctx context.Context, taskID string) Preface
 	planRecoveryOwner func(task.Task) bool
 	// offlineAfter is how long a turn runs before its completion also earns
 	// a plain-text ping; zero keeps Steve quiet.

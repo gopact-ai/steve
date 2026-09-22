@@ -84,6 +84,16 @@ func (s *Store) SetDelivery(id, state string) error {
 	return s.replaceLocked(next)
 }
 
+// Undelivered says the task is a delegated child that ended with a result
+// its parent's conversation has not been given: what a delivery, or the
+// parent's next turn, still owes the parent.
+func (t Task) Undelivered() bool {
+	if !t.Delegated() || !t.Finished() || t.Result == nil || t.Parent == "" {
+		return false
+	}
+	return t.Delivery == nil || (t.Delivery.State != DeliveryDelivered && t.Delivery.State != DeliverySuppressed)
+}
+
 // Undelivered lists finished delegated children whose result has not
 // reached their parent's conversation, grouped under their parents.
 func (s *Store) Undelivered() map[string][]Task {
@@ -91,13 +101,10 @@ func (s *Store) Undelivered() map[string][]Task {
 	defer s.mu.Unlock()
 	out := map[string][]Task{}
 	for _, stored := range s.data.Tasks {
+		if !stored.Undelivered() {
+			continue
+		}
 		t := *stored.clone()
-		if !t.Delegated() || !t.Finished() || t.Result == nil || t.Parent == "" {
-			continue
-		}
-		if t.Delivery != nil && (t.Delivery.State == DeliveryDelivered || t.Delivery.State == DeliverySuppressed) {
-			continue
-		}
 		out[t.Parent] = append(out[t.Parent], t)
 	}
 	for parent := range out {
