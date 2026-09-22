@@ -537,8 +537,21 @@ func (s *Server) consoleRetryConflict(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOr(w) {
 		return
 	}
-	if err := s.admin.RetryConflict(r.Context(), r.PathValue("artifact")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	var body struct {
+		Landing string `json:"landing"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Landing == "" {
+		http.Error(w, "the landing the result stopped on is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.RetryConflict(r.Context(), r.PathValue("artifact"), body.Landing); err != nil {
+		// A result no longer stuck on the landing the console showed has
+		// moved on: the console's view is stale, not the request wrong.
+		status := http.StatusBadRequest
+		if errors.Is(err, artifact.ErrNotBlocked) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})

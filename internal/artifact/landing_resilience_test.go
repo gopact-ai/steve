@@ -16,15 +16,22 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 )
 
-// failingNode refuses one kind of operation while fail is set, the way a
-// node that lost its disk or its connection mid-landing would.
+// failingNode refuses one kind of operation while fail is set, and every
+// operation while down is, the way a node that lost its disk or its
+// connection mid-landing would. before runs ahead of each operation, as
+// someone working in the directory at that moment would.
 type failingNode struct {
 	*localNode
-	fail ops.Kind
+	fail   ops.Kind
+	down   bool
+	before func(req ops.Request)
 }
 
 func (n *failingNode) Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
-	if n.fail != "" && req.Op == n.fail {
+	if n.before != nil {
+		n.before(req)
+	}
+	if n.down || n.fail != "" && req.Op == n.fail {
 		return ops.Result{}, errors.New("node refused " + string(req.Op))
 	}
 	return n.localNode.Artifact(ctx, node, req)
@@ -268,8 +275,9 @@ func TestLockContentionIsNotRecordedAsAConflict(t *testing.T) {
 	}
 }
 
-// applyConflicted queues a result that edits a, and lands it on a node that
-// refuses to apply, so it stops apply-conflicted on a.
+// applyConflicted queues a result that edits a, and lands it while someone
+// edits a in the canonical workspace between the snapshot and the write,
+// so git refuses the apply and the landing stops apply-conflicted on a.
 func applyConflicted(t *testing.T) (*Store, project.Project, *failingNode, string, string) {
 	t.Helper()
 	ctx := t.Context()
@@ -286,12 +294,16 @@ func applyConflicted(t *testing.T) (*Store, project.Project, *failingNode, strin
 	if err := store.Defer(ctx, "p", result.ID, "att-1"); err != nil {
 		t.Fatal(err)
 	}
-	nodes.fail = ops.Apply
+	nodes.before = func(req ops.Request) {
+		if req.Op == ops.Apply {
+			write(t, canonical, "a", "a-by-hand")
+			nodes.before = nil
+		}
+	}
 	landed, err := store.LandPending(ctx, p)
-	if err != nil || len(landed) != 1 || landed[0].State != LandApplyConflicted {
+	if err != nil || len(landed) != 1 || landed[0].State != LandApplyConflicted || fmt.Sprint(landed[0].Paths) != "[a]" {
 		t.Fatalf("first pass = %+v err=%v", landed, err)
 	}
-	nodes.fail = ""
 	return store, p, nodes, canonical, result.ID
 }
 
@@ -317,7 +329,9 @@ func TestApplyConflictIsBlockedUntilItsPathsChange(t *testing.T) {
 		t.Fatalf("an apply conflict was retried because an unrelated path moved: %+v err=%v", again, err)
 	}
 
-	if err := store.Unblock(ctx, "p", artifact); err != nil {
+	// The owner puts a back and asks for the result to land again.
+	write(t, canonical, "a", "a0")
+	if err := store.Unblock(ctx, "p", artifact, stuck[0].Landing); err != nil {
 		t.Fatal(err)
 	}
 	landed, err := store.LandPending(ctx, p)
@@ -331,7 +345,7 @@ func TestApplyConflictIsBlockedUntilItsPathsChange(t *testing.T) {
 func TestApplyConflictIsRetriedWhenOneOfItsPathsChanges(t *testing.T) {
 	ctx := t.Context()
 	store, p, _, canonical, _ := applyConflicted(t)
-	write(t, canonical, "a", "a-by-hand")
+	write(t, canonical, "a", "a-by-hand-again")
 	if _, _, err := store.SnapshotCanonical(ctx, p, store.canonicalRef(ctx, "p"), "user", "moved"); err != nil {
 		t.Fatal(err)
 	}

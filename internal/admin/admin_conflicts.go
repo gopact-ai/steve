@@ -162,12 +162,12 @@ func (a *Service) ResolveConflictByHand(ctx context.Context, artifactID string, 
 // write refused because the working tree changed under it, or one into a
 // nested repository — to land again on the next pass. Nothing automatic
 // retries such a result; its owner does, after dealing with the cause.
-func (a *Service) RetryConflict(ctx context.Context, artifactID string) error {
+func (a *Service) RetryConflict(ctx context.Context, artifactID, landing string) error {
 	stuck, p, err := a.conflict(ctx, artifactID)
 	if err != nil {
 		return err
 	}
-	return a.Artifacts.Unblock(ctx, p.ID, stuck.Artifact)
+	return a.Artifacts.Unblock(ctx, p.ID, stuck.Artifact, landing)
 }
 
 // conflict finds a stuck result and the project it belongs to.

@@ -121,6 +121,9 @@ type Store struct {
 	// node, by the node generation that was asked.
 	shadowMu sync.Mutex
 	shadows  map[string]int64
+	// recoveryNotes holds, by landing, the last reason its recovery was
+	// left for a retry, so a reason that repeats every pass is logged once.
+	recoveryNotes sync.Map
 }
 
 func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }
@@ -319,7 +322,7 @@ func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, parent
 	if p.Home.Node == "" {
 		sha, changed, nested, err = repo.snapshot(ctx, p.Home.Path, parent, message, false)
 	} else {
-		sha, changed, nested, err = s.snapshotOnNodeLeaving(ctx, p.Home.Node, p, p.Home.Path, parent, message, repo, false)
+		sha, changed, nested, err = s.snapshotOnNode(ctx, p.Home.Node, p, p.Home.Path, parent, message, repo, false)
 	}
 	if err != nil {
 		return Manifest{}, false, nil, err
@@ -360,7 +363,7 @@ func (s *Store) SnapshotWorkspace(ctx context.Context, p project.Project, ws pro
 	if ws.Node == "" {
 		sha, changed, err = repo.Snapshot(ctx, ws.Path, parent, message, false)
 	} else {
-		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, repo, false)
+		sha, changed, _, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, repo, false)
 	}
 	if err != nil {
 		return Manifest{}, false, err
@@ -418,15 +421,9 @@ func (s *Store) setHead(ctx context.Context, name, sha string) error {
 }
 
 // snapshotOnNode snapshots a directory on a node into the node's shadow
-// repository and fetches the result to the hub.
-func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (string, bool, error) {
-	sha, changed, _, err := s.snapshotOnNodeLeaving(ctx, node, p, dir, parent, message, hub, flatten)
-	return sha, changed, err
-}
-
-// snapshotOnNodeLeaving is snapshotOnNode that also names the nested git
-// repositories the node left out of the snapshot.
-func (s *Store) snapshotOnNodeLeaving(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (string, bool, []string, error) {
+// repository and fetches the result to the hub. nested names the nested
+// git repositories of the directory the snapshot left out.
+func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (sha string, changed bool, nested []string, err error) {
 	_, _, state, err := s.nodes.Git(ctx, node)
 	if err != nil {
 		return "", false, nil, err
@@ -711,7 +708,7 @@ func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, m
 		// Like dropInputs on the hub: inputs are dropped when possible so
 		// they do not enter the snapshot, and a leftover is not an error.
 		_, _ = s.nodes.Artifact(ctx, ws.Node, ops.Request{Op: ops.Remove, Path: filepath.Join(ws.Path, "inputs")})
-		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, hub, ws.Kind == project.KindWorktree)
+		sha, changed, _, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, hub, ws.Kind == project.KindWorktree)
 	}
 	if err != nil {
 		return Manifest{}, false, err
@@ -832,7 +829,21 @@ func (s *Store) Defer(ctx context.Context, projectID, artifactID, by string, sou
 				return err
 			}
 		}
-		return tx.PutBinding(pendingKind, projectID+"/"+artifactID, Pending{Project: projectID, Artifact: artifactID, By: by, At: s.now().UTC(), Source: origin})
+		id := projectID + "/" + artifactID
+		item := Pending{Project: projectID, Artifact: artifactID, By: by, At: s.now().UTC(), Source: origin}
+		// Deferring a result already queued — one its landing just stopped
+		// on a conflict — keeps its place in line and why it is stuck.
+		raw, err := tx.Bindings(pendingKind)
+		if err != nil {
+			return err
+		}
+		if existing, ok := raw[id]; ok {
+			var prior Pending
+			if err := json.Unmarshal(existing, &prior); err == nil && prior.Project == projectID {
+				item.At, item.Blocked = prior.At, prior.Blocked
+			}
+		}
+		return tx.PutBinding(pendingKind, id, item)
 	})
 }
 
@@ -991,11 +1002,18 @@ func (s *Store) changedBetween(ctx context.Context, p project.Project, from, to 
 	return repo.Changed(ctx, from, to)
 }
 
+// ErrNotBlocked refuses to unblock a queued result that is no longer
+// stuck on the landing named, or is stuck on a conflict that has a merge
+// to work from and is resolved rather than retried.
+var ErrNotBlocked = errors.New("the result is not stuck on that landing")
+
 // Unblock clears why a queued result is stuck, so the next pass lands it
 // again whatever the canonical is. It is the explicit retry for a conflict
-// nothing automatic will clear — a result refused for writing into a
-// nested repository, once that directory has been dealt with.
-func (s *Store) Unblock(ctx context.Context, projectID, artifactID string) error {
+// nothing automatic will clear and no merge can resolve — a result refused
+// for writing into a nested repository, once that directory has been dealt
+// with. landingID is the stop the caller saw: a result that has since
+// stopped again, on another landing, is left for the caller to look at.
+func (s *Store) Unblock(ctx context.Context, projectID, artifactID, landingID string) error {
 	return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
 		raw, err := tx.Bindings(pendingKind)
 		if err != nil {
@@ -1004,14 +1022,17 @@ func (s *Store) Unblock(ctx context.Context, projectID, artifactID string) error
 		id := projectID + "/" + artifactID
 		data, ok := raw[id]
 		if !ok {
-			return fmt.Errorf("artifact %s is not queued for %s", short(artifactID), projectID)
+			return fmt.Errorf("%w: artifact %s is not queued for %s", ErrNotBlocked, short(artifactID), projectID)
 		}
 		var item Pending
 		if err := json.Unmarshal(data, &item); err != nil {
 			return err
 		}
-		if item.Blocked == nil {
-			return nil
+		if item.Blocked == nil || item.Blocked.Landing != landingID {
+			return fmt.Errorf("%w: artifact %s, landing %s", ErrNotBlocked, short(artifactID), landingID)
+		}
+		if item.Blocked.Marked != "" {
+			return fmt.Errorf("%w: landing %s stopped on a merge conflict, which is resolved rather than retried", ErrNotBlocked, landingID)
 		}
 		item.Blocked = nil
 		return tx.PutBinding(pendingKind, id, item)

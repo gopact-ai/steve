@@ -90,7 +90,7 @@ function ConflictRow({ conflict, nodes, locale, onEdit }: { conflict: Conflict; 
     async function retry() {
         setBusy(true); setNote("");
         try {
-            await retryConflict(conflict.artifact);
+            await retryConflict(conflict.artifact, conflict.landing);
             setNote(t("conflicts.retried"));
         } catch (e) { setNote(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }

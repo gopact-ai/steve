@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -19,15 +20,18 @@ import (
 const LandRecoveryPending = "recovery-pending"
 
 // RecoverLandings is run at boot. A landing that never reached applying
-// wrote nothing and is closed as interrupted. One cut off mid-apply goes
-// recovery-pending, takes the canonical lock again under a new epoch, and
-// finishes path by path: a path already at the merged content is skipped,
-// one still at the old content is rewritten, and anything else is a
-// conflict that ends the landing before any path is written.
+// wrote nothing and is closed as interrupted. One cut off mid-apply is
+// marked recovery-pending before anything else is tried — from then on no
+// new landing merges onto the half-written workspace — then takes the
+// canonical lock again under a new epoch and finishes path by path: a path
+// already at the merged content is skipped, one still at the old content
+// is rewritten, and anything else is a conflict that ends the landing
+// before any path is written.
 //
-// The previous process is gone, so the canonical lock a landing recorded is
-// released first. A landing that still cannot be recovered — the lock is
-// someone else's, the home node is unreachable — is logged and left
+// The previous process is gone, so the canonical lock a landing took for
+// itself is released first; a lock it was lent is its lender's, which
+// recovery waits for. A landing that still cannot be recovered — the lock
+// is someone else's, the home node is unreachable — is logged and left
 // recovery-pending for RetryRecoveries; it is not a reason to refuse to
 // start. Only failing to list the landings at all is returned.
 func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
@@ -42,17 +46,26 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 			continue
 		}
 		land.State = op.State
-		if _, _, err := s.projects.Get(ctx, land.Project); errors.Is(err, project.ErrNotOwner) {
-			continue
-		} else if err != nil {
-			logRecoveryLeft(land, err)
+		_, _, projectErr := s.projects.Get(ctx, land.Project)
+		if errors.Is(projectErr, project.ErrNotOwner) {
 			continue
 		}
-		if err := s.releaseDeadLanding(ctx, land); err != nil {
-			logRecoveryLeft(land, err)
+		dead := land.Lease
+		if land.State == LandApplying {
+			if err := s.pendRecovery(ctx, &land); err != nil {
+				s.noteRecoveryLeft(land, err)
+				continue
+			}
+		}
+		if projectErr != nil {
+			s.noteRecoveryLeft(land, projectErr)
 			continue
 		}
-		switch op.State {
+		if err := s.releaseDeadLanding(ctx, land, dead); err != nil {
+			s.noteRecoveryLeft(land, err)
+			continue
+		}
+		switch land.State {
 		case LandProposed, LandLocked, LandMerged:
 			if land.Recoverable {
 				out = append(out, land)
@@ -60,25 +73,36 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 			}
 			land.Lease = nil
 			land.Unapplied = true
-			s.failed(ctx, &land, op.State, LandMergeConflicted, "interrupted before apply; nothing was written", nil)
+			s.failed(ctx, &land, land.State, LandMergeConflicted, "interrupted before apply; nothing was written", nil)
 			out = append(out, land)
-		case LandApplying, LandRecoveryPending:
+		case LandRecoveryPending:
 			recovered, err := s.recoverLanding(ctx, land)
 			if err != nil {
-				logRecoveryLeft(recovered, err)
+				s.noteRecoveryLeft(recovered, err)
 				continue
 			}
-			out = append(out, recovered)
+			if recovered.State != LandRecoveryPending {
+				s.recoveryNotes.Delete(land.ID)
+				out = append(out, recovered)
+			}
 		}
 	}
 	return out, nil
 }
 
+// pendRecovery marks a landing cut off mid-apply as waiting for recovery.
+// The lock it recorded belonged to the process that was applying it.
+func (s *Store) pendRecovery(ctx context.Context, land *Landing) error {
+	land.Lease = nil
+	return s.move(ctx, land, LandApplying, LandRecoveryPending, nil)
+}
+
 // releaseDeadLanding lets go of what the previous process held for a
 // landing it did not finish: the driver of a durable landing, and the
-// canonical lock of any landing still in flight. Only the exact lease the
-// landing recorded is released; one taken since is someone else's.
-func (s *Store) releaseDeadLanding(ctx context.Context, land Landing) error {
+// canonical lock the landing took for itself. Only the exact lease the
+// landing recorded is released; one taken since is someone else's, and
+// one it was lent is still its lender's.
+func (s *Store) releaseDeadLanding(ctx context.Context, land Landing, lease *ledger.Lease) error {
 	inFlight := false
 	switch land.State {
 	case LandProposed, LandLocked, LandMerged, LandApplying, LandRecoveryPending:
@@ -89,26 +113,31 @@ func (s *Store) releaseDeadLanding(ctx context.Context, land Landing) error {
 			return err
 		}
 	}
-	if land.Lease != nil && (inFlight || land.Recoverable) {
-		if err := s.ledger.ReleaseAny(ctx, *land.Lease); err != nil && !errors.Is(err, ledger.ErrStale) {
+	if lease != nil && !land.Borrowed && (inFlight || land.Recoverable) {
+		if err := s.ledger.ReleaseAny(ctx, *lease); err != nil && !errors.Is(err, ledger.ErrStale) {
 			return fmt.Errorf("release canonical lock of the previous process: %w", err)
 		}
 	}
 	return nil
 }
 
-// logRecoveryLeft records a landing whose recovery has to wait, with the
-// keys an operator filters on.
-func logRecoveryLeft(land Landing, err error) {
+// noteRecoveryLeft records a landing whose recovery has to wait, with the
+// keys an operator filters on. The periodic retry meets the same obstacle
+// every pass; it is logged when it first appears or changes, not each time.
+func (s *Store) noteRecoveryLeft(land Landing, err error) {
+	if previous, ok := s.recoveryNotes.Swap(land.ID, err.Error()); ok && previous == err.Error() {
+		return
+	}
 	slog.Warn(fmt.Sprintf("artifact: landing %s into %s left %s for a later retry: %v", land.ID, land.Project, land.State, err),
 		"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "state", land.State, "error", err.Error())
 }
 
 // RetryRecoveries finishes the landings that are still recovery-pending:
-// ones boot recovery could not finish, or whose recovery was cut off in
-// turn. It is run periodically. A landing whose canonical lock is busy, or
-// whose own driver is running, is skipped quietly until the next pass; any
-// other failure is logged and retried next pass. What was recovered — to
+// ones boot recovery could not finish, ones whose apply failed and could
+// not be inspected, or whose recovery was cut off in turn. It is run
+// periodically. A landing whose canonical lock is busy, or whose own
+// driver is running, is skipped quietly until the next pass; any other
+// failure is logged and retried next pass. What was recovered — to
 // committed or to a conflict — is returned.
 func (s *Store) RetryRecoveries(ctx context.Context) ([]Landing, error) {
 	pending, err := s.ledger.Operations(ctx, landKind, LandRecoveryPending)
@@ -125,7 +154,7 @@ func (s *Store) RetryRecoveries(ctx context.Context) ([]Landing, error) {
 		if _, _, err := s.projects.Get(ctx, land.Project); errors.Is(err, project.ErrNotOwner) {
 			continue
 		} else if err != nil {
-			logRecoveryLeft(land, err)
+			s.noteRecoveryLeft(land, err)
 			continue
 		}
 		recovered, err := s.retryRecovery(ctx, land)
@@ -133,12 +162,13 @@ func (s *Store) RetryRecoveries(ctx context.Context) ([]Landing, error) {
 			continue
 		}
 		if err != nil {
-			logRecoveryLeft(recovered, err)
+			s.noteRecoveryLeft(recovered, err)
 			continue
 		}
 		if recovered.State == LandRecoveryPending {
 			continue
 		}
+		s.recoveryNotes.Delete(land.ID)
 		out = append(out, recovered)
 	}
 	return out, nil
@@ -166,19 +196,32 @@ func (s *Store) retryRecovery(ctx context.Context, land Landing) (Landing, error
 	return s.recoverLanding(apply, land)
 }
 
+// recoverLanding recovers a landing nobody is applying any more. What can
+// never be recovered ends it: a project that is gone, or one whose
+// directory moved — the paths were started in the old one, and writing the
+// rest into the new one would be half a landing. Otherwise it waits for
+// the project's writer to be free, takes the canonical lock and finishes.
+// A landing it finds still recovery-pending — another recovery raced it
+// and the record vanished — comes back unchanged.
 func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, error) {
 	if land.State == LandApplying {
-		land.Lease = nil
-		if err := s.move(ctx, &land, LandApplying, LandRecoveryPending, nil); err != nil {
+		if err := s.pendRecovery(ctx, &land); err != nil {
 			return land, err
 		}
 	}
 	p, ok, err := s.projects.GetHistorical(ctx, land.Project)
-	if err != nil || !ok {
-		return land, fmt.Errorf("landing %s: project %s is unknown", land.ID, land.Project)
+	if err != nil {
+		return land, fmt.Errorf("landing %s: read project %s: %w", land.ID, land.Project, err)
+	}
+	if !ok {
+		land.Lease = nil
+		s.conflictedRecovery(ctx, project.Project{}, &land, land.Paths, fmt.Sprintf("project %s no longer exists", land.Project))
+		return land, nil
 	}
 	if land.Target.Path == "" || land.Target != p.Home {
-		return land, fmt.Errorf("landing %s: original target no longer matches project metadata", land.ID)
+		land.Lease = nil
+		s.conflictedRecovery(ctx, p, &land, land.Paths, fmt.Sprintf("the project directory moved from %s to %s while this landing was being written; nothing more was written to the old directory, where it may be partly written, and nothing to the new one. Land it again to write it into the project directory", placeOf(land.Target), placeOf(p.Home)))
+		return land, nil
 	}
 	if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return attempt.CheckWriterTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
 		return land, err
@@ -188,21 +231,36 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	if err != nil {
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
-	land.Lease = &lease
 	defer s.releaseCanonical(ctx, &land, lease)
 	defer trackLandingLease(ctx, lease)()
+	return s.finishRecovery(ctx, p, land, lease)
+}
+
+// placeOf names a project directory, with the machine it is on.
+func placeOf(home project.Home) string {
+	if home.Node == "" {
+		return home.Path
+	}
+	return home.Node + ":" + home.Path
+}
+
+// finishRecovery brings a recovery-pending landing to its end under the
+// canonical lock, which lease is. It reads before it writes: every path is
+// inspected first, and a recovery that ends in a conflict writes nothing.
+func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Landing, lease ledger.Lease) (Landing, error) {
+	land.Lease = &lease
 	// Another recovery of the same landing may have finished it while this
 	// one waited for the lock; its outcome stands.
 	if op, found, err := s.ledger.Operation(ctx, land.ID); err != nil {
 		return land, err
-	} else if !found || op.State != LandRecoveryPending {
+	} else if !found {
+		return land, nil
+	} else if op.State != LandRecoveryPending {
 		var stored Landing
-		if found {
-			if err := json.Unmarshal(op.Data, &stored); err != nil {
-				return land, err
-			}
-			stored.State = op.State
+		if err := json.Unmarshal(op.Data, &stored); err != nil {
+			return land, err
 		}
+		stored.State = op.State
 		return stored, nil
 	}
 	// Recovery reads the merged snapshot where the canonical workspace
@@ -227,17 +285,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	if err != nil {
 		return land, fmt.Errorf("landing %s: snapshot before recovery: %w", land.ID, err)
 	}
-	// A path inside a nested repository was never in any snapshot, so it
-	// reads as "old" and would be written into the user's repository. It
-	// is refused here as a new landing refuses it.
-	if inside, repos := pathsInsideNested(land.Paths, nested); len(inside) > 0 {
-		s.conflictedRecovery(ctx, p, &land, inside, nestedReason(repos))
-		return land, nil
-	}
-
-	// Every path is inspected before any is written: a recovery that ends
-	// in a conflict leaves the workspace as it found it.
-	var conflicted, stale []string
+	var written, stale, conflicted []string
 	for _, path := range land.Paths {
 		state, err := s.pathState(ctx, p, land, path)
 		if err != nil {
@@ -245,14 +293,22 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		}
 		switch state {
 		case "merged":
+			written = append(written, path)
 		case "old":
 			stale = append(stale, path)
 		default:
 			conflicted = append(conflicted, path)
 		}
 	}
+	// A path inside a nested repository was never in any snapshot, so it
+	// reads as "old" and would be written into the user's repository. It
+	// is refused here as a new landing refuses it.
+	if inside, repos := pathsInsideNested(land.Paths, nested); len(inside) > 0 {
+		s.conflictedRecovery(ctx, p, &land, inside, nestedReason(repos)+partlyWritten(written, len(land.Paths)))
+		return land, nil
+	}
 	if len(conflicted) > 0 {
-		s.conflictedRecovery(ctx, p, &land, conflicted, "interrupted while applying, and these paths were changed by someone else before recovery could finish them")
+		s.conflictedRecovery(ctx, p, &land, conflicted, "these paths were changed by someone else while the landing was being written"+partlyWritten(written, len(land.Paths)))
 		return land, nil
 	}
 	land.Round++
@@ -282,6 +338,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 			return tx.SetData(op, land)
 		})
 	if err != nil {
+		land.State = LandRecoveryPending
 		s.failed(ctx, &land, LandRecoveryPending, LandCommitConflict, err.Error(), land.Paths)
 		return land, nil
 	}
@@ -291,12 +348,30 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	return land, nil
 }
 
+// partlyWritten says, for a recovery that stops, how much of the landing
+// the interrupted write had already put in the workspace, where it stays.
+func partlyWritten(written []string, total int) string {
+	if len(written) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d of its %d paths had already been written before it stopped and are left as they are (%s)", len(written), total, clipPaths(written, 5))
+}
+
+// clipPaths lists a few paths and says how many more there are.
+func clipPaths(paths []string, n int) string {
+	if len(paths) <= n {
+		return strings.Join(paths, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(paths[:n], ", "), len(paths)-n)
+}
+
 // conflictedRecovery ends a recovery that wrote nothing as apply-conflicted
 // on paths, and keeps a queued result blocked on it the way a landing's own
-// conflict is kept, with the reason a person can act on.
+// conflict is kept, with the reason a person can act on. A project that
+// is gone has no queue to keep it on.
 func (s *Store) conflictedRecovery(ctx context.Context, p project.Project, land *Landing, paths []string, reason string) {
 	s.failed(ctx, land, LandRecoveryPending, LandApplyConflicted, "recovery: "+reason, paths)
-	if !land.Recoverable {
+	if land.State == LandApplyConflicted && !land.Recoverable && p.ID != "" {
 		s.queueConflicted(ctx, p, *land, Conflict{State: LandApplyConflicted, Paths: paths, Reason: reason}, land.By, land.Source)
 	}
 }

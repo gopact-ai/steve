@@ -80,6 +80,9 @@ type Landing struct {
 	StartedAt   time.Time     `json:"started_at"`
 	EndedAt     time.Time     `json:"ended_at,omitempty"`
 	Recoverable bool          `json:"recoverable,omitempty"`
+	// Borrowed says Lease is the caller's, lent for this landing: a parent
+	// turn's lock, which outlives the landing and is never released by it.
+	Borrowed bool `json:"borrowed,omitempty"`
 	// Unapplied is durably recorded only when closing a preapply state.
 	Unapplied bool `json:"unapplied,omitempty"`
 }
@@ -209,6 +212,10 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	ctx = applyCtx
 	if err := s.applyLanding(ctx, p, &land, repo); err != nil {
 		return land, err
+	}
+	if land.State == LandCommitted {
+		// The apply failed part-way and recovering it finished the landing.
+		return land, nil
 	}
 	if err := s.commitLanding(ctx, p, &land); err != nil {
 		return land, err
@@ -357,7 +364,7 @@ func (s *Store) queueConflicted(ctx context.Context, p project.Project, land Lan
 func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Landing, held *ledger.Lease) (unlock func(), err error) {
 	if held != nil {
 		lease := *held
-		land.Lease = &lease
+		land.Lease, land.Borrowed = &lease, true
 		return func() {}, nil
 	}
 	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
@@ -442,12 +449,14 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 
 // pathsInsideNested picks the paths that fall inside one of the nested
 // repositories, and which repositories they fall in. Both lists are
-// slash-separated and relative to the canonical workspace.
+// slash-separated and relative to the canonical workspace. Case is
+// ignored: on a case-insensitive file system, as macOS has by default,
+// Inner/x is written into inner/.
 func pathsInsideNested(paths, nested []string) (inside, repos []string) {
 	hit := map[string]bool{}
 	for _, path := range paths {
 		for _, dir := range nested {
-			if path == dir || strings.HasPrefix(path, dir+"/") {
+			if strings.EqualFold(path, dir) || len(path) > len(dir) && path[len(dir)] == '/' && strings.EqualFold(path[:len(dir)], dir) {
 				inside = append(inside, path)
 				if !hit[dir] {
 					hit[dir] = true
@@ -472,8 +481,9 @@ func nestedReason(repos []string) string {
 
 // applyLanding writes the merged tree into the canonical workspace, every
 // path journaled before and confirmed after, so a landing cut off here is
-// recovered per path. A write that fails is an apply conflict — unless
-// recovery is the one applying, which records its own outcome.
+// recovered per path. A write that fails may have written some paths
+// first, so it is recovered the same way, at once; a durable landing is
+// recovered by its own caller.
 func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landing, repo *Repo) error {
 	journal := s.ledger.Journal()
 	for _, path := range land.Paths {
@@ -491,13 +501,43 @@ func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landi
 		if land.Recoverable {
 			return err
 		}
-		s.failed(ctx, land, LandApplying, LandApplyConflicted, err.Error(), land.Paths)
-		return Conflict{State: LandApplyConflicted, Paths: land.Paths, Reason: err.Error()}
+		return s.recoverFailedApply(ctx, p, land, err)
 	}
 	for _, path := range land.Paths {
 		if _, err := journal.Confirmed(landPathEffect(*land, path), nil); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// recoverFailedApply settles a landing whose apply failed. Whether the
+// apply wrote nothing — the working tree refused it — or stopped part-way,
+// only the workspace can say, so the landing is recovered path by path
+// under the lock it already holds: a path someone else changed ends it
+// apply-conflicted on that path with nothing further written, and one the
+// failed apply simply did not reach is written now. What cannot be
+// inspected yet — the home node is gone — is left recovery-pending, which
+// keeps new landings off the half-written workspace until the periodic
+// retry finishes it.
+func (s *Store) recoverFailedApply(ctx context.Context, p project.Project, land *Landing, applyErr error) error {
+	slog.Warn(fmt.Sprintf("artifact: landing %s into %s: apply failed, recovering it path by path: %v", land.ID, land.Project, applyErr),
+		"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "error", applyErr.Error())
+	if err := s.move(ctx, land, LandApplying, LandRecoveryPending, map[string]any{"apply_error": applyErr.Error()}); err != nil {
+		return fmt.Errorf("apply: %w; recording it for recovery: %v", applyErr, err)
+	}
+	recovered, err := s.finishRecovery(ctx, p, *land, *land.Lease)
+	if recovered.ID != "" {
+		*land = recovered
+	}
+	if err != nil || land.State == LandRecoveryPending {
+		if err == nil {
+			err = errors.New("the landing record changed underneath")
+		}
+		return fmt.Errorf("%w: landing %s: apply failed (%v) and recovering it failed: %v", ErrRecoveryPending, land.ID, applyErr, err)
+	}
+	if land.State != LandCommitted {
+		return Conflict{State: land.State, Paths: land.Paths, Reason: strings.TrimPrefix(land.Error, "recovery: ")}
 	}
 	return nil
 }
@@ -610,13 +650,21 @@ func (s *Store) applyOnNode(ctx context.Context, p project.Project, from, merged
 	return err
 }
 
-func (s *Store) move(ctx context.Context, land *Landing, from, to string, effects any) error {
+// move records the landing's transition from one state to another. The
+// landing in hand keeps its previous state when the transition is refused.
+func (s *Store) move(ctx context.Context, land *Landing, from, to string, effects any) (err error) {
+	previous := land.State
 	land.State = to
+	defer func() {
+		if err != nil {
+			land.State = previous
+		}
+	}()
 	var fencings []ledger.Lease
 	if land.Lease != nil {
 		fencings = []ledger.Lease{*land.Lease}
 	}
-	_, err := s.ledger.Transition(ctx, land.ID, from, to, land.By, landingFence(ctx, fencings), effects,
+	_, err = s.ledger.Transition(ctx, land.ID, from, to, land.By, landingFence(ctx, fencings), effects,
 		func(tx *ledger.Tx, op *ledger.Operation) error {
 			if to == LandApplying || (to == LandCommitted && from != LandApplying && from != LandRecoveryPending) {
 				if err := project.CheckHomeTx(tx, land.Project, land.Target); err != nil {

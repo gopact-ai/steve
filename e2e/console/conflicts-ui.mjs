@@ -38,7 +38,7 @@ await page.route("**/*", async (route) => {
     if (p === "/console/conflicts" && req.method() === "POST") { f.all++; return route.fulfill({ json: { started: 2 } }); }
     if (p.endsWith("/agent") && req.method() === "POST") { f.agent.push(p); return route.fulfill({ json: { started: 1 } }); }
     if (p.endsWith("/file")) { const want = u.searchParams.get("path"); f.reads.push(want); return route.fulfill({ json: { path: want, text: marked, size: marked.length } }); }
-    if (p.endsWith("/retry") && req.method() === "POST") { f.retry.push(p); return route.fulfill({ json: { ok: true } }); }
+    if (p.endsWith("/retry") && req.method() === "POST") { f.retry.push({ path: p, body: req.postDataJSON() }); return route.fulfill({ json: { ok: true } }); }
     if (p.endsWith("/manual") && req.method() === "POST") { f.manual.push({ path: p, body: req.postDataJSON() }); return route.fulfill({ json: { ok: true } }); }
     return route.continue();
 });
@@ -73,7 +73,7 @@ try {
     assert.equal(await applied.getByRole("button", { name: "Hand to an agent", exact: true }).count(), 0);
     await applied.getByRole("button", { name: "Land again", exact: true }).click();
     await applied.getByText("Queued to land again", { exact: false }).waitFor();
-    assert.deepEqual(f.retry, ["/console/conflicts/art-apply-4/retry"]);
+    assert.deepEqual(f.retry, [{ path: "/console/conflicts/art-apply-4/retry", body: { landing: "land-4" } }], "the retry names the stop the owner saw");
 
     // The count is carried to the navigation, so a conflict is visible from
     // anywhere in the console and not only on the page that lists it.
