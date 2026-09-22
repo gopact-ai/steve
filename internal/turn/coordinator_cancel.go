@@ -95,8 +95,9 @@ func atWork(child task.Task) bool {
 // owing says the task's next turn has a child to account for: one at
 // work, or one that ended with a result the task was not given. A child
 // stopped without its execution confirming the stop has no result to
-// give; it is reported while the stop's hold lasts, and left to the
-// recovery flow after that.
+// give; it is reported while the stop's hold lasts, and stays cancelled
+// in the listing after that — should its execution confirm and leave a
+// result, that is delivered as any other.
 func owing(child task.Task) bool {
 	if !child.Delegated() {
 		return false
@@ -119,14 +120,17 @@ func (c *Coordinator) holdCovered(covered []task.Task) map[string]time.Time {
 }
 
 // settleHolds is the stop's last word on each covered task. One with a
-// child to account for is stamped again: a turn composed while the stop
-// was under way accounted for less than this stop, and its settling must
-// not lift it. One with nothing to account for is let go — its stop is
-// what it always was — by the stamp this stop placed, so that neither a
-// later stop's hold nor one a turn already lifted is touched.
+// child to account for, or one already held when the stop began — an
+// earlier stop's account, not yet given — is stamped again: a turn
+// composed while the stop was under way accounted for less than this
+// stop, and its settling must not lift it. One with nothing to account
+// for is let go — its stop is what it always was — by the stamp this
+// stop placed, so that neither a later stop's hold nor one a turn
+// already lifted is touched.
 func (c *Coordinator) settleHolds(covered []task.Task, stamps map[string]time.Time, stopped []task.Task) {
 	for _, tracked := range covered {
-		if c.owed(tracked, stopped) {
+		// tracked is the task as the stop found it, before holdCovered.
+		if tracked.Held() || c.owed(tracked, stopped) {
 			c.hold(tracked)
 			continue
 		}

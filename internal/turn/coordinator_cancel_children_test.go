@@ -575,6 +575,44 @@ func TestAChildStoppedUnconfirmedDoesNotHoldEveryLaterStop(t *testing.T) {
 	}
 }
 
+// A stop's hold lasts until a turn gives its account. A second stop
+// before the user's next message — nothing running, nothing left to
+// stop — finds the task held for the child the first stop cancelled
+// without confirmation, and leaves it so: that child is still owed to
+// the next turn, and only that turn may lift the hold.
+func TestASecondStopBeforeTheNextMessageKeepsTheTaskHeld(t *testing.T) {
+	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
+	coordinator, tasks := taskCoordinator(t, runner)
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "a long job")
+		first <- err
+	}()
+	<-runner.started
+	child, err := tasks.Spawn("1", task.Task{Member: "child", Node: "dev", Origin: "delegate:1", Goal: "part of it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Advance(child.ID, task.StateRunning); err != nil {
+		t.Fatal(err)
+	}
+	// What the first stop left: the child cancelled, its execution never
+	// confirming, and the task held for it.
+	if _, err := tasks.SetAside(child.ID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Hold("1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle(coordinator, t.Context(), "/cancel"); err != nil {
+		t.Fatalf("/cancel: %v", err)
+	}
+	<-first
+	if parent, _ := tasks.Get("1"); !parent.Held() {
+		t.Fatal("a second stop lifted the hold the first stop placed for a child whose stop was never confirmed")
+	}
+}
+
 // A plain cancel with nothing delegated is what it always was.
 func TestCancelWithoutChildrenLeavesTheTaskUnheld(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
