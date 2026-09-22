@@ -43,8 +43,20 @@ async function submissionSupportChecks() {
         const request = gate(); requests.push({ ...request, path }); return request.promise;
     };
     try {
-        const source = readFileSync(new URL("../../web/console/src/lib/api/console.ts", import.meta.url), "utf8").replace('import { request, UnsentRequestError } from "../http";', 'const request = globalThis.__supportRequest; class UnsentRequestError extends Error {}');
-        const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+        // The stub covers whatever the module takes from ../http: a name it
+        // starts importing without a stub here fails loudly instead of
+        // leaving a relative import no data: URL can resolve.
+        const stubs = {
+            request: "const request = globalThis.__supportRequest;",
+            UnsentRequestError: "class UnsentRequestError extends Error {}",
+            HTTPError: "class HTTPError extends Error { constructor(message, status) { super(message); this.status = status; } }",
+        };
+        const source = readFileSync(new URL("../../web/console/src/lib/api/console.ts", import.meta.url), "utf8");
+        const boundary = source.match(/^import \{([^}]*)\} from "\.\.\/http";$/m);
+        assert.ok(boundary, "console.ts must import its HTTP boundary from ../http");
+        const names = boundary[1].split(",").map((name) => name.trim()).filter(Boolean);
+        assert.deepEqual(names.filter((name) => !stubs[name]), [], "Stub every name console.ts imports from ../http");
+        const code = ts.transpileModule(source.replace(boundary[0], names.map((name) => stubs[name]).join(" ")), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
         const api = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
         for (const outcome of ["unsupported", "failed"]) {
             const offset = requests.length;
