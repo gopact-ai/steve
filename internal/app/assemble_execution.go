@@ -85,13 +85,16 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	intents := intent.New(book)
 	coordinator.SetIntents(intents)
 	// A landing the previous process was cut off in is finished — or
-	// stopped at a conflict — before any turn can touch the canonical.
-	if recovered, err := artifacts.RecoverLandings(ctx); err != nil {
-		return nil, fmt.Errorf("recover landings: %w", err)
-	} else {
-		for _, l := range recovered {
-			slog.Info(fmt.Sprintf("steve: recovered landing %s of %s into %s: %s", l.ID, l.Artifact, l.Project, l.State), "landing", l.ID, "artifact", l.Artifact, "project", l.Project)
-		}
+	// stopped at a conflict — before any turn can touch the canonical. One
+	// that cannot be finished yet stays recovery-pending, which keeps new
+	// landings off its project, and the landing sweep retries it; it is
+	// never a reason for the generation not to start.
+	recovered, err := artifacts.RecoverLandings(ctx)
+	if err != nil {
+		slog.Error(fmt.Sprintf("steve: recover landings: %v", err), "error", err.Error())
+	}
+	for _, l := range recovered {
+		slog.Info(fmt.Sprintf("steve: recovered landing %s of %s into %s: %s", l.ID, l.Artifact, l.Project, l.State), "landing", l.ID, "artifact", l.Artifact, "project", l.Project)
 	}
 	tasks, err := task.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "tasks.json"))
 	if err != nil {

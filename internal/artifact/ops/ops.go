@@ -53,12 +53,16 @@ type Request struct {
 	LegacyMerge bool      `json:"legacy_merge,omitempty"`
 }
 
+// Result is an operation's outcome. Nested, for a snapshot of a user's
+// directory, lists the nested git repositories the snapshot left out; a
+// node that predates it reports none.
 type Result struct {
 	Commit  string   `json:"commit,omitempty"`
 	Changed bool     `json:"changed,omitempty"`
 	Has     bool     `json:"has,omitempty"`
 	Paths   []string `json:"paths,omitempty"`
 	State   string   `json:"state,omitempty"`
+	Nested  []string `json:"nested,omitempty"`
 }
 
 // Failure is the serializable form of an operation error. Callers use its

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -301,22 +302,27 @@ func (s *Store) receipt(ctx context.Context, p project.Project, m Manifest) (Man
 // it. parent is the previous canonical snapshot; the artifact returned is
 // parent itself when nothing changed.
 func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, error) {
+	m, changed, _, err := s.snapshotCanonical(ctx, p, parent, by, message)
+	return m, changed, err
+}
+
+// snapshotCanonical is SnapshotCanonical that also names the nested git
+// repositories the snapshot left out of the canonical workspace.
+func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, []string, error) {
 	repo, err := s.Repo(ctx, p.ID)
 	if err != nil {
-		return Manifest{}, false, err
+		return Manifest{}, false, nil, err
 	}
 	var sha string
 	var changed bool
+	var nested []string
 	if p.Home.Node == "" {
-		sha, changed, err = repo.Snapshot(ctx, p.Home.Path, parent, message, false)
-		if err != nil {
-			return Manifest{}, false, err
-		}
+		sha, changed, nested, err = repo.snapshot(ctx, p.Home.Path, parent, message, false)
 	} else {
-		sha, changed, err = s.snapshotOnNode(ctx, p.Home.Node, p, p.Home.Path, parent, message, repo, false)
-		if err != nil {
-			return Manifest{}, false, err
-		}
+		sha, changed, nested, err = s.snapshotOnNodeLeaving(ctx, p.Home.Node, p, p.Home.Path, parent, message, repo, false)
+	}
+	if err != nil {
+		return Manifest{}, false, nil, err
 	}
 	if !changed {
 		m, ok, err := s.Manifest(ctx, sha)
@@ -324,15 +330,15 @@ func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent
 			if s.replication != nil {
 				m, err = s.receipt(ctx, p, m)
 			}
-			return m, false, err
+			return m, false, nested, err
 		}
 	}
 	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true})
 	if err != nil {
-		return m, changed, err
+		return m, changed, nested, err
 	}
 	// The snapshot is now the project's last known canonical state.
-	return m, changed, s.setCanonical(ctx, p.ID, sha)
+	return m, changed, nested, s.setCanonical(ctx, p.ID, sha)
 }
 
 // SnapshotWorkspace takes a before- or after-snapshot of a copy, wherever
@@ -414,25 +420,32 @@ func (s *Store) setHead(ctx context.Context, name, sha string) error {
 // snapshotOnNode snapshots a directory on a node into the node's shadow
 // repository and fetches the result to the hub.
 func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (string, bool, error) {
+	sha, changed, _, err := s.snapshotOnNodeLeaving(ctx, node, p, dir, parent, message, hub, flatten)
+	return sha, changed, err
+}
+
+// snapshotOnNodeLeaving is snapshotOnNode that also names the nested git
+// repositories the node left out of the snapshot.
+func (s *Store) snapshotOnNodeLeaving(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (string, bool, []string, error) {
 	_, _, state, err := s.nodes.Git(ctx, node)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	bare := nodeBare(state, p.ID)
-	sha, changed, trusted, err := s.snapshotOnNodeWith(ctx, node, p, dir, parent, message, hub, flatten, bare, true)
+	sha, changed, nested, trusted, err := s.snapshotOnNodeWith(ctx, node, p, dir, parent, message, hub, flatten, bare, true)
 	if err == nil || !trusted || ctx.Err() != nil {
-		return sha, changed, err
+		return sha, changed, nested, err
 	}
 	var tooLarge TooLarge
 	if errors.As(err, &tooLarge) {
-		return "", false, err
+		return "", false, nil, err
 	}
 	// What was trusted — the shadow repository, the parent's replica — may
 	// be gone from the node after all: look, and take the snapshot again.
 	slog.Warn(fmt.Sprintf("artifact: snapshot on %s failed after trusting its state (%v); checking the node", node, err), "node", node, "project", p.ID)
 	s.forgetShadow(node, bare)
-	sha, changed, _, err = s.snapshotOnNodeWith(ctx, node, p, dir, parent, message, hub, flatten, bare, false)
-	return sha, changed, err
+	sha, changed, nested, _, err = s.snapshotOnNodeWith(ctx, node, p, dir, parent, message, hub, flatten, bare, false)
+	return sha, changed, nested, err
 }
 
 // snapshotOnNodeWith takes the snapshot on the node. With trust, the shadow
@@ -440,13 +453,13 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 // replica is verified there are not asked about again: on a distant node
 // each question is a round trip, and an unchanged snapshot used to cost
 // three of them. trusted reports whether anything was skipped that way.
-func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool, bare string, trust bool) (sha string, changed, trusted bool, err error) {
+func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool, bare string, trust bool) (sha string, changed bool, nested []string, trusted bool, err error) {
 	gen := s.generationOf(ctx, node)
 	if trust && s.shadowKnown(node, bare, gen) {
 		trusted = true
 	} else {
 		if _, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Init, Repo: bare}); err != nil {
-			return "", false, trusted, fmt.Errorf("init shadow repo on %s: %w", node, err)
+			return "", false, nil, trusted, fmt.Errorf("init shadow repo on %s: %w", node, err)
 		}
 		s.rememberShadow(node, bare, gen)
 	}
@@ -460,32 +473,32 @@ func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.P
 			}
 		}
 		if err := s.ensureOnNode(ctx, p, node, bare, hub, parent); err != nil {
-			return "", false, trusted, err
+			return "", false, nil, trusted, err
 		}
 	}
 	result, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Snapshot, Repo: bare, WorkTree: dir, Parent: parent, Message: message, Flatten: flatten, Limits: ops.Limits(hub.Limits)})
 	if err != nil {
 		var tooLarge TooLarge
 		if errors.As(err, &tooLarge) {
-			return "", false, trusted, tooLarge
+			return "", false, nil, trusted, tooLarge
 		}
-		return "", false, trusted, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
+		return "", false, nil, trusted, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
 	}
-	sha = result.Commit
+	sha, nested = result.Commit, result.Nested
 	if !shaPattern.MatchString(sha) {
-		return "", false, trusted, fmt.Errorf("snapshot on %s returned %q", node, sha)
+		return "", false, nil, trusted, fmt.Errorf("snapshot on %s returned %q", node, sha)
 	}
 	if !result.Changed {
-		return sha, false, trusted, nil
+		return sha, false, nested, trusted, nil
 	}
 	s.setReplica(ctx, sha, node, gen, ReplicaVerified, "made here")
 	if metadataOnly(p) {
-		return sha, true, trusted, nil
+		return sha, true, nested, trusted, nil
 	}
 	if err := s.pull(ctx, node, bare, hub, sha, []string{parent}); err != nil {
-		return "", false, trusted, err
+		return "", false, nil, trusted, err
 	}
-	return sha, true, trusted, nil
+	return sha, true, nested, trusted, nil
 }
 
 // shadowKnown reports whether the node's shadow repository was initialised
@@ -782,7 +795,8 @@ type Pending struct {
 	Artifact string    `json:"artifact"`
 	By       string    `json:"by"`
 	At       time.Time `json:"at"`
-	// Blocked records the merge conflict this artifact last stopped at.
+	// Blocked records the conflict this artifact last stopped at — a merge
+	// conflict, or one found applying the merge to the canonical workspace.
 	// Retrying against an unchanged canonical would reach the same
 	// conflict, so the queue waits for the canonical name to move —
 	// which is what resolving the conflict does.
@@ -792,11 +806,17 @@ type Pending struct {
 // Blocked is why a queued artifact is not being retried, and what a
 // resolver needs to work from.
 type Blocked struct {
-	Landing   string    `json:"landing"`
+	Landing string `json:"landing"`
+	// State is the landing state it stopped at: merge-conflicted or
+	// apply-conflicted. An older record without one was a merge conflict.
+	State     string    `json:"state,omitempty"`
 	Canonical string    `json:"canonical"`
 	Marked    string    `json:"marked,omitempty"`
 	Paths     []string  `json:"paths,omitempty"`
 	At        time.Time `json:"at"`
+	// Reason says why, in words a user can act on. A merge conflict has a
+	// marked tree to resolve from; an apply conflict has only this.
+	Reason string `json:"reason,omitempty"`
 	// Attempt is the task of a resolution already tried against this
 	// canonical. One automatic try per conflict: a second would repeat
 	// whatever went wrong, at the cost of an agent run each time.
@@ -873,7 +893,7 @@ func (s *Store) landPending(ctx context.Context, p project.Project, held *ledger
 	head := s.CanonicalOf(ctx, p.ID)
 	var out []Landing
 	for _, item := range queue {
-		if item.Blocked != nil && item.Blocked.Canonical == head && s.markedStillThere(ctx, *item.Blocked) {
+		if item.Blocked != nil && s.stillBlocked(ctx, p, *item.Blocked, head) {
 			continue
 		}
 		var source []Source
@@ -906,10 +926,11 @@ func (s *Store) landPending(ctx context.Context, p project.Project, held *ledger
 	return out, nil
 }
 
-// Stuck is a queued result whose landing stopped at a merge conflict and
-// is waiting for the conflict to be resolved.
+// Stuck is a queued result whose landing stopped at a conflict and is
+// waiting for it to be resolved or for the canonical to move.
 type Stuck struct {
 	Project   string    `json:"project"`
+	State     string    `json:"state,omitempty"`
 	Artifact  string    `json:"artifact"`
 	By        string    `json:"by"`
 	Landing   string    `json:"landing"`
@@ -918,11 +939,84 @@ type Stuck struct {
 	Paths     []string  `json:"paths,omitempty"`
 	At        time.Time `json:"at"`
 	Attempt   string    `json:"attempt,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
 }
 
 // Resolvable says whether an agent can be handed a checkout of this
 // conflict: git has to have kept the marked tree.
 func (s Stuck) Resolvable() bool { return s.Marked != "" }
+
+// stillBlocked says a queued result is still held up by the conflict it
+// stopped at, given the canonical head now.
+//
+// A merge conflict is retried once the canonical moves, which is what
+// resolving it does. An apply conflict is retried only once one of its
+// own paths changed in the canonical: the canonical also moves for
+// reasons that cannot clear it — a landing's own partial writes being
+// snapshotted, work elsewhere in the project — and retrying on each of
+// those was a loop of full snapshots and merges under the canonical lock.
+// A block whose change cannot be read stays a block; Unblock is the way
+// out a person has.
+func (s *Store) stillBlocked(ctx context.Context, p project.Project, blocked Blocked, head string) bool {
+	if blocked.Canonical == head {
+		return s.markedStillThere(ctx, blocked)
+	}
+	if blocked.State != LandApplyConflicted || blocked.Canonical == "" || head == "" || len(blocked.Paths) == 0 {
+		return false
+	}
+	changed, err := s.changedBetween(ctx, p, blocked.Canonical, head)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("artifact: apply conflict of landing %s in %s kept blocked: compare canonical %s..%s: %v", blocked.Landing, p.ID, short(blocked.Canonical), short(head), err),
+			"landing", blocked.Landing, "project", p.ID, "error", err.Error())
+		return true
+	}
+	for _, path := range changed {
+		if slices.Contains(blocked.Paths, path) {
+			return false
+		}
+	}
+	return true
+}
+
+// changedBetween lists the paths that differ between two canonical
+// snapshots, read wherever the project's objects are kept.
+func (s *Store) changedBetween(ctx context.Context, p project.Project, from, to string) ([]string, error) {
+	if metadataOnly(p) {
+		return s.changedOnNode(ctx, p, from, to)
+	}
+	repo, err := s.Repo(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	return repo.Changed(ctx, from, to)
+}
+
+// Unblock clears why a queued result is stuck, so the next pass lands it
+// again whatever the canonical is. It is the explicit retry for a conflict
+// nothing automatic will clear — a result refused for writing into a
+// nested repository, once that directory has been dealt with.
+func (s *Store) Unblock(ctx context.Context, projectID, artifactID string) error {
+	return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		raw, err := tx.Bindings(pendingKind)
+		if err != nil {
+			return err
+		}
+		id := projectID + "/" + artifactID
+		data, ok := raw[id]
+		if !ok {
+			return fmt.Errorf("artifact %s is not queued for %s", short(artifactID), projectID)
+		}
+		var item Pending
+		if err := json.Unmarshal(data, &item); err != nil {
+			return err
+		}
+		if item.Blocked == nil {
+			return nil
+		}
+		item.Blocked = nil
+		return tx.PutBinding(pendingKind, id, item)
+	})
+}
 
 // markedStillThere says the conflict this entry is blocked on can still be
 // worked: the half-merged snapshot has to be a recorded artifact for a
@@ -1008,8 +1102,9 @@ func (s *Store) blocked(ctx context.Context, projectID string) ([]Stuck, error) 
 		}
 		out = append(out, Stuck{
 			Project: item.Project, Artifact: item.Artifact, By: item.By,
-			Landing: item.Blocked.Landing, Canonical: item.Blocked.Canonical,
+			Landing: item.Blocked.Landing, State: item.Blocked.State, Canonical: item.Blocked.Canonical,
 			Marked: item.Blocked.Marked, Paths: item.Blocked.Paths, At: item.Blocked.At, Attempt: item.Blocked.Attempt,
+			Reason: item.Blocked.Reason,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
