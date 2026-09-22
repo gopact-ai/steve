@@ -25,6 +25,13 @@ func taskCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Stor
 
 func taskCoordinatorBook(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Store, *ledger.Ledger) {
 	t.Helper()
+	return taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": runner}})
+}
+
+// taskCoordinatorOn is taskCoordinatorBook with the runtime chosen: for a
+// test whose session must be more than a fakeRunner.
+func taskCoordinatorOn(t *testing.T, rt runtime) (*Coordinator, *task.Store, *ledger.Ledger) {
+	t.Helper()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
@@ -41,8 +48,7 @@ func taskCoordinatorBook(t *testing.T, runner *fakeRunner) (*Coordinator, *task.
 	if err != nil {
 		t.Fatalf("open tasks: %v", err)
 	}
-	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, book)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, book)
 	coordinator.SetTasks(tasks, "laptop")
 	registry := execution.New(t.Context(), tasks)
 	coordinator.SetExecution(registry)

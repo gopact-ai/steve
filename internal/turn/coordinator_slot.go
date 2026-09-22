@@ -19,10 +19,13 @@ import (
 // turnEntry tracks one in-flight prompt turn. The blocked prompt goroutine
 // owns session cleanup; done is closed by clearActive once it has finished,
 // so /cancel can confirm the turn ended before deciding to force-kill.
+// stopped says a user's stop cancelled this turn: however it settles, it
+// is the turn the stop ended, and it must not lift the stop's hold.
 type turnEntry struct {
-	err    error
-	cancel context.CancelFunc
-	done   chan struct{}
+	err     error
+	cancel  context.CancelFunc
+	done    chan struct{}
+	stopped bool
 }
 
 // cancelTurn stops the turn running for this agent in this conversation.
@@ -32,16 +35,18 @@ func (c *Coordinator) cancelTurn(ctx context.Context, conversationID string, sel
 	key := sessionKey(conversationID, selected.ID)
 	c.mu.Lock()
 	runner, entry := c.active[key], c.cancels[key]
-	c.mu.Unlock()
 	if entry == nil {
 		// A turn may be starting right now (the worker already dequeued the
 		// message); arm a short-lived flag so a turn that begins within the
 		// window is canceled instead of running after the user asked to stop.
-		c.mu.Lock()
 		c.cancelPending[key] = time.Now().Add(pendingCancelWindow)
 		c.mu.Unlock()
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.NoRunningTurn)}, nil
 	}
+	// Marked before the cancel reaches it: the turn reads this as it
+	// settles, and a settled cancel can come back at once.
+	entry.stopped = true
+	c.mu.Unlock()
 	if runner != nil {
 		cancelCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 		err := runner.Cancel(cancelCtx)
@@ -144,6 +149,16 @@ func (c *Coordinator) beginTurn(conversationID, agentID string, cancel context.C
 	}
 	c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{})}
 	return true
+}
+
+// stoppedTurn reports whether a user's stop cancelled the turn holding
+// this agent's slot. The turn asks about itself, before it lets the slot
+// go: the entry is its own until clearActive.
+func (c *Coordinator) stoppedTurn(conversationID, agentID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry := c.cancels[sessionKey(conversationID, agentID)]
+	return entry != nil && entry.stopped
 }
 
 // turnInFlight reports a turn holding this agent's session in this

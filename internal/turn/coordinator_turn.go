@@ -37,7 +37,7 @@ type chatTurn struct {
 	tracked  string
 	prompt   string
 	// told records the task's preface as given, once the prompt settles.
-	told func()
+	told func(lift bool)
 
 	binding           project.Binding
 	workspace         project.Workspace
@@ -314,12 +314,16 @@ func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 	return nil
 }
 
+// ended records the task's preface as given once the prompt settled with
+// the agent. The turn a user's stop cancelled settles too — the agent
+// acknowledged the stop — but its end is the stop's, not the user's next
+// word: it does not lift the hold.
 func (t *chatTurn) ended(e *lifecycle.Execution) {
 	t.clock.mark("prompt")
 	if e.Outcome.PromptSettled {
 		t.req.phase(view.PhaseFinishing)
 		if t.told != nil {
-			t.told()
+			t.told(!t.c.stoppedTurn(t.req.ConversationID, t.selected.ID))
 		}
 	}
 }

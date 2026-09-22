@@ -8,29 +8,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
-// driveChild stands in for the delegation service driving a child on a
+// drivenChild is a delegated child of task 1 with an execution the stop
+// has to reach, driven the way the delegation service drives one on a
 // detached scope: when the scope is stopped it records how the child
-// ended and lets the scope go, the way completeChild does.
-func driveChild(t *testing.T, tasks *task.Store, scope *execution.Scope, childID string) {
-	t.Helper()
-	go func() {
-		<-scope.Context().Done()
-		if err := tasks.SetResult(childID, task.Result{Outcome: task.OutcomeCancelled, Answer: "half done"}); err != nil {
-			t.Error(err)
-		}
-		scope.Finish(nil)
-	}()
+// ended and lets the scope go, the way completeChild does. parentHeld is
+// what the parent looked like at that moment — the moment completeChild
+// would deliver the result, so the parent must be held then.
+type drivenChild struct {
+	task.Task
+	scope      *execution.Scope
+	ended      chan struct{}
+	parentHeld bool
 }
 
-// delegateChild opens a running child of task 1 with an execution the
-// stop has to reach, and returns it.
-func delegateChild(t *testing.T, coordinator *Coordinator, tasks *task.Store, name string) (task.Task, *execution.Scope) {
+func delegateChild(t *testing.T, coordinator *Coordinator, tasks *task.Store, name string) *drivenChild {
 	t.Helper()
 	child, err := tasks.Spawn("1", task.Task{Member: name, Node: "dev", Origin: "delegate:1", Goal: "part of it"})
 	if err != nil {
@@ -43,8 +42,38 @@ func delegateChild(t *testing.T, coordinator *Coordinator, tasks *task.Store, na
 	if err != nil {
 		t.Fatal(err)
 	}
-	driveChild(t, tasks, scope, child.ID)
-	return child, scope
+	d := &drivenChild{Task: child, scope: scope, ended: make(chan struct{})}
+	go func() {
+		defer close(d.ended)
+		<-scope.Context().Done()
+		parent, _ := tasks.Get("1")
+		d.parentHeld = parent.Held()
+		if err := tasks.SetResult(child.ID, task.Result{Outcome: task.OutcomeCancelled, Answer: "half done"}); err != nil {
+			t.Error(err)
+		}
+		scope.Finish(nil)
+	}()
+	return d
+}
+
+// stopped waits for the child to have ended and checks it ended the way
+// a stop ends a child: cancelled, its execution stopped, its parent held.
+func (d *drivenChild) stopped(t *testing.T, tasks *task.Store) {
+	t.Helper()
+	select {
+	case <-d.ended:
+	case <-time.After(waitDeadline):
+		t.Fatalf("child #%s never ended", d.ID)
+	}
+	if got, _ := tasks.Get(d.ID); got.State != task.StateCancelled || got.Result == nil {
+		t.Fatalf("child #%s = %s result=%+v; want cancelled with its result kept", d.ID, got.State, got.Result)
+	}
+	if d.scope.Context().Err() == nil {
+		t.Fatalf("child #%s's execution was not stopped", d.ID)
+	}
+	if !d.parentHeld {
+		t.Fatalf("child #%s ended while its parent was not held: its result would have woken the task", d.ID)
+	}
 }
 
 // rearm readies the fake for another turn that blocks until it is
@@ -102,7 +131,7 @@ func TestCancelStopsDelegatedChildrenAndHoldsTheTaskUntilTheNextTurn(t *testing.
 		first <- err
 	}()
 	<-runner.started
-	child, scope := delegateChild(t, coordinator, tasks, "child")
+	child := delegateChild(t, coordinator, tasks, "child")
 
 	result, err := handle(coordinator, t.Context(), "/cancel")
 	if err != nil {
@@ -120,12 +149,7 @@ func TestCancelStopsDelegatedChildrenAndHoldsTheTaskUntilTheNextTurn(t *testing.
 	case <-time.After(waitDeadline):
 		t.Fatal("cancel did not stop the running turn")
 	}
-	if stopped, _ := tasks.Get(child.ID); stopped.State != task.StateCancelled || stopped.Result == nil {
-		t.Fatalf("child = %s result=%+v; want cancelled with its result kept", stopped.State, stopped.Result)
-	}
-	if scope.Context().Err() == nil {
-		t.Fatal("the child's execution was not stopped")
-	}
+	child.stopped(t, tasks)
 	parent, _ := tasks.Get("1")
 	if parent.State != task.StateRunning || !parent.Held() {
 		t.Fatalf("parent = %s held=%v; want still running, and held", parent.State, parent.Held())
@@ -196,7 +220,7 @@ func TestASecondStopDuringTheContinuedTurnKeepsTheTaskHeld(t *testing.T) {
 	}()
 	<-runner.started
 	// The agent, continuing, delegates again; the user stops again.
-	again, scope := delegateChild(t, coordinator, tasks, "two")
+	again := delegateChild(t, coordinator, tasks, "two")
 	if _, err := handle(coordinator, t.Context(), "/cancel"); err != nil {
 		t.Fatalf("second /cancel: %v", err)
 	}
@@ -208,9 +232,7 @@ func TestASecondStopDuringTheContinuedTurnKeepsTheTaskHeld(t *testing.T) {
 	case <-time.After(waitDeadline):
 		t.Fatal("the second cancel did not stop the continued turn")
 	}
-	if stopped, _ := tasks.Get(again.ID); stopped.State != task.StateCancelled || scope.Context().Err() == nil {
-		t.Fatalf("second child = %s stopped=%v; want cancelled and its execution stopped", stopped.State, scope.Context().Err() != nil)
-	}
+	again.stopped(t, tasks)
 	if parent, _ := tasks.Get("1"); !parent.Held() {
 		t.Fatal("the continued turn's settled account lifted the second stop's hold")
 	}
@@ -262,7 +284,7 @@ func TestCancelStopsDelegatedChildrenWhenNoTurnIsRunning(t *testing.T) {
 	if _, err := handle(coordinator, t.Context(), "start it"); err != nil {
 		t.Fatal(err)
 	}
-	child, _ := delegateChild(t, coordinator, tasks, "child")
+	child := delegateChild(t, coordinator, tasks, "child")
 
 	result, err := handle(coordinator, t.Context(), "/cancel")
 	if err != nil {
@@ -272,9 +294,7 @@ func TestCancelStopsDelegatedChildrenWhenNoTurnIsRunning(t *testing.T) {
 	if strings.Contains(result.Text, zh.T(i18n.NoRunningTurn)) || !strings.Contains(result.Text, "#"+child.ID) {
 		t.Fatalf("reply = %q; want the stopped child named, not 'nothing running'", result.Text)
 	}
-	if stopped, _ := tasks.Get(child.ID); stopped.State != task.StateCancelled {
-		t.Fatalf("child = %s; want cancelled", stopped.State)
-	}
+	child.stopped(t, tasks)
 	if parent, _ := tasks.Get("1"); !parent.Held() || parent.State != task.StateRunning {
 		t.Fatalf("parent held=%v state=%s", parent.Held(), parent.State)
 	}
@@ -291,9 +311,8 @@ func TestCancelStopsDelegatedChildrenWhenNoTurnIsRunning(t *testing.T) {
 func TestCancelStopsAChildDelegatedWhileTheTurnWasStopping(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
 	coordinator, tasks := taskCoordinator(t, runner)
-	var late task.Task
-	var lateScope *execution.Scope
-	runner.onCancel = func() { late, lateScope = delegateChild(t, coordinator, tasks, "late") }
+	var late *drivenChild
+	runner.onCancel = func() { late = delegateChild(t, coordinator, tasks, "late") }
 	first := make(chan error, 1)
 	go func() {
 		_, err := handle(coordinator, t.Context(), "a long job")
@@ -305,14 +324,179 @@ func TestCancelStopsAChildDelegatedWhileTheTurnWasStopping(t *testing.T) {
 		t.Fatalf("/cancel: %v", err)
 	}
 	<-first
-	if stopped, _ := tasks.Get(late.ID); stopped.State != task.StateCancelled || lateScope.Context().Err() == nil {
-		t.Fatalf("late child = %s stopped=%v; want cancelled and its execution stopped", stopped.State, lateScope.Context().Err() != nil)
-	}
+	late.stopped(t, tasks)
 	if !strings.Contains(result.Text, "#"+late.ID) {
 		t.Fatalf("reply = %q; want the late child named", result.Text)
 	}
 	if parent, _ := tasks.Get("1"); !parent.Held() {
 		t.Fatal("a task whose child was stopped is not held")
+	}
+}
+
+// composingRunner is a session whose settings are read as the turn is
+// armed: once the session is reachable for /cancel, before the prompt is
+// composed. One read can be made to wait, which is where a stop lands
+// between the two.
+type composingRunner struct {
+	*fakeRunner
+	mu   sync.Mutex
+	wait func()
+}
+
+// onNextSettingsRead makes the next read of the settings run fn first.
+func (r *composingRunner) onNextSettingsRead(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.wait = fn
+}
+
+func (r *composingRunner) Settings() view.Settings {
+	r.mu.Lock()
+	wait := r.wait
+	r.wait = nil
+	r.mu.Unlock()
+	if wait != nil {
+		wait()
+	}
+	return view.Settings{}
+}
+func (r *composingRunner) ModelChoices() (string, []view.Choice)           { return "", nil }
+func (r *composingRunner) SetModel(context.Context, string, string) error  { return nil }
+func (r *composingRunner) SetOption(context.Context, string, string) error { return nil }
+
+// composingRuntime opens the composingRunner as the codex session.
+type composingRuntime struct {
+	*fakeManager
+	runner *composingRunner
+}
+
+func (m *composingRuntime) OpenSession(ctx context.Context, at harness.Placement, upstream, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
+	if _, err := m.fakeManager.OpenSession(ctx, at, upstream, workdir, servers); err != nil {
+		return nil, err
+	}
+	return m.runner, nil
+}
+
+// A stop can land while a turn is armed but not yet composed. That turn
+// then composes under the stop's own stamp and, cancelled, settles with
+// its account given — but it is the turn the stop cancelled, and its
+// end must not lift the stop's hold: the children are stopped next, and
+// what they leave waits for the user.
+func TestATurnStoppedWhileComposingDoesNotLiftTheStopsHold(t *testing.T) {
+	runner := &composingRunner{fakeRunner: &fakeRunner{reply: "ok", cancelSettles: true}}
+	rt := &composingRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": runner.fakeRunner}}, runner: runner}
+	coordinator, tasks, _ := taskCoordinatorOn(t, rt)
+	if _, err := handle(coordinator, t.Context(), "start it"); err != nil {
+		t.Fatal(err)
+	}
+	child := delegateChild(t, coordinator, tasks, "child")
+	composing, gate := make(chan struct{}), make(chan struct{})
+	runner.onNextSettingsRead(func() {
+		close(composing)
+		<-gate
+	})
+	heldAtEnd := make(chan bool, 1)
+	coordinator.SetAfterTurn(func(taskID string) {
+		parent, _ := tasks.Get(taskID)
+		heldAtEnd <- parent.Held()
+	})
+	cancelled := make(chan struct{})
+	runner.onCancel = func() { close(cancelled) }
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "a long job")
+		first <- err
+	}()
+	<-composing
+	stop := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "/cancel")
+		stop <- err
+	}()
+	<-cancelled
+	close(gate)
+	if err := <-first; !errors.Is(err, harness.ErrTurnCanceled) {
+		t.Fatalf("stopped turn ended with %v; want ErrTurnCanceled", err)
+	}
+	if err := <-stop; err != nil {
+		t.Fatalf("/cancel: %v", err)
+	}
+	if held := <-heldAtEnd; !held {
+		t.Fatal("the turn the stop cancelled lifted the hold when it ended")
+	}
+	child.stopped(t, tasks)
+	if parent, _ := tasks.Get("1"); !parent.Held() {
+		t.Fatal("the task is not held after the stop")
+	}
+}
+
+// A preface lifts only the hold it was composed under, and only when the
+// turn was not the one a stop cancelled: a later stop re-stamps the hold,
+// and neither the earlier turn's settling nor the stopped turn's lifts it.
+func TestAPrefaceLiftsOnlyTheHoldItWasComposedUnder(t *testing.T) {
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	if _, err := handle(coordinator, t.Context(), "start it"); err != nil {
+		t.Fatal(err)
+	}
+	spy := &prefaceSpy{}
+	coordinator.SetTurnPreface(spy.preface)
+	if _, err := tasks.Hold("1"); err != nil {
+		t.Fatal(err)
+	}
+	_, told := coordinator.preface(t.Context(), "1")
+	if _, err := tasks.Hold("1"); err != nil {
+		t.Fatal(err)
+	}
+	told(true)
+	if parent, _ := tasks.Get("1"); !parent.Held() {
+		t.Fatal("a turn composed under the earlier stop lifted the later one's hold")
+	}
+	_, told = coordinator.preface(t.Context(), "1")
+	told(false)
+	if parent, _ := tasks.Get("1"); !parent.Held() {
+		t.Fatal("the turn a stop cancelled lifted its hold")
+	}
+	_, told = coordinator.preface(t.Context(), "1")
+	told(true)
+	if parent, _ := tasks.Get("1"); parent.Held() {
+		t.Fatal("a turn composed under the current stop did not lift its hold")
+	}
+	if spy.toldTimes() != 3 {
+		t.Fatalf("preface told %d time(s); want every settled turn's account recorded, lifted or not", spy.toldTimes())
+	}
+}
+
+// A child whose stop was never confirmed — cancelled, with no result — is
+// reported while the stop that cancelled it holds the task, then left to
+// the recovery flow. It does not make every later stop hold the task
+// again: with nothing else delegated, that stop is what it always was.
+func TestAChildStoppedUnconfirmedDoesNotHoldEveryLaterStop(t *testing.T) {
+	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
+	coordinator, tasks := taskCoordinator(t, runner)
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "a long job")
+		first <- err
+	}()
+	<-runner.started
+	child, err := tasks.Spawn("1", task.Task{Member: "child", Node: "dev", Origin: "delegate:1", Goal: "part of it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Advance(child.ID, task.StateRunning); err != nil {
+		t.Fatal(err)
+	}
+	// Stopped earlier, and its execution never confirmed: no result.
+	if _, err := tasks.SetAside(child.ID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	result, err := handle(coordinator, t.Context(), "/cancel")
+	if err != nil || result.Text != i18n.New(i18n.LocaleZH).T(i18n.CancelRequested, "codex") {
+		t.Fatalf("cancel = %#v, %v", result, err)
+	}
+	<-first
+	if parent, _ := tasks.Get("1"); parent.Held() {
+		t.Fatal("a child whose earlier stop was never confirmed held the task at a later stop")
 	}
 }
 
