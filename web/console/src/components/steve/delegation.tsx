@@ -20,8 +20,11 @@ import { DeferredDetails } from "./deferred-details";
 // the card is worth a glance. Folding a finished child never removes
 // its reasoning.
 
-const tones: Record<string, "brand" | "success" | "error" | "gray"> = { running: "brand", done: "success", failed: "error" };
-const labels = { running: "status.inProgress", done: "status.done", failed: "status.failed" } as const;
+// A stopped child wears the same words as any task: cancelled is a stop
+// the user asked for (nothing resumes a delegation), paused is a parent
+// set aside and not yet continued.
+const tones: Record<string, "brand" | "success" | "error" | "warning" | "gray"> = { running: "brand", done: "success", failed: "error", cancelled: "error", paused: "warning" };
+const labels = { running: "status.inProgress", done: "status.done", failed: "status.failed", cancelled: "status.cancelled", paused: "status.paused" } as const;
 
 export function DelegationCard({ id, info, progress, live, open }: {
     id: string; info: StepInfo; progress?: Progress; live?: boolean; open?: boolean;
