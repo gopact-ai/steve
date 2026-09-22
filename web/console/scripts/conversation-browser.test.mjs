@@ -111,10 +111,8 @@ await context.route("**/*", async (route) => {
 await context.addInitScript(({ A, B }) => {
     localStorage.setItem("steve.ui.locale", "en");
     sessionStorage.setItem("steve.conversation", A);
-    localStorage.setItem("steve.side-conversations", JSON.stringify({
-        p: { id: A, project: "p", title: "p", excerpt: "", bindingLocale: "en", bound: true },
-        q: { id: B, project: "q", title: "q", excerpt: "", bindingLocale: "en", bound: true },
-    }));
+    localStorage.setItem("steve.side-conversation:p", JSON.stringify({ id: A, project: "p", title: "p", excerpt: "", bindingLocale: "en", bound: true }));
+    localStorage.setItem("steve.side-conversation:q", JSON.stringify({ id: B, project: "q", title: "q", excerpt: "", bindingLocale: "en", bound: true }));
     window.sources = [];
     window.EventSource = class {
         constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); }

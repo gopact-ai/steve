@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
 import { addDraftMaterial } from "@/lib/drafts";
 import { fetchContext } from "@/lib/api/console";
+import { applyItemChanges, discardItem, itemChanges, readItems } from "@/lib/item-storage";
 import { bindSideConversation, selectSideAgent } from "@/lib/side-chat";
 import type { Locale } from "@/lib/i18n";
 import { UnsentRequestError } from "@/lib/http";
@@ -11,9 +12,14 @@ export interface SideChatOpen { material: Material; ref: MaterialRef; excerpt: s
 export interface SideSession { id: string; project: string; title: string; excerpt: string; originConversation?: string; bindingLocale: Locale; selectedAgent?: string; agentCommandID?: string; agentReviewRequired?: boolean; agentPrepared?: boolean; bound: boolean; binding?: boolean; error?: string }
 interface SideChatValue { session: SideSession | null; open: (input: SideChatOpen) => Promise<void>; close: () => void; ensureBound: (session: SideSession) => Promise<void>; acceptWorkbenchAgent: (session: SideSession) => Promise<void>; report: (id: string, error: string) => void }
 const Context = createContext<SideChatValue | null>(null);
-const storageKey = "steve.side-conversations";
-function readSessions(): Record<string, SideSession> { const saved = JSON.parse(localStorage.getItem(storageKey) || "{}"); return Object.fromEntries(Object.entries(saved).filter(([project, item]) => item && typeof (item as SideSession).id === "string" && (item as SideSession).id.startsWith("console:side-") && (item as SideSession).project === project && typeof (item as SideSession).title === "string" && typeof (item as SideSession).excerpt === "string").map(([project, item]) => [project, { ...(item as SideSession), binding: false, bindingLocale: (item as SideSession).bindingLocale === "zh" ? "zh" : "en" }])); }
-function initial(): Record<string, SideSession> { try { return readSessions(); } catch { return {}; } }
+// Each project's side conversation is stored under its own key (see
+// item-storage.ts). The lock keeps the name of the former single stored value.
+const lockName = "steve.side-conversations";
+const itemPrefix = "steve.side-conversation:";
+function parse(value: string): unknown { try { return JSON.parse(value); } catch { return null; } }
+function readSessions(): Record<string, SideSession> { return Object.fromEntries(readItems(itemPrefix).map(([project, raw]): [string, unknown] => [project, parse(raw)]).filter(([project, item]) => item && typeof (item as SideSession).id === "string" && (item as SideSession).id.startsWith("console:side-") && (item as SideSession).project === project && typeof (item as SideSession).title === "string" && typeof (item as SideSession).excerpt === "string").map(([project, item]) => [project, { ...(item as SideSession), binding: false, bindingLocale: (item as SideSession).bindingLocale === "zh" ? "zh" : "en" }])); }
+function initial(): Record<string, SideSession> { discardItem(lockName); try { return readSessions(); } catch { return {}; } }
+const encode = (sessions: Record<string, SideSession>) => Object.fromEntries(Object.entries(sessions).map(([project, item]) => [project, JSON.stringify(item)]));
 const unique = () => { try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; } };
 
 export function SideChatProvider({ children }: { children: ReactNode }) {
@@ -21,9 +27,9 @@ export function SideChatProvider({ children }: { children: ReactNode }) {
     const bindings = useRef(new Map<string, Promise<void>>()); const returnFocus = useRef<HTMLElement | null>(null);
     const change = useCallback(async (update: (latest: Record<string, SideSession>) => Record<string, SideSession>) => {
         if (!navigator.locks) throw new Error(t("console.draftLockUnavailable"));
-        return navigator.locks.request(storageKey, () => {
-            const next = update(readSessions());
-            localStorage.setItem(storageKey, JSON.stringify(next)); current.current = next; setSessions(next);
+        return navigator.locks.request(lockName, () => {
+            const latest = readSessions(), next = update(latest);
+            applyItemChanges(itemChanges(itemPrefix, encode(latest), encode(next))); current.current = next; setSessions(next);
             return next;
         });
     }, [t]);
