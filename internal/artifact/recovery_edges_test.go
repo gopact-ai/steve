@@ -264,6 +264,53 @@ func TestRetryLeavesARecoveryInProgressAlone(t *testing.T) {
 // the project refuses every other landing.
 func TestFailedApplyThatTurnsAFileIntoADirectoryEnds(t *testing.T) {
 	ctx := t.Context()
+	store, p, nodes, canonical, result := fileBecomesDirectory(t)
+	// Someone edits x as the apply starts, and git refuses it.
+	nodes.before = func(req ops.Request) {
+		if req.Op == ops.Apply {
+			write(t, canonical, "x", "x-by-hand")
+			nodes.before = nil
+		}
+	}
+	land, err := store.Land(ctx, p, result, "test")
+	var conflict Conflict
+	if !errors.As(err, &conflict) || land.State != LandApplyConflicted || !strings.Contains(land.Error, "between files and directories") {
+		t.Fatalf("land = %+v err=%v", land, err)
+	}
+	if err := store.checkNoRecoveryPending(ctx, p, ""); err != nil {
+		t.Fatalf("the project still refuses landings: %v", err)
+	}
+	if read(t, canonical, "a") != "a0" {
+		t.Fatalf("a=%q", read(t, canonical, "a"))
+	}
+}
+
+// An apply that turned a file into a directory completely before it
+// reported failing has nothing left to write: it is finished, not called
+// a conflict.
+func TestFailedApplyThatFinishedTurningAFileIntoADirectoryIsCommitted(t *testing.T) {
+	ctx := t.Context()
+	store, p, nodes, canonical, result := fileBecomesDirectory(t)
+	nodes.fail = ops.Apply
+	nodes.before = func(req ops.Request) {
+		if req.Op == ops.Apply {
+			nodes.before = nil
+			if _, err := nodes.localNode.Artifact(ctx, "node-a", req); err != nil {
+				t.Errorf("apply: %v", err)
+			}
+		}
+	}
+	land, err := store.Land(ctx, p, result, "test")
+	if err != nil || land.State != LandCommitted || read(t, canonical, "a/b") != "b1" {
+		t.Fatalf("land = %+v err=%v a/b=%q", land, err, read(t, canonical, "a/b"))
+	}
+}
+
+// fileBecomesDirectory publishes a result that replaces the file a with a
+// directory holding a/b, next to an untouched x.
+func fileBecomesDirectory(t *testing.T) (*Store, project.Project, *failingNode, string, string) {
+	t.Helper()
+	ctx := t.Context()
 	local := &localNode{root: t.TempDir(), state: t.TempDir()}
 	canonical := filepath.Join(local.root, "proj")
 	write(t, canonical, "a", "a0")
@@ -280,24 +327,7 @@ func TestFailedApplyThatTurnsAFileIntoADirectoryEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Someone edits x as the apply starts, and git refuses it.
-	nodes.before = func(req ops.Request) {
-		if req.Op == ops.Apply {
-			write(t, canonical, "x", "x-by-hand")
-			nodes.before = nil
-		}
-	}
-	land, err := store.Land(ctx, p, result.ID, "test")
-	var conflict Conflict
-	if !errors.As(err, &conflict) || land.State != LandApplyConflicted || !strings.Contains(land.Error, "between files and directories") {
-		t.Fatalf("land = %+v err=%v", land, err)
-	}
-	if err := store.checkNoRecoveryPending(ctx, p, ""); err != nil {
-		t.Fatalf("the project still refuses landings: %v", err)
-	}
-	if read(t, canonical, "a") != "a0" {
-		t.Fatalf("a=%q", read(t, canonical, "a"))
-	}
+	return store, p, nodes, canonical, result.ID
 }
 
 // A durable landing whose apply fails is recovered in place like any
