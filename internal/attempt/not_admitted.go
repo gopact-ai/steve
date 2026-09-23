@@ -12,7 +12,7 @@ import (
 
 // UnadmittedTurn returns positive ended-input evidence only when the complete
 // attempt identity index in that same committed snapshot has no admission.
-// Unlike RetainedChats it excludes no execution phase, kind or session type.
+// Unlike RetainedChatsFor it excludes no execution phase, kind or session type.
 func (s *Service) UnadmittedTurn(ctx context.Context, address channel.Address) (task.Task, bool, error) {
 	turnID := address.Message
 	var tracked task.Task

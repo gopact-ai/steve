@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -51,36 +50,35 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
-	live, err := s.attempts.Live(ctx)
-	if err != nil {
-		return err
-	}
-	closed, err := s.attempts.Closed(ctx)
+	candidates, err := s.attempts.StopCandidates(ctx)
 	if err != nil {
 		return err
 	}
 	seen := map[string]bool{}
 	var pending []attempt.Record
-	for _, r := range append(live, closed...) {
-		if seen[r.ID] || r.State == attempt.Superseded || (!strings.HasPrefix(r.Session, "ns_") && !attempt.PendingSessionOpen(r)) || r.Node == "" || r.Execution == nil {
+	var retired error
+	for _, r := range candidates {
+		if seen[r.ID] || !attempt.TaskStopOwed(r) {
 			continue
 		}
 		seen[r.ID] = true
-		if r.State.Terminal() && !r.Unsettled && r.SessionSettled != nil && *r.SessionSettled && (r.StopEvidence != "task-stop/"+r.ID || !s.accountingPending(r)) {
-			if r.StopEvidence == "task-stop/"+r.ID {
-				// The durable projection may have completed before the local
-				// owner or its stop handler joined. Retry only memory cleanup.
-				s.resolveStopped(r)
-			}
+		if attempt.TaskStopConfirmed(r) && !s.accountingPending(r) {
+			// The stop and its accounting both committed; record that so
+			// later passes no longer read it.
+			_, err := s.attempts.MarkStopProjected(ctx, r.ID, "task-stop-recovery")
+			retired = errors.Join(retired, err)
 			continue
 		}
 		if _, ok := s.tasks.Get(r.TaskID); ok && errors.Is(s.tasks.CheckExecution(*r.Execution), task.ErrExecutionStopped) {
 			pending = append(pending, r)
 		}
 	}
+	if err := s.resolveJoined(ctx); err != nil {
+		return errors.Join(retired, err)
+	}
 	sort.Slice(pending, func(i, j int) bool { return pending[i].ID < pending[j].ID })
 	if len(pending) == 0 {
-		return nil
+		return retired
 	}
 	start := sort.Search(len(pending), func(i int) bool { return pending[i].ID > s.after })
 	if start == len(pending) {
@@ -93,7 +91,7 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 		s.after = r.ID
 		go func() { failures <- s.stop(ctx, r) }()
 	}
-	var result error
+	result := retired
 	for range count {
 		result = errors.Join(result, <-failures)
 	}
@@ -174,19 +172,36 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 	return s.projectStopped(stopped)
 }
 
-func stoppedAccounting(r attempt.Record) task.RecoveryUsage {
-	if r.Usage == nil {
-		return task.RecoveryUsage{}
-	}
-	u := r.Usage
-	return task.RecoveryUsage{Tokens: task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Total: u.Input + u.Output}, Model: u.Model, Reported: u.Reported}
-}
+func stoppedAccounting(r attempt.Record) task.RecoveryUsage { return attempt.StoppedUsage(r) }
 
 func (s *applicationStops) projectStopped(r attempt.Record) error {
 	if err := s.tasks.SettleAttempt(r.TaskID, r.ID, r.TurnID, r.EndedAt, task.OutcomeCancelled, stoppedAccounting(r)); err != nil {
 		return fmt.Errorf("task %s attempt %s: native stop confirmed; original usage accounting remains pending: %w", r.TaskID, r.ID, err)
 	}
 	s.resolveStopped(r)
+	_, err := s.attempts.MarkStopProjected(context.Background(), r.ID, "task-stop-recovery")
+	return err
+}
+
+// resolveJoined retries the in-memory cleanup a committed stop owes an owner
+// or stop handler that joined only after its accounting was projected. Only
+// joined registry entries can be resolved, so only their attempts are read.
+func (s *applicationStops) resolveJoined(ctx context.Context) error {
+	if s.executions == nil {
+		return nil
+	}
+	for _, id := range s.executions.JoinedAttempts() {
+		r, err := s.attempts.Get(ctx, id)
+		if errors.Is(err, attempt.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if attempt.TaskStopConfirmed(r) && !s.accountingPending(r) {
+			s.resolveStopped(r)
+		}
+	}
 	return nil
 }
 
@@ -196,21 +211,17 @@ func (s *applicationStops) resolveStopped(r attempt.Record) {
 	}
 }
 
+// accountingPending also reports true for a stop whose task is gone. Such a
+// stop is never marked projected and remains a stop candidate.
 func (s *applicationStops) accountingPending(r attempt.Record) bool {
 	tracked, ok := s.tasks.Get(r.TaskID)
 	if !ok {
 		return true
 	}
-	u := stoppedAccounting(r)
 	for _, row := range tracked.Attempts {
-		if row.ExecutionID != r.ID || row.TurnID != r.TurnID {
-			continue
+		if row.ExecutionID == r.ID && row.TurnID == r.TurnID {
+			return !attempt.StopAccountingSettled(r, row)
 		}
-		if row.Open() || row.UsageKnown == nil {
-			return true
-		}
-		known := u.Reported || u.Tokens.Input != 0 || u.Tokens.Output != 0 || u.Tokens.CachedRead != 0 || u.Tokens.CachedWrite != 0
-		return known && (!*row.UsageKnown || row.Tokens != u.Tokens || row.Model != u.Model)
 	}
 	return true
 }

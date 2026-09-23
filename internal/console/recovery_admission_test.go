@@ -24,11 +24,11 @@ type admissionRecoveryDriver struct {
 	lookupErr atomic.Bool
 }
 
-func (d *admissionRecoveryDriver) RetainedChats(ctx context.Context) ([]turn.RetainedChat, error) {
+func (d *admissionRecoveryDriver) RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]turn.RetainedChat, error) {
 	if d.lookupErr.Load() {
 		return nil, errors.New("retained identity read failed")
 	}
-	return d.recoveryDriver.RetainedChats(ctx)
+	return d.recoveryDriver.RetainedChatsFor(ctx, conversation, messageID)
 }
 
 func (d *admissionRecoveryDriver) ConfirmNeverAdmitted(_ context.Context, req turn.Request) (bool, error) {

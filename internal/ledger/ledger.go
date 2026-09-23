@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -92,6 +93,7 @@ type Ledger struct {
 	writerMu            sync.Mutex
 	applyMu             sync.Mutex
 	snapshotGeneration  uint64
+	restoreGeneration   atomic.Uint64
 	replication         Replicator
 	replicaFailure      error
 	replicationRequired bool
@@ -245,6 +247,14 @@ func (l *Ledger) Incarnation() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.incarnation
+}
+
+// RestoreGeneration moves when a replica restore begins and again when it
+// ends, so an odd value is a restore in progress. A reader that caches facts
+// across reads keeps them only while the generation it read them under is
+// even and unchanged.
+func (l *Ledger) RestoreGeneration() uint64 {
+	return l.restoreGeneration.Load()
 }
 
 // InRecovery reports whether this open accepted an older database and still

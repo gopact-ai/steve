@@ -46,8 +46,8 @@ func TestStepOutcomesRecordObservedUsage(t *testing.T) {
 			if (err != nil) != (failure != "") {
 				t.Fatalf("run error=%v", err)
 			}
-			records, err := att.Closed(t.Context())
-			if err != nil || len(records) != 1 || records[0].Usage == nil || *records[0].Usage != *attemptUsage(want) {
+			records, err := att.ForTask(t.Context(), p.TaskID)
+			if err != nil || len(records) != 1 || !records[0].State.Terminal() || records[0].Usage == nil || *records[0].Usage != *attemptUsage(want) {
 				t.Fatalf("closed=%+v err=%v", records, err)
 			}
 			if _, err := os.Stat(workspace); !os.IsNotExist(err) {
@@ -70,7 +70,7 @@ func TestStepBudgetFailureReleasesAttemptAndWorkspace(t *testing.T) {
 		t.Fatalf("run=%v", err)
 	}
 	live, _ := att.Live(t.Context())
-	closed, _ := att.Closed(t.Context())
+	closed, _ := att.ForTask(t.Context(), "task")
 	if len(live) != 0 || len(closed) != 1 || closed[0].State != attempt.Failed {
 		t.Fatalf("live=%+v closed=%+v", live, closed)
 	}

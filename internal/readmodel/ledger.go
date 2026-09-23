@@ -19,7 +19,7 @@ import (
 type Ledger struct {
 	Book     *ledger.Ledger
 	Attempts interface {
-		Closed(context.Context) ([]attempt.Record, error)
+		UsageSamples(context.Context) ([]attempt.UsageSample, error)
 		Live(context.Context) ([]attempt.Record, error)
 		Reservations(context.Context) ([]attempt.Reservation, error)
 	}
@@ -39,12 +39,13 @@ type Ledger struct {
 	}
 }
 
-// ClosedAttempts are the attempts that reached a terminal state.
-func (l Ledger) ClosedAttempts(ctx context.Context) ([]attempt.Record, error) {
+// UsageSamples are the spend fields of the attempts that reached a terminal
+// state.
+func (l Ledger) UsageSamples(ctx context.Context) ([]attempt.UsageSample, error) {
 	if l.Attempts == nil {
 		return nil, errors.New("attempt source is not configured")
 	}
-	return l.Attempts.Closed(ctx)
+	return l.Attempts.UsageSamples(ctx)
 }
 
 // Events pages the ledger journal newest first.

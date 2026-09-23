@@ -608,11 +608,11 @@ type lookupFailureStopDriver struct {
 	lookupErr atomic.Bool
 }
 
-func (d *lookupFailureStopDriver) RetainedChats(ctx context.Context) ([]turn.RetainedChat, error) {
+func (d *lookupFailureStopDriver) RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]turn.RetainedChat, error) {
 	if d.lookupErr.Load() {
 		return nil, errors.New("retained lookup unavailable")
 	}
-	return d.recoveryDriver.RetainedChats(ctx)
+	return d.recoveryDriver.RetainedChatsFor(ctx, conversation, messageID)
 }
 
 func TestSameStopRetryRecoversAfterOriginalTaskLookupFails(t *testing.T) {

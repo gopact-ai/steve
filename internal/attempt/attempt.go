@@ -190,15 +190,18 @@ type Record struct {
 	NodeReceipt *nodewire.SessionReceipt `json:"node_receipt,omitempty"`
 	// SessionSettled is nil for records without durable execution evidence.
 	// Running arms it false before Prompt; confirmed settlement writes true.
-	SessionSettled *bool          `json:"session_settled,omitempty"`
-	Unsettled      bool           `json:"unsettled,omitempty"`
-	StopEvidence   string         `json:"stop_evidence,omitempty"`
-	State          State          `json:"state"`
-	Revision       int64          `json:"revision"`
-	Session        string         `json:"session,omitempty"`
-	NativeContext  string         `json:"native_context,omitempty"`
-	Leases         []ledger.Lease `json:"leases"`
-	Result         *Result        `json:"result,omitempty"`
+	SessionSettled *bool  `json:"session_settled,omitempty"`
+	Unsettled      bool   `json:"unsettled,omitempty"`
+	StopEvidence   string `json:"stop_evidence,omitempty"`
+	// StopProjected records that a confirmed task stop's accounting row was
+	// found settled with this record's usage, so the stop pass is done with it.
+	StopProjected bool           `json:"stop_projected,omitempty"`
+	State         State          `json:"state"`
+	Revision      int64          `json:"revision"`
+	Session       string         `json:"session,omitempty"`
+	NativeContext string         `json:"native_context,omitempty"`
+	Leases        []ledger.Lease `json:"leases"`
+	Result        *Result        `json:"result,omitempty"`
 	// Usage is what the attempt cost, as the harness last reported it,
 	// written with every terminal transition — success, failure, expiry
 	// alike — so failed work is not free in the books.
@@ -258,6 +261,8 @@ type Service struct {
 	now func() time.Time
 	// TTL is how long a lease lives without renewal.
 	TTL time.Duration
+
+	usage usageCache
 }
 
 func New(l *ledger.Ledger) *Service {
@@ -901,30 +906,22 @@ func (s *Service) Live(ctx context.Context) ([]Record, error) {
 	return s.liveRecords(ctx)
 }
 
-// Closed lists every attempt that reached a terminal state, oldest first:
-// the fleet's spend is the sum of their results.
-func (s *Service) Closed(ctx context.Context) ([]Record, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
-	if err != nil {
-		return nil, err
-	}
-	var out []Record
-	for _, op := range ops {
-		if !State(op.State).Terminal() {
-			continue
-		}
-		r, err := decode(op)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, nil
-}
-
 // ForTask lists a task's attempts, oldest first.
 func (s *Service) ForTask(ctx context.Context, taskID string) ([]Record, error) {
 	return s.identityRecords(ctx, taskIdentitySQL, taskID)
+}
+
+// ForTasksByUpdate lists the attempts of the given tasks, most recently
+// updated first. Its cost follows those tasks' attempts, not all history.
+func (s *Service) ForTasksByUpdate(ctx context.Context, taskIDs []string) ([]Record, error) {
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.identityRecords(ctx, tasksByUpdateSQL, string(raw))
 }
 
 // LatestForTurn is the most recent attempt of a logical turn, if any.
@@ -937,6 +934,11 @@ func (s *Service) LatestForTurn(ctx context.Context, turnID string) (Record, boo
 		return Record{}, false, nil
 	}
 	return records[0], true, nil
+}
+
+// ForTurn lists every attempt of a logical turn, newest first.
+func (s *Service) ForTurn(ctx context.Context, turnID string) ([]Record, error) {
+	return s.identityRecords(ctx, turnAttemptsSQL, turnID)
 }
 
 // TakeoverAllowed says whether a previous attempt of the turn leaves work
