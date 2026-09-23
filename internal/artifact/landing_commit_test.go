@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,23 @@ func displaceCanonical(t *testing.T, store *Store, to string) func() {
 	}
 }
 
+// waitsForRecoverySaying checks a landing is recorded recovery-pending
+// with a reason that says so much.
+func waitsForRecoverySaying(t *testing.T, store *Store, id, reason string) {
+	t.Helper()
+	op, ok, err := store.ledger.Operation(t.Context(), id)
+	if err != nil || !ok {
+		t.Fatalf("landing %s: found=%v err=%v", id, ok, err)
+	}
+	var land Landing
+	if err := json.Unmarshal(op.Data, &land); err != nil {
+		t.Fatal(err)
+	}
+	if op.State != LandRecoveryPending || !strings.Contains(land.Error, reason) {
+		t.Fatalf("recorded %s saying %q, want %s saying %q", op.State, land.Error, LandRecoveryPending, reason)
+	}
+}
+
 // unreadableCanonical breaks reads of the canonical name while leaving its
 // version intact; repair restores it.
 func unreadableCanonical(t *testing.T, store *Store) (breakIt, repair func()) {
@@ -92,9 +110,9 @@ func unreadableCanonical(t *testing.T, store *Store) (breakIt, repair func()) {
 
 // The landing merged onto the canonical snapshot it took under the lock.
 // A canonical name found elsewhere at commit is not a verdict on the
-// landing, which wrote every path: it stays applying, the name is not
-// moved back over whatever it points at, and recovery commits it against
-// a fresh snapshot.
+// landing, which wrote every path: it waits for recovery, saying why, the
+// name is not moved back over whatever it points at, and recovery commits
+// it against a fresh snapshot.
 func TestLandingWhoseCanonicalNameMovedIsLeftForRecovery(t *testing.T) {
 	store, p, node, canonical, result := commitFixture(t)
 	node.before = onFirst(ops.Apply, displaceCanonical(t, store, result))
@@ -104,9 +122,7 @@ func TestLandingWhoseCanonicalNameMovedIsLeftForRecovery(t *testing.T) {
 	if !errors.Is(err, ErrRecoveryPending) || errors.As(err, &conflict) {
 		t.Fatalf("land = %+v err=%v, want ErrRecoveryPending", land, err)
 	}
-	if state := landingState(t, store, land.ID); state != LandApplying {
-		t.Fatalf("recorded state = %s, want %s left for recovery", state, LandApplying)
-	}
+	waitsForRecoverySaying(t, store, land.ID, "not committed")
 	if ref, _, _ := store.Resolve(t.Context(), CanonicalRef("p")); ref.Artifact != result {
 		t.Fatalf("canonical = %s, want it left where it was moved, %s", ref.Artifact, result)
 	}
@@ -124,8 +140,8 @@ func TestLandingWhoseCanonicalNameMovedIsLeftForRecovery(t *testing.T) {
 }
 
 // A landing that wrote every path but could not read the canonical name at
-// commit has not conflicted with anyone. It stays applying for recovery,
-// which commits it once the name reads again.
+// commit has not conflicted with anyone. It waits for recovery, saying
+// why, which commits it once the name reads again.
 func TestLandingThatCannotReadTheCanonicalNameIsLeftForRecovery(t *testing.T) {
 	store, p, node, canonical, result := commitFixture(t)
 	breakIt, repair := unreadableCanonical(t, store)
@@ -136,9 +152,7 @@ func TestLandingThatCannotReadTheCanonicalNameIsLeftForRecovery(t *testing.T) {
 	if err == nil || errors.As(err, &conflict) {
 		t.Fatalf("land = %+v err=%v, want a plain error", land, err)
 	}
-	if state := landingState(t, store, land.ID); state != LandApplying {
-		t.Fatalf("recorded state = %s, want %s left for recovery", state, LandApplying)
-	}
+	waitsForRecoverySaying(t, store, land.ID, "not committed")
 	if read(t, canonical, "a") != "a1" || read(t, canonical, "b") != "b1" {
 		t.Fatal("apply did not write the landing")
 	}
@@ -165,9 +179,7 @@ func TestRecoveryWhoseCanonicalNameMovedStaysPending(t *testing.T) {
 	if !errors.Is(err, ErrRecoveryPending) {
 		t.Fatalf("land = %+v err=%v, want ErrRecoveryPending", land, err)
 	}
-	if state := landingState(t, store, land.ID); state != LandRecoveryPending {
-		t.Fatalf("recorded state = %s, want %s", state, LandRecoveryPending)
-	}
+	waitsForRecoverySaying(t, store, land.ID, "not committed")
 
 	recovered, err := store.RetryRecoveries(t.Context())
 	if err != nil || len(recovered) != 1 || recovered[0].State != LandCommitted {
@@ -193,9 +205,7 @@ func TestRecoveryThatCannotReadTheCanonicalNameStaysPending(t *testing.T) {
 	if !errors.Is(err, ErrRecoveryPending) {
 		t.Fatalf("land = %+v err=%v, want ErrRecoveryPending", land, err)
 	}
-	if state := landingState(t, store, land.ID); state != LandRecoveryPending {
-		t.Fatalf("recorded state = %s, want %s", state, LandRecoveryPending)
-	}
+	waitsForRecoverySaying(t, store, land.ID, "not committed")
 	if read(t, canonical, "a") != "a1" || read(t, canonical, "b") != "b1" {
 		t.Fatal("recovery did not write the landing")
 	}

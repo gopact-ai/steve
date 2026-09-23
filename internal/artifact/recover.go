@@ -349,6 +349,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	// next retry snapshots again and commits against that.
 	committed := land
 	committed.State = LandCommitted
+	committed.Error = ""
 	committed.EndedAt = s.now().UTC()
 	_, err = s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", landingFence(ctx, []ledger.Lease{lease}),
 		map[string]any{"paths": land.Paths, "rewritten": stale, "round": land.Round},
@@ -365,6 +366,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			return tx.SetData(op, committed)
 		})
 	if err != nil {
+		s.pendCommit(ctx, &land, LandRecoveryPending, err)
 		return land, fmt.Errorf("landing %s: commit recovery: %w", land.ID, err)
 	}
 	land = committed

@@ -24,13 +24,14 @@ import (
 //	locked   → merge-conflicted     (both sides changed the same paths)
 //	locked   → apply-conflicted     (paths fall inside a nested repository)
 //	applying → apply-conflicted     (a path changed under the WAL)
-//	applying → recovery-pending     (the apply failed; see recover.go)
+//	applying → recovery-pending     (the apply or the commit failed; see recover.go)
 //
 // The commit moves the canonical name from the snapshot the landing merged
 // onto to the merged one. Only a holder of the canonical lock moves the
 // name, so it is still there; should it not be, the fully written landing
-// is not failed for it but stays applying, and recovery commits it against
-// a fresh snapshot, as it does any landing whose commit did not go through.
+// is not failed for it but waits for recovery, saying why, and recovery
+// commits it against a fresh snapshot, as it does any landing whose commit
+// did not go through.
 //
 // A landing's record is opened once the canonical lock is held: a lock
 // someone else holds is contention, returned as ledger.ErrHeld, and leaves
@@ -605,8 +606,7 @@ func (s *Store) snapshotUnderLanding(ctx context.Context, p project.Project, hel
 // committed state, fenced on the lock, then signs for the merged snapshot
 // as the project's new canonical. A commit that does not go through —
 // the name is not where the landing left it, or it cannot be read — leaves
-// the written landing applying, for recovery to commit once its lock is
-// gone.
+// the written landing recovery-pending, for recovery to commit.
 func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Landing) error {
 	committed := *land
 	committed.State = LandCommitted
@@ -619,13 +619,27 @@ func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Land
 			return tx.SetData(op, committed)
 		})
 	if err != nil {
-		slog.Warn(fmt.Sprintf("artifact: landing %s into %s is written but not committed; left applying for recovery: %v", land.ID, land.Project, err),
-			"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "error", err.Error())
+		s.pendCommit(ctx, land, LandApplying, err)
 		return fmt.Errorf("%w: landing %s is written; its commit: %w", ErrRecoveryPending, land.ID, err)
 	}
 	*land = committed
 	_, err = s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact), Canonical: true})
 	return err
+}
+
+// pendCommit records a landing written but not committed as waiting for
+// recovery, which commits it, and why. A record that cannot be written
+// leaves the landing as the record has it: applying with its lock gone,
+// which recovery finds as well.
+func (s *Store) pendCommit(ctx context.Context, land *Landing, from string, cause error) {
+	slog.Warn(fmt.Sprintf("artifact: landing %s into %s is written but not committed; left for recovery: %v", land.ID, land.Project, cause),
+		"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "error", cause.Error())
+	previous := *land
+	land.Error = "written, not committed: " + cause.Error()
+	if err := s.move(context.WithoutCancel(ctx), land, from, LandRecoveryPending, map[string]any{"commit_error": cause.Error()}); err != nil {
+		*land = previous
+		slog.Warn(fmt.Sprintf("artifact: landing %s: why it waits for recovery not recorded: %v", land.ID, err), "landing", land.ID, "project", land.Project)
+	}
 }
 
 // moveCanonical moves the project's canonical name to merged, inside a
