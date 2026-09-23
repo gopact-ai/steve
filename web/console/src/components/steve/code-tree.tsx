@@ -3,7 +3,7 @@ import { number } from "@/lib/format";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, File02, Folder, Link01 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
-import { fetchAttemptTree } from "@/lib/api";
+import { fetchAttemptTree } from "@/lib/api/work";
 import type { ChangeIndex, TreeEntry, TreeView } from "@/lib/types";
 
 export function CodeTree({ attempt, path, index, onOpen, acceptSnapshot, onEntries }: {

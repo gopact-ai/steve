@@ -40,11 +40,6 @@ func Probe(ctx context.Context, appID, appSecret, domain string) (Identity, erro
 	return botIdentity(ctx, api)
 }
 
-func Check(ctx context.Context, appID, appSecret, domain string) error {
-	_, err := Probe(ctx, appID, appSecret, domain)
-	return err
-}
-
 func OwnerOpenID(ctx context.Context, appID, appSecret, domain string) (string, error) {
 	api := newAPI(appID, appSecret, domain)
 	resp, err := api.Get(ctx, "/open-apis/application/v6/applications/"+appID+"?user_id_type=open_id", nil, larkcore.AccessTokenTypeTenant)

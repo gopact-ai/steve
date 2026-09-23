@@ -81,11 +81,7 @@ func (b taskBudget) Reserve(taskID string) (int, time.Time, error) {
 // the rule planner places declared steps and treats an open goal as a single
 // step. Both produce the same validated Plan and the executor cannot tell
 // which one did.
-func choosePlanner(cfg *config.Config, catalog *agent.Catalog, executor *agentexec.Runner) planner.Planner {
-	return choosePlannerWithSettings(cfg, catalog, executor, nil)
-}
-
-func choosePlannerWithSettings(cfg *config.Config, catalog *agent.Catalog, executor *agentexec.Runner, settings *config.RuntimeSettings) planner.Planner {
+func choosePlanner(cfg *config.Config, catalog *agent.Catalog, executor *agentexec.Runner, settings *config.RuntimeSettings) planner.Planner {
 	if cfg.Gateway.Planner == "" {
 		return planner.Rule{}
 	}

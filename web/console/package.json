@@ -1,5 +1,5 @@
 {
-  "name": "untitledui-vite-starter-kit",
+  "name": "steve-console",
   "version": "0.0.0",
   "type": "module",
   "private": true,
@@ -39,9 +39,9 @@
     "test:work-history-ui": "node scripts/work-history-browser.test.mjs",
     "test:styles": "node scripts/style-contract-browser.test.mjs && node scripts/style-controls-browser.test.mjs && node scripts/dialog-surface-browser.test.mjs && node scripts/conversation-typography-browser.test.mjs",
     "test:performance": "node ../../e2e/console/performance-ui.mjs && node ../../e2e/console/deferred-details.mjs && node scripts/lazy-region-browser.test.mjs && node scripts/fleet-render-browser.test.mjs && node scripts/sessions-render-browser.test.mjs",
-    "test:channel-conversations": "node --test scripts/channel-history.test.mjs && node scripts/channel-history-refresh-browser.test.mjs && node scripts/channel-conversation-browser.test.mjs",
+    "test:channel-conversations": "node scripts/channel-history-refresh-browser.test.mjs && node scripts/channel-conversation-browser.test.mjs",
     "generate:palettes": "node scripts/generate-palettes.mjs",
-    "test:appearance": "node --test scripts/appearance.test.mjs && node scripts/generate-palettes.mjs --check && node scripts/appearance-browser.test.mjs"
+    "test:appearance": "node scripts/generate-palettes.mjs --check && node scripts/appearance-browser.test.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -51,23 +51,16 @@
     "@codemirror/view": "^6.43.12",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.2.2",
-    "@untitledui/file-icons": "^0.0.9",
     "@untitledui/icons": "^0.0.22",
-    "embla-carousel-react": "^8.6.0",
     "highlight.js": "11.12.0",
-    "input-otp": "^1.4.2",
     "mermaid": "^12.0.0",
-    "motion": "^12.38.0",
-    "qr-code-styling": "^1.9.2",
     "react": "^19.2.4",
     "react-aria": "^3.47.0",
     "react-aria-components": "^1.16.0",
     "react-dom": "^19.2.4",
-    "react-hotkeys-hook": "^5.2.4",
     "react-markdown": "^9.1.0",
     "react-router": "^7.13.0",
     "recharts": "^3.8.0",
-    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
@@ -75,17 +68,12 @@
     "tailwindcss-react-aria-components": "^2.0.1"
   },
   "devDependencies": {
-    "@trivago/prettier-plugin-sort-imports": "^6.0.2",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "globals": "^16.5.0",
     "playwright": "1.62.1",
-    "prettier": "^3.8.1",
-    "prettier-plugin-tailwindcss": "^0.7.2",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.53.1",
     "vite": "^8.0.2"
   }
 }

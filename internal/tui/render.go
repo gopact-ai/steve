@@ -199,9 +199,6 @@ func renderPlans(snap readmodel.Snapshot, width int) string {
 			if s.Error != "" {
 				fmt.Fprintf(&b, "        %s%s%s\n", red, truncate(s.Error, width-10), reset)
 			}
-			if s.Context != nil && len(s.Context.Refs) > 0 {
-				fmt.Fprintf(&b, "        %srefs %s%s\n", dim, strings.Join(s.Context.Refs, ", "), reset)
-			}
 		}
 	}
 	return b.String()

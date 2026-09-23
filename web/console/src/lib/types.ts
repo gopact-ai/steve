@@ -50,11 +50,10 @@ export interface Task {
     tokens?: Tokens; seconds?: number; model?: string;
 }
 export interface TaskMetaPatch { title?: string; priority?: Task["priority"]; labels?: string[]; archived?: boolean }
-export interface StepContext { goal: string; ancestry?: string[]; refs?: string[]; findings?: string[]; facts?: string[]; bytes?: number }
 export interface StepUsage { day: string; model?: string; tokens: Tokens; seconds: number }
 export interface Step {
     id: string; goal: string; state: string; agent?: string; node?: string; needs?: string[]; merge?: string[];
-    requires?: string[]; verify?: string; error?: string; context?: StepContext; artifact?: string; attempts?: number; usage?: StepUsage;
+    requires?: string[]; verify?: string; error?: string; artifact?: string; attempts?: number; usage?: StepUsage;
     started_at?: string; ended_at?: string;
 }
 export interface Plan { id: string; task_id: string; rev: number; goal: string; by: string; because: string; steps: Step[]; created_at?: string; base?: string; fixed?: boolean }

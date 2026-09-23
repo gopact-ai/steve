@@ -78,6 +78,3 @@ func (l *Local) Get(maxAge time.Duration) []Found {
 	}
 	return append([]Found{}, l.list...)
 }
-
-// Rescan throws the cache away.
-func (l *Local) Rescan() []Found { return l.Get(0) }

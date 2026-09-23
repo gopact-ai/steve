@@ -70,7 +70,7 @@ func newRemoteProcess(t remoteTransport, c *conn, stream *nodewire.Stream) *remo
 		requests: map[string]bool{}, answered: map[string]bool{}}
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go p.writeLoop()
-	go p.readLoop(c, stream, bufio.NewReader(stream))
+	go p.readLoop(c, bufio.NewReader(stream))
 	return p
 }
 
@@ -314,7 +314,7 @@ func (p *remoteProcess) writeLoop() {
 	}
 }
 
-func (p *remoteProcess) readLoop(c *conn, stream *nodewire.Stream, reader *bufio.Reader) {
+func (p *remoteProcess) readLoop(c *conn, reader *bufio.Reader) {
 	for {
 		err := readLines(reader, func(line []byte, complete bool) error {
 			p.mu.Lock()
@@ -367,6 +367,7 @@ func (p *remoteProcess) readLoop(c *conn, stream *nodewire.Stream, reader *bufio
 			}
 			req := nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: p.transport.harness, Stream: p.id, Resume: true, AfterOut: p.out, AfterIn: p.in}
 			p.mu.Unlock()
+			var stream *nodewire.Stream
 			stream, err = c.mux.Open(req)
 			if err != nil {
 				p.transport.registry.down(c)

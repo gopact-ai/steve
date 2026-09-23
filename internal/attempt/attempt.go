@@ -600,10 +600,8 @@ func (s *Service) Renew(ctx context.Context, id string) error {
 	if current.State.Terminal() || current.Unsettled {
 		return fmt.Errorf("%w: attempt is %s", ErrLost, current.State)
 	}
-	renewed := make([]ledger.Lease, 0, len(current.Leases))
 	for _, lease := range current.Leases {
-		next, err := s.l.RenewAny(ctx, lease, s.TTL)
-		if err != nil {
+		if _, err := s.l.RenewAny(ctx, lease, s.TTL); err != nil {
 			// Session cleanup may have removed its endpoint fence after
 			// this renewal took its snapshot. That is not a lease loss.
 			if strings.HasPrefix(lease.Key, "endpoint:") {
@@ -623,7 +621,6 @@ func (s *Service) Renew(ctx context.Context, id string) error {
 			}
 			return fmt.Errorf("%w: %v", ErrLost, err)
 		}
-		renewed = append(renewed, next)
 	}
 	// Expiry times moved; the record keeps the tuple, which is what
 	// fencing compares, so nothing needs writing back.
