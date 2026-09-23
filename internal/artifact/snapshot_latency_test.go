@@ -124,3 +124,40 @@ func BenchmarkSnapshotUnchanged(b *testing.B) {
 		})
 	}
 }
+
+// A real workspace is thousands of files, some of them large. Re-staging
+// it unchanged must cost a stat of each file, not a hash of its contents.
+func BenchmarkSnapshotUnchangedLarge(b *testing.B) {
+	repo, err := Open(b.Context(), filepath.Join(b.TempDir(), "objects.git"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	work := b.TempDir()
+	small := []byte(strings.Repeat("contents\n", 2048))
+	for i := 0; i < 2000; i++ {
+		dir := filepath.Join(work, fmt.Sprintf("dir-%02d", i%40))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("file-%04d", i)), small, 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	large := []byte(strings.Repeat("0123456789abcdef", 1<<19))
+	for i := 0; i < 4; i++ {
+		if err := os.WriteFile(filepath.Join(work, fmt.Sprintf("large-%d", i)), large, 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	parent, _, err := repo.Snapshot(b.Context(), work, "", "initial", false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sha, changed, err := repo.Snapshot(b.Context(), work, parent, "unchanged", false)
+		if err != nil || changed || sha != parent {
+			b.Fatalf("unchanged snapshot: %q %v %v", sha, changed, err)
+		}
+	}
+}

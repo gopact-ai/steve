@@ -124,6 +124,8 @@ type Store struct {
 	// recoveryNotes holds, by landing, the last reason its recovery was
 	// left for a retry, so a reason that repeats every pass is logged once.
 	recoveryNotes sync.Map
+	// inApply holds the landings this process is applying right now.
+	inApply sync.Map
 }
 
 func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }

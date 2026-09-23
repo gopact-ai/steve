@@ -141,7 +141,10 @@ const checks = {
         const answer = { id: "answer-1", conversation: A, exchange_id: "ex-1", kind: "reply", at, text: "原来的回答" };
         f.replies[A].push(sent, answer);
         await f.page.reload();
-        await f.page.getByText("原来的问题", { exact: true }).waitFor();
+        // Until the conversation list arrives the header falls back to the
+        // first sent line, so wait on the header and the unique answer.
+        await f.page.locator("main header").getByText("Conversation A", { exact: true }).waitFor();
+        await f.page.getByText("原来的回答", { exact: true }).waitFor();
 
         await f.box.click();
         await f.page.keyboard.type("没发出去的草稿");

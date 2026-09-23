@@ -132,25 +132,27 @@ func (s *Store) noteRecoveryLeft(land Landing, err error) {
 		"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "state", land.State, "error", err.Error())
 }
 
-// RetryRecoveries finishes the landings that are still recovery-pending:
-// ones boot recovery could not finish, ones whose apply failed and could
-// not be inspected, or whose recovery was cut off in turn. It is run
+// RetryRecoveries finishes the landings nobody is finishing (see
+// awaitingRecovery): ones boot recovery could not finish, ones whose apply
+// failed and could not be inspected or not even recorded, or whose
+// recovery was cut off in turn. It is run
 // periodically. A landing whose canonical lock is busy, or whose own
 // driver is running, is skipped quietly until the next pass; any other
 // failure is logged and retried next pass. What was recovered — to
 // committed or to a conflict — is returned.
 func (s *Store) RetryRecoveries(ctx context.Context) ([]Landing, error) {
-	pending, err := s.ledger.Operations(ctx, landKind, LandRecoveryPending)
+	pending, err := s.awaitingRecovery(ctx, "")
 	if err != nil {
 		return nil, err
 	}
 	var out []Landing
-	for _, op := range pending {
-		var land Landing
-		if err := json.Unmarshal(op.Data, &land); err != nil {
+	for _, land := range pending {
+		// Still being applied here: its lock is gone, but its writer is
+		// not. It stays awaiting recovery, holding new landings off, and
+		// is taken over once that apply has returned.
+		if _, busy := s.inApply.Load(land.ID); busy {
 			continue
 		}
-		land.State = op.State
 		if _, _, err := s.projects.Get(ctx, land.Project); errors.Is(err, project.ErrNotOwner) {
 			continue
 		} else if err != nil {
@@ -235,8 +237,16 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
 	defer s.releaseCanonical(ctx, &land, lease)
-	defer trackLandingLease(ctx, lease)()
+	defer s.keepCanonical(ctx, lease)()
+	defer s.applying(land.ID)()
 	return s.finishRecovery(ctx, p, land, lease)
+}
+
+// sameLease says whether a recorded lease is the one held: renewals move
+// only its expiry.
+func sameLease(recorded *ledger.Lease, held ledger.Lease) bool {
+	return recorded != nil && recorded.Region == held.Region && recorded.Key == held.Key &&
+		recorded.Incarnation == held.Incarnation && recorded.Epoch == held.Epoch && recorded.Holder == held.Holder
 }
 
 // placeOf names a project directory, with the machine it is on.
@@ -258,13 +268,25 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 		return land, err
 	} else if !found {
 		return land, nil
-	} else if op.State != LandRecoveryPending {
+	} else {
 		var stored Landing
 		if err := json.Unmarshal(op.Data, &stored); err != nil {
 			return land, err
 		}
-		stored.State = op.State
-		return stored, nil
+		if op.State != LandRecoveryPending {
+			stored.State = op.State
+			return stored, nil
+		}
+		// A lock the recovery took for itself goes on the record before
+		// anything is written: if this process dies mid-recovery, boot
+		// recovery releases exactly the lock the record names, and the
+		// project does not wait out its TTL.
+		if !sameLease(stored.Lease, lease) {
+			land.Borrowed = false
+			if err := s.move(ctx, &land, LandRecoveryPending, LandRecoveryPending, nil); err != nil {
+				return land, fmt.Errorf("landing %s: record the recovery's lock: %w", land.ID, err)
+			}
+		}
 	}
 	// Recovery reads the merged snapshot where the canonical workspace
 	// lives. A landing cut off before it got there still has it on the hub,
@@ -327,6 +349,12 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 				if _, err := tx.CompareAndSetName(CanonicalRef(p.ID), current.Version, land.Merged); err != nil {
 					return err
 				}
+			}
+			// The result has landed now. A queue entry for it — the pass
+			// that started this landing stopped at recovery-pending and
+			// left it queued — would only land it again, as nothing.
+			if _, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id = ?`, pendingKind, p.ID+"/"+land.Artifact); err != nil {
+				return err
 			}
 			return tx.SetData(op, land)
 		})

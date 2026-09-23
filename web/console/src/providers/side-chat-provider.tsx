@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { addDraftMaterial } from "@/lib/drafts";
 import { fetchContext } from "@/lib/api/console";
 import { applyItemChanges, discardItem, itemChanges, readItems } from "@/lib/item-storage";
@@ -19,16 +19,35 @@ const itemPrefix = "steve.side-conversation:";
 function parse(value: string): unknown { try { return JSON.parse(value); } catch { return null; } }
 function readSessions(): Record<string, SideSession> { return Object.fromEntries(readItems(itemPrefix).map(([project, raw]): [string, unknown] => [project, parse(raw)]).filter(([project, item]) => item && typeof (item as SideSession).id === "string" && (item as SideSession).id.startsWith("console:side-") && (item as SideSession).project === project && typeof (item as SideSession).title === "string" && typeof (item as SideSession).excerpt === "string").map(([project, item]) => [project, { ...(item as SideSession), binding: false, bindingLocale: (item as SideSession).bindingLocale === "zh" ? "zh" : "en" }])); }
 function initial(): Record<string, SideSession> { discardItem(lockName); try { return readSessions(); } catch { return {}; } }
+// Binding marks a request this window has in flight. It is read back as
+// false, so another window never waits on it; this window keeps its own.
+const keepBinding = (stored: Record<string, SideSession>, local: Record<string, SideSession>) => Object.fromEntries(Object.entries(stored).map(([project, entry]) => {
+    const own = Object.hasOwn(local, project) ? local[project] : undefined;
+    return [project, own?.id === entry.id && own.binding ? { ...entry, binding: true } : entry];
+}));
 const encode = (sessions: Record<string, SideSession>) => Object.fromEntries(Object.entries(sessions).map(([project, item]) => [project, JSON.stringify(item)]));
 const unique = () => { try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; } };
 
 export function SideChatProvider({ children }: { children: ReactNode }) {
     const { t, locale } = useI18n(); const [sessions, setSessions] = useState(initial); const current = useRef(sessions); const [opened, setOpened] = useState<string | null>(null);
     const bindings = useRef(new Map<string, Promise<void>>()); const returnFocus = useRef<HTMLElement | null>(null);
+    // Another window's change is shown as soon as it arrives. Browsers do not
+    // deliver a window's own writes to it as storage events, and this only
+    // reads, so it cannot start a write in either window.
+    useEffect(() => {
+        const refresh = (event: StorageEvent) => {
+            if (event.key !== null && !event.key.startsWith(itemPrefix)) return;
+            let next: Record<string, SideSession>;
+            try { next = keepBinding(readSessions(), current.current); } catch { return; /* Keep what is shown. Writes fail until storage recovers. */ }
+            current.current = next; setSessions(next);
+        };
+        window.addEventListener("storage", refresh);
+        return () => window.removeEventListener("storage", refresh);
+    }, []);
     const change = useCallback(async (update: (latest: Record<string, SideSession>) => Record<string, SideSession>) => {
         if (!navigator.locks) throw new Error(t("console.draftLockUnavailable"));
         return navigator.locks.request(lockName, () => {
-            const latest = readSessions(), next = update(latest);
+            const latest = keepBinding(readSessions(), current.current), next = update(latest);
             applyItemChanges(itemChanges(itemPrefix, encode(latest), encode(next))); current.current = next; setSessions(next);
             return next;
         });

@@ -170,6 +170,28 @@ try {
     }
     console.log("PASS simultaneous edits from separate renderers, with and without delayed propagation, keep every draft and side conversation");
 
+    // A side conversation another window changes is shown as stored, without
+    // waiting for this window's next write, and this window writes nothing
+    // back. A binding this window has in flight stays visible meanwhile.
+    for (const lag of [0, 150]) {
+        const project = `side-sync-${lag}`, source = (excerpt) => ({ material: { id: project, project, title: "notes", kind: "text", mime: "text/plain", size: 1 }, ref: { id: project }, excerpt });
+        const here = await open(undefined, lag), there = await open(undefined, lag);
+        await here.evaluate((input) => sideChat.open(input), source("first"));
+        const id = await here.waitForFunction((project) => window.sideSession?.project === project && window.sideSession.id, project).then((handle) => handle.jsonValue());
+        await here.route("**/console/**", () => {}); // The hub never answers, so binding stays in flight.
+        await here.evaluate(() => { void sideChat.ensureBound(window.sideSession).catch(() => {}); });
+        await here.waitForFunction(() => window.sideSession?.binding === true);
+        await here.evaluate(() => { const set = Storage.prototype.setItem, remove = Storage.prototype.removeItem, count = (key) => { if (String(key).startsWith("steve.side-conversation:")) window.sideWrites++; }; window.sideWrites = 0; Storage.prototype.setItem = function (key, value) { count(key); return set.call(this, key, value); }; Storage.prototype.removeItem = function (key) { count(key); return remove.call(this, key); }; });
+        await there.waitForFunction(({ project, id }) => JSON.parse(localStorage.getItem("steve.side-conversation:" + project))?.id === id, { project, id });
+        await there.evaluate((input) => sideChat.open(input), source("second"));
+        await here.waitForFunction(() => window.sideSession?.excerpt === "second", undefined, { timeout: 3000 }).catch(() => assert.fail(`lag ${lag}: this window shows the side conversation another window changed`));
+        await new Promise((resolve) => setTimeout(resolve, lag + 300));
+        assert.deepEqual(await here.evaluate(() => ({ id: window.sideSession.id, binding: window.sideSession.binding, writes: window.sideWrites })), { id, binding: true, writes: 0 }, `lag ${lag}: the same conversation, still binding, and nothing written back`);
+        assert.equal(await there.evaluate((project) => JSON.parse(localStorage.getItem("steve.side-conversation:" + project)).excerpt, project), "second");
+        await Promise.all([here.close(), there.close()]);
+    }
+    console.log("PASS a side conversation changed in another window is shown without being written back, and an in-flight binding survives it");
+
     // Values stored in the former single-key layout, or unreadable entries, are ignored.
     const legacy = await context.newPage();
     await legacy.addInitScript(() => {

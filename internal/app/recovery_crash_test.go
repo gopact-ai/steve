@@ -37,6 +37,9 @@ type crashProbe struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	calls    atomic.Int32
+	// worked is how long the seeded execution runs before its session is
+	// confirmed settled: real work the dead process did before it stopped.
+	worked time.Duration
 }
 
 // The native execution has ended before these windows. Only an isolated
@@ -138,6 +141,7 @@ func (f *crashProbe) seed(t *testing.T, bound bool, exchangeState consoleapi.Exc
 			t.Fatal(err)
 		}
 	}
+	time.Sleep(f.worked)
 	if err := f.attempts.MarkSessionSettled(f.ctx, r.ID, "test"); err != nil {
 		t.Fatal(err)
 	}

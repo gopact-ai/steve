@@ -100,7 +100,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			if settled {
 				finishErr = settledErr
 			}
-			if accountingErr := t.closeTask(parent, started, finishErr); accountingErr != nil {
+			if accountingErr := t.settleTask(parent, started, finishErr); accountingErr != nil {
 				result = Result{}
 				err = retainedBlocked("accounting", "提交原执行的任务记账", "结果已保留，但记账尚未提交。",
 					accountingErr.Error(), "将重试原结果的记账，不会重新发送原任务。", errors.Join(err, accountingErr))
@@ -137,12 +137,12 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	return result, err
 }
 
-// closeTask charges the task a tracked turn opened with what the turn
+// settleTask charges the task a tracked turn opened with what the turn
 // spent and ended with, then tells whoever is waiting on it. It returns
 // the accounting error that has to replace the turn's outcome — the
 // result is kept, the charge is not committed yet. A managed stop the
 // harness could not confirm is left open for the stop to settle.
-func (t *chatTurn) closeTask(parent context.Context, started time.Time, finishErr error) error {
+func (t *chatTurn) settleTask(parent context.Context, started time.Time, finishErr error) error {
 	c, req, tracked := t.c, t.req, t.tracked
 	if t.managed && errors.Is(finishErr, harness.ErrStopUnconfirmed) {
 		return nil
