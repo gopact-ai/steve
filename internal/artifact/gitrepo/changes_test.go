@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/budget"
 )
 
 func TestSourceTruncationPreservesUTF8Text(t *testing.T) {
 	work := t.TempDir()
-	contents := strings.Repeat("a", MaxFileBytes-1) + "中文"
+	contents := strings.Repeat("a", budget.ReviewFileBytes-1) + "中文"
 	if err := os.WriteFile(filepath.Join(work, "large.txt"), []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +26,7 @@ func TestSourceTruncationPreservesUTF8Text(t *testing.T) {
 		t.Fatal(err)
 	}
 	text, size, binary, truncated, err := repo.File(t.Context(), commit, "large.txt")
-	if err != nil || binary || !truncated || len(text) != MaxFileBytes-1 || size != int64(len(contents)) {
+	if err != nil || binary || !truncated || len(text) != budget.ReviewFileBytes-1 || size != int64(len(contents)) {
 		t.Fatalf("UTF-8 boundary became binary or corrupt: size=%d bytes=%d binary=%v truncated=%v err=%v", size, len(text), binary, truncated, err)
 	}
 }

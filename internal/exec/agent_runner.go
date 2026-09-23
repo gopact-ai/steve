@@ -12,7 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/budget"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
@@ -71,7 +71,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 		timeout = a.TimeoutSource()
 	}
 	if timeout <= 0 {
-		timeout = config.DefaultStepTimeout
+		timeout = budget.StepTimeout
 	}
 	ctx = harness.WithPluginProfile(ctx, req.PluginRuntime)
 	candidate, ok := a.find(ctx, req.Agent)

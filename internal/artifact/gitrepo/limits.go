@@ -6,13 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-)
 
-// Default snapshot budgets bound staging before git starts reading blobs.
-const (
-	MaxSnapshotFiles     = 20_000
-	MaxSnapshotBytes     = 2 * 1024 * 1024 * 1024
-	MaxSnapshotFileBytes = 200 * 1024 * 1024
+	"github.com/gopact-ai/steve/internal/budget"
 )
 
 // Limits can be injected per repository or store. Zero fields use the
@@ -25,13 +20,13 @@ type Limits struct {
 
 func (l Limits) defaults() Limits {
 	if l.MaxFiles <= 0 {
-		l.MaxFiles = MaxSnapshotFiles
+		l.MaxFiles = budget.SnapshotFiles
 	}
 	if l.MaxBytes <= 0 {
-		l.MaxBytes = MaxSnapshotBytes
+		l.MaxBytes = budget.SnapshotBytes
 	}
 	if l.MaxFileBytes <= 0 {
-		l.MaxFileBytes = MaxSnapshotFileBytes
+		l.MaxFileBytes = budget.SnapshotFileBytes
 	}
 	return l
 }

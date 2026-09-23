@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/approval"
-	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
+	"github.com/gopact-ai/steve/internal/budget"
 )
 
 type ExecutionPolicy struct {
@@ -56,53 +56,44 @@ type Policies struct {
 	Review    ReviewPolicy    `json:"review"`
 }
 
-// Execution and planning defaults. Plan steps, verification and the
-// planner fall back to the same values when a caller leaves them unset.
-const (
-	DefaultStepTimeout      = 15 * time.Minute
-	DefaultVerifyTimeout    = 10 * time.Minute
-	DefaultPlanningTimeout  = 3 * time.Minute
-	DefaultPlanningAttempts = 2
-)
-
-// WithDefaults fills every unset policy. Snapshot and review budgets are
-// the defaults artifact/gitrepo also applies to a zero value.
+// WithDefaults fills every unset policy from package budget, the values the
+// runtime also applies to a zero value.
 func (p Policies) WithDefaults() Policies {
 	if p.Execution.StepTimeout == 0 {
-		p.Execution.StepTimeout = Duration(DefaultStepTimeout)
+		p.Execution.StepTimeout = Duration(budget.StepTimeout)
 	}
 	if p.Execution.VerifyTimeout == 0 {
-		p.Execution.VerifyTimeout = Duration(DefaultVerifyTimeout)
+		p.Execution.VerifyTimeout = Duration(budget.VerifyTimeout)
 	}
 	if p.Planning.Timeout == 0 {
-		p.Planning.Timeout = Duration(DefaultPlanningTimeout)
+		p.Planning.Timeout = Duration(budget.PlanningTimeout)
 	}
 	if p.Planning.Attempts == 0 {
-		p.Planning.Attempts = DefaultPlanningAttempts
+		p.Planning.Attempts = budget.PlanningAttempts
 	}
 	if p.Snapshot.MaxFiles == 0 {
-		p.Snapshot.MaxFiles = gitrepo.MaxSnapshotFiles
+		p.Snapshot.MaxFiles = budget.SnapshotFiles
 	}
 	if p.Snapshot.MaxBytes == 0 {
-		p.Snapshot.MaxBytes = gitrepo.MaxSnapshotBytes
+		p.Snapshot.MaxBytes = budget.SnapshotBytes
 	}
 	if p.Snapshot.MaxFileBytes == 0 {
-		p.Snapshot.MaxFileBytes = gitrepo.MaxSnapshotFileBytes
+		p.Snapshot.MaxFileBytes = budget.SnapshotFileBytes
 	}
 	if p.Review.MaxChanges == 0 {
-		p.Review.MaxChanges = gitrepo.MaxChanges
+		p.Review.MaxChanges = budget.ReviewChanges
 	}
 	if p.Review.MaxDiffBytes == 0 {
-		p.Review.MaxDiffBytes = gitrepo.MaxDiffBytes
+		p.Review.MaxDiffBytes = budget.ReviewDiffBytes
 	}
 	if p.Review.MaxFileBytes == 0 {
-		p.Review.MaxFileBytes = gitrepo.MaxFileBytes
+		p.Review.MaxFileBytes = budget.ReviewFileBytes
 	}
 	if p.Review.MaxEntries == 0 {
-		p.Review.MaxEntries = gitrepo.MaxEntries
+		p.Review.MaxEntries = budget.ReviewEntries
 	}
 	if p.Review.Timeout == 0 {
-		p.Review.Timeout = Duration(gitrepo.DefaultReviewTimeout)
+		p.Review.Timeout = Duration(budget.ReviewTimeout)
 	}
 	if p.Landing.Conflicts == "" {
 		p.Landing.Conflicts = ConflictsByAgent

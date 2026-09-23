@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // EmptyTree is git's well-known empty tree: the "before" of a first
@@ -27,17 +26,9 @@ type Change struct {
 	Binary  bool   `json:"binary,omitempty"`
 }
 
-// Limits on what a review may cost: an index is at most this many
-// entries, a file's diff at most this many bytes, and git gets this long.
-const (
-	MaxChanges           = 500
-	MaxDiffBytes         = 200 * 1024
-	DefaultReviewTimeout = 30 * time.Second
-)
-
 // Changes indexes what differs from one snapshot to the next: status
 // and line counts per path, renames not detected (a rename is a D and
-// an A). Truncated says the index stopped at MaxChanges.
+// an A). Truncated says the index stopped at budget.ReviewChanges.
 func (r *Repo) Changes(ctx context.Context, from, to string) ([]Change, bool, error) {
 	if from == "" {
 		from = EmptyTree

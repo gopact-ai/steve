@@ -1,6 +1,10 @@
 package gitrepo
 
-import "time"
+import (
+	"time"
+
+	"github.com/gopact-ai/steve/internal/budget"
+)
 
 // ReviewLimits bound projections independently of artifact storage limits.
 type ReviewLimits struct {
@@ -14,19 +18,19 @@ type ReviewLimits struct {
 // WithDefaults fills each unset budget with its default.
 func (p ReviewLimits) WithDefaults() ReviewLimits {
 	if p.MaxChanges <= 0 {
-		p.MaxChanges = MaxChanges
+		p.MaxChanges = budget.ReviewChanges
 	}
 	if p.MaxDiffBytes <= 0 {
-		p.MaxDiffBytes = MaxDiffBytes
+		p.MaxDiffBytes = budget.ReviewDiffBytes
 	}
 	if p.MaxFileBytes <= 0 {
-		p.MaxFileBytes = MaxFileBytes
+		p.MaxFileBytes = budget.ReviewFileBytes
 	}
 	if p.MaxEntries <= 0 {
-		p.MaxEntries = MaxEntries
+		p.MaxEntries = budget.ReviewEntries
 	}
 	if p.Timeout <= 0 {
-		p.Timeout = DefaultReviewTimeout
+		p.Timeout = budget.ReviewTimeout
 	}
 	return p
 }

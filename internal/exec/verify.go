@@ -9,7 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/budget"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -50,7 +50,7 @@ func (v *Verifiers) Verify(ctx context.Context, req StepRequest, check plan.Veri
 		timeout = v.TimeoutSource()
 	}
 	if timeout <= 0 {
-		timeout = config.DefaultVerifyTimeout
+		timeout = budget.VerifyTimeout
 	}
 	if check.Kind == plan.VerifyAgent {
 		// The executor must identify retained work before creating its timer.

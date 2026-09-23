@@ -19,13 +19,6 @@ type Entry struct {
 	Mode string `json:"mode,omitempty"`
 }
 
-// Limits on browsing: a directory lists at most this many names, a
-// file is read up to this many bytes.
-const (
-	MaxEntries   = 2000
-	MaxFileBytes = 200 * 1024
-)
-
 // Tree lists one directory of a snapshot, no deeper: files with their
 // sizes, directories, links and nested repositories as what they are.
 func (r *Repo) Tree(ctx context.Context, commit, dir string) ([]Entry, bool, error) {
@@ -85,7 +78,7 @@ func (r *Repo) Tree(ctx context.Context, commit, dir string) ([]Entry, bool, err
 	return entries, truncated, nil
 }
 
-// File is one file of a snapshot: its text up to MaxFileBytes, or only
+// File is one file of a snapshot: its text up to budget.ReviewFileBytes, or only
 // its size when it is binary. A link shows its target.
 func (r *Repo) File(ctx context.Context, commit, path string) (text string, size int64, binary, truncated bool, err error) {
 	if !shaPattern.MatchString(commit) {
