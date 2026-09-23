@@ -926,6 +926,19 @@ func (s *Service) ForTask(ctx context.Context, taskID string) ([]Record, error) 
 	return s.identityRecords(ctx, taskIdentitySQL, taskID)
 }
 
+// ForTasksByUpdate lists the attempts of the given tasks, most recently
+// updated first. Its cost follows those tasks' attempts, not all history.
+func (s *Service) ForTasksByUpdate(ctx context.Context, taskIDs []string) ([]Record, error) {
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.identityRecords(ctx, tasksByUpdateSQL, string(raw))
+}
+
 // LatestForTurn is the most recent attempt of a logical turn, if any.
 func (s *Service) LatestForTurn(ctx context.Context, turnID string) (Record, bool, error) {
 	records, err := s.identityRecords(ctx, turnIdentitySQL, turnID)

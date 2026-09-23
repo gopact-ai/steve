@@ -116,28 +116,22 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 	if s.tasks == nil || s.attempts == nil || s.artifacts == nil || s.executions == nil {
 		return errors.New("retained delegate recovery is not configured")
 	}
-	live, err := s.attempts.Live(ctx)
+	if err := s.resolveJoined(ctx); err != nil {
+		return err
+	}
+	records, err := s.recoverableRecords(ctx)
 	if err != nil {
 		return err
 	}
-	closed, err := s.attempts.Closed(ctx)
-	if err != nil {
-		return err
-	}
-	seen := map[string]bool{}
-	for _, record := range append(live, closed...) {
+	for _, record := range records {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if seen[record.ID] || record.Kind != attempt.KindDelegate || (!lifecycle.IsManaged(record.Session) && !pendingDelegatePreparation(record)) {
+		if record.Kind != attempt.KindDelegate || (!lifecycle.IsManaged(record.Session) && !pendingDelegatePreparation(record)) {
 			continue
 		}
-		seen[record.ID] = true
 		tracked, ok := s.tasks.Get(record.TaskID)
-		if ok {
-			s.resolveRecovered(record, tracked)
-		}
-		if !ok || !tracked.Delegated() || tracked.Parent == "" || (tracked.Result != nil && tracked.Finished() && len(tracked.Attempts) > 0 && !tracked.Attempts[len(tracked.Attempts)-1].Open()) {
+		if !ok || !tracked.Delegated() || tracked.Parent == "" || tracked.DelegationSettled() {
 			continue
 		}
 		parent, ok := s.tasks.Get(tracked.Parent)
@@ -173,6 +167,41 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 		go s.recoverChild(s.executions.Detached(ctx), parent, tracked, record, entry)
 	}
 	return s.settleUnrecordedChildren(ctx)
+}
+
+// recoverableRecords lists, once each, the attempts a recovery pass may
+// resume: every live attempt, most recently updated first, then the settled
+// attempts of delegated children whose result is not yet settled, most
+// recently updated first. A malformed row fails the whole pass.
+func (s *Service) recoverableRecords(ctx context.Context) ([]attempt.Record, error) {
+	live, err := s.attempts.Live(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending := s.tasks.PendingDelegations()
+	ids := make([]string, 0, len(pending))
+	for _, tracked := range pending {
+		ids = append(ids, tracked.ID)
+	}
+	settled, err := s.attempts.ForTasksByUpdate(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(live))
+	out := make([]attempt.Record, 0, len(live)+len(settled))
+	for _, record := range live {
+		if !seen[record.ID] {
+			seen[record.ID] = true
+			out = append(out, record)
+		}
+	}
+	for _, record := range settled {
+		if record.State.Terminal() && !seen[record.ID] {
+			seen[record.ID] = true
+			out = append(out, record)
+		}
+	}
+	return out, nil
 }
 
 // recoveryPending reports one way a child could not be joined: a question

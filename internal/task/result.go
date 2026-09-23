@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -51,6 +52,27 @@ func (t Task) Finished() bool {
 
 // Delegated says the task was opened by another task's delegation.
 func (t Task) Delegated() bool { return strings.HasPrefix(t.Origin, "delegate:") }
+
+// DelegationSettled says a child's result is final: it is recorded, the task
+// has finished, and its last accounting row is closed.
+func (t Task) DelegationSettled() bool {
+	return t.Result != nil && t.Finished() && len(t.Attempts) > 0 && !t.Attempts[len(t.Attempts)-1].Open()
+}
+
+// PendingDelegations lists, by id, the delegated children whose result is
+// not yet settled: the children a recovery pass may still owe their parent.
+func (s *Store) PendingDelegations() []Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Task
+	for _, stored := range s.data.Tasks {
+		if stored.Delegated() && stored.Parent != "" && !stored.DelegationSettled() {
+			out = append(out, *stored.clone())
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
 
 // SetResult records how a delegated child ended.
 func (s *Store) SetResult(id string, r Result) error {

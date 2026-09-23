@@ -23,9 +23,11 @@ const (
 		WHERE kind='attempt' AND ` + identityTask + `=? ORDER BY ` + identityStarted + `,updated_at,id`
 	turnAttemptsSQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_turn
 		WHERE kind='attempt' AND ` + identityTurn + `=? ORDER BY ` + identityOrder
-	turnIdentitySQL = turnAttemptsSQL + ` LIMIT 1`
+	turnIdentitySQL     = turnAttemptsSQL + ` LIMIT 1`
 	liveTaskIdentitySQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_task_live
 		WHERE ` + liveAttemptPredicate + ` AND ` + identityTask + `=? ORDER BY ` + identityOrder + ` LIMIT 1`
+	tasksByUpdateSQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_task
+		WHERE kind='attempt' AND ` + identityTask + ` IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC,id DESC`
 	invalidIdentitySQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_task
 		WHERE kind='attempt' AND ` + identityTask + ` IS NULL LIMIT 1`
 )

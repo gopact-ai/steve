@@ -90,7 +90,13 @@ func BenchmarkSettledHistoryReads(b *testing.B) {
 			_, err := s.ForTurn(ctx, fixture.turnID)
 			return err
 		}},
-		{"delegate-recovery", liveAndClosed},
+		{"delegate-recovery", func(ctx context.Context, s *Service, fixture settledHistoryFixture) error {
+			if _, err := s.Live(ctx); err != nil {
+				return err
+			}
+			_, err := s.ForTasksByUpdate(ctx, []string{fixture.delegateTask})
+			return err
+		}},
 		{"usage", liveAndClosed},
 	} {
 		for _, n := range []int{1000, 10000, 50000} {
