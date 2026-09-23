@@ -30,7 +30,7 @@ type nodeReceiptReconciler struct {
 	seen     map[string]bool
 }
 
-// Reconcile examines only one page of pending receipts, never Closed history.
+// Reconcile examines only one page of pending receipts, never settled history.
 // Advancing the cursor past blocked receipts prevents one unknown result from
 // starving later completed work. A failed RPC/index commit is retried with the
 // same immutable receipt; it never grants new input or trusts a client ack.

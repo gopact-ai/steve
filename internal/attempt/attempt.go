@@ -902,27 +902,6 @@ func (s *Service) Live(ctx context.Context) ([]Record, error) {
 	return s.liveRecords(ctx)
 }
 
-// Closed lists every attempt that reached a terminal state, oldest first:
-// the fleet's spend is the sum of their results.
-func (s *Service) Closed(ctx context.Context) ([]Record, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
-	if err != nil {
-		return nil, err
-	}
-	var out []Record
-	for _, op := range ops {
-		if !State(op.State).Terminal() {
-			continue
-		}
-		r, err := decode(op)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, nil
-}
-
 // ForTask lists a task's attempts, oldest first.
 func (s *Service) ForTask(ctx context.Context, taskID string) ([]Record, error) {
 	return s.identityRecords(ctx, taskIdentitySQL, taskID)

@@ -55,7 +55,7 @@ func TestUsageEndpointIsGuardedIndependentAndFresh(t *testing.T) {
 }
 
 func TestUsageEndpointRetainsReadFailureWithoutFabricatingZero(t *testing.T) {
-	source := &usageHTTPSource{err: errors.New("closed attempts unavailable")}
+	source := &usageHTTPSource{err: errors.New("usage samples unavailable")}
 	server := serve(t, readmodel.New(readmodel.Sources{Ledger: source}), ServerConfig{})
 	code, _, raw := taskMetaRequest(t, server, http.MethodGet, "/usage", "", "")
 	var got readmodel.UsageSnapshot

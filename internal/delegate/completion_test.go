@@ -36,8 +36,8 @@ func TestDelegationSettlesReportedUsageOnSuccessAndFailure(t *testing.T) {
 			if (err != nil) != failed {
 				t.Fatalf("delegate=%+v err=%v", out, err)
 			}
-			records, err := w.attempts.Closed(t.Context())
-			if err != nil || len(records) != 1 || records[0].Usage == nil || *records[0].Usage != *attemptUsage(p) {
+			records, err := w.attempts.ForTask(t.Context(), out.TaskID)
+			if err != nil || len(records) != 1 || !records[0].State.Terminal() || records[0].Usage == nil || *records[0].Usage != *attemptUsage(p) {
 				t.Fatalf("closed=%+v err=%v", records, err)
 			}
 			if (records[0].State == attempt.Bound) == failed {

@@ -126,11 +126,3 @@ func BenchmarkSettledHistoryReads(b *testing.B) {
 		}
 	}
 }
-
-func liveAndClosed(ctx context.Context, s *Service, _ settledHistoryFixture) error {
-	if _, err := s.Live(ctx); err != nil {
-		return err
-	}
-	_, err := s.Closed(ctx)
-	return err
-}

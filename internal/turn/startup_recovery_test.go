@@ -18,7 +18,7 @@ import (
 
 func TestRejectedRunningTransitionNeverPromptsTheAgent(t *testing.T) {
 	runner := &fakeRunner{reply: "must not run"}
-	c, _, book := taskCoordinatorBook(t, runner)
+	c, tasks, book := taskCoordinatorBook(t, runner)
 	// A trigger fails only the durable Running transition, after session setup.
 	if _, err := book.DB().Exec(`CREATE TRIGGER deny_running BEFORE UPDATE OF state ON operations WHEN NEW.kind='attempt' AND NEW.state='running' BEGIN SELECT RAISE(FAIL,'cannot record running'); END`); err != nil {
 		t.Fatal(err)
@@ -30,7 +30,11 @@ func TestRejectedRunningTransitionNeverPromptsTheAgent(t *testing.T) {
 	if got := runner.seen(); len(got) != 0 {
 		t.Fatalf("unrecorded prompt ran: %v", got)
 	}
-	records, err := c.attempts.Closed(t.Context())
+	list := tasks.List("")
+	if len(list) != 1 {
+		t.Fatalf("tasks=%+v", list)
+	}
+	records, err := c.attempts.ForTask(t.Context(), list[0].ID)
 	if err != nil || len(records) != 1 || records[0].State != attempt.Failed {
 		t.Fatalf("failed preparation not closed: %+v %v", records, err)
 	}
