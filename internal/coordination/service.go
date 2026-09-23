@@ -168,6 +168,9 @@ func Open(config Config) (*Service, error) {
 }
 
 func requireLoopback(address string) error {
+	if _, _, err := net.SplitHostPort(address); err != nil {
+		return fmt.Errorf("%w: invalid Raft address", ErrInvalid)
+	}
 	if !sameorigin.LoopbackIP(address) {
 		return fmt.Errorf("%w: non-loopback Raft transport requires an authenticated StreamLayer", ErrInvalid)
 	}
