@@ -2,6 +2,8 @@ package attempt
 
 import (
 	"encoding/json"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -59,5 +61,96 @@ func TestMarkStopProjectedRefusesRecordsThatAreNotConfirmedStops(t *testing.T) {
 	insertAttemptRow(t, s, r.ID, string(r.State), string(raw))
 	if marked, err := s.MarkStopProjected(t.Context(), r.ID, "test"); marked || err == nil {
 		t.Fatalf("marked=%v err=%v", marked, err)
+	}
+}
+
+// A projection mark belongs to the confirmation it was recorded for. When
+// the stop is quarantined again and re-confirmed with other usage, a failed
+// accounting settle must leave it a candidate so a later pass projects it.
+func TestStopProjectionIsClearedWhenTheStopIsConfirmedAgain(t *testing.T) {
+	s, now, old, proof, tasks := retainedFixture(t)
+	if err := tasks.BindAttempt(*old.Execution, old.ID, old.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.SetAside(old.TaskID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	proof.Session.State = "idle"
+	proof.Session.Command.State, proof.Session.Command.Settled = "cancelled", true
+	proof.Session.Progress.Usage.InputTokens = 5
+	confirmed, err := s.ConfirmTaskStopped(t.Context(), old.ID, "stopper", proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.SettleAttempt(old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(confirmed)); err != nil {
+		t.Fatal(err)
+	}
+	if marked, err := s.MarkStopProjected(t.Context(), old.ID, "stopper"); err != nil || !marked {
+		t.Fatalf("marked=%v err=%v", marked, err)
+	}
+
+	if err := s.MarkUnsettled(t.Context(), old.ID, "observer", errors.New("observer restarted"), nil); err != nil {
+		t.Fatal(err)
+	}
+	proof.Session.Progress.Usage.InputTokens, proof.Session.Progress.Usage.OutputTokens = 9, 4
+	reconfirmed, err := s.ConfirmTaskStopped(t.Context(), old.ID, "stopper", proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.l.DB().Exec(`CREATE TRIGGER reject_accounting BEFORE UPDATE ON bindings WHEN NEW.kind = 'task-attempt' BEGIN SELECT RAISE(FAIL, 'accounting unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.SettleAttempt(old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(reconfirmed)); err == nil {
+		t.Fatal("injected accounting failure did not fail the settle")
+	}
+	current, err := s.Get(t.Context(), old.ID)
+	if err != nil || current.StopProjected || !TaskStopOwed(current) {
+		t.Fatalf("re-confirmed stop kept its old projection: %+v %v", current, err)
+	}
+	if ids := stopCandidateIDs(t, s); !slices.Contains(ids, old.ID) {
+		t.Fatalf("re-confirmed stop left the candidates: %v", ids)
+	}
+	if marked, err := s.MarkStopProjected(t.Context(), old.ID, "stopper"); err != nil || marked {
+		t.Fatalf("stale accounting projected: marked=%v err=%v", marked, err)
+	}
+
+	if _, err := s.l.DB().Exec(`DROP TRIGGER reject_accounting`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.SettleAttempt(old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(reconfirmed)); err != nil {
+		t.Fatal(err)
+	}
+	if marked, err := s.MarkStopProjected(t.Context(), old.ID, "stopper"); err != nil || !marked {
+		t.Fatalf("retry did not project: marked=%v err=%v", marked, err)
+	}
+	if ids := stopCandidateIDs(t, s); slices.Contains(ids, old.ID) {
+		t.Fatalf("projected stop still a candidate: %v", ids)
+	}
+}
+
+func TestStopProjectionHoldsOnlyForTheSameConfirmation(t *testing.T) {
+	yes := true
+	confirmed := Record{Spec: Spec{ID: "a", TaskID: "t", Kind: KindChat, Node: "n1", Execution: &task.ExecutionToken{TaskID: "t", Epoch: 1}},
+		State: Failed, Session: "ns_a", SessionSettled: &yes, StopEvidence: "task-stop/a", StopProjected: true, Usage: &Usage{Input: 2, Reported: true}}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Record)
+		want   bool
+	}{
+		{"unchanged", func(*Record) {}, true},
+		{"expired later", func(r *Record) { r.State = Expired }, true},
+		{"quarantined", func(r *Record) { r.Unsettled = true }, false},
+		{"usage changed", func(r *Record) { r.Usage = &Usage{Input: 3, Reported: true} }, false},
+		{"usage dropped", func(r *Record) { r.Usage = nil }, false},
+		{"other evidence", func(r *Record) { r.StopEvidence = "process-stop/a" }, false},
+		{"superseded", func(r *Record) { r.State = Superseded }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := confirmed
+			tc.mutate(&next)
+			if got := stopProjectionHolds(confirmed, next); got != tc.want {
+				t.Fatalf("holds=%v want %v", got, tc.want)
+			}
+		})
 	}
 }

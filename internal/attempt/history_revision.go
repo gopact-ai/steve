@@ -86,10 +86,15 @@ func touchHistoryRevisionTx(tx *ledger.Tx, taskID string) error {
 // setRecordDataTx is the owner save boundary for every Transition, including
 // same-state session, quarantine and settlement updates. Both old and new
 // scopes are invalidated if an owner mutation changes the task identity.
+// It is also where a stop projection mark is dropped once it no longer
+// describes the record: see stopProjectionHolds.
 func setRecordDataTx(tx *ledger.Tx, op *ledger.Operation, next Record) error {
 	previous, err := decodeHistoryRecord(*op)
 	if err != nil {
 		return err
+	}
+	if next.StopProjected && !stopProjectionHolds(previous, next) {
+		next.StopProjected = false
 	}
 	if err := tx.SetData(op, next); err != nil {
 		return err

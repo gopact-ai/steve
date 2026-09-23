@@ -44,6 +44,22 @@ func StopAccountingSettled(r Record, row task.Attempt) bool {
 	return !known || *row.UsageKnown && row.Tokens == u.Tokens && row.Model == u.Model
 }
 
+// stopProjectionHolds reports whether next's projection mark still describes
+// the confirmation it was recorded for: next is still a confirmed task stop
+// with the stop evidence and usage it had before this write. Any other write
+// clears the mark, so a stop quarantined and confirmed again is projected
+// again. MarkStopProjected's own write changes neither and keeps it.
+func stopProjectionHolds(previous, next Record) bool {
+	return TaskStopConfirmed(next) && next.StopEvidence == previous.StopEvidence && sameUsage(previous.Usage, next.Usage)
+}
+
+func sameUsage(a, b *Usage) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
 // MarkStopProjected retires a confirmed task stop from the stop pass once
 // its accounting row, read in the same transaction, is settled with the
 // record's usage. It reports false, and writes nothing, while the
