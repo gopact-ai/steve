@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/hubid"
 	"github.com/gopact-ai/steve/internal/node"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
@@ -219,13 +220,7 @@ func publishClusterBootstrap(root, path string, peer PeerConfig, worker *node.Se
 	if err := os.Rename(staging, peer.DataDir); err != nil {
 		return err
 	}
-	parent, err := os.Open(root)
-	if err != nil {
-		return err
-	}
-	syncErr := parent.Sync()
-	closeErr := parent.Close()
-	if err := errors.Join(syncErr, closeErr); err != nil {
+	if err := fsx.SyncDir(root); err != nil {
 		return err
 	}
 	return SaveClusterJSON(path, peer, true)

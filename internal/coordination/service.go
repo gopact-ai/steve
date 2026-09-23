@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
 	"go.etcd.io/bbolt"
@@ -217,12 +218,7 @@ func checkIdentity(c Config) error {
 	if err = file.Close(); err != nil {
 		return err
 	}
-	dir, err := os.Open(c.DataDir)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return fsx.SyncDir(c.DataDir)
 }
 
 func (s *Service) Status() Status {

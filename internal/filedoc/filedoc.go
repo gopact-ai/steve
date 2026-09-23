@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 // Document is one file kept with the durable-replace discipline:
@@ -31,37 +33,8 @@ func (f *Document) Save(raw []byte) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
-	temp, err := os.CreateTemp(dir, "."+filepath.Base(f.Path)+"-*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	name := temp.Name()
-	defer os.Remove(name)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return fmt.Errorf("secure temp file: %w", err)
-	}
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return fmt.Errorf("write: %w", err)
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return fmt.Errorf("sync: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close: %w", err)
-	}
-	if err := os.Rename(name, f.Path); err != nil {
+	if err := fsx.WriteFile(f.Path, raw); err != nil {
 		return fmt.Errorf("replace: %w", err)
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	if err := d.Sync(); err != nil {
-		return fmt.Errorf("sync directory: %w", err)
 	}
 	return nil
 }

@@ -32,6 +32,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/fsx"
 	_ "modernc.org/sqlite"
 )
 
@@ -370,33 +371,7 @@ func readIncarnation(path string) (uint64, error) {
 // writeIncarnation is durable: temp file, fsync, rename, fsync dir. Losing
 // this file is worse than losing the database.
 func writeIncarnation(path string, value uint64) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, ".incarnation-*")
-	if err != nil {
-		return err
-	}
-	name := temp.Name()
-	defer os.Remove(name)
-	if _, err := temp.WriteString(strconv.FormatUint(value, 10) + "\n"); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		return err
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return fsx.WriteFile(path, []byte(strconv.FormatUint(value, 10)+"\n"))
 }
 
 // ---------------------------------------------------------------- commands

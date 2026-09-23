@@ -28,6 +28,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -376,34 +377,8 @@ func WritePrivate(path string, data []byte, create bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("cluster file path is empty")
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".cluster-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
 	if create {
-		err = os.Link(file.Name(), path)
-	} else {
-		err = os.Rename(file.Name(), path)
+		return fsx.CreateFile(path, data)
 	}
-	if err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return fsx.WriteFile(path, data)
 }

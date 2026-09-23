@@ -30,6 +30,7 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/sshconnect"
@@ -1042,12 +1043,7 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	if err := os.Rename(staging, root); err != nil {
 		return result, err
 	}
-	parent, err := os.Open(filepath.Dir(root))
-	if err != nil {
-		return result, err
-	}
-	defer parent.Close()
-	return result, parent.Sync()
+	return result, fsx.SyncDir(filepath.Dir(root))
 }
 
 func validatePeerCertificate(bundle PeerJoinPackage) error {

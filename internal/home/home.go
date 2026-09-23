@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 const (
@@ -140,42 +142,10 @@ func stripTemplateMarker(body string) string {
 }
 
 func writeReplace(path, body string) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
-	if err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Base(path), err)
-	}
-	name := temp.Name()
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		os.Remove(name)
-		return fmt.Errorf("chmod %s: %w", filepath.Base(path), err)
-	}
-	if _, err := temp.WriteString(body); err != nil {
-		temp.Close()
-		os.Remove(name)
-		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
-	}
-	if err := temp.Close(); err != nil {
-		os.Remove(name)
-		return fmt.Errorf("close %s: %w", filepath.Base(path), err)
-	}
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
+	if err := fsx.WriteFile(path, []byte(body)); err != nil {
 		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
 	}
-	return syncDir(dir)
-}
-
-// syncDir flushes a directory entry after a rename so the replacement
-// survives a crash (rename alone is not guaranteed durable on all filesystems).
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
+	return nil
 }
 
 func writeMissing(path, body string) error {
@@ -509,22 +479,5 @@ func Write(path, name, text string) error {
 		}
 		target = real
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(target), "."+name+".*")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.WriteString(text); err != nil {
-		tmp.Close()
-		_ = os.Remove(tmp.Name()) // the write is the finding; a stray temp dotfile is all a failed sweep costs
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name()) // the close is the finding; a stray temp dotfile is all a failed sweep costs
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
-		_ = os.Remove(tmp.Name()) // the chmod is the finding; a stray temp dotfile is all a failed sweep costs
-		return err
-	}
-	return os.Rename(tmp.Name(), target)
+	return fsx.WriteFile(target, []byte(text))
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/localtoken"
 )
 
@@ -255,38 +256,8 @@ func createJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return createPrivate(path, append(raw, '\n'))
-}
-
-// createPrivate publishes a fully synced file without replacing an existing one.
-func createPrivate(path string, raw []byte) error {
-	temp, err := os.CreateTemp(filepath.Dir(path), ".desktop-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temp.Name())
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Link(temp.Name(), path); err != nil {
+	if err := fsx.CreateFile(path, append(raw, '\n')); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Base(path), err)
 	}
-	return syncDirectory(filepath.Dir(path))
-}
-
-func syncDirectory(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
+	return nil
 }

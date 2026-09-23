@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 func readRegular(root *os.Root, name string, limit int64) ([]byte, error) {
@@ -171,25 +173,10 @@ func (s *Store) writeReceipt(receipt Receipt) error {
 }
 
 func (s *Store) writeRecord(path string, raw []byte) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, ".record-")
-	if err != nil {
+	if err := fsx.ReplaceFile(path, append(raw, '\n')); err != nil {
 		return err
 	}
-	name := temp.Name()
-	defer removeStaging(name)
-	_, err = temp.Write(append(raw, '\n'))
-	if err == nil {
-		err = temp.Sync()
-	}
-	err = errors.Join(err, temp.Close())
-	if err != nil {
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		return err
-	}
-	return s.sync(dir)
+	return s.sync(filepath.Dir(path))
 }
 
 func removeStaging(path string) {
