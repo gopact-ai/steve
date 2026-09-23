@@ -340,12 +340,8 @@ func (s *Store) SnapshotCanonicalUnder(ctx context.Context, p project.Project, h
 func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, message string) (string, error) {
 	var base string
 	err := s.underCanonical(ctx, p, by, func(held ledger.Lease) error {
-		parent, err := s.CanonicalOf(ctx, p.ID)
-		if err != nil {
-			return err
-		}
-		m, _, _, err := s.snapshotCanonical(ctx, p, held, parent, by, message)
-		base = m.ID
+		var err error
+		base, err = s.CanonicalBaseUnder(ctx, p, held, by, message)
 		return err
 	})
 	if !errors.Is(err, ledger.ErrHeld) && !errors.Is(err, ErrRecoveryPending) {
@@ -362,6 +358,19 @@ func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, messag
 		return "", fmt.Errorf("project %s has no canonical snapshot to start from yet: %w", p.ID, err)
 	}
 	m, _, _, err := s.cutCanonical(ctx, p, "", by, message)
+	return m.ID, err
+}
+
+// CanonicalBaseUnder is CanonicalBase for a caller holding the canonical
+// lock, which held is: an in-place turn handing work to a child. What the
+// holder has written so far is the base, snapshotted under its lock on top
+// of the canonical name, which moves there.
+func (s *Store) CanonicalBaseUnder(ctx context.Context, p project.Project, held ledger.Lease, by, message string) (string, error) {
+	parent, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return "", err
+	}
+	m, _, _, err := s.snapshotCanonical(ctx, p, held, parent, by, message)
 	return m.ID, err
 }
 

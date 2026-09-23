@@ -212,7 +212,11 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		defer preparation.Finish(nil)
 		ctx = preparation.Context()
 	}
-	workspace, err := s.workspaces.Materialize(ctx, project.Request{Project: parent.ProjectID, Node: candidate.Node, Isolated: true, Owner: attemptID})
+	base, err := s.childBase(ctx, parent, attemptID)
+	if err != nil {
+		return agentmcp.DelegateResult{}, fmt.Errorf("base for %s: %w", candidate.Agent.ID, err)
+	}
+	workspace, err := s.workspaces.Materialize(ctx, project.Request{Project: parent.ProjectID, Node: candidate.Node, Isolated: true, Base: base, Owner: attemptID})
 	if err != nil {
 		return agentmcp.DelegateResult{}, fmt.Errorf("workspace for %s: %w", candidate.Agent.ID, err)
 	}
@@ -279,6 +283,43 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		first.Note = "Still running. You need not wait: when it ends, Steve sends its result into this conversation as a new message. End your turn if nothing else is left."
 	}
 	return first, err
+}
+
+// childBase is the artifact a child starts from. A parent working in place
+// holds the canonical lock and may have written the canonical workspace
+// since its turn began: the child starts from that, cut under the
+// parent's lock. For any other parent it is "", the project's current
+// canonical state, as Materialize takes it.
+func (s *Service) childBase(ctx context.Context, parent task.Task, owner string) (string, error) {
+	attemptID := ""
+	if fixed, ok := agentmcp.ScopeFromContext(ctx); ok {
+		attemptID = fixed.AttemptID
+	} else {
+		id, live, err := s.attempts.LiveAttemptOf(ctx, parent.ID)
+		if err != nil {
+			return "", err
+		}
+		if !live {
+			return "", nil
+		}
+		attemptID = id
+	}
+	record, err := s.attempts.Get(ctx, attemptID)
+	if err != nil {
+		return "", err
+	}
+	held, inPlace := artifact.CanonicalLease(record.Leases, parent.ProjectID)
+	if !inPlace {
+		return "", nil
+	}
+	p, found, err := s.artifacts.Project(ctx, parent.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("%w: %s", project.ErrUnknown, parent.ProjectID)
+	}
+	return s.artifacts.CanonicalBaseUnder(ctx, p, held, owner, "base for "+owner)
 }
 
 // Await returns a child's result, waiting up to the request's bound. Only
