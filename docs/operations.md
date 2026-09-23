@@ -1,6 +1,6 @@
 # Steve 运维指南
 
-本文按当前代码说明配置、部署、门禁和排障。对象与权威边界见 [architecture.md](architecture.md)，首次使用见 [中文 README](../README.md) / [English README](../README.en.md)，旧方案保存在 [history/](history/)。
+本文按当前代码说明配置、部署、门禁和排障。对象与权威边界见 [architecture.md](architecture.md)，首次使用见 [中文 README](../README.md) / [English README](../README.en.md)。
 
 桌面 App 的首次启动、完整节点接入、协调交接与容灾要求见 [桌面指南](desktop.md)。服务器上的集群首次初始化见[服务端集群初始化](#服务端集群初始化)。下方 `steve run` / `steve-node` 配置说明以独立部署为主。
 
@@ -699,7 +699,7 @@ go run ./e2e/fleet -scenario autonomous
 
 ## 插件安装与会话版本
 
-插件往**别的节点**部署需要 hub 作为集群应用运行：节点只接受已提交协调者的插件操作。未初始化集群的独立 hub 能导入、能配置、能管自己这台机器，控制台目标状态会写明 `this hub is not a cluster coordinator`；服务部署按上面的 `peer-init` 流程初始化。插件的包准备、节点部署、启用与会话使用是不同状态。控制台「插件」页显示目标机器的实际回执；查看 [插件操作指南](plugins-local.md) 和 [隔离验收记录](plugins-acceptance.md)。凭据先在执行机器用 `steve plugins secret-put` 从 stdin 写入，管理端仅选择版本引用。不要把密钥放到普通设置、包归档、日志或 MR 中。
+插件往**别的节点**部署需要 hub 作为集群应用运行：节点只接受已提交协调者的插件操作。未初始化集群的独立 hub 能导入、能配置、能管自己这台机器，控制台目标状态会写明 `this hub is not a cluster coordinator`；服务部署按上面的 `peer-init` 流程初始化。插件的包准备、节点部署、启用与会话使用是不同状态。控制台「插件」页显示目标机器的实际回执；查看 [插件操作指南](plugins-local.md)。凭据先在执行机器用 `steve plugins secret-put` 从 stdin 写入，管理端仅选择版本引用。不要把密钥放到普通设置、包归档、日志或 MR 中。
 
 旧会话使用固定的包摘要、技能目录和 MCP 路由。升版或回退只改变新会话；停用只阻止新绑定。撤销项目/节点范围后，核心会拒绝该范围的新准入和会话接回；已发出的外部请求不会被撤销。
 
