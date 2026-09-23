@@ -66,7 +66,7 @@ type Server struct {
 	admin          consoleapi.Admin
 	model          Model
 	token          string
-	loopbackOnly   bool
+	reach          sameorigin.Reach
 	listener       net.Listener
 	httpServer     *http.Server
 	stopRequests   context.CancelFunc
@@ -78,7 +78,7 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if !loopback(addr) && strings.TrimSpace(cfg.Token) == "" {
+	if !sameorigin.LoopbackListener(addr) && strings.TrimSpace(cfg.Token) == "" {
 		return nil, fmt.Errorf("read model on %s needs a token: it reports hosts, goals and agents", addr)
 	}
 	listener, err := net.Listen("tcp", addr)
@@ -87,7 +87,7 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	}
 	requestContext, stopRequests := context.WithCancel(context.Background())
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
-	return &Server{model: model, token: cfg.Token, loopbackOnly: loopback(addr), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
+	return &Server{model: model, token: cfg.Token, reach: sameorigin.Reach(sameorigin.LoopbackListener(addr)), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
@@ -200,7 +200,7 @@ func (s *Server) Serve() error {
 	server := s.httpServer
 	// Around the whole mux, unguarded routes included, so a route added
 	// later cannot forget it.
-	server.Handler = sameorigin.Guard(mux, s.loopbackOnly)
+	server.Handler = sameorigin.Guard(mux, s.reach)
 	if err := server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -328,18 +328,6 @@ func writeEvent(w http.ResponseWriter, ev readmodel.Event) {
 		return
 	}
 	fmt.Fprintf(w, "data: %s\n\n", payload)
-}
-
-func loopback(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if host == "" {
-		return false // a bare ":port" listens on every interface
-	}
-	ip := net.ParseIP(host)
-	return host == "localhost" || (ip != nil && ip.IsLoopback())
 }
 
 // SetConsole wires the acting half of the page.

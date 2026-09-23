@@ -558,6 +558,18 @@ func TestConsoleConnectionReadsTheGeneratedToken(t *testing.T) {
 		t.Fatal("a generated token followed -url to another origin")
 	}
 
+	// An explicit -token needs nothing from the state directory, which may
+	// belong to the Hub's own service account.
+	if err := os.Chmod(filepath.Join(state, localtoken.FileName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveTestConnection("-config", path); err == nil {
+		t.Fatal("an exposed token file was used")
+	}
+	if connection, err := resolveTestConnection("-config", path, "-token", "explicit"); err != nil || connection.Token != "explicit" {
+		t.Fatalf("explicit token with an unusable token file = %+v, %v", connection, err)
+	}
+
 	unstarted := filepath.Join(t.TempDir(), "config.json")
 	data, _ = json.Marshal(map[string]any{"gateway": map[string]string{"state_path": filepath.Join(t.TempDir(), "state.json")}})
 	writeClientFixture(t, unstarted, string(data))

@@ -489,7 +489,7 @@ func ApplicationAuthorityError(err error) bool {
 func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 	// The listener is loopback-only (requireClusterLoopback); what remains is
 	// the owner's browser acting for another site. Proxied hops drop Origin.
-	if err := sameorigin.Check(r, true); err != nil {
+	if err := sameorigin.Check(r, sameorigin.Loopback); err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}

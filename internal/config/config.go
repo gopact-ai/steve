@@ -980,9 +980,10 @@ func (c *Config) ProjectList() []project.Project {
 // DefaultStatePath is where a Hub keeps its state unless configured otherwise.
 const DefaultStatePath = "~/.steve/state.json"
 
-// StateDir is the directory a gateway.state_path names, resolved the way a
-// Hub loading the same file resolves it. Clients use it to find what the Hub
-// keeps there without loading the whole configuration.
+// StateDir is the directory a gateway.state_path names, resolved as Load
+// resolves it: "~" against this user's home and a relative path against the
+// working directory. Clients use it to find what the Hub keeps there without
+// loading the whole configuration.
 func StateDir(statePath string) string {
 	if statePath == "" {
 		statePath = DefaultStatePath

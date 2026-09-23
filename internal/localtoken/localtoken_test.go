@@ -74,3 +74,28 @@ func TestReadRefusesAnExposedOrMalformedToken(t *testing.T) {
 		t.Fatal("a short token was accepted")
 	}
 }
+
+func TestReadRefusesLinksAndOversizedFiles(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "other-secret")
+	if err := os.WriteFile(secret, []byte("0123456789012345678901234567890123456789abcd"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(dir, FileName)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(dir); err == nil {
+		t.Fatal("a token was read through a symbolic link")
+	}
+	if _, err := Resolve(dir); err == nil {
+		t.Fatal("Resolve adopted a symbolic link")
+	}
+
+	big := t.TempDir()
+	if err := os.WriteFile(filepath.Join(big, FileName), make([]byte, 1<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(big); err == nil {
+		t.Fatal("an oversized token file was read")
+	}
+}

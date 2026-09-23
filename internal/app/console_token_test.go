@@ -31,3 +31,16 @@ func TestConsoleIsNeverServedWithoutAToken(t *testing.T) {
 		t.Fatalf("configured token not served: %+v %v", served, err)
 	}
 }
+
+// Exposing the console to the network is the owner's explicit decision: a
+// token is generated for loopback only, never to paper over a missing one.
+func TestNetworkConsoleStillNeedsAConfiguredToken(t *testing.T) {
+	state := t.TempDir()
+	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(state, "state.json"), ReadModelAddr: "0.0.0.0:7710"}}
+	if served, err := consoleServerConfig(cfg); err != nil || served.Token != "" {
+		t.Fatalf("network bind got a generated token: %+v %v", served, err)
+	}
+	if _, err := localtoken.Read(state); err == nil {
+		t.Fatal("a token was generated for a network bind")
+	}
+}

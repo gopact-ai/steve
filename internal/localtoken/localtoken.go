@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,8 @@ const (
 	FileName = "loopback-token"
 	// MinLength is what every local client checks before presenting a token.
 	MinLength = 40
+	// maxLength bounds what Read loads; generated tokens are 43 bytes.
+	maxLength = 1024
 )
 
 // Resolve returns the token in dir, creating it on first use. Concurrent first
@@ -38,24 +41,43 @@ func Resolve(dir string) (string, error) {
 }
 
 // Read returns the token in dir; os.ErrNotExist means none was created yet.
+// The file must be the private regular file it was created as: a link or a
+// swap between the check and the read could hand another file's contents to
+// every client as a bearer token.
 func Read(dir string) (string, error) {
 	path := filepath.Join(dir, FileName)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return "", err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if !private(info) {
 		return "", fmt.Errorf("%s must be a private regular file", path)
 	}
-	raw, err := os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(info, opened) || !private(opened) {
+		return "", fmt.Errorf("%s changed while it was read", path)
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maxLength+1))
 	if err != nil {
 		return "", err
 	}
 	token := string(raw)
-	if len(token) < MinLength || strings.ContainsAny(token, "\r\n\t ") {
+	if len(token) < MinLength || len(token) > maxLength || strings.ContainsAny(token, "\r\n\t ") {
 		return "", fmt.Errorf("%s does not hold a valid token", path)
 	}
 	return token, nil
+}
+
+func private(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0
 }
 
 // create publishes a fully synced file and never replaces an existing one.

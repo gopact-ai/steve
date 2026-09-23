@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/localtoken"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
 func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, planning plansAssembly, projection readModelAssembly) (consoleAssembly, error) {
@@ -175,7 +176,9 @@ func (v *consoleValues) Reconciliations() *reconciliationWorkers { return v.reco
 // with the one the process booted with, and it is not the owner's setting.
 func consoleServerConfig(cfg *config.Config) (httpapi.ServerConfig, error) {
 	served := httpapi.ServerConfig{Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken}
-	if served.Token != "" {
+	// Serving the network is the owner's decision, token included; the
+	// server refuses a network bind without one.
+	if served.Token != "" || !sameorigin.LoopbackListener(served.Addr) {
 		return served, nil
 	}
 	token, err := localtoken.Resolve(filepath.Dir(cfg.Gateway.StatePath))

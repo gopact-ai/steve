@@ -44,7 +44,7 @@ func (options *consoleClientFlags) resolve(flags *flag.FlagSet) (consoleConnecti
 	connection := consoleConnection{URL: defaultReadModelURL}
 	if explicit["config"] {
 		var err error
-		connection, err = readConsoleConnection(options.configPath)
+		connection, err = readConsoleConnection(options.configPath, !explicit["token"])
 		if err != nil {
 			return consoleConnection{}, err
 		}
@@ -97,7 +97,10 @@ func (gateway *connectionGateway) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*fields)(gateway))
 }
 
-func readConsoleConnection(path string) (consoleConnection, error) {
+// readConsoleConnection reads where the console listens and its token. With
+// generated set, a configuration without a token falls back to the one the
+// Hub generated in its state directory; an explicit -token skips that read.
+func readConsoleConnection(path string, generated bool) (consoleConnection, error) {
 	var config struct {
 		Gateway connectionGateway `json:"gateway"`
 	}
@@ -133,8 +136,10 @@ func readConsoleConnection(path string) (consoleConnection, error) {
 		return consoleConnection{}, fmt.Errorf("inspect cluster sidecar: %w", err)
 	}
 	token := string(config.Gateway.Token)
-	if token == "" {
-		// The Hub generated one; before its first start there is none.
+	if token == "" && generated {
+		// Before the Hub's first start there is none. The state path is
+		// resolved as the Hub resolves it only for the same user and
+		// working directory; other deployments pass -token.
 		token, err = localtoken.Read(appconfig.StateDir(string(config.Gateway.StatePath)))
 		if errors.Is(err, os.ErrNotExist) {
 			token, err = "", nil

@@ -9,41 +9,61 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strings"
 )
 
-var (
-	ErrForeignHost   = errors.New("request names a host this loopback service does not answer to")
-	ErrForeignOrigin = errors.New("cross-origin writes are refused")
+// ErrForeignHost refuses a Host a loopback service does not answer to.
+var ErrForeignHost = errors.New("request names a host this loopback service does not answer to")
+
+// crossOrigin refuses unsafe methods a browser sends for another origin,
+// judged by Sec-Fetch-Site and then Origin; clients that send neither pass.
+var crossOrigin = http.NewCrossOriginProtection()
+
+// Reach says who can address a service, and so which Host names it answers.
+type Reach bool
+
+const (
+	// Network services are addressed by whatever name the operator gave
+	// them and rely on their token for that.
+	Network Reach = false
+	// Loopback services also refuse any Host that is not a loopback name,
+	// which is what defeats DNS rebinding.
+	Loopback Reach = true
 )
 
 // Check refuses a request a browser sent on another site's behalf.
-//
-// loopbackOnly services also refuse any Host that is not a loopback name,
-// which is what defeats DNS rebinding. Services reachable from the network
-// are addressed by whatever name the operator gave them and rely on their
-// token for that.
-//
-// Writes must come from the same origin or from a non-browser client, which
-// sends no Origin at all.
-func Check(r *http.Request, loopbackOnly bool) error {
-	if loopbackOnly && !loopbackHost(hostname(r.Host)) {
+func Check(r *http.Request, reach Reach) error {
+	if reach == Loopback && !loopbackHost(hostname(r.Host)) {
 		return ErrForeignHost
 	}
-	switch r.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return nil
+	return crossOrigin.Check(r)
+}
+
+// Guard applies Check in front of next and answers 403 on refusal.
+func Guard(next http.Handler, reach Reach) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := Check(r, reach); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// LoopbackListener reports whether a listen address ("host:port") only
+// accepts connections from this machine. It is stricter than a Host header:
+// a bare ":port" listens everywhere, and only "localhost" among names is
+// trusted to resolve to loopback.
+func LoopbackListener(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
 	}
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return nil
+	if host == "localhost" {
+		return true
 	}
-	parsed, err := url.Parse(origin)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || !strings.EqualFold(parsed.Host, r.Host) {
-		return ErrForeignOrigin
-	}
-	return nil
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 func hostname(hostport string) string {
@@ -53,6 +73,7 @@ func hostname(hostport string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(hostport, "["), "]")
 }
 
+// loopbackHost accepts the names a browser only resolves to this machine.
 func loopbackHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
@@ -60,15 +81,4 @@ func loopbackHost(host string) bool {
 	}
 	addr, err := netip.ParseAddr(host)
 	return err == nil && addr.IsLoopback()
-}
-
-// Guard applies Check in front of next and answers 403 on refusal.
-func Guard(next http.Handler, loopbackOnly bool) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := Check(r, loopbackOnly); err != nil {
-			http.Error(w, err.Error(), http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
