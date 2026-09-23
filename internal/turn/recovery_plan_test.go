@@ -222,14 +222,14 @@ func TestPlanRecoveryErrorMarksOnlyExecutionQuestionsStopUnconfirmed(t *testing.
 func TestRetainedBlockedAsksInTheCoordinatorLanguage(t *testing.T) {
 	c, _, _, _, _ := retainedChatFixture(t)
 	q := c.localized(i18n.LocaleEN).retainedBlocked("offline", "检查原节点", "问题", "原因", "建议", nil).Question
-	if q.RequestID != "recovery/offline" || q.Title != "Continuing this task needs your decision" || !strings.HasPrefix(q.Message, "Tried: 检查原节点.") {
+	if q.RequestID != "recovery/offline" || q.Title != "Continuing this task needs your decision" || !strings.HasPrefix(q.Message, "Tried: 检查原节点\n\n") {
 		t.Fatalf("question = %+v", q)
 	}
 	if len(q.Choices) != 2 || q.Choices[0].Label != "Recheck the original execution" || q.Choices[1].Label != "Wait for now" {
 		t.Fatalf("choices = %+v", q.Choices)
 	}
 	zh := c.localized(i18n.LocaleZH).retainedBlocked("offline", "检查原节点", "问题", "原因", "建议", nil).Question
-	if zh.Title != "继续任务需要你的处理" || zh.Message != "已尝试：检查原节点。\n\n问题\n\n原因\n\n建议" || zh.Choices[1].Label != "暂时等待" {
+	if zh.Title != "继续任务需要你的处理" || zh.Message != "已尝试：检查原节点\n\n问题\n\n原因\n\n建议" || zh.Choices[1].Label != "暂时等待" {
 		t.Fatalf("zh question = %+v", zh)
 	}
 }

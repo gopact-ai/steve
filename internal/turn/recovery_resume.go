@@ -34,7 +34,7 @@ type RetainedChat struct {
 // question describes reconciliation work; it is not an invented native-agent
 // callback and accepting it only retries observation of the retained command.
 func (c *Coordinator) retainedBlocked(code, attempted, problem, reason, recommendation string, cause error) *agentexec.RecoveryBlocked {
-	message := c.text.T(i18n.RecoveryAttempted, attempted) + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation
+	message := c.text.T(i18n.RecoveryTried, attempted) + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation
 	return &agentexec.RecoveryBlocked{Cause: cause, Question: agentexec.RecoveryQuestion("recovery/"+code, c.text.T(i18n.RecoveryTitleTask), message,
 		view.Choice{Label: c.text.T(i18n.RecoveryRetry), Detail: c.text.T(i18n.RecoveryRetryTask)},
 		view.Choice{Label: c.text.T(i18n.RecoveryWait), Detail: c.text.T(i18n.RecoveryWaitReconnect)})}

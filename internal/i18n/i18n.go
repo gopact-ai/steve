@@ -305,6 +305,7 @@ const (
 	RecoveryTitleExecution    Key = "recovery_title_execution"
 	RecoveryTitleTask         Key = "recovery_title_task"
 	RecoveryAttempted         Key = "recovery_attempted"
+	RecoveryTried             Key = "recovery_tried"
 	RecoveryDiagnostics       Key = "recovery_diagnostics"
 	RecoveryStopUnconfirmed   Key = "recovery_stop_unconfirmed"
 	RecoveryRetry             Key = "recovery_retry"
