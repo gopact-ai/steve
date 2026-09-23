@@ -47,13 +47,8 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	repos := projection.Repos()
 	shipper := projection.Shipper()
 	view := projection.View()
-	var (
-		httpConfig httpapi.ServerConfig
-		err        error
-	)
-	if environment != nil && environment.HTTPConfig != nil {
-		httpConfig = *environment.HTTPConfig
-	} else if httpConfig, err = consoleServerConfig(cfg); err != nil {
+	httpConfig, err := consoleServerConfig(environment, cfg)
+	if err != nil {
 		return nil, err
 	}
 	dashboard, err := httpapi.NewServer(view, httpConfig)
@@ -170,11 +165,15 @@ func (v *consoleValues) Materials() *material.Store { return v.materials }
 
 func (v *consoleValues) Reconciliations() *reconciliationWorkers { return v.reconciliations }
 
-// consoleServerConfig never serves the console without a token. Loopback keeps
+// consoleServerConfig takes the listener a cluster member was handed as is.
+// Otherwise it never serves the console without a token. Loopback keeps
 // other machines out, not other users and processes on this one. A generated
 // token stays out of the configuration: restarts compare the configured token
 // with the one the process booted with, and it is not the owner's setting.
-func consoleServerConfig(cfg *config.Config) (httpapi.ServerConfig, error) {
+func consoleServerConfig(environment *Environment, cfg *config.Config) (httpapi.ServerConfig, error) {
+	if environment != nil && environment.HTTPConfig != nil {
+		return *environment.HTTPConfig, nil
+	}
 	served := httpapi.ServerConfig{Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken}
 	// Serving the network is the owner's decision, token included; the
 	// server refuses a network bind without one.

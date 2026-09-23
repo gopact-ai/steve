@@ -13,7 +13,7 @@ import (
 func TestConsoleIsNeverServedWithoutAToken(t *testing.T) {
 	state := t.TempDir()
 	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(state, "state.json"), ReadModelAddr: "127.0.0.1:0"}}
-	served, err := consoleServerConfig(cfg)
+	served, err := consoleServerConfig(nil, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestConsoleIsNeverServedWithoutAToken(t *testing.T) {
 	}
 
 	cfg.Gateway.ReadModelToken = "configured-token"
-	served, err = consoleServerConfig(cfg)
+	served, err = consoleServerConfig(nil, cfg)
 	if err != nil || served.Token != "configured-token" || served.Addr != "127.0.0.1:0" {
 		t.Fatalf("configured token not served: %+v %v", served, err)
 	}
@@ -37,7 +37,7 @@ func TestConsoleIsNeverServedWithoutAToken(t *testing.T) {
 func TestNetworkConsoleStillNeedsAConfiguredToken(t *testing.T) {
 	state := t.TempDir()
 	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(state, "state.json"), ReadModelAddr: "0.0.0.0:7710"}}
-	if served, err := consoleServerConfig(cfg); err != nil || served.Token != "" {
+	if served, err := consoleServerConfig(nil, cfg); err != nil || served.Token != "" {
 		t.Fatalf("network bind got a generated token: %+v %v", served, err)
 	}
 	if _, err := localtoken.Read(state); err == nil {
