@@ -51,17 +51,13 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
-	live, err := s.attempts.Live(ctx)
-	if err != nil {
-		return err
-	}
-	closed, err := s.attempts.Closed(ctx)
+	candidates, err := s.attempts.StopCandidates(ctx)
 	if err != nil {
 		return err
 	}
 	seen := map[string]bool{}
 	var pending []attempt.Record
-	for _, r := range append(live, closed...) {
+	for _, r := range candidates {
 		if seen[r.ID] || r.State == attempt.Superseded || (!strings.HasPrefix(r.Session, "ns_") && !attempt.PendingSessionOpen(r)) || r.Node == "" || r.Execution == nil {
 			continue
 		}
