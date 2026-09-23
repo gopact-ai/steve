@@ -280,13 +280,17 @@ func TestUsageSamplesRereadInFullWhenARestoreLandsDuringTheRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	restores := 0
-	target.usage.afterRead = func() {
+	usageAfterRead = func(c *usageCache) {
+		if c != &target.usage {
+			return
+		}
 		if restores++; restores == 1 {
 			if err := target.l.RestoreReplica(snapshot); err != nil {
 				t.Error(err)
 			}
 		}
 	}
+	t.Cleanup(func() { usageAfterRead = nil })
 	got, err := target.UsageSamples(t.Context())
 	if err != nil {
 		t.Fatal(err)

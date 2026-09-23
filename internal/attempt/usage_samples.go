@@ -65,9 +65,11 @@ type usageCache struct {
 	scopes     map[string]usageScope
 	attempts   int
 	samples    []UsageSample
-	// afterRead runs between the ledger read and the restore check.
-	afterRead func()
 }
+
+// usageAfterRead, when set, runs between a usage read and its restore
+// check. It is nil outside tests.
+var usageAfterRead func(*usageCache)
 
 type usageRead struct {
 	full   bool
@@ -131,8 +133,8 @@ func (s *Service) readUsage(ctx context.Context, full bool) (usageRead, error) {
 		}
 		return err
 	})
-	if c.afterRead != nil {
-		c.afterRead()
+	if usageAfterRead != nil {
+		usageAfterRead(c)
 	}
 	return read, err
 }
