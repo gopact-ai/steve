@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/plugins"
-
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/plugins"
 )
 
 func init() {

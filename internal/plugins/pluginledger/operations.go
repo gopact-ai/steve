@@ -7,9 +7,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/plugins"
-
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plugins"
 )
 
 const managementOperationKind = "plugin-management"

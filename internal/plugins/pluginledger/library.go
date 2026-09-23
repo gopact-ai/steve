@@ -1,3 +1,7 @@
+// Package pluginledger keeps the hub's durable plugin records in the ledger:
+// the project package library, installation history, operations and runtime
+// reservations. The plugins package itself stays free of storage, so a node
+// can install and run plugins without linking the hub ledger.
 package pluginledger
 
 import (
@@ -9,10 +13,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/plugins"
-
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plugins"
 )
 
 const packageRecordKind = "plugin-package"
