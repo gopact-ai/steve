@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -177,7 +178,7 @@ func TestUnverifiedRecoveryPersistsAskUserThenRechecksWithoutNewPrompt(t *testin
 	var ready atomic.Bool
 	driver := &recoveryDriver{resume: func(ctx context.Context, id string, req turn.Request) (turn.Result, error) {
 		if !ready.Load() {
-			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "已检查原执行。节点暂时无法连接，请恢复后重新检查。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+			return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "已检查原执行。节点暂时无法连接，请恢复后重新检查。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
 		}
 		return turn.Result{Text: "retained result", Attempt: id}, nil
 	}}
@@ -343,7 +344,7 @@ func TestRecoveryRejoinsShortOutageWithoutAskingTheOwner(t *testing.T) {
 	driver := &recoveryDriver{resume: func(_ context.Context, id string, _ turn.Request) (turn.Result, error) {
 		if !back.Load() {
 			back.Store(true)
-			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+			return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
 		}
 		return turn.Result{Text: "retained result", Attempt: id}, nil
 	}}
@@ -374,7 +375,7 @@ func TestOpenRecoveryQuestionIsWithdrawnWhenTheOriginalComesBack(t *testing.T) {
 	driver := &probingDriver{}
 	driver.resume = func(_ context.Context, id string, _ turn.Request) (turn.Result, error) {
 		if !driver.reachable.Load() {
-			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+			return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
 		}
 		return turn.Result{Text: "retained result", Attempt: id}, nil
 	}

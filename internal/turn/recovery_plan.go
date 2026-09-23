@@ -97,13 +97,15 @@ func planRecoveryError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var blocked *RecoveryBlocked
+	var blocked *agentexec.RecoveryBlocked
 	if errors.As(err, &blocked) {
-		return blocked
-	}
-	var native *agentexec.RecoveryBlocked
-	if errors.As(err, &native) {
-		return &RecoveryBlocked{Question: native.Question, Cause: errors.Join(err, harness.ErrStopUnconfirmed)}
+		if blocked.AttemptID == "" && blocked.TaskID == "" {
+			// The coordinator raised it; it already speaks for the exchange.
+			return blocked
+		}
+		// The execution layer raised it for an attempt it could not settle:
+		// the attempt's stop is unconfirmed, whatever the question says.
+		return &agentexec.RecoveryBlocked{Question: blocked.Question, Cause: errors.Join(err, harness.ErrStopUnconfirmed)}
 	}
 	var nowhere exec.ErrNowhereToRun
 	var noBudget exec.ErrNoBudget

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -29,19 +30,11 @@ type RetainedChat struct {
 	Completed    bool
 }
 
-// RecoveryBlocked leaves the original attempt and exchange unresolved. The
+// retainedBlocked leaves the original attempt and exchange unresolved. The
 // question describes reconciliation work; it is not an invented native-agent
 // callback and accepting it only retries observation of the retained command.
-type RecoveryBlocked struct {
-	Question view.Question
-	Cause    error
-}
-
-func (e *RecoveryBlocked) Error() string { return e.Question.Message }
-func (e *RecoveryBlocked) Unwrap() error { return e.Cause }
-
-func retainedBlocked(code, attempted, problem, reason, recommendation string, cause error) *RecoveryBlocked {
-	return &RecoveryBlocked{Cause: cause, Question: view.Question{RequestID: "recovery/" + code, Kind: "recovery", Title: "继续任务需要你的处理", Message: "已尝试：" + attempted + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "仅核对节点上的原执行，不会重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留当前任务和进度。Steve 会继续自己重连，机器回来后自动接着跑。"}}}}
+func retainedBlocked(code, attempted, problem, reason, recommendation string, cause error) *agentexec.RecoveryBlocked {
+	return &agentexec.RecoveryBlocked{Cause: cause, Question: view.Question{RequestID: "recovery/" + code, Kind: "recovery", Title: "继续任务需要你的处理", Message: "已尝试：" + attempted + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "仅核对节点上的原执行，不会重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留当前任务和进度。Steve 会继续自己重连，机器回来后自动接着跑。"}}}}
 }
 
 // retainedChat says whether a chat execution holds an accepted native command

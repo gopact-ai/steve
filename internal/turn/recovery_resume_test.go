@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/datalevel"
 
@@ -177,7 +178,7 @@ func TestRetainedChatWithUncertainNodeRemainsOriginalBlockedExecution(t *testing
 	runner.state.State = "interrupted"
 	runner.state.Command.State = "uncertain"
 	_, err := c.ResumeRetainedChat(t.Context(), old.ID, req)
-	var blocked *RecoveryBlocked
+	var blocked *agentexec.RecoveryBlocked
 	if !errors.As(err, &blocked) || blocked.Question.Kind != "recovery" || !strings.Contains(blocked.Question.Message, "已尝试") {
 		t.Fatalf("missing intelligible recovery request: %v", err)
 	}

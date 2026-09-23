@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -340,7 +341,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 			result, runErr := g.processor.Handle(ctx, request)
 			runErr = errors.Join(runErr, acceptanceErr)
 			output := recoveredResult(result, runErr)
-			var blocked *turn.RecoveryBlocked
+			var blocked *agentexec.RecoveryBlocked
 			output.Recover = errors.As(runErr, &blocked) || errors.Is(runErr, harness.ErrStopUnconfirmed) ||
 				admitted != "" && result.Attempt != admitted
 			// A completed observation can carry an execution error. Persist

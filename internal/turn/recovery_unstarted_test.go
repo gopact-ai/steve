@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -44,7 +45,7 @@ func TestRetainedChatDeliversTheFailureOfAnAttemptThatNeverOpenedASession(t *tes
 		t.Fatalf("fixture = %+v; want a settled failure without a session", failed)
 	}
 	result, err := coordinator.ResumeRetainedChat(t.Context(), record.ID, Request{ConversationID: "chat", MessageID: "om_1", SenderOpenID: "owner"})
-	var blocked *RecoveryBlocked
+	var blocked *agentexec.RecoveryBlocked
 	if errors.As(err, &blocked) || err == nil || err.Error() != cause || result.Attempt != record.ID {
 		t.Fatalf("recovery = %+v, %v; want the recorded failure delivered", result, err)
 	}

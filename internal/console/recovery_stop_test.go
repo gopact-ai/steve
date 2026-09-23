@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -57,7 +58,7 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 				t.Fatal(err)
 			}
 			driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
-				return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "Open was not acknowledged. Check the original machine.", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}}
+				return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "Open was not acknowledged. Check the original machine.", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}}
 			}}}
 			if uncertain {
 				driver.stopErr = harness.ErrStopUnconfirmed
@@ -377,7 +378,7 @@ func TestRecoveryStopIntentIsDurableBeforeStoppingExecutions(t *testing.T) {
 	}
 	var snapshot *memDoc
 	driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
-		return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "open not acknowledged", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}}
+		return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "open not acknowledged", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}}
 	}}, stopErr: harness.ErrStopUnconfirmed, stopHook: func() {
 		raw, ok, err := doc.Load()
 		if err != nil || !ok {
@@ -473,7 +474,7 @@ func TestSameStopCommandRechecksOriginalTaskAfterNodeReturns(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
-		return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "node is offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+		return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "node is offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
 	}}, stopErr: harness.ErrStopUnconfirmed}
 	if err := s.RecoverChats(lifetime, driver); err != nil {
 		t.Fatal(err)
@@ -519,7 +520,7 @@ func TestRecoveryStopRetryKeepsItsTargetAcrossRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
-				return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "node is offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+				return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "node is offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
 			}}, stopErr: errors.New("attempt attempt-1 writer is quarantined until physically confirmed stopped")}
 			if err := s.RecoverChats(lifetime, driver); err != nil {
 				t.Fatal(err)
@@ -577,7 +578,7 @@ func TestConcurrentRetrySharesOriginalStopCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
-		return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Message: "offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+		return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Message: "offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
 	}}, stopErr: harness.ErrStopUnconfirmed}
 	if err := s.RecoverChats(lifetime, driver); err != nil {
 		t.Fatal(err)
@@ -624,7 +625,7 @@ func TestSameStopRetryRecoversAfterOriginalTaskLookupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := &lookupFailureStopDriver{stoppingRecoveryDriver: &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
-		return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+		return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
 	}}}}
 	if err := s.RecoverChats(lifetime, driver); err != nil {
 		t.Fatal(err)

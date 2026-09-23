@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
@@ -71,7 +72,7 @@ func TestRestartConsumesOnlyExactPersistedRelocationApproval(t *testing.T) {
 				question.Choices[0].Value = "confirm-stopped-and-retry:" + question.RequestID
 			}
 			driver := &approvedPlanDriver{plan: turn.RelocationPlan{ID: question.RequestID, Question: question}, recoveryDriver: recoveryDriver{candidates: []turn.RetainedChat{{AttemptID: "attempt-1", TaskID: "task-1", Conversation: "console:main", MessageID: "web-e1", AgentID: "worker", ProjectID: "p"}}, resume: func(context.Context, string, turn.Request) (turn.Result, error) {
-				return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Message: "source unavailable"}}
+				return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Message: "source unavailable"}}
 			}}}
 			if err := restarted.RecoverChats(lifetime, driver); err != nil {
 				t.Fatal(err)

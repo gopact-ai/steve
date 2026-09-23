@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -90,7 +91,7 @@ func TestLostFreshNodeOpenKeepsOriginalTaskUnsettledWhileObserverCanExit(t *test
 	inspector := &inspectingOpenManager{uncertainOpenManager: manager}
 	c.runtime = inspector
 	_, err = c.ResumeRetainedChat(lifetime, record.ID, req)
-	var question *RecoveryBlocked
+	var question *agentexec.RecoveryBlocked
 	if !errors.As(err, &question) || !strings.Contains(question.Question.Message, "已找到原会话") || !strings.Contains(question.Question.Message, "停止") || inspector.inspections != 1 || manager.calls != 1 {
 		t.Fatalf("found preparation did not ask for safe cancellation without re-opening: inspections=%d opens=%d err=%v", inspector.inspections, manager.calls, err)
 	}

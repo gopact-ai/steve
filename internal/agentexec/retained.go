@@ -21,6 +21,8 @@ import (
 
 // RecoveryBlocked leaves the original attempt and input in place. Its question
 // is a platform diagnostic, never an answer to a native permission request.
+// The execution layer names the attempt and task it could not settle; a
+// question raised above it, for a whole exchange, names neither.
 type RecoveryBlocked struct {
 	AttemptID, TaskID string
 	Question          view.Question

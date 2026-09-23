@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -527,7 +528,7 @@ func (r *exchangeRecovery) approvePlan(plan turn.RelocationPlan, signature strin
 // retry it waits and observes again; otherwise it asks, and the answer
 // decides whether the next pass asks once more. It reports whether
 // another pass should follow.
-func (r *exchangeRecovery) consult(blocked *turn.RecoveryBlocked, identity *questionIdentity) bool {
+func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity *questionIdentity) bool {
 	if err := r.s.markExchange(r.e, consoleapi.ExchangeAwaitingUser); err != nil {
 		if r.ctx.Err() != nil {
 			err = r.ctx.Err()
@@ -751,8 +752,8 @@ func settles(result turn.Result, err error) bool {
 
 // blockedBy is the block to put to the owner: the recovery's own, or when
 // the execution could not even be found, a generic one over both errors.
-func blockedBy(err, lookupErr error) *turn.RecoveryBlocked {
-	var blocked *turn.RecoveryBlocked
+func blockedBy(err, lookupErr error) *agentexec.RecoveryBlocked {
+	var blocked *agentexec.RecoveryBlocked
 	if errors.As(err, &blocked) {
 		return blocked
 	}
@@ -761,12 +762,12 @@ func blockedBy(err, lookupErr error) *turn.RecoveryBlocked {
 
 // blockedRecovery is a block whose question offers the owner a retry, by
 // the given label, or to wait.
-func blockedRecovery(cause error, title, message, retryLabel string) *turn.RecoveryBlocked {
-	return &turn.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: retryLabel}, {Value: "wait", Label: "暂时等待", Detail: "保留任务和进度。Steve 会继续自己重连，原节点回来后自动接着跑。"}}}}
+func blockedRecovery(cause error, title, message, retryLabel string) *agentexec.RecoveryBlocked {
+	return &agentexec.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: retryLabel}, {Value: "wait", Label: "暂时等待", Detail: "保留任务和进度。Steve 会继续自己重连，原节点回来后自动接着跑。"}}}}
 }
 
 func isRecoveryBlocked(err error) bool {
-	var blocked *turn.RecoveryBlocked
+	var blocked *agentexec.RecoveryBlocked
 	return errors.As(err, &blocked)
 }
 

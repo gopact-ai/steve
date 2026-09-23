@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/turn"
 )
 
 type inputEnricher interface {
@@ -117,7 +117,7 @@ func (g *Gateway) dispatchInput(ctx context.Context, book *ledger.Ledger, key st
 		result, runErr := g.processor.Handle(ctx, request)
 		runErr = errors.Join(runErr, receiptErr)
 		output := recoveredResult(result, runErr)
-		var blocked *turn.RecoveryBlocked
+		var blocked *agentexec.RecoveryBlocked
 		output.Recover = receiptErr != nil || result.Attempt != admitted ||
 			admitted != "" && (errors.As(runErr, &blocked) || errors.Is(runErr, harness.ErrStopUnconfirmed))
 		return json.Marshal(output)
