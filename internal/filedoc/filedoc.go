@@ -1,6 +1,6 @@
 // Package filedoc keeps a small document in one local file, replaced
-// durably. It depends only on the standard library, so a node can keep its
-// own state files without linking the hub ledger.
+// durably. It depends only on the standard library and internal/fsx, so a node
+// can keep its own state files without linking the hub ledger.
 package filedoc
 
 import (
