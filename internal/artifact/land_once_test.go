@@ -151,8 +151,12 @@ func TestApplyingRecoveryUsesHistoricalTargetButNeverAMovedDirectory(t *testing.
 			if err := store.projects.Declare(t.Context(), []project.Project{other}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.recoverLanding(context.Background(), land); err == nil {
-				t.Fatal("recovery followed reassigned project metadata")
+			recovered, err := store.recoverLanding(context.Background(), land)
+			if err != nil || recovered.State != LandApplyConflicted {
+				t.Fatalf("recovery followed reassigned project metadata: %+v err=%v", recovered, err)
+			}
+			if read(t, other.Home.Path, "b") != "<missing>" || read(t, canonical, "b") != "b0" {
+				t.Fatal("recovery wrote into either directory")
 			}
 		} else {
 			if err := store.projects.Reconcile(t.Context(), nil, "test"); err != nil {

@@ -4,7 +4,7 @@ export function workState(state) {
     if (state.task_coverage?.has_more_closed || state.plan_coverage?.has_more) throw new Error("A partial owner fixture must supply its real totals, not use workState");
     const tasks = (state.tasks || []).map((task) => ({
         children_count: (state.tasks || []).filter((child) => child.parent === task.id).length,
-        children_complete: true, attempt_count: (task.attempt_rows || []).length, ...task,
+        children_complete: true, attempt_count: 0, ...task,
     }));
     const counts = (items) => {
         const roots = items.filter((task) => !task.parent);
@@ -22,8 +22,7 @@ export function workState(state) {
 export function workDetail(task, tasks = [task], plans = []) {
     const state = workState({ tasks, plans });
     const children = state.tasks.filter((child) => child.parent === task.id);
-    const items = [...(task.attempt_rows || [])].map((row, index) => ({ index, ...row })).reverse();
-    return { task: state.tasks.find((item) => item.id === task.id), plan: plans.find((plan) => plan.task_id === task.id), children: { items: children, total: children.length }, accounting: { items, total: items.length } };
+    return { task: state.tasks.find((item) => item.id === task.id), plan: plans.find((plan) => plan.task_id === task.id), children: { items: children, total: children.length }, accounting: { items: [], total: 0 } };
 }
 export function nativeHistory(items) {
     return { items: items.map((item) => ({ task_id: "fixture-task", files_known: true, ...item })).sort((a,b) => {

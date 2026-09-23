@@ -4,7 +4,12 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/logs"
 
@@ -115,9 +120,27 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 
 // Run waits for the application lifetime and joins shutdown before returning.
 func (a *App) Run(ctx context.Context) (runErr error) {
-	stop := context.AfterFunc(ctx, a.stop)
+	var stopping time.Time
+	var stopMu sync.Mutex
+	stop := context.AfterFunc(ctx, func() {
+		stopMu.Lock()
+		stopping = time.Now()
+		stopMu.Unlock()
+		a.stop()
+	})
 	defer stop()
-	defer func() { a.life.err = runErr; runErr = a.Close() }()
+	defer func() {
+		stopMu.Lock()
+		since := stopping
+		stopMu.Unlock()
+		if !since.IsZero() {
+			slog.Info("app: application run returned after stop", "took", time.Since(since).Round(time.Millisecond))
+		}
+		a.life.err = runErr
+		started := time.Now()
+		runErr = a.Close()
+		slog.Info("app: application closed", "took", time.Since(started).Round(time.Millisecond))
+	}()
 	return a.run()
 }
 
@@ -134,12 +157,30 @@ type lifetime interface {
 type applicationLifetime struct {
 	afterClose []func() error
 	once       sync.Once
-	cleanup    []func()
+	cleanup    []shutdownStep
 	err        error
 	services   *adminsvc.Services
+	// slowStep is how long one shutdown step may take before it is
+	// reported; zero means defaultSlowStep.
+	slowStep time.Duration
 }
 
-func (l *applicationLifetime) Defer(close func())                      { l.cleanup = append(l.cleanup, close) }
+const defaultSlowStep = time.Second
+
+// shutdownStep is one cleanup together with where it was registered, which
+// names the component when the step is slow.
+type shutdownStep struct {
+	at  string
+	run func()
+}
+
+func (l *applicationLifetime) Defer(close func()) {
+	at := "unknown"
+	if _, file, line, ok := runtime.Caller(1); ok {
+		at = fmt.Sprintf("%s:%d", filepath.Base(file), line)
+	}
+	l.cleanup = append(l.cleanup, shutdownStep{at: at, run: close})
+}
 func (l *applicationLifetime) RunError() *error                        { return &l.err }
 func (l *applicationLifetime) SetServices(services *adminsvc.Services) { l.services = services }
 func (l *applicationLifetime) AfterClose(f func() error)               { l.afterClose = append(l.afterClose, f) }
@@ -151,8 +192,18 @@ func (l *applicationLifetime) Close() error {
 				l.err = errors.Join(l.err, close())
 			}
 		}()
-		for _, cleanup := range l.cleanup {
-			defer cleanup()
+		slow := l.slowStep
+		if slow <= 0 {
+			slow = defaultSlowStep
+		}
+		for _, step := range l.cleanup {
+			defer func() {
+				started := time.Now()
+				step.run()
+				if took := time.Since(started); took >= slow {
+					slog.Warn("app: shutdown step is slow", "step", step.at, "took", took.Round(time.Millisecond))
+				}
+			}()
 		}
 	})
 	return l.err

@@ -107,13 +107,13 @@ assert.equal(applyLive(running, { kind: "console.reply", at: "", exchange_id: "c
 console.log("PASS browser-independent formatting and live projection");
 
 const stored = new Map();
-globalThis.localStorage = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+globalThis.localStorage = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, String(value)), removeItem: (key) => stored.delete(key), key: (index) => [...stored.keys()][index] ?? null, get length() { return stored.size; } };
 globalThis.navigator.locks ||= { request: async (_key, work) => work() };
 const submissions = await import("../../web/console/src/lib/drafts.ts");
 await submissions.updateDraft("test:a", "Original");
 const first = await submissions.beginSubmission("test:a", "Original", []);
 assert.ok(first.id);
-assert.equal(JSON.parse(stored.get("steve.console.drafts")).drafts["test:a"], undefined, "Persisting pending and consuming the draft must be atomic");
+assert.equal(stored.get("steve.console.draft.text:test:a"), undefined, "Persisting pending and consuming the draft must be atomic");
 await submissions.updateDraft("test:a", "Newer draft");
 await submissions.failSubmission("test:a", first.id, "Connection reset", "unknown");
 await submissions.retrySubmission("test:a");
@@ -127,7 +127,7 @@ const second = await submissions.beginSubmission("test:a", "Newer draft", []);
 assert.equal(await submissions.failSubmission("test:a", first.id, "Late reset", "unknown"), false, "An old acknowledgement cannot change a newer operation");
 await submissions.updateDraft("test:a", "More typing");
 await submissions.failSubmission("test:a", second.id, "Bad input", "rejected");
-assert.equal(JSON.parse(stored.get("steve.console.drafts")).drafts["test:a"], "Newer draft\nMore typing");
+assert.equal(stored.get("steve.console.draft.text:test:a"), "Newer draft\nMore typing");
 await submissions.updateDraft("test:a", "Conflict");
 const conflict = await submissions.beginSubmission("test:a", "Conflict", []);
 await submissions.failSubmission("test:a", conflict.id, "Conflict", "conflict");
@@ -269,9 +269,9 @@ if (process.env.PURE_ONLY !== "1") {
             await retry.click();
             await f.page.getByText("无法确认协调节点是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
             await retry.waitFor();
-            const retained = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
-            assert.equal(retained.submissions[A].id, id, "A failed retry preflight must retain the original possibly accepted key");
-            assert.equal(retained.drafts[A], "Newer unsent work");
+            const retained = await f.page.evaluate((id) => ({ submission: JSON.parse(localStorage.getItem("steve.console.draft.submission:" + id)), draft: localStorage.getItem("steve.console.draft.text:" + id) }), A);
+            assert.equal(retained.submission.id, id, "A failed retry preflight must retain the original possibly accepted key");
+            assert.equal(retained.draft, "Newer unsent work");
             assert.equal(f.posts.length, 1, "A failed preflight sends no retry POST");
             f.queueReadError = 0;
             await f.page.getByRole("button", { name: "重新检查", exact: true }).click();
@@ -279,8 +279,8 @@ if (process.env.PURE_ONLY !== "1") {
             f.reject = 401; await retry.click();
             await eventually(() => f.posts.length === 2, "The server can reject authentication on a retry");
             await retry.waitFor();
-            const rejectedRetry = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
-            assert.equal(rejectedRetry.submissions[A].id, id, "A retry rejection cannot prove the original operation was never accepted");
+            const rejectedRetry = await f.page.evaluate((id) => JSON.parse(localStorage.getItem("steve.console.draft.submission:" + id)), A);
+            assert.equal(rejectedRetry.id, id, "A retry rejection cannot prove the original operation was never accepted");
             assert.equal(await draftOf(box), "Newer unsent work");
             f.reject = 0; await retry.click();
             await eventually(() => f.posts.length === 3, "A later retry still uses the original operation");
@@ -374,8 +374,8 @@ if (process.env.PURE_ONLY !== "1") {
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
             await box.fill("Newer draft"); await box.press("Enter");
             assert.equal(f.posts.length, 1, "Uncertain receipt must block a fresh submission");
-            const persisted = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
-            assert.equal(persisted.submissions[A].id, f.posts[0].command_id, "The operation identity is durable before sending");
+            const persisted = await f.page.evaluate((id) => JSON.parse(localStorage.getItem("steve.console.draft.submission:" + id)), A);
+            assert.equal(persisted.id, f.posts[0].command_id, "The operation identity is durable before sending");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).click();
             await eventually(() => f.posts.length === 2, "Explicit retry sends the original operation");
             assert.equal(f.posts[1].command_id, f.posts[0].command_id);
@@ -410,7 +410,7 @@ if (process.env.PURE_ONLY !== "1") {
             await box.fill("Accepted before reload"); await box.press("Enter");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
             await box.fill("Draft survives reconciliation");
-            const pending = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]);
+            const pending = await f.page.evaluate((id) => JSON.parse(localStorage.getItem("steve.console.draft.submission:" + id)), A);
             assert.equal(pending.locale, "zh", "Submission captures the selected locale before HTTP");
             assert.equal(f.queue[0].locale, pending.locale, "The durable queue receipt preserves locale for reload reconciliation");
             assert.deepEqual(f.queue[0].refs, pending.refs || [], "The durable queue receipt preserves material reference identity");
@@ -425,7 +425,7 @@ if (process.env.PURE_ONLY !== "1") {
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.reject = 400;
             await box.fill("Rejected work"); await box.press("Enter");
-            await eventually(async () => f.posts.length === 1 && await draftOf(box) === "Rejected work" && await f.page.evaluate(() => !JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]), "Explicit rejection restores the draft after the response is persisted");
+            await eventually(async () => f.posts.length === 1 && await draftOf(box) === "Rejected work" && !await f.page.evaluate((id) => JSON.parse(localStorage.getItem("steve.console.draft.submission:" + id)), A), "Explicit rejection restores the draft after the response is persisted");
             f.reject = 409; await box.press("Enter");
             await f.page.getByText("这次发送的标识与服务器记录冲突，请核对会话记录，不要直接重新发送。", { exact: true }).waitFor();
             assert.equal(await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count(), 0);

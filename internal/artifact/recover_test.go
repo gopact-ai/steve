@@ -16,6 +16,13 @@ import (
 // its WAL started for every path, some paths already written, one not.
 func crashMidApply(t *testing.T, store *Store, p project.Project, canonical string) (Landing, string) {
 	t.Helper()
+	return crashMidApplyAs(t, store, p, canonical, func(*Landing) {})
+}
+
+// crashMidApplyAs is crashMidApply with the landing record adjusted before
+// it is written.
+func crashMidApplyAs(t *testing.T, store *Store, p project.Project, canonical string, adjust func(*Landing)) (Landing, string) {
+	t.Helper()
 	ctx := context.Background()
 	write(t, canonical, "a", "a0")
 	write(t, canonical, "b", "b0")
@@ -34,6 +41,7 @@ func crashMidApply(t *testing.T, store *Store, p project.Project, canonical stri
 	}
 	land := Landing{Target: p.Home, ID: "land-crash", Project: "p", Artifact: result.ID, Base: base, Now: now.ID, Merged: merged, By: "test",
 		State: LandApplying, Paths: []string{"a", "b", "c"}, Round: 1}
+	adjust(&land)
 	if _, err := store.ledger.Begin(ctx, land.ID, landKind, LandApplying, "test", land); err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +122,11 @@ func TestRecoveryStopsAtAPathSomeoneElseChanged(t *testing.T) {
 	if len(recovered) != 1 || recovered[0].State != LandApplyConflicted || fmt.Sprint(recovered[0].Paths) != "[c]" {
 		t.Fatalf("recovered = %+v", recovered)
 	}
-	// b was still at the old content and got its merged version; c was
-	// left alone; the canonical name did not move.
-	if read(t, canonical, "b") != "b1" || read(t, canonical, "c") != "c-by-hand" {
-		t.Fatalf("b=%q c=%q", read(t, canonical, "b"), read(t, canonical, "c"))
+	// A conflict ends the recovery before it writes anything more: a keeps
+	// what the interrupted apply wrote, b stays at its old content, c is
+	// left alone, and the canonical name does not move.
+	if read(t, canonical, "a") != "a1" || read(t, canonical, "b") != "b0" || read(t, canonical, "c") != "c-by-hand" {
+		t.Fatalf("a=%q b=%q c=%q", read(t, canonical, "a"), read(t, canonical, "b"), read(t, canonical, "c"))
 	}
 	ref, _, _ := store.Resolve(ctx, CanonicalRef("p"))
 	if ref.Artifact == merged {

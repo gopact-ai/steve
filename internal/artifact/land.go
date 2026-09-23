@@ -22,13 +22,17 @@ import (
 //
 //	proposed → locked → merged → applying → committed
 //	locked   → merge-conflicted     (both sides changed the same paths)
+//	locked   → apply-conflicted     (paths fall inside a nested repository)
 //	applying → apply-conflicted     (a path changed under the WAL)
 //	merged   → commit-conflicted    (the canonical name moved)
 //
-// The canonical lock is held from locked to the end. Every path written is
-// journaled as an effect — started before, confirmed after — under the WAL
-// round, so a landing cut off mid-apply is recovered per path rather than
-// guessed at.
+// A landing's record is opened once the canonical lock is held: a lock
+// someone else holds is contention, returned as ledger.ErrHeld, and leaves
+// no record behind. The lock is held from locked to the end. Before
+// applying, the merged snapshot is put where the canonical workspace
+// lives, which is where recovery reads it. Every path written is journaled
+// as an effect — started before, confirmed after — under the WAL round, so
+// a landing cut off mid-apply is recovered per path rather than guessed at.
 // Source keeps an execution's original permission with its result.
 type Source struct {
 	Execution *task.ExecutionToken `json:"execution"`
@@ -76,6 +80,9 @@ type Landing struct {
 	StartedAt   time.Time     `json:"started_at"`
 	EndedAt     time.Time     `json:"ended_at,omitempty"`
 	Recoverable bool          `json:"recoverable,omitempty"`
+	// Borrowed says Lease is the caller's, lent for this landing: a parent
+	// turn's lock, which outlives the landing and is never released by it.
+	Borrowed bool `json:"borrowed,omitempty"`
 	// Unapplied is durably recorded only when closing a preapply state.
 	Unapplied bool `json:"unapplied,omitempty"`
 }
@@ -95,15 +102,25 @@ const (
 
 // Conflict is a landing that stopped at a conflict, with the paths and,
 // for a merge conflict git could keep a tree for, the marked snapshot.
+// Reason says in words why an apply conflict stopped.
 type Conflict struct {
 	State  string
 	Paths  []string
 	Marked string
+	Reason string
 }
 
 func (c Conflict) Error() string {
+	if c.Reason != "" {
+		return fmt.Sprintf("landing %s: %s: %s", c.State, c.Reason, strings.Join(c.Paths, ", "))
+	}
 	return fmt.Sprintf("landing %s: %s", c.State, strings.Join(c.Paths, ", "))
 }
+
+// ErrRecoveryPending refuses a new landing while an earlier one on the
+// same project is still waiting to be recovered: the canonical workspace
+// is half written, and a snapshot of it is nothing to merge onto.
+var ErrRecoveryPending = errors.New("an interrupted landing on this project is waiting to be recovered")
 
 // Land merges an artifact into the project's canonical workspace. The
 // caller must not hold the canonical lock: the landing takes it, and
@@ -148,15 +165,27 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		return land, err
 	}
 	defer unlock()
+	if err := s.checkNoRecoveryPending(ctx, p, land.ID); err != nil {
+		return land, err
+	}
+	if resume == nil {
+		if _, err := s.ledger.Begin(ctx, land.ID, landKind, LandProposed, by, land); err != nil {
+			return land, err
+		}
+	}
 	if err := s.move(ctx, &land, LandProposed, LandLocked, nil); err != nil {
 		return land, err
 	}
-	repo, err := s.mergeLanding(ctx, p, &land)
-	if err != nil {
+	// A conflict is kept on the queue, merge or apply alike: retrying it
+	// against the same canonical would only reach it again.
+	defer func() {
 		var conflict Conflict
-		if errors.As(err, &conflict) && conflict.State == LandMergeConflicted && !land.Recoverable {
+		if errors.As(err, &conflict) && conflict.State != LandCommitConflict && !land.Recoverable {
 			s.queueConflicted(ctx, p, land, conflict, by, source)
 		}
+	}()
+	repo, err := s.mergeLanding(ctx, p, &land)
+	if err != nil {
 		return land, err
 	}
 	if err := s.move(ctx, &land, LandLocked, LandMerged, nil); err != nil {
@@ -169,6 +198,9 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		}
 		return land, nil
 	}
+	if err := s.stageMerged(ctx, p, &land, repo); err != nil {
+		return land, err
+	}
 	land.Round++
 	if err := s.move(ctx, &land, LandMerged, LandApplying, nil); err != nil {
 		return land, err
@@ -180,6 +212,10 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	ctx = applyCtx
 	if err := s.applyLanding(ctx, p, &land, repo); err != nil {
 		return land, err
+	}
+	if land.State == LandCommitted {
+		// The apply failed part-way and recovering it finished the landing.
+		return land, nil
 	}
 	if err := s.commitLanding(ctx, p, &land); err != nil {
 		return land, err
@@ -235,9 +271,10 @@ func (s *Store) admitLandingSource(ctx context.Context, artifactID string, sourc
 }
 
 // proposeLanding resolves the artifact and the canonical snapshot it
-// descends from, which is the merge base, and opens the landing's record —
-// unless recovery is resuming a landing that already has one, in which
-// case the record keeps its identity and start.
+// descends from, which is the merge base. A durable caller's landing opens
+// its record here, under the identity it keeps across retries; recovery
+// resuming one keeps its record, identity and start. Any other landing's
+// record is opened by land once the canonical lock is held.
 func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactID, by, borrowedHolder string, source *Source, resume *Landing) (Landing, error) {
 	m, ok, err := s.Manifest(ctx, artifactID)
 	if err != nil {
@@ -260,7 +297,7 @@ func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactI
 			land.StartedAt = resume.StartedAt
 		}
 	}
-	if resume == nil || resume.State == "" {
+	if resume != nil && resume.State == "" {
 		if _, err := s.ledger.Begin(ctx, land.ID, landKind, LandProposed, by, land); err != nil {
 			return Landing{}, err
 		}
@@ -268,15 +305,36 @@ func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactI
 	return land, nil
 }
 
-// queueConflicted keeps a result that could not be merged, along with what
-// resolving it needs. A conflict used to end the landing and, for a result
+// checkNoRecoveryPending refuses to land onto a canonical workspace that
+// an earlier, interrupted landing has half written and not yet recovered.
+// It is asked under the canonical lock, which a recovery in progress holds.
+func (s *Store) checkNoRecoveryPending(ctx context.Context, p project.Project, self string) error {
+	pending, err := s.ledger.Operations(ctx, landKind, LandRecoveryPending)
+	if err != nil {
+		return err
+	}
+	for _, op := range pending {
+		var other Landing
+		if err := json.Unmarshal(op.Data, &other); err != nil || other.Project != p.ID || op.ID == self {
+			continue
+		}
+		return fmt.Errorf("%w: landing %s into %s", ErrRecoveryPending, op.ID, p.ID)
+	}
+	return nil
+}
+
+// queueConflicted keeps a result that could not be merged or applied,
+// along with what resolving it needs. A conflict used to end the landing and, for a result
 // that was landing directly rather than from the queue, end the result:
 // nothing held it, so nothing ever retried or resolved it. Now both paths
 // leave the same record, and the queue is what carries it forward.
 func (s *Store) queueConflicted(ctx context.Context, p project.Project, land Landing, conflict Conflict, by string, source *Source) {
+	// Recorded on the way out of the landing, after its own contexts may
+	// have ended; the canonical it is blocked on must still be read.
+	ctx = context.WithoutCancel(ctx)
 	id := p.ID + "/" + land.Artifact
-	blocked := &Blocked{Landing: land.ID, Canonical: s.CanonicalOf(ctx, p.ID), Marked: conflict.Marked, Paths: conflict.Paths, At: s.now().UTC()}
-	err := s.ledger.Update(context.WithoutCancel(ctx), func(tx *ledger.Tx) error {
+	blocked := &Blocked{Landing: land.ID, State: conflict.State, Canonical: s.CanonicalOf(ctx, p.ID), Marked: conflict.Marked, Paths: conflict.Paths, Reason: conflict.Reason, At: s.now().UTC()}
+	err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
 		raw, err := tx.Bindings(pendingKind)
 		if err != nil {
 			return err
@@ -301,18 +359,16 @@ func (s *Store) queueConflicted(ctx context.Context, p project.Project, land Lan
 // lockCanonical takes the project's canonical lock for the landing, or
 // adopts the one the caller lends, which is released by nobody here. A
 // lock of the landing's own is renewed by the landing driver when there is
-// one, and the returned unlock stops that and gives the lock back.
+// one, and the returned unlock stops that and gives the lock back. A lock
+// someone else holds comes back as it is: contention, not a conflict.
 func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Landing, held *ledger.Lease) (unlock func(), err error) {
 	if held != nil {
 		lease := *held
-		land.Lease = &lease
+		land.Lease, land.Borrowed = &lease, true
 		return func() {}, nil
 	}
 	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
 	if err != nil {
-		if !land.Recoverable {
-			s.failed(ctx, land, LandProposed, LandMergeConflicted, err.Error(), nil)
-		}
 		return nil, err
 	}
 	land.Lease = &lease
@@ -326,10 +382,12 @@ func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Land
 // mergeLanding, under the lock, snapshots what the canonical workspace
 // holds right now and three-way merges the artifact onto it from their
 // common base, recording the merged snapshot and the paths it changes.
-// Paths both sides changed end the landing as merge-conflicted. The
-// project's repository comes back for applying.
+// Paths both sides changed end the landing as merge-conflicted; paths
+// inside a nested repository the snapshot left out end it apply-conflicted
+// before anything is written. The project's repository comes back for
+// applying.
 func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landing) (*Repo, error) {
-	now, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(land.Artifact))
+	now, _, nested, err := s.snapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(land.Artifact))
 	if err != nil {
 		if !land.Recoverable {
 			s.failed(ctx, land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
@@ -379,14 +437,54 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 	if err != nil {
 		return nil, err
 	}
+	if inside, repos := pathsInsideNested(paths, nested); len(inside) > 0 {
+		reason := nestedReason(repos)
+		land.Unapplied = true
+		s.failed(ctx, land, LandLocked, LandApplyConflicted, reason, inside)
+		return nil, Conflict{State: LandApplyConflicted, Paths: inside, Reason: reason}
+	}
 	land.Paths = paths
 	return repo, nil
 }
 
+// pathsInsideNested picks the paths that fall inside one of the nested
+// repositories, and which repositories they fall in. Both lists are
+// slash-separated and relative to the canonical workspace. Case is
+// ignored: on a case-insensitive file system, as macOS has by default,
+// Inner/x is written into inner/. The home's file system is not asked, so
+// on a case-sensitive one a path differing from a nested repository only
+// in case is refused too; refusing is the side that loses no data.
+func pathsInsideNested(paths, nested []string) (inside, repos []string) {
+	hit := map[string]bool{}
+	for _, path := range paths {
+		for _, dir := range nested {
+			if strings.EqualFold(path, dir) || len(path) > len(dir) && path[len(dir)] == '/' && strings.EqualFold(path[:len(dir)], dir) {
+				inside = append(inside, path)
+				if !hit[dir] {
+					hit[dir] = true
+					repos = append(repos, dir)
+				}
+				break
+			}
+		}
+	}
+	return inside, repos
+}
+
+// nestedReason says why a landing into nested repositories is refused, in
+// terms of what a person can do about it.
+func nestedReason(repos []string) string {
+	noun := "a nested git repository"
+	if len(repos) > 1 {
+		noun = "nested git repositories"
+	}
+	return fmt.Sprintf("the result writes inside %s (%s) of the project directory; snapshots leave nested repositories out, so these files cannot be merged with what is on disk. Make the directory an ordinary one (without its own .git) or move it out of the project, then land again", noun, strings.Join(repos, ", "))
+}
+
 // applyLanding writes the merged tree into the canonical workspace, every
 // path journaled before and confirmed after, so a landing cut off here is
-// recovered per path. A write that fails is an apply conflict — unless
-// recovery is the one applying, which records its own outcome.
+// recovered per path. A write that fails may have written some paths
+// first, so it is recovered the same way, at once, durable or not.
 func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landing, repo *Repo) error {
 	journal := s.ledger.Journal()
 	for _, path := range land.Paths {
@@ -398,19 +496,47 @@ func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landi
 	if p.Home.Node == "" {
 		_, err = repo.Apply(ctx, land.Now, land.Merged, p.Home.Path)
 	} else {
-		err = s.applyOnNode(ctx, p, land.Now, land.Merged, repo)
+		err = s.applyOnNode(ctx, p, land.Now, land.Merged)
 	}
 	if err != nil {
-		if land.Recoverable {
-			return err
-		}
-		s.failed(ctx, land, LandApplying, LandApplyConflicted, err.Error(), land.Paths)
-		return Conflict{State: LandApplyConflicted, Paths: land.Paths}
+		return s.recoverFailedApply(ctx, p, land, err)
 	}
 	for _, path := range land.Paths {
 		if _, err := journal.Confirmed(landPathEffect(*land, path), nil); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// recoverFailedApply settles a landing whose apply failed. Whether the
+// apply wrote nothing — the working tree refused it — or stopped part-way,
+// only the workspace can say, so the landing is recovered path by path
+// under the lock it already holds: a path someone else changed ends it
+// apply-conflicted on that path with nothing further written, and one the
+// failed apply simply did not reach is written now. What cannot be
+// inspected yet — the home node is gone — is left recovery-pending, which
+// keeps new landings off the half-written workspace until the periodic
+// retry finishes it.
+func (s *Store) recoverFailedApply(ctx context.Context, p project.Project, land *Landing, applyErr error) error {
+	slog.Warn(fmt.Sprintf("artifact: landing %s into %s: apply failed, recovering it path by path: %v", land.ID, land.Project, applyErr),
+		"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "error", applyErr.Error())
+	if err := s.move(context.WithoutCancel(ctx), land, LandApplying, LandRecoveryPending, map[string]any{"apply_error": applyErr.Error()}); err != nil {
+		return fmt.Errorf("apply: %w; recording it for recovery: %v", applyErr, err)
+	}
+	recovered, err := s.finishRecovery(ctx, p, *land, *land.Lease)
+	if recovered.ID != "" {
+		*land = recovered
+	}
+	if err != nil || land.State == LandRecoveryPending {
+		if err == nil {
+			// finishRecovery logged why its outcome was not recorded.
+			err = errors.New("its outcome could not be recorded")
+		}
+		return fmt.Errorf("%w: landing %s: apply failed (%v) and recovering it failed: %v", ErrRecoveryPending, land.ID, applyErr, err)
+	}
+	if land.State != LandCommitted {
+		return Conflict{State: land.State, Paths: land.Paths, Reason: strings.TrimPrefix(land.Error, "recovery: ")}
 	}
 	return nil
 }
@@ -485,31 +611,59 @@ func (s *Store) changedOnNode(ctx context.Context, p project.Project, from, to s
 	return result.Paths, err
 }
 
-// applyOnNode writes the merged tree into a canonical workspace that lives
-// on a node: the merged commit is pushed and applied there with the same
-// two-tree merge the hub uses.
-func (s *Store) applyOnNode(ctx context.Context, p project.Project, from, merged string, hub *Repo) error {
+// stageMerged puts the merged snapshot where the canonical workspace
+// lives before the landing starts applying: applying reads it there, and
+// so does recovery of a landing cut off while applying. A hub workspace
+// reads the hub's repository, where the merge was made; a sealed project
+// was merged at its home.
+func (s *Store) stageMerged(ctx context.Context, p project.Project, land *Landing, hub *Repo) error {
+	if p.Home.Node == "" || metadataOnly(p) {
+		return nil
+	}
 	_, _, state, err := s.nodes.Git(ctx, p.Home.Node)
 	if err != nil {
 		return err
 	}
 	bare := nodeBare(state, p.ID)
-	if !metadataOnly(p) && !s.nodeHas(ctx, p.Home.Node, bare, merged) {
-		if err := s.push(ctx, p.Home.Node, bare, hub, merged, []string{from}); err != nil {
-			return err
-		}
+	if s.nodeHas(ctx, p.Home.Node, bare, land.Merged) {
+		return nil
 	}
-	_, err = s.nodes.Artifact(ctx, p.Home.Node, ops.Request{Op: ops.Apply, Repo: bare, From: from, Commit: merged, WorkTree: p.Home.Path})
+	if err := s.push(ctx, p.Home.Node, bare, hub, land.Merged, []string{land.Now}); err != nil {
+		return fmt.Errorf("stage merged snapshot %s on %s: %w", short(land.Merged), p.Home.Node, err)
+	}
+	if !s.nodeHas(ctx, p.Home.Node, bare, land.Merged) {
+		return fmt.Errorf("merged snapshot %s did not arrive at %s", short(land.Merged), p.Home.Node)
+	}
+	return nil
+}
+
+// applyOnNode writes the merged tree into a canonical workspace that lives
+// on a node, where stageMerged put it, with the same two-tree merge the
+// hub uses.
+func (s *Store) applyOnNode(ctx context.Context, p project.Project, from, merged string) error {
+	_, _, state, err := s.nodes.Git(ctx, p.Home.Node)
+	if err != nil {
+		return err
+	}
+	_, err = s.nodes.Artifact(ctx, p.Home.Node, ops.Request{Op: ops.Apply, Repo: nodeBare(state, p.ID), From: from, Commit: merged, WorkTree: p.Home.Path})
 	return err
 }
 
-func (s *Store) move(ctx context.Context, land *Landing, from, to string, effects any) error {
+// move records the landing's transition from one state to another. The
+// landing in hand keeps its previous state when the transition is refused.
+func (s *Store) move(ctx context.Context, land *Landing, from, to string, effects any) (err error) {
+	previous := land.State
 	land.State = to
+	defer func() {
+		if err != nil {
+			land.State = previous
+		}
+	}()
 	var fencings []ledger.Lease
 	if land.Lease != nil {
 		fencings = []ledger.Lease{*land.Lease}
 	}
-	_, err := s.ledger.Transition(ctx, land.ID, from, to, land.By, landingFence(ctx, fencings), effects,
+	_, err = s.ledger.Transition(ctx, land.ID, from, to, land.By, landingFence(ctx, fencings), effects,
 		func(tx *ledger.Tx, op *ledger.Operation) error {
 			if to == LandApplying || (to == LandCommitted && from != LandApplying && from != LandRecoveryPending) {
 				if err := project.CheckHomeTx(tx, land.Project, land.Target); err != nil {
@@ -531,13 +685,20 @@ func (s *Store) move(ctx context.Context, land *Landing, from, to string, effect
 	return err
 }
 
+// fail ends a landing in a failure state. A failure that cannot be
+// recorded leaves the landing in hand as the record has it.
 func (s *Store) fail(ctx context.Context, land *Landing, from, to, cause string, paths []string) error {
+	previous := *land
 	land.Error = cause
 	if paths != nil {
 		land.Paths = paths
 	}
 	land.EndedAt = s.now().UTC()
-	return s.move(context.WithoutCancel(ctx), land, from, to, map[string]any{"paths": paths})
+	if err := s.move(context.WithoutCancel(ctx), land, from, to, map[string]any{"paths": paths}); err != nil {
+		*land = previous
+		return err
+	}
+	return nil
 }
 
 // failed records a failure whose cause the caller is already returning. A

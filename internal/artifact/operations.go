@@ -113,7 +113,7 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 	case ops.Init:
 		_, err = Open(ctx, req.Repo)
 	case ops.Snapshot:
-		result.Commit, result.Changed, err = r.Snapshot(ctx, req.WorkTree, req.Parent, req.Message, req.Flatten)
+		result.Commit, result.Changed, result.Nested, err = r.snapshot(ctx, req.WorkTree, req.Parent, req.Message, req.Flatten)
 	case ops.Checkout:
 		err = r.Checkout(ctx, req.Commit, req.WorkTree)
 	case ops.VerifyCheckout:

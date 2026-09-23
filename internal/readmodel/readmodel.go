@@ -182,6 +182,9 @@ type Conflict struct {
 	// Editable says the conflict can be resolved in the console. A sealed
 	// project's data never leaves its home machine, so it cannot be.
 	Editable bool `json:"editable,omitempty"`
+	// Reason says in words why a result with no merge to work on stopped,
+	// such as writing into a nested repository.
+	Reason string `json:"reason,omitempty"`
 	// Attempt is the task of a resolution already running, if one is.
 	Attempt string    `json:"attempt,omitempty"`
 	At      time.Time `json:"at"`
@@ -366,10 +369,9 @@ type Task struct {
 	ProjectID string `json:"project_id,omitempty"`
 	Origin    string `json:"origin,omitempty"`
 	Requester string `json:"requester,omitempty"`
-	// AttemptRows are the task's turns as the task store caches them; the
-	// ledger's attempt records are the authority for what they cost.
-	AttemptRows  []AttemptRow `json:"attempt_rows,omitempty"`
-	AttemptCount int          `json:"attempt_count"`
+	// AttemptCount is how many turns the task has had; the rows themselves
+	// are read page by page from its accounting (TaskDetail.Accounting).
+	AttemptCount int `json:"attempt_count"`
 	planInTree   bool
 	// Four axes, decided here and rolled up from every descendant task:
 	// Lifecycle is the task's own state; Execution says whether an

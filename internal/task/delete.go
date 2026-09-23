@@ -1,9 +1,13 @@
 package task
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // ErrExecuting is work that cannot be deleted yet: an attempt of it is
@@ -76,4 +80,34 @@ func (s *Store) deletableLocked(channel string) ([]string, error) {
 	}
 	sort.Slice(ids, func(i, j int) bool { return lessID(ids[i], ids[j]) })
 	return ids, nil
+}
+
+// DeletedTx proves under the caller's snapshot that a task was deleted: the
+// store issued its id, and neither its header, its organization nor any of
+// its accounting rows remain. Deleting a conversation removes exactly these
+// together, so a record that still names the task has nothing left to
+// account or deliver. A missing header alone is not proof; it may be a
+// partial or damaged store, which stays an error for its callers.
+func DeletedTx(tx ledger.Reader, id string) (bool, error) {
+	n, err := strconv.Atoi(id)
+	if err != nil || n < 1 || strconv.Itoa(n) != id {
+		return false, nil
+	}
+	var control recordControl
+	found, err := readRecordTx(tx, taskStoreKind, taskStoreID, &control)
+	if err != nil || !found || n >= control.NextID {
+		return false, err
+	}
+	var raw json.RawMessage
+	for _, kind := range []string{taskKind, taskMetaKind} {
+		if found, err := readRecordTx(tx, kind, id, &raw); err != nil || found {
+			return false, err
+		}
+	}
+	prefix := attemptPrefix(id)
+	var rows int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM bindings WHERE kind=? AND substr(id,1,?)=?`, taskAttemptKind, len(prefix), prefix).Scan(&rows); err != nil {
+		return false, err
+	}
+	return rows == 0, nil
 }

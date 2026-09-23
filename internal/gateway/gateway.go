@@ -108,6 +108,10 @@ type Gateway struct {
 	// one can tell that its conversation already holds a slot.
 	serving        map[string]int
 	durableRunning map[string]bool
+	// pendingReasons is the last reason each accepted input was reported
+	// pending for. Recovery retries every pass, and the same reason again
+	// is the same state, not something new to log.
+	pendingReasons map[string]string
 }
 
 // PoolSize is the ceiling on concurrently served conversations.

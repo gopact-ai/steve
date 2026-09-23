@@ -47,7 +47,7 @@ export interface Task {
     title?: string; priority?: "high" | "normal" | "low" | ""; labels?: string[]; archived_at?: string;
     member?: string; node?: string; transport?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
     turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; updated_at?: string; plan_id?: string;
-    tokens?: Tokens; seconds?: number; model?: string; attempt_rows?: AttemptRow[];
+    tokens?: Tokens; seconds?: number; model?: string;
 }
 export interface TaskMetaPatch { title?: string; priority?: Task["priority"]; labels?: string[]; archived?: boolean }
 export interface StepContext { goal: string; ancestry?: string[]; refs?: string[]; findings?: string[]; facts?: string[]; bytes?: number }
@@ -78,7 +78,7 @@ export interface Landing { id: string; project: string; state: string; artifact:
 // same files. Landings are recent history; this is the standing list.
 export interface Conflict {
     project: string; artifact: string; landing: string; node?: string; files?: string[];
-    resolvable?: boolean; editable?: boolean; attempt?: string; at: string;
+    resolvable?: boolean; editable?: boolean; reason?: string; attempt?: string; at: string;
 }
 export interface Reservation { id: string; key: string; node: string; harness: string; slots: number; for: string; by: string; expires_at: string }
 export interface Attestation { artifact: string; verdict: string; by: string; note?: string; at: string }

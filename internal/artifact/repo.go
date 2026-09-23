@@ -81,28 +81,36 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 // noise to remove. A user's directory is never modified: a nested
 // repository there is left alone and simply not part of the snapshot.
 func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, flatten bool) (sha string, changed bool, err error) {
+	sha, changed, _, err = r.snapshot(ctx, workTree, parent, message, flatten)
+	return sha, changed, err
+}
+
+// snapshot is Snapshot that also says which nested repositories of a
+// user's directory it left out, as slash-separated paths relative to the
+// directory: a landing must not write where its snapshot cannot see.
+func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, flatten bool) (sha string, changed bool, left []string, err error) {
 	// A shell's cd followed a symlink at the workspace root. Resolve that
 	// root for Go's walk too, while leaving symlinks inside it untouched.
 	workTree, err = filepath.EvalSymlinks(workTree)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	index, cleanup, err := r.tempIndex()
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	defer cleanup()
 	env := []string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + workTree}
 	if parent != "" {
 		if _, err := r.git(ctx, env, "read-tree", parent); err != nil {
-			return "", false, fmt.Errorf("read parent tree: %w", err)
+			return "", false, nil, fmt.Errorf("read parent tree: %w", err)
 		}
 	}
 	add := []string{"add", "-A", "--", "."}
 	if flatten {
 		flattened, err := flattenNestedRepos(ctx, workTree)
 		if err != nil {
-			return "", false, err
+			return "", false, nil, err
 		}
 		if len(flattened) > 0 {
 			slog.Info(fmt.Sprintf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", ")), "worktree", workTree)
@@ -110,7 +118,7 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 	} else {
 		nested, err := nestedRepos(workTree)
 		if err != nil {
-			return "", false, err
+			return "", false, nil, err
 		}
 		// Left alone and left out: git would otherwise record them as
 		// links, or refuse one that has no commit yet.
@@ -119,36 +127,40 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 		}
 		for _, dir := range nested {
 			add = append(add, ":(exclude,literal)"+filepath.ToSlash(dir))
+			left = append(left, filepath.ToSlash(dir))
 		}
 	}
 	if err := r.prepareSnapshotIndex(ctx, workTree, env, add[3:]); err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	if _, err := r.git(ctx, env, add...); err != nil {
-		return "", false, fmt.Errorf("stage %s: %w", workTree, err)
+		return "", false, nil, fmt.Errorf("stage %s: %w", workTree, err)
 	}
 	// A nested repository staged as a gitlink would land as an empty
 	// directory; it is not this snapshot's to carry.
 	if links, err := r.gitlinks(ctx, env); err != nil {
-		return "", false, err
+		return "", false, nil, err
 	} else if len(links) > 0 {
+		if !flatten {
+			left = append(left, links...)
+		}
 		slog.Warn(fmt.Sprintf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(links, ", ")), "worktree", workTree)
 		if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
-			return "", false, fmt.Errorf("drop gitlinks: %w", err)
+			return "", false, nil, fmt.Errorf("drop gitlinks: %w", err)
 		}
 	}
 	tree, err := r.git(ctx, env, "write-tree")
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	tree = strings.TrimSpace(tree)
 	if parent != "" {
 		parentTree, err := r.git(ctx, nil, "rev-parse", parent+"^{tree}")
 		if err != nil {
-			return "", false, err
+			return "", false, nil, err
 		}
 		if strings.TrimSpace(parentTree) == tree {
-			return parent, false, nil
+			return parent, false, left, nil
 		}
 	}
 	args := []string{"commit-tree", tree, "-m", message}
@@ -157,10 +169,10 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 	}
 	out, err := r.git(ctx, nil, args...)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	sha = strings.TrimSpace(out)
-	return sha, true, r.pin(ctx, sha)
+	return sha, true, left, r.pin(ctx, sha)
 }
 
 // pin gives a commit a ref so it is an artifact git will keep, and a name

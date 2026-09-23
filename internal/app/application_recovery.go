@@ -161,10 +161,15 @@ func (r *applicationRecovery) reconcileTask(ctx context.Context, candidate task.
 	} else {
 		slog.Info("retaining stopped task without new continuation", "task", tracked.ID, "state", tracked.State)
 	}
+	// The row was opened by a process that is gone. The only end its
+	// execution has on record is when this process noticed it — after the
+	// outage, which is not work — so the row ends when it began: the turn
+	// stays charged, the downtime does not. A row that never reached an
+	// admitted execution ran nothing at all.
 	if record.ID != "" {
-		return r.tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, record.EndedAt, task.OutcomeInterrupted, stoppedAccounting(record))
+		return r.tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, row.StartedAt, task.OutcomeInterrupted, stoppedAccounting(record))
 	}
-	_, err := r.tasks.Finish(tracked.ID, task.OutcomeInterrupted, task.Tokens{}, 0)
+	_, err := r.tasks.FinishUnstarted(tracked.ID, task.OutcomeInterrupted)
 	return err
 }
 

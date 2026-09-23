@@ -42,6 +42,15 @@ func sweepLandings(ctx context.Context, projects *project.Store, artifacts *arti
 			return
 		case <-ticker.C:
 		}
+		// A landing interrupted mid-apply is finished first: until it is,
+		// its project's canonical is half written and takes no new landing.
+		recovered, err := artifacts.RetryRecoveries(ctx)
+		for _, l := range recovered {
+			slog.Info(fmt.Sprintf("sweep: recovered landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact, l.Project, l.State, len(l.Paths)), "landing", l.ID, "artifact", l.Artifact, "project", l.Project, "state", l.State)
+		}
+		if err != nil {
+			slog.Error(fmt.Sprintf("sweep: retry landing recoveries: %v", err), "error", err.Error())
+		}
 		list, err := projects.List(ctx)
 		if err != nil {
 			continue
@@ -54,7 +63,9 @@ func sweepLandings(ctx context.Context, projects *project.Store, artifacts *arti
 					map[string]string{"artifact": l.Artifact[:12], "project": p.ID, "state": l.State, "paths": strconv.Itoa(len(l.Paths))})
 				slog.Info(fmt.Sprintf("sweep: landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact[:12], p.ID, l.State, len(l.Paths)), "landing", l.ID, "artifact", l.Artifact, "project", p.ID)
 			}
-			if err != nil && !errors.Is(err, ledger.ErrHeld) {
+			// A busy lock and a recovery still to finish are retried next
+			// pass; the recovery logs its own reason.
+			if err != nil && !errors.Is(err, ledger.ErrHeld) && !errors.Is(err, artifact.ErrRecoveryPending) {
 				slog.Error(fmt.Sprintf("sweep: land pending for %s: %v", p.ID, err), "project", p.ID)
 			}
 		}

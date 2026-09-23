@@ -158,6 +158,18 @@ func (a *Service) ResolveConflictByHand(ctx context.Context, artifactID string, 
 	return err
 }
 
+// RetryConflict sends a result that stopped with no merge to work on — a
+// write refused because the working tree changed under it, or one into a
+// nested repository — to land again on the next pass. Nothing automatic
+// retries such a result; its owner does, after dealing with the cause.
+func (a *Service) RetryConflict(ctx context.Context, artifactID, landing string) error {
+	stuck, p, err := a.conflict(ctx, artifactID)
+	if err != nil {
+		return err
+	}
+	return a.Artifacts.Unblock(ctx, p.ID, stuck.Artifact, landing)
+}
+
 // conflict finds a stuck result and the project it belongs to.
 func (a *Service) conflict(ctx context.Context, artifactID string) (artifact.Stuck, project.Project, error) {
 	if a.Artifacts == nil || a.Coordinator == nil || a.Projects == nil {
@@ -168,7 +180,7 @@ func (a *Service) conflict(ctx context.Context, artifactID string) (artifact.Stu
 		return artifact.Stuck{}, project.Project{}, err
 	}
 	if !ok {
-		return artifact.Stuck{}, project.Project{}, fmt.Errorf("nothing is stuck on a conflict for %s", artifactID)
+		return artifact.Stuck{}, project.Project{}, fmt.Errorf("%w: nothing is stuck on a conflict for %s", artifact.ErrNotBlocked, artifactID)
 	}
 	p, ok, err := a.Projects.Get(ctx, stuck.Project)
 	if err != nil {

@@ -88,8 +88,8 @@ try {
  const message=page.locator('.message-assistant [data-selection-surface]').first();
  await select(message,'bold passage with a link');
  const bar=page.getByRole('toolbar',{name:'Selection actions'});await bar.getByRole('button',{name:'Add to chat',exact:true}).click();
- await waitFor(async()=>!!(await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')||'{}').materials?.[A]?.length,A)),'selection enters draft');
- const refs=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A);
+ await waitFor(async()=>!!(await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)||'[]').length,A)),'selection enters draft');
+ const refs=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)),A);
  assert.equal(refs[0].selector.kind,'quote');assert.ok(replyText.includes(refs[0].selector.quote));assert.equal(refs[0].selector.quote,'bold passage** with [a link');assert.equal(f.posts.length,0);
  console.log('PASS floating selection maps formatted reply to immutable raw source without sending');
  await select(message,'Second paragraph.');await page.keyboard.press('Tab');assert.equal(await bar.getByRole('button',{name:'Add to chat',exact:true}).evaluate(e=>e===document.activeElement),true);await page.keyboard.press('Escape');await bar.waitFor({state:'hidden'});
@@ -143,12 +143,12 @@ try {
  await page.screenshot({path:'/tmp/steve-selection-review-mobile.png'});console.log('PASS source/deleted-side references, Review side chat and narrow toolbar placement');
  await page.keyboard.press('Escape');await page.getByRole('dialog',{name:'Artifact workspace',exact:true}).getByRole('button',{name:'Back',exact:true}).click();await page.setViewportSize({width:1600,height:1000});
  const draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep this draft while the project changes');
- const saved=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A),writes=f.posts.length,captures=f.captures.length;
+ const saved=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)),A),writes=f.posts.length,captures=f.captures.length;
  f.captureGate=new Promise(resolve=>f.releaseCapture=resolve);
  await select(message,'Second paragraph.');await bar.getByRole('button',{name:'Add to chat',exact:true}).click();await waitFor(()=>f.captures.length===captures+1,'delayed capture begins');
  f.project='q';await page.evaluate(event=>window.emit(event),{kind:'console.reply',conversation:A,reply_id:'binding-change',text:'Project changed',at});await page.getByText('q · test-hub',{exact:true}).waitFor();
  f.releaseCapture();f.captureGate=null;await bar.getByRole('alert').waitFor();
- assert.deepEqual(await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A),saved,'A delayed capture cannot add old-project material after the target is rebound');
+ assert.deepEqual(await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)),A),saved,'A delayed capture cannot add old-project material after the target is rebound');
  assert.equal(await draftOf(draft),'Keep this draft while the project changes');assert.equal(f.posts.length,writes,'Rejecting a stale capture cannot submit a question');
  console.log('PASS delayed capture rechecks the target project without changing drafts or sending');
  assert.deepEqual(f.errors,[]);

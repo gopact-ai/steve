@@ -58,9 +58,6 @@ func TestBaseStateIsLiveClosureAndExplicitRecentCoverage(t *testing.T) {
 		ids := map[string]Task{}
 		for _, item := range snap.Tasks {
 			ids[item.ID] = item
-			if len(item.AttemptRows) != 0 {
-				t.Fatal("base state loaded accounting history")
-			}
 		}
 		if len(snap.Tasks) != task.RecentClosedLimit+3 || len(snap.Plans) != task.RecentClosedLimit {
 			t.Fatalf("base state includes history instead of closure+recent: tasks=%d plans=%d", len(snap.Tasks), len(snap.Plans))

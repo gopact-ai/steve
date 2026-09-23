@@ -100,23 +100,11 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			if settled {
 				finishErr = settledErr
 			}
-			if t.managed && errors.Is(finishErr, harness.ErrStopUnconfirmed) {
-				return
-			}
-			accountingCtx, cancelAccounting := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
-			defer cancelAccounting()
-			if accountingErr := c.finishChatAccounting(accountingCtx, tracked, t.run.Record, finishErr, spent.tokens(), spent.model()); accountingErr != nil {
+			if accountingErr := t.closeTask(parent, started, finishErr); accountingErr != nil {
 				result = Result{}
 				err = retainedBlocked("accounting", "提交原执行的任务记账", "结果已保留，但记账尚未提交。",
 					accountingErr.Error(), "将重试原结果的记账，不会重新发送原任务。", errors.Join(err, accountingErr))
-				return
 			}
-			var step *lifecycle.StepError
-			errors.As(finishErr, &step)
-			if t.run.Record.ID != "" && (step == nil || step.Step >= lifecycle.StepArm) {
-				c.notifyAccountedTurn(tracked)
-			}
-			c.offlineReminder(req, tracked, started, finishErr)
 		}()
 	}
 	if t.scope != nil {
@@ -147,6 +135,36 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return c.gateDisclosure(parent, req, result)
 	}
 	return result, err
+}
+
+// closeTask charges the task a tracked turn opened with what the turn
+// spent and ended with, then tells whoever is waiting on it. It returns
+// the accounting error that has to replace the turn's outcome — the
+// result is kept, the charge is not committed yet. A managed stop the
+// harness could not confirm is left open for the stop to settle.
+func (t *chatTurn) closeTask(parent context.Context, started time.Time, finishErr error) error {
+	c, req, tracked := t.c, t.req, t.tracked
+	if t.managed && errors.Is(finishErr, harness.ErrStopUnconfirmed) {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+	defer cancel()
+	if err := c.finishChatAccounting(ctx, tracked, t.run.Record, finishErr, t.spent.tokens(), t.spent.model()); err != nil {
+		return err
+	}
+	var step *lifecycle.StepError
+	errors.As(finishErr, &step)
+	if t.run.Record.ID != "" && (step == nil || step.Step >= lifecycle.StepArm) {
+		c.notifyAccountedTurn(tracked)
+	}
+	if onboarding(req) {
+		// The introduction is delivered by onboarding itself, not as
+		// a task notice into a chat that does not exist yet.
+		c.closeOnboardingTask(req, tracked, finishErr)
+		return nil
+	}
+	c.offlineReminder(req, tracked, started, finishErr)
+	return nil
 }
 
 func (t *chatTurn) prepareSession(ctx context.Context) error {

@@ -21,8 +21,9 @@ const conflicts = [
     { project: "atlas", artifact: "art-editable-1", landing: "land-1", node: "node-mac", files: ["src/a.txt", "src/b.txt"], resolvable: true, editable: true, at },
     { project: "sealed-thing", artifact: "art-sealed-2", landing: "land-2", node: "node-linux", files: ["secret.txt"], resolvable: true, editable: false, at },
     { project: "atlas", artifact: "art-notree-3", landing: "land-3", node: "node-mac", files: ["gone.txt"], resolvable: false, editable: false, at },
+    { project: "atlas", artifact: "art-apply-4", landing: "land-4", node: "node-mac", files: ["vendor/lib/x.go"], resolvable: false, editable: false, reason: "vendor/lib is a nested git repository", at },
 ];
-const f = { agent: [], all: 0, reads: [], manual: [], errors: [] };
+const f = { agent: [], all: 0, reads: [], manual: [], retry: [], errors: [] };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => {
     localStorage.setItem("steve.ui.locale", "en");
@@ -37,6 +38,7 @@ await page.route("**/*", async (route) => {
     if (p === "/console/conflicts" && req.method() === "POST") { f.all++; return route.fulfill({ json: { started: 2 } }); }
     if (p.endsWith("/agent") && req.method() === "POST") { f.agent.push(p); return route.fulfill({ json: { started: 1 } }); }
     if (p.endsWith("/file")) { const want = u.searchParams.get("path"); f.reads.push(want); return route.fulfill({ json: { path: want, text: marked, size: marked.length } }); }
+    if (p.endsWith("/retry") && req.method() === "POST") { f.retry.push({ path: p, body: req.postDataJSON() }); return route.fulfill({ json: { ok: true } }); }
     if (p.endsWith("/manual") && req.method() === "POST") { f.manual.push({ path: p, body: req.postDataJSON() }); return route.fulfill({ json: { ok: true } }); }
     return route.continue();
 });
@@ -62,9 +64,20 @@ try {
     assert.equal(await noTree.getByRole("button", { name: "Hand to an agent", exact: true }).count(), 0, "nothing to work from means no agent button");
     await noTree.getByText("no snapshot to edit", { exact: false }).waitFor();
 
+    // A result refused while being written has no merge to work on either;
+    // why it stopped is said in words, and once the owner has dealt with it
+    // the result can be sent to land again.
+    const applied = panel.getByRole("listitem").filter({ hasText: "art-apply-4" });
+    await applied.getByText("vendor/lib is a nested git repository", { exact: false }).waitFor();
+    assert.equal(await applied.getByText("no snapshot to edit", { exact: false }).count(), 0, "the stated reason replaces the generic one");
+    assert.equal(await applied.getByRole("button", { name: "Hand to an agent", exact: true }).count(), 0);
+    await applied.getByRole("button", { name: "Land again", exact: true }).click();
+    await applied.getByText("Queued to land again", { exact: false }).waitFor();
+    assert.deepEqual(f.retry, [{ path: "/console/conflicts/art-apply-4/retry", body: { landing: "land-4" } }], "the retry names the stop the owner saw");
+
     // The count is carried to the navigation, so a conflict is visible from
     // anywhere in the console and not only on the page that lists it.
-    await page.getByRole("link", { name: /Inbox/ }).getByText("3", { exact: true }).waitFor();
+    await page.getByRole("link", { name: /Inbox/ }).getByText("4", { exact: true }).waitFor();
 
     const first = panel.getByRole("listitem").filter({ hasText: "art-editable" });
     await first.getByRole("button", { name: "Hand to an agent", exact: true }).click();

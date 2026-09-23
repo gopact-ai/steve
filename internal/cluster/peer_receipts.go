@@ -23,6 +23,8 @@ var ErrNodeReceiptPending = errors.New("node receipt lacks exact committed resul
 // Callers on a follower must first wait for the required committed version.
 // Unsupported delivery owners, unknown usage and incomplete settlement retain
 // evidence; client fields and the task's latest attempt cannot authorize GC.
+// A task proved deleted leaves nothing to account or deliver, so its exact,
+// settled terminal receipt is released.
 func ReadNodeReceiptProof(ctx context.Context, book *ledger.Ledger, receipt nodewire.SessionReceipt) error {
 	if err := receipt.Validate(); err != nil {
 		return err
@@ -40,7 +42,12 @@ func ReadNodeReceiptProof(ctx context.Context, book *ledger.Ledger, receipt node
 			record.EndedAt.IsZero() {
 			return ErrNodeReceiptPending
 		}
-		if err := attempt.CheckNodeReceiptTx(tx, record, receipt); err != nil {
+		if err := attempt.CheckNodeReceiptTx(tx, record, receipt); errors.Is(err, attempt.ErrNodeReceiptTaskDeleted) {
+			// The conversation was deleted with its task, accounting and
+			// delivery: there is no owner left to wait for, and the exact
+			// settled terminal receipt above is all that remains to release.
+			return nil
+		} else if err != nil {
 			return err
 		}
 		switch record.State {

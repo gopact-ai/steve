@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -123,6 +124,9 @@ type Peer struct {
 	contentOnce       sync.Once
 	contentErr        error
 	contentOps        sync.WaitGroup
+	// duplexWarning reports once that the server's response writer cannot
+	// read a request while answering it; each proxied request would say so.
+	duplexWarning sync.Once
 }
 
 func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr error) {
@@ -600,6 +604,17 @@ func (p *Peer) proxyLocalApplication(w http.ResponseWriter, r *http.Request, epo
 }
 
 func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, prefix, token string, epoch uint64, transport http.RoundTripper) {
+	// The application may answer before the forwarded request body is fully
+	// copied. Without full duplex, starting the answer makes this server take
+	// the rest of the inbound body for itself and close it, and the transport
+	// still forwarding that body then tears down the upstream connection: the
+	// console is left with a 200 and half of its answer. HTTP/2 streams are
+	// full duplex already and refuse the call, which is not worth a warning.
+	if err := http.NewResponseController(w).EnableFullDuplex(); err != nil && r.ProtoMajor == 1 {
+		p.duplexWarning.Do(func() {
+			slog.Warn(fmt.Sprintf("cluster: proxied answers can be cut short: %v", err))
+		})
+	}
 	proxy := httputil.ReverseProxy{Transport: transport, FlushInterval: -1, Rewrite: func(request *httputil.ProxyRequest) {
 		query := request.In.URL.Query()
 		query.Del("token")

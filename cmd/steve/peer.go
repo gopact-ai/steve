@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/app"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/desktop"
@@ -80,7 +81,13 @@ func peerCmd(args []string) error {
 	slog.Info("steve: cluster peer "+peer.Config.NodeID+" UI available at "+peer.UiURL, "node", peer.Config.NodeID)
 	select {
 	case <-ctx.Done():
+		return peer.Close()
 	case err = <-peer.Errors:
 	}
-	return errors.Join(err, peer.Close())
+	err = errors.Join(err, peer.Close())
+	var restart *adminsvc.RestartExit
+	if errors.As(err, &restart) {
+		return err
+	}
+	return restartAfterFailure(err)
 }
