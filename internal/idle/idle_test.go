@@ -117,17 +117,15 @@ func TestHoldSuspendsSilenceAcrossPauseAndResume(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatalf("held clock expired: %v", ctx.Err())
 	}
+	released := time.Now()
 	release()
-	release() // Releasing twice must not drop another holder's hold.
 	// The answer is a sign of life: the whole silence starts again.
 	select {
 	case <-ctx.Done():
-		t.Fatal("released clock expired without a full silence")
-	case <-time.After(25 * time.Millisecond):
-	}
-	select {
-	case <-ctx.Done():
-	case <-time.After(300 * time.Millisecond):
+		if elapsed := time.Since(released); elapsed < 40*time.Millisecond {
+			t.Fatalf("released clock expired after %v, before a full silence", elapsed)
+		}
+	case <-time.After(time.Second):
 		t.Fatal("released clock never expired")
 	}
 }
@@ -137,6 +135,7 @@ func TestNestedHoldsAndPauseKeepClockStopped(t *testing.T) {
 	defer stop()
 	first, second := Hold(ctx), Hold(ctx)
 	first()
+	first() // Releasing twice must not drop the other holder's hold.
 	time.Sleep(60 * time.Millisecond)
 	if ctx.Err() != nil {
 		t.Fatal("second hold was dropped by the first release")

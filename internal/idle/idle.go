@@ -41,8 +41,8 @@ func (c *idleContext) Value(key any) any {
 // Hold stops the silence clock ctx derives from while the caller waits on
 // something that is not the agent — a person answering a question. Holds
 // nest and are independent of Pause: a connection coming back does not
-// restart a clock a pending question still holds. Releasing the last hold
-// counts as a sign of life. Without a clock in ctx, Hold does nothing.
+// restart a clock a pending question still holds. Every release counts as
+// a sign of life: the clock runs a whole silence again once nothing holds it. Without a clock in ctx, Hold does nothing.
 func Hold(ctx context.Context) (release func()) {
 	c, _ := ctx.Value(clockKey{}).(*idleContext)
 	if c == nil {
@@ -66,6 +66,19 @@ func Hold(ctx context.Context) (release func()) {
 			}
 		})
 	}
+}
+
+// Detach keeps ctx's values but not its silence clock. Work that outlives
+// the context it came from must not hold a clock it no longer runs under.
+func Detach(ctx context.Context) context.Context { return unclocked{ctx} }
+
+type unclocked struct{ context.Context }
+
+func (u unclocked) Value(key any) any {
+	if key == (clockKey{}) {
+		return nil
+	}
+	return u.Context.Value(key)
 }
 
 // Clock can suspend silence accounting without suspending a parent's hard

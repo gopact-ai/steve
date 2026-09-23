@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -75,5 +76,19 @@ func TestShutdownClosesAdmissionAndWaitsForCleanup(t *testing.T) {
 	}
 	if _, err := r.Begin(t.Context(), Key{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("admitted after shutdown: %v", err)
+	}
+}
+
+// Detached work waiting on a person must not hold the silence clock of
+// the turn it came from: that turn keeps its own hang detection.
+func TestDetachedWorkDoesNotHoldItsOriginsSilenceClock(t *testing.T) {
+	origin, stop, _ := idle.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer stop()
+	release := idle.Hold(New(t.Context(), nil).Detached(origin))
+	defer release()
+	select {
+	case <-origin.Done():
+	case <-time.After(time.Second):
+		t.Fatal("detached work held its origin's silence clock")
 	}
 }

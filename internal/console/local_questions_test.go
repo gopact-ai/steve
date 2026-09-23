@@ -25,6 +25,9 @@ func TestLocalChildQuestionWaitsInParentConversationBeyondSilence(t *testing.T) 
 	service := New(&echo{}, "owner", nil)
 	clock, stop, _ := idle.WithTimeout(t.Context(), 40*time.Millisecond)
 	defer stop()
+	// Paused until the question is up, so a slow start is not what is
+	// measured; resuming does not restart a clock the question holds.
+	clock.Pause()
 	type result struct {
 		answer view.Answer
 		err    error
@@ -40,6 +43,7 @@ func TestLocalChildQuestionWaitsInParentConversationBeyondSilence(t *testing.T) 
 	if q.Conversation != "console:parent" || q.ExchangeID != "" || q.TaskID != "child-task" || q.AttemptID != "child-attempt" || q.SessionID != "local-session" || q.Principal != "owner" || !q.Deadline.IsZero() {
 		t.Fatalf("local child question lost its binding: %+v", q)
 	}
+	clock.Resume()
 	time.Sleep(100 * time.Millisecond)
 	if clock.Err() != nil {
 		t.Fatalf("waiting on the owner counted as the child's silence: %v", clock.Err())

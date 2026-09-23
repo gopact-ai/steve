@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -50,9 +51,10 @@ func WithProbeKey(ctx context.Context, key Key) context.Context {
 }
 
 // Detached retains trace values while work belongs to the service lifetime.
-// It does not retain the parent prompt's cancellation or deadline.
+// It does not retain the parent prompt's cancellation, deadline or silence
+// clock.
 func (r *Registry) Detached(values context.Context) context.Context {
-	return detached{Context: r.lifetime, values: values}
+	return detached{Context: r.lifetime, values: idle.Detach(values)}
 }
 
 type detached struct {

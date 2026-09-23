@@ -202,6 +202,10 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 			q.Project = current.Project.ID
 		}
 	}
+	// Hold before anything slow: saving the question is not the agent's
+	// silence either.
+	release := idle.Hold(ctx)
+	defer release()
 	s.nameAsker(ctx, &q)
 	q.ID, q.State, q.Principal = "q"+strings.TrimPrefix(newReplyID(), "r"), "pending", s.owner
 	q.CreatedAt = time.Now().UTC()
@@ -249,8 +253,6 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 	}
 	s.publishQuestion(q)
 	s.mu.Unlock()
-	release := idle.Hold(ctx)
-	defer release()
 	var deadline <-chan time.Time
 	if !q.Deadline.IsZero() {
 		timer := time.NewTimer(time.Until(q.Deadline))
