@@ -54,3 +54,21 @@ func TestSayRejectsUnsuccessfulResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestRefusedTokenTellsHowToAuthenticate(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer hub.Close()
+	for name, run := range map[string]func() error{
+		"dash": func() error { return Dash([]string{"-url", hub.URL, "-token", ""}) },
+		"say":  func() error { return Say([]string{"-url", hub.URL, "-token", "", "hi"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := captureClientOutput(t, run)
+			if err == nil || !strings.Contains(err.Error(), "-config") || !strings.Contains(err.Error(), "-token") {
+				t.Fatalf("error = %v, want a hint naming -config and -token", err)
+			}
+		})
+	}
+}

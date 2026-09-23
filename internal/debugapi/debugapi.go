@@ -10,13 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
 type Gateway interface {
@@ -107,7 +107,7 @@ func Handler(gw Gateway, def Defaults) http.Handler {
 		toast := gw.HandleCardAction(req.action(def))
 		writeJSON(w, http.StatusOK, map[string]any{"toast_type": toast.Type, "toast": toast.Content})
 	})
-	return mux
+	return sameorigin.Guard(mux, sameorigin.Loopback)
 }
 
 type messageRequest struct {
@@ -179,15 +179,7 @@ func or(value, fallback string) string {
 
 // checkLoopback refuses to expose the injection endpoint beyond this machine.
 func checkLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("debug endpoint address %q: %w", addr, err)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
+	if !sameorigin.LoopbackListener(addr) {
 		return fmt.Errorf("debug endpoint address %q must be loopback", addr)
 	}
 	return nil

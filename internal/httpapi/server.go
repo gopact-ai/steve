@@ -23,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -66,6 +67,7 @@ type Server struct {
 	admin          consoleapi.Admin
 	model          Model
 	token          string
+	reach          sameorigin.Reach
 	listener       net.Listener
 	httpServer     *http.Server
 	stopRequests   context.CancelFunc
@@ -77,7 +79,7 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if !loopback(addr) && strings.TrimSpace(cfg.Token) == "" {
+	if !sameorigin.LoopbackListener(addr) && strings.TrimSpace(cfg.Token) == "" {
 		return nil, fmt.Errorf("read model on %s needs a token: it reports hosts, goals and agents", addr)
 	}
 	listener, err := net.Listen("tcp", addr)
@@ -86,7 +88,7 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	}
 	requestContext, stopRequests := context.WithCancel(context.Background())
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
-	return &Server{model: model, token: cfg.Token, listener: listener, httpServer: server, stopRequests: stopRequests}, nil
+	return &Server{model: model, token: cfg.Token, reach: sameorigin.Reach(sameorigin.LoopbackListener(addr)), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
@@ -197,7 +199,9 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /assets/", s.page)
 	mux.HandleFunc("GET /", s.guard(s.page))
 	server := s.httpServer
-	server.Handler = mux
+	// Around the whole mux, unguarded routes included, so a route added
+	// later cannot forget it.
+	server.Handler = sameorigin.Guard(mux, s.reach)
 	if err := server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -240,13 +244,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// guard checks the token when one is configured. Loopback-only deployments
-// leave it empty and rely on the bind address, which is the same posture the
-// messaging server already takes.
+// guard checks the token. A standalone Hub always has one (configured or
+// generated); an empty token remains only for servers assembled in tests.
 func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.token != "" && !s.authorized(r) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			http.Error(w, "unauthorized: open the address `steve dash -config <config>` prints", http.StatusUnauthorized)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !(strings.HasPrefix(r.URL.Path, "/console/services/") && strings.HasSuffix(r.URL.Path, "/restart")) {
@@ -326,18 +329,6 @@ func writeEvent(w http.ResponseWriter, ev readmodel.Event) {
 		return
 	}
 	fmt.Fprintf(w, "data: %s\n\n", payload)
-}
-
-func loopback(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if host == "" {
-		return false // a bare ":port" listens on every interface
-	}
-	ip := net.ParseIP(host)
-	return host == "localhost" || (ip != nil && ip.IsLoopback())
 }
 
 // SetConsole wires the acting half of the page.

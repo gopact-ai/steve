@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -27,7 +28,8 @@ type SSHService interface {
 func (s *Server) SetSSH(service SSHService) { s.ssh = service }
 
 // SSHHandler provides the same authenticated local-management API to a stable
-// desktop gateway that can outlive its current coordination application.
+// desktop gateway that can outlive its current coordination application. It
+// answers loopback names only, whoever mounts it.
 func SSHHandler(service SSHService, token, origin string) (http.Handler, error) {
 	if service == nil || len(token) < 32 || origin == "" {
 		return nil, errors.New("private SSH management requires a service, token and origin")
@@ -35,7 +37,7 @@ func SSHHandler(service SSHService, token, origin string) (http.Handler, error) 
 	server := &Server{ssh: service, token: token, sshOrigin: origin}
 	mux := http.NewServeMux()
 	server.sshRoutes(mux)
-	return mux, nil
+	return sameorigin.Guard(mux, sameorigin.Loopback), nil
 }
 
 func (s *Server) sshRoutes(mux *http.ServeMux) {
