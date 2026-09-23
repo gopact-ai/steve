@@ -3,7 +3,7 @@
 // every directory Steve runs an attempt in is materialised from one.
 //
 // The repository is a shadow of the user's directory, never the user's own
-// .git: a snapshot is taken with a throwaway index against a work tree, so
+// .git: a snapshot is taken with Steve's own index against a work tree, so
 // a directory that is not a git repository — or is one with its own
 // history — is versioned without being touched. Git is the transport too:
 // a bundle carries a commit's closure to a node and a result back.
@@ -95,15 +95,21 @@ func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, f
 	if err != nil {
 		return "", false, nil, err
 	}
-	index, cleanup, err := r.tempIndex()
+	index, keep, cleanup, err := r.snapshotIndex(workTree, parent != "")
 	if err != nil {
 		return "", false, nil, err
 	}
 	defer cleanup()
 	env := []string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + workTree}
 	if parent != "" {
-		if _, err := r.git(ctx, env, "read-tree", parent); err != nil {
-			return "", false, nil, fmt.Errorf("read parent tree: %w", err)
+		// --reset replaces every entry with the parent's but keeps the
+		// stat data of those that match, which is what spares the hashing.
+		if _, err := r.git(ctx, env, "read-tree", "--reset", parent); err != nil {
+			// A cache git cannot read is only a cache: start without it.
+			os.Remove(index)
+			if _, err := r.git(ctx, env, "read-tree", parent); err != nil {
+				return "", false, nil, fmt.Errorf("read parent tree: %w", err)
+			}
 		}
 	}
 	add := []string{"add", "-A", "--", "."}
@@ -154,6 +160,7 @@ func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, f
 		return "", false, nil, err
 	}
 	tree = strings.TrimSpace(tree)
+	keep()
 	if parent != "" {
 		parentTree, err := r.git(ctx, nil, "rev-parse", parent+"^{tree}")
 		if err != nil {
