@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
@@ -28,7 +27,7 @@ func assertPeerUsage(t *testing.T, peer *cluster.Peer) {
 		t.Fatal(err)
 	}
 	request.Header.Set("Authorization", "Bearer "+peer.UIToken)
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: peerRequestTimeout}
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
