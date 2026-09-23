@@ -343,6 +343,12 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 					return err
 				}
 			}
+			// The result has landed now. A queue entry for it — the pass
+			// that started this landing stopped at recovery-pending and
+			// left it queued — would only land it again, as nothing.
+			if _, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id = ?`, pendingKind, p.ID+"/"+land.Artifact); err != nil {
+				return err
+			}
 			return tx.SetData(op, land)
 		})
 	if err != nil {

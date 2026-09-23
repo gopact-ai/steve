@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -139,5 +140,33 @@ func TestTheRetryLeavesALiveApplyingLandingAlone(t *testing.T) {
 	}
 	if state := landingState(t, store, land.ID); state != LandApplying {
 		t.Fatalf("state = %s, want %s", state, LandApplying)
+	}
+}
+
+// A queued result whose landing went recovery-pending is landed by the
+// recovery. It must leave the queue then, not land a second time as an
+// empty landing on the next pass.
+func TestRecoveredQueuedResultLeavesTheQueue(t *testing.T) {
+	ctx := t.Context()
+	store, p, nodes, canonical, artifact := nodeLanding(t)
+	if err := store.Defer(ctx, "p", artifact, "test"); err != nil {
+		t.Fatal(err)
+	}
+	nodes.before = func(req ops.Request) {
+		if req.Op == ops.Apply {
+			write(t, canonical, "a", "a1")
+			nodes.down, nodes.before = true, nil
+		}
+	}
+	if _, err := store.LandPending(ctx, p); !errors.Is(err, ErrRecoveryPending) {
+		t.Fatalf("land pending = %v, want ErrRecoveryPending", err)
+	}
+	nodes.down = false
+	if recovered, err := store.RetryRecoveries(ctx); err != nil || len(recovered) != 1 || recovered[0].State != LandCommitted {
+		t.Fatalf("retry = %+v err=%v", recovered, err)
+	}
+	again, err := store.LandPending(ctx, p)
+	if err != nil || len(again) != 0 {
+		t.Fatalf("the recovered result landed again: %+v err=%v", again, err)
 	}
 }
