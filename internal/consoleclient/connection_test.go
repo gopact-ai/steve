@@ -15,7 +15,22 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/localtoken"
 )
+
+// Configurations without a token make the client look in the default state
+// directory; no test may see the developer's own Hub there.
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "consoleclient-home-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HOME", home)
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
+}
 
 func resolveTestConnection(args ...string) (consoleConnection, error) {
 	flags := flag.NewFlagSet("client-test", flag.ContinueOnError)
@@ -521,5 +536,44 @@ func TestConsoleSidecarRequiresPrivateRegularFile(t *testing.T) {
 				t.Fatalf("wanted safe sidecar rejection, got %v", err)
 			}
 		})
+	}
+}
+
+// A Hub whose configuration names no token generates one in its state
+// directory; -config finds it there, and it is guarded like a configured one.
+func TestConsoleConnectionReadsTheGeneratedToken(t *testing.T) {
+	state := t.TempDir()
+	token, err := localtoken.Resolve(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	data, _ := json.Marshal(map[string]any{"gateway": map[string]string{"read_model_addr": "127.0.0.1:8800", "state_path": filepath.Join(state, "state.json")}})
+	writeClientFixture(t, path, string(data))
+	connection, err := resolveTestConnection("-config", path)
+	if err != nil || connection != (consoleConnection{URL: "http://127.0.0.1:8800", Token: token}) {
+		t.Fatalf("connection = %+v, %v", connection, err)
+	}
+	if _, err := resolveTestConnection("-config", path, "-url", "https://other.example"); err == nil {
+		t.Fatal("a generated token followed -url to another origin")
+	}
+
+	// An explicit -token needs nothing from the state directory, which may
+	// belong to the Hub's own service account.
+	if err := os.Chmod(filepath.Join(state, localtoken.FileName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveTestConnection("-config", path); err == nil {
+		t.Fatal("an exposed token file was used")
+	}
+	if connection, err := resolveTestConnection("-config", path, "-token", "explicit"); err != nil || connection.Token != "explicit" {
+		t.Fatalf("explicit token with an unusable token file = %+v, %v", connection, err)
+	}
+
+	unstarted := filepath.Join(t.TempDir(), "config.json")
+	data, _ = json.Marshal(map[string]any{"gateway": map[string]string{"state_path": filepath.Join(t.TempDir(), "state.json")}})
+	writeClientFixture(t, unstarted, string(data))
+	if connection, err := resolveTestConnection("-config", unstarted); err != nil || connection.Token != "" {
+		t.Fatalf("a Hub that never started has no token yet: %+v, %v", connection, err)
 	}
 }

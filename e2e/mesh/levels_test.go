@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -43,13 +44,13 @@ func TestC8LevelsGatePlacementAndSealedStaysHome(t *testing.T) {
 	fleetRoster := roster.New(catalog)
 	fleetRoster.SetNodes(reg)
 	fleetRoster.SetHubCapabilities([]string{"basic"})
-	fleetRoster.SetHubLevel(project.LevelSealed)
-	fleetRoster.SetNodeLevels(map[string]project.Level{nodeA: project.LevelPublic, nodeB: project.LevelRestricted})
+	fleetRoster.SetHubLevel(datalevel.Sealed)
+	fleetRoster.SetNodeLevels(map[string]datalevel.Level{nodeA: datalevel.Public, nodeB: datalevel.Restricted})
 
 	dir := t.TempDir()
 	projects, attempts, artifacts := declareProjects(t, dir, reg,
-		project.Project{ID: "secret", Level: project.LevelRestricted, Home: project.Home{Path: t.TempDir()}},
-		project.Project{ID: "vault", Level: project.LevelSealed, Home: project.Home{Path: t.TempDir()}},
+		project.Project{ID: "secret", Level: datalevel.Restricted, Home: project.Home{Path: t.TempDir()}},
+		project.Project{ID: "vault", Level: datalevel.Sealed, Home: project.Home{Path: t.TempDir()}},
 	)
 	_ = projects
 	deps := exec.Deps{Workspaces: artifacts, Attempts: attempts, Artifacts: artifacts, Roster: fleetRoster,

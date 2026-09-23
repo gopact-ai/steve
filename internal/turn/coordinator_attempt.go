@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/text"
 	"log/slog"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/text"
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -123,7 +125,7 @@ func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Recor
 		return
 	}
 	// Internal and public content leaving is not a disclosure.
-	if level := p.Level.OrDefault(); level != project.LevelRestricted && level != project.LevelSealed {
+	if level := p.Level.OrDefault(); level != datalevel.Restricted && level != datalevel.Sealed {
 		return
 	}
 	d := Disclosure{Project: p.ID, Level: string(p.Level), TaskID: record.TaskID, Attempt: record.ID, Turn: record.TurnID,

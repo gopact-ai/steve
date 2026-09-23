@@ -3,9 +3,10 @@ package artifact
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -17,7 +18,7 @@ func TestStoppedChildCannotLandUnderParentLeaseOrFromPending(t *testing.T) {
 	canonical := t.TempDir()
 	write(t, canonical, "a", "before")
 	s, p := newStore(t, &localNode{}, project.Home{Path: canonical})
-	tasks, err := task.OpenLedger(s.ledger, "")
+	tasks, err := task.OpenLedger(s.ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestCancellationBeforeApplyRefusesAndAfterApplySettlesWAL(t *testing.T) {
 			s, p := newStore(t, local, project.Home{Node: "node", Path: canonical})
 			nodes := &stoppingNode{localNode: local}
 			s.nodes = nodes
-			tasks, err := task.OpenLedger(s.ledger, "")
+			tasks, err := task.OpenLedger(s.ledger)
 			if err != nil {
 				t.Fatal(err)
 			}

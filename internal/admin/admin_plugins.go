@@ -13,10 +13,11 @@ import (
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
-	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 // PluginService owns management actions, while immutable content and runtime
@@ -24,7 +25,7 @@ import (
 type PluginService struct {
 	RuntimeGate  *sync.RWMutex
 	Admin        *Service
-	Library      *plugins.Library
+	Library      *pluginledger.Library
 	Local        *node.PluginRuntimePool
 	Authority    nodewire.SessionAuthority
 	mu           sync.Mutex
@@ -153,7 +154,7 @@ func (s *PluginService) PreviewPlugin(ctx context.Context, source plugins.Source
 	return consoleapi.PluginPreview{Manifest: bundle.Manifest, Digest: bundle.Digest, Source: resolved}, nil
 }
 
-func (s *PluginService) ImportPlugin(ctx context.Context, req consoleapi.PluginImportRequest) (record plugins.PackageRecord, err error) {
+func (s *PluginService) ImportPlugin(ctx context.Context, req consoleapi.PluginImportRequest) (record pluginledger.PackageRecord, err error) {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
 	if req.CommandID == "" || req.Project == "" || req.Digest == "" {
@@ -166,7 +167,7 @@ func (s *PluginService) ImportPlugin(ctx context.Context, req consoleapi.PluginI
 	if !exists {
 		return record, errors.New("plugin import project is unknown")
 	}
-	if !s.Admin.ClusterMode && !project.Level(declared.Level).OrDefault().Admits(level) {
+	if !s.Admin.ClusterMode && !datalevel.Level(declared.Level).OrDefault().Admits(level) {
 		return record, errors.New("coordinator cannot hold this project package")
 	}
 	operation, err := s.Library.BeginOperation(ctx, req.CommandID, "import", req)

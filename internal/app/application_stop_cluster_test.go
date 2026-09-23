@@ -100,7 +100,7 @@ func TestClusterCoordinatorCompletesStopPersistedByPreviousGeneration(t *testing
 	if st.ID != original.SessionID || st.Binding.AttemptID != original.AttemptID || st.Binding.TaskID != original.TaskID || st.InputAccepted != 1 || st.Command == nil || !st.Command.Settled {
 		t.Fatalf("durable stop changed or replayed original execution: %+v", receipt)
 	}
-	tasks, err := task.OpenLedger(next.Ledger, "")
+	tasks, err := task.OpenLedger(next.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

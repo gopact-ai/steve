@@ -53,7 +53,7 @@ func (s *Store) readReceipt(id string) (Receipt, bool, error) {
 		return Receipt{}, false, err
 	}
 	var receipt Receipt
-	if err := decodeStrict(raw, &receipt); err != nil {
+	if err := DecodeStrict(raw, &receipt); err != nil {
 		return receipt, false, err
 	}
 	if receipt.Schema != Schema || receipt.CommandID != id || !ValidID(receipt.ID) || !validVersion(receipt.Version) || !digestShape.MatchString(receipt.Digest) || receipt.State != Prepared || receipt.PreparedAt.IsZero() {

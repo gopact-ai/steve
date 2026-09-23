@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -51,7 +52,7 @@ func TestSharedSettingsAndChannelConfigSurviveRealCoordinatorTransfer(t *testing
 	if status != http.StatusOK || json.Unmarshal(body, &channelBefore) != nil {
 		t.Fatalf("initial channels: %d", status)
 	}
-	status, body = PeerRequest(t, first, http.MethodPut, "/console/channels", consoleapi.ChannelsUpdate{BaseRevision: channelBefore.Revision, Channels: config.ChannelPatch{Feishu: &config.FeishuChannelPatch{Enabled: ChannelValue(false), AppID: ChannelValue("fixture-channel-app"), AppSecret: &config.ChannelSecret{Action: "replace", Value: ChannelValue("fixture-shared-platform-secret")}}}})
+	status, body = PeerRequest(t, first, http.MethodPut, "/console/channels", consoleapi.ChannelsUpdate{BaseRevision: channelBefore.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{Enabled: ChannelValue(false), AppID: ChannelValue("fixture-channel-app"), AppSecret: &channelsettings.Secret{Action: "replace", Value: ChannelValue("fixture-shared-platform-secret")}}}})
 	var channelSaved consoleapi.ChannelsView
 	if status != http.StatusOK || json.Unmarshal(body, &channelSaved) != nil || channelSaved.Revision == channelBefore.Revision {
 		t.Fatalf("channel save: %d", status)

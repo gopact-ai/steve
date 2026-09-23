@@ -23,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -57,7 +58,7 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { materials.Close() })
-	store, err := state.OpenLedger(book, "")
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +76,7 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	}
 	t.Cleanup(manager.Stop)
 	projects := project.Open(book)
-	if err := projects.Declare(t.Context(), []project.Project{{ID: "scratch", Home: project.Home{Path: t.TempDir()}, Level: project.LevelPublic}}); err != nil {
+	if err := projects.Declare(t.Context(), []project.Project{{ID: "scratch", Home: project.Home{Path: t.TempDir()}, Level: datalevel.Public}}); err != nil {
 		t.Fatal(err)
 	}
 	coordinator := turn.New(catalog, store, capability.NewAssembler(nil), manager, 10*time.Second)
@@ -84,7 +85,7 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	coordinator.SetAttempts(attempt.New(book))
 	artifacts := artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	coordinator.SetArtifacts(artifacts)
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

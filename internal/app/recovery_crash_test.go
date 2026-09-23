@@ -64,11 +64,11 @@ func openCrashProbe(t *testing.T, dir string) *crashProbe {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.tasks, err = task.OpenLedger(f.book, "")
+	f.tasks, err = task.OpenLedger(f.book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := state.OpenLedger(f.book, "")
+	sessions, err := state.OpenLedger(f.book)
 	if err != nil {
 		t.Fatal(err)
 	}

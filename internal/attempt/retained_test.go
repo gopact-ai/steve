@@ -14,7 +14,7 @@ import (
 func retainedFixture(t *testing.T) (*Service, *clock, Record, RetainedEvidence, *task.Store) {
 	t.Helper()
 	s, now := newService(t)
-	tasks, err := task.OpenLedger(s.l, "")
+	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 func presetFixture(t *testing.T) (*PluginService, string, plugins.Manifest) {
@@ -143,7 +144,7 @@ func TestPluginPresetReplayFinishesPendingOperation(t *testing.T) {
 	}
 	for _, operation := range operations {
 		if operation.ID == req.CommandID {
-			operation.State = plugins.OperationPending
+			operation.State = pluginledger.OperationPending
 			if err := s.Library.Ledger.PutBinding(t.Context(), "plugin-management", operation.ID, operation); err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +158,7 @@ func TestPluginPresetReplayFinishesPendingOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, operation := range operations {
-		if operation.ID == req.CommandID && operation.State != plugins.OperationSucceeded {
+		if operation.ID == req.CommandID && operation.State != pluginledger.OperationSucceeded {
 			t.Fatalf("saved result left management operation pending: %+v", operation)
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 )
@@ -48,7 +49,7 @@ func TestChannelsRotationCASAndEffectiveSettings(t *testing.T) {
 		t.Fatalf("initial view=%+v err=%v", before, err)
 	}
 	AssertNoChannelSecrets(t, before)
-	update := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: config.ChannelPatch{Feishu: &config.FeishuChannelPatch{AppSecret: &config.ChannelSecret{Action: "replace", Value: ChannelValue("rotated-private-secret")}}}}
+	update := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "replace", Value: ChannelValue("rotated-private-secret")}}}}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for range 2 {
@@ -78,7 +79,7 @@ func TestChannelsRotationCASAndEffectiveSettings(t *testing.T) {
 	if err != nil || reloaded.Feishu.AppSecret != "rotated-private-secret" {
 		t.Fatal("secret rotation not persisted", err)
 	}
-	if _, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{Channels: config.ChannelPatch{}}); !errors.Is(err, consoleapi.ErrSettingsConflict) {
+	if _, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{Channels: channelsettings.Patch{}}); !errors.Is(err, consoleapi.ErrSettingsConflict) {
 		t.Fatal("missing revision accepted", err)
 	}
 	policies := NewSettings(a, a.Cfg)
@@ -99,7 +100,7 @@ func TestChannelsDisablePreservesConsoleIdentityAndSecrets(t *testing.T) {
 	}
 	s := NewChannels(a, a.Cfg)
 	before, _ := s.Channels(t.Context())
-	update := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: config.ChannelPatch{DefaultChannel: ChannelValue("console"), Feishu: &config.FeishuChannelPatch{Enabled: ChannelValue(false), OwnerOpenID: ChannelValue("different-im-owner")}}}
+	update := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{DefaultChannel: ChannelValue("console"), Feishu: &channelsettings.FeishuPatch{Enabled: ChannelValue(false), OwnerOpenID: ChannelValue("different-im-owner")}}}
 	after, err := s.UpdateChannels(t.Context(), update)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +112,7 @@ func TestChannelsDisablePreservesConsoleIdentityAndSecrets(t *testing.T) {
 	if a.Cfg.Feishu.AppSecret != "original-private-secret" {
 		t.Fatal("disabled channel lost omitted secret")
 	}
-	if _, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: after.Revision, Channels: config.ChannelPatch{Feishu: &config.FeishuChannelPatch{AppSecret: &config.ChannelSecret{Action: "clear"}}}}); err != nil {
+	if _, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: after.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "clear"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	after, _ = s.Channels(t.Context())
@@ -127,7 +128,7 @@ func TestChannelsSaveFailuresAndExternalEditRespectCommitBoundary(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	update := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: config.ChannelPatch{Feishu: &config.FeishuChannelPatch{AppSecret: &config.ChannelSecret{Action: "replace", Value: ChannelValue("rotated-private-secret")}}}}
+	update := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "replace", Value: ChannelValue("rotated-private-secret")}}}}
 	a.WriteConfig = func(string, *config.Config) error {
 		return errors.New("write failed original-private-secret rotated-private-secret")
 	}

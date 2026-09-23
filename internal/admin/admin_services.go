@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -485,7 +486,7 @@ func (s *Services) preflight() error {
 		if _, err := cfg.AgentCatalog(); err != nil {
 			return serviceFailure("invalid", "The shared Agent configuration is invalid")
 		}
-		if _, _, err := config.ProjectDeclarations(cfg); err != nil {
+		if _, _, err := configbuild.ProjectDeclarations(cfg); err != nil {
 			return serviceFailure("invalid", "The shared project configuration is invalid")
 		}
 		return nil
@@ -503,7 +504,7 @@ func (s *Services) preflight() error {
 	if _, err := cfg.AgentCatalog(); err != nil {
 		return serviceFailure("invalid", "Saved agent configuration is invalid; fix it before restarting")
 	}
-	if _, _, err := config.ProjectDeclarations(cfg); err != nil {
+	if _, _, err := configbuild.ProjectDeclarations(cfg); err != nil {
 		return serviceFailure("invalid", "Saved project configuration is invalid; fix it before restarting")
 	}
 	if boot := s.boot; boot != nil {

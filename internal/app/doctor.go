@@ -11,7 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
-	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/logs"
@@ -33,7 +33,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 		return err
 	}
 	defer book.Close()
-	store, err := state.OpenLedger(book, cfg.Gateway.StatePath)
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 	// line in the config, and an agent placed on an unreachable node should
 	// fail with that fact rather than with a mystery session error.
 	nodewire.SetSelf(adminsvc.NodeName())
-	nodes := node.NewRegistry(cfg.Gateway.HubID, cfg.NodeConfigs())
+	nodes := node.NewRegistry(cfg.Gateway.HubID, configbuild.NodeConfigs(cfg))
 	defer nodes.Close()
 	manager.SetTransports(nodes)
 
@@ -71,17 +71,17 @@ func Doctor(configPath string, timeout time.Duration) error {
 	// the owner's DM works in — so nothing special-cases it downstream.
 	projects := project.Open(book, artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
 	projects.SetHubID(cfg.Gateway.HubID)
-	declared, _, err := config.ProjectDeclarations(cfg)
+	declared, _, err := configbuild.ProjectDeclarations(cfg)
 	if err != nil {
 		return err
 	}
-	if err := (config.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
 		return fmt.Errorf("reconcile configured projects: %w", err)
 	}
 	for _, note := range cfg.Migrated {
 		slog.Info(fmt.Sprintf("steve: config migrated: %s", note))
 	}
-	for _, g := range cfg.GrantList() {
+	for _, g := range configbuild.GrantList(cfg) {
 		if _, err := projects.Grant(context.Background(), g.Project, g.Principal, g.Role, g.By); err != nil {
 			return fmt.Errorf("grant %s in %s: %w", g.Principal, g.Project, err)
 		}

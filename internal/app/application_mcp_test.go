@@ -103,7 +103,7 @@ func applicationGrantBook(t *testing.T) (*ledger.Ledger, *task.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestApplicationMCPGrantFollowsRealAttemptLifecycleAndReplicaSnapshot(t *tes
 	if status := grantRPC(t, fresh, "original-native-token", "tools/call"); status != http.StatusOK {
 		t.Fatalf("migrated token: %d", status)
 	}
-	restoredTasks, err := task.OpenLedger(replica, "")
+	restoredTasks, err := task.OpenLedger(replica)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/gopact-ai/steve/internal/channel"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/datalevel"
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
@@ -69,11 +71,11 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := state.OpenLedger(book, "")
+	sessions, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +91,7 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 	c.SetAttempts(attempt.New(book))
 	projects := project.Open(book)
 	workspace := project.Workspace{ID: "workspace", Project: "p", Node: "node-a", Path: t.TempDir(), Kind: project.KindCanonical}
-	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: "node-a", Path: workspace.Path}, Level: project.LevelInternal}}); err != nil {
+	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: "node-a", Path: workspace.Path}, Level: datalevel.Internal}}); err != nil {
 		t.Fatal(err)
 	}
 	c.SetProjects(projects, "p", "")

@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nativehistory"
 	"io"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/filedoc"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plugins"
@@ -99,16 +101,12 @@ type Store struct {
 
 // Open keeps the store in one JSON file; the gateway opens the ledger.
 func Open(path string) (*Store, error) {
-	return openWith(&ledger.FileDocument{Path: path})
+	return openWith(&filedoc.Document{Path: path})
 }
 
-// OpenLedger keeps the store in the ledger, importing a legacy file once.
-func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
-	doc := l.Document("state")
-	if _, err := doc.Import(legacy); err != nil {
-		return nil, err
-	}
-	return openWith(doc)
+// OpenLedger keeps the store in the ledger.
+func OpenLedger(l *ledger.Ledger) (*Store, error) {
+	return openWith(l.Document("state"))
 }
 
 func openWith(doc ledger.Doc) (*Store, error) {

@@ -81,7 +81,7 @@ func TestNativeHistoryRevisionTracksSameStateWritesAndScopes(t *testing.T) {
 
 func TestNativeHistoryScopeClosureInvalidatesOnlyItsConversation(t *testing.T) {
 	s, _ := newService(t)
-	tasks, err := task.OpenLedger(s.l, "")
+	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
 		t.Fatal(err)
 	}

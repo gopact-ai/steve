@@ -51,7 +51,7 @@ func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
 			called := 0
 			c.SetAfterTurn(func(id string) {
 				called++
-				durable, err := task.OpenLedger(book, "")
+				durable, err := task.OpenLedger(book)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -159,7 +159,7 @@ func TestCompletedRelocationRequiresAccountingBeforeResult(t *testing.T) {
 		WHERE kind='task-attempt' AND json_extract(data,'$.execution_id')=?`, old.ID); err != nil {
 		t.Fatal(err)
 	}
-	c.tasks, err = task.OpenLedger(book, "")
+	c.tasks, err = task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

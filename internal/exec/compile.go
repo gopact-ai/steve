@@ -17,13 +17,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"log/slog"
 	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/nodewire"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/gopact/workflow"
@@ -401,7 +403,7 @@ func endpointOf(node, harness string) string {
 
 // admits says why a candidate may not hold the project's data, or "".
 func admits(p project.Project, c roster.Candidate) string {
-	if p.Level == project.LevelSealed && c.Node != p.Home.Node {
+	if p.Level == datalevel.Sealed && c.Node != p.Home.Node {
 		return "sealed project " + p.ID + " runs only at " + placeLabel(p.Home.Node)
 	}
 	if !p.Level.OrDefault().Admits(c.Level.OrDefault()) {

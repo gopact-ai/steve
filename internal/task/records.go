@@ -180,9 +180,8 @@ func decodeRecords(records recordSet) (data, uint64, error) {
 	return d, control.Revision, nil
 }
 
-// OpenLedger exclusively reads record bindings. The former legacy path is
-// intentionally ignored: neither that file nor Document("tasks") is authority.
-func OpenLedger(book *ledger.Ledger, _ string) (*Store, error) {
+// OpenLedger reads the task record bindings, the only task authority.
+func OpenLedger(book *ledger.Ledger) (*Store, error) {
 	records, err := loadRecordSet(book)
 	if err != nil {
 		return nil, fmt.Errorf("read task records: %w", err)

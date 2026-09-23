@@ -11,7 +11,7 @@ import (
 
 func TestChatOpenCannotAdmitAnAlreadyEndedTurn(t *testing.T) {
 	s := identityStore(t)
-	tasks, err := task.OpenLedger(s.l, "")
+	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestChatOpenCannotAdmitAnAlreadyEndedTurn(t *testing.T) {
 
 func TestChatOpenRechecksEndedAccountingAfterLeaseAcquisition(t *testing.T) {
 	s := identityStore(t)
-	tasks, err := task.OpenLedger(s.l, "")
+	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestTaskBackedChatCannotBypassAdmissionFenceByOmittingExecutionToken(t *tes
 	for _, accounting := range []string{"open", "ended"} {
 		t.Run(accounting, func(t *testing.T) {
 			s := identityStore(t)
-			tasks, err := task.OpenLedger(s.l, "")
+			tasks, err := task.OpenLedger(s.l)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -129,7 +129,7 @@ func TestUntrackedChatAdmissionStillWorksWithoutExecutionToken(t *testing.T) {
 	if _, err := s.Open(t.Context(), Spec{ID: "direct", TaskID: "untracked", TurnID: "input", Kind: KindChat, Scope: ScopeNone}); err != nil {
 		t.Fatalf("untracked chat consumer requires nonexistent task token: %v", err)
 	}
-	tasks, err := task.OpenLedger(s.l, "")
+	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestUntrackedChatAdmissionStillWorksWithoutExecutionToken(t *testing.T) {
 
 func TestChatCannotReadmitTheSameInputAfterNeverAdmittedProof(t *testing.T) {
 	s := identityStore(t)
-	tasks, err := task.OpenLedger(s.l, "")
+	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
 		t.Fatal(err)
 	}

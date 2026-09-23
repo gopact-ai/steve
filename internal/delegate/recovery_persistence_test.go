@@ -29,7 +29,7 @@ func boundDelegatePersistenceFixture(t *testing.T) (*world, *sql.DB, task.Task, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

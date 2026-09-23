@@ -34,6 +34,7 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	webassets "github.com/gopact-ai/steve/internal/readmodel/web"
 	runtimestore "github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 	"github.com/hashicorp/raft"
 )
@@ -486,6 +487,12 @@ func ApplicationAuthorityError(err error) bool {
 }
 
 func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
+	// The listener is loopback-only (requireClusterLoopback); what remains is
+	// the owner's browser acting for another site. Proxied hops drop Origin.
+	if err := sameorigin.Check(r, sameorigin.Loopback); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/cluster/") || strings.HasPrefix(r.URL.Path, coordination.RPCPath) {
 		http.NotFound(w, r)
 		return

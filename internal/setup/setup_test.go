@@ -483,3 +483,15 @@ func TestRunReuseKeepPromptsOwner(t *testing.T) {
 		t.Fatalf("saved owner = %q", loaded.Feishu.OwnerOpenID)
 	}
 }
+
+func TestLocaleForDomain(t *testing.T) {
+	if localeForDomain(config.DomainLark) != i18n.LocaleEN {
+		t.Fatal("lark should be english")
+	}
+	if localeForDomain(config.DomainFeishu) != i18n.LocaleZH {
+		t.Fatal("feishu should be chinese")
+	}
+	if localeForDomain("") != i18n.LocaleZH {
+		t.Fatal("empty domain should default to chinese")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -45,7 +46,7 @@ func TestPendingImportGatesStartupUntilConfigurationAndActivationComplete(t *tes
 			if err != nil || !found || owner.State != "importing" {
 				t.Fatalf("incomplete configuration activated ownership: %+v %v", owner, err)
 			}
-			if err := (config.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); !errors.Is(err, project.ErrTransferPending) {
+			if err := (configbuild.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); !errors.Is(err, project.ErrTransferPending) {
 				t.Fatal("startup did not gate incomplete import", err)
 			}
 			if _, found, err := projects.Lookup(t.Context(), "p"); err != nil || !found {
@@ -66,7 +67,7 @@ func TestPendingImportGatesStartupUntilConfigurationAndActivationComplete(t *tes
 			defer book.Close()
 			projects = project.Open(book)
 			projects.SetHubID("target")
-			if err := (config.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); err != nil {
+			if err := (configbuild.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); err != nil {
 				t.Fatal(err)
 			}
 			if _, found, err := projects.Get(t.Context(), "p"); err != nil || !found {

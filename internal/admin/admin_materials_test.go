@@ -9,12 +9,13 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
-func materialsAdmin(t *testing.T, level project.Level) (*Service, *ledger.Ledger) {
+func materialsAdmin(t *testing.T, level datalevel.Level) (*Service, *ledger.Ledger) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -30,16 +31,16 @@ func materialsAdmin(t *testing.T, level project.Level) (*Service, *ledger.Ledger
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}, Level: level}}); err != nil {
 		t.Fatal(err)
 	}
-	return &Service{Cfg: &config.Config{Gateway: config.Gateway{OwnerID: "owner"}}, Owner: "owner", MaterialLevel: project.LevelRestricted, Materials: materials, Projects: projects}, book
+	return &Service{Cfg: &config.Config{Gateway: config.Gateway{OwnerID: "owner"}}, Owner: "owner", MaterialLevel: datalevel.Restricted, Materials: materials, Projects: projects}, book
 }
 
 func TestMaterialsDoNotCrossHubDataLevelOrPendingOwnerChange(t *testing.T) {
-	a, _ := materialsAdmin(t, project.LevelRestricted)
-	a.MaterialLevel = project.LevelPublic
+	a, _ := materialsAdmin(t, datalevel.Restricted)
+	a.MaterialLevel = datalevel.Public
 	if _, err := a.UploadMaterial(t.Context(), "p", "secret.txt", "text/plain", strings.NewReader("secret")); !errors.Is(err, material.ErrScope) {
 		t.Fatalf("public Hub received restricted content: %v", err)
 	}
-	a.MaterialLevel = project.LevelRestricted
+	a.MaterialLevel = datalevel.Restricted
 	item, err := a.UploadMaterial(t.Context(), "p", "note.txt", "text/plain", strings.NewReader("note"))
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +56,7 @@ func TestMaterialsDoNotCrossHubDataLevelOrPendingOwnerChange(t *testing.T) {
 }
 
 func TestReplyCaptureUsesOriginalProjectAndRevision(t *testing.T) {
-	a, book := materialsAdmin(t, project.LevelPublic)
+	a, book := materialsAdmin(t, datalevel.Public)
 	replies := console.DurableState{Replies: map[string][]consoleapi.Reply{"console:one": {{ID: "reply", Conversation: "console:one", ProjectID: "p", Text: "original", Kind: "reply"}}}}
 	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, replies) }); err != nil {
 		t.Fatal(err)

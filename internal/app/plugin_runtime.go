@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 // applicationPlugins joins declared project scopes to physical preparation.
@@ -26,7 +27,7 @@ import (
 type applicationPlugins struct {
 	gate      *sync.RWMutex
 	cfg       *config.Config
-	library   *plugins.Library
+	library   *pluginledger.Library
 	local     *node.PluginRuntimePool
 	nodes     *node.Registry
 	authority nodewire.SessionAuthority
@@ -203,7 +204,7 @@ func pluginRuntimeCommand(attemptID string) string {
 
 func assemblePlugins(life lifetime, boot runtimeAssembly, machines fleetAssembly, page consoleAssembly, input inputAssembly) error {
 	store := &plugins.Store{Dir: filepath.Join(filepath.Dir(boot.Config().Gateway.StatePath), "plugins")}
-	library := &plugins.Library{Store: store, Ledger: boot.Book()}
+	library := &pluginledger.Library{Store: store, Ledger: boot.Book()}
 	pool := &node.PluginRuntimePool{Store: store, StateDir: filepath.Dir(boot.Config().Gateway.StatePath)}
 	gate := &sync.RWMutex{}
 	service := &applicationPlugins{gate: gate, cfg: boot.Config(), library: library, local: pool, nodes: machines.Nodes()}

@@ -126,7 +126,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 		t.Fatalf("original question lacks retained execution binding: %+v", original)
 	}
 	firstActive := WaitPeerReady(t, first)
-	conversationStore, err := state.OpenLedger(firstActive.Ledger, "")
+	conversationStore, err := state.OpenLedger(firstActive.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	if err != nil || len(records) != 1 {
 		t.Fatalf("recovery created a second attempt: %+v %v", records, err)
 	}
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +474,7 @@ func TestSourceNodeLossUsesPlanScopedApprovalAndContinuesInIsolatedWorkspace(t *
 	if newRecord.State != attempt.Bound || newRecord.Workspace.Kind != "worktree" || newRecord.Node == oldRecord.Node || newRecord.Workspace.Path == oldRecord.Workspace.Path || newRecord.Recovery == nil {
 		t.Fatalf("unsafe replacement workspace: %+v", newRecord)
 	}
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -114,8 +114,8 @@ func TestCrashResumeE2E(t *testing.T) {
 	configs := map[string]harness.Config{"mock": {Command: bin, Permission: "auto"}}
 
 	// Life before the crash: one finished turn, then a turn "in flight".
-	store1, _ := state.OpenLedger(book, "")
-	tasks1, _ := task.OpenLedger(book, "")
+	store1, _ := state.OpenLedger(book)
+	tasks1, _ := task.OpenLedger(book)
 	manager1, err := harness.NewManager(configs)
 	if err != nil {
 		t.Fatal(err)
@@ -146,8 +146,8 @@ func TestCrashResumeE2E(t *testing.T) {
 	manager1.Stop() // the crash
 
 	// The next gateway process.
-	store2, _ := state.OpenLedger(book, "")
-	tasks2, _ := task.OpenLedger(book, "")
+	store2, _ := state.OpenLedger(book)
+	tasks2, _ := task.OpenLedger(book)
 	manager2, err := harness.NewManager(configs)
 	if err != nil {
 		t.Fatal(err)

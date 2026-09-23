@@ -227,36 +227,37 @@ func TestFaultDropsHubOnlyOnceAfterFirstACPStream(t *testing.T) {
 	}
 }
 
-func TestLegacyHubAndNodeKeepOriginalStreams(t *testing.T) {
+func TestHubRefusesANodeWithoutTheProcessJournal(t *testing.T) {
+	cfg := Config{Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
+		hub, node := net.Pipe()
+		go func() {
+			defer node.Close()
+			_, _ = nodewire.Accept(node, "t", nodewire.Advert{})
+		}()
+		return hub, nil
+	}}
+	c, err := dial(t.Context(), "old", "hub", cfg, nil)
+	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), nodewire.FeatureJournal) {
+		if c != nil {
+			c.close()
+		}
+		t.Fatalf("dial = %v, want a version mismatch naming %s", err, nodewire.FeatureJournal)
+	}
+}
+
+func TestNodeRefusesAnAgentStreamWithoutAnID(t *testing.T) {
 	m := newMemoryNode(t, "/bin/cat")
-	r := memoryRegistry(t)
-	c := connectMemory(t, m, r)
-	adv := c.getAdvert()
-	adv.Features = nil
-	c.setAdvert(adv)
-	p, err := r.Transport("n", "cat").Start(t.Context())
+	stream, err := m.connection(t).Open(nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: "cat"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Kill()
-	legacy, ok := p.(legacyRemoteProcess)
-	if !ok || legacy.stream.Request().Stream != "" {
-		t.Fatalf("legacy transport = %T", p)
+	select {
+	case <-stream.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the node started an agent for a stream it cannot resume")
 	}
-	_, _ = io.WriteString(p.Stdin(), "raw without newline")
-	buf := make([]byte, len("raw without newline"))
-	if _, err := io.ReadFull(p.Stdout(), buf); err != nil || string(buf) != "raw without newline" {
-		t.Fatal(string(buf), err)
-	}
-	_ = c.mux.Close()
-	_, err = p.Stdout().Read(buf)
-	if err == nil {
-		t.Fatal("legacy stream pretended to resume")
-	}
-	// An old hub omits the four fields, which the new server treats exactly
-	// as above. No ResumeAck or sideband acknowledgement enters its stream.
-	if legacy.stream.Request().Kind != nodewire.StreamACP {
-		t.Fatal("wrong kind")
+	if err := stream.Err(); err == nil || !strings.Contains(err.Error(), "invalid stream id") {
+		t.Fatalf("stream ended with %v, want invalid stream id", err)
 	}
 }
 

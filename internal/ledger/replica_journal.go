@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/gopact-ai/steve/internal/filedoc"
 )
 
 // The replicated table makes effect evidence part of the application state.
@@ -122,7 +124,7 @@ func (l *Ledger) replaceEffectsJournal() error {
 		}
 		raw = append(append(raw, line...), '\n')
 	}
-	if err := (&FileDocument{Path: j.path}).Save(raw); err != nil {
+	if err := (&filedoc.Document{Path: j.path}).Save(raw); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(j.path, os.O_RDWR|os.O_APPEND, 0o600)

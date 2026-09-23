@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -27,7 +28,7 @@ func configuredCloneFixture(t *testing.T, options ...ledger.Options) *Service {
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 		t.Fatal(err)
 	}
 	return a
@@ -82,7 +83,7 @@ func TestRunningCloneBlocksRemovalRetirementAndReassignment(t *testing.T) {
 	candidate := config.CloneProjects(a.Cfg)
 	delete(candidate.Projects, "remove")
 	candidate.Projects["replacement"] = config.Project{Home: config.ProjectHome{Node: "remote", Path: "/held-clone"}}
-	if err := (config.ProjectController{Store: a.Projects}).Commit(t.Context(), candidate, func() error { t.Fatal("isolated path reached file commit"); return nil }); !errors.Is(err, project.ErrCloneIsolated) {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Commit(t.Context(), candidate, func() error { t.Fatal("isolated path reached file commit"); return nil }); !errors.Is(err, project.ErrCloneIsolated) {
 		t.Fatalf("path reassigned while clone writes: %v", err)
 	}
 	close(release)

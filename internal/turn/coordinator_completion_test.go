@@ -15,7 +15,7 @@ func TestTaskCompletionWithoutConsoleGuardRejectsExistingRecords(t *testing.T) {
 				t.Fatal(err)
 			}
 			before, _ := c.tasks.Get("1")
-			beforeStore, err := task.OpenLedger(book, "")
+			beforeStore, err := task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -35,7 +35,7 @@ func TestTaskCompletionWithoutConsoleGuardRejectsExistingRecords(t *testing.T) {
 			if after, _ := c.tasks.Get("1"); !reflect.DeepEqual(before, after) {
 				t.Fatal("refused completion changed the in-memory task")
 			}
-			afterStore, err := task.OpenLedger(book, "")
+			afterStore, err := task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

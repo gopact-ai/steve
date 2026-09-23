@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -29,7 +30,7 @@ func (n *localNode) Generation(context.Context, string) (int64, error) {
 }
 
 func (n *localNode) Artifact(ctx context.Context, _ string, req ops.Request) (ops.Result, error) {
-	return RunOperation(ctx, req)
+	return gitrepo.RunOperation(ctx, req)
 }
 
 func (n *localNode) PutBlob(_ context.Context, node, name string, content io.Reader, size int64) error {

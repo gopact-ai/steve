@@ -81,7 +81,7 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 		t.Fatal(err)
 	}
 	defer func() { book.Close() }()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

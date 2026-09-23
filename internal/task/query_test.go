@@ -74,7 +74,7 @@ func TestWorksetReadBoundedByLiveClosureAndRecentNotHistory(t *testing.T) {
 	if !ok || h.Summary.Attempts != 10000 || h.Summary.Tokens.Total != 30000 || h.Summary.Seconds != 10000 || h.Budget.Turns != 10050 {
 		t.Fatalf("own summary confused with subtree budget: %+v", h)
 	}
-	reopened, err := OpenLedger(s.book, "")
+	reopened, err := OpenLedger(s.book)
 	if err != nil {
 		t.Fatal(err)
 	}

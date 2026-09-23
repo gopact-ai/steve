@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 )
 
@@ -40,7 +41,7 @@ func (l LocalNodes) root(node string) string  { return filepath.Join(l.Dir, node
 func (l LocalNodes) state(node string) string { return filepath.Join(l.Dir, node, "state") }
 
 func (l LocalNodes) Artifact(ctx context.Context, _ string, req ops.Request) (ops.Result, error) {
-	return RunOperation(ctx, req)
+	return gitrepo.RunOperation(ctx, req)
 }
 
 // Exec runs only harness verification commands.

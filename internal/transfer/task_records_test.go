@@ -19,7 +19,7 @@ func TestReleaseOwnershipAndTaskRecordFreezeRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestReleaseOwnershipAndTaskRecordFreezeRollbackTogether(t *testing.T) {
 	if err := releaseSource(t.Context(), projects, options, "p", nil, b.Tasks, b.Console); err == nil || !strings.Contains(err.Error(), "owner release rejected") {
 		t.Fatalf("ownership failure: %v", err)
 	}
-	loaded, err := task.OpenLedger(book, "")
+	loaded, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestReleaseOwnershipAndTaskRecordFreezeRollbackTogether(t *testing.T) {
 	if err := releaseSource(t.Context(), projects, options, "p", nil, b.Tasks, b.Console); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err = task.OpenLedger(book, "")
+	loaded, err = task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestImportFinalTaskRecordFailureRollsBackAllDomainFactsAndRetries(t *testin
 		t.Fatal(err)
 	}
 	defer book.Close()
-	loaded, err := task.OpenLedger(book, "")
+	loaded, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

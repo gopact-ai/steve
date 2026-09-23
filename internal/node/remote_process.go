@@ -355,10 +355,6 @@ func (p *remoteProcess) readLoop(c *conn, stream *nodewire.Stream, reader *bufio
 			if err != nil {
 				break
 			}
-			if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureJournal) {
-				err = journal.ErrUnresumable
-				break
-			}
 			p.mu.Lock()
 			if p.err != nil {
 				err = p.err

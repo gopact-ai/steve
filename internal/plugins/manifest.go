@@ -93,6 +93,13 @@ type AgentPreset struct {
 	MCPServers   []string          `json:"mcp_servers,omitempty"`
 }
 
+// ValidName reports whether s is a plugin name segment: an installation,
+// operation or capability name.
+func ValidName(s string) bool { return nameShape.MatchString(s) }
+
+// ValidDigest reports whether s is a lowercase hex SHA-256 digest.
+func ValidDigest(s string) bool { return digestShape.MatchString(s) }
+
 func ValidID(id string) bool {
 	parts := strings.Split(id, "/")
 	return len(parts) == 2 && nameShape.MatchString(parts[0]) && nameShape.MatchString(parts[1])

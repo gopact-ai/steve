@@ -17,7 +17,7 @@ func TestTaskExecutionNodeSurvivesCoordinatorChangeAndReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer book.Close()
-			store, err := task.OpenLedger(book, "")
+			store, err := task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +48,7 @@ func TestTaskExecutionNodeSurvivesCoordinatorChangeAndReload(t *testing.T) {
 				if _, err := store.Finish(id, task.OutcomeOK, task.Tokens{}, 0); err != nil {
 					t.Fatal(err)
 				}
-				store, err = task.OpenLedger(book, "")
+				store, err = task.OpenLedger(book)
 				if err != nil {
 					t.Fatal(err)
 				}

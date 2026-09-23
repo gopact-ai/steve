@@ -12,7 +12,9 @@ import (
 	"sort"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -170,7 +172,7 @@ func (s *Store) generationOf(ctx context.Context, node string) int64 {
 // ensureOnNode makes sure the node holds the artifact, keeping the replica
 // record honest at every step: a known verified copy of this generation is
 // trusted; anything else is checked; a missing copy is pushed and checked.
-func (s *Store) ensureOnNode(ctx context.Context, p project.Project, node, bare string, hub *Repo, sha string) error {
+func (s *Store) ensureOnNode(ctx context.Context, p project.Project, node, bare string, hub *gitrepo.Repo, sha string) error {
 	gen := s.generationOf(ctx, node)
 	if r, ok := s.replica(ctx, sha, node); ok {
 		if r.State == ReplicaVerified && r.Generation == gen {
@@ -218,18 +220,18 @@ func (s *Store) ensureOnNode(ctx context.Context, p project.Project, node, bare 
 // higher one: content changed on purpose so it may leave the level it
 // came from. Lowering below the source's label needs an approval id.
 type Derivation struct {
-	Source   string        `json:"source"`
-	Derived  string        `json:"derived"`
-	Label    project.Level `json:"label"`
-	By       string        `json:"by"`
-	Approval string        `json:"approval,omitempty"`
-	At       time.Time     `json:"at"`
+	Source   string          `json:"source"`
+	Derived  string          `json:"derived"`
+	Label    datalevel.Level `json:"label"`
+	By       string          `json:"by"`
+	Approval string          `json:"approval,omitempty"`
+	At       time.Time       `json:"at"`
 }
 
 const derivationKind = "derivation"
 
 // Derive labels an already published artifact as derived from another.
-func (s *Store) Derive(ctx context.Context, source, derived string, label project.Level, by, approval string) (Derivation, error) {
+func (s *Store) Derive(ctx context.Context, source, derived string, label datalevel.Level, by, approval string) (Derivation, error) {
 	from, ok, err := s.Manifest(ctx, source)
 	if err != nil || !ok {
 		return Derivation{}, fmt.Errorf("source artifact %s is unknown", short(source))

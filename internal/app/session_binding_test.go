@@ -137,7 +137,7 @@ func TestApplicationStopsUseCommittedSessionBinding(t *testing.T) {
 				case <-time.After(time.Millisecond):
 				}
 			}
-			tasks, err := task.OpenLedger(active.Ledger, "")
+			tasks, err := task.OpenLedger(active.Ledger)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -50,11 +50,11 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		tasks, err := task.OpenLedger(book, "")
+		tasks, err := task.OpenLedger(book)
 		if err != nil {
 			t.Fatal(err)
 		}
-		store, err := state.OpenLedger(book, "")
+		store, err := state.OpenLedger(book)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -77,7 +77,7 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 	manager.Stop()
 
 	// Reload rather than inspecting the old owner's cache.
-	onDisk, err := task.OpenLedger(book, "")
+	onDisk, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

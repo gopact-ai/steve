@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/harness"
-	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -47,7 +47,7 @@ func TestNodeSessionSubprocess(t *testing.T) {
 			t.Fatal(err)
 		}
 		s := NewServer(ServerConfig{Name: "worker", Token: "session-process-test", StateDir: filepath.Join(dir, "state"), WorkspaceRoot: filepath.Join(dir, "workspace"), Harnesses: map[string]HarnessSpec{"mock": {Command: os.Getenv("STEVE_SESSION_TEST_AGENT")}}, SessionAuthorizer: diskSessionAuthority{dir}, Listener: listener})
-		if err := (&ledger.FileDocument{Path: filepath.Join(dir, "address")}).Save([]byte(listener.Addr().String())); err != nil {
+		if err := (&filedoc.Document{Path: filepath.Join(dir, "address")}).Save([]byte(listener.Addr().String())); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(t.Context())
@@ -101,7 +101,7 @@ func TestNodeSessionSubprocess(t *testing.T) {
 		}
 		_, _, err = runner.(harness.TurnRunner).PromptTurn(ctx, "askme", nil, nil, func(ctx context.Context, q view.Question) (view.Answer, error) {
 			raw, _ := json.Marshal(subprocessSessionReceipt{ID: runner.ID(), Question: q.RequestID})
-			if err := (&ledger.FileDocument{Path: filepath.Join(dir, "accepted.json")}).Save(raw); err != nil {
+			if err := (&filedoc.Document{Path: filepath.Join(dir, "accepted.json")}).Save(raw); err != nil {
 				return view.Answer{}, err
 			}
 			<-ctx.Done()
@@ -135,7 +135,7 @@ func TestNodeSessionSubprocess(t *testing.T) {
 	}
 	previous.Output = output
 	raw, _ = json.Marshal(previous)
-	if err := (&ledger.FileDocument{Path: filepath.Join(dir, "completed.json")}).Save(raw); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(dir, "completed.json")}).Save(raw); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -202,7 +202,7 @@ func TestNodeSessionContinuesAfterCoordinatorProcessIsKilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = first.Wait()
-	if err := (&ledger.FileDocument{Path: filepath.Join(dir, "authority")}).Save([]byte("2")); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(dir, "authority")}).Save([]byte("2")); err != nil {
 		t.Fatal(err)
 	}
 	second := start("second")

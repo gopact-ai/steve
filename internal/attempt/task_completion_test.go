@@ -11,7 +11,7 @@ import (
 
 func TestReservationRechecksCompletionAfterLeaseAcquisition(t *testing.T) {
 	service, _ := newService(t)
-	tasks, err := task.OpenLedger(service.l, "")
+	tasks, err := task.OpenLedger(service.l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestReservationRechecksCompletionAfterLeaseAcquisition(t *testing.T) {
 func TestTaskCompletionAndAttemptReservationHaveOneWinner(t *testing.T) {
 	for range 30 {
 		service, _ := newService(t)
-		tasks, err := task.OpenLedger(service.l, "")
+		tasks, err := task.OpenLedger(service.l)
 		if err != nil {
 			t.Fatal(err)
 		}

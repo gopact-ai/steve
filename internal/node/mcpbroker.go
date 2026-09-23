@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/filedoc"
 )
 
 // The MCP broker keeps the machine's MCP servers — and their credentials
@@ -591,5 +591,5 @@ func (b *Broker) rememberProxyPort(port int) error {
 	if !b.cfg.StrictPort {
 		return os.WriteFile(b.cfg.PortFile, raw, 0600)
 	}
-	return (&ledger.FileDocument{Path: b.cfg.PortFile}).Save(raw)
+	return (&filedoc.Document{Path: b.cfg.PortFile}).Save(raw)
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/budget"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/view"
@@ -133,9 +134,9 @@ func TestTimeoutSourcePinsRunningConsumersAndRefreshesRequests(t *testing.T) {
 func TestTimeoutSourceDefaultsAndLegacyFields(t *testing.T) {
 	for _, kind := range []string{"step", "command", "agent"} {
 		t.Run(kind, func(t *testing.T) {
-			defaultTimeout := DefaultVerifyTimeout
+			defaultTimeout := budget.VerifyTimeout
 			if kind == "step" {
-				defaultTimeout = DefaultStepTimeout
+				defaultTimeout = budget.StepTimeout
 			}
 			for _, tc := range []struct {
 				name           string

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -157,14 +158,14 @@ func installMarkerBytes(t *testing.T, o ImportOptions, input []byte) []byte {
 
 func writeInstallMarker(t *testing.T, stateDir, transferID string, raw []byte) {
 	t.Helper()
-	if err := (&ledger.FileDocument{Path: filepath.Join(stateDir, "transfers", transferID+".json")}).Save(raw); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(stateDir, "transfers", transferID+".json")}).Save(raw); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func writeTargetMemory(t *testing.T, stateDir, name, content string) {
 	t.Helper()
-	if err := (&ledger.FileDocument{Path: filepath.Join(stateDir, "memory", "projects", name)}).Save([]byte(content)); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(stateDir, "memory", "projects", name)}).Save([]byte(content)); err != nil {
 		t.Fatal(err)
 	}
 }

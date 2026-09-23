@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/datalevel"
 )
 
 func corruptProjectRow(t *testing.T, s *Store, table, kind, id, data string) {
@@ -79,7 +81,7 @@ func TestProjectListKeepsDeclarationGate(t *testing.T) {
 func TestProjectOperationsRejectCorruptProjectSet(t *testing.T) {
 	tests := map[string]func(*Store, Project) error{
 		"declare": func(s *Store, p Project) error {
-			p.Level = LevelRestricted
+			p.Level = datalevel.Restricted
 			return s.Declare(t.Context(), []Project{p})
 		},
 		"set-copy": func(s *Store, p Project) error {

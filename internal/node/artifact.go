@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -18,13 +18,13 @@ const operationTimeout = 10 * time.Minute
 // report an unsupported feature; there is deliberately no shell fallback.
 func (r *Registry) Artifact(ctx context.Context, name string, req nodewire.ArtifactRequest) (nodewire.ArtifactResult, error) {
 	if name == "" {
-		return artifact.RunOperation(ctx, req)
+		return gitrepo.RunOperation(ctx, req)
 	}
 	var reply nodewire.ArtifactReply
 	if err := r.operation(ctx, name, nodewire.StreamArtifact, nodewire.FeatureArtifact, req, &reply); err != nil {
 		return reply.Result, err
 	}
-	return reply.Result, artifact.DecodeFailure(reply.Error)
+	return reply.Result, gitrepo.DecodeFailure(reply.Error)
 }
 
 func (r *Registry) operation(ctx context.Context, name, kind, feature string, req, reply any) error {
@@ -88,8 +88,8 @@ func (s *Server) runArtifact(ctx context.Context, stream *nodewire.Stream) {
 	if err := json.NewDecoder(io.LimitReader(stream, nodewire.MaxPayload)).Decode(&req); err != nil {
 		reply.Error = &nodewire.OperationFailure{Code: "invalid_request", Message: err.Error()}
 	} else {
-		result, err := artifact.RunOperation(ctx, req)
-		reply.Result, reply.Error = result, artifact.EncodeFailure(err)
+		result, err := gitrepo.RunOperation(ctx, req)
+		reply.Result, reply.Error = result, gitrepo.EncodeFailure(err)
 	}
 	if err := json.NewEncoder(stream).Encode(reply); err != nil {
 		slog.Error(fmt.Sprintf("steve-node: artifact reply: %v", err))

@@ -63,9 +63,9 @@ func Run(ctx context.Context, flags Flags, opts Options) (*config.Config, error)
 	if opts.Catalog.IsZero() {
 		locale := i18n.FromLang(opts.Env("LANG"))
 		if flags.Domain != "" {
-			locale = i18n.FromDomain(flags.Domain)
+			locale = localeForDomain(flags.Domain)
 		} else if complete {
-			locale = i18n.FromDomain(cached.Domain)
+			locale = localeForDomain(cached.Domain)
 		}
 		opts.Catalog = i18n.New(locale)
 	}
@@ -85,7 +85,7 @@ func Run(ctx context.Context, flags Flags, opts Options) (*config.Config, error)
 	if err := config.Save(flags.ConfigPath, cfg); err != nil {
 		return nil, err
 	}
-	text := i18n.New(i18n.FromDomain(cfg.Feishu.Domain))
+	text := i18n.New(localeForDomain(cfg.Feishu.Domain))
 	opts.Catalog = text
 	fmt.Fprintln(opts.Out, text.T(i18n.SetupCreatedConfig, flags.ConfigPath))
 	if identity.Name != "" || identity.OpenID != "" {
@@ -206,7 +206,7 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 	appID, secret, domain = credentials.appID, credentials.secret, credentials.domain
 	scannedOpenID := credentials.scannedOpenID
 
-	opts.Catalog = i18n.New(i18n.FromDomain(domain))
+	opts.Catalog = i18n.New(localeForDomain(domain))
 
 	identity, err := opts.Probe(ctx, appID, secret, domain)
 	if err != nil {
@@ -320,7 +320,7 @@ func (c *appCredentials) complete(flags Flags, opts Options, reader *bufio.Reade
 
 func finishCached(ctx context.Context, opts Options, reader *bufio.Reader, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
 	fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupUsingCached))
-	opts.Catalog = i18n.New(i18n.FromDomain(cached.Domain))
+	opts.Catalog = i18n.New(localeForDomain(cached.Domain))
 	identity, err := opts.Probe(ctx, cached.AppID, cached.AppSecret, cached.Domain)
 	if err != nil {
 		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
@@ -355,7 +355,7 @@ func collectCredentials(ctx context.Context, flags Flags, opts Options, reader *
 	if domain == "" {
 		domain = config.DomainFeishu
 	}
-	opts.Catalog = i18n.New(i18n.FromDomain(domain))
+	opts.Catalog = i18n.New(localeForDomain(domain))
 	identity, err := opts.Probe(ctx, appID, secret, domain)
 	if err != nil {
 		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
@@ -367,7 +367,7 @@ func collectCredentials(ctx context.Context, flags Flags, opts Options, reader *
 }
 
 func collectAccess(ctx context.Context, flags Flags, opts Options, reader *bufio.Reader, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
-	opts.Catalog = i18n.New(i18n.FromDomain(cached.Domain))
+	opts.Catalog = i18n.New(localeForDomain(cached.Domain))
 	identity, err := opts.Probe(ctx, cached.AppID, cached.AppSecret, cached.Domain)
 	if err != nil {
 		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
@@ -597,4 +597,12 @@ func domainOptions(text i18n.Catalog) []option {
 		{config.DomainFeishu, text.T(i18n.SetupDomainFeishu)},
 		{config.DomainLark, text.T(i18n.SetupDomainLark)},
 	}
+}
+
+// localeForDomain speaks English to a Lark tenant and Chinese to Feishu.
+func localeForDomain(domain string) i18n.Locale {
+	if domain == config.DomainLark {
+		return i18n.LocaleEN
+	}
+	return i18n.LocaleZH
 }

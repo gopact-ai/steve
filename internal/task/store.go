@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -49,10 +50,10 @@ type data struct {
 	Meta   map[string]Meta  `json:"meta,omitempty"`
 }
 
-// Open keeps the store in one JSON file. It is what tests use and what a
-// pre-ledger deployment wrote; the gateway itself opens the ledger.
+// Open keeps the store in one JSON file, for tests; the gateway opens the
+// ledger.
 func Open(path string) (*Store, error) {
-	return openWith(&ledger.FileDocument{Path: path})
+	return openWith(&filedoc.Document{Path: path})
 }
 
 func openWith(doc ledger.Doc) (*Store, error) {

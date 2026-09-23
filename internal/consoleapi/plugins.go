@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 type PluginTargetView struct {
@@ -29,12 +30,12 @@ type PluginInstallationView struct {
 }
 
 type PluginsView struct {
-	Agents        []PluginAgentView        `json:"agents"`
-	Warning       string                   `json:"warning,omitempty"`
-	Operations    []plugins.Operation      `json:"operations"`
-	Revision      string                   `json:"revision"`
-	Packages      []plugins.PackageRecord  `json:"packages"`
-	Installations []PluginInstallationView `json:"installations"`
+	Agents        []PluginAgentView            `json:"agents"`
+	Warning       string                       `json:"warning,omitempty"`
+	Operations    []pluginledger.Operation     `json:"operations"`
+	Revision      string                       `json:"revision"`
+	Packages      []pluginledger.PackageRecord `json:"packages"`
+	Installations []PluginInstallationView     `json:"installations"`
 }
 
 type PluginPreview struct {
@@ -58,7 +59,7 @@ type PluginUpdateRequest struct {
 type PluginsService interface {
 	Plugins(context.Context) (PluginsView, error)
 	PreviewPlugin(context.Context, plugins.Source) (PluginPreview, error)
-	ImportPlugin(context.Context, PluginImportRequest) (plugins.PackageRecord, error)
+	ImportPlugin(context.Context, PluginImportRequest) (pluginledger.PackageRecord, error)
 	UpdatePlugin(context.Context, string, PluginUpdateRequest) (PluginsView, error)
 	PreparePlugin(context.Context, string) (PluginInstallationView, error)
 	PluginSecrets(context.Context, string) ([]plugins.SecretInfo, error)

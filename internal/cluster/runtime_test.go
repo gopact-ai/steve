@@ -176,11 +176,11 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 			Coordination: coordination.Config{ClusterID: "test-cluster", NodeID: members[i].NodeID, FailureDomain: "test-domain-" + members[i].NodeID, StorageLevel: "restricted", DataDir: filepath.Join(t.TempDir(), "raft"), Bootstrap: i == 0,
 				APIAddress: n.server.URL, StreamLayer: stream, RaftConfig: raftConfig, ApplyTimeout: 3 * time.Second, ProbeInterval: 500 * time.Millisecond, FailoverTimeout: time.Second}}
 		n.config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
-			sessions, err := statepkg.OpenLedger(activation.Ledger, "")
+			sessions, err := statepkg.OpenLedger(activation.Ledger)
 			if err != nil {
 				return nil, err
 			}
-			tasks, err := task.OpenLedger(activation.Ledger, "")
+			tasks, err := task.OpenLedger(activation.Ledger)
 			if err != nil {
 				return nil, err
 			}
@@ -671,14 +671,14 @@ func TestAutomaticCoordinatorFailureActivatesReconstructedLedgerOnSurvivor(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := statepkg.OpenLedger(activation.Ledger, "")
+	sessions, err := statepkg.OpenLedger(activation.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sessions.Conversation("running-session").ActiveAgent != "worker" {
 		t.Fatal("automatic transfer lost session identity")
 	}
-	tasks, err := task.OpenLedger(activation.Ledger, "")
+	tasks, err := task.OpenLedger(activation.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

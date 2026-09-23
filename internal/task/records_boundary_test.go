@@ -16,7 +16,7 @@ func TestTaskRecordBeginTurnDestinationAndAccountingRollbackAndReopen(t *testing
 		t.Fatal(err)
 	}
 	defer func() { _ = book.Close() }()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestTaskRecordBeginTurnDestinationAndAccountingRollbackAndReopen(t *testing
 	if _, err := s.BeginTurn(root.ID, "worker", "node", input); err == nil {
 		t.Fatal("failed final record admitted a turn")
 	}
-	loaded, err := OpenLedger(book, "")
+	loaded, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestTaskRecordBeginTurnDestinationAndAccountingRollbackAndReopen(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err = OpenLedger(book, "")
+	loaded, err = OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestTaskRecordStaleStoreRejectsBudgetAndMetadataUpdates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stale, err := OpenLedger(book, "")
+			stale, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func TestTaskRecordStaleStoreRejectsBudgetAndMetadataUpdates(t *testing.T) {
 			if !errors.Is(err, ledger.ErrConflict) {
 				t.Fatalf("stale %s: %v", operation, err)
 			}
-			loaded, err := OpenLedger(book, "")
+			loaded, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestTaskHeaderChecksIgnoreHistoryButHonorAncestorRevocation(t *testing.T) {
 	}); err != nil {
 		t.Fatal("header check read historical records", err)
 	}
-	if _, err := OpenLedger(book, ""); err == nil {
+	if _, err := OpenLedger(book); err == nil {
 		t.Fatal("full owner load silently ignored corrupt history")
 	}
 	if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
@@ -164,7 +164,7 @@ func TestTaskRecordStopAndCompletionCannotMissConcurrentChild(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			s, book := taskRecordBook(t)
 			root := idleCompletionRoot(t, s)
-			stale, err := OpenLedger(book, "")
+			stale, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,7 +183,7 @@ func TestTaskRecordStopAndCompletionCannotMissConcurrentChild(t *testing.T) {
 			if !errors.Is(err, ledger.ErrConflict) {
 				t.Fatalf("%s missed concurrent child: %v", operation, err)
 			}
-			loaded, err := OpenLedger(book, "")
+			loaded, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +227,7 @@ func TestTaskRecordLoadRejectsIncompleteOrOrphanRecords(t *testing.T) {
 			if _, err := book.DB().Exec(query); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := OpenLedger(book, ""); err == nil {
+			if _, err := OpenLedger(book); err == nil {
 				t.Fatalf("%s silently loaded incomplete history", corrupt)
 			}
 		})
@@ -263,7 +263,7 @@ func TestTaskRecordDeleteRemovesOnlySelectedTreeRows(t *testing.T) {
 	if ids, err := s.DeleteChannel("remove"); err != nil || len(ids) != 2 {
 		t.Fatalf("delete=%v %v", ids, err)
 	}
-	loaded, err := OpenLedger(book, "")
+	loaded, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

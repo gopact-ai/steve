@@ -10,7 +10,7 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
@@ -34,7 +34,7 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	if environment != nil && environment.Coordination != nil {
 		nodewire.SetNames(publishedNames(boot.Background(), environment.Coordination.MemberNames))
 	}
-	nodeConfigs := cfg.NodeConfigs()
+	nodeConfigs := configbuild.NodeConfigs(cfg)
 	if environment != nil && environment.ConfigureNodes != nil {
 		if err := environment.ConfigureNodes(nodeConfigs); err != nil {
 			return nil, err
@@ -54,7 +54,7 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	// the owner's DM works in — so nothing special-cases it downstream.
 	projects := project.Open(book, artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
 	projects.SetHubID(cfg.Gateway.HubID)
-	if err := (config.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("reconcile configured projects: %w", err)
 	}
 	for _, note := range cfg.Migrated {

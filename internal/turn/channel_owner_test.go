@@ -74,7 +74,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	t.Cleanup(func() { book.Close() })
 	c, _, runner := homeCoordinator(t, dir, "console-owner", book)
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

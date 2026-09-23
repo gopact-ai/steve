@@ -13,6 +13,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -32,10 +33,10 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 		t.Fatal(err)
 	}
 	a.Catalog, _ = agent.NewCatalog(map[string]agent.Config{"importer": {Node: "node-test", Harness: "codex", Default: true}})
-	a.Nodes = node.NewRegistry("hub-test", a.Cfg.NodeConfigs())
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
 	t.Cleanup(a.Nodes.Close)
 	a.ClusterMode = true
-	store, err := state.OpenLedger(book, "")
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

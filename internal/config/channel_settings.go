@@ -4,60 +4,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/channelsettings"
 )
 
-// ChannelSettings contains only values safe to return to the console.
-// Credentials never appear in either desired or effective settings.
-type ChannelSettings struct {
-	DefaultChannel string                `json:"default_channel"`
-	Console        ConsoleChannelSetting `json:"console"`
-	Feishu         FeishuChannelSetting  `json:"feishu"`
-}
-
-type ConsoleChannelSetting struct {
-	Enabled bool   `json:"enabled"`
-	OwnerID string `json:"owner_id"`
-}
-
-type FeishuChannelSetting struct {
-	Enabled             bool     `json:"enabled"`
-	AppID               string   `json:"app_id"`
-	AppSecretConfigured bool     `json:"app_secret_configured"`
-	Domain              string   `json:"domain"`
-	OwnerOpenID         string   `json:"owner_open_id"`
-	GroupPolicy         string   `json:"group_policy"`
-	AllowUnmentioned    bool     `json:"allow_unmentioned"`
-	AllowedSenders      []string `json:"allowed_senders"`
-	BlockedSenders      []string `json:"blocked_senders"`
-}
-
-// ChannelPatch intentionally excludes console identity and listener settings.
-// Their changes require deployment configuration rather than an IM edit.
-type ChannelPatch struct {
-	DefaultChannel *string             `json:"default_channel,omitempty"`
-	Feishu         *FeishuChannelPatch `json:"feishu,omitempty"`
-}
-
-type FeishuChannelPatch struct {
-	Enabled          *bool          `json:"enabled,omitempty"`
-	AppID            *string        `json:"app_id,omitempty"`
-	AppSecret        *ChannelSecret `json:"app_secret,omitempty"`
-	Domain           *string        `json:"domain,omitempty"`
-	OwnerOpenID      *string        `json:"owner_open_id,omitempty"`
-	GroupPolicy      *string        `json:"group_policy,omitempty"`
-	AllowUnmentioned *bool          `json:"allow_unmentioned,omitempty"`
-	AllowedSenders   *[]string      `json:"allowed_senders,omitempty"`
-	BlockedSenders   *[]string      `json:"blocked_senders,omitempty"`
-}
-
-// ChannelSecret is write-only: omission preserves the current value, replace
-// requires a nonempty value, and clear must not include a value.
-type ChannelSecret struct {
-	Action string  `json:"action"`
-	Value  *string `json:"value,omitempty"`
-}
-
-func (c *Config) ChannelSettings() ChannelSettings {
+func (c *Config) ChannelSettings() channelsettings.Settings {
 	f := c.Feishu
 	f.applyDefaults()
 	defaultChannel := c.Gateway.DefaultChannel
@@ -67,10 +18,10 @@ func (c *Config) ChannelSettings() ChannelSettings {
 			defaultChannel = "feishu"
 		}
 	}
-	return ChannelSettings{
+	return channelsettings.Settings{
 		DefaultChannel: defaultChannel,
-		Console:        ConsoleChannelSetting{Enabled: true, OwnerID: c.EffectiveOwnerID()},
-		Feishu: FeishuChannelSetting{
+		Console:        channelsettings.ConsoleSetting{Enabled: true, OwnerID: c.EffectiveOwnerID()},
+		Feishu: channelsettings.FeishuSetting{
 			Enabled: c.FeishuEnabled(), AppID: f.AppID, AppSecretConfigured: f.AppSecret != "",
 			Domain: f.Domain, OwnerOpenID: f.OwnerOpenID, GroupPolicy: f.GroupPolicy,
 			AllowUnmentioned: f.AllowUnmentioned,
@@ -80,7 +31,7 @@ func (c *Config) ChannelSettings() ChannelSettings {
 	}
 }
 
-func (c *Config) PatchChannels(patch ChannelPatch) (*Config, error) {
+func (c *Config) PatchChannels(patch channelsettings.Patch) (*Config, error) {
 	next := *c
 	next.Feishu.AllowedSenders = slices.Clone(c.Feishu.AllowedSenders)
 	next.Feishu.BlockedSenders = slices.Clone(c.Feishu.BlockedSenders)

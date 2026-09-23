@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 func pluginAdminFixture(t *testing.T) (*PluginService, string) {
@@ -35,7 +36,7 @@ func pluginAdminFixture(t *testing.T) (*PluginService, string) {
 	t.Cleanup(func() { pool.Close() })
 	// A node accepts plugin operations only from a committed coordinator, so
 	// the service under test carries the authority a real one presents.
-	service := &PluginService{Admin: &Service{Cfg: cfg, Path: path}, Library: &plugins.Library{Store: store, Ledger: book}, Local: pool,
+	service := &PluginService{Admin: &Service{Cfg: cfg, Path: path}, Library: &pluginledger.Library{Store: store, Ledger: book}, Local: pool,
 		Authority: nodewire.SessionAuthority{ClusterID: "cluster-under-test", CoordinatorNodeID: "hub", CoordinatorEpoch: 1, WriterGeneration: 1}}
 	source := t.TempDir()
 	os.Mkdir(filepath.Join(source, "skill"), 0700)
@@ -75,7 +76,7 @@ func TestPluginManagementImportsConfiguresAndPreparesWithCAS(t *testing.T) {
 		t.Fatalf("command changed meaning: %v", err)
 	}
 	view, err := service.Plugins(t.Context())
-	if err != nil || len(view.Packages) != 1 || len(view.Operations) != 1 || view.Operations[0].State != plugins.OperationSucceeded {
+	if err != nil || len(view.Packages) != 1 || len(view.Operations) != 1 || view.Operations[0].State != pluginledger.OperationSucceeded {
 		t.Fatalf("view: %+v %v", view, err)
 	}
 	update := consoleapi.PluginUpdateRequest{BaseRevision: view.Revision, Installation: plugins.Installation{PackageID: preview.Manifest.ID, Digest: preview.Digest, Projects: []string{"p"}, Targets: map[string]plugins.Configuration{"": {}}}}

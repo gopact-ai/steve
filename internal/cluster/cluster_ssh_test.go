@@ -55,7 +55,7 @@ exec /bin/sh -s
 			_ = peer.localSSH.Close()
 		}
 	})
-	req := httptest.NewRequest(http.MethodPost, "/console/ssh/check", strings.NewReader(`{"alias":"fixture"}`))
+	req := httptest.NewRequest(http.MethodPost, peer.UiURL+"/console/ssh/check", strings.NewReader(`{"alias":"fixture"}`))
 	req.Header.Set("Authorization", "Bearer "+peer.UIToken)
 	response := httptest.NewRecorder()
 	peer.serveSSHLocal(response, req)

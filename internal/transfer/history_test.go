@@ -348,7 +348,7 @@ func TestTaskResultRefsRemapWithoutChangingProse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

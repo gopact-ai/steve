@@ -16,7 +16,7 @@ func TestResumeRejectsChangedTaskWithoutOverridingStop(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer book.Close()
-			store, err := OpenLedger(book, "")
+			store, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

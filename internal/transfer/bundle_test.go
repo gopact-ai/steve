@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -42,7 +43,7 @@ func transferFixture(t *testing.T) (string, string) {
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: home}}, {ID: "private-other", Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestTransferIntoHubWithExistingNumericIDsPreservesBothProjects(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := plan.OpenLedger(sourceBook, "")
+	plans, err := plan.OpenLedger(sourceBook)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestTransferIntoHubWithExistingNumericIDsPreservesBothProjects(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := schedule.OpenLedger(sourceBook, "")
+	jobs, err := schedule.OpenLedger(sourceBook)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,12 +143,12 @@ func TestTransferIntoHubWithExistingNumericIDsPreservesBothProjects(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealedTasks, _ := task.OpenLedger(sourceBook, "")
+	sealedTasks, _ := task.OpenLedger(sourceBook)
 	sealedTask, _ := sealedTasks.Get("1")
 	if sealedTask.State != task.StateCancelled {
 		t.Fatal("source task can resume migrated project")
 	}
-	sourceJobs, _ := schedule.OpenLedger(sourceBook, "")
+	sourceJobs, _ := schedule.OpenLedger(sourceBook)
 	if due, err := sourceJobs.Due(time.Now().Add(2 * time.Hour)); err != nil || len(due) != 0 {
 		t.Fatal("source still dispatches transferred schedule")
 	}
@@ -167,16 +168,16 @@ func TestTransferIntoHubWithExistingNumericIDsPreservesBothProjects(t *testing.T
 	if err := targetProjects.Declare(t.Context(), []project.Project{{ID: "q", Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
-	tasks, _ := task.OpenLedger(book, "")
+	tasks, _ := task.OpenLedger(book)
 	other, err := tasks.Create(task.Task{ProjectID: "q", Goal: "keep me"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherPlans, _ := plan.OpenLedger(book, "")
+	otherPlans, _ := plan.OpenLedger(book)
 	if _, err := otherPlans.Create(plan.Plan{ProjectID: "q", TaskID: other.ID, Goal: "q", Steps: []plan.Step{{ID: "work", Agent: "worker", Goal: "q", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	otherJobs, _ := schedule.OpenLedger(book, "")
+	otherJobs, _ := schedule.OpenLedger(book)
 	if _, err := otherJobs.Create(schedule.Job{ProjectID: "q", ConversationID: "console:q", Prompt: "q", Spec: schedule.Spec{Kind: schedule.KindOnce, At: time.Now().Add(time.Hour)}}); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func TestTransferIntoHubWithExistingNumericIDsPreservesBothProjects(t *testing.T
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, _ = task.OpenLedger(book, "")
+	tasks, _ = task.OpenLedger(book)
 	if got, ok := tasks.Get(other.ID); !ok || got.Goal != "keep me" {
 		t.Fatalf("q task overwritten: %+v", got)
 	}
@@ -340,7 +341,7 @@ func TestPublicTargetRejectsRestrictedProjectBeforeExtraction(t *testing.T) {
 	projects := project.Open(book)
 	projects.SetHubID("source")
 	p, _, _ := projects.Get(t.Context(), "p")
-	p.Level = project.LevelRestricted
+	p.Level = datalevel.Restricted
 	if err := projects.Declare(t.Context(), []project.Project{p}); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +352,7 @@ func TestPublicTargetRejectsRestrictedProjectBeforeExtraction(t *testing.T) {
 	}
 	target := filepath.Join(t.TempDir(), "unused-state")
 	home := filepath.Join(t.TempDir(), "unused-home")
-	if _, err := Import(t.Context(), ImportOptions{StateDir: target, HubID: "target", ExpectedSource: "source", Input: path, Home: home, TargetLevel: project.LevelPublic}); err == nil {
+	if _, err := Import(t.Context(), ImportOptions{StateDir: target, HubID: "target", ExpectedSource: "source", Input: path, Home: home, TargetLevel: datalevel.Public}); err == nil {
 		t.Fatal("low-level target accepted restricted data")
 	}
 	for _, name := range []string{target, home} {
@@ -372,7 +373,7 @@ func TestRichProjectTransferPreservesMaterialsQuestionsReceiptsAndArtifacts(t *t
 	if _, err := projects.Bind(t.Context(), "console:a", "p", "owner"); err != nil {
 		t.Fatal(err)
 	}
-	tasks, _ := task.OpenLedger(book, "")
+	tasks, _ := task.OpenLedger(book)
 	title := "important work"
 	labels := []string{"keep"}
 	if _, err := tasks.SetMeta("1", task.MetaPatch{Title: &title, Labels: &labels}); err != nil {

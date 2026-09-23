@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/roster"
 )
@@ -146,12 +147,12 @@ func TestHubNodeSettingsDerivesEnvOnlyForRunningHarness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			manager, err := HarnessRuntimeConfig(cfg).HarnessManager()
+			manager, err := configbuild.HarnessManager(HarnessRuntimeConfig(cfg))
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(manager.Stop)
-			a := &Service{Cfg: cfg, Path: path, Catalog: catalog, Manager: manager, Assembler: cfg.CapabilityAssembler(), Fleet: roster.New(catalog)}
+			a := &Service{Cfg: cfg, Path: path, Catalog: catalog, Manager: manager, Assembler: configbuild.CapabilityAssembler(cfg), Fleet: roster.New(catalog)}
 			set, err := a.NodeSettings(t.Context(), NodeName())
 			if err != nil {
 				t.Fatal(err)

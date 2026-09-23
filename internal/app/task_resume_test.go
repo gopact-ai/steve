@@ -56,11 +56,11 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := state.OpenLedger(book, "")
+	sessions, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestTaskResumeProductionRefusalLeavesTaskPaused(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			reopened, err := task.OpenLedger(f.book, "")
+			reopened, err := task.OpenLedger(f.book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -396,7 +396,7 @@ func TestTaskResumeProductionRefusalLeavesTaskPaused(t *testing.T) {
 			if !reflect.DeepEqual(before, after) {
 				t.Errorf("refused resume changed task state, epoch or accounting: before=%+v after=%+v", before, after)
 			}
-			reopened, err = task.OpenLedger(f.book, "")
+			reopened, err = task.OpenLedger(f.book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -479,7 +479,7 @@ func TestTaskResumeProductionConsoleReentersOnlyAfterAdmission(t *testing.T) {
 			if len(f.tasks.List(before.Channel)) != 1 {
 				t.Fatal("resume opened a different task")
 			}
-			reopened, err := task.OpenLedger(f.book, "")
+			reopened, err := task.OpenLedger(f.book)
 			if err != nil {
 				t.Fatal(err)
 			}

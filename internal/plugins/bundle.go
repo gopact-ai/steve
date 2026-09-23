@@ -153,7 +153,7 @@ func packFiles(files map[string]packageFile) (Bundle, error) {
 		return Bundle{}, fmt.Errorf("%w: archive size limit", ErrInvalid)
 	}
 	data := buf.Bytes()
-	return Bundle{Manifest: m, Digest: contentDigest(data), Data: data}, nil
+	return Bundle{Manifest: m, Digest: ContentDigest(data), Data: data}, nil
 }
 
 func validateEntries(m Manifest, files map[string]packageFile) error {
@@ -195,7 +195,7 @@ func validateEntries(m Manifest, files map[string]packageFile) error {
 	return nil
 }
 
-func contentDigest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
+func ContentDigest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
 
 // DecodeBundle accepts only the canonical archive produced by the snapshotter.
 // It validates all entries before any of them are written to disk.

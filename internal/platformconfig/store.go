@@ -11,6 +11,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -28,7 +29,7 @@ type Declaration struct {
 	Plugins        map[string]plugins.Installation `json:"plugins,omitempty"`
 	Revision       uint64                          `json:"revision"`
 	Settings       config.SettingsValues           `json:"settings"`
-	Channels       config.ChannelSettings          `json:"channels"`
+	Channels       channelsettings.Settings        `json:"channels"`
 	Credentials    ChannelCredentials              `json:"channel_credentials"`
 	Work           WorkPolicy                      `json:"work"`
 	DefaultProject string                          `json:"default_project,omitempty"`

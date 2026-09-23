@@ -7,6 +7,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 func TestPluginLibraryRestoresExactPackageAfterCoordinatorLoss(t *testing.T) {
@@ -16,7 +17,7 @@ func TestPluginLibraryRestoresExactPackageAfterCoordinatorLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := &plugins.Library{Store: &plugins.Store{Dir: filepath.Join(t.TempDir(), "plugins")}, Ledger: book, Replication: client("a")}
+	first := &pluginledger.Library{Store: &plugins.Store{Dir: filepath.Join(t.TempDir(), "plugins")}, Ledger: book, Replication: client("a")}
 	transport.before = func(_ string, _ contentreplica.Object) {
 		records, err := first.List(t.Context())
 		if err != nil || len(records) != 0 {
@@ -32,7 +33,7 @@ func TestPluginLibraryRestoresExactPackageAfterCoordinatorLoss(t *testing.T) {
 	}
 	transport.before = nil
 	transport.offline["a"] = true
-	replacement := &plugins.Library{Store: &plugins.Store{Dir: filepath.Join(t.TempDir(), "plugins")}, Ledger: book, Replication: client("c")}
+	replacement := &pluginledger.Library{Store: &plugins.Store{Dir: filepath.Join(t.TempDir(), "plugins")}, Ledger: book, Replication: client("c")}
 	restored, err := replacement.Get(t.Context(), "p", bundle.Digest)
 	if err != nil || !bytes.Equal(restored.Data, bundle.Data) {
 		t.Fatalf("restore original plugin bytes: %v", err)
@@ -54,7 +55,7 @@ func TestPluginLibraryDoesNotPublishWhenRequiredReplicaIsOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	library := &plugins.Library{Store: &plugins.Store{Dir: filepath.Join(t.TempDir(), "plugins")}, Ledger: book, Replication: client("a")}
+	library := &pluginledger.Library{Store: &plugins.Store{Dir: filepath.Join(t.TempDir(), "plugins")}, Ledger: book, Replication: client("a")}
 	if _, err := library.Add(t.Context(), "p", bundle); err == nil {
 		t.Fatal("insufficient copies acknowledged")
 	}
