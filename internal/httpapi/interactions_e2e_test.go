@@ -57,7 +57,7 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { materials.Close() })
-	store, err := state.OpenLedger(book, "")
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	coordinator.SetAttempts(attempt.New(book))
 	artifacts := artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	coordinator.SetArtifacts(artifacts)
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -69,11 +69,11 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := state.OpenLedger(book, "")
+	sessions, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

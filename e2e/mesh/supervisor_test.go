@@ -123,7 +123,7 @@ func newFleet(t *testing.T) *fleet {
 
 	dir := t.TempDir()
 	projects, attempts, artifacts := declareProjects(t, dir, reg)
-	tasks, err := task.OpenLedger(ledgerOf(t, dir), "")
+	tasks, err := task.OpenLedger(ledgerOf(t, dir))
 	if err != nil {
 		t.Fatal(err)
 	}

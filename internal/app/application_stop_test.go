@@ -79,7 +79,7 @@ func TestApplicationStopsRecoverDurableRevocationWithoutReplayingNativeInput(t *
 				t.Fatal(err)
 			}
 			defer func() { _ = book.Close() }()
-			tasks, err := task.OpenLedger(book, "")
+			tasks, err := task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -199,7 +199,7 @@ func TestApplicationStopsRecoverDurableRevocationWithoutReplayingNativeInput(t *
 				t.Fatal(err)
 			}
 			attempts = attempt.New(book)
-			tasks, err = task.OpenLedger(book, "")
+			tasks, err = task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

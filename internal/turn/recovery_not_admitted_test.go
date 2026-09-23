@@ -58,7 +58,7 @@ func TestConfirmNeverAdmittedAfterRealPrepareSessionErrorAndRestart(t *testing.T
 		t.Fatal("preparation failure admitted native execution")
 	}
 	var err error
-	c.tasks, err = task.OpenLedger(book, "")
+	c.tasks, err = task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestConfirmNeverAdmittedRequiresPositiveEndedAccounting(t *testing.T) {
 			// Re-open the owners: neither an old runner nor in-memory task state
 			// is the source of the proof.
 			var err error
-			c.tasks, err = task.OpenLedger(book, "")
+			c.tasks, err = task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -294,7 +294,7 @@ func TestConfirmNeverAdmittedLegacyRequiresExplicitCancellationAndSettledNamedHi
 		t.Fatalf("explicitly cancelled unadmitted legacy input cannot close: %v %v", yes, err)
 	}
 	var err error
-	c.tasks, err = task.OpenLedger(book, "")
+	c.tasks, err = task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestConfirmNeverAdmittedInterruptedRequiresCancelledLegacyReconciliation(t 
 			}
 			// Observe the same committed state the restarted runtime uses.
 			var err error
-			c.tasks, err = task.OpenLedger(book, "")
+			c.tasks, err = task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

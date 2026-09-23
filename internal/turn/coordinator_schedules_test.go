@@ -110,7 +110,7 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 	if _, err := c.projects.Bind(t.Context(), tracked.Channel, tracked.ProjectID, tracked.Requester); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := schedule.OpenLedger(book, "")
+	jobs, err := schedule.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestScheduleMCPUsesTrustedExecutionIdentityWithoutModeCache(t *testing.T) {
 	if _, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); bad || len(f.jobs.List("chat")) != 1 {
 		t.Fatal("create retry duplicated a schedule")
 	}
-	reopened, err := schedule.OpenLedger(f.book, "")
+	reopened, err := schedule.OpenLedger(f.book)
 	if err != nil || len(reopened.List("chat")) != 1 {
 		t.Fatalf("schedule was not durable: %v", err)
 	}

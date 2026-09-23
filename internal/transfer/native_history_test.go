@@ -36,7 +36,7 @@ func TestNativeHistoryRemainsPageableAfterOfflineProjectTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(destination, "")
+	tasks, err := task.OpenLedger(destination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestNativeHistoryRemainsPageableAfterOfflineProjectTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer destination.Close()
-	tasks, err = task.OpenLedger(destination, "")
+	tasks, err = task.OpenLedger(destination)
 	if err != nil {
 		t.Fatal(err)
 	}

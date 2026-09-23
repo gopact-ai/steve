@@ -49,7 +49,7 @@ func TestConsoleScheduleCrashGapReplaysOnlyItsDurableExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	store, err := schedule.OpenLedger(book, "")
+	store, err := schedule.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestConsoleScheduleCrashGapReplaysOnlyItsDurableExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Restart after the receiver accepted, before the scheduler saved its receipt.
-	restarted, err := schedule.OpenLedger(book, "")
+	restarted, err := schedule.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestUnknownScheduleDeliveryIsVisibleAndNeverAutomaticallyReplayed(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	store, err := schedule.OpenLedger(book, "")
+	store, err := schedule.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

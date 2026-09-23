@@ -17,7 +17,7 @@ func sessionReadFixture(t *testing.T) (*ledger.Ledger, *task.Store, task.Task, a
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestSessionAuthorizationReadsOnlyBoundHeadersAndAncestors(t *testing.T) {
 	if _, err := book.DB().Exec(`INSERT INTO bindings(kind,id,data,updated_at) VALUES('task-attempt','unrelated','invalid','2026-09-19T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := task.OpenLedger(book, ""); err == nil {
+	if _, err := task.OpenLedger(book); err == nil {
 		t.Fatal("fixture did not distinguish full loads from header reads")
 	}
 	got, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionStart)

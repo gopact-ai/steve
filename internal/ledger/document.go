@@ -67,34 +67,6 @@ func (d *Document) Check() error {
 	return tx.Rollback()
 }
 
-// Import moves a legacy JSON file into the document, once: only when the
-// document has never been saved and the file exists. The file is renamed
-// with a ".migrated" suffix so it cannot be read as authority again.
-func (d *Document) Import(path string) (bool, error) {
-	if path == "" {
-		return false, nil
-	}
-	if _, ok, err := d.Load(); err != nil || ok {
-		return false, err
-	}
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read %s: %w", path, err)
-	}
-	if len(raw) > 0 {
-		if err := d.Save(raw); err != nil {
-			return false, fmt.Errorf("import %s: %w", path, err)
-		}
-	}
-	if err := os.Rename(path, path+".migrated"); err != nil {
-		return false, fmt.Errorf("retire %s: %w", path, err)
-	}
-	return len(raw) > 0, nil
-}
-
 // FileDocument is a Doc kept in one JSON file with the durable-replace
 // discipline: temp file, fsync, rename, fsync the directory.
 type FileDocument struct {

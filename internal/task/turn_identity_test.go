@@ -26,7 +26,7 @@ func TestBeginTurnPersistsInputIdentityBeforeAttemptAdmission(t *testing.T) {
 			if _, err := s.Finish(before.ID, OutcomeError, Tokens{}, 0); err != nil {
 				t.Fatal(err)
 			}
-			s, err := OpenLedger(book, "")
+			s, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

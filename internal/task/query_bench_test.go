@@ -18,7 +18,7 @@ func BenchmarkTaskSmallWriteHistory(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer book.Close()
-			s, err := OpenLedger(book, "")
+			s, err := OpenLedger(book)
 			if err != nil {
 				b.Fatal(err)
 			}

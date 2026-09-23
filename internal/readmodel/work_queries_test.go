@@ -35,7 +35,7 @@ func historyStateFixture(t testing.TB, count int) *Model {
 	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return task.ImportProjectTx(tx, in) }); err != nil {
 		t.Fatal(err)
 	}
-	store, err := task.OpenLedger(book, "")
+	store, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func historyStateFixture(t testing.TB, count int) *Model {
 	if err := book.Document("plans").Save(raw); err != nil {
 		t.Fatal(err)
 	}
-	planStore, err := plan.OpenLedger(book, "")
+	planStore, err := plan.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestHistoricalDetailCompletionUsesOwnerSummaryNotLoadedChildren(t *testing.
 			if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return task.ImportProjectTx(tx, in) }); err != nil {
 				t.Fatal(err)
 			}
-			store, err := task.OpenLedger(book, "")
+			store, err := task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

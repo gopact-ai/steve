@@ -16,7 +16,7 @@ func resumeOwner(t *testing.T) (*ledger.Ledger, *Store, Task) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestResumeGrantAndConsumptionAreDurableAndSingleUse(t *testing.T) {
 	if resumed.ResumeGrant.Admission != a || resumed.ResumeGrant.Consumed {
 		t.Fatalf("resume did not durably grant exactly the accepted input: %+v", resumed.ResumeGrant)
 	}
-	s, err = OpenLedger(book, "")
+	s, err = OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestResumeGrantAndConsumptionAreDurableAndSingleUse(t *testing.T) {
 	if _, err := s.Finish(before.ID, OutcomeOK, Tokens{}, 0); err != nil {
 		t.Fatal(err)
 	}
-	s, err = OpenLedger(book, "")
+	s, err = OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestResumeConsumptionCASRejectsAnotherOwnerStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale, _ := s.Get(before.ID)
-	newOwner, err := OpenLedger(book, "")
+	newOwner, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestResumeConsumptionCASRejectsAnotherOwnerStop(t *testing.T) {
 	if got, _ := s.Get(before.ID); !reflect.DeepEqual(got, stale) {
 		t.Fatal("failed stale-owner consumption installed task changes")
 	}
-	reopened, err := OpenLedger(book, "")
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

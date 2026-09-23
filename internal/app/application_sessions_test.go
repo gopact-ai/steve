@@ -56,7 +56,7 @@ func TestExecutorSessionAuthorityUsesCommittedExecutionAndActiveCoordinator(t *t
 	case <-time.After(10 * time.Second):
 		t.Fatal("coordinator did not activate")
 	}
-	tasks, err := task.OpenLedger(active.Ledger, "")
+	tasks, err := task.OpenLedger(active.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

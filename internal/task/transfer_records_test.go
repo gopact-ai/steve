@@ -99,7 +99,7 @@ func TestTaskRecordTransferFullHistoryMetadataAtomicImportAndReplay(t *testing.T
 	if len(replicated.payloads) != 0 {
 		t.Fatal("identical task import rewrote records")
 	}
-	loaded, err := OpenLedger(target, "")
+	loaded, err := OpenLedger(target)
 	if err != nil {
 		t.Fatal(err)
 	}

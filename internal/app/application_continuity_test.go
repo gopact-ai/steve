@@ -409,7 +409,7 @@ func continuityEvents(t *testing.T, dir string) []continuityEvent {
 
 func continuityConversation(t *testing.T, peer *cluster.Peer, conversation string) state.Conversation {
 	t.Helper()
-	store, err := state.OpenLedger(peer.Runtime.Load().Ledger(), "")
+	store, err := state.OpenLedger(peer.Runtime.Load().Ledger())
 	if err != nil {
 		t.Fatal(err)
 	}

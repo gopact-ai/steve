@@ -19,7 +19,7 @@ func TestParentLeaseReleaseBeforeApplyClosesLandingAndAllowsExactResultRetry(t *
 			write(t, canonical, "file", "before")
 			local := &localNode{root: t.TempDir(), state: t.TempDir()}
 			s, p := newStore(t, local, project.Home{Node: "node", Path: canonical})
-			tasks, err := task.OpenLedger(s.ledger, "")
+			tasks, err := task.OpenLedger(s.ledger)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestMergedPreapplyFailureKeepsEvidenceAndAcceptsOnlyDeliveredResult(t *test
 			canonical := t.TempDir()
 			write(t, canonical, "file", "before")
 			s, p := newStore(t, &localNode{}, project.Home{Path: canonical})
-			tasks, err := task.OpenLedger(s.ledger, "")
+			tasks, err := task.OpenLedger(s.ledger)
 			if err != nil {
 				t.Fatal(err)
 			}

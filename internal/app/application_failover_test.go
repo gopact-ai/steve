@@ -101,7 +101,7 @@ func TestAutomaticCoordinatorLossPreservesHealthyTaskAndReturningDesktop(t *test
 	}
 	original := awaitPeerQuestion(t, first, conversation, "")
 	active := WaitPeerReady(t, first)
-	sessions, err := state.OpenLedger(active.Ledger, "")
+	sessions, err := state.OpenLedger(active.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestAutomaticCoordinatorLossPreservesHealthyTaskAndReturningDesktop(t *test
 	if err != nil || len(records) != 1 || records[0].State != attempt.Bound || records[0].Node != third.Config.NodeID {
 		t.Fatalf("automatic takeover replayed or moved execution: %+v %v", records, err)
 	}
-	tasks, err := task.OpenLedger(latest.Ledger, "")
+	tasks, err := task.OpenLedger(latest.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

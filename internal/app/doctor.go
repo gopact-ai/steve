@@ -33,7 +33,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 		return err
 	}
 	defer book.Close()
-	store, err := state.OpenLedger(book, cfg.Gateway.StatePath)
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		return err
 	}

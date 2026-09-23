@@ -14,7 +14,7 @@ func TestScopedPlanPagesSurviveUnrelatedPlanProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestPlanCursorVersionsRollbackRebuildAndDropEmptyScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestPlanCursorVersionsRollbackRebuildAndDropEmptyScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	q.Cursor = fresh.NextCursor
-	reopened, err := OpenLedger(book, "")
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

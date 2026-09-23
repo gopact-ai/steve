@@ -32,11 +32,11 @@ func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *led
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := state.OpenLedger(book, "")
+	sessions, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *test
 		t.Fatal("completion changed session state")
 	}
 	closed, _ := coordinator.tasks.Get("1")
-	reopened, err := task.OpenLedger(book, "")
+	reopened, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

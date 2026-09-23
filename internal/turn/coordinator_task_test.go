@@ -40,11 +40,11 @@ func taskCoordinatorOn(t *testing.T, rt runtime) (*Coordinator, *task.Store, *le
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	store, err := state.OpenLedger(book, "")
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatalf("open tasks: %v", err)
 	}

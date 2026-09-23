@@ -46,7 +46,7 @@ func TestWorkPagesContinueAfterUnrelatedOwnerMutation(t *testing.T) {
 			if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return task.ImportProjectTx(tx, in) }); err != nil {
 				t.Fatal(err)
 			}
-			tasks, err := task.OpenLedger(book, "")
+			tasks, err := task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -54,7 +54,7 @@ func TestWorkPagesContinueAfterUnrelatedOwnerMutation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plans, err := plan.OpenLedger(book, "")
+			plans, err := plan.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

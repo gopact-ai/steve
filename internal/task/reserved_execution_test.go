@@ -15,7 +15,7 @@ func TestParallelReservedExecutionsHaveIndependentAccountingAndSharedBudget(t *t
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestReservedExecutionBudgetAndIdentityRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestIndependentAccountingDoesNotHideOrCloseOtherOpenExecutions(t *testing.T
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -50,7 +50,7 @@ func recoveryWorldAt(t *testing.T, now func() time.Time) *runWorld {
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: home}}}); err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func recoveryWorldAt(t *testing.T, now func() time.Time) *runWorld {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := plan.OpenLedger(book, "")
+	plans, err := plan.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

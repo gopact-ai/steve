@@ -73,7 +73,7 @@ func unstartedFixture(t *testing.T, attemptState, data string) (*ledger.Ledger, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func unstartedFixture(t *testing.T, attemptState, data string) (*ledger.Ledger, 
 		VALUES('original-attempt','attempt',?,2,1,?,'2026-09-20T21:55:53Z','2026-09-20T21:55:54Z')`, attemptState, data); err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := state.OpenLedger(book, "")
+	sessions, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

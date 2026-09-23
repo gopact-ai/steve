@@ -102,13 +102,9 @@ func Open(path string) (*Store, error) {
 	return openWith(&ledger.FileDocument{Path: path})
 }
 
-// OpenLedger keeps the store in the ledger, importing a legacy file once.
-func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
-	doc := l.Document("state")
-	if _, err := doc.Import(legacy); err != nil {
-		return nil, err
-	}
-	return openWith(doc)
+// OpenLedger keeps the store in the ledger.
+func OpenLedger(l *ledger.Ledger) (*Store, error) {
+	return openWith(l.Document("state"))
 }
 
 func openWith(doc ledger.Doc) (*Store, error) {

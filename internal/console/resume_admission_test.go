@@ -14,7 +14,7 @@ func TestManualResumeWakeCannotReleaseStartupAccountingBarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	owner, err := task.OpenLedger(book, "")
+	owner, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
