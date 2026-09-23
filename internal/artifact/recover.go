@@ -339,6 +339,10 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			return land, err
 		}
 	}
+	target, err := s.recoveredCanonical(ctx, p, land, onto.ID)
+	if err != nil {
+		return land, fmt.Errorf("landing %s: snapshot after recovery: %w", land.ID, err)
+	}
 	// The recovery wrote relative to its own snapshot, where the canonical
 	// name was left. A commit that does not go through — the name is not
 	// there, or cannot be read — leaves the landing recovery-pending: the
@@ -349,7 +353,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	_, err = s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", landingFence(ctx, []ledger.Lease{lease}),
 		map[string]any{"paths": land.Paths, "rewritten": stale, "round": land.Round},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
-			if err := moveCanonical(tx, p.ID, onto.ID, land.Merged); err != nil {
+			if err := moveCanonical(tx, p.ID, onto.ID, target); err != nil {
 				return err
 			}
 			// The result has landed now. A queue entry for it — the pass
@@ -368,6 +372,26 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 		return land, err
 	}
 	return land, nil
+}
+
+// recoveredCanonical is the snapshot the canonical name moves to once a
+// recovery has written the landing's paths onto onto. That is the merged
+// snapshot when it is what the workspace now holds: onto and the merged
+// snapshot differ in the landing's paths only. Anything else that differs
+// was written after the landing merged — by the holder that lent it the
+// lock, or by hand — and the merged snapshot would name a workspace older
+// than the one on disk: what is on disk is cut instead, under the lock the
+// recovery holds.
+func (s *Store) recoveredCanonical(ctx context.Context, p project.Project, land Landing, onto string) (string, error) {
+	differs, err := s.changedBetween(ctx, p, onto, land.Merged)
+	if err != nil {
+		return "", err
+	}
+	if len(outside(differs, land.Paths)) == 0 {
+		return land.Merged, nil
+	}
+	after, _, _, err := s.cutCanonical(ctx, p, onto, land.ID, "recovered "+short(land.Artifact))
+	return after.ID, err
 }
 
 // inspectPaths sorts a landing's paths by what the canonical workspace

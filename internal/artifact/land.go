@@ -474,12 +474,7 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 		return nil, Conflict{State: LandMergeConflicted, Paths: conflicts, Marked: marked}
 	}
 	land.Merged = merged
-	var paths []string
-	if metadataOnly(p) {
-		paths, err = s.changedOnNode(ctx, p, now.ID, merged)
-	} else {
-		paths, err = repo.Changed(ctx, now.ID, merged)
-	}
+	paths, err := s.changedBetween(ctx, p, now.ID, merged)
 	if err != nil {
 		return nil, err
 	}

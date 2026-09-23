@@ -107,6 +107,41 @@ func TestRecoveryFinishesALandingCutOffMidApply(t *testing.T) {
 	}
 }
 
+// A recovery writes the landing's paths onto what the workspace holds
+// now. With more on disk than the landing's merged snapshot has — the lock
+// was lent, and its lender wrote on after the apply was cut off — the
+// canonical name moves to what is on disk, not back to the merged
+// snapshot, which would be older than the workspace.
+func TestRecoveryNamesTheWorkspaceItLeftNotAnOlderMergedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	canonical := t.TempDir()
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	_, merged := crashMidApply(t, store, p, canonical)
+	write(t, canonical, "d", "d-by-the-lender")
+
+	recovered, err := store.RecoverLandings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 1 || recovered[0].State != LandCommitted {
+		t.Fatalf("recovered = %+v", recovered)
+	}
+	ref, _, _ := store.Resolve(ctx, CanonicalRef("p"))
+	if ref.Artifact == merged {
+		t.Fatal("the canonical name moved back to the merged snapshot, which lacks what the lender wrote")
+	}
+	repo, err := store.Repo(ctx, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{"a": "a1", "b": "b1", "c": "c1", "d": "d-by-the-lender"} {
+		got, _, _, _, err := repo.File(ctx, ref.Artifact, path)
+		if err != nil || got != want {
+			t.Fatalf("canonical snapshot %s: %s = %q (%v), want %q", short(ref.Artifact), path, got, err, want)
+		}
+	}
+}
+
 func TestRecoveryStopsAtAPathSomeoneElseChanged(t *testing.T) {
 	ctx := context.Background()
 	canonical := t.TempDir()
