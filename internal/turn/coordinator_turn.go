@@ -81,7 +81,11 @@ func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.
 		cand = c.fleet.ForAgent(ctx, selected)
 		spec.Slots = cand.Slots
 		spec.Region = cand.Region
-		if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
+		p, ok, err := c.projects.Get(ctx, binding.ProjectID)
+		if err != nil {
+			return attempt.Spec{}, roster.Candidate{}, fmt.Errorf("turn: read project %s: %w", binding.ProjectID, err)
+		}
+		if ok {
 			spec.CanonicalRegion = c.fleet.RegionOf(p.Home.Node)
 			if !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
 				return attempt.Spec{}, roster.Candidate{}, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
