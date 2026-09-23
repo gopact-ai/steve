@@ -100,7 +100,7 @@ func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, f
 		return "", false, nil, err
 	}
 	defer cleanup()
-	env := []string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + workTree}
+	env := append([]string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + workTree}, snapshotIndexConfig...)
 	if parent != "" {
 		// --reset replaces every entry with the parent's but keeps the
 		// stat data of those that match, which is what spares the hashing.

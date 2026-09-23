@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The cached index only spares hashing; what a snapshot records is still
@@ -100,5 +101,68 @@ func TestSnapshotIndexConcurrentSnapshotsOfOneDirectory(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(repo.Dir, snapshotIndexDir, "tmp-*")); len(left) != 0 {
 		t.Fatalf("private indexes left behind: %v", left)
+	}
+}
+
+// However old its name says it is — a snapshot that ran for hours, a
+// clock that jumped after sleep — an index a snapshot is using is never
+// swept: without it git would write an empty tree.
+func TestSnapshotIndexSweepSparesIndexesInUse(t *testing.T) {
+	repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "objects.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	write(t, work, "a", "one")
+	index, _, cleanup, err := repo.snapshotIndex(work, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := os.WriteFile(index, []byte("in use"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(index)
+	old := filepath.Join(dir, "tmp-1-abandoned")
+	if err := os.WriteFile(old, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshotPruned.Delete(dir)
+	repo.pruneSnapshotIndexes(dir, time.Now().Add(48*time.Hour))
+	if _, err := os.Stat(index); err != nil {
+		t.Fatalf("an index in use was swept: %v", err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("an abandoned index was kept: %v", err)
+	}
+}
+
+// A user's global git settings must not let the kept index skip looking
+// at a file: fsmonitor and relaxed stat checks are pinned off.
+func TestSnapshotIndexIgnoresGlobalTrustSettings(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, ".gitconfig")
+	if err := os.WriteFile(config, []byte("[core]\n\tcheckStat = minimal\n\ttrustctime = false\n\tuntrackedCache = true\n\tfsmonitor = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "objects.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	write(t, work, "a", "one")
+	parent, _, err := repo.Snapshot(t.Context(), work, "", "first", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, work, "a", "two")
+	write(t, work, "b", "new")
+	sha, changed, err := repo.Snapshot(t.Context(), work, parent, "second", false)
+	if err != nil || !changed {
+		t.Fatalf("second: %v %v", changed, err)
+	}
+	if paths, err := repo.Changed(t.Context(), parent, sha); err != nil || len(paths) != 2 {
+		t.Fatalf("changed = %v %v", paths, err)
 	}
 }

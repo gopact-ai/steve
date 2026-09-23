@@ -27,7 +27,14 @@ const (
 	snapshotPruneGap = time.Hour
 )
 
-var snapshotPruned sync.Map // cache dir -> time.Time of the last sweep
+var (
+	snapshotPruned sync.Map // cache dir -> time.Time of the last sweep
+	// snapshotInUse holds the private indexes snapshots are working on. A
+	// sweep never takes one, however old its name says it is: a snapshot
+	// can run long, and a wall clock can jump after sleep. Deleted under
+	// git, it would make an empty tree of the whole directory.
+	snapshotInUse sync.Map
+)
 
 // snapshotIndex gives one snapshot of workTree a private index. With seed
 // it starts from the cached index of the directory's last snapshot. keep
@@ -47,7 +54,14 @@ func (r *Repo) snapshotIndex(workTree string, seed bool) (index string, keep fun
 		return "", nil, nil, err
 	}
 	index = f.Name()
-	cleanup = func() { os.Remove(index) }
+	snapshotInUse.Store(index, struct{}{})
+	kept := false
+	cleanup = func() {
+		if !kept {
+			os.Remove(index)
+		}
+		snapshotInUse.Delete(index)
+	}
 	copied := seed && copyIndex(f, cached)
 	f.Close()
 	if !copied {
@@ -56,7 +70,9 @@ func (r *Repo) snapshotIndex(workTree string, seed bool) (index string, keep fun
 	}
 	keep = func() {
 		if os.Rename(index, cached) == nil {
-			r.pruneSnapshotIndexes(dir)
+			kept = true
+			snapshotInUse.Delete(index)
+			r.pruneSnapshotIndexes(dir, time.Now())
 		}
 	}
 	return index, keep, cleanup, nil
@@ -81,8 +97,18 @@ func copyIndex(dst *os.File, cached string) bool {
 	return os.Chtimes(dst.Name(), info.ModTime(), info.ModTime()) == nil
 }
 
-func (r *Repo) pruneSnapshotIndexes(dir string) {
-	now := time.Now()
+// snapshotIndexConfig pins what git may trust in a kept index to full stat
+// checks: a user's global fsmonitor, untracked cache or relaxed stat
+// settings would otherwise let a cache vouch for files it did not look at.
+var snapshotIndexConfig = []string{
+	"GIT_CONFIG_COUNT=4",
+	"GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
+	"GIT_CONFIG_KEY_1=core.untrackedCache", "GIT_CONFIG_VALUE_1=false",
+	"GIT_CONFIG_KEY_2=core.checkStat", "GIT_CONFIG_VALUE_2=default",
+	"GIT_CONFIG_KEY_3=core.trustctime", "GIT_CONFIG_VALUE_3=true",
+}
+
+func (r *Repo) pruneSnapshotIndexes(dir string, now time.Time) {
 	if last, ok := snapshotPruned.Load(dir); ok && now.Sub(last.(time.Time)) < snapshotPruneGap {
 		return
 	}
@@ -94,6 +120,9 @@ func (r *Repo) pruneSnapshotIndexes(dir string) {
 	for _, entry := range entries {
 		name := entry.Name()
 		if rest, ok := strings.CutPrefix(name, "tmp-"); ok {
+			if _, busy := snapshotInUse.Load(filepath.Join(dir, name)); busy {
+				continue
+			}
 			// One this old was left by a process that died mid-snapshot.
 			stamp, _, _ := strings.Cut(rest, "-")
 			if created, err := strconv.ParseInt(stamp, 10, 64); err == nil && now.Sub(time.Unix(created, 0)) > snapshotPruneGap {
