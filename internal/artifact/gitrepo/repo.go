@@ -272,19 +272,26 @@ func flattenNestedRepos(ctx context.Context, workTree string) ([]string, error) 
 
 // Pin gives a commit a ref so it is an artifact git will keep, and a name
 // a bundle can carry.
-//
-// Identical snapshots produce the same commit and so pin the same ref at
-// the same time. The ref is named by the commit it holds, so a writer that
-// finds another's lock waits for it rather than failing: whichever writes
-// last writes the same value.
 func (r *Repo) Pin(ctx context.Context, sha string) error {
-	_, err := r.Git(ctx, nil, "-c", "core.filesRefLockTimeout="+pinLockWaitMillis, "update-ref", RefFor(sha), sha)
+	_, err := r.GitRefWrite(ctx, "update-ref", RefFor(sha), sha)
 	return err
 }
 
-// pinLockWaitMillis bounds how long Pin waits for a ref lock another
-// writer holds. A lock left by a crashed git outlasts it and still fails.
-const pinLockWaitMillis = "5000"
+// GitRefWrite is Git for a command that writes artifact refs.
+//
+// Identical snapshots produce the same commit, so several writers can
+// write the same ref at once. The ref is named by the commit it holds, so
+// a writer that finds another's lock waits for it rather than failing:
+// whichever writes last writes the same value. A lock left by a crashed
+// git outlasts the wait and still fails.
+func (r *Repo) GitRefWrite(ctx context.Context, args ...string) (string, error) {
+	return r.Git(ctx, nil, append([]string{
+		"-c", "core.filesRefLockTimeout=" + refLockWaitMillis,
+		"-c", "reftable.lockTimeout=" + refLockWaitMillis,
+	}, args...)...)
+}
+
+const refLockWaitMillis = "5000"
 
 // RefFor is the ref under which an artifact is kept.
 func RefFor(sha string) string { return "refs/steve/artifacts/" + sha }
@@ -466,7 +473,7 @@ func (r *Repo) Unbundle(ctx context.Context, path string) error {
 		if len(fields) != 2 {
 			continue
 		}
-		if _, err := r.Git(ctx, nil, "fetch", "--quiet", path, fields[1]+":"+fields[1]); err != nil {
+		if _, err := r.GitRefWrite(ctx, "fetch", "--quiet", path, fields[1]+":"+fields[1]); err != nil {
 			return err
 		}
 	}

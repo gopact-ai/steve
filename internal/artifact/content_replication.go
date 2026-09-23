@@ -286,7 +286,7 @@ func (s *Store) restoreBundle(ctx context.Context, repo *gitrepo.Repo, commit st
 	if _, err := s.verifyContentCommitWith(ctx, repo, commit, verified); err != nil {
 		return fmt.Errorf("verify repaired content: %w", err)
 	}
-	_, err = repo.Git(ctx, nil, "-c", "core.fsync=all", "update-ref", gitrepo.RefFor(commit), commit)
+	_, err = repo.GitRefWrite(ctx, "-c", "core.fsync=all", "update-ref", gitrepo.RefFor(commit), commit)
 	return err
 }
 
