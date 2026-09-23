@@ -4,8 +4,6 @@ package i18n
 import (
 	"fmt"
 	"strings"
-
-	"github.com/gopact-ai/steve/internal/config"
 )
 
 type Locale string
@@ -14,13 +12,6 @@ const (
 	LocaleZH Locale = "zh"
 	LocaleEN Locale = "en"
 )
-
-func FromDomain(domain string) Locale {
-	if domain == config.DomainLark {
-		return LocaleEN
-	}
-	return LocaleZH
-}
 
 func FromLang(lang string) Locale {
 	lang = strings.ToLower(strings.TrimSpace(lang))

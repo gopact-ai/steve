@@ -12,6 +12,7 @@ import (
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -161,7 +162,7 @@ func TestSharedApplicationChannelSecretSurvivesReplicaAndStaysPrivate(t *testing
 	a, _, book, _ := sharedSettingsFixture(t)
 	channels := adminsvc.NewChannels(a, a.Cfg)
 	before, _ := channels.Channels(t.Context())
-	request := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: config.ChannelPatch{DefaultChannel: ChannelValue("feishu"), Feishu: &config.FeishuChannelPatch{AppSecret: &config.ChannelSecret{Action: "replace", Value: ChannelValue("rotated-private-secret")}, Domain: ChannelValue(config.DomainLark), AllowedSenders: ChannelValue([]string{"allowed-owner"}), GroupPolicy: ChannelValue(config.GroupPolicyAllowlist)}}}
+	request := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{DefaultChannel: ChannelValue("feishu"), Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "replace", Value: ChannelValue("rotated-private-secret")}, Domain: ChannelValue(config.DomainLark), AllowedSenders: ChannelValue([]string{"allowed-owner"}), GroupPolicy: ChannelValue(config.GroupPolicyAllowlist)}}}
 	after, err := channels.UpdateChannels(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
