@@ -272,10 +272,19 @@ func flattenNestedRepos(ctx context.Context, workTree string) ([]string, error) 
 
 // Pin gives a commit a ref so it is an artifact git will keep, and a name
 // a bundle can carry.
+//
+// Identical snapshots produce the same commit and so pin the same ref at
+// the same time. The ref is named by the commit it holds, so a writer that
+// finds another's lock waits for it rather than failing: whichever writes
+// last writes the same value.
 func (r *Repo) Pin(ctx context.Context, sha string) error {
-	_, err := r.Git(ctx, nil, "update-ref", RefFor(sha), sha)
+	_, err := r.Git(ctx, nil, "-c", "core.filesRefLockTimeout="+pinLockWaitMillis, "update-ref", RefFor(sha), sha)
 	return err
 }
+
+// pinLockWaitMillis bounds how long Pin waits for a ref lock another
+// writer holds. A lock left by a crashed git outlasts it and still fails.
+const pinLockWaitMillis = "5000"
 
 // RefFor is the ref under which an artifact is kept.
 func RefFor(sha string) string { return "refs/steve/artifacts/" + sha }
