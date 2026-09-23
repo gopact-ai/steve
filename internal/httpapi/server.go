@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -65,6 +66,7 @@ type Server struct {
 	admin          consoleapi.Admin
 	model          Model
 	token          string
+	loopbackOnly   bool
 	listener       net.Listener
 	httpServer     *http.Server
 	stopRequests   context.CancelFunc
@@ -85,7 +87,7 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	}
 	requestContext, stopRequests := context.WithCancel(context.Background())
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
-	return &Server{model: model, token: cfg.Token, listener: listener, httpServer: server, stopRequests: stopRequests}, nil
+	return &Server{model: model, token: cfg.Token, loopbackOnly: loopback(addr), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
@@ -196,7 +198,9 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /assets/", s.page)
 	mux.HandleFunc("GET /", s.guard(s.page))
 	server := s.httpServer
-	server.Handler = mux
+	// Around the whole mux, unguarded routes included, so a route added
+	// later cannot forget it.
+	server.Handler = sameorigin.Guard(mux, s.loopbackOnly)
 	if err := server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}

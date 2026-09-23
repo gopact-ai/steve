@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
 type Gateway interface {
@@ -107,7 +108,7 @@ func Handler(gw Gateway, def Defaults) http.Handler {
 		toast := gw.HandleCardAction(req.action(def))
 		writeJSON(w, http.StatusOK, map[string]any{"toast_type": toast.Type, "toast": toast.Content})
 	})
-	return mux
+	return sameorigin.Guard(mux, true)
 }
 
 type messageRequest struct {
