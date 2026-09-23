@@ -178,12 +178,7 @@ func (s *Service) recoverableRecords(ctx context.Context) ([]attempt.Record, err
 	if err != nil {
 		return nil, err
 	}
-	pending := s.tasks.PendingDelegations()
-	ids := make([]string, 0, len(pending))
-	for _, tracked := range pending {
-		ids = append(ids, tracked.ID)
-	}
-	settled, err := s.attempts.ForTasksByUpdate(ctx, ids)
+	settled, err := s.attempts.ForTasksByUpdate(ctx, s.tasks.PendingDelegations())
 	if err != nil {
 		return nil, err
 	}

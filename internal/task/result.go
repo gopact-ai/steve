@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 )
@@ -59,18 +58,19 @@ func (t Task) DelegationSettled() bool {
 	return t.Result != nil && t.Finished() && len(t.Attempts) > 0 && !t.Attempts[len(t.Attempts)-1].Open()
 }
 
-// PendingDelegations lists, by id, the delegated children whose result is
-// not yet settled: the children a recovery pass may still owe their parent.
-func (s *Store) PendingDelegations() []Task {
+// PendingDelegations lists, sorted, the ids of delegated children whose
+// result is not yet settled: the children a recovery pass may still owe
+// their parent.
+func (s *Store) PendingDelegations() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []Task
+	var out []string
 	for _, stored := range s.data.Tasks {
 		if stored.Delegated() && stored.Parent != "" && !stored.DelegationSettled() {
-			out = append(out, *stored.clone())
+			out = append(out, stored.ID)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.Sort(out)
 	return out
 }
 

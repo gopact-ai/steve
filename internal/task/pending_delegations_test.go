@@ -57,10 +57,7 @@ func TestPendingDelegationsListOnlyChildrenStillOwingTheirParent(t *testing.T) {
 	if _, err := s.Create(Task{Goal: "orphan", Member: "b", Origin: "delegate:gone"}); err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, child := range s.PendingDelegations() {
-		got = append(got, child.ID)
-	}
+	got := s.PendingDelegations()
 	want := []string{unstarted.ID, openRow.ID, noRows.ID}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
