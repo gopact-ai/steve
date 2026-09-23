@@ -99,7 +99,7 @@ func (d Deployment) Hash() (string, error) {
 	if len(raw) > MaxManifestBytes/2 {
 		return "", fmt.Errorf("%w: deployment configuration is too large", ErrInvalid)
 	}
-	return contentDigest(raw), nil
+	return ContentDigest(raw), nil
 }
 
 func (m Manifest) CheckConfiguration(c Configuration) error {

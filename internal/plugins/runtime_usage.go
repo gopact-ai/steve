@@ -61,7 +61,7 @@ func (s *Store) BeginRuntimeUse(ctx context.Context, ref RuntimeRef, id, kind st
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	if err := s.writeRecord(filepath.Join(dir, contentDigest([]byte(id))+".json"), raw); err != nil {
+	if err := s.writeRecord(filepath.Join(dir, ContentDigest([]byte(id))+".json"), raw); err != nil {
 		return err
 	}
 	return s.sync(filepath.Dir(dir))
@@ -81,13 +81,13 @@ func (s *Store) EndRuntimeUse(ctx context.Context, ref RuntimeRef, id string) er
 		return err
 	}
 	defer root.Close()
-	path := "runtimes/" + ref.ID + "/uses/" + contentDigest([]byte(id)) + ".json"
+	path := "runtimes/" + ref.ID + "/uses/" + ContentDigest([]byte(id)) + ".json"
 	raw, err := readRegular(root, path, MaxManifestBytes)
 	if err != nil {
 		return err
 	}
 	var usage RuntimeUse
-	if err := decodeStrict(raw, &usage); err != nil {
+	if err := DecodeStrict(raw, &usage); err != nil {
 		return err
 	}
 	if usage.ID != id || usage.Runtime.ID != ref.ID {
@@ -203,10 +203,10 @@ func (s *Store) RuntimeInfos() ([]RuntimeInfo, error) {
 				return nil, err
 			}
 			var usage RuntimeUse
-			if err := decodeStrict(raw, &usage); err != nil {
+			if err := DecodeStrict(raw, &usage); err != nil {
 				return nil, err
 			}
-			if usage.Runtime.ID != record.Ref.ID || use.Name() != contentDigest([]byte(usage.ID))+".json" {
+			if usage.Runtime.ID != record.Ref.ID || use.Name() != ContentDigest([]byte(usage.ID))+".json" {
 				return nil, ErrIntegrity
 			}
 			info.Uses = append(info.Uses, usage)

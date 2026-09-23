@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/runtime"
@@ -303,7 +304,7 @@ func (a *Service) saveDesktopAgents(ctx context.Context, addedAgents map[string]
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	preparedManager, err := HarnessRuntimeConfig(&candidate).HarnessManager()
+	preparedManager, err := configbuild.HarnessManager(HarnessRuntimeConfig(&candidate))
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
@@ -326,7 +327,7 @@ func (a *Service) prepareDesktopAgents(ctx context.Context, statePath string, se
 		return fmt.Errorf("准备所选 Agent 运行环境：%w", err)
 	}
 	install := &config.Config{Gateway: config.Gateway{StatePath: statePath}, Harnesses: harnesses}
-	if err := install.PrepareAdapters(ctx); err != nil {
+	if err := configbuild.PrepareAdapters(ctx, install); err != nil {
 		return fmt.Errorf("安装所选 Agent 适配器：%w", err)
 	}
 	if a.LiveSkills != nil {

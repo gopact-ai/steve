@@ -12,9 +12,11 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -39,7 +41,7 @@ func newRetentionOwnerFixture(t *testing.T, kind string) retentionOwnerFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		owner := artifact.Manifest{ID: m.Object.Key, Project: "p", Label: project.LevelInternal, CreatedAt: time.Now().UTC(), Content: &m}
+		owner := artifact.Manifest{ID: m.Object.Key, Project: "p", Label: datalevel.Internal, CreatedAt: time.Now().UTC(), Content: &m}
 		if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
 			if _, err := contentreplica.Record(tx, m); err != nil {
 				return err
@@ -80,7 +82,7 @@ func newRetentionOwnerFixture(t *testing.T, kind string) retentionOwnerFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		library := &plugins.Library{Store: &plugins.Store{Dir: t.TempDir()}, Ledger: book, Replication: client("a")}
+		library := &pluginledger.Library{Store: &plugins.Store{Dir: t.TempDir()}, Ledger: book, Replication: client("a")}
 		owner, err := library.Add(t.Context(), "p", bundle)
 		if err != nil {
 			t.Fatal(err)

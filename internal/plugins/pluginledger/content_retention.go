@@ -1,8 +1,10 @@
-package plugins
+package pluginledger
 
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/plugins"
 
 	"github.com/gopact-ai/steve/internal/contentreplica"
 )
@@ -19,9 +21,9 @@ func packageRetentionRoots(key string, raw json.RawMessage, lookup contentreplic
 		return nil, err
 	}
 	if record == nil || record.Project == "" || len(record.Project) > 256 ||
-		strings.ContainsAny(record.Project, "\x00\r\n") || !digestShape.MatchString(record.Digest) ||
+		strings.ContainsAny(record.Project, "\x00\r\n") || !plugins.ValidDigest(record.Digest) ||
 		libraryKey(record.Project, record.Digest) != key {
-		return nil, ErrIntegrity
+		return nil, plugins.ErrIntegrity
 	}
 	if err := record.Manifest.Validate(); err != nil {
 		return nil, err
@@ -38,8 +40,8 @@ func packageRetentionRoots(key string, raw json.RawMessage, lookup contentreplic
 	}
 	if !found || current.Object != record.Content.Object || current.Object.Scope.ProjectID != record.Project ||
 		current.Object.Kind != contentreplica.PluginPackage || current.Object.Key != record.Digest ||
-		current.Object.Blob.SHA256 != record.Digest || current.Object.Blob.Size > MaxPackageBytes {
-		return nil, ErrIntegrity
+		current.Object.Blob.SHA256 != record.Digest || current.Object.Blob.Size > plugins.MaxPackageBytes {
+		return nil, plugins.ErrIntegrity
 	}
 	return []string{record.Content.ID}, nil
 }

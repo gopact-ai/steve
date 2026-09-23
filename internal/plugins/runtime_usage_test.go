@@ -16,7 +16,7 @@ func runtimeUsageFixture(t *testing.T) (*Store, RuntimeRecord) {
 		t.Fatal(err)
 	}
 	selection := Selection{Project: "p", Node: "worker", Harness: "mock", Deployments: []string{receipt.Hash}}
-	record, err := store.PrepareRuntime(t.Context(), "runtime-use", selection, RuntimeConfig{Command: "unused"}, func(context.Context, string, RuntimeRecord) (string, error) { return contentDigest(nil), nil })
+	record, err := store.PrepareRuntime(t.Context(), "runtime-use", selection, RuntimeConfig{Command: "unused"}, func(context.Context, string, RuntimeRecord) (string, error) { return ContentDigest(nil), nil })
 	if err != nil {
 		t.Fatal(err)
 	}

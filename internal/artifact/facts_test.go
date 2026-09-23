@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -125,7 +126,7 @@ func TestSealedLandingOnOldGitUsesTheLegacyMerge(t *testing.T) {
 	book, _ := ledger.Open(t.TempDir(), ledger.Options{})
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
-	_ = projects.Declare(ctx, []project.Project{{ID: "p", Level: project.LevelSealed, Home: project.Home{Node: "node-a", Path: canonical}}})
+	_ = projects.Declare(ctx, []project.Project{{ID: "p", Level: datalevel.Sealed, Home: project.Home{Node: "node-a", Path: canonical}}})
 	p, _, _ := projects.Get(ctx, "p")
 	store := New(filepath.Join(t.TempDir(), "artifacts"), book, projects, node)
 	store.LegacyMerge = true
@@ -166,7 +167,7 @@ func TestDeriveLowersALabelOnlyWithApprovalAndNewContent(t *testing.T) {
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
 	// Internal data on an internal hub; lowering it to public is the case.
-	_ = projects.Declare(ctx, []project.Project{{ID: "p", Level: project.LevelInternal, Home: project.Home{Path: canonical}}})
+	_ = projects.Declare(ctx, []project.Project{{ID: "p", Level: datalevel.Internal, Home: project.Home{Path: canonical}}})
 	store := New(filepath.Join(t.TempDir(), "artifacts"), book, projects, &localNode{})
 	ws, err := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
 	if err != nil {
@@ -174,18 +175,18 @@ func TestDeriveLowersALabelOnlyWithApprovalAndNewContent(t *testing.T) {
 	}
 	write(t, ws.Path, "a", "redacted")
 	derived, _, _ := store.Publish(ctx, ws, ws.Base, "att-1", "redact")
-	if _, err := store.Derive(ctx, ws.Base, ws.Base, project.LevelPublic, "att-1", "appr-1"); err == nil {
+	if _, err := store.Derive(ctx, ws.Base, ws.Base, datalevel.Public, "att-1", "appr-1"); err == nil {
 		t.Fatal("an artifact was derived from itself")
 	}
-	if _, err := store.Derive(ctx, ws.Base, derived.ID, project.LevelPublic, "att-1", ""); err == nil {
+	if _, err := store.Derive(ctx, ws.Base, derived.ID, datalevel.Public, "att-1", ""); err == nil {
 		t.Fatal("a label was lowered without approval")
 	}
-	d, err := store.Derive(ctx, ws.Base, derived.ID, project.LevelPublic, "att-1", "appr-1")
-	if err != nil || d.Label != project.LevelPublic {
+	d, err := store.Derive(ctx, ws.Base, derived.ID, datalevel.Public, "att-1", "appr-1")
+	if err != nil || d.Label != datalevel.Public {
 		t.Fatalf("derive = %+v err=%v", d, err)
 	}
 	m, _, _ := store.Manifest(ctx, derived.ID)
-	if m.Label != project.LevelPublic {
+	if m.Label != datalevel.Public {
 		t.Fatalf("derived manifest label = %s", m.Label)
 	}
 }

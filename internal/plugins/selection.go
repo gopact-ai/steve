@@ -49,7 +49,7 @@ func (selection Selection) Hash() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return contentDigest(raw), nil
+	return ContentDigest(raw), nil
 }
 
 func (s *Store) Selection(selection Selection) ([]DeploymentReceipt, error) {

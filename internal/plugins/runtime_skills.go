@@ -76,9 +76,9 @@ func runtimeSkillsHash(files map[string]packageFile) string {
 	var identity strings.Builder
 	for _, name := range sortedKeys(files) {
 		file := files[name]
-		fmt.Fprintf(&identity, "%s\x00%t\x00%s\n", name, file.executable, contentDigest(file.data))
+		fmt.Fprintf(&identity, "%s\x00%t\x00%s\n", name, file.executable, ContentDigest(file.data))
 	}
-	return contentDigest([]byte(identity.String()))
+	return ContentDigest([]byte(identity.String()))
 }
 
 func (s *Store) RuntimeInstructions(selection Selection) (string, error) {

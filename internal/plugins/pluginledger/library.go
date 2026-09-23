@@ -1,10 +1,15 @@
-package plugins
+package pluginledger
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/plugins"
 
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -15,7 +20,7 @@ const packageRecordKind = "plugin-package"
 type PackageRecord struct {
 	Project  string                   `json:"project"`
 	Digest   string                   `json:"digest"`
-	Manifest Manifest                 `json:"manifest"`
+	Manifest plugins.Manifest         `json:"manifest"`
 	Content  *contentreplica.Manifest `json:"content,omitempty"`
 }
 
@@ -23,20 +28,20 @@ type PackageRecord struct {
 // The physical cache is recoverable from the same replication mechanism as
 // other project content; credentials remain solely in the local Store.
 type Library struct {
-	Store       *Store
+	Store       *plugins.Store
 	Ledger      *ledger.Ledger
 	Replication contentreplica.Replicator
 }
 
 func libraryKey(project, digest string) string {
-	return contentDigest([]byte(project + "\x00" + digest))
+	return plugins.ContentDigest([]byte(project + "\x00" + digest))
 }
 
-func (l *Library) Add(ctx context.Context, project string, bundle Bundle) (PackageRecord, error) {
+func (l *Library) Add(ctx context.Context, project string, bundle plugins.Bundle) (PackageRecord, error) {
 	if project == "" || len(project) > 256 || strings.ContainsAny(project, "\x00\r\n") || l.Store == nil || l.Ledger == nil {
-		return PackageRecord{}, ErrInvalid
+		return PackageRecord{}, plugins.ErrInvalid
 	}
-	checked, err := DecodeBundle(bundle.Data)
+	checked, err := plugins.DecodeBundle(bundle.Data)
 	if err != nil {
 		return PackageRecord{}, err
 	}
@@ -64,40 +69,39 @@ func (l *Library) Add(ctx context.Context, project string, bundle Bundle) (Packa
 	return record, err
 }
 
-func (l *Library) Get(ctx context.Context, project, digest string) (Bundle, error) {
+func (l *Library) Get(ctx context.Context, project, digest string) (plugins.Bundle, error) {
 	record, err := l.Record(ctx, project, digest)
 	if err != nil {
-		return Bundle{}, err
+		return plugins.Bundle{}, err
 	}
 	if l.Replication != nil {
 		if _, err := l.Replication.CheckLocal(ctx, project); err != nil {
-			return Bundle{}, err
+			return plugins.Bundle{}, err
 		}
 	}
 	if cached, err := l.Store.Read(digest); err == nil {
 		if cached.Manifest.ID != record.Manifest.ID || cached.Manifest.Version != record.Manifest.Version {
-			return Bundle{}, ErrIntegrity
+			return plugins.Bundle{}, plugins.ErrIntegrity
 		}
 		return cached, nil
 	}
 	if record.Content == nil || l.Replication == nil {
-		return Bundle{}, fmt.Errorf("%w: original package content is not locally available", ErrUnavailable)
+		return plugins.Bundle{}, fmt.Errorf("%w: original package content is not locally available", plugins.ErrUnavailable)
 	}
-	var content limitedBuffer
-	content.limit = MaxPackageBytes
+	content := packageBuffer{limit: plugins.MaxPackageBytes}
 	restored, err := l.Replication.Read(ctx, *record.Content, &content)
 	if err != nil {
-		return Bundle{}, err
+		return plugins.Bundle{}, err
 	}
-	bundle, err := DecodeBundle(content.Bytes())
+	bundle, err := plugins.DecodeBundle(content.Bytes())
 	if err != nil {
-		return Bundle{}, err
+		return plugins.Bundle{}, err
 	}
 	if bundle.Digest != digest {
-		return Bundle{}, ErrIntegrity
+		return plugins.Bundle{}, plugins.ErrIntegrity
 	}
 	if err := l.cache(ctx, project, bundle); err != nil {
-		return Bundle{}, err
+		return plugins.Bundle{}, err
 	}
 	err = l.Ledger.Update(ctx, func(tx *ledger.Tx) error {
 		committed, err := contentreplica.Record(tx, restored)
@@ -112,26 +116,26 @@ func (l *Library) Get(ctx context.Context, project, digest string) (Bundle, erro
 
 func (l *Library) Record(ctx context.Context, project, digest string) (PackageRecord, error) {
 	var record PackageRecord
-	if project == "" || !digestShape.MatchString(digest) || l.Ledger == nil {
-		return record, ErrInvalid
+	if project == "" || !plugins.ValidDigest(digest) || l.Ledger == nil {
+		return record, plugins.ErrInvalid
 	}
 	found, err := l.Ledger.GetBinding(ctx, packageRecordKind, libraryKey(project, digest), &record)
 	if err != nil {
 		return record, err
 	}
 	if !found {
-		return record, ErrUnavailable
+		return record, plugins.ErrUnavailable
 	}
 	if record.Project != project || record.Digest != digest || record.Manifest.Validate() != nil {
-		return record, ErrIntegrity
+		return record, plugins.ErrIntegrity
 	}
 	if record.Content != nil {
 		current, found, err := contentreplica.Lookup(ctx, l.Ledger, record.Content.ID)
 		if err != nil {
 			return record, err
 		}
-		if !found || current.Object.Scope.ProjectID != project || current.Object.Kind != contentreplica.PluginPackage || current.Object.Key != digest || current.Object.Blob.SHA256 != digest || current.Object.Blob.Size > MaxPackageBytes {
-			return record, ErrIntegrity
+		if !found || current.Object.Scope.ProjectID != project || current.Object.Kind != contentreplica.PluginPackage || current.Object.Key != digest || current.Object.Blob.SHA256 != digest || current.Object.Blob.Size > plugins.MaxPackageBytes {
+			return record, plugins.ErrIntegrity
 		}
 		record.Content = &current
 	}
@@ -144,13 +148,13 @@ func (l *Library) List(ctx context.Context) ([]PackageRecord, error) {
 		return nil, err
 	}
 	out := make([]PackageRecord, 0, len(records))
-	for _, key := range sortedKeys(records) {
+	for _, key := range slices.Sorted(maps.Keys(records)) {
 		var item PackageRecord
-		if err := decodeStrict(records[key], &item); err != nil {
+		if err := plugins.DecodeStrict(records[key], &item); err != nil {
 			return nil, err
 		}
 		if libraryKey(item.Project, item.Digest) != key {
-			return nil, ErrIntegrity
+			return nil, plugins.ErrIntegrity
 		}
 		checked, err := l.Record(ctx, item.Project, item.Digest)
 		if err != nil {
@@ -161,7 +165,21 @@ func (l *Library) List(ctx context.Context) ([]PackageRecord, error) {
 	return out, nil
 }
 
-func (l *Library) cache(ctx context.Context, project string, bundle Bundle) error {
-	_, err := l.Store.Install(ctx, InstallRequest{CommandID: libraryKey(project, bundle.Digest), ExpectedDigest: bundle.Digest, Source: Source{Kind: "bundle", Location: bundle.Digest}, Bundle: bundle})
+func (l *Library) cache(ctx context.Context, project string, bundle plugins.Bundle) error {
+	_, err := l.Store.Install(ctx, plugins.InstallRequest{CommandID: libraryKey(project, bundle.Digest), ExpectedDigest: bundle.Digest, Source: plugins.Source{Kind: "bundle", Location: bundle.Digest}, Bundle: bundle})
 	return err
+}
+
+// packageBuffer holds restored package bytes, refusing more than a package
+// may contain.
+type packageBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *packageBuffer) Write(raw []byte) (int, error) {
+	if len(raw) > b.limit-b.Len() {
+		return 0, errors.New("output exceeds limit")
+	}
+	return b.Buffer.Write(raw)
 }

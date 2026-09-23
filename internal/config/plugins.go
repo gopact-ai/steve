@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/plugins"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 // ValidatePlugins checks desired scopes without touching package files or
@@ -33,7 +33,7 @@ func (c *Config) ValidatePlugins() error {
 				if !ok {
 					return fmt.Errorf("plugin %s names unknown node %s", id, node)
 				}
-				level = project.Level(configured.Level).OrDefault()
+				level = datalevel.Level(configured.Level).OrDefault()
 			}
 			for _, pid := range deployment.Projects {
 				if item.Enabled {
@@ -47,7 +47,7 @@ func (c *Config) ValidatePlugins() error {
 				if !ok {
 					return fmt.Errorf("plugin %s names unknown project %s", id, pid)
 				}
-				if !project.Level(p.Level).OrDefault().Admits(level) {
+				if !datalevel.Level(p.Level).OrDefault().Admits(level) {
 					return fmt.Errorf("plugin %s: node %s may not hold project %s content", id, node, pid)
 				}
 			}

@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -27,13 +28,13 @@ import (
 // Manifest is what the ledger knows about an artifact: a commit in the
 // project's shadow repository, where it came from, and its label.
 type Manifest struct {
-	ID        string        `json:"id"`
-	Project   string        `json:"project"`
-	Parent    string        `json:"parent,omitempty"`
-	Label     project.Level `json:"label"`
-	By        string        `json:"by,omitempty"`
-	Message   string        `json:"message,omitempty"`
-	CreatedAt time.Time     `json:"created_at"`
+	ID        string          `json:"id"`
+	Project   string          `json:"project"`
+	Parent    string          `json:"parent,omitempty"`
+	Label     datalevel.Level `json:"label"`
+	By        string          `json:"by,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
 	// Canonical marks a snapshot of the canonical workspace itself: the
 	// merge base for whatever descends from it. Workspace names the copy
 	// a snapshot was taken in; such a snapshot descends from the copy's
@@ -147,15 +148,15 @@ func (s *Store) Project(ctx context.Context, id string) (project.Project, bool, 
 // admits checks that a node may hold the project's data: the node's level
 // must reach the project's, and a sealed project never leaves its home.
 func (s *Store) admits(ctx context.Context, p project.Project, node string) error {
-	if p.Level == project.LevelSealed && node != p.Home.Node {
+	if p.Level == datalevel.Sealed && node != p.Home.Node {
 		return fmt.Errorf("project %s is sealed: it runs only at its home, %s", p.ID, placeName(p.Home.Node))
 	}
 	level, err := s.nodes.Level(ctx, node)
 	if err != nil {
 		return err
 	}
-	if !p.Level.OrDefault().Admits(project.Level(level).OrDefault()) {
-		return fmt.Errorf("project %s is %s; %s is only %s", p.ID, p.Level.OrDefault(), placeName(node), project.Level(level).OrDefault())
+	if !p.Level.OrDefault().Admits(datalevel.Level(level).OrDefault()) {
+		return fmt.Errorf("project %s is %s; %s is only %s", p.ID, p.Level.OrDefault(), placeName(node), datalevel.Level(level).OrDefault())
 	}
 	return nil
 }
@@ -170,7 +171,7 @@ func placeName(node string) string {
 // metadataOnly says the hub keeps no objects of the project: sealed data
 // stays at its home node, which is its durable place.
 func metadataOnly(p project.Project) bool {
-	return p.Level == project.LevelSealed && p.Home.Node != ""
+	return p.Level == datalevel.Sealed && p.Home.Node != ""
 }
 
 func (s *Store) policy() (Limits, ReviewLimits) {

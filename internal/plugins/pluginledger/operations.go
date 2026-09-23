@@ -1,9 +1,13 @@
-package plugins
+package pluginledger
 
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/plugins"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -22,14 +26,14 @@ type Operation struct {
 }
 
 func (l *Library) BeginOperation(ctx context.Context, id, kind string, input any) (Operation, error) {
-	if !nameShape.MatchString(id) || !nameShape.MatchString(kind) {
-		return Operation{}, ErrInvalid
+	if !plugins.ValidName(id) || !plugins.ValidName(kind) {
+		return Operation{}, plugins.ErrInvalid
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {
 		return Operation{}, err
 	}
-	fingerprint := contentDigest(raw)
+	fingerprint := plugins.ContentDigest(raw)
 	operation := Operation{ID: id, Kind: kind, Fingerprint: fingerprint, State: OperationPending, UpdatedAt: time.Now().UTC()}
 	err = l.Ledger.Update(ctx, func(tx *ledger.Tx) error {
 		rows, err := tx.Bindings(managementOperationKind)
@@ -38,11 +42,11 @@ func (l *Library) BeginOperation(ctx context.Context, id, kind string, input any
 		}
 		if prior, exists := rows[id]; exists {
 			var original Operation
-			if err := decodeStrict(prior, &original); err != nil {
+			if err := plugins.DecodeStrict(prior, &original); err != nil {
 				return err
 			}
 			if original.ID != id || original.Kind != kind || original.Fingerprint != fingerprint {
-				return ErrConflict
+				return plugins.ErrConflict
 			}
 			operation = original
 			return nil
@@ -53,8 +57,8 @@ func (l *Library) BeginOperation(ctx context.Context, id, kind string, input any
 }
 
 func (l *Library) FinishOperation(ctx context.Context, operation Operation, cause error) error {
-	if !nameShape.MatchString(operation.ID) || !digestShape.MatchString(operation.Fingerprint) {
-		return ErrInvalid
+	if !plugins.ValidName(operation.ID) || !plugins.ValidDigest(operation.Fingerprint) {
+		return plugins.ErrInvalid
 	}
 	return l.Ledger.Update(ctx, func(tx *ledger.Tx) error {
 		rows, err := tx.Bindings(managementOperationKind)
@@ -63,12 +67,12 @@ func (l *Library) FinishOperation(ctx context.Context, operation Operation, caus
 		}
 		var current Operation
 		if raw, exists := rows[operation.ID]; !exists {
-			return ErrUnavailable
-		} else if err := decodeStrict(raw, &current); err != nil {
+			return plugins.ErrUnavailable
+		} else if err := plugins.DecodeStrict(raw, &current); err != nil {
 			return err
 		}
 		if current.Fingerprint != operation.Fingerprint || current.Kind != operation.Kind {
-			return ErrConflict
+			return plugins.ErrConflict
 		}
 		if current.State == OperationSucceeded {
 			return nil
@@ -90,13 +94,13 @@ func (l *Library) Operations(ctx context.Context) ([]Operation, error) {
 		return nil, err
 	}
 	out := make([]Operation, 0, len(rows))
-	for _, id := range sortedKeys(rows) {
+	for _, id := range slices.Sorted(maps.Keys(rows)) {
 		var operation Operation
-		if err := decodeStrict(rows[id], &operation); err != nil {
+		if err := plugins.DecodeStrict(rows[id], &operation); err != nil {
 			return nil, err
 		}
-		if operation.ID != id || !digestShape.MatchString(operation.Fingerprint) {
-			return nil, ErrIntegrity
+		if operation.ID != id || !plugins.ValidDigest(operation.Fingerprint) {
+			return nil, plugins.ErrIntegrity
 		}
 		out = append(out, operation)
 	}

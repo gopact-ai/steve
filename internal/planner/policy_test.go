@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/config"
 )
 
 type planningPolicy struct {
@@ -142,8 +143,8 @@ func TestLLMPolicyDefaultsAndLegacyFields(t *testing.T) {
 		want     planningPolicy
 	}{
 		{"legacy", nil, time.Minute, 1, planningPolicy{time.Minute, 1}},
-		{"defaults", nil, 0, 0, planningPolicy{DefaultTimeout, DefaultAttempts}},
-		{"source-zero", func() (time.Duration, int) { return 0, 0 }, time.Minute, 1, planningPolicy{DefaultTimeout, DefaultAttempts}},
+		{"defaults", nil, 0, 0, planningPolicy{config.DefaultPlanningTimeout, config.DefaultPlanningAttempts}},
+		{"source-zero", func() (time.Duration, int) { return 0, 0 }, time.Minute, 1, planningPolicy{config.DefaultPlanningTimeout, config.DefaultPlanningAttempts}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stopped := errors.New("stop after checking")

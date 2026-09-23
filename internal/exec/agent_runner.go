@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
@@ -64,15 +65,13 @@ func NewAgentRunner(sessions Sessions, caps Capabilities, r *roster.Roster) *Age
 	return &AgentRunner{sessions: sessions, caps: caps, roster: r}
 }
 
-const DefaultStepTimeout = 15 * time.Minute
-
 func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan.StepResult, runErr error) {
 	timeout := a.Timeout
 	if a.TimeoutSource != nil {
 		timeout = a.TimeoutSource()
 	}
 	if timeout <= 0 {
-		timeout = DefaultStepTimeout
+		timeout = config.DefaultStepTimeout
 	}
 	ctx = harness.WithPluginProfile(ctx, req.PluginRuntime)
 	candidate, ok := a.find(ctx, req.Agent)

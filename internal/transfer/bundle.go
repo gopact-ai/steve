@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -496,7 +497,7 @@ func Read(path string) (Bundle, error) {
 }
 
 type ImportOptions struct {
-	TargetLevel                                  project.Level
+	TargetLevel                                  datalevel.Level
 	StateDir, HubID, ExpectedSource, Home, Input string
 	Finalize                                     func(project.Project) error
 }

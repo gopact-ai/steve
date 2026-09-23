@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -41,7 +42,7 @@ func TestChangesSummaryKeepsHistoricalSnapshotAndPartialCounts(t *testing.T) {
 	t.Cleanup(func() { book.Close() })
 	work := t.TempDir()
 	projects := project.Open(book)
-	p := project.Project{ID: "p", Home: project.Home{Path: work}, Level: project.LevelPublic}
+	p := project.Project{ID: "p", Home: project.Home{Path: work}, Level: datalevel.Public}
 	if err := projects.Declare(t.Context(), []project.Project{p}); err != nil {
 		t.Fatal(err)
 	}

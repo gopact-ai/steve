@@ -1,17 +1,18 @@
-package plugins
+package pluginledger
 
 import (
 	"context"
 	"slices"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plugins"
 )
 
 const installationHistoryKind = "plugin-installation-history"
 
 // RememberTargets runs before changing a declaration. A node removed from
 // current scope may still hold a process whose open response was lost.
-func (l *Library) RememberTargets(ctx context.Context, id string, item Installation) error {
+func (l *Library) RememberTargets(ctx context.Context, id string, item plugins.Installation) error {
 	return l.Ledger.Update(ctx, func(tx *ledger.Tx) error {
 		rows, err := tx.Bindings(installationHistoryKind)
 		if err != nil {
@@ -19,7 +20,7 @@ func (l *Library) RememberTargets(ctx context.Context, id string, item Installat
 		}
 		var nodes []string
 		if raw, ok := rows[id]; ok {
-			if err := decodeStrict(raw, &nodes); err != nil {
+			if err := plugins.DecodeStrict(raw, &nodes); err != nil {
 				return err
 			}
 		}
@@ -44,8 +45,8 @@ func (l *Library) InstallationNodes(ctx context.Context, id string) ([]string, e
 		return nil, err
 	}
 	for _, raw := range rows {
-		var receipt DeploymentReceipt
-		if err := decodeStrict(raw, &receipt); err != nil {
+		var receipt plugins.DeploymentReceipt
+		if err := plugins.DecodeStrict(raw, &receipt); err != nil {
 			return nil, err
 		}
 		if receipt.Deployment.Installation == id && !slices.Contains(nodes, receipt.Deployment.Node) {

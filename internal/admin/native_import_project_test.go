@@ -11,6 +11,8 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -25,7 +27,7 @@ func nativeProjectFixture(t *testing.T) (*Service, config.Node, agent.Agent) {
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", a.Cfg.NodeConfigs())
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
 	t.Cleanup(a.Nodes.Close)
 	return a, target, agent.Agent{ID: "importer", Node: "node-test", Harness: "codex"}
 }
@@ -62,7 +64,7 @@ func TestNativeImportAutoProjectConcurrentRetryUsesOneDeclaration(t *testing.T) 
 		}
 	}
 	p, ok, err := a.Projects.Get(t.Context(), want)
-	if err != nil || !ok || p.Home.Path != dir || p.Home.Node != "node-test" || p.Repo != project.RepoInPlace || p.Level != project.LevelInternal {
+	if err != nil || !ok || p.Home.Path != dir || p.Home.Node != "node-test" || p.Repo != project.RepoInPlace || p.Level != datalevel.Internal {
 		t.Fatalf("automatic project=%+v %v", p, err)
 	}
 	if len(a.Cfg.Projects) != 3 {
@@ -111,7 +113,7 @@ func TestNativeImportAutoProjectReusesExistingWorkspaceWithoutChangingPolicy(t *
 					t.Fatal("failed workspace was made available by auto import")
 				}
 			}
-			if err != nil || got.Level != project.LevelRestricted || got.Repo != project.RepoIsolated || got.DefaultRole != project.RoleNone || len(a.Cfg.Projects) != 3 {
+			if err != nil || got.Level != datalevel.Restricted || got.Repo != project.RepoIsolated || got.DefaultRole != project.RoleNone || len(a.Cfg.Projects) != 3 {
 				t.Fatalf("existing policy changed: %+v %v", got, err)
 			}
 		})

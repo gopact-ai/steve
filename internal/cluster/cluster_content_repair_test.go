@@ -14,6 +14,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -332,7 +333,7 @@ func TestContentRepairUpgradesSingleMachineManifestAfterJoiningPeers(t *testing.
 	}
 	projects := project.Open(active.Ledger)
 	projects.SetHubID(source.Config.ClusterID)
-	if err := (config.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	client, err := source.ContentReplicator(active)

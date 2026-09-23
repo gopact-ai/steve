@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -159,7 +160,7 @@ func TestDisclosurePersistenceErrorDoesNotRewriteSuccessfulAgentOutcome(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.Level, p.DefaultRole = project.LevelSealed, project.RoleWrite
+	p.Level, p.DefaultRole = datalevel.Sealed, project.RoleWrite
 	if err := c.projects.Declare(t.Context(), []project.Project{p}); err != nil {
 		t.Fatal(err)
 	}

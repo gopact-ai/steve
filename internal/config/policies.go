@@ -10,8 +10,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/approval"
 	"github.com/gopact-ai/steve/internal/artifact"
-	"github.com/gopact-ai/steve/internal/exec"
-	"github.com/gopact-ai/steve/internal/planner"
 )
 
 type ExecutionPolicy struct {
@@ -58,19 +56,29 @@ type Policies struct {
 	Review    ReviewPolicy    `json:"review"`
 }
 
-// Defaults belong to their consumer's policy, not a shared constants bucket.
+// Execution and planning defaults. Plan steps, verification and the
+// planner fall back to the same values when a caller leaves them unset.
+const (
+	DefaultStepTimeout      = 15 * time.Minute
+	DefaultVerifyTimeout    = 10 * time.Minute
+	DefaultPlanningTimeout  = 3 * time.Minute
+	DefaultPlanningAttempts = 2
+)
+
+// WithDefaults fills every unset policy. Snapshot and review budgets are the
+// artifact layer's own limits, which it also applies to a zero value.
 func (p Policies) WithDefaults() Policies {
 	if p.Execution.StepTimeout == 0 {
-		p.Execution.StepTimeout = Duration(exec.DefaultStepTimeout)
+		p.Execution.StepTimeout = Duration(DefaultStepTimeout)
 	}
 	if p.Execution.VerifyTimeout == 0 {
-		p.Execution.VerifyTimeout = Duration(exec.DefaultVerifyTimeout)
+		p.Execution.VerifyTimeout = Duration(DefaultVerifyTimeout)
 	}
 	if p.Planning.Timeout == 0 {
-		p.Planning.Timeout = Duration(planner.DefaultTimeout)
+		p.Planning.Timeout = Duration(DefaultPlanningTimeout)
 	}
 	if p.Planning.Attempts == 0 {
-		p.Planning.Attempts = planner.DefaultAttempts
+		p.Planning.Attempts = DefaultPlanningAttempts
 	}
 	if p.Snapshot.MaxFiles == 0 {
 		p.Snapshot.MaxFiles = artifact.MaxSnapshotFiles

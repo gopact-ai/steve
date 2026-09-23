@@ -190,7 +190,7 @@ func (s *Store) Runtime(ref RuntimeRef) (RuntimeRecord, error) {
 		return RuntimeRecord{}, err
 	}
 	var record RuntimeRecord
-	if err := decodeStrict(raw, &record); err != nil {
+	if err := DecodeStrict(raw, &record); err != nil {
 		return record, err
 	}
 	want, err := ref.Selection.Hash()
@@ -235,7 +235,7 @@ func (s *Store) readRuntimeCommand(id string) (RuntimeRecord, bool, error) {
 		return RuntimeRecord{}, false, err
 	}
 	var record RuntimeRecord
-	if err := decodeStrict(raw, &record); err != nil {
+	if err := DecodeStrict(raw, &record); err != nil {
 		return record, false, err
 	}
 	if record.CommandID != id || record.Ref.Validate() != nil || record.Config.Command == "" {

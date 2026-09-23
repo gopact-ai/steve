@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
@@ -225,8 +226,8 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return consoleapi.AddNodeResult{}, fmt.Errorf("地址要写成 ip:端口，如 10.0.0.5:7701")
 	}
-	level := project.Level(strings.TrimSpace(req.Level)).OrDefault()
-	if _, ok := map[project.Level]bool{project.LevelPublic: true, project.LevelInternal: true, project.LevelRestricted: true, project.LevelSealed: true}[level]; !ok {
+	level := datalevel.Level(strings.TrimSpace(req.Level)).OrDefault()
+	if _, ok := map[datalevel.Level]bool{datalevel.Public: true, datalevel.Internal: true, datalevel.Restricted: true, datalevel.Sealed: true}[level]; !ok {
 		return consoleapi.AddNodeResult{}, fmt.Errorf("数据等级只能是 public / internal / restricted / sealed")
 	}
 	var raw [24]byte

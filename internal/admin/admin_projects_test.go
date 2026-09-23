@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -38,7 +39,7 @@ func projectAdminFixture(t *testing.T, options ...ledger.Options) (*Service, *le
 	}
 	t.Cleanup(func() { book.Close() })
 	admin.Projects = project.Open(book)
-	if err := (config.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
 		t.Fatal(err)
 	}
 	return admin, book
@@ -55,7 +56,7 @@ func TestProjectManagementFileFailureLeavesCandidateUnpublished(t *testing.T) {
 				if err := config.Save(a.Path, a.Cfg); err != nil {
 					t.Fatal(err)
 				}
-				if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+				if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -108,7 +109,7 @@ func TestProjectManagementRetryReconcilesCommittedCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := consoleapi.AddProjectRequest{ID: "new", Path: "new"}
-	var pending *config.ProjectionPendingError
+	var pending *configbuild.ProjectionPendingError
 	if err := a.AddProject(t.Context(), req); !errors.As(err, &pending) {
 		t.Fatalf("committed failure missing pending receipt: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/platformconfig"
@@ -28,7 +29,7 @@ func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T
 		t.Run("node="+requestedNode, func(t *testing.T) {
 			a, _, book, _ := sharedSettingsFixture(t)
 			a.Projects = project.Open(book)
-			if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+			if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 				t.Fatal(err)
 			}
 			req := consoleapi.AddProjectRequest{ID: "new", Node: requestedNode, Path: "new-service", Level: "internal", Repo: "inplace"}

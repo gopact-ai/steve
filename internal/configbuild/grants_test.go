@@ -1,8 +1,9 @@
-package config
+package configbuild
 
 import (
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -22,10 +23,10 @@ func TestConfiguredGrantsReconcileAsAnExplicitOverlay(t *testing.T) {
 	if err != nil || beforeHash == afterHash {
 		t.Fatal("configured grants do not participate in declaration identity")
 	}
-	if err := Save(path, cfg); err != nil {
+	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := Load(path)
+	loaded, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func TestConfiguredGrantsReconcileAsAnExplicitOverlay(t *testing.T) {
 	p = loaded.Projects["p"]
 	p.Grants = nil
 	loaded.Projects["p"] = p
-	if err := Save(path, loaded); err != nil {
+	if err := config.Save(path, loaded); err != nil {
 		t.Fatal(err)
 	}
 	if err := startup.Reconcile(t.Context(), loaded); err != nil {
@@ -63,7 +64,7 @@ func TestConfiguredGrantsReconcileAsAnExplicitOverlay(t *testing.T) {
 func TestInvalidConfiguredGrantFailsBeforeCommit(t *testing.T) {
 	cfg, _, controller, _ := controllerFixture(t)
 	for _, grants := range []map[string]string{{"guest": "root"}, {" ": "none"}, {"guest": "none", " guest ": "write"}} {
-		candidate := CloneProjects(cfg)
+		candidate := config.CloneProjects(cfg)
 		p := candidate.Projects["p"]
 		p.Grants = grants
 		candidate.Projects["p"] = p

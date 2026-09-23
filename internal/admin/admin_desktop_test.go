@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -42,7 +43,7 @@ func desktopAdminFixture(t *testing.T) (*Service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := cfg.HarnessManager()
+	manager, err := configbuild.HarnessManager(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

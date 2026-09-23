@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -162,7 +163,7 @@ func TestSealedProjectStaysAtItsHomeAndTheHubKeepsMetadataOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
-	if err := projects.Declare(ctx, []project.Project{{ID: "p", Level: project.LevelSealed, Home: project.Home{Node: "node-a", Path: canonical}}}); err != nil {
+	if err := projects.Declare(ctx, []project.Project{{ID: "p", Level: datalevel.Sealed, Home: project.Home{Node: "node-a", Path: canonical}}}); err != nil {
 		t.Fatal(err)
 	}
 	p, _, _ := projects.Get(ctx, "p")
@@ -207,7 +208,7 @@ func TestNodeLevelGatesMaterialization(t *testing.T) {
 	book, _ := ledger.Open(t.TempDir(), ledger.Options{})
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
-	_ = projects.Declare(ctx, []project.Project{{ID: "p", Level: project.LevelRestricted, Home: project.Home{Path: canonical}}})
+	_ = projects.Declare(ctx, []project.Project{{ID: "p", Level: datalevel.Restricted, Home: project.Home{Path: canonical}}})
 	store := New(filepath.Join(t.TempDir(), "artifacts"), book, projects, node)
 	if _, err := store.Materialize(ctx, project.Request{Project: "p", Node: "node-a", Isolated: true, Owner: "att-1"}); err == nil {
 		t.Fatal("restricted data was materialised on a public node")

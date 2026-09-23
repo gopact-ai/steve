@@ -17,8 +17,8 @@ import (
 	"sync"
 
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 const artifactContentKind = "artifact-content"
@@ -51,7 +51,7 @@ func (s *Store) prepareContent(ctx context.Context, m Manifest) (contentreplica.
 	if err != nil {
 		return contentreplica.Manifest{}, err
 	}
-	if !m.Label.OrDefault().Admits(project.Level(scope.Level)) {
+	if !m.Label.OrDefault().Admits(datalevel.Level(scope.Level)) {
 		return contentreplica.Manifest{}, contentreplica.ErrPlacement
 	}
 	// The source repo is already complete when receipt/record is called. Open

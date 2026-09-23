@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -67,7 +68,7 @@ func TestAddWorkspaceMakesTheDirectoryItAdopts(t *testing.T) {
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{}); err != nil {
@@ -93,7 +94,7 @@ func TestAddWorkspaceResolvesAnotherMachineWorkspaceFromItsAdvert(t *testing.T) 
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", a.Cfg.NodeConfigs())
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
 	t.Cleanup(a.Nodes.Close)
 	advert, err := a.Nodes.Advert(t.Context(), "node-test")
 	if err != nil {

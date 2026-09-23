@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -205,7 +206,7 @@ func (l Ledger) Conflicts(ctx context.Context) ([]Conflict, error) {
 			entry.Node = p.Home.Node
 			// A sealed project keeps its data at home, so the hub cannot
 			// check the half-merged tree out for a person to edit.
-			entry.Editable = item.Resolvable() && !(p.Level == project.LevelSealed && p.Home.Node != "")
+			entry.Editable = item.Resolvable() && !(p.Level == datalevel.Sealed && p.Home.Node != "")
 		}
 		out = append(out, entry)
 	}

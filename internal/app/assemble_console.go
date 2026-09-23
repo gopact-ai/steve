@@ -10,11 +10,11 @@ import (
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/material"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, planning plansAssembly, projection readModelAssembly) (consoleAssembly, error) {
@@ -79,12 +79,12 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	})
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.
-	projects.Levels = func(node string) project.Level {
+	projects.Levels = func(node string) datalevel.Level {
 		level, err := nodes.Level(context.Background(), node)
 		if err != nil {
 			return ""
 		}
-		return project.Level(level)
+		return datalevel.Level(level)
 	}
 	admin := &adminsvc.Service{Lifetime: ctx, Cfg: cfg, Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, View: view,
 		LiveSkills: live, Shipper: shipper, Observation: observation, Coordinator: coordinator, HomePath: cfg.Gateway.HomePath, Memory: memories, Artifacts: artifacts}

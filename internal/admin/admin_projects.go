@@ -12,7 +12,9 @@ import (
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
@@ -29,14 +31,14 @@ func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config
 	if err := candidate.CheckFileRevision(a.Path); err != nil {
 		return err
 	}
-	controller := config.ProjectController{Store: a.Projects}
+	controller := configbuild.ProjectController{Store: a.Projects}
 	if err := controller.Ensure(ctx, candidate); err != nil {
 		return err
 	}
 	if err := mutate(candidate); err != nil {
 		return err
 	}
-	desired, _, err := config.ProjectDeclarations(candidate)
+	desired, _, err := configbuild.ProjectDeclarations(candidate)
 	if err != nil {
 		return err
 	}
@@ -54,7 +56,7 @@ func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config
 		}
 		return saveErr
 	})
-	var pending *config.ProjectionPendingError
+	var pending *configbuild.ProjectionPendingError
 	if !errors.As(err, &pending) && (err == nil || config.Committed(err)) {
 		if a.Repos != nil {
 			a.Repos.wake()
@@ -127,7 +129,7 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 	if err := a.makeProjectDir(ctx, nodeKey, path); err != nil {
 		return err
 	}
-	level := project.Level(req.Level).OrDefault()
+	level := datalevel.Level(req.Level).OrDefault()
 	repo := project.RepoMode(req.Repo)
 	if repo == "" {
 		repo = project.RepoInPlace
@@ -334,7 +336,7 @@ func (a *Service) ResumeProjectCopies(ctx context.Context) error {
 			}
 		}
 	}
-	if err := (config.ProjectController{Store: a.Projects}).Ensure(ctx, a.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(ctx, a.Cfg); err != nil {
 		return err
 	}
 	a.startProjectClonesLocked(ctx)
