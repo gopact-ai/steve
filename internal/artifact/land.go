@@ -615,6 +615,12 @@ func (s *Store) snapshotUnderLanding(ctx context.Context, p project.Project, hel
 // as the project's new canonical. A commit that does not go through —
 // the name is not where the landing left it, or it cannot be read — leaves
 // the written landing recovery-pending, for recovery to commit.
+//
+// Under a lock lent by an in-place turn, the name moves to the merged
+// snapshot although the lender may have written outside the landing's
+// paths, so the name can briefly lag what is on disk. The lender's turn
+// ends with a snapshot cut from the workspace as it is, which moves the
+// name to it and closes the gap.
 func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Landing) error {
 	committed := *land
 	committed.State = LandCommitted

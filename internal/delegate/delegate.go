@@ -319,6 +319,10 @@ func (s *Service) childBase(ctx context.Context, parent task.Task, owner string)
 	if !found {
 		return "", fmt.Errorf("%w: %s", project.ErrUnknown, parent.ProjectID)
 	}
+	// A parent lock found stale or lost fails the delegation rather than
+	// falling back to the canonical name: that name does not hold what
+	// the parent wrote, and a child started from it would silently miss
+	// it. The parent's turn is ending anyway once its lock is gone.
 	return s.artifacts.CanonicalBaseUnder(ctx, p, held, owner, "base for "+owner)
 }
 

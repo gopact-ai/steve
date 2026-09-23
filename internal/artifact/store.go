@@ -317,7 +317,9 @@ func (s *Store) receipt(ctx context.Context, p project.Project, m Manifest) (Man
 // workspace while it is cut. A lock someone else holds comes back as
 // ledger.ErrHeld, and a workspace an interrupted landing half wrote as
 // ErrRecoveryPending. parent is the previous canonical snapshot; the
-// artifact returned is parent itself when nothing changed.
+// artifact returned is parent itself when nothing changed. It records the
+// workspace as it is; a base for new work is CanonicalBase, which also
+// stands aside for a holder of the lock and a pending recovery.
 func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, error) {
 	var m Manifest
 	var changed bool
