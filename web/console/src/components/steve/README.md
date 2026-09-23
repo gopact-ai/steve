@@ -6,7 +6,7 @@ Steve 自己的组件，组合 Untitled UI（`components/base`、`components/app
 | 文件 | 组件 | 用在 |
 |---|---|---|
 | `page.tsx` | `PageHeader` `PageBody` `Panel` `KeyValue` `Chips` | 每一页的骨架与事实块 |
-| `ui.tsx` | `StateBadge` `Where` `Mono` `Nothing` `Tags` `Section` `taskState` | 到处 |
+| `ui.tsx` | `StateBadge` `Where` `Mono` `Nothing` `taskState` | 到处 |
 | `icon-button.tsx` | `IconButton` | 复用 `ButtonUtility` 的图标操作；必填 `label`，通过 `size` 选择密度 |
 | `dialog-surface.tsx` | `DialogSurface` `DialogBody` `DialogHeader` `DialogFooter` | 普通弹窗的展示组合；调用者保留打开/关闭、焦点、滚动和业务状态 |
 | `drawer.tsx` | `Sheet` `Drawer` `DrawerSection` | 侧栏与详情抽屉，键盘焦点隔离，Esc 关闭 |

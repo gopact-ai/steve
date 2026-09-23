@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, File02, Loading01, Maximize01 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
-import { fetchAttemptChanges } from "@/lib/api";
+import { fetchAttemptChanges } from "@/lib/api/work";
 import { number } from "@/lib/format";
 import type { ChangeIndex, ChangeSummary } from "@/lib/types";
 import { useI18n } from "@/providers/locale-provider";

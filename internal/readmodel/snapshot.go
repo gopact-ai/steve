@@ -592,18 +592,6 @@ func (m *Model) observedModels(n *Node) {
 	}
 }
 
-// recentActivity is an agent's activity if it is fresh enough to mean
-// "now": a progress stream that went quiet two minutes ago is history.
-func (m *Model) recentActivity(agent string) (Activity, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	act, ok := m.activity[agent]
-	if !ok || time.Since(act.At) > activityFresh {
-		return Activity{}, false
-	}
-	return act, true
-}
-
 const activityFresh = 2 * time.Minute
 
 // nodeOf is place's inverse: the hub's name back to the model's "".
@@ -733,23 +721,6 @@ func convertPlan(p plan.Plan) Plan {
 			}
 		}
 		out.Steps = append(out.Steps, step)
-	}
-	return out
-}
-
-// DescribeContext renders an assembled payload for the read model. It is a
-// summary rather than the raw text: the point is to answer "what did that
-// agent see?" at a glance, with the size that matters for the budget.
-func DescribeContext(goal string, ancestry []string, refs []plan.Ref, findings []plan.Finding,
-	facts []string, turnsLeft, bytes int) *StepContext {
-	out := &StepContext{
-		Goal: goal, Ancestry: ancestry, Facts: facts, TurnsLeft: turnsLeft, Bytes: bytes,
-	}
-	for _, ref := range refs {
-		out.Refs = append(out.Refs, fmt.Sprintf("%s:%s", ref.Kind, ref.Value))
-	}
-	for _, f := range findings {
-		out.Findings = append(out.Findings, f.Text)
 	}
 	return out
 }

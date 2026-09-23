@@ -12,6 +12,9 @@ export function indexSessionWork(tasks: Task[]) {
     const rootsByConversation = new Map<string, Task[]>();
     for (const task of tasks) {
         if (task.transport !== "console" || task.channel === undefined || task.parent) continue;
+        // A task is worth a line of its own under its thread when it is
+        // running, waits on the owner, was planned, fires on a schedule, or
+        // handed work on. A one-turn chat task is the thread itself.
         const notable = task.execution === "running" || (task.attention || 0) > 0 || !!task.plan_id
             || (task.origin || "").startsWith("schedule") || childrenByParent.has(task.id);
         if (!notable) continue;

@@ -99,15 +99,14 @@ func (s *Store) ExportProject(ctx context.Context, project string) (ProjectTrans
 	} else if err != nil {
 		return out, err
 	}
-	path := filepath.Join(os.TempDir(), "unused")
-	tmp, err := os.CreateTemp("", "steve-artifact-*.bundle")
+	// git bundle create refuses an existing file, so it writes to a fresh
+	// name inside a directory only this process can enter.
+	dir, err := os.MkdirTemp("", "steve-artifact-*")
 	if err != nil {
 		return out, err
 	}
-	path = tmp.Name()
-	tmp.Close()
-	os.Remove(path)
-	defer os.Remove(path)
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "objects.bundle")
 	cmd := exec.CommandContext(ctx, "git", "--git-dir", repo, "bundle", "create", path, "--all")
 	if raw, err := cmd.CombinedOutput(); err != nil {
 		if len(artifacts) == 0 && strings.Contains(string(raw), "empty bundle") {

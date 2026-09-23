@@ -85,11 +85,6 @@ type Lab struct {
 // configuration and failures while starting machines are ordinary errors.
 var ErrUnavailable = errors.New("fleetlab unavailable")
 
-// Unavailable reports why a lab cannot run here, or "" when one can. A
-// suite calls it before Open so it can skip with a reason rather than
-// fail as if the code under test were broken.
-func Unavailable() string { return dockerUnavailable() }
-
 // Open brings the machines up. The caller closes the lab; a suite that
 // shares one across its scenarios does that from TestMain.
 //
@@ -156,9 +151,6 @@ func (l *Lab) Token(name string) string { return l.Node(name).Token }
 
 // Work is the directory that node's sessions run under.
 func (l *Lab) Work(name string) string { return l.Node(name).Work }
-
-// Names lists the machines, in the order they were asked for.
-func (l *Lab) Names() []string { return append([]string(nil), l.names...) }
 
 // Exec runs a shell command on the node's own machine and returns its
 // combined output. This is how a scenario proves where something

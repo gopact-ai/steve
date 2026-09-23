@@ -16,7 +16,7 @@ jobs:
       - run: go vet ./cmd/... ./internal/... ./e2e/...
       - name: Raft snapshot retry regression
         run: ./scripts/test-raft.sh -race -run '^TestRaft_AppendEntriesSnapshotBoundary' -count=1
-      - run: go test -race ./cmd/... ./internal/... ./e2e/...
+      - run: make test
   console:
     runs-on: ubuntu-latest
     steps:

@@ -3,7 +3,6 @@ package schedule
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"sync"
@@ -232,13 +231,4 @@ func (s *Store) replaceLocked(next data) error {
 	}
 	s.data = next
 	return nil
-}
-
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
 }
