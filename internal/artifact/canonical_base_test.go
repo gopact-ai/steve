@@ -3,8 +3,10 @@ package artifact
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -175,5 +177,34 @@ func TestIsolatedBaseBeforeAnyCanonicalSnapshotTakesTheHoldersOnceNamed(t *testi
 	}
 	if first == "" || ws.Base != first || read(t, ws.Path, "a") != "a0" {
 		t.Fatalf("isolated base = %s with a=%s, want the holder's first snapshot %s", ws.Base, read(t, ws.Path, "a"), first)
+	}
+}
+
+// A base cut under a landing driver's context renews the lock it took for
+// the cut itself: the driver keeps renewing the canonical lock its landing
+// holds, before, during and after.
+func TestIsolatedBaseLeavesTheLandingDriversLockAlone(t *testing.T) {
+	ctx := t.Context()
+	canonical := t.TempDir()
+	write(t, canonical, "a", "a0")
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	lease, err := store.ledger.Acquire(ctx, "landing-driver:test", "driver", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driven, stop := store.startLandingDriver(ctx, lease, time.Minute)
+	defer stop()
+	landing := ledger.Lease{Key: canonicalLock("other"), Holder: "a landing"}
+	defer store.keepCanonical(driven, landing)()
+
+	if _, err := store.CanonicalBase(driven, p, "att-2", "base"); err != nil {
+		t.Fatal(err)
+	}
+	d := driven.Value(landingDriverKey{}).(*landingDriver)
+	d.mu.Lock()
+	renewing := d.canonical
+	d.mu.Unlock()
+	if renewing == nil || renewing.Key != landing.Key {
+		t.Fatalf("the driver renews %+v after the cut, want its landing's lock %s", renewing, landing.Key)
 	}
 }

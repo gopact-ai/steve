@@ -398,7 +398,9 @@ func (s *Store) underCanonical(ctx context.Context, p project.Project, by string
 			slog.Warn(fmt.Sprintf("artifact: release canonical lock of %s after a snapshot: %v", p.ID, err), "project", p.ID, "holder", lease.Holder)
 		}
 	}()
-	defer s.keepCanonical(ctx, lease)()
+	// Renewed on its own even under a landing driver, which renews the
+	// lock its landing holds and must go on doing so.
+	defer s.renewCanonical(ctx, lease)()
 	if err := s.checkNoRecoveryPending(ctx, p, ""); err != nil {
 		return err
 	}

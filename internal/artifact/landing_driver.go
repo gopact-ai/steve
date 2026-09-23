@@ -98,6 +98,13 @@ func (s *Store) keepCanonical(ctx context.Context, lease ledger.Lease) func() {
 		d.mu.Unlock()
 		return func() { d.mu.Lock(); d.canonical = nil; d.mu.Unlock() }
 	}
+	return s.renewCanonical(ctx, lease)
+}
+
+// renewCanonical renews a canonical lock on its own until the returned
+// func is called, which stops renewing and waits. A lock found stale
+// stops renewing; any other failure is retried on the next tick.
+func (s *Store) renewCanonical(ctx context.Context, lease ledger.Lease) func() {
 	ticks := s.renewTicks
 	if ticks == nil {
 		ticks = renewTicks
@@ -118,7 +125,7 @@ func (s *Store) keepCanonical(ctx context.Context, lease ledger.Lease) func() {
 						return
 					}
 					if errors.Is(err, ledger.ErrStale) {
-						slog.Warn(fmt.Sprintf("artifact: canonical lock %s lost while landing: %v", lease.Key, err), "lease", lease.Key, "holder", lease.Holder)
+						slog.Warn(fmt.Sprintf("artifact: canonical lock %s lost: %v", lease.Key, err), "lease", lease.Key, "holder", lease.Holder)
 						return
 					}
 					// A busy database or an unreachable issuer may pass
