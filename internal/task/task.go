@@ -231,6 +231,11 @@ type Task struct {
 	// a schedule's id, say. It is how unattended work can be recognised and
 	// rotated without touching a task the user has since taken over.
 	Origin string `json:"origin,omitempty"`
+	// System marks a task the platform opens for its own work, such as the
+	// onboarding introduction, rather than anything a person or their agents
+	// asked for. It is persisted, accounted and recovered like any other task,
+	// but no task list, page or count shows it: see keysOf.
+	System bool `json:"system,omitempty"`
 	// ProjectID is fixed when the task is created and never changes: a
 	// task belongs to one project even if the conversation moves on.
 	ProjectID string `json:"project_id,omitempty"`

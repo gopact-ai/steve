@@ -92,6 +92,8 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		ok = false
 	}
 	if !ok {
+		// The introduction is the platform's own turn, not work the owner
+		// asked for: its task is accounted but never listed as theirs.
 		title := goal(prompt)
 		if onboarding(req) {
 			title = onboard.TaskGoal(c.text.Locale())
@@ -105,6 +107,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Member:    selected.ID,
 			Node:      executionNode,
 			Origin:    req.Origin,
+			System:    onboarding(req),
 			ProjectID: binding.ProjectID,
 			Workspace: workspace,
 		})

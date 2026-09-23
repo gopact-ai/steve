@@ -33,7 +33,14 @@ func scopesOf(t *Task) []Scope {
 	}
 	return scopes
 }
+
+// keysOf is every list a task belongs to. A system task belongs to none: it
+// is the platform's own work, so pages and counts leave it out while its
+// summary, accounting and recovery rows stay indexed like any other task's.
 func keysOf(t *Task, meta Meta, summary ReadSummary) []queryKey {
+	if t.System {
+		return nil
+	}
 	status := "closed"
 	if actionable(*t, summary) {
 		status = "live"
@@ -53,6 +60,9 @@ func keysOf(t *Task, meta Meta, summary ReadSummary) []queryKey {
 	return keys
 }
 func (r *readIndex) count(t *Task, summary ReadSummary, delta int) {
+	if t.System {
+		return
+	}
 	for _, scope := range scopesOf(t) {
 		c := r.counts[scope]
 		c.Total += delta

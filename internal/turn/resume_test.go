@@ -209,8 +209,13 @@ func TestOnboardingTurnRunsUnderAClosedTaskWithAnExecutionToken(t *testing.T) {
 		t.Fatalf("onboarding tasks = %+v; want exactly one", all)
 	}
 	tracked := all[0]
-	if tracked.State != task.StateDone || tracked.Goal != onboard.TaskGoal(coordinator.text.Locale()) {
-		t.Fatalf("onboarding task = %+v; want a done task named for onboarding", tracked)
+	if tracked.State != task.StateDone || tracked.Goal != onboard.TaskGoal(coordinator.text.Locale()) || !tracked.System {
+		t.Fatalf("onboarding task = %+v; want a done system task named for onboarding", tracked)
+	}
+	// The introduction is the platform's own work: the owner's task board
+	// must not show it as something they asked for and completed.
+	if page, err := tasks.Query(task.Query{}); err != nil || len(page.Items) != 0 || tasks.Counts(task.Scope{}).Total != 0 {
+		t.Fatalf("task board = %+v, %v; want no onboarding task listed", page.Items, err)
 	}
 	if len(tracked.Attempts) != 1 || tracked.Attempts[0].Open() || tracked.Attempts[0].Outcome != task.OutcomeOK {
 		t.Fatalf("onboarding attempts = %+v; want one closed ok row", tracked.Attempts)
