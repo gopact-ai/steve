@@ -41,30 +41,6 @@ export const Nothing = ({ icon: Icon, title, children }: { icon: FC<{ className?
     </div>
 );
 
-export const Tags = ({ items }: { items?: string[] }) =>
-    items && items.length ? (
-        <span className="flex flex-wrap gap-1">
-            {items.map((t) => (
-                <Badge key={t} type="modern" size="sm" color="gray">{t}</Badge>
-            ))}
-        </span>
-    ) : (
-        <span className="text-quaternary">—</span>
-    );
-
-export const Section = ({ title, description, aside, children }: { title: string; description?: string; aside?: ReactNode; children: ReactNode }) => (
-    <section className="flex min-w-0 flex-col gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-            <div className="min-w-0">
-                <h2 className="text-base font-semibold text-primary">{title}</h2>
-                {description && <p className="text-sm text-tertiary">{description}</p>}
-            </div>
-            {aside}
-        </div>
-        {children}
-    </section>
-);
-
 // taskState is what to call a task right now: "running" only while an
 // attempt is live; an open task nobody is working on is idle — a chat
 // thread waiting for its next line — not 进行中.

@@ -302,32 +302,6 @@
     }
 }
 
-.prose.prose-centered-quote :not(:where([class~="not-prose"], [class~="not-prose"] *)) {
-    &:where(blockquote) {
-        padding-inline-start: 0px !important;
-        border-left: none;
-        text-align: center;
-    }
-    &:where(figure:has(> blockquote)) {
-        border-left: none;
-        padding-inline-start: 0px !important;
-        padding-top: 0px !important;
-        padding-bottom: 0px !important;
-        text-align: center;
-    }
-}
-
-.prose.prose-minimal-quote :not(:where([class~="not-prose"], [class~="not-prose"] *)) {
-    &:where(blockquote) {
-        border-left: none;
-        padding-inline-start: 0px !important;
-    }
-    &:where(figure:has(> blockquote)) {
-        border-left: none;
-        padding-inline-start: 0px !important;
-    }
-}
-
 .prose.md\:prose-lg:not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     @media (width >= 48rem /* 768px */) {
         /* Base */

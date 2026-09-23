@@ -498,7 +498,7 @@ const Thread = memo(function Thread({ c, current, unseen, onPick, usualAgent, us
                                 : execution === "unknown" ? null
                                 : running
                                     ? <span className="conversation-running">{tr(conversationTransport(c) === "feishu" ? "channel.running" : "consoleChrome.running")}</span>
-                                    : <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>}
+                                    : <span className="conversation-time">{c.last_at ? relative(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>}
                         </span>
                         {execution === "unknown" && <span className="u-meta text-warning-primary">{tr("channel.executionUnknown")}</span>}
                         {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
@@ -606,5 +606,3 @@ function RenameBox({ initial, onDone }: { initial: string; onDone: (title: strin
             className="w-full rounded-lg bg-primary px-2 py-1.5 text-sm text-primary outline-none ring-1 ring-brand placeholder:text-placeholder" />
     );
 }
-
-export function ago(at: string, locale: Locale = "zh"): string { return relative(at, locale); }
