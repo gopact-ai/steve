@@ -81,8 +81,9 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		delegation.SetLedger(attempts, artifacts)
 		delegation.SetGate(gate)
 		delegation.SetEndpoints(nodes)
+		wireDelegateQuestions(delegation, cons)
 		if environment != nil {
-			wireDelegateQuestions(delegation, cons)
+			wireDelegateRecovery(delegation, cons)
 			delegation.SetSpawnGuard(func(ctx context.Context, tx *ledger.Tx) error {
 				return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx})
 			})

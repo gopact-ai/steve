@@ -24,8 +24,9 @@ import (
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-// QuestionBinding names the existing child execution that originated a native
-// question. Recovery diagnostics use a separate callback and never approve it.
+// QuestionBinding names the existing child execution — node-owned or on the
+// hub — that asked. Recovery diagnostics use a separate callback and never
+// approve it.
 type QuestionBinding struct {
 	Conversation, ParentTask, Task, Attempt, Node, Agent, Project, Session string
 }
@@ -69,22 +70,25 @@ func (s *Service) SetRecoveryQuestion(handler func(context.Context, RecoveryQues
 	s.recoveryQuestion = handler
 }
 
-func (s *Service) SetRetainedQuestionHandlers(
+// SetQuestionHandlers installs who answers a child's own questions and
+// permission requests: the owner, reached with the child's execution
+// binding whether the child runs on a node or on the hub itself.
+func (s *Service) SetQuestionHandlers(
 	ask func(context.Context, QuestionBinding, permission.Ask) (acp.RequestPermissionOutcome, error),
 	askUser func(context.Context, QuestionBinding, view.Question) (view.Answer, error),
 ) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.retainedPermission, s.retainedQuestion = ask, askUser
+	s.ownerPermission, s.ownerQuestion = ask, askUser
 }
 
 func questionBinding(parent, child task.Task, record attempt.Record) QuestionBinding {
 	return QuestionBinding{Conversation: parent.Channel, ParentTask: parent.ID, Task: child.ID, Attempt: record.ID, Node: record.Node, Agent: record.Agent, Project: record.Project, Session: record.Session}
 }
 
-func (s *Service) nodeQuestionHandlers(binding QuestionBinding) (permission.AskFunc, acphost.AskUserFunc) {
+func (s *Service) ownerHandlers(binding QuestionBinding) (permission.AskFunc, acphost.AskUserFunc) {
 	s.mu.Lock()
-	ask, askUser := s.retainedPermission, s.retainedQuestion
+	ask, askUser := s.ownerPermission, s.ownerQuestion
 	s.mu.Unlock()
 	var permissionHandler permission.AskFunc
 	var questionHandler acphost.AskUserFunc
@@ -301,7 +305,7 @@ func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, re
 		return nil, nil, nil, false
 	}
 	scope.AdoptRetained()
-	ask, askUser := s.nodeQuestionHandlers(binding)
+	ask, askUser := s.ownerHandlers(binding)
 	for _, q := range state.Questions {
 		if q.State == "pending" && ((q.Permission != nil && ask == nil) || (q.Permission == nil && askUser == nil)) {
 			pending("question", "读取原节点保留的待答问题", "原子任务正在等待一个真实的 Agent 问题。", "当前服务尚未接通该原生问答，平台恢复问题不能替代工具授权。", "建议接通原会话问答后继续，原执行会保持等待。", nil)
