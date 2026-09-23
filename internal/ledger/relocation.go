@@ -22,7 +22,7 @@ func (t *Tx) AcquireLocal(key, holder string, ttl time.Duration) (Lease, error) 
 	if current != "" && current != holder {
 		until, _ := time.Parse(time.RFC3339Nano, expires)
 		if until.After(t.l.now()) {
-			return Lease{}, fmt.Errorf("%w: %s is held by %s", ErrHeld, key, current)
+			return Lease{}, Held{Key: key, Holder: current, Until: until}
 		}
 	}
 	if epoch == ^uint64(0) {

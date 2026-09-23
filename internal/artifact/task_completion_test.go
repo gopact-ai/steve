@@ -20,7 +20,7 @@ func TestPendingLandingDrainersDoNotCreateCompetingRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := s.canonicalRef(t.Context(), p.ID)
+	base := canonicalOf(t, s, p.ID)
 	write(t, ws.Path, "file", "accepted")
 	result, _, err := s.Publish(t.Context(), ws, base, "child", "result")
 	if err != nil {

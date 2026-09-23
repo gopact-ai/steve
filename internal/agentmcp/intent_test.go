@@ -20,8 +20,8 @@ var (
 // attemptsOf plays the attempt service: which attempt is live for a task.
 type attemptsOf struct{ live string }
 
-func (a *attemptsOf) LiveAttemptOf(context.Context, string) (string, bool) {
-	return a.live, a.live != ""
+func (a *attemptsOf) LiveAttemptOf(context.Context, string) (string, bool, error) {
+	return a.live, a.live != "", nil
 }
 
 // A send the hub never heard back about blocks the same send from the next

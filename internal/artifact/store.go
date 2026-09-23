@@ -104,6 +104,9 @@ type Store struct {
 	Policy           func() (gitrepo.Limits, gitrepo.ReviewLimits)
 	Review           gitrepo.ReviewLimits
 	landingDriverTTL time.Duration
+	// snapshotLimit bounds a snapshot cut under the canonical lock; zero
+	// means canonicalSnapshotLimit.
+	snapshotLimit time.Duration
 	// renewTicks paces landing-driver renewals; nil means a real ticker.
 	renewTicks   func(time.Duration) (<-chan time.Time, func())
 	executions   *execution.Registry
@@ -133,6 +136,11 @@ type Store struct {
 	recoveryNotes sync.Map
 	// inApply holds the landings this process is applying right now.
 	inApply sync.Map
+	// writing holds, by project, a one-slot channel taken by whoever in
+	// this process writes the canonical workspace or cuts it under a lock
+	// it shares: a landing under a lent lock and its lender (see
+	// writeCanonical).
+	writing sync.Map
 }
 
 func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }
@@ -309,18 +317,259 @@ func (s *Store) receipt(ctx context.Context, p project.Project, m Manifest) (Man
 
 // ---------------------------------------------------------------- canonical
 
-// SnapshotCanonical takes a before- or after-snapshot of the project's
-// canonical workspace wherever it lives, brings it to the hub, and records
-// it. parent is the previous canonical snapshot; the artifact returned is
-// parent itself when nothing changed.
+// SnapshotCanonical takes a snapshot of the project's canonical workspace
+// wherever it lives, brings it to the hub, records it and moves the
+// canonical name to it. It takes the canonical lock for that and gives it
+// back: the name only moves under the lock, and nothing else writes the
+// workspace while it is cut. A lock someone else holds comes back as
+// ledger.ErrHeld, and a workspace an interrupted landing half wrote as
+// ErrRecoveryPending. parent is the previous canonical snapshot; the
+// artifact returned is parent itself when nothing changed. It records the
+// workspace as it is; a base for new work is CanonicalBase, which also
+// stands aside for a holder of the lock and a pending recovery.
 func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, error) {
-	m, changed, _, err := s.snapshotCanonical(ctx, p, parent, by, message)
+	var m Manifest
+	var changed bool
+	err := s.underCanonical(ctx, p, by, func(ctx context.Context, held ledger.Lease) error {
+		var err error
+		m, changed, _, err = s.snapshotCanonical(ctx, p, held, parent, by, message)
+		return err
+	})
 	return m, changed, err
 }
 
-// snapshotCanonical is SnapshotCanonical that also names the nested git
-// repositories the snapshot left out of the canonical workspace.
-func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, []string, error) {
+// SnapshotCanonicalUnder is SnapshotCanonical for a caller already holding
+// the canonical lock, which held is: an in-place turn snapshotting the
+// directory it works in. The name moves fenced on that lock. A landing
+// the holder lent the lock to is waited for; with one waiting for
+// recovery, the workspace is half written and the snapshot is the one
+// the name is at, unchanged.
+func (s *Store) SnapshotCanonicalUnder(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string) (Manifest, bool, error) {
+	var m Manifest
+	var changed bool
+	err := s.underLent(ctx, p, func() error {
+		var err error
+		m, changed, _, err = s.snapshotCanonical(ctx, p, held, parent, by, message)
+		return err
+	})
+	if !errors.Is(err, ErrRecoveryPending) {
+		return m, changed, err
+	}
+	head, err := s.namedWhilePending(ctx, p, err)
+	if err != nil {
+		return Manifest{}, false, err
+	}
+	m, found, err := s.Manifest(ctx, head)
+	if err == nil && !found {
+		err = fmt.Errorf("canonical snapshot %s of %s is not recorded", short(head), p.ID)
+	}
+	return m, false, err
+}
+
+// CanonicalBase is the canonical snapshot new work starts from. With the
+// canonical lock free it is a fresh snapshot, taken under the lock. With
+// the lock held — a landing or an in-place turn is writing the workspace —
+// or the workspace half written by a landing waiting for recovery, what is
+// on disk is no base: it is the snapshot the canonical name is at, which
+// is left where it is. A landing names its snapshot before it writes, so
+// with no name yet the holder is not one: the base is then cut as the
+// lineage's first snapshot, and naming it is left to the holder — unless
+// the holder named one meanwhile, which is then the base.
+func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, message string) (string, error) {
+	var base string
+	err := s.underCanonical(ctx, p, by, func(ctx context.Context, held ledger.Lease) error {
+		var err error
+		base, err = s.canonicalBaseUnder(ctx, p, held, by, message)
+		return err
+	})
+	if !errors.Is(err, ledger.ErrHeld) && !errors.Is(err, ErrRecoveryPending) {
+		return base, err
+	}
+	head, readErr := s.CanonicalOf(ctx, p.ID)
+	if readErr != nil {
+		return "", readErr
+	}
+	if head != "" {
+		return head, nil
+	}
+	if !errors.Is(err, ledger.ErrHeld) {
+		return "", fmt.Errorf("project %s has no canonical snapshot to start from yet: %w", p.ID, err)
+	}
+	m, _, _, err := s.cutCanonical(ctx, p, "", by, message)
+	if err != nil {
+		return "", err
+	}
+	// The holder may have named its first snapshot while the base was cut,
+	// and written on: the cut may hold those writes half done, and stands
+	// off the lineage the name now starts. The holder's snapshot is the
+	// base then.
+	if head, err = s.CanonicalOf(ctx, p.ID); err != nil || head != "" {
+		return head, err
+	}
+	return m.ID, nil
+}
+
+// CanonicalBaseUnder is CanonicalBase for a caller holding the canonical
+// lock, which held is: an in-place turn handing work to a child. What the
+// holder has written so far is the base, snapshotted under its lock on top
+// of the canonical name, which moves there. A landing the holder lent the
+// lock to is waited for; with one waiting for recovery, the workspace is
+// half written and the base is the snapshot the name is at, left there.
+func (s *Store) CanonicalBaseUnder(ctx context.Context, p project.Project, held ledger.Lease, by, message string) (string, error) {
+	var base string
+	err := s.underLent(ctx, p, func() error {
+		var err error
+		base, err = s.canonicalBaseUnder(ctx, p, held, by, message)
+		return err
+	})
+	if errors.Is(err, ErrRecoveryPending) {
+		return s.namedWhilePending(ctx, p, err)
+	}
+	return base, err
+}
+
+// canonicalBaseUnder is CanonicalBaseUnder for a caller that has already
+// ruled out anyone else writing the workspace under its lock.
+func (s *Store) canonicalBaseUnder(ctx context.Context, p project.Project, held ledger.Lease, by, message string) (string, error) {
+	parent, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return "", err
+	}
+	m, _, _, err := s.snapshotCanonical(ctx, p, held, parent, by, message)
+	return m.ID, err
+}
+
+// underLent runs fn for a holder of the canonical lock once no landing it
+// lent the lock to is writing (see writeCanonical), and only if none is
+// waiting to be recovered: that is ErrRecoveryPending.
+func (s *Store) underLent(ctx context.Context, p project.Project, fn func() error) error {
+	done, err := s.writeCanonical(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := s.checkNoRecoveryPending(ctx, p, ""); err != nil {
+		return err
+	}
+	return fn()
+}
+
+// namedWhilePending is the snapshot the canonical name is at, which stands
+// for the workspace while a landing waiting for recovery has it half
+// written. With no name there is nothing to stand for it: pending is
+// the error then.
+func (s *Store) namedWhilePending(ctx context.Context, p project.Project, pending error) (string, error) {
+	head, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return "", err
+	}
+	if head == "" {
+		return "", pending
+	}
+	return head, nil
+}
+
+// writeCanonical takes the project's slot for writing its canonical
+// workspace in this process. The canonical lock keeps other holders out,
+// but a holder lends its lock to landings, and those write under the same
+// lease the holder snapshots under: the slot is what keeps the two apart.
+// It waits for the slot as long as ctx allows; the returned func gives it
+// back.
+//
+// The slot excludes only within this process. That is enough because a
+// lent lock never leaves the hub process that owns the project: the
+// in-place turn lending it and the LandUnder it lends it to both run
+// there. A lender waiting on the slot waits out one landing: its merge and
+// staging run under the landing's own ctx, and its write, from apply to
+// commit, is bounded by landTTL (see landingApplyContext).
+func (s *Store) writeCanonical(ctx context.Context, projectID string) (func(), error) {
+	slot, _ := s.writing.LoadOrStore(projectID, make(chan struct{}, 1))
+	ch := slot.(chan struct{})
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait for the canonical workspace of %s: %w", projectID, context.Cause(ctx))
+	}
+}
+
+// underCanonical runs fn under the project's canonical lock, taken for it
+// and given back after, and only once no interrupted landing is waiting
+// to be recovered. fn runs under a ctx bounded by canonicalSnapshotLimit.
+func (s *Store) underCanonical(ctx context.Context, p project.Project, by string, fn func(ctx context.Context, held ledger.Lease) error) error {
+	lease, err := s.acquireCanonical(ctx, p, SnapshotHolder(by))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease); err != nil {
+			slog.Warn(fmt.Sprintf("artifact: release canonical lock of %s after a snapshot: %v", p.ID, err), "project", p.ID, "holder", lease.Holder)
+		}
+	}()
+	limit := s.snapshotLimit
+	if limit <= 0 {
+		limit = canonicalSnapshotLimit
+	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	// Renewed on its own even under a landing driver, which renews the
+	// lock its landing holds and must go on doing so. Renewal ends with
+	// the snapshot's time, even if fn is stuck in a call that ignores ctx:
+	// the lock then runs out instead of being held for as long as fn hangs.
+	stopRenew := s.renewCanonical(ctx, lease)
+	defer stopRenew()
+	defer context.AfterFunc(ctx, stopRenew)()
+	if err := s.checkNoRecoveryPending(ctx, p, ""); err != nil {
+		return err
+	}
+	return fn(ctx, lease)
+}
+
+// canonicalSnapshotLimit bounds a snapshot cut under the canonical lock.
+// The lock is renewed while the cut runs, and turns wait it out, so a cut
+// that hangs must end by itself rather than hold the project indefinitely.
+const canonicalSnapshotLimit = 10 * time.Minute
+
+// SnapshotHolder is a holder of the canonical lock that only cuts a
+// snapshot for by, writing nothing.
+func SnapshotHolder(by string) string { return "snapshot:" + by + ":" + attempt.NewID() }
+
+// Snapshotting says whether holder, holding a canonical lock, only cuts a
+// snapshot: it writes nothing and gives the lock back once the cut is
+// done.
+func Snapshotting(holder string) bool { return strings.HasPrefix(holder, "snapshot:") }
+
+// canonicalLock is the lock whoever writes a project's canonical workspace
+// or moves its canonical name holds.
+func canonicalLock(projectID string) string { return "canonical:" + projectID }
+
+// CanonicalLease picks the project's canonical lock out of leases.
+func CanonicalLease(leases []ledger.Lease, projectID string) (ledger.Lease, bool) {
+	for _, lease := range leases {
+		if lease.Key == canonicalLock(projectID) {
+			return lease, true
+		}
+	}
+	return ledger.Lease{}, false
+}
+
+// snapshotCanonical is SnapshotCanonicalUnder that also names the nested
+// git repositories the snapshot left out of the canonical workspace.
+func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string) (Manifest, bool, []string, error) {
+	if held.Key != canonicalLock(p.ID) {
+		return Manifest{}, false, nil, fmt.Errorf("snapshot of %s under lock %q, not its canonical lock", p.ID, held.Key)
+	}
+	m, changed, nested, err := s.cutCanonical(ctx, p, parent, by, message)
+	if err != nil {
+		return m, changed, nested, err
+	}
+	// The snapshot is now the project's last known canonical state.
+	return m, changed, nested, s.setCanonical(ctx, p.ID, held, m.ID)
+}
+
+// cutCanonical snapshots the canonical workspace, brings the snapshot to
+// the hub and records it, without moving the canonical name.
+func (s *Store) cutCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, []string, error) {
 	repo, err := s.Repo(ctx, p.ID)
 	if err != nil {
 		return Manifest{}, false, nil, err
@@ -346,11 +595,7 @@ func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, parent
 		}
 	}
 	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true})
-	if err != nil {
-		return m, changed, nested, err
-	}
-	// The snapshot is now the project's last known canonical state.
-	return m, changed, nested, s.setCanonical(ctx, p.ID, sha)
+	return m, changed, nested, err
 }
 
 // SnapshotWorkspace takes a before- or after-snapshot of a copy, wherever
@@ -395,17 +640,44 @@ func (s *Store) SnapshotWorkspace(ctx context.Context, p project.Project, ws pro
 // CopyRef names a copy's last known snapshot.
 func CopyRef(workspaceID string) string { return "workspace/" + workspaceID + "/head" }
 
-// HeadOf is the last known snapshot of a copy, or "".
-func (s *Store) HeadOf(ctx context.Context, workspaceID string) string {
-	ref, ok, err := s.ledger.Name(ctx, CopyRef(workspaceID))
-	if err != nil || !ok {
-		return ""
-	}
-	return ref.Artifact
+// HeadOf is the last known snapshot of a copy, "" when it has none.
+func (s *Store) HeadOf(ctx context.Context, workspaceID string) (string, error) {
+	return s.nameOf(ctx, CopyRef(workspaceID))
 }
 
-func (s *Store) setCanonical(ctx context.Context, projectID, sha string) error {
-	return s.setHead(ctx, CanonicalRef(projectID), sha)
+// setCanonical moves the canonical name to sha, fenced on the canonical
+// lock the caller holds, which is also why it needs no retry: nobody else
+// moves the name meanwhile.
+func (s *Store) setCanonical(ctx context.Context, projectID string, held ledger.Lease, sha string) error {
+	// A lease another region issued cannot be checked inside this
+	// ledger's transaction; it is checked just before instead. That
+	// leaves a window: the lease may run out between the check and the
+	// transaction, a new holder take the lock, and this move land over
+	// the new holder's. Only a holder that stopped renewing its lease can
+	// fall into it, as a renewed lease does not run out in the moment
+	// between check and transaction.
+	foreign := held.Region != "" && held.Region != s.ledger.Region()
+	if foreign {
+		if err := s.ledger.CheckAny(ctx, held); err != nil {
+			return err
+		}
+	}
+	return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		if !foreign {
+			if err := tx.CheckLocalLease(held); err != nil {
+				return err
+			}
+		}
+		current, _, err := tx.Name(CanonicalRef(projectID))
+		if err != nil {
+			return fmt.Errorf("read canonical of %s: %w", projectID, err)
+		}
+		if current.Artifact == sha {
+			return nil
+		}
+		_, err = tx.CompareAndSetName(CanonicalRef(projectID), current.Version, sha)
+		return err
+	})
 }
 
 // setHead moves a name to sha under compare-and-set.
@@ -625,11 +897,10 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 	}
 	base := req.Base
 	if base == "" {
-		m, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), req.Owner, "base for "+req.Owner)
+		base, err = s.CanonicalBase(ctx, p, req.Owner, "base for "+req.Owner)
 		if err != nil {
 			return project.Workspace{}, fmt.Errorf("base snapshot: %w", err)
 		}
-		base = m.ID
 	}
 	hub, err := s.Repo(ctx, p.ID)
 	if err != nil {
@@ -759,17 +1030,20 @@ func (s *Store) Discard(ctx context.Context, ws project.Workspace) error {
 // CanonicalRef names the project's last known canonical snapshot.
 func CanonicalRef(projectID string) string { return "project/" + projectID + "/canonical" }
 
-// CanonicalOf is the project's last known canonical snapshot, or "".
-func (s *Store) CanonicalOf(ctx context.Context, projectID string) string {
-	return s.canonicalRef(ctx, projectID)
+// CanonicalOf is the project's last known canonical snapshot, "" when it
+// has none yet. A name that cannot be read is an error, never "": work
+// started from "" would be cut off the canonical lineage.
+func (s *Store) CanonicalOf(ctx context.Context, projectID string) (string, error) {
+	return s.nameOf(ctx, CanonicalRef(projectID))
 }
 
-func (s *Store) canonicalRef(ctx context.Context, projectID string) string {
-	ref, ok, err := s.ledger.Name(ctx, CanonicalRef(projectID))
-	if err != nil || !ok {
-		return ""
+// nameOf is the artifact a name points at, "" when it is not bound.
+func (s *Store) nameOf(ctx context.Context, name string) (string, error) {
+	ref, _, err := s.ledger.Name(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", name, err)
 	}
-	return ref.Artifact
+	return ref.Artifact, nil
 }
 
 // Bind points a name at an artifact under compare-and-set on its version.
@@ -910,7 +1184,10 @@ func (s *Store) landPending(ctx context.Context, p project.Project, held *ledger
 		}
 	}
 	sort.Slice(queue, func(i, j int) bool { return queue[i].At.Before(queue[j].At) })
-	head := s.CanonicalOf(ctx, p.ID)
+	head, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
 	var out []Landing
 	for _, item := range queue {
 		if item.Blocked != nil && s.stillBlocked(ctx, p, *item.Blocked, head) {
@@ -1156,13 +1433,19 @@ func (s *Store) Changed(ctx context.Context, projectID, from, to string) ([]stri
 	return repo.Changed(ctx, from, to)
 }
 
-// homeRegion is the region of the project's canonical workspace.
-func (s *Store) homeRegion(ctx context.Context, p project.Project) string {
-	region, err := s.nodes.Region(ctx, p.Home.Node)
-	if err != nil {
-		return ""
+// acquireCanonical takes the project's canonical lock for holder from the
+// region its canonical workspace is in, "" being the hub's. A region that
+// cannot be read is an error: a lock taken from the wrong issuer would
+// exclude nobody.
+func (s *Store) acquireCanonical(ctx context.Context, p project.Project, holder string) (ledger.Lease, error) {
+	region := ""
+	if p.Home.Node != "" {
+		var err error
+		if region, err = s.nodes.Region(ctx, p.Home.Node); err != nil {
+			return ledger.Lease{}, fmt.Errorf("region of %s, home of %s: %w", p.Home.Node, p.ID, err)
+		}
 	}
-	return region
+	return s.ledger.AcquireIn(ctx, region, canonicalLock(p.ID), holder, landTTL)
 }
 
 // operation runs an artifact operation here when node is empty (the hub's

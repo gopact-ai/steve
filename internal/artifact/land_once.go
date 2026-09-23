@@ -48,7 +48,7 @@ func (s *Store) LandOnce(ctx context.Context, id string, p project.Project, arti
 		switch land.State {
 		case LandCommitted:
 			return land, s.ensureLandingReceipt(ctx, p, land)
-		case LandMergeConflicted, LandApplyConflicted, LandCommitConflict:
+		case LandMergeConflicted, LandApplyConflicted:
 			return land, Conflict{State: land.State, Paths: land.Paths}
 		case LandApplying, LandRecoveryPending:
 			cleanup, cancel := landingApplyContext(ctx)

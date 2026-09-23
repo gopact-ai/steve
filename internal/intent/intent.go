@@ -316,13 +316,20 @@ type ForAgents struct {
 
 // AttemptSource finds the live attempt of a task.
 type AttemptSource interface {
-	LiveAttemptOf(ctx context.Context, taskID string) (string, bool)
+	LiveAttemptOf(ctx context.Context, taskID string) (string, bool, error)
 }
 
+// Claim binds the call to the task's attempt in flight. When that attempt
+// cannot be read the call is refused: recorded under no attempt, its
+// outcome could not be reconciled against the execution that made it.
 func (f ForAgents) Claim(ctx context.Context, taskID, tool string, args []byte) (string, error) {
 	attemptID := ""
 	if f.Attempts != nil {
-		if id, ok := f.Attempts.LiveAttemptOf(ctx, taskID); ok {
+		id, ok, err := f.Attempts.LiveAttemptOf(ctx, taskID)
+		if err != nil {
+			return "", fmt.Errorf("intent: claim %s for task %s: %w", tool, taskID, err)
+		}
+		if ok {
 			attemptID = id
 		}
 	}

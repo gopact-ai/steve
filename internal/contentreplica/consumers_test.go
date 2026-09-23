@@ -236,7 +236,11 @@ func TestArtifactLandsWithPhysicalDurablePlaceAfterServiceConversion(t *testing.
 			if err := os.WriteFile(filepath.Join(ws.Path, "result.txt"), []byte("landed\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			result, _, err := store.Publish(t.Context(), ws, store.CanonicalOf(t.Context(), "p"), "child", "result")
+			head, err := store.CanonicalOf(t.Context(), "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, _, err := store.Publish(t.Context(), ws, head, "child", "result")
 			if err != nil {
 				t.Fatal(err)
 			}

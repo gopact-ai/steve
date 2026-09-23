@@ -18,25 +18,35 @@ const idleTaskAge = 24 * time.Hour
 // sweepIdleTasks closes chat tasks that have gone quiet, at start and
 // then hourly, and puts each closing in the history.
 func sweepIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model) {
-	live := func(id string) bool {
-		_, ok := attempts.LiveAttemptOf(ctx, id)
-		return ok
-	}
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
-		for _, t := range tasks.CloseIdle(idleTaskAge, live) {
-			slog.Info(fmt.Sprintf("steve: task #%s closed after %s without a word", t.ID, idleTaskAge), "task", t.ID)
-			if view != nil {
-				// Keys: task, member, idle.
-				view.Observe("task.idle", t.ID, fmt.Sprintf("task #%s (%s) closed: quiet for more than %s", t.ID, t.Member, idleTaskAge),
-					map[string]string{"task": t.ID, "member": t.Member, "idle": idleTaskAge.String()})
-			}
-		}
+		closeIdleTasks(ctx, tasks, attempts, view, idleTaskAge)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+// closeIdleTasks is one pass of the sweep.
+func closeIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model, age time.Duration) {
+	live := func(id string) (bool, error) {
+		_, ok, err := attempts.LiveAttemptOf(ctx, id)
+		return ok, err
+	}
+	closed, err := tasks.CloseIdle(age, live)
+	if err != nil && ctx.Err() == nil {
+		// Each named task stays open; the next pass looks at it again.
+		slog.Warn(fmt.Sprintf("steve: idle sweep left tasks open: %v", err))
+	}
+	for _, t := range closed {
+		slog.Info(fmt.Sprintf("steve: task #%s closed after %s without a word", t.ID, age), "task", t.ID)
+		if view != nil {
+			// Keys: task, member, idle.
+			view.Observe("task.idle", t.ID, fmt.Sprintf("task #%s (%s) closed: quiet for more than %s", t.ID, t.Member, age),
+				map[string]string{"task": t.ID, "member": t.Member, "idle": age.String()})
 		}
 	}
 }

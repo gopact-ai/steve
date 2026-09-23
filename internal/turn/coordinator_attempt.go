@@ -13,6 +13,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -43,7 +44,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 		if !ok {
 			return reject(fmt.Errorf("completion project %s: %w", record.Project, project.ErrUnknown))
 		}
-		after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, record.ID, "after turn "+record.TurnID)
+		after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Leases, record.Base, record.ID, "after turn "+record.TurnID)
 		clock.mark("after")
 		if serr != nil {
 			slog.Error(fmt.Sprintf("turn: attempt %s after-snapshot: %v", record.ID, serr), "attempt", record.ID, "task", record.TaskID, "project", record.Project)
@@ -135,9 +136,10 @@ func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Recor
 }
 
 // snapshot takes a before- or after-snapshot of the workspace a turn runs
-// in: the canonical one moves the project's canonical name, a copy moves
-// its own head. An empty parent means "from the workspace's last snapshot".
-func (c *Coordinator) snapshot(ctx context.Context, p project.Project, ws project.Workspace, parent, by, message string) (artifact.Manifest, bool, error) {
+// in: the canonical one moves the project's canonical name, under the
+// canonical lock among the attempt's leases; a copy moves its own head. An
+// empty parent means "from the workspace's last snapshot".
+func (c *Coordinator) snapshot(ctx context.Context, p project.Project, ws project.Workspace, leases []ledger.Lease, parent, by, message string) (artifact.Manifest, bool, error) {
 	if ws.Kind == project.KindWorktree {
 		if parent == "" {
 			parent = ws.Base
@@ -146,12 +148,24 @@ func (c *Coordinator) snapshot(ctx context.Context, p project.Project, ws projec
 	}
 	if ws.Kind == project.KindCopy {
 		if parent == "" {
-			parent = c.artifacts.HeadOf(ctx, ws.ID)
+			head, err := c.artifacts.HeadOf(ctx, ws.ID)
+			if err != nil {
+				return artifact.Manifest{}, false, err
+			}
+			parent = head
 		}
 		return c.artifacts.SnapshotWorkspace(ctx, p, ws, parent, by, message)
 	}
-	if parent == "" {
-		parent = c.artifacts.CanonicalOf(ctx, p.ID)
+	held, ok := artifact.CanonicalLease(leases, p.ID)
+	if !ok {
+		return artifact.Manifest{}, false, fmt.Errorf("snapshot of %s in place without its canonical lock", p.ID)
 	}
-	return c.artifacts.SnapshotCanonical(ctx, p, parent, by, message)
+	if parent == "" {
+		head, err := c.artifacts.CanonicalOf(ctx, p.ID)
+		if err != nil {
+			return artifact.Manifest{}, false, err
+		}
+		parent = head
+	}
+	return c.artifacts.SnapshotCanonicalUnder(ctx, p, held, parent, by, message)
 }

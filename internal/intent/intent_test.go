@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -83,5 +84,30 @@ func TestSameCallFromANewAttemptIsBlockedUntilResolved(t *testing.T) {
 	unresolved, _ := s.Unresolved(ctx)
 	if len(unresolved) != 0 {
 		t.Fatalf("unresolved = %+v", unresolved)
+	}
+}
+
+// A side effect is claimed for the task's attempt in flight. When that
+// attempt cannot be read, the claim must be refused rather than recorded
+// as belonging to no attempt.
+func TestAgentClaimRefusesWhenTheLiveAttemptCannotBeRead(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	unreadable, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreadable.Close()
+	s := New(book)
+	agents := ForAgents{S: s, Attempts: attempt.New(unreadable)}
+
+	if id, err := agents.Claim(t.Context(), "t1", "channel_send", []byte(`{"content":"hi"}`)); err == nil {
+		t.Fatalf("claimed %s without knowing the live attempt", id)
+	}
+	if claimed, err := s.ForTask(t.Context(), "t1"); err != nil || len(claimed) != 0 {
+		t.Fatalf("claims recorded = %+v err=%v", claimed, err)
 	}
 }

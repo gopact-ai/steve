@@ -100,9 +100,11 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 	if c.fleet != nil {
 		fleet = c.fleet
 	}
-	var attempts lifecycle.Attempts = c.attempts
+	attempts := waitingAttempts{Attempts: c.attempts, passes: snapshotPasses, limit: snapshotWaitLimit, waiting: func() {
+		req.stage(view.StageAwaitSnapshot)
+	}}
 	if req.ExpectedTask != "" {
-		attempts = continuationAttempts{Attempts: attempts, waiting: func() {
+		attempts = waitingAttempts{Attempts: c.attempts, passes: continuationPasses, waiting: func() {
 			slog.Info("turn: parent continuation waiting for a workspace or endpoint", "task", req.ExpectedTask, "conversation", req.ConversationID)
 		}}
 	}
@@ -165,7 +167,7 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 		return nil, nil
 	}
 	req.stage(view.StageSnapshot)
-	before, _, serr := c.snapshot(ctx, p, workspace, "", e.Record.ID, "before turn "+req.MessageID)
+	before, _, serr := c.snapshot(ctx, p, workspace, e.Record.Leases, "", e.Record.ID, "before turn "+req.MessageID)
 	if serr != nil {
 		return nil, fmt.Errorf("before-snapshot: %w", serr)
 	}

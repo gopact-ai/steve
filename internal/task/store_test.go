@@ -509,13 +509,42 @@ func TestCloseIdleEndsQuietChatTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	*clock = now
-	closed := s.CloseIdle(24*time.Hour, func(id string) bool { return id == busy.ID })
-	if len(closed) != 1 || closed[0].ID != old.ID {
-		t.Fatalf("closed = %+v", closed)
+	closed, err := s.CloseIdle(24*time.Hour, func(id string) (bool, error) { return id == busy.ID, nil })
+	if err != nil || len(closed) != 1 || closed[0].ID != old.ID {
+		t.Fatalf("closed = %+v err=%v", closed, err)
 	}
 	for _, id := range []string{busy.ID, sched.ID, fresh.ID} {
 		if got, _ := s.Get(id); got.State != StateRunning {
 			t.Fatalf("task %s = %s, want running", id, got.State)
 		}
+	}
+}
+
+// The liveness check and the close are not one step: a turn that begins
+// in between makes the task current again, and it must not be closed.
+func TestCloseIdleSparesATaskThatResumedAfterItsLivenessCheck(t *testing.T) {
+	s, clock := newStore(t)
+	now := *clock
+	*clock = now.Add(-30 * time.Hour)
+	quiet, _ := s.Create(Task{Goal: "quiet chat", Channel: "c1", Member: "codex"})
+	if _, err := s.Begin(quiet.ID, "codex", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Finish(quiet.ID, OutcomeOK, Tokens{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	*clock = now
+	closed, err := s.CloseIdle(24*time.Hour, func(id string) (bool, error) {
+		// Nothing was live when asked; the person speaks right after.
+		if _, err := s.Begin(id, "codex", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		return false, nil
+	})
+	if err != nil || len(closed) != 0 {
+		t.Fatalf("closed a task whose new turn began after the check: %+v err=%v", closed, err)
+	}
+	if got, _ := s.Get(quiet.ID); got.State != StateRunning || !got.HasOpenExecution() {
+		t.Fatalf("resumed task = %s open=%v, want running with its turn open", got.State, got.HasOpenExecution())
 	}
 }

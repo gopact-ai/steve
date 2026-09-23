@@ -50,8 +50,8 @@ func TestIdentityReadsDoNotDecodeUnrelatedHistory(t *testing.T) {
 		if err != nil || !found || latest.ID != "wanted" {
 			t.Fatalf("turn=%+v found=%v err=%v", latest, found, err)
 		}
-		if id, found := s.LiveAttemptOf(t.Context(), "task"); !found || id != "wanted" {
-			t.Fatalf("live=%s found=%v", id, found)
+		if id, found, err := s.LiveAttemptOf(t.Context(), "task"); err != nil || !found || id != "wanted" {
+			t.Fatalf("live=%s found=%v err=%v", id, found, err)
 		}
 	}
 	before := testing.AllocsPerRun(3, check)
@@ -78,8 +78,8 @@ func TestIdentityReadsRejectMiskeyedOrMalformedOwnerRows(t *testing.T) {
 			if _, _, err := s.LatestForTurn(t.Context(), "turn"); err == nil || !strings.Contains(err.Error(), "bad") {
 				t.Fatalf("turn hid unclassifiable owner row: %v", err)
 			}
-			if id, found := s.LiveAttemptOf(t.Context(), "task"); found {
-				t.Fatalf("live query ignored invalid owner: %s", id)
+			if id, found, err := s.LiveAttemptOf(t.Context(), "task"); err == nil || found {
+				t.Fatalf("live query hid invalid owner: %s found=%v err=%v", id, found, err)
 			}
 		})
 	}
@@ -102,8 +102,8 @@ func TestIdentityReadsPreserveOwnerJSONAndNanosecondOrder(t *testing.T) {
 	if err != nil || !found || last.ID != "later" {
 		t.Fatalf("turn order=%+v found=%v err=%v", last, found, err)
 	}
-	if id, found := s.LiveAttemptOf(t.Context(), "task"); !found || id != "later" {
-		t.Fatalf("terminal unsettled attempt lost: %s %v", id, found)
+	if id, found, err := s.LiveAttemptOf(t.Context(), "task"); err != nil || !found || id != "later" {
+		t.Fatalf("terminal unsettled attempt lost: %s %v %v", id, found, err)
 	}
 	if rows, err := s.ForTask(t.Context(), "absent"); err != nil || len(rows) != 0 {
 		t.Fatalf("absent task=%+v err=%v", rows, err)
@@ -166,14 +166,14 @@ func TestIdentityIndexesRestoreAndAdvanceWithOwnerWrites(t *testing.T) {
 	if _, err := s.l.Transition(t.Context(), "wanted", "running", "bound", "test", nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if id, found := s.LiveAttemptOf(t.Context(), "task"); found {
-		t.Fatalf("terminal transition left live identity: %s", id)
+	if id, found, err := s.LiveAttemptOf(t.Context(), "task"); err != nil || found {
+		t.Fatalf("terminal transition left live identity: %s err=%v", id, err)
 	}
 	if _, err := s.l.DB().Exec(`UPDATE operations SET data=json_set(data,'$.Unsettled',json('true')) WHERE id='wanted'`); err != nil {
 		t.Fatal(err)
 	}
-	if id, found := s.LiveAttemptOf(t.Context(), "task"); !found || id != "wanted" {
-		t.Fatalf("late unsettled evidence not indexed: %s %v", id, found)
+	if id, found, err := s.LiveAttemptOf(t.Context(), "task"); err != nil || !found || id != "wanted" {
+		t.Fatalf("late unsettled evidence not indexed: %s %v %v", id, found, err)
 	}
 	if _, err := s.l.DB().Exec(`DROP INDEX operations_attempt_turn`); err != nil {
 		t.Fatal(err)
@@ -190,8 +190,8 @@ func TestIdentityIndexesRestoreAndAdvanceWithOwnerWrites(t *testing.T) {
 	if err != nil || !found || got.ID != "wanted" {
 		t.Fatalf("restored index missing: %+v %v %v", got, found, err)
 	}
-	if id, found := target.LiveAttemptOf(t.Context(), "task"); !found || id != "wanted" {
-		t.Fatalf("restored unsettled evidence not indexed: %s %v", id, found)
+	if id, found, err := target.LiveAttemptOf(t.Context(), "task"); err != nil || !found || id != "wanted" {
+		t.Fatalf("restored unsettled evidence not indexed: %s %v %v", id, found, err)
 	}
 }
 

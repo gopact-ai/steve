@@ -144,11 +144,11 @@ func (s *Supervisor) prepareBase(ctx context.Context, rec *RunRecord, p *plan.Pl
 		if !found {
 			return errors.New("plan project is missing")
 		}
-		base, _, err := s.deps.Artifacts.SnapshotCanonical(ctx, proj, s.deps.Artifacts.CanonicalOf(ctx, proj.ID), rec.ID, "base of plan "+p.ID)
+		base, err := s.deps.Artifacts.CanonicalBase(ctx, proj, rec.ID, "base of plan "+p.ID)
 		if err != nil {
 			return err
 		}
-		rec.Base = base.ID
+		rec.Base = base
 		if err := s.saveRun(ctx, rec, RunExecuting); err != nil {
 			return err
 		}
