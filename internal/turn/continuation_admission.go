@@ -5,20 +5,40 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 )
 
-// A child result can arrive while a sibling is landing into the parent's
-// workspace. Keep the original turn and delivery identity while Open is
-// definitively refused; no model input or attempt has been committed yet.
-// Failures after Open, unknown outcomes, and cancellation are never replayed.
-type continuationAttempts struct {
+// waitingAttempts waits out an Open refused for a reason that passes by
+// itself, keeping the original turn and delivery identity: while Open is
+// definitively refused no model input or attempt has been committed yet.
+// Failures after Open, unknown outcomes, and cancellation are never
+// replayed.
+type waitingAttempts struct {
 	lifecycle.Attempts
+	// passes says a refusal is worth waiting out.
+	passes  func(error) bool
 	waiting func()
 }
 
-func (a continuationAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.Record, error) {
+// A child result can arrive while a sibling is landing into the parent's
+// workspace, or while every slot of its endpoint is taken: the parent's
+// continuation waits for either.
+func continuationPasses(err error) bool {
+	var busy attempt.Busy
+	var full attempt.NoSlot
+	return errors.As(err, &busy) || errors.As(err, &full)
+}
+
+// Any turn waits out a canonical lock held only to cut a snapshot: that
+// holder writes nothing and gives the lock back once the cut is done.
+func snapshotPasses(err error) bool {
+	var busy attempt.Busy
+	return errors.As(err, &busy) && artifact.Snapshotting(busy.Holder)
+}
+
+func (a waitingAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.Record, error) {
 	if spec.ID == "" {
 		spec.ID = attempt.NewID()
 	}
@@ -29,9 +49,7 @@ func (a continuationAttempts) Open(ctx context.Context, spec attempt.Spec) (atte
 			return attempt.Record{}, err
 		}
 		record, err := a.Attempts.Open(ctx, spec)
-		var busy attempt.Busy
-		var full attempt.NoSlot
-		if err == nil || record.ID != "" || (!errors.As(err, &busy) && !errors.As(err, &full)) {
+		if err == nil || record.ID != "" || !a.passes(err) {
 			return record, err
 		}
 		if !notified && a.waiting != nil {

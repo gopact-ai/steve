@@ -378,7 +378,7 @@ func (s *Store) CanonicalBaseUnder(ctx context.Context, p project.Project, held 
 // and given back after, and only once no interrupted landing is waiting
 // to be recovered.
 func (s *Store) underCanonical(ctx context.Context, p project.Project, by string, fn func(held ledger.Lease) error) error {
-	lease, err := s.acquireCanonical(ctx, p, "snapshot:"+by+":"+attempt.NewID())
+	lease, err := s.acquireCanonical(ctx, p, SnapshotHolder(by))
 	if err != nil {
 		return err
 	}
@@ -393,6 +393,15 @@ func (s *Store) underCanonical(ctx context.Context, p project.Project, by string
 	}
 	return fn(lease)
 }
+
+// SnapshotHolder is a holder of the canonical lock that only cuts a
+// snapshot for by, writing nothing.
+func SnapshotHolder(by string) string { return "snapshot:" + by + ":" + attempt.NewID() }
+
+// Snapshotting says whether holder, holding a canonical lock, only cuts a
+// snapshot: it writes nothing and gives the lock back once the cut is
+// done.
+func Snapshotting(holder string) bool { return strings.HasPrefix(holder, "snapshot:") }
 
 // canonicalLock is the lock whoever writes a project's canonical workspace
 // or moves its canonical name holds.
