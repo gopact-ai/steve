@@ -111,10 +111,7 @@ func testPeerApplication(t *testing.T, activations *atomic.Int32) func(context.C
 		if err != nil {
 			return nil, err
 		}
-		token, err := cluster.ClusterRandomToken()
-		if err != nil {
-			return nil, err
-		}
+		token := cluster.ClusterRandomToken()
 		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !cluster.ConstantToken(r.Header.Get("Authorization"), token) || r.URL.Query().Get("token") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Referer") != "" {
 				http.Error(w, "proxy leaked client credentials", http.StatusBadRequest)

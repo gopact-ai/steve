@@ -93,3 +93,19 @@ func TestTaskStopReachesDetachedDelegateAndRejectsLateSuccess(t *testing.T) {
 		t.Fatalf("cancellation did not settle spend: %+v %v", records, err)
 	}
 }
+
+// The child's canonical region comes from the parent's project. A project
+// that is absent has no home region; one that cannot be read is an error,
+// not a project without a home region.
+func TestHomeRegionReportsAnUnreadableProject(t *testing.T) {
+	w, _ := executionWorld(t)
+	if region, err := w.service.homeRegion(t.Context(), "absent"); err != nil || region != "" {
+		t.Fatalf("absent project: region %q, err %v", region, err)
+	}
+	if err := w.book.PutBinding(t.Context(), "project", "p", "not a project"); err != nil {
+		t.Fatal(err)
+	}
+	if region, err := w.service.homeRegion(t.Context(), "p"); err == nil {
+		t.Fatalf("unreadable project gave region %q and no error", region)
+	}
+}

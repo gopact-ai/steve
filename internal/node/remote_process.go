@@ -338,7 +338,8 @@ func (p *remoteProcess) readLoop(c *conn, reader *bufio.Reader) {
 		p.wakeLocked()
 		p.mu.Unlock()
 		if !canResume {
-			if err != nil && strings.HasPrefix(err.Error(), nodewire.ExitPrefix) {
+			// readLines only returns once reading or consuming fails.
+			if strings.HasPrefix(err.Error(), nodewire.ExitPrefix) {
 				p.stopped.Store(true)
 			}
 			p.finish(err)

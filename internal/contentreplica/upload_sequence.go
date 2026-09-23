@@ -58,7 +58,7 @@ func allocateUpload(tx *ledger.Tx, object Object, targets []string) (Upload, err
 		return Upload{}, fmt.Errorf("%w: upload sequence exhausted", ErrInvalid)
 	}
 	var nonce [24]byte
-	_, _ = rand.Read(nonce[:])
+	rand.Read(nonce[:])
 	u := Upload{ID: fmt.Sprintf("%016x%s", high+1, hex.EncodeToString(nonce[:])), Object: object}
 	return u, Reserve(tx, u, targets)
 }

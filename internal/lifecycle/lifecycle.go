@@ -10,13 +10,13 @@ package lifecycle
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -59,11 +59,8 @@ func Keep(ctx context.Context, leases Leaser, id string, lost func()) (stop func
 // Managed reports whether the node owns the session: it keeps the process
 // and the input receipts, and the hub only observes it.
 func Managed(session harness.Runner) bool {
-	return session != nil && IsManaged(session.ID())
+	return session != nil && nodewire.IsManagedSession(session.ID())
 }
-
-// IsManaged is Managed for a session id on a record.
-func IsManaged(sessionID string) bool { return strings.HasPrefix(sessionID, "ns_") }
 
 // Stopper is a session that can prove its process has exited.
 type Stopper interface {

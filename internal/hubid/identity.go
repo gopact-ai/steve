@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 const FileName = "hub-identity.json"
@@ -57,40 +59,15 @@ func Resolve(stateDir, configured string) (string, error) {
 	id := configured
 	if id == "" {
 		var bytes [16]byte
-		if _, err := rand.Read(bytes[:]); err != nil {
-			return "", err
-		}
+		rand.Read(bytes[:])
 		id = "hub-" + hex.EncodeToString(bytes[:])
 	}
 	raw, _ := json.Marshal(Identity{ID: id})
-	tmp, err := os.CreateTemp(stateDir, ".hub-identity-*")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err = tmp.Write(raw); err == nil {
-		err = tmp.Sync()
-	}
-	closeErr := tmp.Close()
-	if err != nil {
-		return "", err
-	}
-	if closeErr != nil {
-		return "", closeErr
-	}
-	// Link publishes without overwriting another simultaneous first startup.
-	if err := os.Link(tmp.Name(), name); err != nil {
+	// Publishing never overwrites another simultaneous first startup.
+	if err := fsx.CreateFile(name, raw); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return read()
 		}
-		return "", err
-	}
-	d, err := os.Open(stateDir)
-	if err != nil {
-		return "", err
-	}
-	defer d.Close()
-	if err := d.Sync(); err != nil {
 		return "", err
 	}
 	return id, nil

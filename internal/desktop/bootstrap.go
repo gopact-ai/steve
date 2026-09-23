@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,7 +14,9 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/localtoken"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
 const profileName = "desktop.json"
@@ -94,10 +95,7 @@ func Bootstrap(options Options) (*Installation, error) {
 		if _, err := os.Lstat(paths.Config); !errors.Is(err, os.ErrNotExist) {
 			return nil, errors.New("desktop configuration already exists without a desktop profile; choose a new state directory")
 		}
-		id, err := randomID()
-		if err != nil {
-			return nil, err
-		}
+		id := randomID()
 		saved = profile{Version: 1, NodeID: id}
 		if err := createJSON(paths.Profile, saved); err != nil {
 			return nil, err
@@ -186,12 +184,10 @@ func IsManagedConfig(configPath string) bool {
 	return readJSON(filepath.Join(filepath.Dir(configPath), profileName), &p) == nil && p.validate() == nil
 }
 
-func randomID() (string, error) {
+func randomID() string {
 	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", err
-	}
-	return "node-" + hex.EncodeToString(value[:]), nil
+	rand.Read(value[:])
+	return "node-" + hex.EncodeToString(value[:])
 }
 
 func localURL(raw string, allowZero bool) error {
@@ -199,8 +195,7 @@ func localURL(raw string, allowZero bool) error {
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return errors.New("expected a plain local HTTP endpoint")
 	}
-	ip := net.ParseIP(u.Hostname())
-	if ip == nil || !ip.IsLoopback() || u.Port() == "" || (!allowZero && u.Port() == "0") {
+	if !sameorigin.LoopbackIP(u.Host) || u.Port() == "" || (!allowZero && u.Port() == "0") {
 		return errors.New("desktop requires an explicit loopback address and port")
 	}
 	return nil
@@ -255,38 +250,8 @@ func createJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return createPrivate(path, append(raw, '\n'))
-}
-
-// createPrivate publishes a fully synced file without replacing an existing one.
-func createPrivate(path string, raw []byte) error {
-	temp, err := os.CreateTemp(filepath.Dir(path), ".desktop-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temp.Name())
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Link(temp.Name(), path); err != nil {
+	if err := fsx.CreateFile(path, append(raw, '\n')); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Base(path), err)
 	}
-	return syncDirectory(filepath.Dir(path))
-}
-
-func syncDirectory(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
+	return nil
 }

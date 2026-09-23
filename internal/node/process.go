@@ -452,6 +452,8 @@ func (p *agentProcess) run(ctx context.Context) {
 
 // readLines discards a trailing partial line on loss. An oversized line is
 // streamed in bounded fragments, but makes the process non-resumable.
+// It returns only when reading or consuming fails, so its error is never
+// nil.
 func readLines(src io.Reader, consume func([]byte, bool) error) error {
 	r := bufio.NewReaderSize(src, 64<<10)
 	var line []byte

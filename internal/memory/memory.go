@@ -765,7 +765,7 @@ func newID() string {
 	var raw [6]byte
 	// crypto/rand.Read never returns an error; it aborts the program
 	// instead when the platform cannot supply randomness.
-	_, _ = rand.Read(raw[:])
+	rand.Read(raw[:])
 	return hex.EncodeToString(raw[:])
 }
 

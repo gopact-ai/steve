@@ -101,3 +101,14 @@ func TestSessionStatesKeepLegacyReceipts(t *testing.T) {
 		}
 	}
 }
+
+func TestIsManagedSessionRecognizesNodeOpenedSessions(t *testing.T) {
+	if id := SessionOpenID("cluster", "node", "attempt", "command", "codex"); !IsManagedSession(id) {
+		t.Fatalf("node-opened session %q is not managed", id)
+	}
+	for _, id := range []string{"", "session-1", "NS_abc", "xns_abc"} {
+		if IsManagedSession(id) {
+			t.Fatalf("hub session %q reads as managed", id)
+		}
+	}
+}

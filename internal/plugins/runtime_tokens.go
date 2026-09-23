@@ -43,9 +43,7 @@ func (s *Store) RuntimeMCPToken(ctx context.Context, ref RuntimeRef, name string
 		return "", err
 	}
 	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", err
-	}
+	rand.Read(nonce[:])
 	token := hex.EncodeToString(nonce[:])
 	if err := writeSynced(filepath.Join(dir, name), []byte(token), 0600); err != nil {
 		return "", err

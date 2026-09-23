@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/hubid"
 	"github.com/gopact-ai/steve/internal/node"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
@@ -89,10 +90,7 @@ func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
 	}
 	nodeID := options.NodeID
 	if nodeID == "" {
-		nodeID, err = clusterRandomID("node-")
-		if err != nil {
-			return "", err
-		}
+		nodeID = clusterRandomID("node-")
 	}
 	ui := options.UIAddress
 	if ui == "" {
@@ -109,10 +107,7 @@ func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
 		CertFile: filepath.Join(dir, "node.pem"), KeyFile: filepath.Join(dir, "node-key.pem"),
 		OwnerTokenFile: filepath.Join(dir, "owner-control-token"), WorkerConfigFile: filepath.Join(dir, "node.json")}
 	peer.RaftBindAddress, peer.PeerBindAddress = peer.RaftAddress, peer.PeerAddress
-	worker, err := serviceWorker(peer, cfg)
-	if err != nil {
-		return "", err
-	}
+	worker := serviceWorker(peer, cfg)
 	if err := publishClusterBootstrap(root, path, peer, &worker); err != nil {
 		return "", err
 	}
@@ -219,13 +214,7 @@ func publishClusterBootstrap(root, path string, peer PeerConfig, worker *node.Se
 	if err := os.Rename(staging, peer.DataDir); err != nil {
 		return err
 	}
-	parent, err := os.Open(root)
-	if err != nil {
-		return err
-	}
-	syncErr := parent.Sync()
-	closeErr := parent.Close()
-	if err := errors.Join(syncErr, closeErr); err != nil {
+	if err := fsx.SyncDir(root); err != nil {
 		return err
 	}
 	return SaveClusterJSON(path, peer, true)

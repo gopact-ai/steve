@@ -800,10 +800,7 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 	var cfg node.ServerConfig
 	raw, err := ReadClusterPrivate(p.Config.WorkerConfigFile)
 	if errors.Is(err, os.ErrNotExist) {
-		token, err := ClusterRandomToken()
-		if err != nil {
-			return err
-		}
+		token := ClusterRandomToken()
 		cfg = node.ServerConfig{Name: p.Config.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{p.Config.ClusterID: token}, Harnesses: map[string]node.HarnessSpec{}, StateDir: filepath.Join(p.Config.DataDir, "node"), WorkspaceRoot: workspaceRoot}
 		if err := SaveClusterJSON(p.Config.WorkerConfigFile, cfg, true); err != nil {
 			return err

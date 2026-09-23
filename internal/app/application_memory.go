@@ -23,12 +23,9 @@ type applicationMemory struct {
 	Locale home.Locale
 }
 
-// prepareApplicationMemory chooses one authority per deployment. Cluster
-// activation uses only the generation-scoped ledger after its initial import.
-func prepareApplicationMemory(ctx context.Context, cfg *config.Config, book *ledger.Ledger) (applicationMemory, error) {
-	return prepareApplicationMemoryWithSettings(ctx, cfg, book, nil)
-}
-
+// prepareApplicationMemoryWithSettings chooses one authority per deployment.
+// Cluster activation uses only the generation-scoped ledger after its initial
+// import.
 func prepareApplicationMemoryWithSettings(ctx context.Context, cfg *config.Config, book *ledger.Ledger, settings *config.RuntimeSettings) (applicationMemory, error) {
 	locale := home.LocaleZH
 	if cfg.EffectiveLocale() == "en" {

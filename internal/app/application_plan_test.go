@@ -45,10 +45,7 @@ func testPlanHandover(t *testing.T, llm bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := cluster.ClusterRandomToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := cluster.ClusterRandomToken()
 	worker := node.ServerConfig{Name: peerConfig.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{peerConfig.ClusterID: token}, StateDir: filepath.Join(peerConfig.DataDir, "node"), WorkspaceRoot: installed.Paths.Root, Harnesses: map[string]node.HarnessSpec{"mock": {Command: bin}}}
 	if llm {
 		worker.Capabilities = []string{"gpu", "internal-net", "prod-cred"}

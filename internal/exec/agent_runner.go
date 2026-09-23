@@ -103,7 +103,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 	}
 	unsettled := false
 	defer func() {
-		if unsettled || strings.HasPrefix(session.ID(), "ns_") {
+		if unsettled || nodewire.IsManagedSession(session.ID()) {
 			return
 		}
 		// A step's session is finished with; closing it releases the agent
@@ -115,7 +115,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 		}
 	}()
 
-	if strings.HasPrefix(session.ID(), "ns_") {
+	if nodewire.IsManagedSession(session.ID()) {
 		if req.RecordSession == nil {
 			return result, errors.Join(harness.ErrStopUnconfirmed, errors.New("step session persistence is unavailable"))
 		}
@@ -140,12 +140,12 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 	a.mu.Unlock()
 	// A node-owned step always takes the turn entry; any step does when
 	// someone can answer it, so its questions are never dropped.
-	if turn, ok := session.(harness.TurnRunner); ok && (strings.HasPrefix(session.ID(), "ns_") || ask != nil || askUser != nil) {
+	if turn, ok := session.(harness.TurnRunner); ok && (nodewire.IsManagedSession(session.ID()) || ask != nil || askUser != nil) {
 		answer, _, err = turn.PromptTurn(ctx, prompt, nil, ask, askUser, spent.wrap(a.progress(ctx, req), req.Agent))
 	} else {
 		answer, _, err = session.Prompt(ctx, prompt, spent.wrap(a.progress(ctx, req), req.Agent))
 	}
-	if strings.HasPrefix(session.ID(), "ns_") {
+	if nodewire.IsManagedSession(session.ID()) {
 		if !acphost.PromptSettled(err) || (ctx.Err() != nil && !errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped)) {
 			key, _ := execution.KeyOf(ctx)
 			record := attempt.Record{Spec: attempt.Spec{ID: key.AttemptID, TaskID: req.TaskID, Node: req.Node}, Session: session.ID()}

@@ -265,7 +265,7 @@ func (m *Manager) CloseSession(ctx context.Context, at Placement, upstreamID str
 	if bindErr != nil {
 		return bindErr
 	}
-	if strings.HasPrefix(upstreamID, "ns_") {
+	if nodewire.IsManagedSession(upstreamID) {
 		binding, ok := NodeSessionFromContext(ctx)
 		if !ok {
 			return ErrNodeSessionUnavailable

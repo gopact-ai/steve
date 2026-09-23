@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 type endpoint struct {
@@ -93,10 +94,7 @@ func PublishEndpoint(configPath, address string) (func(), error) {
 	if err := readJSON(paths.Profile, &p); err != nil {
 		return nil, err
 	}
-	instance, err := randomID()
-	if err != nil {
-		return nil, err
-	}
+	instance := randomID()
 	value := endpoint{NodeID: p.NodeID, URL: address, PID: os.Getpid(), Instance: instance}
 	if err := replaceJSON(paths.Endpoint, value); err != nil {
 		return nil, err
@@ -105,7 +103,7 @@ func PublishEndpoint(configPath, address string) (func(), error) {
 		var current endpoint
 		if readJSON(paths.Endpoint, &current) == nil && current.Instance == instance {
 			_ = os.Remove(paths.Endpoint)
-			_ = syncDirectory(paths.Root)
+			_ = fsx.SyncDir(paths.Root)
 		}
 	}, nil
 }
@@ -274,24 +272,5 @@ func replaceJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".desktop-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temp.Name())
-	if _, err := temp.Write(append(raw, '\n')); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temp.Name(), path); err != nil {
-		return err
-	}
-	return syncDirectory(filepath.Dir(path))
+	return fsx.WriteFile(path, append(raw, '\n'))
 }

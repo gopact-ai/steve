@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -60,7 +60,7 @@ func (s *Service) resolveJoined(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !lifecycle.IsManaged(record.Session) {
+		if !nodewire.IsManagedSession(record.Session) {
 			continue
 		}
 		if tracked, ok := s.tasks.Get(record.TaskID); ok {

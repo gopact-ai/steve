@@ -305,10 +305,7 @@ func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Age
 	}
 	token := saved.AgentToken
 	if token == "" {
-		token, err = newAgentToken()
-		if err != nil {
-			return nil, "", "", err
-		}
+		token = newAgentToken()
 	}
 	endpoint := ""
 	if selected.Node != "" {
@@ -347,12 +344,10 @@ func (c *Coordinator) clearSettledTaint(ctx context.Context, conversationID, age
 	return true, nil
 }
 
-func newAgentToken() (string, error) {
+func newAgentToken() string {
 	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("mint agent token: %w", err)
-	}
-	return hex.EncodeToString(raw[:]), nil
+	rand.Read(raw[:])
+	return hex.EncodeToString(raw[:])
 }
 
 // turnSpend follows a turn's progress for what it cost and which model

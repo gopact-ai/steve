@@ -30,8 +30,10 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -365,18 +367,12 @@ func (p *Peer) PrepareEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	if !ok {
 		return PeerEnrollmentPackage{}, errors.New("不支持的机群签发密钥类型")
 	}
-	nodeID, err := clusterRandomID("node-")
-	if err != nil {
-		return PeerEnrollmentPackage{}, err
-	}
+	nodeID := clusterRandomID("node-")
 	certificate, leafKey, err := IssueNodeCertificate(ca, privateKey, p.Config.ClusterID, nodeID)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
-	workerToken, err := ClusterRandomToken()
-	if err != nil {
-		return PeerEnrollmentPackage{}, err
-	}
+	workerToken := ClusterRandomToken()
 	_, peerPort, _ := net.SplitHostPort(plan.Request.PeerAddress)
 	_, raftPort, _ := net.SplitHostPort(plan.Request.RaftAddress)
 	bundle := PeerJoinPackage{Version: 1, OperationID: id, ClusterID: p.Config.ClusterID, NodeID: nodeID, StorageLevel: plan.Request.Level, Name: plan.Request.Name, WorkspaceDir: plan.Request.WorkspaceDir, PeerListen: net.JoinHostPort("0.0.0.0", peerPort), PeerAdvertise: plan.Request.PeerAddress, RaftListen: net.JoinHostPort("0.0.0.0", raftPort), RaftAdvertise: plan.Request.RaftAddress, CA: caPEM, Certificate: certificate, PrivateKey: leafKey, OwnerToken: p.OwnerToken, WorkerToken: workerToken, Seeds: plan.Seeds}
@@ -411,11 +407,11 @@ func validHubRoute(route coordination.Route) (bool, error) {
 // real ports: a tunnel's ends are fixed ports, never 0.
 func loopbackRoute(route coordination.Route) error {
 	for _, address := range []string{route.Raft, route.API} {
-		host, port, err := net.SplitHostPort(address)
+		_, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return errors.New("SSH 隧道端口需要写成 host:port")
 		}
-		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		if !sameorigin.LoopbackIP(address) {
 			return errors.New("SSH 隧道端口必须在目标机的回环地址上")
 		}
 		if number, err := strconv.Atoi(port); err != nil || number <= 0 || number > 65535 {
@@ -1011,10 +1007,7 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	defer os.RemoveAll(staging)
 	clusterDir := filepath.Join(root, "cluster")
 	settings := PeerConfig{Version: 1, ClusterID: bundle.ClusterID, NodeID: bundle.NodeID, StorageLevel: bundle.StorageLevel, Name: bundle.Name, DataDir: clusterDir, RaftAddress: bundle.RaftAdvertise, PeerAddress: bundle.PeerAdvertise, RaftBindAddress: bundle.RaftListen, PeerBindAddress: bundle.PeerListen, PeerURL: "https://" + bundle.PeerAdvertise, UIAddress: "127.0.0.1:0", CACertFile: filepath.Join(clusterDir, "ca.pem"), CertFile: filepath.Join(clusterDir, "node.pem"), KeyFile: filepath.Join(clusterDir, "node-key.pem"), OwnerTokenFile: filepath.Join(clusterDir, "owner-control-token"), WorkerConfigFile: filepath.Join(clusterDir, "node.json"), Seeds: bundle.Seeds, Routes: bundle.Routes}
-	UIToken, err := ClusterRandomToken()
-	if err != nil {
-		return result, err
-	}
+	UIToken := ClusterRandomToken()
 	disabled := false
 	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: workspace}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: "zh", DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: UIToken, PromptTimeout: config.Duration(10 * time.Minute)}}
 	worker := node.ServerConfig{Name: bundle.NodeID, Listen: "127.0.0.1:0", Token: bundle.WorkerToken, Hubs: map[string]string{bundle.ClusterID: bundle.WorkerToken}, StateDir: filepath.Join(clusterDir, "node"), StateRoot: root, WorkspaceRoot: workspace, Harnesses: map[string]node.HarnessSpec{}}
@@ -1042,12 +1035,7 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	if err := os.Rename(staging, root); err != nil {
 		return result, err
 	}
-	parent, err := os.Open(filepath.Dir(root))
-	if err != nil {
-		return result, err
-	}
-	defer parent.Close()
-	return result, parent.Sync()
+	return result, fsx.SyncDir(filepath.Dir(root))
 }
 
 func validatePeerCertificate(bundle PeerJoinPackage) error {

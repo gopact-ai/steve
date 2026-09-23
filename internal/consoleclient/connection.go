@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/cluster"
 	appconfig "github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/localtoken"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
 type consoleConnection struct {
@@ -123,9 +124,7 @@ func readConsoleConnection(path string, generated bool) (consoleConnection, erro
 		if err := decodeConsoleJSON(sidecarPath, data, &sidecar); err != nil {
 			return consoleConnection{}, err
 		}
-		host, _, splitErr := net.SplitHostPort(string(sidecar.UIAddress))
-		ip := net.ParseIP(host)
-		if splitErr != nil || ip == nil || !ip.IsLoopback() {
+		if !sameorigin.LoopbackIP(string(sidecar.UIAddress)) {
 			return consoleConnection{}, errors.New("cluster sidecar ui_address must be an explicit loopback IP and port")
 		}
 		address, err = normalizeConsoleURL(string(sidecar.UIAddress), true)

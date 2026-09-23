@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 const idempotencyTTL = 24 * time.Hour
@@ -177,7 +179,7 @@ func removePending(path string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear committed memory request: %w", err)
 	}
-	return syncMemoryDir(filepath.Dir(path))
+	return fsx.SyncDir(filepath.Dir(path))
 }
 
 func (m *Markdown) syncMemory(scope Scope) error {
@@ -197,42 +199,14 @@ func (m *Markdown) syncMemory(scope Scope) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return syncMemoryDir(filepath.Dir(path))
-}
-
-func syncMemoryDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return fsx.SyncDir(filepath.Dir(path))
 }
 
 func atomicMemoryFile(path string, raw []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".memory-write-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if _, err := f.Write(raw); err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	return syncMemoryDir(dir)
+	return fsx.WriteFile(path, raw)
 }
 
 func loadReceipts(path string, now time.Time) (map[requestKey]requestReceipt, error) {

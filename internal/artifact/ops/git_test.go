@@ -1,4 +1,4 @@
-package nodewire
+package ops
 
 import "testing"
 

@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -218,7 +219,7 @@ func (s *Supervisor) revise(ctx context.Context, current plan.Plan, cause error)
 		prefix := fmt.Sprintf("plan/%s/r%d/prompt/", latest.TaskID, latest.Rev+1)
 		var retained attempt.Record
 		for _, record := range records {
-			if record.Kind == attempt.KindPlan && strings.HasPrefix(record.TurnID, prefix) && strings.HasPrefix(record.Session, "ns_") && record.State != attempt.Superseded && (retained.ID == "" || record.StartedAt.After(retained.StartedAt)) {
+			if record.Kind == attempt.KindPlan && strings.HasPrefix(record.TurnID, prefix) && nodewire.IsManagedSession(record.Session) && record.State != attempt.Superseded && (retained.ID == "" || record.StartedAt.After(retained.StartedAt)) {
 				retained = record
 			}
 		}

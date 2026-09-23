@@ -70,7 +70,7 @@ func retainedPhase(state State) bool {
 // attempt's phase. A session may be assigned once; it cannot be replaced under
 // an already admitted attempt or written with an expired lease/task token.
 func (s *Service) RecordSession(ctx context.Context, id, actor, session string) (Record, error) {
-	if !strings.HasPrefix(session, "ns_") || len(session) > 512 || strings.ContainsAny(session, "\x00\r\n") {
+	if !nodewire.IsManagedSession(session) || len(session) > 512 || strings.ContainsAny(session, "\x00\r\n") {
 		return Record{}, errors.New("a node-owned session identity is required")
 	}
 	r, err := s.Get(ctx, id)
@@ -130,7 +130,7 @@ func (s *Service) RecoverRetained(ctx context.Context, id string, evidence Retai
 			return errors.New("attempt is not a supported retained execution phase")
 		}
 		state, binding, command := evidence.Session, evidence.Session.Binding, evidence.Session.Command
-		if binding.PluginRuntimeID != result.PluginRuntimeID() || !strings.HasPrefix(state.ID, "ns_") || state.ID != result.Session || state.Harness != result.Harness || binding.ProjectID != result.Project || binding.AttemptID != result.ID || binding.TaskID != result.TaskID || binding.NodeID != result.Node || binding.TaskEpoch != result.Execution.Epoch {
+		if binding.PluginRuntimeID != result.PluginRuntimeID() || !nodewire.IsManagedSession(state.ID) || state.ID != result.Session || state.Harness != result.Harness || binding.ProjectID != result.Project || binding.AttemptID != result.ID || binding.TaskID != result.TaskID || binding.NodeID != result.Node || binding.TaskEpoch != result.Execution.Epoch {
 			return errors.New("retained node session does not match the admitted attempt")
 		}
 		if result.Execution.TaskID != result.TaskID {

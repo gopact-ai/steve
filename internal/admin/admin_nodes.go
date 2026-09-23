@@ -231,9 +231,7 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 		return consoleapi.AddNodeResult{}, fmt.Errorf("数据等级只能是 public / internal / restricted / sealed")
 	}
 	var raw [24]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return consoleapi.AddNodeResult{}, err
-	}
+	rand.Read(raw[:])
 	token := hex.EncodeToString(raw[:])
 	a.Mu.Lock()
 	defer a.Mu.Unlock()

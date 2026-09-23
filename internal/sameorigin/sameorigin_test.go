@@ -75,3 +75,15 @@ func TestLoopbackListener(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopbackIPRequiresLiteralLoopbackAddress(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:7710": true, "[::1]:0": true, "127.0.0.2:1": true, "[::ffff:127.0.0.1]:1": true,
+		"localhost:7710": false, "[::1%lo0]:7710": false, "0.0.0.0:7710": false, "[::]:7710": false,
+		":7710": false, "10.0.0.5:7710": false, "127.0.0.1": false, "": false,
+	} {
+		if got := LoopbackIP(addr); got != want {
+			t.Errorf("LoopbackIP(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}

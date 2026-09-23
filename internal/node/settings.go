@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -208,31 +209,10 @@ func writeConfig(cfg ServerConfig) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(cfg.Source), ".node-config-*")
-	if err != nil {
-		return fmt.Errorf("write node configuration: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), cfg.Source); err != nil {
+	if err := fsx.ReplaceFile(cfg.Source, append(raw, '\n')); err != nil {
 		return fmt.Errorf("write %s: %w", cfg.Source, err)
 	}
-	dir, err := os.Open(filepath.Dir(cfg.Source))
-	if err != nil {
-		return &settingsCommittedError{err: err}
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil {
+	if err := fsx.SyncDir(filepath.Dir(cfg.Source)); err != nil {
 		return &settingsCommittedError{err: err}
 	}
 	return nil

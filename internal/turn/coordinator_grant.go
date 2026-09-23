@@ -2,10 +2,10 @@ package turn
 
 import (
 	"context"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 type executionGate interface {
@@ -24,7 +24,7 @@ func (c *Coordinator) bindExecutionGate(ctx context.Context, conversation, id st
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(r.Session, "ns_") || r.Execution == nil {
+	if !nodewire.IsManagedSession(r.Session) || r.Execution == nil {
 		return nil
 	}
 	if saved := c.store.Conversation(conversation).Sessions[r.Agent]; saved.AgentToken == "" {

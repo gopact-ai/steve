@@ -295,7 +295,7 @@ func (r *stepRun) OpenSession(ctx context.Context, _ harness.Placement, _, _ str
 // CloseSession closes a node-owned session the finish did not close
 // already. A hub session is the Runner's, closed when the prompt returned.
 func (r *stepRun) CloseSession(ctx context.Context, _ harness.Placement, id string) error {
-	if r.closed || !lifecycle.IsManaged(id) {
+	if r.closed || !nodewire.IsManagedSession(id) {
 		return nil
 	}
 	closer, ok := r.deps.Runner.(retainedStepCloser)
@@ -327,7 +327,7 @@ func (*stepSession) Abort()                       {}
 // ended reads the prompt's end into the step's result: its identity, the
 // session the Runner recorded, and what the turn cost.
 func (r *stepRun) ended(e *lifecycle.Execution) {
-	r.managed = lifecycle.IsManaged(r.record.Session)
+	r.managed = nodewire.IsManagedSession(r.record.Session)
 	e.Record, e.Managed = r.record, r.managed
 	switch {
 	case r.saved != nil:

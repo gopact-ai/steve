@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
@@ -15,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -115,7 +115,7 @@ func (r *Runner) resumeAttempt(parent context.Context, record attempt.Record, va
 	if _, err := originalInput(record); err != nil {
 		return out, Blocked(record, "input", "读取原执行的请求与工作身份", "原请求记录不完整或无法核对。", "建议核对原任务和执行记录，不构造另一份原始请求。", err)
 	}
-	if (record.Kind != attempt.KindPlan && record.Kind != attempt.KindVerify) || !strings.HasPrefix(record.Session, "ns_") || record.Execution == nil || record.WorkID == "" {
+	if (record.Kind != attempt.KindPlan && record.Kind != attempt.KindVerify) || !nodewire.IsManagedSession(record.Session) || record.Execution == nil || record.WorkID == "" {
 		return out, Blocked(record, "identity", "检查原规划或验证执行的身份", "原执行缺少稳定的工作或原生会话标识。", "建议核对任务记录后继续。", nil)
 	}
 	scope, err := r.executions.BeginAccepted(parent, execution.Key{TaskID: record.TaskID, InstanceID: record.TurnID, AttemptID: record.ID}, record.Execution)

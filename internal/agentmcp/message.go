@@ -272,9 +272,8 @@ func (d messageDelivery) deliver(ctx context.Context, tool string) (string, chan
 	switch tool {
 	case "channel_send":
 		var random [16]byte
-		if _, err = rand.Read(random[:]); err == nil {
-			id, err = call.messenger.Send(callCtx, call.address, msg)
-		}
+		rand.Read(random[:])
+		id, err = call.messenger.Send(callCtx, call.address, msg)
 		if err == nil && id == "" {
 			err = fmt.Errorf("%w: channel returned an empty message receipt", errOutcomeUnknown)
 		}

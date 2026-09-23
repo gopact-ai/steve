@@ -11,7 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/gateway"
-	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -26,7 +26,7 @@ func delegateQuestionBinding(ctx context.Context, cons *console.Service, binding
 			return consoleapi.PendingQuestion{}, err
 		}
 	}
-	if !lifecycle.IsManaged(binding.Session) {
+	if !nodewire.IsManagedSession(binding.Session) {
 		requestID = ""
 	}
 	return consoleapi.PendingQuestion{Conversation: conversation, Project: binding.Project, TaskID: binding.Task, ParentTaskID: binding.ParentTask, AttemptID: binding.Attempt, SessionID: binding.Session, RequestID: requestID}, nil
@@ -42,7 +42,7 @@ func wireDelegateQuestions(delegation *delegate.Service, cons *console.Service) 
 			if err != nil {
 				return permission.Choose(false, ask.Options), err
 			}
-			if !lifecycle.IsManaged(binding.Session) {
+			if !nodewire.IsManagedSession(binding.Session) {
 				return cons.RequestLocalPermission(ctx, pending, ask)
 			}
 			return cons.RequestNativePermission(ctx, pending, ask)
@@ -52,7 +52,7 @@ func wireDelegateQuestions(delegation *delegate.Service, cons *console.Service) 
 			if err != nil {
 				return view.Answer{}, err
 			}
-			if !lifecycle.IsManaged(binding.Session) {
+			if !nodewire.IsManagedSession(binding.Session) {
 				return cons.RequestLocalQuestion(ctx, pending, question)
 			}
 			return cons.RequestNativeQuestion(ctx, pending, question)

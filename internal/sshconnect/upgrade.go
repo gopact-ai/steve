@@ -52,9 +52,7 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 		return InstallResult{}, fail("preflight", "upgrade_unsupported", "这类接入的机器无法从这里升级", "在机器上重新安装节点程序")
 	}
 	var nonce [24]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return InstallResult{}, fmt.Errorf("无法生成升级操作 ID")
-	}
+	rand.Read(nonce[:])
 	id := hex.EncodeToString(nonce[:])
 	s.mu.Lock()
 	if s.closed {

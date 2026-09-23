@@ -227,9 +227,7 @@ func (b *Broker) Bind(mcp, attempt, harness string) (ability.Binding, error) {
 		return ability.Binding{}, fmt.Errorf("%w: unknown transport %q", ErrUnbindable, spec.Type)
 	}
 	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return ability.Binding{}, err
-	}
+	rand.Read(raw[:])
 	nb := mcpBinding{id: hex.EncodeToString(raw[:]), mcp: mcp, attempt: attempt, harness: harness, expires: time.Now().Add(BindingTTL)}
 	b.mu.Lock()
 	now := time.Now()

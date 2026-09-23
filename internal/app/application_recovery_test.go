@@ -76,10 +76,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := cluster.ClusterRandomToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := cluster.ClusterRandomToken()
 	worker := node.ServerConfig{Name: peerConfig.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{peerConfig.ClusterID: token}, StateDir: filepath.Join(peerConfig.DataDir, "node"), WorkspaceRoot: installed.Paths.Root, Harnesses: map[string]node.HarnessSpec{"mock": {Command: bin}}}
 	if err := cluster.SaveClusterJSON(peerConfig.WorkerConfigFile, worker, true); err != nil {
 		t.Fatal(err)
@@ -281,10 +278,7 @@ func installRecoveryWorker(t *testing.T, options cluster.PeerOptions, root, bin 
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := cluster.ClusterRandomToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := cluster.ClusterRandomToken()
 	worker := node.ServerConfig{Name: cfg.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{cfg.ClusterID: token}, StateDir: filepath.Join(cfg.DataDir, "node"), WorkspaceRoot: root, Harnesses: map[string]node.HarnessSpec{"mock": {Command: bin}}}
 	if err := cluster.SaveClusterJSON(cfg.WorkerConfigFile, worker, true); err != nil {
 		t.Fatal(err)

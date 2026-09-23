@@ -89,9 +89,7 @@ func (s *Store) BeginClone(ctx context.Context, projectID string, copy Copy, reg
 		return CloneOperation{}, err
 	}
 	var token [16]byte
-	if _, err := rand.Read(token[:]); err != nil {
-		return CloneOperation{}, err
-	}
+	rand.Read(token[:])
 	id := "clone-" + hex.EncodeToString(token[:])
 	lease, err := s.l.AcquireIn(ctx, region, CopyID(projectID, copy.Node), id, ttl)
 	if err != nil {

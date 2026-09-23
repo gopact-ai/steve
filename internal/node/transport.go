@@ -40,9 +40,7 @@ func (t remoteTransport) Start(ctx context.Context) (acphost.Process, error) {
 			t.node, t.harness, c.harnessTrouble(t.harness))
 	}
 	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return nil, err
-	}
+	rand.Read(nonce[:])
 	req := nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: t.harness, Plugin: t.plugin.Clone(), Stream: hex.EncodeToString(nonce[:])}
 	stream, err := c.mux.Open(req)
 	if err != nil {

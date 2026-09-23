@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 type fileData struct {
@@ -34,7 +36,7 @@ type Ref struct {
 type Map struct {
 	path string
 	mu   sync.Mutex
-	// Nil uses syncDir. The per-map hook permits faults at the post-rename
+	// Nil uses fsx.SyncDir. The per-map hook permits faults at the post-rename
 	// durability boundary without changing other maps or global state.
 	syncDir func(string) error
 }
@@ -436,30 +438,10 @@ func (m *Map) writeLocked(data fileData) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(dir, ".skills-*.json")
-	if err != nil {
+	if err := fsx.ReplaceFile(m.path, append(raw, '\n')); err != nil {
 		return err
 	}
-	name := temp.Name()
-	if _, err := temp.Write(append(raw, '\n')); err != nil {
-		temp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, m.path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	sync := syncDir
+	sync := fsx.SyncDir
 	if m.syncDir != nil {
 		sync = m.syncDir
 	}
@@ -467,17 +449,6 @@ func (m *Map) writeLocked(data fileData) error {
 		return &committedWriteError{err: err}
 	}
 	return nil
-}
-
-// syncDir flushes a directory entry after a rename so the replacement
-// survives a crash (rename alone is not guaranteed durable on all filesystems).
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
 }
 
 func enabledMatch(item, name string, data fileData, m *Map) bool {

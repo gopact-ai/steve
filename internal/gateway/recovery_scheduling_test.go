@@ -416,7 +416,7 @@ func TestGatewayRecoverySlotDoesNotBlockItsOrdinaryStop(t *testing.T) {
 		t.Fatal("recovery never entered")
 	}
 	go func() {
-		done <- g.serve(feishu.InboundMessage{ConversationID: "conversation", ChatID: "chat", MessageID: "stop", SenderOpenID: "owner", Text: "/cancel"}, "conversation")
+		done <- g.serveTask(feishu.InboundMessage{ConversationID: "conversation", ChatID: "chat", MessageID: "stop", SenderOpenID: "owner", Text: "/cancel"}, "conversation", "")
 	}()
 	blocked := false
 	select {

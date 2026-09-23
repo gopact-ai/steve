@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plugins"
 )
@@ -422,7 +423,7 @@ func Committed(err error) bool {
 }
 
 func Save(path string, cfg *Config) error {
-	return saveWithSync(path, cfg, syncDir)
+	return saveWithSync(path, cfg, fsx.SyncDir)
 }
 
 func saveWithSync(path string, cfg *Config, syncParent func(string) error) error {
@@ -464,17 +465,6 @@ func saveWithSync(path string, cfg *Config, syncParent func(string) error) error
 		return &CommittedError{Err: err}
 	}
 	return nil
-}
-
-// syncDir flushes a directory entry after a rename so the replacement
-// survives a crash (rename alone is not guaranteed durable on all filesystems).
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
 }
 
 func writeConfigFile(file *os.File, data []byte) error {

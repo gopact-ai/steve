@@ -3,7 +3,6 @@ package delegate
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
@@ -25,7 +24,7 @@ func pendingDelegateOpen(record attempt.Record, tracked task.Task, cause error) 
 }
 
 func pendingDelegatePreparation(record attempt.Record) bool {
-	return record.Execution != nil && record.Node != "" && record.Unsettled && !strings.HasPrefix(record.Session, "ns_") && (record.State == attempt.Leased || record.State == attempt.Prepared)
+	return record.Execution != nil && record.Node != "" && record.Unsettled && !nodewire.IsManagedSession(record.Session) && (record.State == attempt.Leased || record.State == attempt.Prepared)
 }
 
 func (s *Service) reportDelegatePreparation(ctx context.Context, parent, tracked task.Task, record attempt.Record) {

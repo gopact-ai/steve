@@ -4,21 +4,29 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/gopact-ai/steve/internal/nativehistory"
+	"strings"
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
+// managedSessionPrefix marks the identity of a session a node opened and owns.
+const managedSessionPrefix = "ns_"
+
 // SessionOpenID is the stable native identity of one admitted open command.
 func SessionOpenID(cluster, node, attempt, command, harness string) string {
 	raw, _ := json.Marshal([]string{cluster, node, attempt, command, harness})
 	hash := sha256.Sum256(raw)
-	return "ns_" + hex.EncodeToString(hash[:])
+	return managedSessionPrefix + hex.EncodeToString(hash[:])
 }
+
+// IsManagedSession reports whether id names a node-owned session: the node
+// keeps its process and input receipts, and the hub only observes it.
+func IsManagedSession(id string) bool { return strings.HasPrefix(id, managedSessionPrefix) }
 
 const FeatureNativeHistory = "native_history.v1"
 

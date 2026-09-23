@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 type ImportRequest struct {
@@ -268,12 +270,7 @@ func writeSynced(path string, raw []byte) error {
 }
 
 func syncDirectory(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil {
+	if err := fsx.SyncDir(path); err != nil {
 		return fmt.Errorf("sync native import: %w", err)
 	}
 	return nil

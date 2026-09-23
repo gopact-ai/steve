@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -119,7 +120,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		if err != nil {
 			return out, errors.Join(err, parent.Err())
 		}
-		if found && prior.Kind == spec.Kind && (strings.HasPrefix(prior.Session, "ns_") || PendingOpen(prior)) {
+		if found && prior.Kind == spec.Kind && (nodewire.IsManagedSession(prior.Session) || PendingOpen(prior)) {
 			if prior.TaskID != spec.TaskID || prior.WorkID != identity {
 				return out, Blocked(prior, "work", "核对原规划或验证请求", "同一请求标识对应的输入条件已经变化。", "建议核对原任务与已有执行，不重发原命令。", nil)
 			}

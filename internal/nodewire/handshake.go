@@ -197,26 +197,22 @@ func Dial(conn io.ReadWriter, hello Hello) (Advert, error) {
 // Accept performs the node side. It answers with advert on success, and with
 // a refusal the hub can report rather than a bare closed connection.
 func Accept(conn io.ReadWriter, token string, advert Advert) (Hello, error) {
-	return AcceptWith(conn, func(offered string) bool {
+	return AcceptClaim(conn, func(offered string) bool {
 		// Constant time: the token is a shared secret, and a timing oracle
 		// here would let a prober recover it byte by byte.
 		return subtle.ConstantTimeCompare([]byte(offered), []byte(token)) == 1
-	}, advert)
-}
-
-// AcceptWith is Accept with the caller deciding which tokens are good: the
-// hub's, or a one-time grant a peer node was given for one transfer.
-func AcceptWith(conn io.ReadWriter, valid func(token string) bool, advert Advert) (Hello, error) {
-	return AcceptClaim(conn, valid, nil, advert)
+	}, nil, advert)
 }
 
 // ErrRefused is a handshake the node declined for a reason of its own —
 // another hub already holds it, say — after the token checked out.
 var ErrRefused = errors.New("nodewire: refused")
 
-// AcceptClaim is AcceptWith with a claim step between the token check and
-// the advert: the node may decline a hub it will not serve, and the hub
-// learns why instead of receiving an advert and then losing the link.
+// AcceptClaim is Accept with the caller deciding which tokens are good (the
+// hub's, or a one-time grant a peer node was given for one transfer) and
+// with an optional claim step between the token check and the advert: the
+// node may decline a hub it will not serve, and the hub learns why instead
+// of receiving an advert and then losing the link.
 func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(Hello) error, advert Advert) (Hello, error) {
 	var hello Hello
 	if err := readJSON(conn, &hello); err != nil {

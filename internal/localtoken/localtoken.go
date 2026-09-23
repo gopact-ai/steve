@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 const (
@@ -33,8 +35,8 @@ func Resolve(dir string) (string, error) {
 		return "", err
 	}
 	var secret [32]byte
-	_, _ = rand.Read(secret[:]) // crypto/rand.Read never fails
-	if err := create(filepath.Join(dir, FileName), base64.RawURLEncoding.EncodeToString(secret[:])); err != nil && !errors.Is(err, os.ErrExist) {
+	rand.Read(secret[:])
+	if err := fsx.CreateFile(filepath.Join(dir, FileName), []byte(base64.RawURLEncoding.EncodeToString(secret[:]))); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", err
 	}
 	return Read(dir)
@@ -78,32 +80,4 @@ func Read(dir string) (string, error) {
 
 func private(info os.FileInfo) bool {
 	return info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0
-}
-
-// create publishes a fully synced file and never replaces an existing one.
-func create(path, token string) error {
-	temp, err := os.CreateTemp(filepath.Dir(path), ".loopback-token-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temp.Name())
-	_, err = temp.WriteString(token)
-	if err == nil {
-		err = temp.Sync()
-	}
-	if closeErr := temp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err := os.Link(temp.Name(), path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
 }

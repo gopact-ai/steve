@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nativehistory"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // ResumeNativeHistory reuses the admitted managed home, including inputs made
@@ -18,7 +19,7 @@ func ResumeNativeHistory(ctx context.Context, stateDir, execution string, ref na
 	if !nativehistory.StorageSupported {
 		return harness.Config{}, nativehistory.ErrUnsupported
 	}
-	if !strings.HasPrefix(execution, "ns_") || strings.ContainsAny(execution, "/\\") {
+	if !nodewire.IsManagedSession(execution) || strings.ContainsAny(execution, "/\\") {
 		return harness.Config{}, errors.New("native history needs a managed execution identity")
 	}
 	key, _ := (PluginProfiles{StateDir: stateDir}).nativeHome(ref.Harness, cfg.Env)
@@ -50,7 +51,7 @@ func ResumeNativeHistory(ctx context.Context, stateDir, execution string, ref na
 // selected transcript comes from the immutable import; model access and skills
 // come from the currently admitted runtime, including a pinned plugin profile.
 func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref nativehistory.Reference, cfg harness.Config) (harness.Config, error) {
-	if !strings.HasPrefix(execution, "ns_") || strings.ContainsAny(execution, "/\\") {
+	if !nodewire.IsManagedSession(execution) || strings.ContainsAny(execution, "/\\") {
 		return harness.Config{}, errors.New("native history needs a managed execution identity")
 	}
 	profiles := PluginProfiles{StateDir: stateDir}

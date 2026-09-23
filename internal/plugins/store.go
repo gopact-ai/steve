@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 const Prepared = "prepared"
@@ -208,12 +210,7 @@ func (s *Store) sync(dir string) error {
 	if s.syncDir != nil {
 		return s.syncDir(dir)
 	}
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
+	return fsx.SyncDir(dir)
 }
 
 func (source Source) validate() error {

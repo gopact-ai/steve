@@ -33,7 +33,7 @@ func TestSharedMemoryActivationImportsOnlyPortableDocsThenIgnoresLocalFiles(t *t
 	}
 	defer book.Close()
 	cfg := &config.Config{Gateway: config.Gateway{HomePath: local, StatePath: filepath.Join(root, "state.json")}, Projects: map[string]config.Project{"work": {}}}
-	first, err := prepareApplicationMemory(t.Context(), cfg, book)
+	first, err := prepareApplicationMemoryWithSettings(t.Context(), cfg, book, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestSharedMemoryActivationImportsOnlyPortableDocsThenIgnoresLocalFiles(t *t
 	if err := os.RemoveAll(local); err != nil {
 		t.Fatal(err)
 	}
-	second, err := prepareApplicationMemory(t.Context(), cfg, book)
+	second, err := prepareApplicationMemoryWithSettings(t.Context(), cfg, book, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestSharedMemoryBootstrapDoesNotFollowProjectFileSymlinks(t *testing.T) {
 	}
 	defer book.Close()
 	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(root, "state.json")}, Projects: map[string]config.Project{"work": {}}}
-	if _, err := prepareApplicationMemory(t.Context(), cfg, book); err == nil {
+	if _, err := prepareApplicationMemoryWithSettings(t.Context(), cfg, book, nil); err == nil {
 		t.Fatal("bootstrap followed a project memory symlink")
 	}
 	items, err := memory.NewLedgerStore(book).List(t.Context(), memory.ProjectScope("work"))

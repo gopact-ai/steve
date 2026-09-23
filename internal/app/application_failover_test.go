@@ -40,10 +40,7 @@ func TestAutomaticCoordinatorLossPreservesHealthyTaskAndReturningDesktop(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := cluster.ClusterRandomToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := cluster.ClusterRandomToken()
 	worker := node.ServerConfig{Name: thirdConfig.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{thirdConfig.ClusterID: token}, StateDir: filepath.Join(thirdConfig.DataDir, "node"), WorkspaceRoot: thirdInstallation.Paths.Root, Harnesses: map[string]node.HarnessSpec{"mock": {Command: bin}}}
 	if err := cluster.SaveClusterJSON(thirdConfig.WorkerConfigFile, worker, true); err != nil {
 		t.Fatal(err)

@@ -24,10 +24,7 @@ func OpenClusterPeer(ctx context.Context, options cluster.PeerOptions) (*cluster
 	return cluster.OpenPeer(ctx, options)
 }
 func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activation cluster.Activation, ready func(cluster.PeerApplicationEndpoint) error) (cluster.Deactivate, error) {
-	token, err := cluster.ClusterRandomToken()
-	if err != nil {
-		return nil, err
-	}
+	token := cluster.ClusterRandomToken()
 	started := make(chan struct{})
 	done := make(chan struct{})
 	var runErr error

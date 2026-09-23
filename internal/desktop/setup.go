@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/fsx"
 )
 
 // setupName is the per-machine record of how far the first-run guide has
@@ -64,29 +66,9 @@ func SaveSetup(root string, progress SetupProgress) error {
 	if err != nil {
 		return err
 	}
-	return replacePrivate(filepath.Join(root, setupName), append(raw, '\n'))
-}
-
-// replacePrivate publishes a fully synced private file over any existing one.
-func replacePrivate(path string, raw []byte) error {
-	temp, err := os.CreateTemp(filepath.Dir(path), ".desktop-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temp.Name())
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temp.Name(), path); err != nil {
+	path := filepath.Join(root, setupName)
+	if err := fsx.WriteFile(path, append(raw, '\n')); err != nil {
 		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
 	}
-	return syncDirectory(filepath.Dir(path))
+	return nil
 }

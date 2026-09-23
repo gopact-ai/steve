@@ -28,6 +28,8 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -188,10 +190,7 @@ func PrepareDesktopCluster(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	id, err := clusterRandomID("cluster-")
-	if err != nil {
-		return "", err
-	}
+	id := clusterRandomID("cluster-")
 	dir := filepath.Join(installed.Paths.Root, "cluster")
 	if _, err := os.Stat(dir); err == nil {
 		if _, err := os.Stat(filepath.Join(dir, "raft")); err == nil {
@@ -258,10 +257,7 @@ func createClusterAuthority(c PeerConfig) error {
 	if err != nil {
 		return err
 	}
-	token, err := ClusterRandomToken()
-	if err != nil {
-		return err
-	}
+	token := ClusterRandomToken()
 	for _, file := range []struct {
 		path string
 		data []byte
@@ -294,19 +290,15 @@ func IssueNodeCertificate(ca *x509.Certificate, caKey ed25519.PrivateKey, cluste
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), nil
 }
 
-func clusterRandomID(prefix string) (string, error) {
+func clusterRandomID(prefix string) string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return prefix + hex.EncodeToString(b[:]), nil
+	rand.Read(b[:])
+	return prefix + hex.EncodeToString(b[:])
 }
-func ClusterRandomToken() (string, error) {
+func ClusterRandomToken() string {
 	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+	rand.Read(b[:])
+	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 
 // Raw machine identifiers never enter configuration, logs or network replies.
@@ -342,13 +334,8 @@ func physicalFailureDomain() (string, error) {
 }
 
 func requireClusterLoopback(address string) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return errors.New("cluster UI needs an explicit loopback address")
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("cluster UI gateway must bind to loopback")
+	if !sameorigin.LoopbackIP(address) {
+		return errors.New("cluster UI gateway must bind to an explicit loopback address")
 	}
 	return nil
 }
@@ -376,34 +363,8 @@ func WritePrivate(path string, data []byte, create bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("cluster file path is empty")
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".cluster-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
 	if create {
-		err = os.Link(file.Name(), path)
-	} else {
-		err = os.Rename(file.Name(), path)
+		return fsx.CreateFile(path, data)
 	}
-	if err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return fsx.WriteFile(path, data)
 }

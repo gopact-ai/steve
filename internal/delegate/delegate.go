@@ -15,8 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -24,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -36,6 +35,7 @@ import (
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
@@ -521,13 +521,13 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	s.mu.Lock()
 	managedSession := entry.session
 	s.mu.Unlock()
-	if strings.HasPrefix(managedSession, "ns_") && s.canSettleStopped(ctx, runErr) {
+	if nodewire.IsManagedSession(managedSession) && s.canSettleStopped(ctx, runErr) {
 		var cancel context.CancelFunc
 		ctx, cancel = lifecycle.Cleanup(ctx)
 		defer cancel()
 	}
 	var retainedRecord attempt.Record
-	if strings.HasPrefix(managedSession, "ns_") {
+	if nodewire.IsManagedSession(managedSession) {
 		var err error
 		retainedRecord, err = s.attempts.Get(ctx, s.attemptOf(spawned.ID))
 		if err == nil && !retainedRecord.State.Terminal() {
@@ -566,7 +566,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		}
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateFailed); err != nil {
 			slog.Error(fmt.Sprintf("delegate: mark task #%s failed: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
-			if strings.HasPrefix(managedSession, "ns_") {
+			if nodewire.IsManagedSession(managedSession) {
 				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 				return
@@ -577,7 +577,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		result.State = task.StateDone
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateDone); err != nil {
 			slog.Error(fmt.Sprintf("delegate: mark task #%s done: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
-			if strings.HasPrefix(managedSession, "ns_") {
+			if nodewire.IsManagedSession(managedSession) {
 				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 				return
@@ -591,7 +591,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 
 	if err := s.tasks.SetResult(spawned.ID, task.Result{Outcome: result.Outcome, Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}); err != nil {
 		slog.Error(fmt.Sprintf("delegate: record result of task #%s: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
-		if strings.HasPrefix(managedSession, "ns_") {
+		if nodewire.IsManagedSession(managedSession) {
 			s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-result", "保存原执行的完整答复到子任务记录", "答复尚未完整写入任务。", "已提交的执行结果仍保留，不能提前向父任务宣布完成。", "建议恢复存储后重新核对。")
 			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 			return
@@ -671,10 +671,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	candidate roster.Candidate, req agentmcp.DelegateRequest, progress func(view.Progress)) (result agentmcp.DelegateResult, runErr error) {
 	result = agentmcp.DelegateResult{TaskID: child.ID, Agent: candidate.Agent.ID, Node: candidate.Node}
 
-	extras, revoke, err := s.childToken(ctx, conversationID, delegatedBy, parent, child, candidate)
-	if err != nil {
-		return result, err
-	}
+	extras, revoke := s.childToken(ctx, conversationID, delegatedBy, parent, child, candidate)
 	defer func() { revoke(runErr) }()
 
 	caps, err := s.assembler.AssembleExtra(candidate.Agent, home.ModeGuest, extras)
@@ -713,6 +710,10 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 
 	at := harness.Placement{Node: candidate.Node, Harness: candidate.Harness}
+	canonicalRegion, err := s.homeRegion(ctx, parent.ProjectID)
+	if err != nil {
+		return result, err
+	}
 	accountingTask, err := s.tasks.Begin(child.ID, candidate.Agent.ID, orHub(candidate.Node, s.node), "")
 	if err != nil {
 		return result, err
@@ -744,7 +745,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Spec: attempt.Spec{Execution: execution.Token(ctx),
 			ID: attemptID, TaskID: child.ID, TurnID: turnID, Kind: attempt.KindDelegate,
 			Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
-			Region: candidate.Region, CanonicalRegion: s.homeRegion(ctx, parent.ProjectID),
+			Region: candidate.Region, CanonicalRegion: canonicalRegion,
 			Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy, Requires: req.Requires,
 		},
 		Lost: func() {
@@ -776,17 +777,15 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 // reached through its node's loopback endpoint when it runs remotely, and
 // revoked by the returned func when the run ends — unless the run detached
 // from a session that is still using it.
-func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy string, parent, child task.Task, candidate roster.Candidate) ([]capability.Extra, func(runErr error), error) {
+func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy string, parent, child task.Task, candidate roster.Candidate) ([]capability.Extra, func(runErr error)) {
 	keep := func(error) {}
 	if s.gate == nil {
-		return nil, keep, nil
+		return nil, keep
 	}
-	token, err := newToken()
-	if err != nil {
-		return nil, keep, err
-	}
+	token := newToken()
 	endpoint := ""
 	if candidate.Node != "" && s.endpoints != nil {
+		var err error
 		endpoint, err = s.endpoints.MCPEndpoint(ctx, candidate.Node)
 		if err != nil {
 			// Losing milestone cards is a degradation; losing the
@@ -797,7 +796,7 @@ func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy st
 		}
 	}
 	if candidate.Node != "" && endpoint == "" {
-		return nil, keep, nil
+		return nil, keep
 	}
 	extras := s.gate.Delegated(conversationID, candidate.Agent.ID, child.ID, delegatedBy, token, endpoint)
 	return extras, func(runErr error) {
@@ -805,7 +804,7 @@ func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy st
 		if !errors.As(runErr, &detached) {
 			s.gate.Revoke(token)
 		}
-	}, nil
+	}
 }
 
 func (s *Service) delegationContext(child task.Task, candidate roster.Candidate, req agentmcp.DelegateRequest) (ctxpack.Context, error) {
@@ -1070,7 +1069,7 @@ func (s *Service) land(ctx context.Context, parent, child task.Task, record atte
 			}
 		}
 		if err := s.artifacts.Defer(ctx, parent.ProjectID, p.published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
-			if lifecycle.IsManaged(record.Session) {
+			if nodewire.IsManagedSession(record.Session) {
 				return result, retainedDetached(record, err)
 			}
 			s.finish(child.ID, task.OutcomeError)
@@ -1269,12 +1268,10 @@ func goal(request string) string {
 	return text.Clip(line, goalLimit)
 }
 
-func newToken() (string, error) {
+func newToken() string {
 	var buf [24]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", fmt.Errorf("mint token: %w", err)
-	}
-	return hex.EncodeToString(buf[:]), nil
+	rand.Read(buf[:])
+	return hex.EncodeToString(buf[:])
 }
 
 // parentLease finds the canonical lease the parent's in-place attempt holds.
@@ -1360,16 +1357,20 @@ func orHub(node, hub string) string {
 	return node
 }
 
-// homeRegion is the region of the project's canonical workspace.
-func (s *Service) homeRegion(ctx context.Context, projectID string) string {
+// homeRegion is the region of the project's canonical workspace; a project
+// that does not exist has none.
+func (s *Service) homeRegion(ctx context.Context, projectID string) (string, error) {
 	if s.artifacts == nil || s.roster == nil {
-		return ""
+		return "", nil
 	}
 	p, ok, err := s.artifacts.Project(ctx, projectID)
-	if err != nil || !ok {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("home region of project %s: %w", projectID, err)
 	}
-	return s.roster.RegionOf(p.Home.Node)
+	if !ok {
+		return "", nil
+	}
+	return s.roster.RegionOf(p.Home.Node), nil
 }
 
 // Fleet renders the roster for an agent: one line per other agent, with
@@ -1412,8 +1413,6 @@ func (s *Service) Fleet(ctx context.Context, _ string, caller string, requires [
 	}
 	return b.String(), nil
 }
-
-func attemptUsage(p view.Progress) *attempt.Usage { return lifecycle.Usage(p) }
 
 func (s *Service) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {
 	if tracked, ok := s.tasks.Get(id); ok && tracked.State == to {

@@ -66,6 +66,19 @@ func LoopbackListener(addr string) bool {
 	return err == nil && ip.IsLoopback()
 }
 
+// LoopbackIP reports whether addr ("host:port") names a literal loopback
+// IP. Unlike LoopbackListener it refuses "localhost" and zoned addresses:
+// callers that require an explicit loopback address use it so a name can
+// never stand in for one.
+func LoopbackIP(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Zone() == "" && ip.IsLoopback()
+}
+
 func hostname(hostport string) string {
 	if host, _, err := net.SplitHostPort(hostport); err == nil {
 		return host

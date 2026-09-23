@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -48,7 +48,7 @@ func (s *Service) PrepareRecovery(ctx context.Context, actor string) (RecoveryRe
 			report.Quarantined = append(report.Quarantined, current)
 			continue
 		}
-		if retainedKind(r.Kind) && retainedPhase(r.State) && strings.HasPrefix(r.Session, "ns_") {
+		if retainedKind(r.Kind) && retainedPhase(r.State) && nodewire.IsManagedSession(r.Session) {
 			// The node may hold either an active prompt or a settled result
 			// whose completion was not committed before coordinator loss.
 			// Preserve its exact leases until authenticated reattachment.

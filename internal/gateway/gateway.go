@@ -161,7 +161,7 @@ func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask stri
 	return nil
 }
 
-// serve runs one message against the pool.
+// serveTask runs one message against the pool.
 //
 // The slot is per conversation, not per message, and that is the whole
 // subtlety: a second message for a conversation already being served is an
@@ -169,10 +169,6 @@ func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask stri
 // is holding would deadlock the two against each other — the same mistake
 // the per-conversation queue made. So only the first message of a
 // conversation takes a slot, and whoever finishes last gives it back.
-func (g *Gateway) serve(msg feishu.InboundMessage, conversation string) error {
-	return g.serveTask(msg, conversation, "")
-}
-
 func (g *Gateway) serveTask(msg feishu.InboundMessage, conversation, expectedTask string) error {
 	g.mu.Lock()
 	first := g.serving[conversation] == 0
@@ -611,9 +607,7 @@ func (g *Gateway) handleApprovalAction(action feishu.CardAction) feishu.CardToas
 
 func newRequestID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return hex.EncodeToString([]byte(time.Now().UTC().Format("150405.000000000")))
-	}
+	rand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }
 

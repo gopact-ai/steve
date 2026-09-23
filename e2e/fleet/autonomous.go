@@ -81,9 +81,7 @@ func toolName(name string) string {
 
 func (g *gate) runAutonomous(ctx context.Context) error {
 	var nonce [4]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return fmt.Errorf("create run ID: %w", err)
-	}
+	rand.Read(nonce[:])
 	id := g.started.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(nonce[:])
 	g.conversation = "console:e2e-auto-" + id
 	release := "release-" + id
