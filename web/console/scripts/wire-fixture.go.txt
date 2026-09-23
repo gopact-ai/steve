@@ -140,8 +140,8 @@ func workWireFixture(t *testing.T, at time.Time) map[string]wireResponse {
  book,err:=ledger.Open(t.TempDir(),ledger.Options{});if err!=nil{t.Fatal(err)};t.Cleanup(func(){book.Close()})
  in:=task.ProjectTransfer{Project:"p",Tasks:map[string]*task.Task{"root":{ID:"root",ProjectID:"p",State:task.StateRunning,Transport:"console",Channel:"opaque",Attempts:[]task.Attempt{{Member:"fixture",StartedAt:at,EndedAt:at.Add(time.Second)},{Member:"fixture",StartedAt:at,EndedAt:at.Add(time.Second)}}},"child":{ID:"child",Parent:"root",ProjectID:"p",State:task.StateDone,Transport:"console",Channel:"delegate:root"}}}
  if err:=book.Update(t.Context(),func(tx *ledger.Tx)error{return task.ImportProjectTx(tx,in)});err!=nil{t.Fatal(err)}
- tasks,err:=task.OpenLedger(book,"");if err!=nil{t.Fatal(err)}
- plans,err:=plan.OpenLedger(book,"");if err!=nil{t.Fatal(err)}
+ tasks,err:=task.OpenLedger(book);if err!=nil{t.Fatal(err)}
+ plans,err:=plan.OpenLedger(book);if err!=nil{t.Fatal(err)}
  if _,err:=plans.Create(plan.Plan{TaskID:"root",ProjectID:"p",Goal:"Wire plan",Steps:[]plan.Step{{ID:"step",Goal:"fixture",Agent:"fixture",State:plan.StepDone,Verify:&plan.Verify{Kind:plan.VerifyNone,Why:"fixture"}}}});err!=nil{t.Fatal(err)}
  native:=attempt.New(book)
  for _,id:=range []string{"native-1","native-2"}{if _,err:=native.Open(t.Context(),attempt.Spec{ID:id,TaskID:"root",Scope:attempt.ScopeNone});err!=nil{t.Fatal(err)};if _,err:=native.Advance(t.Context(),id,attempt.Failed,"fixture",nil);err!=nil{t.Fatal(err)}}
