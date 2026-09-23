@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -152,5 +153,25 @@ func TestStopProjectionHoldsOnlyForTheSameConfirmation(t *testing.T) {
 				t.Fatalf("holds=%v want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Superseding a record in place writes it outside setRecordDataTx, so it
+// clears the projection mark itself: the superseded record carries none.
+func TestSupersededSourceCarriesNoStopProjection(t *testing.T) {
+	s, _ := newService(t)
+	yes := true
+	r := Record{Spec: Spec{ID: "source", TaskID: "t", TurnID: "turn", Kind: KindChat, Node: "n1", Execution: &task.ExecutionToken{TaskID: "t", Epoch: 1}},
+		State: Failed, Session: "ns_source", SessionSettled: &yes, StopEvidence: "task-stop/source", StopProjected: true, Revision: 1}
+	putHistoryAttempt(t, s.l, r)
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error {
+		old := r
+		return s.supersedeSourceTx(tx, &old, "replacement", "relocation-stop/source")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.Get(t.Context(), r.ID)
+	if err != nil || current.State != Superseded || current.StopProjected {
+		t.Fatalf("superseded source kept its projection mark: %+v %v", current, err)
 	}
 }
