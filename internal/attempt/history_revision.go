@@ -112,6 +112,11 @@ func setRecordDataTx(tx *ledger.Tx, op *ledger.Operation, next Record) error {
 // Transfer is an explicit bulk initialization boundary: source read tokens
 // are not destination authority. An import refreshes only its affected scopes;
 // restoring a replica instead preserves the exact tokens in its bindings.
+// Imported records keep the source's StopProjected marks. That is sound
+// only because the tasks' accounting rows the marks were checked against
+// are imported in the same transfer by task.ImportProjectTx; importing
+// attempt history without them would retire stops with no settled
+// accounting at the destination.
 func ImportHistoryTx(tx *ledger.Tx, operations []ledger.Operation, validateOnly bool) error {
 	scopes := map[string][]string{}
 	for _, op := range operations {
