@@ -306,3 +306,37 @@ func TestSnapshotUnderTheCanonicalLockIsBounded(t *testing.T) {
 		t.Fatalf("canonical lock after the snapshot: %v", err)
 	}
 }
+
+// A snapshot stuck in a call that ignores its context stops having its
+// canonical lock renewed once its time is up, so the lock runs out rather
+// than being held for as long as the call hangs.
+func TestStuckSnapshotStopsRenewingTheCanonicalLock(t *testing.T) {
+	canonical := t.TempDir()
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	store.snapshotLimit = 300 * time.Millisecond
+	ticks := make(chan time.Time)
+	store.renewTicks = func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
+	stuck := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- store.underCanonical(t.Context(), p, "plan", func(context.Context, ledger.Lease) error {
+			<-stuck
+			return nil
+		})
+	}()
+	select {
+	case ticks <- time.Time{}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lock was not renewed while the snapshot had time")
+	}
+	time.Sleep(store.snapshotLimit + 200*time.Millisecond)
+	select {
+	case ticks <- time.Time{}:
+		t.Error("the lock was still renewed after the snapshot's time was up")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(stuck)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

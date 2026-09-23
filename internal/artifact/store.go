@@ -492,15 +492,19 @@ func (s *Store) underCanonical(ctx context.Context, p project.Project, by string
 			slog.Warn(fmt.Sprintf("artifact: release canonical lock of %s after a snapshot: %v", p.ID, err), "project", p.ID, "holder", lease.Holder)
 		}
 	}()
-	// Renewed on its own even under a landing driver, which renews the
-	// lock its landing holds and must go on doing so.
-	defer s.renewCanonical(ctx, lease)()
 	limit := s.snapshotLimit
 	if limit <= 0 {
 		limit = canonicalSnapshotLimit
 	}
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
+	// Renewed on its own even under a landing driver, which renews the
+	// lock its landing holds and must go on doing so. Renewal ends with
+	// the snapshot's time, even if fn is stuck in a call that ignores ctx:
+	// the lock then runs out instead of being held for as long as fn hangs.
+	stopRenew := s.renewCanonical(ctx, lease)
+	defer stopRenew()
+	defer context.AfterFunc(ctx, stopRenew)()
 	if err := s.checkNoRecoveryPending(ctx, p, ""); err != nil {
 		return err
 	}
