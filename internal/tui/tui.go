@@ -266,13 +266,6 @@ func (m *Model) authorize(req *http.Request) {
 	}
 }
 
-// Snapshot exposes the current state for tests and for a one-shot render.
-func (m *Model) Snapshot() readmodel.Snapshot {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.snap
-}
-
 // Once fetches and renders a single frame, for a non-terminal caller.
 // It reports the frame as a snapshot rather than as a dropped stream: it
 // never opened one, and "offline" would be describing this call rather than

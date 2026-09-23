@@ -86,8 +86,8 @@ export function resolveDocumentPath(base: string, href: string): string {
     return segments.join("/");
 }
 
-// Preserve parser source offsets before presenting hard line breaks. Running
-// remark-breaks first discards positions on the text fragments it creates.
+// Marks each text fragment with its source offsets and turns its newlines
+// into hard breaks itself, so the breaks cannot lose the offsets.
 const sourcePositions: Plugin<[], Root> = () => (tree, file) => {
     const raw = String(file.value);
     const bounded = raw.length <= 2 << 20;

@@ -387,13 +387,11 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 		case lifecycle.StepOpen:
 			var busy attempt.Busy
 			if errors.As(err, &busy) {
-				holderAgent, holderTask := busy.Holder, "?"
-				if holder, herr := c.attempts.Get(parent, busy.Holder); herr == nil && holder.Agent != "" && holder.TaskID != "" {
-					holderAgent, holderTask = holder.Agent, holder.TaskID
-				} else {
+				holder, herr := c.attempts.Get(parent, busy.Holder)
+				if herr != nil || holder.Agent == "" || holder.TaskID == "" {
 					return Result{}, UserError{Text: c.text.T(i18n.ProjectWriting, t.binding.ProjectID, protocol.CommandProject)}
 				}
-				return Result{}, UserError{Text: c.text.T(i18n.ProjectBusy, t.binding.ProjectID, holderAgent, holderTask, protocol.CommandProject)}
+				return Result{}, UserError{Text: c.text.T(i18n.ProjectBusy, t.binding.ProjectID, holder.Agent, holder.TaskID, protocol.CommandProject)}
 			}
 			return Result{}, fmt.Errorf("open attempt: %w", step.Err)
 		case lifecycle.StepAdmit:

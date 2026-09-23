@@ -29,10 +29,10 @@ export async function request<T>(path: string, { body, ...init }: Omit<RequestIn
     return response.json() as Promise<T>;
 }
 
-// EventSource cannot set Authorization; normal requests never put tokens in URLs.
 // message is what to show a person about a failed request: the reason
 // without the Error prefix a thrown value carries.
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error: /, "");
+// EventSource cannot set Authorization; normal requests never put tokens in URLs.
 export const eventsURL = () => `./events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
 // Timeout, transport, server and malformed-response failures can follow an

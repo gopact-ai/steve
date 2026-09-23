@@ -21,13 +21,6 @@ const (
 	UserLabelTimezone = UserLabelTimezoneZH
 )
 
-func UserLabels(locale Locale) (name, timezone string) {
-	if locale == LocaleEN {
-		return UserLabelNameEN, UserLabelTimezoneEN
-	}
-	return UserLabelNameZH, UserLabelTimezoneZH
-}
-
 type templatePack struct {
 	soul, user, memory string
 }

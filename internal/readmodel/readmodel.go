@@ -402,35 +402,20 @@ type Plan struct {
 }
 
 type Step struct {
-	ID       string   `json:"id"`
-	Goal     string   `json:"goal"`
-	State    string   `json:"state"`
-	Agent    string   `json:"agent,omitempty"`
-	Node     string   `json:"node,omitempty"`
-	Needs    []string `json:"needs,omitempty"`
-	Merge    []string `json:"merge,omitempty"`
-	Requires []string `json:"requires,omitempty"`
-	Attempts int      `json:"attempts,omitempty"`
-	Verify   string   `json:"verify,omitempty"`
-	Error    string   `json:"error,omitempty"`
-	// Context is what this step's agent was actually given. It is here
-	// because "what did it see?" is the first question when a delegated
-	// step goes wrong, and a payload nobody can inspect is a payload nobody
-	// can debug.
-	Context   *StepContext `json:"context,omitempty"`
-	Usage     *StepUsage   `json:"usage,omitempty"`
-	StartedAt time.Time    `json:"started_at,omitzero"`
-	EndedAt   time.Time    `json:"ended_at,omitzero"`
-}
-
-type StepContext struct {
-	Goal      string   `json:"goal"`
-	Ancestry  []string `json:"ancestry,omitempty"`
-	Refs      []string `json:"refs,omitempty"`
-	Findings  []string `json:"findings,omitempty"`
-	Facts     []string `json:"facts,omitempty"`
-	TurnsLeft int      `json:"turns_left,omitempty"`
-	Bytes     int      `json:"bytes"`
+	ID        string     `json:"id"`
+	Goal      string     `json:"goal"`
+	State     string     `json:"state"`
+	Agent     string     `json:"agent,omitempty"`
+	Node      string     `json:"node,omitempty"`
+	Needs     []string   `json:"needs,omitempty"`
+	Merge     []string   `json:"merge,omitempty"`
+	Requires  []string   `json:"requires,omitempty"`
+	Attempts  int        `json:"attempts,omitempty"`
+	Verify    string     `json:"verify,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Usage     *StepUsage `json:"usage,omitempty"`
+	StartedAt time.Time  `json:"started_at,omitzero"`
+	EndedAt   time.Time  `json:"ended_at,omitzero"`
 }
 
 // Sources are the live stores the model reads. Each is optional: a hub with
