@@ -10,7 +10,7 @@ export function colorOf(state: string): StateColor {
         case "approved": case "completed": case "published": case "durable":
             return "success";
         case "failed": case "down": case "lost": case "expired": case "bind-conflict": case "fail":
-        case "merge-conflicted": case "apply-conflicted": case "commit-conflicted": case "cancelled": case "outcome-unknown":
+        case "merge-conflicted": case "apply-conflicted": case "cancelled": case "outcome-unknown":
             return "error";
         case "running": case "applying": case "transferring": case "present": case "prepared": case "leased": case "verifying": case "locked": case "merged":
         case "executing": case "landing": case "snapshotted": case "claimed":
@@ -60,7 +60,6 @@ const stateWords = {
     "expired": "status.expired",
     "merge-conflicted": "status.mergeConflict",
     "apply-conflicted": "status.applyConflict",
-    "commit-conflicted": "status.commitConflict",
     "bind-conflict": "status.bindConflict",
     "outcome-unknown": "status.outcomeUnknown",
     "merged": "status.merged",
