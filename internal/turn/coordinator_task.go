@@ -191,19 +191,6 @@ func (c *Coordinator) releaseConversationTask(tracked task.Task) error {
 	return err
 }
 
-func outcome(err error) task.Outcome {
-	switch {
-	case err == nil:
-		return task.OutcomeOK
-	case errors.Is(err, context.DeadlineExceeded):
-		return task.OutcomeTimeout
-	case errors.Is(err, context.Canceled):
-		return task.OutcomeCancelled
-	default:
-		return task.OutcomeError
-	}
-}
-
 func goal(prompt string) string {
 	line := strings.TrimSpace(text.FirstLine(strings.TrimSpace(prompt)))
 	return text.Clip(line, goalLimit)

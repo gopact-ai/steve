@@ -395,7 +395,7 @@ func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task
 	}
 	result := agentmcp.DelegateResult{TaskID: tracked.ID, Agent: record.Agent, Node: record.Node, Answer: run.Answer}
 	if runErr != nil {
-		s.finish(tracked.ID, outcomeOf(runErr))
+		s.finish(tracked.ID, lifecycle.OutcomeOf(runErr))
 	} else if result, runErr = s.land(ctx, parent, tracked, record, d.published); errors.As(runErr, &detached) {
 		pending("completion", "保存原子任务的产物和结算记录", "原命令已经返回，但产物或结果尚未完整提交。", "节点或存储可能暂时不可用，不能重复执行原任务来补结果。", "建议恢复节点与存储后重新核对原命令和产物。", runErr)
 		return
@@ -534,7 +534,7 @@ func (s *Service) detachChild(spawned task.Task, entry *child, detached *executi
 // failure, so a recovered observer reports it without running the child
 // again.
 func retainedFailure(record attempt.Record, answer string, cause error) (*attempt.Result, error) {
-	result := agentmcp.DelegateResult{TaskID: record.TaskID, Agent: record.Agent, Node: record.Node, Outcome: outcomeOf(cause), Answer: answer}
+	result := agentmcp.DelegateResult{TaskID: record.TaskID, Agent: record.Agent, Node: record.Node, Outcome: lifecycle.OutcomeOf(cause), Answer: answer}
 	if result.Answer == "" {
 		result.Answer = cause.Error()
 	}

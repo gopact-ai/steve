@@ -534,7 +534,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 			err = errors.New("delegate result has not been durably settled")
 		}
 		if err == nil {
-			err = s.finishFromRecord(retainedRecord, outcomeOf(runErr))
+			err = s.finishFromRecord(retainedRecord, lifecycle.OutcomeOf(runErr))
 		}
 		if err != nil {
 			binding := QuestionBinding{Conversation: conversationID, Transport: parent.Transport, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
@@ -985,7 +985,7 @@ func (d *delegation) settle(ctx context.Context, run lifecycle.Result, err error
 		if run.Managed {
 			result.Answer = run.Answer
 		}
-		outcome := outcomeOf(err)
+		outcome := lifecycle.OutcomeOf(err)
 		if d.publishErr != nil {
 			outcome = task.OutcomeError
 		}
@@ -1241,23 +1241,6 @@ func expectLine(expect string) string {
 		return ""
 	}
 	return "\n\n完成的标准：" + strings.TrimSpace(expect)
-}
-
-func outcomeOf(err error) task.Outcome {
-	switch {
-	case err == nil:
-		return task.OutcomeOK
-	case ctxErr(err, context.DeadlineExceeded):
-		return task.OutcomeTimeout
-	case errors.Is(err, harness.ErrTurnCanceled) || ctxErr(err, context.Canceled):
-		return task.OutcomeCancelled
-	default:
-		return task.OutcomeError
-	}
-}
-
-func ctxErr(err, target error) bool {
-	return err == target || strings.Contains(err.Error(), target.Error())
 }
 
 const goalLimit = 120

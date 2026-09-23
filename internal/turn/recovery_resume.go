@@ -250,7 +250,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 
 func (c *Coordinator) finishRetainedTask(record attempt.Record, runErr error, spent *turnSpend) error {
 	if spent != nil {
-		return c.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, time.Now().UTC(), outcome(runErr), task.RecoveryUsage{Tokens: spent.tokens(), Model: spent.model(), Reported: spent.attemptUsage().Reported})
+		return c.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, time.Now().UTC(), lifecycle.OutcomeOf(runErr), task.RecoveryUsage{Tokens: spent.tokens(), Model: spent.model(), Reported: spent.attemptUsage().Reported})
 	}
 	var tokens task.Tokens
 	model := ""
@@ -259,7 +259,7 @@ func (c *Coordinator) finishRetainedTask(record attempt.Record, runErr error, sp
 		tokens = task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Total: u.Input + u.Output}
 		model = u.Model
 	}
-	return c.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome(runErr), task.RecoveryUsage{Tokens: tokens, Model: model, Reported: record.Usage != nil && record.Usage.Reported})
+	return c.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, lifecycle.OutcomeOf(runErr), task.RecoveryUsage{Tokens: tokens, Model: model, Reported: record.Usage != nil && record.Usage.Reported})
 }
 
 // retainedChatRecord is the attempt a retained chat resumes, once it is

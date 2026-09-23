@@ -1,12 +1,11 @@
 package agentexec
 
 import (
-	"context"
 	"errors"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -32,14 +31,9 @@ func SettleBudget(budget Budget, record attempt.Record, cause error) error {
 	if !record.State.Terminal() || record.Unsettled {
 		return errors.New("execution has no durable settlement for accounting")
 	}
-	outcome := task.OutcomeOK
-	if record.State != attempt.Bound || cause != nil {
+	outcome := lifecycle.OutcomeOf(cause)
+	if outcome == task.OutcomeOK && record.State != attempt.Bound {
 		outcome = task.OutcomeError
-		if errors.Is(cause, context.DeadlineExceeded) {
-			outcome = task.OutcomeTimeout
-		} else if errors.Is(cause, context.Canceled) || errors.Is(cause, harness.ErrTurnCanceled) {
-			outcome = task.OutcomeCancelled
-		}
 	}
 	return exact.SettleAttempt(record, outcome)
 }
