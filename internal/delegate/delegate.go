@@ -710,6 +710,10 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 
 	at := harness.Placement{Node: candidate.Node, Harness: candidate.Harness}
+	canonicalRegion, err := s.homeRegion(ctx, parent.ProjectID)
+	if err != nil {
+		return result, err
+	}
 	accountingTask, err := s.tasks.Begin(child.ID, candidate.Agent.ID, orHub(candidate.Node, s.node), "")
 	if err != nil {
 		return result, err
@@ -741,7 +745,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Spec: attempt.Spec{Execution: execution.Token(ctx),
 			ID: attemptID, TaskID: child.ID, TurnID: turnID, Kind: attempt.KindDelegate,
 			Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
-			Region: candidate.Region, CanonicalRegion: s.homeRegion(ctx, parent.ProjectID),
+			Region: candidate.Region, CanonicalRegion: canonicalRegion,
 			Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy, Requires: req.Requires,
 		},
 		Lost: func() {
@@ -1353,16 +1357,20 @@ func orHub(node, hub string) string {
 	return node
 }
 
-// homeRegion is the region of the project's canonical workspace.
-func (s *Service) homeRegion(ctx context.Context, projectID string) string {
+// homeRegion is the region of the project's canonical workspace; a project
+// that does not exist has none.
+func (s *Service) homeRegion(ctx context.Context, projectID string) (string, error) {
 	if s.artifacts == nil || s.roster == nil {
-		return ""
+		return "", nil
 	}
 	p, ok, err := s.artifacts.Project(ctx, projectID)
-	if err != nil || !ok {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("home region of project %s: %w", projectID, err)
 	}
-	return s.roster.RegionOf(p.Home.Node)
+	if !ok {
+		return "", nil
+	}
+	return s.roster.RegionOf(p.Home.Node), nil
 }
 
 // Fleet renders the roster for an agent: one line per other agent, with
