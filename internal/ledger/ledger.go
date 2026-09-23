@@ -997,9 +997,21 @@ type NamedRef struct {
 
 // Name reads a named ref.
 func (l *Ledger) Name(ctx context.Context, name string) (NamedRef, bool, error) {
+	return scanName(l.db.QueryRowContext(ctx, nameSQL, name), name)
+}
+
+// Name reads a named ref inside the transaction, so a write decided on it
+// cannot be separated from what it read.
+func (t *Tx) Name(name string) (NamedRef, bool, error) {
+	return scanName(t.tx.QueryRowContext(t.ctx, nameSQL, name), name)
+}
+
+const nameSQL = `SELECT version, artifact, updated_at FROM names WHERE name = ?`
+
+func scanName(row interface{ Scan(...any) error }, name string) (NamedRef, bool, error) {
 	var ref NamedRef
 	var at string
-	err := l.db.QueryRowContext(ctx, `SELECT version, artifact, updated_at FROM names WHERE name = ?`, name).Scan(&ref.Version, &ref.Artifact, &at)
+	err := row.Scan(&ref.Version, &ref.Artifact, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return NamedRef{}, false, nil
 	}

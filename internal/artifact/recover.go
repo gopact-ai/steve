@@ -306,7 +306,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	// repositories the canonical workspace has, and it is the canonical a
 	// conflict is blocked on — the interrupted round's own writes included,
 	// so those turning up in a later snapshot do not start it again.
-	_, _, nested, err := s.snapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before recovering "+short(land.Artifact))
+	onto, _, nested, err := s.snapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before recovering "+short(land.Artifact))
 	if err != nil {
 		return land, fmt.Errorf("landing %s: snapshot before recovery: %w", land.ID, err)
 	}
@@ -339,16 +339,17 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			return land, err
 		}
 	}
-	current, _, _ := s.ledger.Name(ctx, CanonicalRef(p.ID))
-	land.State = LandCommitted
-	land.EndedAt = s.now().UTC()
+	// The recovery wrote relative to its own snapshot, where the canonical
+	// name was left; a name moved from there meanwhile is a commit conflict.
+	// Any other failure leaves the landing recovery-pending for a retry.
+	committed := land
+	committed.State = LandCommitted
+	committed.EndedAt = s.now().UTC()
 	_, err = s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", landingFence(ctx, []ledger.Lease{lease}),
 		map[string]any{"paths": land.Paths, "rewritten": stale, "round": land.Round},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
-			if current.Artifact != land.Merged {
-				if _, err := tx.CompareAndSetName(CanonicalRef(p.ID), current.Version, land.Merged); err != nil {
-					return err
-				}
+			if err := moveCanonical(tx, p.ID, onto.ID, land.Merged); err != nil {
+				return err
 			}
 			// The result has landed now. A queue entry for it — the pass
 			// that started this landing stopped at recovery-pending and
@@ -356,13 +357,16 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			if _, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id = ?`, pendingKind, p.ID+"/"+land.Artifact); err != nil {
 				return err
 			}
-			return tx.SetData(op, land)
+			return tx.SetData(op, committed)
 		})
 	if err != nil {
-		land.State = LandRecoveryPending
+		if !errors.Is(err, ledger.ErrConflict) {
+			return land, fmt.Errorf("landing %s: commit recovery: %w", land.ID, err)
+		}
 		s.failed(ctx, &land, LandRecoveryPending, LandCommitConflict, err.Error(), land.Paths)
 		return land, nil
 	}
+	land = committed
 	if _, err := s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact) + " (recovered)", Canonical: true}); err != nil {
 		return land, err
 	}

@@ -24,7 +24,7 @@ import (
 //	locked   → merge-conflicted     (both sides changed the same paths)
 //	locked   → apply-conflicted     (paths fall inside a nested repository)
 //	applying → apply-conflicted     (a path changed under the WAL)
-//	merged   → commit-conflicted    (the canonical name moved)
+//	applying → commit-conflicted    (the canonical name moved off the snapshot merged onto)
 //
 // A landing's record is opened once the canonical lock is held: a lock
 // someone else holds is contention, returned as ledger.ErrHeld, and leaves
@@ -584,29 +584,51 @@ func landPathEffect(land Landing, path string) ledger.EffectID {
 	return ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}
 }
 
-// commitLanding moves the canonical name to the merged snapshot in the
-// same transaction as the committed state, fenced on the lock, then signs
-// for the merged snapshot as the project's new canonical. A name that
-// moved underneath is a commit conflict.
+// commitLanding moves the canonical name from the snapshot the landing
+// merged onto to the merged snapshot, in the same transaction as the
+// committed state, fenced on the lock, then signs for the merged snapshot
+// as the project's new canonical. A name that moved underneath is a commit
+// conflict. Any other failure leaves the written landing applying, for
+// recovery to commit once its lock is gone.
 func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Landing) error {
-	current, _, _ := s.ledger.Name(ctx, CanonicalRef(p.ID))
-	land.State = LandCommitted
-	land.EndedAt = s.now().UTC()
+	committed := *land
+	committed.State = LandCommitted
+	committed.EndedAt = s.now().UTC()
 	_, err := s.ledger.Transition(ctx, land.ID, LandApplying, LandCommitted, land.By, landingFence(ctx, []ledger.Lease{*land.Lease}), map[string]any{"paths": land.Paths},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
-			if _, err := tx.CompareAndSetName(CanonicalRef(p.ID), current.Version, land.Merged); err != nil {
+			if err := moveCanonical(tx, p.ID, land.Now, land.Merged); err != nil {
 				return err
 			}
-			return tx.SetData(op, *land)
+			return tx.SetData(op, committed)
 		})
 	if err != nil {
 		if errors.Is(err, ledger.ErrConflict) {
 			s.failed(ctx, land, LandApplying, LandCommitConflict, err.Error(), land.Paths)
 			return Conflict{State: LandCommitConflict, Paths: land.Paths}
 		}
-		return err
+		return fmt.Errorf("landing %s: commit: %w", land.ID, err)
 	}
+	*land = committed
 	_, err = s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact), Canonical: true})
+	return err
+}
+
+// moveCanonical moves the project's canonical name to merged, inside a
+// landing's commit. onto is the canonical snapshot the landing took under
+// its lock and wrote relative to; the name must still be there. A name
+// found anywhere else was moved by someone else meanwhile: a conflict.
+func moveCanonical(tx *ledger.Tx, projectID, onto, merged string) error {
+	current, _, err := tx.Name(CanonicalRef(projectID))
+	if err != nil {
+		return fmt.Errorf("read canonical of %s: %w", projectID, err)
+	}
+	if current.Artifact != onto {
+		return fmt.Errorf("%w: canonical of %s moved to %s from %s, which the landing wrote onto", ledger.ErrConflict, projectID, short(current.Artifact), short(onto))
+	}
+	if onto == merged {
+		return nil
+	}
+	_, err = tx.CompareAndSetName(CanonicalRef(projectID), current.Version, merged)
 	return err
 }
 
