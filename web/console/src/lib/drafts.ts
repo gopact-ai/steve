@@ -8,7 +8,7 @@ export interface Submission { id?: string; input: string; quotes: QuoteRef[]; re
 // reason: a reload in the middle of an edit must not quietly turn the
 // rewrite into a new message appended under the old one.
 export interface Rewind { reply: string; restore: string }
-interface DraftState { drafts: Record<string, string>; submissions: Record<string, Submission>; quotes: QuoteRef[]; quoteOrder: Record<string, number>; materials: Record<string, DraftMaterial[]>; rewinds: Record<string, Rewind> }
+interface DraftState { drafts: Record<string, string>; submissions: Record<string, Submission>; quotes: QuoteRef[]; quoteOrder: Record<string, string>; materials: Record<string, DraftMaterial[]>; rewinds: Record<string, Rewind> }
 interface StopState { id: string; active: boolean; uncertain?: boolean; error?: string; message?: string }
 // Each conversation's text, attachments, pending submission and rewind, and
 // each carried quote, is stored under its own key (see item-storage.ts).
@@ -34,8 +34,8 @@ function load(): DraftState {
     const quotes = Object.values(stored(keys.quotes, (value) => {
         const entry = value as { quote?: unknown; order?: unknown } | null;
         const [quote] = validQuotes([entry?.quote]);
-        return quote && typeof entry!.order === "number" && Number.isFinite(entry!.order) ? { quote, order: entry!.order } : null;
-    })).sort((a, b) => a.order - b.order || quoteKey(a.quote).localeCompare(quoteKey(b.quote)));
+        return quote && typeof entry!.order === "string" && validPosition.test(entry!.order) ? { quote, order: entry!.order } : null;
+    })).sort((a, b) => a.order < b.order ? -1 : a.order > b.order ? 1 : quoteKey(a.quote).localeCompare(quoteKey(b.quote)));
     return {
         drafts: Object.fromEntries(readItems(keys.drafts)),
         submissions: stored(keys.submissions, (value) => {
@@ -51,16 +51,34 @@ function load(): DraftState {
         }),
     };
 }
+// A quote's position is a base-62 fraction written as its digits after the
+// point, without trailing zeros, so string order is numeric order and there is
+// always room for another position between any two: splitting the same gap
+// again only lengthens the string, it never runs out of precision.
+const positionDigits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const validPosition = /^[0-9A-Za-z]*[1-9A-Za-z]$/;
+// Returns a position after low ("" is the start) and before high (null is the end).
+function positionBetween(low: string, high: string | null): string {
+    if (high !== null) {
+        let shared = 0;
+        while ((low[shared] ?? "0") === high[shared]) shared++;
+        if (shared > 0) return high.slice(0, shared) + positionBetween(low.slice(shared), high.slice(shared));
+    }
+    const from = low ? positionDigits.indexOf(low[0]) : 0, to = high === null ? positionDigits.length : positionDigits.indexOf(high[0]);
+    if (to - from > 1) return positionDigits[Math.round((from + to) / 2)];
+    if (high !== null && high.length > 1) return high[0];
+    return positionDigits[from] + positionBetween(low.slice(1), null);
+}
 // A quote keeps its stored position. One added or moved is placed between
 // its neighbours, so windows adding different quotes never renumber shared ones.
-function orderQuotes(quotes: QuoteRef[], known: Record<string, number>): Record<string, number> {
-    const order: Record<string, number> = {};
-    let previous = -Infinity;
+export function orderQuotes(quotes: QuoteRef[], known: Record<string, string>): Record<string, string> {
+    const order: Record<string, string> = {};
+    let previous = "";
     quotes.forEach((quote, index) => {
         const key = quoteKey(quote), own = Object.hasOwn(known, key) ? known[key] : undefined;
         if (own !== undefined && own > previous) { order[key] = previous = own; return; }
         const next = quotes.slice(index + 1).map((later) => Object.hasOwn(known, quoteKey(later)) ? known[quoteKey(later)] : undefined).find((value) => value !== undefined && value > previous);
-        order[key] = previous = previous === -Infinity ? (next === undefined ? 0 : next - 1) : next === undefined ? previous + 1 : (previous + next) / 2;
+        order[key] = previous = positionBetween(previous, next ?? null);
     });
     return order;
 }
