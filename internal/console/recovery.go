@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -395,7 +396,7 @@ func (r *exchangeRecovery) observe() bool {
 			return true
 		}
 	}
-	return r.consult(blockedBy(err, lookupErr), identity)
+	return r.consult(r.blockedBy(err, lookupErr), identity)
 }
 
 // identity binds the pass's questions to the execution found for the
@@ -463,7 +464,8 @@ func (r *exchangeRecovery) resume(candidate retainedExchange, request turn.Reque
 func (r *exchangeRecovery) relocate(planner relocationDriver, candidate retainedExchange, request turn.Request, identity *questionIdentity, blocked error) (bool, error) {
 	input, images, captureErr := r.s.relocationInput(r.ctx, r.exchange, candidate.ProjectID, request.SenderOpenID)
 	if captureErr != nil {
-		return false, blockedRecovery(captureErr, "恢复上下文需要处理", "已读取原输入与冻结材料。\n\n当前无法完整重建恢复上下文："+captureErr.Error()+"\n\n不会用新文件或猜测替换原材料。\n\n建议恢复原材料后重新检查。", "重新检查")
+		text := r.text()
+		return false, r.blockedRecovery(captureErr, text.T(i18n.RecoveryContextTitle), text.T(i18n.RecoveryContextMessage, captureErr.Error()), i18n.RecoveryRecheck)
 	}
 	request.Relocation, request.Images = input, images
 	plan, planErr := planner.PlanRelocation(r.ctx, candidate.AttemptID, request)
@@ -496,7 +498,8 @@ func (r *exchangeRecovery) relocate(planner relocationDriver, candidate retained
 		r.settle(result, err)
 		return true, nil
 	}
-	return false, blockedRecovery(err, "恢复方案需要重新检查", "已按确认的恢复方案检查执行条件。\n\n本次恢复尚未完成："+err.Error()+"\n\n已保存的原任务和恢复记录仍保留，没有将失败当作完成。\n\n建议重新检查当前执行，或等待原节点恢复。", "重新检查")
+	text := r.text()
+	return false, r.blockedRecovery(err, text.T(i18n.RecoveryRelocationTitle), text.T(i18n.RecoveryRelocationMessage, err.Error()), i18n.RecoveryRecheck)
 }
 
 // approvePlan records the exchange as waiting and puts the relocation plan
@@ -752,18 +755,30 @@ func settles(result turn.Result, err error) bool {
 
 // blockedBy is the block to put to the owner: the recovery's own, or when
 // the execution could not even be found, a generic one over both errors.
-func blockedBy(err, lookupErr error) *agentexec.RecoveryBlocked {
+func (r *exchangeRecovery) blockedBy(err, lookupErr error) *agentexec.RecoveryBlocked {
 	var blocked *agentexec.RecoveryBlocked
 	if errors.As(err, &blocked) {
 		return blocked
 	}
-	return blockedRecovery(errors.Join(lookupErr, err), "原执行需要核实", "已检查这条会话的执行记录。\n\n暂时找不到可以安全接回的原执行或完整结果。\n\n原任务可能仍在节点上运行，重新发送任务可能造成重复操作。\n\n建议检查原机器和执行记录，确认后重新检查；也可以保留任务等待处理。", "重新检查原执行")
+	text := r.text()
+	return r.blockedRecovery(errors.Join(lookupErr, err), text.T(i18n.RecoveryUnverifiedTitle), text.T(i18n.RecoveryUnverifiedMessage), i18n.RecoveryRetry)
 }
 
 // blockedRecovery is a block whose question offers the owner a retry, by
 // the given label, or to wait.
-func blockedRecovery(cause error, title, message, retryLabel string) *agentexec.RecoveryBlocked {
-	return &agentexec.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: retryLabel}, {Value: "wait", Label: "暂时等待", Detail: "保留任务和进度。Steve 会继续自己重连，原节点回来后自动接着跑。"}}}}
+func (r *exchangeRecovery) blockedRecovery(cause error, title, message string, retry i18n.Key) *agentexec.RecoveryBlocked {
+	text := r.text()
+	return &agentexec.RecoveryBlocked{Cause: cause, Question: agentexec.RecoveryQuestion("", title, message,
+		view.Choice{Label: text.T(retry)},
+		view.Choice{Label: text.T(i18n.RecoveryWait), Detail: text.T(i18n.RecoveryWaitReconnect)})}
+}
+
+// text is the catalog of the exchange's language.
+func (r *exchangeRecovery) text() i18n.Catalog {
+	if r.e == nil {
+		return i18n.New(i18n.LocaleZH)
+	}
+	return i18n.New(i18n.FromLang(r.e.Locale))
 }
 
 func isRecoveryBlocked(err error) bool {

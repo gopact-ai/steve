@@ -175,7 +175,7 @@ func (c *Coordinator) relocationPreparation(ctx context.Context, p attempt.Reloc
 			return nil, nil, true, nil
 		}
 		if !attempt.PreparingRelocation(existing) {
-			return nil, nil, false, retainedBlocked("relocation-preparation", "读取此前已确认方案的准备记录", "此前的新执行在发送输入前中断。", "需要核实已创建的原生会话与资源，不能凭重试覆盖它们。", "建议重新核对该准备记录并建立新的具体恢复方案。", nil)
+			return nil, nil, false, c.retainedBlocked("relocation-preparation", "读取此前已确认方案的准备记录", "此前的新执行在发送输入前中断。", "需要核实已创建的原生会话与资源，不能凭重试覆盖它们。", "建议重新核对该准备记录并建立新的具体恢复方案。", nil)
 		}
 		admitted = &existing
 	}
@@ -356,7 +356,7 @@ func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt
 		return nil, r, session, true, err
 	}
 	if err := applyRecoveryPreferences(ctx, runner, r.Preferences); err != nil {
-		return nil, r, session, true, retainedBlocked("relocation-options", "在目标原生会话设置并读回原执行的模型和选项", "目标会话不能按原设置继续任务。", err.Error(), "建议补齐目标Agent支持的模型和选项后重新检查；尚未向它发送原任务。", err)
+		return nil, r, session, true, c.retainedBlocked("relocation-options", "在目标原生会话设置并读回原执行的模型和选项", "目标会话不能按原设置继续任务。", err.Error(), "建议补齐目标Agent支持的模型和选项后重新检查；尚未向它发送原任务。", err)
 	}
 	r, err = c.attempts.Advance(ctx, r.ID, attempt.Running, "relocation", func(next *attempt.Record) {
 		next.Session = runner.ID()

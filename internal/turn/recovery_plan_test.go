@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
@@ -202,17 +203,33 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 // reaches the exchange marked stop-unconfirmed; one the coordinator raised
 // is already the exchange's own and passes through unchanged.
 func TestPlanRecoveryErrorMarksOnlyExecutionQuestionsStopUnconfirmed(t *testing.T) {
+	c, _, _, _, _ := retainedChatFixture(t)
 	execution := agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: "att-1", TaskID: "task-1"}}, "offline", "联系原节点", "原节点暂时离线。", "建议恢复节点后重新检查。", nil)
 	var surfaced *agentexec.RecoveryBlocked
-	err := planRecoveryError(fmt.Errorf("step: %w", execution))
+	err := c.planRecoveryError(fmt.Errorf("step: %w", execution))
 	if !errors.As(err, &surfaced) || !errors.Is(err, harness.ErrStopUnconfirmed) || surfaced.AttemptID != "" || surfaced.Question.RequestID != execution.Question.RequestID {
 		t.Fatalf("execution question surfaced as %#v (%v)", surfaced, err)
 	}
-	if again := planRecoveryError(err); again != err {
+	if again := c.planRecoveryError(err); again != err {
 		t.Fatalf("a surfaced question was wrapped again: %v", again)
 	}
-	own := retainedBlocked("plan-conditions", "检查", "问题", "原因", "建议", errors.New("no machine"))
-	if got := planRecoveryError(fmt.Errorf("plan: %w", own)); got != own || errors.Is(got, harness.ErrStopUnconfirmed) {
+	own := c.retainedBlocked("plan-conditions", "检查", "问题", "原因", "建议", errors.New("no machine"))
+	if got := c.planRecoveryError(fmt.Errorf("plan: %w", own)); got != own || errors.Is(got, harness.ErrStopUnconfirmed) {
 		t.Fatalf("coordinator question changed: %v", got)
+	}
+}
+
+func TestRetainedBlockedAsksInTheCoordinatorLanguage(t *testing.T) {
+	c, _, _, _, _ := retainedChatFixture(t)
+	q := c.localized(i18n.LocaleEN).retainedBlocked("offline", "检查原节点", "问题", "原因", "建议", nil).Question
+	if q.RequestID != "recovery/offline" || q.Title != "Continuing this task needs your decision" || !strings.HasPrefix(q.Message, "Tried: 检查原节点.") {
+		t.Fatalf("question = %+v", q)
+	}
+	if len(q.Choices) != 2 || q.Choices[0].Label != "Recheck the original execution" || q.Choices[1].Label != "Wait for now" {
+		t.Fatalf("choices = %+v", q.Choices)
+	}
+	zh := c.localized(i18n.LocaleZH).retainedBlocked("offline", "检查原节点", "问题", "原因", "建议", nil).Question
+	if zh.Title != "继续任务需要你的处理" || zh.Message != "已尝试：检查原节点。\n\n问题\n\n原因\n\n建议" || zh.Choices[1].Label != "暂时等待" {
+		t.Fatalf("zh question = %+v", zh)
 	}
 }

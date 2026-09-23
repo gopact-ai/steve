@@ -439,3 +439,18 @@ func TestFindRetainedAsksForTheExchangeAndRefusesTwoExecutions(t *testing.T) {
 		t.Fatalf("two executions of one exchange were not refused: %v", err)
 	}
 }
+
+func TestRecoveryQuestionsSpeakTheExchangeLanguage(t *testing.T) {
+	en := &exchangeRecovery{e: &queuedExchange{Locale: "en"}}
+	q := en.blockedBy(errors.New("not found"), nil).Question
+	if q.Kind != "recovery" || q.Title != "The original execution needs verifying" || !strings.HasPrefix(q.Message, "Checked this conversation's execution records.") {
+		t.Fatalf("question = %+v", q)
+	}
+	if len(q.Choices) != 2 || q.Choices[0].Value != "retry" || q.Choices[0].Label != "Recheck the original execution" || q.Choices[1].Label != "Wait for now" {
+		t.Fatalf("choices = %+v", q.Choices)
+	}
+	zh := (&exchangeRecovery{e: &queuedExchange{Locale: "zh"}}).blockedBy(errors.New("not found"), nil).Question
+	if zh.Title != "原执行需要核实" || zh.Choices[0].Label != "重新检查原执行" || zh.Choices[1].Label != "暂时等待" {
+		t.Fatalf("zh question = %+v", zh)
+	}
+}

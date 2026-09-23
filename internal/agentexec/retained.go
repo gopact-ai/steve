@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -32,11 +33,31 @@ type RecoveryBlocked struct {
 func (e *RecoveryBlocked) Error() string            { return e.Question.Message }
 func (e *RecoveryBlocked) Unwrap() error            { return e.Cause }
 func (e *RecoveryBlocked) UnsettledAttempt() string { return e.AttemptID }
+
+// RecoveryQuestion is the question every recovery block asks: check again,
+// as retry describes, or wait with the task and its progress kept.
+func RecoveryQuestion(requestID, title, message string, retry, wait view.Choice) view.Question {
+	retry.Value, wait.Value = "retry", "wait"
+	return view.Question{RequestID: requestID, Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{retry, wait}}
+}
+
+// Blocked is BlockedIn the default language: the execution layer has no
+// request of its own to take one from.
 func Blocked(record attempt.Record, code, attempted, problem, recommendation string, cause error) *RecoveryBlocked {
+	return BlockedIn(i18n.Catalog{}, record, code, attempted, problem, recommendation, cause)
+}
+
+// BlockedIn is the block of an attempt the execution layer could not
+// settle, asked in text's language.
+func BlockedIn(text i18n.Catalog, record attempt.Record, code, attempted, problem, recommendation string, cause error) *RecoveryBlocked {
 	if cause != nil {
-		problem += "\n诊断信息：" + cause.Error()
+		problem += "\n" + text.T(i18n.RecoveryDiagnostics, cause.Error())
 	}
-	return &RecoveryBlocked{AttemptID: record.ID, TaskID: record.TaskID, Cause: cause, Question: view.Question{RequestID: "execution-recovery/" + record.ID + "/" + code, Kind: "recovery", Title: "继续执行需要你的处理", Message: "已尝试：" + attempted + "。\n\n" + problem + "\n\n原执行状态尚未完整确认，不能重新发送原任务。\n\n" + recommendation, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "核对原节点、命令和已保存结果。"}, {Value: "wait", Label: "暂时等待", Detail: "保留当前任务与进度，等条件恢复。"}}}}
+	message := text.T(i18n.RecoveryAttempted, attempted) + "\n\n" + problem + "\n\n" + text.T(i18n.RecoveryStopUnconfirmed) + "\n\n" + recommendation
+	question := RecoveryQuestion("execution-recovery/"+record.ID+"/"+code, text.T(i18n.RecoveryTitleExecution), message,
+		view.Choice{Label: text.T(i18n.RecoveryRetry), Detail: text.T(i18n.RecoveryRetryExecution)},
+		view.Choice{Label: text.T(i18n.RecoveryWait), Detail: text.T(i18n.RecoveryWaitConditions)})
+	return &RecoveryBlocked{AttemptID: record.ID, TaskID: record.TaskID, Cause: cause, Question: question}
 }
 
 type auxiliaryInput struct {

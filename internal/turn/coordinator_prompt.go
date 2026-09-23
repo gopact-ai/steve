@@ -103,7 +103,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			}
 			if accountingErr := t.settleTask(parent, started, finishErr); accountingErr != nil {
 				result = Result{}
-				err = retainedBlocked("accounting", "提交原执行的任务记账", "结果已保留，但记账尚未提交。",
+				err = c.retainedBlocked("accounting", "提交原执行的任务记账", "结果已保留，但记账尚未提交。",
 					accountingErr.Error(), "将重试原结果的记账，不会重新发送原任务。", errors.Join(err, accountingErr))
 			}
 		}()

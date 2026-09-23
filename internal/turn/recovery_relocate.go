@@ -100,7 +100,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 		return RelocationPlan{}, err
 	}
 	if req.Relocation == nil || strings.TrimSpace(req.Relocation.Input) == "" || len(req.Relocation.Input)+len(req.Relocation.History) > 256<<10 {
-		return RelocationPlan{}, retainedBlocked("relocation-context", "读取原输入和同项目会话历史", "恢复上下文不完整或超过安全大小。", "不能把丢失的原输入替换成猜测。", "建议补充原任务上下文后重新检查。", nil)
+		return RelocationPlan{}, c.retainedBlocked("relocation-context", "读取原输入和同项目会话历史", "恢复上下文不完整或超过安全大小。", "不能把丢失的原输入替换成猜测。", "建议补充原任务上下文后重新检查。", nil)
 	}
 	if attempt.PreparingRelocation(r) {
 		p, err := c.attempts.Relocation(ctx, r.Recovery.PlanID)
@@ -114,7 +114,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 	}
 	proof, probeErr := c.inspectRelocation(ctx, r)
 	if proof != nil && proof.Session.Command != nil && (proof.Session.Command.Settled || proof.Session.State == nodewire.SessionRunning) && !proof.Session.ProcessStopped {
-		return RelocationPlan{}, retainedBlocked("still-live", "检查原节点执行状态", "原执行仍然可以接续或已经有结果。", "没有必要创建新的执行。", "建议重新接回原执行。", nil)
+		return RelocationPlan{}, c.retainedBlocked("still-live", "检查原节点执行状态", "原执行仍然可以接续或已经有结果。", "没有必要创建新的执行。", "建议重新接回原执行。", nil)
 	}
 	base := r.Base
 	if r.Result != nil && r.Result.Artifact != "" {
@@ -122,11 +122,11 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 	}
 	manifest, found, err := c.artifacts.Manifest(ctx, base)
 	if err != nil || !found || manifest.Project != r.Project || manifest.Content == nil || !manifest.Content.Recoverable() {
-		return RelocationPlan{}, retainedBlocked("relocation-copy", "检查最近保存的Git快照及独立副本回执", "没有可用于跨节点恢复的完整副本。", "单节点内容、sealed项目或未复制完成的快照不能用于跨节点恢复。", "建议等待原节点恢复或提供完整检查点。", err)
+		return RelocationPlan{}, c.retainedBlocked("relocation-copy", "检查最近保存的Git快照及独立副本回执", "没有可用于跨节点恢复的完整副本。", "单节点内容、sealed项目或未复制完成的快照不能用于跨节点恢复。", "建议等待原节点恢复或提供完整检查点。", err)
 	}
 	repo, err := c.artifacts.Repo(ctx, r.Project)
 	if err != nil || !repo.Has(ctx, base) {
-		return RelocationPlan{}, retainedBlocked("relocation-bytes", "从存活副本校验最近Git快照", "快照的实际内容暂时不可用。", "只有摘要或回执不足以启动执行。", "建议恢复持有完整副本的节点后重试。", err)
+		return RelocationPlan{}, c.retainedBlocked("relocation-bytes", "从存活副本校验最近Git快照", "快照的实际内容暂时不可用。", "只有摘要或回执不足以启动执行。", "建议恢复持有完整副本的节点后重试。", err)
 	}
 	existing, err := c.attempts.RelocationsFor(ctx, r.ID)
 	if err != nil {
@@ -145,7 +145,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 	}
 	selected, candidate, err := c.relocationTarget(ctx, r, "")
 	if err != nil {
-		return RelocationPlan{}, retainedBlocked("relocation-target", "检查其他节点的Agent、模型、网络和数据等级", "目前没有满足原任务条件的替代节点。", err.Error(), "建议在其他节点补齐所需工具与访问权限后重新检查。", err)
+		return RelocationPlan{}, c.retainedBlocked("relocation-target", "检查其他节点的Agent、模型、网络和数据等级", "目前没有满足原任务条件的替代节点。", err.Error(), "建议在其他节点补齐所需工具与访问权限后重新检查。", err)
 	}
 	newID := attempt.NewID()
 	admission, _, err := c.fleet.Admit(ctx, candidate, r.Requires, selected.MCPServers, newID)
@@ -155,11 +155,11 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 		if err != nil {
 			reason = err.Error()
 		}
-		return RelocationPlan{}, retainedBlocked("relocation-admission", "在目标节点重新检查原任务所需能力", "目标节点还不能执行这个任务。", reason, "建议补齐工具、凭据或网络条件后重新检查。", err)
+		return RelocationPlan{}, c.retainedBlocked("relocation-admission", "在目标节点重新检查原任务所需能力", "目标节点还不能执行这个任务。", reason, "建议补齐工具、凭据或网络条件后重新检查。", err)
 	}
 	workspace, err := c.artifacts.Materialize(ctx, project.Request{Project: r.Project, Node: selected.Node, Isolated: true, Base: base, Owner: newID})
 	if err != nil {
-		return RelocationPlan{}, retainedBlocked("relocation-workspace", "从已验证快照准备新的隔离目录", "目标节点的恢复目录准备失败。", err.Error(), "建议检查目标节点的磁盘、Git和数据访问条件后重试。", err)
+		return RelocationPlan{}, c.retainedBlocked("relocation-workspace", "从已验证快照准备新的隔离目录", "目标节点的恢复目录准备失败。", err.Error(), "建议检查目标节点的磁盘、Git和数据访问条件后重试。", err)
 	}
 	automatic := undispatchedStopped(r, proof, attempt.RetainedSessionID(tracked.Channel, tracked.ID, r.Agent))
 	var unknown []checkpoint.ExternalAction
@@ -344,7 +344,7 @@ func (c *Coordinator) verifyRelocationWorkspace(ctx context.Context, p attempt.R
 		if invalidateErr := c.attempts.InvalidateRelocation(ctx, p.ID, "prepared workspace changed before execution"); invalidateErr != nil {
 			slog.Error(fmt.Sprintf("turn: invalidate relocation plan %s: %v", p.ID, invalidateErr), "plan", p.ID, "attempt", sourceID, "node", p.Target.Node)
 		}
-		return retainedBlocked("prepared-workspace", "重新校验目标恢复目录", "目标目录已缺失或与方案快照不一致。", "不能在空目录或已变更的文件上执行已批准的方案。", "建议重新准备一份完整快照方案；已有变更不会被覆盖。", err)
+		return c.retainedBlocked("prepared-workspace", "重新校验目标恢复目录", "目标目录已缺失或与方案快照不一致。", "不能在空目录或已变更的文件上执行已批准的方案。", "建议重新准备一份完整快照方案；已有变更不会被覆盖。", err)
 	}
 	return nil
 }
