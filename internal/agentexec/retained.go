@@ -24,6 +24,11 @@ import (
 // is a platform diagnostic, never an answer to a native permission request.
 // The execution layer names the attempt and task it could not settle; a
 // question raised above it, for a whole exchange, names neither.
+//
+// Transports (gateway, console) match any *RecoveryBlocked. An execution
+// layer block reaches them only through turn's planRecoveryError, which
+// drops its AttemptID and TaskID and joins harness.ErrStopUnconfirmed to
+// its cause; a block that still names an attempt must not leave turn.
 type RecoveryBlocked struct {
 	AttemptID, TaskID string
 	Question          view.Question

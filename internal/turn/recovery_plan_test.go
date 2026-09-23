@@ -207,7 +207,7 @@ func TestPlanRecoveryErrorMarksOnlyExecutionQuestionsStopUnconfirmed(t *testing.
 	execution := agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: "att-1", TaskID: "task-1"}}, "offline", "联系原节点", "原节点暂时离线。", "建议恢复节点后重新检查。", nil)
 	var surfaced *agentexec.RecoveryBlocked
 	err := c.planRecoveryError(fmt.Errorf("step: %w", execution))
-	if !errors.As(err, &surfaced) || !errors.Is(err, harness.ErrStopUnconfirmed) || surfaced.AttemptID != "" || surfaced.Question.RequestID != execution.Question.RequestID {
+	if !errors.As(err, &surfaced) || !errors.Is(err, harness.ErrStopUnconfirmed) || surfaced.AttemptID != "" || surfaced.TaskID != "" || surfaced.Question.RequestID != execution.Question.RequestID {
 		t.Fatalf("execution question surfaced as %#v (%v)", surfaced, err)
 	}
 	if again := c.planRecoveryError(err); again != err {

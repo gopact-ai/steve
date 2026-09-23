@@ -755,6 +755,9 @@ func settles(result turn.Result, err error) bool {
 
 // blockedBy is the block to put to the owner: the recovery's own, or when
 // the execution could not even be found, a generic one over both errors.
+// An execution layer block reaches the console only through turn's
+// planRecoveryError, stripped of its attempt and marked ErrStopUnconfirmed
+// (see agentexec.RecoveryBlocked), so any block found here is the owner's.
 func (r *exchangeRecovery) blockedBy(err, lookupErr error) *agentexec.RecoveryBlocked {
 	var blocked *agentexec.RecoveryBlocked
 	if errors.As(err, &blocked) {
@@ -781,6 +784,7 @@ func (r *exchangeRecovery) text() i18n.Catalog {
 	return i18n.New(i18n.FromLang(r.e.Locale))
 }
 
+// isRecoveryBlocked holds under the same convention as blockedBy.
 func isRecoveryBlocked(err error) bool {
 	var blocked *agentexec.RecoveryBlocked
 	return errors.As(err, &blocked)

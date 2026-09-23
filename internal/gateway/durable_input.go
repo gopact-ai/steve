@@ -117,6 +117,9 @@ func (g *Gateway) dispatchInput(ctx context.Context, book *ledger.Ledger, key st
 		result, runErr := g.processor.Handle(ctx, request)
 		runErr = errors.Join(runErr, receiptErr)
 		output := recoveredResult(result, runErr)
+		// An execution layer block arrives here only through turn's
+		// planRecoveryError, stripped of its attempt and marked
+		// ErrStopUnconfirmed (see agentexec.RecoveryBlocked).
 		var blocked *agentexec.RecoveryBlocked
 		output.Recover = receiptErr != nil || result.Attempt != admitted ||
 			admitted != "" && (errors.As(runErr, &blocked) || errors.Is(runErr, harness.ErrStopUnconfirmed))
