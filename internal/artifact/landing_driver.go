@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -88,8 +89,8 @@ func landingHolder(ctx context.Context, fallback string) string {
 // as the landing works: the landing driver renews it alongside its own
 // lease when there is one, and a landing without a driver — a direct
 // Land, a recovery run by boot or the periodic retry — renews it itself.
-// A renewal that fails stops renewing; the next fenced transition is what
-// refuses the lost lock. The returned func stops renewing and waits.
+// A lock found stale stops renewing, and the next fenced transition is
+// what refuses it; any other failure is retried on the next tick. The returned func stops renewing and waits.
 func (s *Store) keepCanonical(ctx context.Context, lease ledger.Lease) func() {
 	if d, ok := ctx.Value(landingDriverKey{}).(*landingDriver); ok {
 		d.mu.Lock()
@@ -113,10 +114,16 @@ func (s *Store) keepCanonical(ctx context.Context, lease ledger.Lease) func() {
 				return
 			case <-tick:
 				if _, err := s.ledger.RenewAny(lifetime, lease, landTTL); err != nil {
-					if lifetime.Err() == nil {
-						slog.Warn(fmt.Sprintf("artifact: canonical lock %s lost while landing: %v", lease.Key, err), "lease", lease.Key, "holder", lease.Holder)
+					if lifetime.Err() != nil {
+						return
 					}
-					return
+					if errors.Is(err, ledger.ErrStale) {
+						slog.Warn(fmt.Sprintf("artifact: canonical lock %s lost while landing: %v", lease.Key, err), "lease", lease.Key, "holder", lease.Holder)
+						return
+					}
+					// A busy database or an unreachable issuer may pass
+					// before the lease runs out; the next tick tries again.
+					slog.Warn(fmt.Sprintf("artifact: renew canonical lock %s: %v", lease.Key, err), "lease", lease.Key, "holder", lease.Holder)
 				}
 			}
 		}
@@ -136,4 +143,14 @@ func landingApplyContext(ctx context.Context) (context.Context, context.CancelFu
 		return apply, func() { stop(); cancel() }
 	}
 	return apply, cancel
+}
+
+// applying marks a landing as being applied by this process until the
+// returned func is called. Its lock may be lost while its apply still
+// writes — a lender let go, a renewal failed — and only this process
+// knows the writer is still there (see RetryRecoveries).
+func (s *Store) applying(id string) func() {
+	token := new(int)
+	s.inApply.Store(id, token)
+	return func() { s.inApply.CompareAndDelete(id, token) }
 }

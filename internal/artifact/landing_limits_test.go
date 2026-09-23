@@ -170,3 +170,28 @@ func TestRecoveredQueuedResultLeavesTheQueue(t *testing.T) {
 		t.Fatalf("the recovered result landed again: %+v err=%v", again, err)
 	}
 }
+
+// A landing this process is still applying may have lost its lock — a
+// lender released it, renewal failed — but its apply is still writing.
+// The retry must not start a second writer on the same directory.
+func TestTheRetryLeavesALandingThisProcessIsApplying(t *testing.T) {
+	ctx := t.Context()
+	canonical := t.TempDir()
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	land, _ := orphanApplying(t, store, p, canonical, false)
+	done := store.applying(land.ID)
+	if retried, err := store.RetryRecoveries(ctx); err != nil || len(retried) != 0 {
+		t.Fatalf("retry took over a landing still applying here: %+v err=%v", retried, err)
+	}
+	if state := landingState(t, store, land.ID); state != LandApplying {
+		t.Fatalf("state = %s, want %s", state, LandApplying)
+	}
+	// New landings are still held off the workspace it is writing.
+	if _, err := store.Land(ctx, p, land.Artifact, "again"); !errors.Is(err, ErrRecoveryPending) {
+		t.Fatalf("land over a landing still applying = %v, want ErrRecoveryPending", err)
+	}
+	done()
+	if retried, err := store.RetryRecoveries(ctx); err != nil || len(retried) != 1 || retried[0].State != LandCommitted {
+		t.Fatalf("retry once the apply ended = %+v err=%v", retried, err)
+	}
+}

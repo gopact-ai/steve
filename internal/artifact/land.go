@@ -202,6 +202,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		return land, err
 	}
 	land.Round++
+	defer s.applying(land.ID)()
 	if err := s.move(ctx, &land, LandMerged, LandApplying, nil); err != nil {
 		return land, err
 	}
@@ -311,12 +312,12 @@ func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactI
 // lock. It is asked under the canonical lock, which a recovery in progress
 // holds.
 func (s *Store) checkNoRecoveryPending(ctx context.Context, p project.Project, self string) error {
-	pending, err := s.awaitingRecovery(ctx)
+	pending, err := s.awaitingRecovery(ctx, p.ID)
 	if err != nil {
 		return err
 	}
 	for _, other := range pending {
-		if other.Project != p.ID || other.ID == self {
+		if other.ID == self {
 			continue
 		}
 		return fmt.Errorf("%w: landing %s into %s", ErrRecoveryPending, other.ID, p.ID)
@@ -330,8 +331,9 @@ func (s *Store) checkNoRecoveryPending(ctx context.Context, p project.Project, s
 // it for recovery was refused — the lock was lost underneath it — and,
 // unlisted, it would neither hold new landings off the half-written
 // workspace nor ever be retried. One whose lock cannot be checked is not
-// taken for dead.
-func (s *Store) awaitingRecovery(ctx context.Context) ([]Landing, error) {
+// taken for dead. projectID narrows the list to one project ("" is all)
+// before any lock is checked.
+func (s *Store) awaitingRecovery(ctx context.Context, projectID string) ([]Landing, error) {
 	var out []Landing
 	for _, state := range []string{LandRecoveryPending, LandApplying} {
 		ops, err := s.ledger.Operations(ctx, landKind, state)
@@ -344,6 +346,9 @@ func (s *Store) awaitingRecovery(ctx context.Context) ([]Landing, error) {
 				continue
 			}
 			land.ID, land.State = op.ID, op.State
+			if projectID != "" && land.Project != projectID {
+				continue
+			}
 			if state == LandApplying && land.Lease != nil {
 				if err := s.ledger.CheckAny(ctx, *land.Lease); !errors.Is(err, ledger.ErrStale) {
 					continue

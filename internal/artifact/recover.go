@@ -141,12 +141,18 @@ func (s *Store) noteRecoveryLeft(land Landing, err error) {
 // failure is logged and retried next pass. What was recovered — to
 // committed or to a conflict — is returned.
 func (s *Store) RetryRecoveries(ctx context.Context) ([]Landing, error) {
-	pending, err := s.awaitingRecovery(ctx)
+	pending, err := s.awaitingRecovery(ctx, "")
 	if err != nil {
 		return nil, err
 	}
 	var out []Landing
 	for _, land := range pending {
+		// Still being applied here: its lock is gone, but its writer is
+		// not. It stays awaiting recovery, holding new landings off, and
+		// is taken over once that apply has returned.
+		if _, busy := s.inApply.Load(land.ID); busy {
+			continue
+		}
 		if _, _, err := s.projects.Get(ctx, land.Project); errors.Is(err, project.ErrNotOwner) {
 			continue
 		} else if err != nil {
