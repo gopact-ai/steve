@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/view"
@@ -174,7 +175,12 @@ func (s *Service) nameAsker(ctx context.Context, q *consoleapi.PendingQuestion) 
 	q.Agent, q.Node = agentID, node
 }
 
-func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestion) (consoleapi.PendingQuestion, error) {
+// awaitQuestion puts q before the owner and waits for the answer. A
+// question bound to a turn expires with the turn's patience; one whose
+// asker outlives any turn (untilAnswered) waits until answered or until
+// the asker itself stops. Either way the wait holds the asker's silence
+// clock: a person thinking is not the agent hanging.
+func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestion, untilAnswered bool) (consoleapi.PendingQuestion, error) {
 	if err := ctx.Err(); err != nil {
 		return q, err
 	}
@@ -196,11 +202,15 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 			q.Project = current.Project.ID
 		}
 	}
+	// Hold before anything slow: saving the question is not the agent's
+	// silence either.
+	release := idle.Hold(ctx)
+	defer release()
 	s.nameAsker(ctx, &q)
 	q.ID, q.State, q.Principal = "q"+strings.TrimPrefix(newReplyID(), "r"), "pending", s.owner
 	q.CreatedAt = time.Now().UTC()
 	q.UpdatedAt, q.Deadline = q.CreatedAt, q.CreatedAt.Add(s.questionTimeout)
-	if q.Kind == "recovery" || strings.HasPrefix(q.SessionID, "ns_") {
+	if untilAnswered || q.Kind == "recovery" || strings.HasPrefix(q.SessionID, "ns_") {
 		q.Deadline = time.Time{}
 	}
 	waiter := make(chan struct{})
@@ -276,7 +286,7 @@ func sameNodeQuestion(a, b consoleapi.PendingQuestion) bool {
 		a.ToolCallID == b.ToolCallID && slices.Equal(a.Options, b.Options)
 }
 
-func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQuestion, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQuestion, ask permission.Ask, untilAnswered bool) (acp.RequestPermissionOutcome, error) {
 	base.Kind, base.Title, base.Message, base.Required = "permission", ask.ToolName, ask.Reason, true
 	base.AllowFreeText = false
 	base.SessionID, base.Generation, base.ToolCallID = ask.SessionID, ask.Generation, ask.ToolCallID
@@ -284,7 +294,7 @@ func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQues
 	for _, option := range ask.Options {
 		base.Options = append(base.Options, consoleapi.QuestionOption{ID: string(option.OptionID), Label: option.Name, Kind: string(option.Kind)})
 	}
-	q, err := s.awaitQuestion(ctx, base)
+	q, err := s.awaitQuestion(ctx, base, untilAnswered)
 	if err != nil {
 		return permission.Choose(false, ask.Options), err
 	}
@@ -294,7 +304,7 @@ func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQues
 	return permission.Choose(false, ask.Options), nil
 }
 
-func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
+func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, question view.Question, untilAnswered bool) (view.Answer, error) {
 	base.Kind, base.Title, base.Message, base.Required = "question", question.Title, question.Message, question.Required
 	base.SessionID, base.Generation = question.SessionID, question.Generation
 	base.RequestID = question.RequestID
@@ -305,7 +315,7 @@ func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, 
 	for _, option := range question.Choices {
 		base.Options = append(base.Options, consoleapi.QuestionOption{ID: option.Value, Label: option.Label, Description: option.Detail})
 	}
-	q, err := s.awaitQuestion(ctx, base)
+	q, err := s.awaitQuestion(ctx, base, untilAnswered)
 	if err != nil {
 		return view.Answer{}, err
 	}
@@ -330,4 +340,9 @@ func (s *Service) VerbsFor(ctx context.Context) []consoleapi.Verb {
 		return out
 	}
 	return s.Verbs()
+}
+
+// turnQuestion asks on behalf of a turn: the question expires with it.
+func (s *Service) turnQuestion(ctx context.Context, base consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
+	return s.askUser(ctx, base, question, false)
 }

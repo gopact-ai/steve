@@ -717,10 +717,10 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 			stream.Bind(taskID)
 		},
 		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
-			return s.askPermission(ctx, identity.binding(), ask)
+			return s.askPermission(ctx, identity.binding(), ask, false)
 		},
 		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
-			return s.askUser(ctx, identity.binding(), q)
+			return s.askUser(ctx, identity.binding(), q, false)
 		},
 		OnProgress: stream.Update,
 		OnPhase:    stream.Phase,

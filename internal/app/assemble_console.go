@@ -67,10 +67,10 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	cons.SetRecoveryQuiet(time.Duration(cfg.Gateway.RecoveryQuiet))
 	if environment != nil {
 		cons.EnableRetainedRecovery(ctx)
-		ask, askUser := nativePlanQuestions(cons, tasks, attempts)
-		stepRunner.SetQuestionHandlers(ask, askUser)
-		auxiliary.SetQuestionHandlers(ask, askUser)
 	}
+	ask, askUser := planQuestions(cons, tasks, attempts)
+	stepRunner.SetQuestionHandlers(ask, askUser)
+	auxiliary.SetQuestionHandlers(ask, askUser)
 	view.SetInteractions(cons)
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)

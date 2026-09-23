@@ -101,3 +101,59 @@ func TestPauseDoesNotSuspendHardDeadline(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 }
+
+// A question waiting on a person is not silence. The hold is found
+// through any context derived from the clock, and a connection coming
+// back does not restart a clock that a pending question still holds.
+func TestHoldSuspendsSilenceAcrossPauseAndResume(t *testing.T) {
+	ctx, stop, _ := WithTimeout(context.Background(), 40*time.Millisecond)
+	defer stop()
+	derived, cancel := context.WithCancel(ctx)
+	defer cancel()
+	release := Hold(derived)
+	ctx.Pause()
+	ctx.Resume()
+	time.Sleep(90 * time.Millisecond)
+	if ctx.Err() != nil {
+		t.Fatalf("held clock expired: %v", ctx.Err())
+	}
+	released := time.Now()
+	release()
+	// The answer is a sign of life: the whole silence starts again.
+	select {
+	case <-ctx.Done():
+		if elapsed := time.Since(released); elapsed < 40*time.Millisecond {
+			t.Fatalf("released clock expired after %v, before a full silence", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("released clock never expired")
+	}
+}
+
+func TestNestedHoldsAndPauseKeepClockStopped(t *testing.T) {
+	ctx, stop, _ := WithTimeout(context.Background(), 30*time.Millisecond)
+	defer stop()
+	first, second := Hold(ctx), Hold(ctx)
+	first()
+	first() // Releasing twice must not drop the other holder's hold.
+	time.Sleep(60 * time.Millisecond)
+	if ctx.Err() != nil {
+		t.Fatal("second hold was dropped by the first release")
+	}
+	ctx.Pause()
+	second()
+	time.Sleep(60 * time.Millisecond)
+	if ctx.Err() != nil {
+		t.Fatal("releasing a hold restarted a paused clock")
+	}
+	ctx.Resume()
+	select {
+	case <-ctx.Done():
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("resumed clock never expired")
+	}
+}
+
+func TestHoldWithoutClockIsHarmless(t *testing.T) {
+	Hold(context.Background())()
+}

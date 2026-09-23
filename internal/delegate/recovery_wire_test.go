@@ -132,7 +132,7 @@ func TestRetainedDelegateAcrossRealNodeTransportKeepsNativeQuestionAndInput(t *t
 		_ = registry.Shutdown(ctx)
 	})
 	asked := make(chan string, 1)
-	w.service.SetRetainedQuestionHandlers(nil, func(ctx context.Context, binding QuestionBinding, q view.Question) (view.Answer, error) {
+	w.service.SetQuestionHandlers(nil, func(ctx context.Context, binding QuestionBinding, q view.Question) (view.Answer, error) {
 		native, session, id, ok := harness.NativeQuestionSource(ctx)
 		if !ok || native.AttemptID != binding.Attempt || session != q.SessionID || id != q.RequestID {
 			t.Error("native question source was not preserved")
@@ -177,7 +177,7 @@ func TestRetainedDelegateAcrossRealNodeTransportKeepsNativeQuestionAndInput(t *t
 	bindRetainedTestManager(t, next, w, authority)
 	t.Cleanup(next.Stop)
 	service := recoveredDelegateService(t, w, next)
-	service.SetRetainedQuestionHandlers(nil, func(ctx context.Context, binding QuestionBinding, q view.Question) (view.Answer, error) {
+	service.SetQuestionHandlers(nil, func(ctx context.Context, binding QuestionBinding, q view.Question) (view.Answer, error) {
 		native, session, id, ok := harness.NativeQuestionSource(ctx)
 		if !ok || native.TaskID != child.TaskID || session != q.SessionID || id != originalQuestion || q.RequestID != originalQuestion || binding.ParentTask != parent.ID {
 			t.Error("reattachment changed the original child question")

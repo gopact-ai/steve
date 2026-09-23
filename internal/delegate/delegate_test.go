@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -42,6 +43,9 @@ type fakeSessions struct {
 	// run, when set, is the child's whole turn: it sees the context and
 	// may report progress, the way a real session does.
 	run func(ctx context.Context, progress func(view.Progress)) (string, error)
+	// turn, when set, is the child's turn through the entry that carries
+	// the owner's question handlers.
+	turn func(ctx context.Context, ask permission.AskFunc, askUser acphost.AskUserFunc) (string, error)
 }
 
 func (f *fakeSessions) OpenSession(_ context.Context, at harness.Placement, _, _ string, servers []acp.MCPServer) (harness.Runner, error) {
@@ -71,6 +75,19 @@ func (r *fakeRunner) Prompt(ctx context.Context, text string, progress func(view
 		return out, nil, err
 	}
 	return "done\nREF: git deadbeef — the result", nil, nil
+}
+func (r *fakeRunner) PromptTurn(ctx context.Context, text string, _ []harness.Media, ask permission.AskFunc, askUser acphost.AskUserFunc, progress func(view.Progress)) (string, []string, error) {
+	r.owner.mu.Lock()
+	turn := r.owner.turn
+	r.owner.mu.Unlock()
+	if turn == nil {
+		return r.Prompt(ctx, text, progress)
+	}
+	r.owner.mu.Lock()
+	r.owner.prompts = append(r.owner.prompts, text)
+	r.owner.mu.Unlock()
+	out, err := turn(ctx, ask, askUser)
+	return out, nil, err
 }
 func (r *fakeRunner) Cancel(context.Context) error { return nil }
 func (r *fakeRunner) Abort()                       {}

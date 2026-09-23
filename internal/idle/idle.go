@@ -24,7 +24,61 @@ type idleContext struct {
 	remaining time.Duration
 	due       time.Time
 	paused    bool
+	holds     int
 	epoch     uint64
+}
+
+type clockKey struct{}
+
+// Value lets Hold find the clock through any context derived from it.
+func (c *idleContext) Value(key any) any {
+	if key == (clockKey{}) {
+		return c
+	}
+	return c.Context.Value(key)
+}
+
+// Hold stops the silence clock ctx derives from while the caller waits on
+// something that is not the agent — a person answering a question. Holds
+// nest and are independent of Pause: a connection coming back does not
+// restart a clock a pending question still holds. Every release counts as
+// a sign of life: the clock runs a whole silence again once nothing holds it. Without a clock in ctx, Hold does nothing.
+func Hold(ctx context.Context) (release func()) {
+	c, _ := ctx.Value(clockKey{}).(*idleContext)
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	if c.err == nil {
+		c.stopLocked()
+	}
+	c.holds++
+	c.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.holds--
+			c.remaining = c.d
+			if c.err == nil && c.holds == 0 && !c.paused {
+				c.arm(c.remaining)
+			}
+		})
+	}
+}
+
+// Detach keeps ctx's values but not its silence clock. Work that outlives
+// the context it came from must not hold a clock it no longer runs under.
+func Detach(ctx context.Context) context.Context { return unclocked{ctx} }
+
+type unclocked struct{ context.Context }
+
+func (u unclocked) Value(key any) any {
+	if key == (clockKey{}) {
+		return nil
+	}
+	return u.Context.Value(key)
 }
 
 // Clock can suspend silence accounting without suspending a parent's hard
@@ -71,7 +125,7 @@ func (c *idleContext) touch() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.err == nil {
-		if c.paused {
+		if c.stopped() {
 			c.remaining = c.d
 		} else {
 			c.arm(c.d)
@@ -91,7 +145,7 @@ func (c *idleContext) arm(d time.Duration) {
 	c.timer = time.AfterFunc(d, func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.err == nil && !c.paused && c.epoch == epoch {
+		if c.err == nil && !c.stopped() && c.epoch == epoch {
 			c.finishLocked(context.DeadlineExceeded)
 		}
 	})
@@ -103,8 +157,19 @@ func (c *idleContext) Pause() {
 	if c.err != nil || c.paused {
 		return
 	}
-	c.remaining = max(0, time.Until(c.due))
+	c.stopLocked()
 	c.paused = true
+}
+
+func (c *idleContext) stopped() bool { return c.paused || c.holds > 0 }
+
+// stopLocked saves what is left of the silence the first time the clock
+// stops; a clock already stopped keeps what it saved.
+func (c *idleContext) stopLocked() {
+	if c.stopped() {
+		return
+	}
+	c.remaining = max(0, time.Until(c.due))
 	c.epoch++
 	c.timer.Stop()
 }
@@ -116,7 +181,9 @@ func (c *idleContext) Resume() {
 		return
 	}
 	c.paused = false
-	c.arm(c.remaining)
+	if c.holds == 0 {
+		c.arm(c.remaining)
+	}
 }
 
 func (c *idleContext) finish(err error) {

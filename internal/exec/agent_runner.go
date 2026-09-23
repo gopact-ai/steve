@@ -139,7 +139,9 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 	a.mu.Lock()
 	ask, askUser := a.ask, a.askUser
 	a.mu.Unlock()
-	if turn, ok := session.(harness.TurnRunner); ok && strings.HasPrefix(session.ID(), "ns_") {
+	// A node-owned step always takes the turn entry; any step does when
+	// someone can answer it, so its questions are never dropped.
+	if turn, ok := session.(harness.TurnRunner); ok && (strings.HasPrefix(session.ID(), "ns_") || ask != nil || askUser != nil) {
 		answer, _, err = turn.PromptTurn(ctx, prompt, nil, ask, askUser, spent.wrap(a.progress(ctx, req), req.Agent))
 	} else {
 		answer, _, err = session.Prompt(ctx, prompt, spent.wrap(a.progress(ctx, req), req.Agent))

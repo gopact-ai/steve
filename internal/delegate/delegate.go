@@ -110,15 +110,15 @@ type Service struct {
 	replaySafeDelivery func(task.Task) bool
 	deliveryReceipt    func(task.Task, string) (bool, error)
 
-	mu                 sync.Mutex
-	pending            map[string]*child
-	inherited          inherited
-	bases              map[string]string
-	spends             map[string]view.Progress
-	recoveryQuestions  map[string]*recoveryNotice
-	recoveryQuestion   func(context.Context, RecoveryQuestion) (view.Answer, error)
-	retainedPermission func(context.Context, QuestionBinding, permission.Ask) (acp.RequestPermissionOutcome, error)
-	retainedQuestion   func(context.Context, QuestionBinding, view.Question) (view.Answer, error)
+	mu                sync.Mutex
+	pending           map[string]*child
+	inherited         inherited
+	bases             map[string]string
+	spends            map[string]view.Progress
+	recoveryQuestions map[string]*recoveryNotice
+	recoveryQuestion  func(context.Context, RecoveryQuestion) (view.Answer, error)
+	ownerPermission   func(context.Context, QuestionBinding, permission.Ask) (acp.RequestPermissionOutcome, error)
+	ownerQuestion     func(context.Context, QuestionBinding, view.Question) (view.Answer, error)
 }
 
 // child is a delegation in flight or recently finished.
@@ -484,7 +484,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 			err = s.finishFromRecord(retainedRecord, outcomeOf(runErr))
 		}
 		if err != nil {
-			binding := QuestionBinding{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
+			binding := QuestionBinding{Conversation: conversationID, Transport: parent.Transport, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
 			s.reportRecovery(ctx, binding, "task-bookkeeping", "核对已提交的子任务结果和预算", "原执行结果尚未完整写入任务记录。", "预算或任务状态的持久化失败，不能提前宣布完成。", "建议恢复存储后核对同一次执行。")
 			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: binding.Attempt, NodeID: binding.Node, SessionID: binding.Session, Cause: err})
 			return
@@ -816,7 +816,7 @@ func (d *delegation) started(ctx context.Context, e *lifecycle.Execution) error 
 // has none: a node-owned session reads a nil handler as no answer, not
 // as a refusal.
 func (d *delegation) handlers() (permission.AskFunc, func(context.Context, view.Question) (view.Answer, error)) {
-	permissionHandler, questionHandler := d.service.nodeQuestionHandlers(QuestionBinding{})
+	permissionHandler, questionHandler := d.service.ownerHandlers(QuestionBinding{})
 	var ask permission.AskFunc
 	var askUser func(context.Context, view.Question) (view.Answer, error)
 	if permissionHandler != nil {
@@ -832,7 +832,7 @@ func (d *delegation) ask(ctx context.Context, q permission.Ask) (acp.RequestPerm
 	d.mu.Lock()
 	binding := d.binding
 	d.mu.Unlock()
-	ask, _ := d.service.nodeQuestionHandlers(binding)
+	ask, _ := d.service.ownerHandlers(binding)
 	if ask == nil {
 		return acp.RequestPermissionOutcome{}, errors.New("delegated permission handler is not configured")
 	}
@@ -843,7 +843,7 @@ func (d *delegation) askUser(ctx context.Context, q view.Question) (view.Answer,
 	d.mu.Lock()
 	binding := d.binding
 	d.mu.Unlock()
-	_, askUser := d.service.nodeQuestionHandlers(binding)
+	_, askUser := d.service.ownerHandlers(binding)
 	if askUser == nil {
 		return view.Answer{}, errors.New("delegated question handler is not configured")
 	}

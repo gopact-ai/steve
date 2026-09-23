@@ -437,7 +437,7 @@ func (w *recoveryStopWait) ask() (string, bool) {
 			{Value: "wait", Label: line(en, "交给它自己核实", "Let it keep checking"), Detail: line(en, "到点自动核实，确认后这一回合会自己结束。", "It rechecks on its own and ends this turn once the stop is confirmed.")},
 		},
 	}
-	answer, err := w.s.askUser(w.ctx, w.base, question)
+	answer, err := w.s.askUser(w.ctx, w.base, question, false)
 	if err != nil {
 		if w.ctx.Err() != nil {
 			err = w.ctx.Err()

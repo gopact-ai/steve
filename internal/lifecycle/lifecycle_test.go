@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/acp"
+
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -80,7 +82,7 @@ type sessions struct{ err error }
 
 func (s sessions) CloseSession(context.Context, harness.Placement, string) error { return s.err }
 
-func TestDriveUsesTheTurnEntryOnlyWhenAsked(t *testing.T) {
+func TestDriveUsesTheTurnEntryWhenAskedOrSomeoneCanAnswer(t *testing.T) {
 	r := &runner{id: "s1", progress: []view.Progress{{Settings: view.Settings{Model: "m"}, Usage: view.Usage{InputTokens: 3, OutputTokens: 4}}}}
 	plain := Drive{Session: r, Prompt: "hi"}.Run(t.Context())
 	if r.prompts != 1 || r.turns != 0 || plain.Answer != "plain" || !plain.PromptSettled || plain.Stopped {
@@ -92,6 +94,15 @@ func TestDriveUsesTheTurnEntryOnlyWhenAsked(t *testing.T) {
 	turn := Drive{Session: r, Prompt: "hi", Turn: true}.Run(t.Context())
 	if r.turns != 1 || turn.Answer != "turn" || len(turn.Activity) != 1 {
 		t.Fatalf("turn drive = %+v turns=%d", turn, r.turns)
+	}
+	// Handlers are never dropped: whoever can answer the session's
+	// questions is reachable through the turn entry, asked for or not.
+	withAsker := Drive{Session: r, Prompt: "hi", AskUser: func(context.Context, view.Question) (view.Answer, error) { return view.Answer{}, nil }}.Run(t.Context())
+	withApprover := Drive{Session: r, Prompt: "hi", Ask: func(context.Context, permission.Ask) (acp.RequestPermissionOutcome, error) {
+		return acp.RequestPermissionOutcome{}, nil
+	}}.Run(t.Context())
+	if r.turns != 3 || withAsker.Answer != "turn" || withApprover.Answer != "turn" {
+		t.Fatalf("a drive with handlers bypassed them: turns=%d", r.turns)
 	}
 }
 

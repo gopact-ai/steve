@@ -144,7 +144,7 @@ func (s *Service) RequestRecovery(ctx context.Context, binding consoleapi.Pendin
 	question.Kind = "recovery"
 	question.SessionID = binding.SessionID
 	question.Generation = binding.Generation
-	return s.askUser(ctx, consoleapi.PendingQuestion{Conversation: binding.Conversation, ExchangeID: binding.ExchangeID, Project: binding.Project, TaskID: binding.TaskID, AttemptID: binding.AttemptID, SessionID: binding.SessionID, Generation: binding.Generation, Locale: binding.Locale}, question)
+	return s.askUser(ctx, consoleapi.PendingQuestion{Conversation: binding.Conversation, ExchangeID: binding.ExchangeID, Project: binding.Project, TaskID: binding.TaskID, ParentTaskID: binding.ParentTaskID, AttemptID: binding.AttemptID, SessionID: binding.SessionID, Generation: binding.Generation, Locale: binding.Locale}, question, false)
 }
 
 // continueDetached preserves a managed exchange when its observer fails while
@@ -413,10 +413,10 @@ func (r *exchangeRecovery) request(requester string, identity *questionIdentity)
 		OnPhase:     r.stream.Phase,
 		OnStage:     r.stream.Stage,
 		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
-			return r.s.askPermission(ctx, identity.binding(), ask)
+			return r.s.askPermission(ctx, identity.binding(), ask, false)
 		},
 		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
-			return r.s.askUser(ctx, identity.binding(), q)
+			return r.s.askUser(ctx, identity.binding(), q, false)
 		},
 	}
 }
@@ -544,7 +544,7 @@ func (r *exchangeRecovery) consult(blocked *turn.RecoveryBlocked, identity *ques
 	}
 	question.Message = r.explain(question.Message, blocked.Cause)
 	question.Choices = append(append([]view.Choice{}, question.Choices...), stopChoice(r.exchange.Locale))
-	answer, err := r.ask(identity, question, r.s.askUser)
+	answer, err := r.ask(identity, question, r.s.turnQuestion)
 	if err != nil {
 		if r.ctx.Err() != nil {
 			err = r.ctx.Err()

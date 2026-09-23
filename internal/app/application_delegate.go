@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/gateway"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -20,27 +21,29 @@ func delegateQuestionBinding(ctx context.Context, cons *console.Service, binding
 	conversation := binding.Conversation
 	if !console.IsConsole(conversation) {
 		var err error
-		conversation, err = cons.EnsureRecoveryConversation(ctx, console.RecoveryConversation{ParentTaskID: binding.ParentTask, SourceChannel: "feishu", SourceConversation: binding.Conversation, Project: binding.Project})
+		conversation, err = cons.EnsureRecoveryConversation(ctx, console.RecoveryConversation{ParentTaskID: binding.ParentTask, SourceChannel: sourceChannel(binding.Transport), SourceConversation: binding.Conversation, Project: binding.Project})
 		if err != nil {
 			return consoleapi.PendingQuestion{}, err
 		}
 	}
-	return consoleapi.PendingQuestion{Conversation: conversation, Project: binding.Project, TaskID: binding.Task, AttemptID: binding.Attempt, SessionID: binding.Session, RequestID: requestID}, nil
+	if !lifecycle.IsManaged(binding.Session) {
+		requestID = ""
+	}
+	return consoleapi.PendingQuestion{Conversation: conversation, Project: binding.Project, TaskID: binding.Task, ParentTaskID: binding.ParentTask, AttemptID: binding.Attempt, SessionID: binding.Session, RequestID: requestID}, nil
 }
 
+// wireDelegateQuestions puts a child's questions before the owner in its
+// parent's conversation. A node-owned child answers to its node callback;
+// a hub-local child to the hub's own execution record, in any deployment.
 func wireDelegateQuestions(delegation *delegate.Service, cons *console.Service) {
-	delegation.SetRecoveryQuestion(func(ctx context.Context, q delegate.RecoveryQuestion) (view.Answer, error) {
-		binding, err := delegateQuestionBinding(ctx, cons, q.QuestionBinding, q.Question.RequestID)
-		if err != nil {
-			return view.Answer{}, err
-		}
-		return cons.RequestRecovery(ctx, binding, q.Question)
-	})
-	delegation.SetRetainedQuestionHandlers(
+	delegation.SetQuestionHandlers(
 		func(ctx context.Context, binding delegate.QuestionBinding, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			pending, err := delegateQuestionBinding(ctx, cons, binding, ask.RequestID)
 			if err != nil {
 				return permission.Choose(false, ask.Options), err
+			}
+			if !lifecycle.IsManaged(binding.Session) {
+				return cons.RequestLocalPermission(ctx, pending, ask)
 			}
 			return cons.RequestNativePermission(ctx, pending, ask)
 		},
@@ -49,9 +52,24 @@ func wireDelegateQuestions(delegation *delegate.Service, cons *console.Service) 
 			if err != nil {
 				return view.Answer{}, err
 			}
+			if !lifecycle.IsManaged(binding.Session) {
+				return cons.RequestLocalQuestion(ctx, pending, question)
+			}
 			return cons.RequestNativeQuestion(ctx, pending, question)
 		},
 	)
+}
+
+// wireDelegateRecovery tells the owner when a node-owned child cannot be
+// joined again.
+func wireDelegateRecovery(delegation *delegate.Service, cons *console.Service) {
+	delegation.SetRecoveryQuestion(func(ctx context.Context, q delegate.RecoveryQuestion) (view.Answer, error) {
+		binding, err := delegateQuestionBinding(ctx, cons, q.QuestionBinding, q.Question.RequestID)
+		if err != nil {
+			return view.Answer{}, err
+		}
+		return cons.RequestRecovery(ctx, binding, q.Question)
+	})
 }
 
 // wireDelegateDelivery sends a child's result back into its parent's
