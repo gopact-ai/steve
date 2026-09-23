@@ -187,8 +187,6 @@ func (r *Repo) SnapshotWithNested(ctx context.Context, workTree, parent, message
 	return sha, true, left, r.Pin(ctx, sha)
 }
 
-// pin gives a commit a ref so it is an artifact git will keep, and a name
-// a bundle can carry.
 // gitlinks lists the submodule entries in the index.
 func (r *Repo) gitlinks(ctx context.Context, env []string) ([]string, error) {
 	out, err := r.Git(ctx, env, "ls-files", "--stage", "-z")
@@ -272,6 +270,8 @@ func flattenNestedRepos(ctx context.Context, workTree string) ([]string, error) 
 	return found, err
 }
 
+// Pin gives a commit a ref so it is an artifact git will keep, and a name
+// a bundle can carry.
 func (r *Repo) Pin(ctx context.Context, sha string) error {
 	_, err := r.Git(ctx, nil, "update-ref", RefFor(sha), sha)
 	return err

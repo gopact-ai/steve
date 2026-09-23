@@ -136,5 +136,3 @@ func runBounded(ctx context.Context, gitDir string, max int, args ...string) ([]
 	}
 	return raw, truncated, nil
 }
-
-// ---------------------------------------------------------------- store

@@ -8,9 +8,9 @@ import (
 )
 
 // Doc is one durable document: what the session, task, plan and schedule
-// stores keep their whole state in. Two implementations exist. The ledger's
-// is the authority; the file one, filedoc.Document, survives for tests and
-// for reading the JSON files a pre-ledger deployment left behind.
+// stores keep their whole state in. The ledger's implementation is what a
+// Hub runs on; filedoc.Document keeps one in a local file, for tests and for
+// state kept outside the ledger.
 type Doc interface {
 	// Load returns the document, or ok=false if it has never been saved.
 	Load() ([]byte, bool, error)

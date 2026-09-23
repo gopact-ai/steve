@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-// Document is one JSON file kept with the durable-replace discipline:
+// Document is one file kept with the durable-replace discipline:
 // temp file, fsync, rename, fsync the directory. It satisfies ledger.Doc.
 type Document struct {
 	Path string

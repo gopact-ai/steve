@@ -381,3 +381,9 @@ func TestDefaultMessageChannel(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteAgentStillRequiresKnownNode(t *testing.T) {
+	if _, err := Load(writeConfig(t, `{"agents":{"remote":{"harness":"remote-only","node":"missing","default":true}},"projects":{"workspace":{"home":{"path":"/tmp/steve-remote-enrollment"}}}}`)); err == nil {
+		t.Fatal("remote Agent accepted an unknown node")
+	}
+}

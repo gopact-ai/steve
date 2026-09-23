@@ -3,9 +3,11 @@ package configbuild
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/harness"
 )
 
 func TestRemoteAgentDoesNotRequireCoordinatorCommandOrCredentials(t *testing.T) {
@@ -23,9 +25,20 @@ func TestRemoteAgentDoesNotRequireCoordinatorCommandOrCredentials(t *testing.T) 
 	manager.Stop()
 }
 
-func TestRemoteAgentStillRequiresKnownNode(t *testing.T) {
-	if _, err := config.Load(writeConfig(t, `{"agents":{"remote":{"harness":"remote-only","node":"missing","default":true}},"projects":{"workspace":{"home":{"path":"/tmp/steve-remote-enrollment"}}}}`)); err == nil {
-		t.Fatal("remote Agent accepted an unknown node")
+// The starter configuration names harnesses by the IDs the runtime switches
+// on; config spells them as strings because it does not import harness.
+func TestStarterNamesHarnessesTheRuntimeKnows(t *testing.T) {
+	known := []string{harness.Codex, harness.ClaudeCode, harness.Grok, harness.Dsh, harness.Kimi}
+	starter := config.StarterFeishu(config.Feishu{})
+	for id := range starter.Harnesses {
+		if !slices.Contains(known, id) {
+			t.Errorf("starter harness %q is not a harness the runtime knows", id)
+		}
+	}
+	for name, agent := range starter.Agents {
+		if !slices.Contains(known, agent.Harness) {
+			t.Errorf("starter agent %q uses unknown harness %q", name, agent.Harness)
+		}
 	}
 }
 
