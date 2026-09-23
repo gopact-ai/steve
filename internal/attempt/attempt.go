@@ -190,15 +190,18 @@ type Record struct {
 	NodeReceipt *nodewire.SessionReceipt `json:"node_receipt,omitempty"`
 	// SessionSettled is nil for records without durable execution evidence.
 	// Running arms it false before Prompt; confirmed settlement writes true.
-	SessionSettled *bool          `json:"session_settled,omitempty"`
-	Unsettled      bool           `json:"unsettled,omitempty"`
-	StopEvidence   string         `json:"stop_evidence,omitempty"`
-	State          State          `json:"state"`
-	Revision       int64          `json:"revision"`
-	Session        string         `json:"session,omitempty"`
-	NativeContext  string         `json:"native_context,omitempty"`
-	Leases         []ledger.Lease `json:"leases"`
-	Result         *Result        `json:"result,omitempty"`
+	SessionSettled *bool  `json:"session_settled,omitempty"`
+	Unsettled      bool   `json:"unsettled,omitempty"`
+	StopEvidence   string `json:"stop_evidence,omitempty"`
+	// StopProjected records that a confirmed task stop's accounting row was
+	// found settled with this record's usage, so the stop pass is done with it.
+	StopProjected bool           `json:"stop_projected,omitempty"`
+	State         State          `json:"state"`
+	Revision      int64          `json:"revision"`
+	Session       string         `json:"session,omitempty"`
+	NativeContext string         `json:"native_context,omitempty"`
+	Leases        []ledger.Lease `json:"leases"`
+	Result        *Result        `json:"result,omitempty"`
 	// Usage is what the attempt cost, as the harness last reported it,
 	// written with every terminal transition — success, failure, expiry
 	// alike — so failed work is not free in the books.

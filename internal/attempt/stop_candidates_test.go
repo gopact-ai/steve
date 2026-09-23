@@ -53,6 +53,8 @@ func TestStopCandidatesSelectOnlyExecutionsAStopPassActsOn(t *testing.T) {
 		{"session not settled", func(r *Record) { r.SessionSettled = &no }, true},
 		{"unsettled terminal", func(r *Record) { r.Unsettled = true }, true},
 		{"own task stop evidence", func(r *Record) { r.StopEvidence = "task-stop/" + r.ID }, true},
+		{"own task stop with projected accounting", func(r *Record) { r.StopEvidence, r.StopProjected = "task-stop/"+r.ID, true }, false},
+		{"projection mark on an unsettled stop", func(r *Record) { r.SessionSettled, r.StopProjected = &no, true }, true},
 		{"another execution's stop evidence", func(r *Record) { r.StopEvidence = "task-stop/other"; r.SessionSettled = &yes }, false},
 		{"process stop evidence", func(r *Record) { r.StopEvidence = "process-stop/" + r.ID }, false},
 		{"superseded", func(r *Record) { r.State = Superseded; r.SessionSettled = &no }, false},
@@ -108,6 +110,7 @@ func TestStopCandidatesMatchTheStopPassOverRandomHistory(t *testing.T) {
 		case 1:
 			r.StopEvidence = "task-stop/att-000"
 		}
+		r.StopProjected = random.Intn(3) == 0
 		raw, _ := json.Marshal(r)
 		insertAttemptRow(t, s, r.ID, string(r.State), string(raw))
 		every = append(every, r.ID)

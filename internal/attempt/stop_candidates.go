@@ -3,7 +3,6 @@ package attempt
 import (
 	"context"
 	"database/sql/driver"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"modernc.org/sqlite"
@@ -41,21 +40,22 @@ func init() {
 }
 
 // TaskStopOwed reports whether a durable task stop pass acts on r: a
-// node-owned execution whose native stop is not yet settled, or a settled
-// one whose own task stop committed and still needs its accounting and
-// in-memory owner reconciled. Both the stop pass and the candidate index
-// use it. Changing what it accepts changes an indexed expression: rename
-// steve_attempt_stop_candidate_v1 to a new version when it does.
+// node-owned execution whose native stop is not yet settled, or a confirmed
+// task stop whose accounting projection is not yet recorded. Both the stop
+// pass and the candidate index use it. Changing what it accepts changes an
+// indexed expression: rename steve_attempt_stop_candidate_v1 to a new
+// version when it does.
 func TaskStopOwed(r Record) bool {
-	if r.State == Superseded || (!strings.HasPrefix(r.Session, "ns_") && !PendingSessionOpen(r)) || r.Node == "" || r.Execution == nil {
+	if !nodeOwnedStop(r) {
 		return false
 	}
-	settled := r.State.Terminal() && !r.Unsettled && r.SessionSettled != nil && *r.SessionSettled
-	return !settled || r.StopEvidence == "task-stop/"+r.ID
+	return !taskStopAlreadySettled(r) || TaskStopConfirmed(r) && !r.StopProjected
 }
 
 // StopCandidates is every attempt TaskStopOwed accepts, most recently
-// updated first. Its cost follows that set, not the settled history.
+// updated first. Its cost follows that set, not the settled history: stops
+// whose native session is unsettled, plus confirmed task stops until
+// MarkStopProjected records their accounting.
 func (s *Service) StopCandidates(ctx context.Context) ([]Record, error) {
 	return s.indexedRecords(ctx, stopCandidateQuery, decodeIdentityRecord)
 }
