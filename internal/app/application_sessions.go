@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/cluster"
@@ -24,7 +23,7 @@ func validateSessionPlacement(record attempt.Record, place harness.Placement, up
 		if upstream == "" {
 			return nil
 		}
-		if upstream != record.Session || !strings.HasPrefix(upstream, "ns_") {
+		if upstream != record.Session || !nodewire.IsManagedSession(upstream) {
 			return errors.New("session cleanup requires its committed native identity")
 		}
 		return nil
@@ -39,7 +38,7 @@ func newApplicationSessionBinder(active cluster.Activation) func(context.Context
 	return func(ctx context.Context, place harness.Placement, upstream string, workdir string) (context.Context, error) {
 		key, ok := execution.KeyOf(ctx)
 		if !ok || key.AttemptID == "" {
-			if workdir != "" || !strings.HasPrefix(upstream, "ns_") {
+			if workdir != "" || !nodewire.IsManagedSession(upstream) {
 				return ctx, nil
 			}
 			// /new runs between turns, without an execution scope. It may

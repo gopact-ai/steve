@@ -127,7 +127,7 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if record.Kind != attempt.KindDelegate || (!lifecycle.IsManaged(record.Session) && !pendingDelegatePreparation(record)) {
+		if record.Kind != attempt.KindDelegate || (!nodewire.IsManagedSession(record.Session) && !pendingDelegatePreparation(record)) {
 			continue
 		}
 		tracked, ok := s.tasks.Get(record.TaskID)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -136,7 +135,7 @@ func stoppedTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 
 // nativeTaskTx is the task behind an original node-owned execution.
 func nativeTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
-	if r.State == Superseded || r.Execution == nil || r.Execution.TaskID != r.TaskID || (!strings.HasPrefix(r.Session, "ns_") && !PendingSessionOpen(r)) {
+	if r.State == Superseded || r.Execution == nil || r.Execution.TaskID != r.TaskID || (!nodewire.IsManagedSession(r.Session) && !PendingSessionOpen(r)) {
 		return task.Task{}, errors.New("task stop requires an original node-owned execution")
 	}
 	tracked, ok, err := task.GetTx(tx, r.TaskID)

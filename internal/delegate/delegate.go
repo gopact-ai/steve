@@ -15,8 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -24,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -36,6 +35,7 @@ import (
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
@@ -521,13 +521,13 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	s.mu.Lock()
 	managedSession := entry.session
 	s.mu.Unlock()
-	if strings.HasPrefix(managedSession, "ns_") && s.canSettleStopped(ctx, runErr) {
+	if nodewire.IsManagedSession(managedSession) && s.canSettleStopped(ctx, runErr) {
 		var cancel context.CancelFunc
 		ctx, cancel = lifecycle.Cleanup(ctx)
 		defer cancel()
 	}
 	var retainedRecord attempt.Record
-	if strings.HasPrefix(managedSession, "ns_") {
+	if nodewire.IsManagedSession(managedSession) {
 		var err error
 		retainedRecord, err = s.attempts.Get(ctx, s.attemptOf(spawned.ID))
 		if err == nil && !retainedRecord.State.Terminal() {
@@ -566,7 +566,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		}
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateFailed); err != nil {
 			slog.Error(fmt.Sprintf("delegate: mark task #%s failed: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
-			if strings.HasPrefix(managedSession, "ns_") {
+			if nodewire.IsManagedSession(managedSession) {
 				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 				return
@@ -577,7 +577,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		result.State = task.StateDone
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateDone); err != nil {
 			slog.Error(fmt.Sprintf("delegate: mark task #%s done: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
-			if strings.HasPrefix(managedSession, "ns_") {
+			if nodewire.IsManagedSession(managedSession) {
 				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 				return
@@ -591,7 +591,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 
 	if err := s.tasks.SetResult(spawned.ID, task.Result{Outcome: result.Outcome, Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}); err != nil {
 		slog.Error(fmt.Sprintf("delegate: record result of task #%s: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
-		if strings.HasPrefix(managedSession, "ns_") {
+		if nodewire.IsManagedSession(managedSession) {
 			s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-result", "保存原执行的完整答复到子任务记录", "答复尚未完整写入任务。", "已提交的执行结果仍保留，不能提前向父任务宣布完成。", "建议恢复存储后重新核对。")
 			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 			return
@@ -1070,7 +1070,7 @@ func (s *Service) land(ctx context.Context, parent, child task.Task, record atte
 			}
 		}
 		if err := s.artifacts.Defer(ctx, parent.ProjectID, p.published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
-			if lifecycle.IsManaged(record.Session) {
+			if nodewire.IsManagedSession(record.Session) {
 				return result, retainedDetached(record, err)
 			}
 			s.finish(child.ID, task.OutcomeError)

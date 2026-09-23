@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
@@ -14,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 )
 
@@ -111,11 +111,11 @@ func recordStepResult(deps Deps, id string, step plan.Step, result plan.StepResu
 }
 
 func retainedCandidate(record attempt.Record) bool {
-	return record.Kind == attempt.KindStep && strings.HasPrefix(record.Session, "ns_") && !record.State.Terminal()
+	return record.Kind == attempt.KindStep && nodewire.IsManagedSession(record.Session) && !record.State.Terminal()
 }
 
 func cleanupFailedStep(ctx context.Context, deps Deps, record attempt.Record) error {
-	if !strings.HasPrefix(record.Session, "ns_") {
+	if !nodewire.IsManagedSession(record.Session) {
 		return nil
 	}
 	if !record.State.Terminal() || record.Unsettled || record.SessionSettled == nil || !*record.SessionSettled {

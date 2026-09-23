@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -52,7 +51,7 @@ func retainedChat(r attempt.Record) bool {
 		return false
 	}
 	reattachable := attempt.Relocatable(r) || attempt.PreparingRelocation(r) || pendingChatOpen(r)
-	if r.State != attempt.Bound && !strings.HasPrefix(r.Session, "ns_") && !reattachable {
+	if r.State != attempt.Bound && !nodewire.IsManagedSession(r.Session) && !reattachable {
 		return false
 	}
 	return r.State == attempt.Running || r.State.Terminal() || reattachable
@@ -114,7 +113,7 @@ func (c *Coordinator) ProbeRetained(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if record.State != attempt.Running || !strings.HasPrefix(record.Session, "ns_") || record.Node == "" {
+	if record.State != attempt.Running || !nodewire.IsManagedSession(record.Session) || record.Node == "" {
 		return errors.New("retained execution has no node-owned session to rejoin")
 	}
 	evidence, err := c.inspectRelocation(ctx, record)
@@ -195,7 +194,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	// attach fails, a service shutdown can join its local observer without
 	// claiming the remote process stopped. Explicit task Stop still reports
 	// its unresolved state and the durable attempt remains quarantined.
-	knownRetained := record.Node != "" && strings.HasPrefix(record.Session, "ns_")
+	knownRetained := record.Node != "" && nodewire.IsManagedSession(record.Session)
 	settled := false
 	var cleanupFailure error
 	defer func() {
@@ -282,7 +281,7 @@ func (c *Coordinator) retainedChatRecord(parent context.Context, id string, req 
 	if pendingChatOpen(record) {
 		return attempt.Record{}, c.inspectPendingOpen(parent, record)
 	}
-	if record.State != attempt.Bound && !strings.HasPrefix(record.Session, "ns_") && !endedBeforeSession(record) {
+	if record.State != attempt.Bound && !nodewire.IsManagedSession(record.Session) && !endedBeforeSession(record) {
 		return attempt.Record{}, retainedBlocked("native-identity", "检查原节点会话标识", "尚未取得可接续的原生会话。", "恢复准备可能在建立会话前中断。", "建议重新检查已确认的恢复准备。", nil)
 	}
 	return record, nil

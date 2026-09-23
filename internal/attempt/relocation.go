@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
@@ -379,7 +378,7 @@ func (s *Service) relocationStopEvidence(old Record, tracked *task.Task, p Reloc
 	automatic := false
 	if proof := approval.Node; proof != nil && !proof.ObservedAt.IsZero() && !proof.ObservedAt.After(s.now().Add(time.Second)) && s.now().Sub(proof.ObservedAt) <= time.Minute {
 		st, cmd := proof.Session, proof.Session.Command
-		automatic = st.Harness == old.Harness && st.ID == old.Session && strings.HasPrefix(st.ID, "ns_") && st.Binding.AttemptID == old.ID && st.Binding.TaskID == old.TaskID && st.Binding.TaskEpoch == old.Execution.Epoch && st.Binding.NodeID == old.Node && st.Binding.ProjectID == old.Project && st.Binding.SessionID == RetainedSessionID(tracked.Channel, tracked.ID, old.Agent) && st.Binding.ExecutionEpoch == SessionExecutionEpoch(old) && st.ProcessStopped && cmd != nil && cmd.ID == InputCommandID(old) && cmd.InputSequence > 0 && cmd.InputSequence <= st.InputAccepted && cmd.DispatchState == "not-dispatched" && cmd.ProcessStopped && !cmd.CancelRequested && cmd.State != nodewire.SessionCommandCancelled && !cmd.Settled
+		automatic = st.Harness == old.Harness && st.ID == old.Session && nodewire.IsManagedSession(st.ID) && st.Binding.AttemptID == old.ID && st.Binding.TaskID == old.TaskID && st.Binding.TaskEpoch == old.Execution.Epoch && st.Binding.NodeID == old.Node && st.Binding.ProjectID == old.Project && st.Binding.SessionID == RetainedSessionID(tracked.Channel, tracked.ID, old.Agent) && st.Binding.ExecutionEpoch == SessionExecutionEpoch(old) && st.ProcessStopped && cmd != nil && cmd.ID == InputCommandID(old) && cmd.InputSequence > 0 && cmd.InputSequence <= st.InputAccepted && cmd.DispatchState == "not-dispatched" && cmd.ProcessStopped && !cmd.CancelRequested && cmd.State != nodewire.SessionCommandCancelled && !cmd.Settled
 	}
 	manual := approval.PlanID == p.ID && approval.Actor == p.Owner && approval.ChoiceID == "confirm-stopped-and-retry:"+p.ID && approval.StoppedConfirmed && approval.EffectsReviewed
 	if !automatic && !manual {

@@ -2,11 +2,11 @@ package agentexec
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 func PendingNodeOpen(record attempt.Record, err error) *execution.NodePreparationObserverDetached {
@@ -22,5 +22,5 @@ func PendingNodeOpen(record attempt.Record, err error) *execution.NodePreparatio
 }
 
 func PendingOpen(record attempt.Record) bool {
-	return record.Execution != nil && record.Node != "" && record.Unsettled && !strings.HasPrefix(record.Session, "ns_") && (record.State == attempt.Leased || record.State == attempt.Prepared)
+	return record.Execution != nil && record.Node != "" && record.Unsettled && !nodewire.IsManagedSession(record.Session) && (record.State == attempt.Leased || record.State == attempt.Prepared)
 }

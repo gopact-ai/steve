@@ -12,7 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
-	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -56,7 +56,7 @@ func planQuestionBinding(ctx context.Context, cons *console.Service, tasks *task
 func localPlanQuestionBinding(ctx context.Context, cons *console.Service, tasks *task.Store, attempts *attempt.Service, sessionID string) (consoleapi.PendingQuestion, bool, error) {
 	// A running scope, not a read-only probe key, vouches for the asker.
 	key, scoped := execution.KeyOf(ctx)
-	if !scoped || execution.Token(ctx) == nil || key.AttemptID == "" || sessionID == "" || lifecycle.IsManaged(sessionID) {
+	if !scoped || execution.Token(ctx) == nil || key.AttemptID == "" || sessionID == "" || nodewire.IsManagedSession(sessionID) {
 		return consoleapi.PendingQuestion{}, true, consoleapi.ErrInvalidAnswer
 	}
 	if err := execution.CheckExecution(ctx); err != nil {
@@ -67,7 +67,7 @@ func localPlanQuestionBinding(ctx context.Context, cons *console.Service, tasks 
 		return consoleapi.PendingQuestion{}, true, err
 	}
 	tracked, ok := tasks.Get(record.TaskID)
-	if !ok || record.TaskID != key.TaskID || !planWork(record.Kind) || record.State.Terminal() || lifecycle.IsManaged(record.Session) || tracked.ProjectID != record.Project {
+	if !ok || record.TaskID != key.TaskID || !planWork(record.Kind) || record.State.Terminal() || nodewire.IsManagedSession(record.Session) || tracked.ProjectID != record.Project {
 		return consoleapi.PendingQuestion{}, true, errors.New("local plan question differs from its execution")
 	}
 	conversation := tracked.Channel

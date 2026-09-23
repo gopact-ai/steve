@@ -3,7 +3,8 @@ package execution
 import (
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // RetainedObserverDetached identifies a node-owned execution that lost only
@@ -39,7 +40,7 @@ func (e *RetainedObserverDetached) Unwrap() error { return e.Cause }
 
 func (s *Scope) retainedDetached() bool {
 	var detached *RetainedObserverDetached
-	if errors.As(s.err, &detached) && detached.AttemptID == s.key.AttemptID && detached.NodeID != "" && strings.HasPrefix(detached.SessionID, "ns_") {
+	if errors.As(s.err, &detached) && detached.AttemptID == s.key.AttemptID && detached.NodeID != "" && nodewire.IsManagedSession(detached.SessionID) {
 		return true
 	}
 	var preparation *NodePreparationObserverDetached

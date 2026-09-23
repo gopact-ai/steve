@@ -4,18 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nativehistory"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/nativehistory"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
-
-	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // NodeSessionContext must come from the committed task/attempt and input
@@ -111,7 +109,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	if profile != nil {
 		binding.Binding.PluginRuntimeID = profile.ID
 	}
-	managed := strings.HasPrefix(upstreamID, "ns_")
+	managed := nodewire.IsManagedSession(upstreamID)
 	if selected := requestedNativeImport(ctx); selected != nil && (!bound || binding.NativeImport == nil || *selected != *binding.NativeImport) {
 		return nil, true, ErrNodeSessionUnavailable
 	}
@@ -444,7 +442,7 @@ func (m *Manager) AttachRetainedSession(ctx context.Context, at Placement, upstr
 		return nil, err
 	}
 	binding, bound := NodeSessionFromContext(ctx)
-	if !bound || !strings.HasPrefix(upstreamID, "ns_") {
+	if !bound || !nodewire.IsManagedSession(upstreamID) {
 		return nil, ErrNodeSessionUnavailable
 	}
 	node := at.Node

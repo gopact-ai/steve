@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -14,7 +14,7 @@ var errStopAccountingPending = errors.New("task stop accounting is not projected
 
 // nodeOwnedStop is an execution a durable task stop can reach on its node.
 func nodeOwnedStop(r Record) bool {
-	return r.State != Superseded && (strings.HasPrefix(r.Session, "ns_") || PendingSessionOpen(r)) && r.Node != "" && r.Execution != nil
+	return r.State != Superseded && (nodewire.IsManagedSession(r.Session) || PendingSessionOpen(r)) && r.Node != "" && r.Execution != nil
 }
 
 // TaskStopConfirmed reports that r's own task stop committed with settled

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -129,7 +129,7 @@ func (r *applicationRecovery) reconcileTask(ctx context.Context, candidate task.
 		}
 		// Node-owned commands are observed or reported in their original exchange,
 		// never automatically re-prompted because their task row remained open.
-		if strings.HasPrefix(record.Session, "ns_") || record.State != attempt.Expired {
+		if nodewire.IsManagedSession(record.Session) || record.State != attempt.Expired {
 			return r.coordinator.SettleChatAccounting(ctx, record.ID)
 		}
 	} else {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
@@ -28,7 +27,7 @@ func (t *chatTurn) prepareCredentials(ctx context.Context, saved state.Session, 
 			return saved, caps, err
 		}
 	}
-	if !strings.HasPrefix(saved.UpstreamID, "ns_") || saved.AgentToken == "" || saved.SessionConfigHash == "" {
+	if !nodewire.IsManagedSession(saved.UpstreamID) || saved.AgentToken == "" || saved.SessionConfigHash == "" {
 		return saved, caps, fmt.Errorf("cannot renew conversation authorization without a verified native context: %w", agentmcp.ErrGrantDenied)
 	}
 	old := c.gate.DescribeExtras(saved.AgentToken, endpoint)

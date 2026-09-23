@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -14,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -76,7 +76,7 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 			}
 			var latest attempt.Record
 			for _, record := range records {
-				if record.Kind != attempt.KindPlan || record.State == attempt.Superseded || !strings.HasPrefix(record.Session, "ns_") && !agentexec.PendingOpen(record) {
+				if record.Kind != attempt.KindPlan || record.State == attempt.Superseded || !nodewire.IsManagedSession(record.Session) && !agentexec.PendingOpen(record) {
 					continue
 				}
 				if latest.ID == "" || record.StartedAt.After(latest.StartedAt) || record.StartedAt.Equal(latest.StartedAt) && record.ID > latest.ID {

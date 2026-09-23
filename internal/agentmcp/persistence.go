@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 type grant struct {
@@ -207,7 +207,7 @@ func (s *Server) prepareLocked(b binding, token string) error {
 // Retained replay is idempotent. The store permits a new scope only for an
 // explicit next chat turn after the prior execution settled in this session.
 func (s *Server) BindExecution(ctx context.Context, b Binding, scope GrantScope) error {
-	if b.ConversationID == "" || b.AgentID == "" || scope.TaskID == "" || scope.AttemptID == "" || scope.NodeID == "" || scope.ExecutionGeneration == 0 || !strings.HasPrefix(scope.SessionID, "ns_") || (b.TaskID != "" && b.TaskID != scope.TaskID) {
+	if b.ConversationID == "" || b.AgentID == "" || scope.TaskID == "" || scope.AttemptID == "" || scope.NodeID == "" || scope.ExecutionGeneration == 0 || !nodewire.IsManagedSession(scope.SessionID) || (b.TaskID != "" && b.TaskID != scope.TaskID) {
 		return ErrGrantDenied
 	}
 	s.mu.Lock()

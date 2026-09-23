@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/idle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/view"
@@ -210,13 +211,13 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 	q.ID, q.State, q.Principal = "q"+strings.TrimPrefix(newReplyID(), "r"), "pending", s.owner
 	q.CreatedAt = time.Now().UTC()
 	q.UpdatedAt, q.Deadline = q.CreatedAt, q.CreatedAt.Add(s.questionTimeout)
-	if untilAnswered || q.Kind == "recovery" || strings.HasPrefix(q.SessionID, "ns_") {
+	if untilAnswered || q.Kind == "recovery" || nodewire.IsManagedSession(q.SessionID) {
 		q.Deadline = time.Time{}
 	}
 	waiter := make(chan struct{})
 	s.mu.Lock()
 	var previous *consoleapi.PendingQuestion
-	if q.Kind != "recovery" && strings.HasPrefix(q.SessionID, "ns_") && q.AttemptID != "" && q.RequestID != "" {
+	if q.Kind != "recovery" && nodewire.IsManagedSession(q.SessionID) && q.AttemptID != "" && q.RequestID != "" {
 		for _, saved := range s.questions {
 			if saved.SessionID != q.SessionID || saved.AttemptID != q.AttemptID || saved.RequestID != q.RequestID {
 				continue

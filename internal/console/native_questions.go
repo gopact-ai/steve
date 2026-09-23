@@ -7,6 +7,7 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -17,7 +18,7 @@ func nativeQuestionMatches(ctx context.Context, binding consoleapi.PendingQuesti
 	}
 	source, sourceSession, sourceRequest, ok := harness.NativeQuestionSource(ctx)
 	if !ok || binding.Conversation == "" || binding.Project == "" || binding.TaskID == "" || binding.AttemptID == "" ||
-		!strings.HasPrefix(sessionID, "ns_") || !strings.HasPrefix(requestID, "nq_") ||
+		!nodewire.IsManagedSession(sessionID) || !strings.HasPrefix(requestID, "nq_") ||
 		binding.SessionID != sessionID || binding.RequestID != requestID || sourceSession != sessionID || sourceRequest != requestID ||
 		binding.Project != source.ProjectID || binding.TaskID != source.TaskID || binding.AttemptID != source.AttemptID {
 		return consoleapi.ErrInvalidAnswer
@@ -56,7 +57,7 @@ func localQuestionMatches(ctx context.Context, binding consoleapi.PendingQuestio
 		return err
 	}
 	if _, _, _, native := harness.NativeQuestionSource(ctx); native || binding.Conversation == "" || binding.ExchangeID != "" ||
-		binding.TaskID == "" || binding.AttemptID == "" || binding.SessionID == "" || strings.HasPrefix(binding.SessionID, "ns_") {
+		binding.TaskID == "" || binding.AttemptID == "" || binding.SessionID == "" || nodewire.IsManagedSession(binding.SessionID) {
 		return consoleapi.ErrInvalidAnswer
 	}
 	return nil

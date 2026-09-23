@@ -143,7 +143,7 @@ func sessionHash(value any) string {
 	return hex.EncodeToString(h[:])
 }
 func sessionIDValid(id string) bool {
-	if !strings.HasPrefix(id, "ns_") || len(id) != 67 {
+	if !nodewire.IsManagedSession(id) || len(id) != 67 {
 		return false
 	}
 	_, err := hex.DecodeString(id[3:])

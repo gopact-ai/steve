@@ -343,7 +343,7 @@ func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt
 	if err != nil {
 		return nil, r, session, false, err
 	}
-	if !strings.HasPrefix(runner.ID(), "ns_") {
+	if !nodewire.IsManagedSession(runner.ID()) {
 		return nil, r, session, false, errors.New("replacement requires a node-owned session")
 	}
 	r.Session = runner.ID()
