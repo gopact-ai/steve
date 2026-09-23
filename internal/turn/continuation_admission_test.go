@@ -3,7 +3,9 @@ package turn
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type openingAttempts struct {
@@ -159,11 +162,44 @@ func TestOrdinaryPromptWaitsOutACanonicalSnapshot(t *testing.T) {
 	}
 	timer := time.AfterFunc(300*time.Millisecond, release)
 	defer timer.Stop()
-	result, err := handle(c, t.Context(), "new work")
+	var mu sync.Mutex
+	var stages []view.Stage
+	result, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "new work", OnStage: func(s view.Stage) {
+		mu.Lock()
+		stages = append(stages, s)
+		mu.Unlock()
+	}})
 	if err != nil {
 		t.Fatalf("a prompt behind a snapshot was refused: %v", err)
 	}
 	if !strings.Contains(result.Text, "after the snapshot") {
 		t.Fatalf("result = %+v", result)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if n := slices.Index(stages, view.StageAwaitSnapshot); n < 0 || slices.Index(stages[n+1:], view.StageAwaitSnapshot) >= 0 {
+		t.Fatalf("stages = %v, want the wait for the snapshot said once", stages)
+	}
+}
+
+// The wait for a snapshot is bounded: a snapshot holding the lock past it
+// is a busy project, said once when the wait began.
+func TestSnapshotWaitIsBounded(t *testing.T) {
+	opens, said := 0, 0
+	opener := waitingAttempts{passes: snapshotPasses, limit: 400 * time.Millisecond, waiting: func() { said++ },
+		Attempts: openingAttempts{open: func(context.Context, attempt.Spec) (attempt.Record, error) {
+			opens++
+			return attempt.Record{}, attempt.Busy{Resource: "canonical:p", Holder: artifact.SnapshotHolder("plan")}
+		}}}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := opener.Open(ctx, attempt.Spec{})
+	var busy attempt.Busy
+	if !errors.As(err, &busy) || ctx.Err() != nil {
+		t.Fatalf("open after %s = %v, want the snapshot's busy once the wait ran out", time.Since(started), err)
+	}
+	if opens < 2 || said != 1 {
+		t.Fatalf("opens=%d said=%d, want retries said once", opens, said)
 	}
 }

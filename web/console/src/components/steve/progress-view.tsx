@@ -129,6 +129,7 @@ const stages = {
     workspace: "consoleChrome.stage.workspace",
     capabilities: "consoleChrome.stage.capabilities",
     placement: "consoleChrome.stage.placement",
+    "await-snapshot": "consoleChrome.stage.awaitSnapshot",
     snapshot: "consoleChrome.stage.snapshot",
     session: "consoleChrome.stage.session",
     resume: "consoleChrome.stage.resume",

@@ -18,7 +18,9 @@ import (
 type waitingAttempts struct {
 	lifecycle.Attempts
 	// passes says a refusal is worth waiting out.
-	passes  func(error) bool
+	passes func(error) bool
+	// limit bounds the whole wait; zero waits as long as ctx does.
+	limit   time.Duration
 	waiting func()
 }
 
@@ -30,6 +32,12 @@ func continuationPasses(err error) bool {
 	var full attempt.NoSlot
 	return errors.As(err, &busy) || errors.As(err, &full)
 }
+
+// snapshotWaitLimit bounds how long a turn waits out a canonical snapshot.
+// A snapshot is a bounded read of the workspace; one still holding the lock
+// past this is treated as the project being written to, and the user is
+// told so rather than kept waiting.
+const snapshotWaitLimit = 45 * time.Second
 
 // Any turn waits out a canonical lock held only to cut a snapshot: that
 // holder writes nothing and gives the lock back once the cut is done.
@@ -44,6 +52,10 @@ func (a waitingAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.R
 	}
 	delay := 250 * time.Millisecond
 	notified := false
+	var deadline time.Time
+	if a.limit > 0 {
+		deadline = time.Now().Add(a.limit)
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return attempt.Record{}, err
@@ -52,11 +64,19 @@ func (a waitingAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.R
 		if err == nil || record.ID != "" || !a.passes(err) {
 			return record, err
 		}
+		wait := delay
+		if !deadline.IsZero() {
+			left := time.Until(deadline)
+			if left <= 0 {
+				return record, err
+			}
+			wait = min(wait, left)
+		}
 		if !notified && a.waiting != nil {
 			a.waiting()
 			notified = true
 		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

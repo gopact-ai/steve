@@ -100,7 +100,9 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 	if c.fleet != nil {
 		fleet = c.fleet
 	}
-	attempts := waitingAttempts{Attempts: c.attempts, passes: snapshotPasses}
+	attempts := waitingAttempts{Attempts: c.attempts, passes: snapshotPasses, limit: snapshotWaitLimit, waiting: func() {
+		req.stage(view.StageAwaitSnapshot)
+	}}
 	if req.ExpectedTask != "" {
 		attempts = waitingAttempts{Attempts: c.attempts, passes: continuationPasses, waiting: func() {
 			slog.Info("turn: parent continuation waiting for a workspace or endpoint", "task", req.ExpectedTask, "conversation", req.ConversationID)

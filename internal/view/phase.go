@@ -25,6 +25,9 @@ const (
 	// StagePlacement is leasing the attempt and asking the machine whether
 	// it can run this agent.
 	StagePlacement Stage = "placement"
+	// StageAwaitSnapshot is waiting for a snapshot of the project's
+	// canonical workspace, cut for other work, to give the workspace back.
+	StageAwaitSnapshot Stage = "await-snapshot"
 	// StageSnapshot is recording what the workspace looked like before the
 	// turn, the baseline its changes are measured against.
 	StageSnapshot Stage = "snapshot"

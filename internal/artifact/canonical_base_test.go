@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -277,5 +278,31 @@ func TestBaseUnderALentLockIsNotCutFromAWorkspaceAwaitingRecovery(t *testing.T) 
 	}
 	if head := canonicalOf(t, store, "p"); head != land.Now {
 		t.Fatalf("canonical = %s, want it left at %s", short(head), short(land.Now))
+	}
+}
+
+// A snapshot that does not finish gives the canonical lock back once its
+// time is up rather than renewing it for as long as it runs.
+func TestSnapshotUnderTheCanonicalLockIsBounded(t *testing.T) {
+	canonical := t.TempDir()
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	store.snapshotLimit = 100 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		done <- store.underCanonical(t.Context(), p, "plan", func(ctx context.Context, _ ledger.Lease) error {
+			<-ctx.Done()
+			return ctx.Err()
+		})
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("snapshot ended with %v, want its time up", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a snapshot that does not finish kept the canonical lock")
+	}
+	if _, err := store.ledger.Acquire(t.Context(), canonicalLock(p.ID), "next", time.Minute); err != nil {
+		t.Fatalf("canonical lock after the snapshot: %v", err)
 	}
 }

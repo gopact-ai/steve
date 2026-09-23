@@ -97,6 +97,9 @@ type Store struct {
 	Policy           func() (Limits, ReviewLimits)
 	Review           ReviewLimits
 	landingDriverTTL time.Duration
+	// snapshotLimit bounds a snapshot cut under the canonical lock; zero
+	// means canonicalSnapshotLimit.
+	snapshotLimit time.Duration
 	// renewTicks paces landing-driver renewals; nil means a real ticker.
 	renewTicks   func(time.Duration) (<-chan time.Time, func())
 	executions   *execution.Registry
@@ -318,7 +321,7 @@ func (s *Store) receipt(ctx context.Context, p project.Project, m Manifest) (Man
 func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, error) {
 	var m Manifest
 	var changed bool
-	err := s.underCanonical(ctx, p, by, func(held ledger.Lease) error {
+	err := s.underCanonical(ctx, p, by, func(ctx context.Context, held ledger.Lease) error {
 		var err error
 		m, changed, _, err = s.snapshotCanonical(ctx, p, held, parent, by, message)
 		return err
@@ -365,7 +368,7 @@ func (s *Store) SnapshotCanonicalUnder(ctx context.Context, p project.Project, h
 // the holder named one meanwhile, which is then the base.
 func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, message string) (string, error) {
 	var base string
-	err := s.underCanonical(ctx, p, by, func(held ledger.Lease) error {
+	err := s.underCanonical(ctx, p, by, func(ctx context.Context, held ledger.Lease) error {
 		var err error
 		base, err = s.canonicalBaseUnder(ctx, p, held, by, message)
 		return err
@@ -476,8 +479,8 @@ func (s *Store) writeCanonical(ctx context.Context, projectID string) (func(), e
 
 // underCanonical runs fn under the project's canonical lock, taken for it
 // and given back after, and only once no interrupted landing is waiting
-// to be recovered.
-func (s *Store) underCanonical(ctx context.Context, p project.Project, by string, fn func(held ledger.Lease) error) error {
+// to be recovered. fn runs under a ctx bounded by canonicalSnapshotLimit.
+func (s *Store) underCanonical(ctx context.Context, p project.Project, by string, fn func(ctx context.Context, held ledger.Lease) error) error {
 	lease, err := s.acquireCanonical(ctx, p, SnapshotHolder(by))
 	if err != nil {
 		return err
@@ -490,11 +493,22 @@ func (s *Store) underCanonical(ctx context.Context, p project.Project, by string
 	// Renewed on its own even under a landing driver, which renews the
 	// lock its landing holds and must go on doing so.
 	defer s.renewCanonical(ctx, lease)()
+	limit := s.snapshotLimit
+	if limit <= 0 {
+		limit = canonicalSnapshotLimit
+	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
 	if err := s.checkNoRecoveryPending(ctx, p, ""); err != nil {
 		return err
 	}
-	return fn(lease)
+	return fn(ctx, lease)
 }
+
+// canonicalSnapshotLimit bounds a snapshot cut under the canonical lock.
+// The lock is renewed while the cut runs, and turns wait it out, so a cut
+// that hangs must end by itself rather than hold the project indefinitely.
+const canonicalSnapshotLimit = 10 * time.Minute
 
 // SnapshotHolder is a holder of the canonical lock that only cuts a
 // snapshot for by, writing nothing.
