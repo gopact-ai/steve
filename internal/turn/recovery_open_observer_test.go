@@ -71,7 +71,7 @@ func TestLostFreshNodeOpenKeepsOriginalTaskUnsettledWhileObserverCanExit(t *test
 	if !tracked.Attempts[len(tracked.Attempts)-1].Open() {
 		t.Fatal("lost open fabricated task settlement")
 	}
-	items, err := c.RetainedChats(t.Context())
+	items, err := c.RetainedChatsFor(t.Context(), tracked.Channel, record.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}

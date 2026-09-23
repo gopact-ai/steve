@@ -186,9 +186,9 @@ func TestStopCandidatesUseBoundedIndex(t *testing.T) {
 	}
 }
 
-func queryPlan(t *testing.T, db *sql.DB, query string) string {
+func queryPlan(t *testing.T, db *sql.DB, query string, args ...any) string {
 	t.Helper()
-	rows, err := db.Query("EXPLAIN QUERY PLAN " + query)
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
 	if err != nil {
 		t.Fatal(err)
 	}

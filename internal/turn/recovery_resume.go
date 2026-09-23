@@ -45,35 +45,54 @@ func retainedBlocked(code, attempted, problem, reason, recommendation string, ca
 	return &RecoveryBlocked{Cause: cause, Question: view.Question{RequestID: "recovery/" + code, Kind: "recovery", Title: "继续任务需要你的处理", Message: "已尝试：" + attempted + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "仅核对节点上的原执行，不会重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留当前任务和进度。Steve 会继续自己重连，机器回来后自动接着跑。"}}}}
 }
 
-// RetainedChats identifies accepted native commands and committed but not yet
-// delivered results. It creates neither tasks nor replacement attempts.
-func (c *Coordinator) RetainedChats(ctx context.Context) ([]RetainedChat, error) {
+// retainedChat says whether a chat execution holds an accepted native command
+// or a committed but undelivered result that recovery observes again.
+func retainedChat(r attempt.Record) bool {
+	if r.Kind != attempt.KindChat || r.State == attempt.Superseded {
+		return false
+	}
+	reattachable := attempt.Relocatable(r) || attempt.PreparingRelocation(r) || pendingChatOpen(r)
+	if r.State != attempt.Bound && !strings.HasPrefix(r.Session, "ns_") && !reattachable {
+		return false
+	}
+	return r.State == attempt.Running || r.State.Terminal() || reattachable
+}
+
+// RetainedChatsFor identifies the retained executions of one exchange: its
+// conversation and the message that opened the turn. More than one is
+// returned as found, never chosen between. It creates neither tasks nor
+// replacement attempts, and reads only the turn's own attempts.
+func (c *Coordinator) RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]RetainedChat, error) {
 	if c.attempts == nil || c.tasks == nil {
 		return nil, errors.New("retained chat recovery is not configured")
 	}
-	live, err := c.attempts.Live(ctx)
+	records, err := c.attempts.ForTurn(ctx, messageID)
 	if err != nil {
 		return nil, err
 	}
-	closed, err := c.attempts.Closed(ctx)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
 	var result []RetainedChat
-	for _, r := range append(live, closed...) {
-		if seen[r.ID] || r.Kind != attempt.KindChat || r.State == attempt.Superseded || (r.State != attempt.Bound && !strings.HasPrefix(r.Session, "ns_") && !attempt.Relocatable(r) && !attempt.PreparingRelocation(r) && !pendingChatOpen(r)) || (r.State != attempt.Running && !r.State.Terminal() && !attempt.Relocatable(r) && !attempt.PreparingRelocation(r) && !pendingChatOpen(r)) {
+	for _, r := range records {
+		if !retainedChat(r) {
 			continue
 		}
-		seen[r.ID] = true
 		tracked, ok := c.tasks.Get(r.TaskID)
-		if !ok {
+		if !ok || tracked.Channel != conversation {
 			continue
 		}
 		result = append(result, RetainedChat{AttemptID: r.ID, TaskID: r.TaskID, Conversation: tracked.Channel, MessageID: r.TurnID, AgentID: r.Agent, NodeID: r.Node, ProjectID: r.Project, Completed: r.State.Terminal()})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].AttemptID < result[j].AttemptID })
 	return result, nil
+}
+
+// CheckRetainedChats fails when execution history cannot be read, so retained
+// recovery does not start over records it could not classify. It decodes no
+// settled payloads.
+func (c *Coordinator) CheckRetainedChats(ctx context.Context) error {
+	if c.attempts == nil || c.tasks == nil {
+		return errors.New("retained chat recovery is not configured")
+	}
+	return c.attempts.CheckReadable(ctx)
 }
 
 type retainedRuntime interface {

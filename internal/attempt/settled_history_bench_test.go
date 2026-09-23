@@ -86,7 +86,10 @@ func BenchmarkSettledHistoryReads(b *testing.B) {
 			_, err := s.StopCandidates(ctx)
 			return err
 		}},
-		{"retained-chat", liveAndClosed},
+		{"retained-chat", func(ctx context.Context, s *Service, fixture settledHistoryFixture) error {
+			_, err := s.ForTurn(ctx, fixture.turnID)
+			return err
+		}},
 		{"delegate-recovery", liveAndClosed},
 		{"usage", liveAndClosed},
 	} {

@@ -22,7 +22,10 @@ import (
 
 // RetainedChatDriver observes already accepted work without invoking Handle.
 type RetainedChatDriver interface {
-	RetainedChats(context.Context) ([]turn.RetainedChat, error)
+	// CheckRetainedChats fails when retained execution history is unreadable.
+	CheckRetainedChats(context.Context) error
+	// RetainedChatsFor lists the retained executions of one exchange.
+	RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]turn.RetainedChat, error)
 	ResumeRetainedChat(context.Context, string, turn.Request) (turn.Result, error)
 }
 
@@ -71,11 +74,11 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 	s.mu.Lock()
 	initialized := reflect.ValueOf(driver).Comparable() && s.recoveryDriver == driver
 	s.mu.Unlock()
-	// Initialization can restore all retained history once. Runtime passes
-	// still restart detached workers, but must not repeat that idle scan.
+	// Initialization checks retained history once. Runtime passes still
+	// restart detached workers, but must not repeat that idle check.
 	// Non-comparable driver values conservatively repeat initialization.
 	if !initialized {
-		if _, err := driver.RetainedChats(ctx); err != nil {
+		if err := driver.CheckRetainedChats(ctx); err != nil {
 			return err
 		}
 		if plans, ok := driver.(retainedPlanDriver); ok {
@@ -188,7 +191,7 @@ func (s *Service) continueDetached(e *queuedExchange, err error) bool {
 }
 
 func (s *Service) findRetained(ctx context.Context, driver RetainedChatDriver, e Exchange) (retainedExchange, bool, error) {
-	items, err := driver.RetainedChats(ctx)
+	items, err := driver.RetainedChatsFor(ctx, e.Conversation, AnchorMark+e.ID)
 	if err != nil {
 		return retainedExchange{}, false, err
 	}

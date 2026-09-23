@@ -938,6 +938,11 @@ func (s *Service) LatestForTurn(ctx context.Context, turnID string) (Record, boo
 	return records[0], true, nil
 }
 
+// ForTurn lists every attempt of a logical turn, newest first.
+func (s *Service) ForTurn(ctx context.Context, turnID string) ([]Record, error) {
+	return s.identityRecords(ctx, turnAttemptsSQL, turnID)
+}
+
 // TakeoverAllowed says whether a previous attempt of the turn leaves work
 // a new attempt may take over, and did not run in place.
 func (r Record) TakeoverAllowed() bool {
