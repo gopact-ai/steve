@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -18,7 +20,7 @@ func TestChangesReportsCaptureFailureWithNoArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	cause := artifact.TooLarge{Which: "files", Have: 3, Limit: 2}.Error()
+	cause := gitrepo.TooLarge{Which: "files", Have: 3, Limit: 2}.Error()
 	record := attempt.Record{Spec: attempt.Spec{ID: "turn", Project: "project", Base: "before"}, Result: &attempt.Result{Summary: "done", CaptureError: cause}}
 	if _, err := book.Begin(t.Context(), record.ID, "attempt", string(attempt.Bound), "test", record); err != nil {
 		t.Fatal(err)
@@ -41,7 +43,7 @@ func TestChangesSummaryKeepsHistoricalSnapshotAndPartialCounts(t *testing.T) {
 	t.Cleanup(func() { book.Close() })
 	work := t.TempDir()
 	projects := project.Open(book)
-	p := project.Project{ID: "p", Home: project.Home{Path: work}, Level: project.LevelPublic}
+	p := project.Project{ID: "p", Home: project.Home{Path: work}, Level: datalevel.Public}
 	if err := projects.Declare(t.Context(), []project.Project{p}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestChangesSummaryKeepsHistoricalSnapshotAndPartialCounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	artifacts.Review = artifact.ReviewLimits{MaxChanges: 2}
+	artifacts.Review = gitrepo.ReviewLimits{MaxChanges: 2}
 	admin := &Service{Attempts: attempt.New(book), Artifacts: artifacts}
 	summary, err := admin.Changes(t.Context(), "historical")
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
@@ -593,12 +594,12 @@ type AttemptView struct {
 
 // TreeView is one directory of an attempt's snapshot.
 type TreeView struct {
-	Attempt   string           `json:"attempt"`
-	Commit    string           `json:"commit"`
-	Which     string           `json:"which"` // result | base
-	Dir       string           `json:"dir"`
-	Entries   []artifact.Entry `json:"entries"`
-	Truncated bool             `json:"truncated,omitempty"`
+	Attempt   string          `json:"attempt"`
+	Commit    string          `json:"commit"`
+	Which     string          `json:"which"` // result | base
+	Dir       string          `json:"dir"`
+	Entries   []gitrepo.Entry `json:"entries"`
+	Truncated bool            `json:"truncated,omitempty"`
 }
 
 // FileView is one file of an attempt's snapshot.
@@ -631,13 +632,13 @@ type ChangeSummary struct {
 
 // ChangeIndex is the files an attempt changed, bounded.
 type ChangeIndex struct {
-	Attempt   string            `json:"attempt"`
-	Project   string            `json:"project,omitempty"`
-	Base      string            `json:"base,omitempty"`
-	Artifact  string            `json:"artifact,omitempty"`
-	Changes   []artifact.Change `json:"changes"`
-	Truncated bool              `json:"truncated,omitempty"`
-	Note      string            `json:"note,omitempty"`
+	Attempt   string           `json:"attempt"`
+	Project   string           `json:"project,omitempty"`
+	Base      string           `json:"base,omitempty"`
+	Artifact  string           `json:"artifact,omitempty"`
+	Changes   []gitrepo.Change `json:"changes"`
+	Truncated bool             `json:"truncated,omitempty"`
+	Note      string           `json:"note,omitempty"`
 }
 
 // FileDiff is one changed file's unified diff, cut at the store's limit.

@@ -8,23 +8,28 @@
 |---|---|---|
 | `cmd/steve` | 进程启动、组件装配、管理用例适配 | 应用服务、配置、HTTP 与通道适配器 |
 | `httpapi` | HTTP 鉴权、请求解析、响应与事件流 | `consoleapi` 契约、只读模型接口 |
-| `consoleapi` | Console/Admin 端口、交换与回复等序列化结构 | 领域值类型；不执行网络或存储操作 |
+| `consoleapi` | Console/Admin 端口、交换与回复等序列化结构 | 领域值类型、`channelsettings`；不执行网络或存储操作，但经 task、project、material、插件库记录类型间接链接账本 |
 | `console` | 会话交换队列、提交去重、回复记录 | 协调入口、账本文档、事件端口 |
 | `readmodel` | 系统快照、派生状态、用量与事件聚合 | 各领域的查询接口、`consoleapi` 数据结构 |
 | `turn`、`delegate`、`exec` | 对话回合、委派与计划的业务编排 | task、attempt、artifact、project、harness 等领域服务 |
 | `execution`、`agentexec` | 执行作用域、停止等待，以及规划/验证的单次执行壳 | task、attempt、harness 与资源准入端口 |
 | `schedule` | 定时规则、触发认领与受理回执 | 持久化文档；通道投递由组合入口装配 |
 | `task`、`project`、`attempt` | 任务树预算、工作区归属、执行状态与租约 | ledger；不依赖 HTTP 或页面实现 |
-| `ledger` | 文档、事务、命名引用、租约与审计 | SQLite 与本地持久化 |
-| `artifact` | 快照、内容搬运、合并与落地 | 项目、账本、节点操作端口 |
+| `ledger` | 文档、事务、命名引用、租约与审计 | SQLite 与本地持久化（单文件文档用 `filedoc`） |
+| `artifact` | 产物清单、内容副本、落地与恢复记录 | `artifact/gitrepo`、项目、账本、节点操作端口 |
+| `artifact/gitrepo` | 项目影子仓库与 git 操作：快照、合并、bundle、受限读取，以及节点执行的产物操作 | `artifact/ops`、`budget`；不依赖账本 |
 | `material` | 不可变内容引用、选择范围、批注与受限 blob 存储 | ledger；不依赖 UI 或模型会话 |
 | `transfer` | 停服状态下导出和导入完整项目，重映射运行身份 | 各领域的导出/导入契约；不运行模型或安装版本 |
 | `hubid` | 持久 Hub 身份 | 本地原子文件；不以主机名或心跳推断归属 |
 | `localtoken`、`sameorigin` | 本机控制台的生成 token；本地 HTTP 面拒绝其他网站（Host 与写请求 Origin） | 标准库；每个直接面向浏览器的监听入口都要经过 `sameorigin` |
-| `node`、`nodewire`、`acphost` | 节点连接、可续接进程流、ACP 会话 | 协议、进程与资源接口 |
+| `node`、`nodewire`、`acphost` | 节点连接、可续接进程流、ACP 会话 | 协议、进程与资源接口；`node` 经 `artifact/gitrepo` 执行产物操作，不依赖账本，SQLite 只用于节点自己的会话记录 |
 | `channel`、`channel/feishu`、`gateway`、`card` | 消息通道、飞书投递及卡片 | 协调入口与呈现数据 |
+| `config` | 配置文件的结构、默认值与校验 | `agent` 目录与 `adapter` 名称校验、`approval` / `permission` 策略值、`plugins` 值类型、`budget`、`channelsettings`、`datalevel`；不依赖执行、产物与存储层 |
+| `configbuild` | 由配置准备适配器，构建 harness 管理器、能力装配器与节点连接参数，并把项目声明投影到账本 | config、adapter、harness、capability、node、project、datalevel |
+| `plugins`、`plugins/pluginledger` | 插件包、安装与运行值类型及本地文件存储；插件库、操作与运行预留的账本记录 | `plugins` 无内部依赖；`pluginledger` 依赖 ledger 与 contentreplica |
+| `budget`、`datalevel`、`channelsettings`、`filedoc` | 默认执行与产物预算、数据等级、通道设置与补丁、单文件持久文档 | 仅标准库 |
 
-依赖门禁禁止领域层反向引用应用/传输层，禁止契约包引用服务实现。HTTP 实现只由组合入口装配，其他内部服务不导入它。包之间采用消费方所需的接口；运行期可替换的对象才需要接口。
+依赖门禁禁止领域层反向引用应用/传输层，禁止契约包引用服务实现。传递依赖门禁要求 `config`、`i18n` 不链接执行层（exec、lifecycle、turn、node、harness）与存储层（ledger、SQLite），`consoleapi` 不链接执行层，`cmd/steve-node` 不链接 ledger 且只经 `node` 的会话记录使用 SQLite；违规时报告最短导入链。HTTP 实现只由组合入口装配，其他内部服务不导入它。包之间采用消费方所需的接口；运行期可替换的对象才需要接口。
 
 `gateway` 仍包含飞书启动及主动投递逻辑；配置了飞书凭据才创建该适配器。独立 Console 使用 `gateway.owner_id`，无需建立飞书连接。`channel.Messenger` 统一 Agent 的进度消息操作；通道特有的卡片、设备授权和回调留在适配器内。
 
@@ -92,7 +97,7 @@ Agent 变更依次执行：构造并验证候选目录、持久化配置、发�
 
 配置文件的原子替换是提交点。替换前失败表示未应用；替换后目录同步失败返回 `config.CommittedError`，表示新配置已应用但持久性未确认。调用者在后一种情况下保持与新文件一致的运行态，不能回滚成旧配置并假称未应用。
 
-配置文件是项目、工作区和配置 ACL 的声明权威；账本保留执行、产物及运行状态。配置保存前检查读取时的文件指纹，检测到外部改动便拒绝覆盖。`ProjectController` 校验完整声明后保存文件，再事务更新项目投影和已应用摘要。两个存储没有跨存储原子事务；投影未应用时，项目执行解析关闭，重试或启动从当前配置重建。
+配置文件是项目、工作区和配置 ACL 的声明权威；账本保留执行、产物及运行状态。配置保存前检查读取时的文件指纹，检测到外部改动便拒绝覆盖。`configbuild.ProjectController` 校验完整声明后保存文件，再事务更新项目投影和已应用摘要。两个存储没有跨存储原子事务；投影未应用时，项目执行解析关闭，重试或启动从当前配置重建。
 
 移除项目保留历史查询入口，不允许用历史声明启动新执行。配置 ACL 作为独立覆盖层参与声明摘要，显式拒绝优先；移除配置授权后才显露独立运行时授权或项目默认值。
 

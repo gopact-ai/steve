@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -138,7 +139,7 @@ func ImportProjectObjects(ctx context.Context, dir string, in ProjectTransfer, r
 		return err
 	}
 	tmp.Close()
-	r, err := Open(ctx, repo)
+	r, err := gitrepo.Open(ctx, repo)
 	if err != nil {
 		return err
 	}

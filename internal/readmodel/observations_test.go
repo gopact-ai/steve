@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -39,7 +40,7 @@ func (d *observationDoc) Load() ([]byte, bool, error) {
 
 func observationFile(t *testing.T) ledger.Doc {
 	t.Helper()
-	return &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "observations.json")}
+	return &filedoc.Document{Path: filepath.Join(t.TempDir(), "observations.json")}
 }
 
 func observationGate() (entered <-chan struct{}, block, release func()) {

@@ -103,7 +103,7 @@ func (s *Store) Deployment(hash string) (DeploymentReceipt, error) {
 		return DeploymentReceipt{}, err
 	}
 	var receipt DeploymentReceipt
-	if err := decodeStrict(raw, &receipt); err != nil {
+	if err := DecodeStrict(raw, &receipt); err != nil {
 		return receipt, err
 	}
 	actual, err := receipt.Deployment.Hash()

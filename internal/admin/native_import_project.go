@@ -11,6 +11,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -79,7 +80,7 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 		if _, exists := candidate.Projects[id]; exists {
 			return fmt.Errorf("自动关联项目名称 %s 已被其他目录占用", id)
 		}
-		candidate.Projects[id] = config.Project{Home: config.ProjectHome{Node: name, Path: workdir}, Level: string(project.LevelInternal), Repo: string(project.RepoInPlace)}
+		candidate.Projects[id] = config.Project{Home: config.ProjectHome{Node: name, Path: workdir}, Level: string(datalevel.Internal), Repo: string(project.RepoInPlace)}
 		return nil
 	})
 	if errors.Is(err, reused) {

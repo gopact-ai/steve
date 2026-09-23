@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -25,7 +26,7 @@ func assembleHome(input inputAssembly, boot runtimeAssembly) (homeAssembly, erro
 	}
 	var assembler *capability.Assembler
 	if environment != nil {
-		assembler = cfg.CapabilityAssembler().SetHome(profile.Home).SetLocale(profile.Locale)
+		assembler = configbuild.CapabilityAssembler(cfg).SetHome(profile.Home).SetLocale(profile.Locale)
 		if live != nil && live.Map != nil {
 			assembler.SetSkills(live.Map)
 		}

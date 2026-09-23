@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
 
@@ -27,18 +26,6 @@ func TestFromLang(t *testing.T) {
 				t.Fatalf("FromLang(%q)=%q want %q", tt.lang, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestFromDomain(t *testing.T) {
-	if FromDomain(config.DomainLark) != LocaleEN {
-		t.Fatal("lark should be english")
-	}
-	if FromDomain(config.DomainFeishu) != LocaleZH {
-		t.Fatal("feishu should be chinese")
-	}
-	if FromDomain("") != LocaleZH {
-		t.Fatal("empty domain should default to chinese")
 	}
 }
 

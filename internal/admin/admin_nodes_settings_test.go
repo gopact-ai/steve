@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/roster"
 )
@@ -21,13 +22,13 @@ func hubNodeSettingsFixture(t *testing.T) *Service {
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := a.Cfg.HarnessManager()
+	manager, err := configbuild.HarnessManager(a.Cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.Manager = manager
 	t.Cleanup(manager.Stop)
-	a.Assembler = a.Cfg.CapabilityAssembler()
+	a.Assembler = configbuild.CapabilityAssembler(a.Cfg)
 	a.Fleet = roster.New(a.Catalog)
 	return a
 }

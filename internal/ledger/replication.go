@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/filedoc"
 )
 
 var (
@@ -75,7 +77,7 @@ func (l *Ledger) AttachReplication(r Replicator) error {
 	if l.replicaFailure != nil {
 		return l.replicaFailure
 	}
-	if err := (&FileDocument{Path: filepath.Join(l.dir, replicaMarker)}).Save([]byte("1\n")); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(l.dir, replicaMarker)}).Save([]byte("1\n")); err != nil {
 		return err
 	}
 	l.replicationRequired = true
@@ -566,7 +568,7 @@ func (l *Ledger) requireReplication() error {
 	if l.replicationRequired {
 		return nil
 	}
-	if err := (&FileDocument{Path: filepath.Join(l.dir, replicaMarker)}).Save([]byte("1\n")); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(l.dir, replicaMarker)}).Save([]byte("1\n")); err != nil {
 		return err
 	}
 	l.replicationRequired = true

@@ -17,8 +17,10 @@ import (
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -64,7 +66,7 @@ func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlace
 		if err := d.Apply(cfg); err != nil {
 			return contentPlacementState{}, err
 		}
-		_, declarationHash, err := config.ProjectDeclarations(cfg)
+		_, declarationHash, err := configbuild.ProjectDeclarations(cfg)
 		if err != nil {
 			return contentPlacementState{}, err
 		}
@@ -114,7 +116,7 @@ func (policy peerContentPolicy) CheckpointPlacement(ctx context.Context, scope c
 	if !memberOK || !nodeOK || current.state.Removing[nodeID] || contentScope(current.project) != scope {
 		return contentreplica.Placement{}, contentreplica.ErrPlacement
 	}
-	level := project.Level(assigned.Level).OrDefault()
+	level := datalevel.Level(assigned.Level).OrDefault()
 	if !level.Valid() || !current.project.Level.OrDefault().Admits(level) || scope.Level == "sealed" && nodeID != scope.HomeNodeID {
 		return contentreplica.Placement{}, contentreplica.ErrPlacement
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/runtime"
@@ -57,7 +58,7 @@ func main() {
 		item.Env = runtime.ApplyEnv(item.Env, id, stateDir)
 		cfg.Harnesses[id] = item
 	}
-	assembler := cfg.CapabilityAssembler().SetSkills(skillMap)
+	assembler := configbuild.CapabilityAssembler(cfg).SetSkills(skillMap)
 	mode := home.ModeGuest
 	if _, err := os.Stat(cfg.Gateway.HomePath); err == nil {
 		assembler.SetHome(home.Dir{Path: cfg.Gateway.HomePath})
@@ -69,7 +70,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	manager, err := cfg.HarnessManager()
+	manager, err := configbuild.HarnessManager(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -9,9 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/approval"
-	"github.com/gopact-ai/steve/internal/artifact"
-	"github.com/gopact-ai/steve/internal/exec"
-	"github.com/gopact-ai/steve/internal/planner"
+	"github.com/gopact-ai/steve/internal/budget"
 )
 
 type ExecutionPolicy struct {
@@ -58,43 +56,44 @@ type Policies struct {
 	Review    ReviewPolicy    `json:"review"`
 }
 
-// Defaults belong to their consumer's policy, not a shared constants bucket.
+// WithDefaults fills every unset policy from package budget, the values the
+// runtime also applies to a zero value.
 func (p Policies) WithDefaults() Policies {
 	if p.Execution.StepTimeout == 0 {
-		p.Execution.StepTimeout = Duration(exec.DefaultStepTimeout)
+		p.Execution.StepTimeout = Duration(budget.StepTimeout)
 	}
 	if p.Execution.VerifyTimeout == 0 {
-		p.Execution.VerifyTimeout = Duration(exec.DefaultVerifyTimeout)
+		p.Execution.VerifyTimeout = Duration(budget.VerifyTimeout)
 	}
 	if p.Planning.Timeout == 0 {
-		p.Planning.Timeout = Duration(planner.DefaultTimeout)
+		p.Planning.Timeout = Duration(budget.PlanningTimeout)
 	}
 	if p.Planning.Attempts == 0 {
-		p.Planning.Attempts = planner.DefaultAttempts
+		p.Planning.Attempts = budget.PlanningAttempts
 	}
 	if p.Snapshot.MaxFiles == 0 {
-		p.Snapshot.MaxFiles = artifact.MaxSnapshotFiles
+		p.Snapshot.MaxFiles = budget.SnapshotFiles
 	}
 	if p.Snapshot.MaxBytes == 0 {
-		p.Snapshot.MaxBytes = artifact.MaxSnapshotBytes
+		p.Snapshot.MaxBytes = budget.SnapshotBytes
 	}
 	if p.Snapshot.MaxFileBytes == 0 {
-		p.Snapshot.MaxFileBytes = artifact.MaxSnapshotFileBytes
+		p.Snapshot.MaxFileBytes = budget.SnapshotFileBytes
 	}
 	if p.Review.MaxChanges == 0 {
-		p.Review.MaxChanges = artifact.MaxChanges
+		p.Review.MaxChanges = budget.ReviewChanges
 	}
 	if p.Review.MaxDiffBytes == 0 {
-		p.Review.MaxDiffBytes = artifact.MaxDiffBytes
+		p.Review.MaxDiffBytes = budget.ReviewDiffBytes
 	}
 	if p.Review.MaxFileBytes == 0 {
-		p.Review.MaxFileBytes = artifact.MaxFileBytes
+		p.Review.MaxFileBytes = budget.ReviewFileBytes
 	}
 	if p.Review.MaxEntries == 0 {
-		p.Review.MaxEntries = artifact.MaxEntries
+		p.Review.MaxEntries = budget.ReviewEntries
 	}
 	if p.Review.Timeout == 0 {
-		p.Review.Timeout = Duration(artifact.DefaultReviewTimeout)
+		p.Review.Timeout = Duration(budget.ReviewTimeout)
 	}
 	if p.Landing.Conflicts == "" {
 		p.Landing.Conflicts = ConflictsByAgent

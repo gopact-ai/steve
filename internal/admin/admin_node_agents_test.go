@@ -15,6 +15,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
@@ -75,7 +76,7 @@ func TestLocalWorkerEnrollmentRefreshesAdvertBeforeFirstSession(t *testing.T) {
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", a.Cfg.NodeConfigs())
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
 	t.Cleanup(a.Nodes.Close)
 	before, err := a.Nodes.Advert(t.Context(), "node-test")
 	if err != nil || len(before.Harnesses) != 0 {
@@ -191,7 +192,7 @@ func remoteAgentAdminFixture(t *testing.T) *Service {
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", a.Cfg.NodeConfigs())
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
 	t.Cleanup(a.Nodes.Close)
 	return a
 }

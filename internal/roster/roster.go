@@ -20,10 +20,10 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 // NodeSource is the live view of remote machines. The node registry
@@ -76,7 +76,7 @@ type Candidate struct {
 	// Slots is the endpoint's session cap for (node, harness); zero is
 	// unlimited. Level is the data level of the machine.
 	Slots int
-	Level project.Level
+	Level datalevel.Level
 	// Region is whose leases the machine's resources carry ("" = hub's).
 	Region string
 }
@@ -91,7 +91,7 @@ type Roster struct {
 	hubCaps []string
 	// hubLevel and hubSlots describe the hub machine the same way a
 	// node's advert and config describe a node.
-	hubLevel project.Level
+	hubLevel datalevel.Level
 	hubSlots map[string]int
 	// hubAdvert is what the hub machine checks about itself, asked fresh
 	// each time: a harness whose binary is not on this PATH blocks a
@@ -100,7 +100,7 @@ type Roster struct {
 	hubAdvert func() nodewire.Advert
 	// models is what harnesses have been observed running, per machine.
 	models     Models
-	nodeLevels map[string]project.Level
+	nodeLevels map[string]datalevel.Level
 	regions    map[string]string
 	nodes      NodeSource
 }
@@ -212,7 +212,7 @@ func (r *Roster) SetNodes(nodes NodeSource) {
 }
 
 // SetHubLevel declares the hub machine's data level.
-func (r *Roster) SetHubLevel(level project.Level) {
+func (r *Roster) SetHubLevel(level datalevel.Level) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.hubLevel = level
@@ -259,7 +259,7 @@ func (r *Roster) RegionOf(node string) string {
 }
 
 // SetNodeLevels declares the level the hub assigned each node.
-func (r *Roster) SetNodeLevels(levels map[string]project.Level) {
+func (r *Roster) SetNodeLevels(levels map[string]datalevel.Level) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.nodeLevels = levels
@@ -413,7 +413,7 @@ const (
 	ReasonBadRequirement = "bad_requirement"
 )
 
-func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hub place, levels map[string]project.Level) Candidate {
+func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hub place, levels map[string]datalevel.Level) Candidate {
 	c := Candidate{Agent: a, Node: a.Node, Harness: a.Harness, Model: a.Model, Eligible: true, Level: levels[a.Node].OrDefault()}
 	if a.Model != "" {
 		c.Models = []string{a.Model}
@@ -681,7 +681,7 @@ func helperRank(harness string) int {
 
 // place is how the hub describes its own machine to describe().
 type place struct {
-	level  project.Level
+	level  datalevel.Level
 	slots  map[string]int
 	advert nodewire.Advert
 }

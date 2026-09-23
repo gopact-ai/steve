@@ -28,10 +28,10 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
-	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -243,8 +243,8 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	if err != nil {
 		return PeerEnrollmentPlan{}, err
 	}
-	level := project.Level(request.Level).OrDefault()
-	if level != project.LevelPublic && level != project.LevelInternal && level != project.LevelRestricted && level != project.LevelSealed {
+	level := datalevel.Level(request.Level).OrDefault()
+	if level != datalevel.Public && level != datalevel.Internal && level != datalevel.Restricted && level != datalevel.Sealed {
 		return PeerEnrollmentPlan{}, errors.New("节点数据等级不合法")
 	}
 	request.Level = string(level)
@@ -900,7 +900,7 @@ func (p *Peer) RegisterEnrolledWorker(ctx context.Context, nodeID, level string)
 	if updated == nil {
 		updated = map[string]config.Node{}
 	}
-	next := config.Node{Addr: worker.Address, Token: worker.Token, Level: string(project.Level(level).OrDefault())}
+	next := config.Node{Addr: worker.Address, Token: worker.Token, Level: string(datalevel.Level(level).OrDefault())}
 	if existing, ok := updated[nodeID]; ok {
 		if existing.Addr != next.Addr || existing.Token != next.Token {
 			adminsvc.ConfigMu.Unlock()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
@@ -27,7 +28,7 @@ func nodeAdminFixture(t *testing.T) *Service {
 	if err := config.Save(admin.Path, admin.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	admin.Nodes = node.NewRegistry("hub-test", admin.Cfg.NodeConfigs())
+	admin.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(admin.Cfg))
 	t.Cleanup(admin.Nodes.Close)
 	admin.Fleet = roster.New(admin.Catalog)
 	return admin
@@ -132,7 +133,7 @@ func TestRemoveNodeRechecksProjectPlacementAfterAPendingCopy(t *testing.T) {
 	if err := config.Save(admin.Path, admin.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	admin.Nodes = node.NewRegistry("hub-test", admin.Cfg.NodeConfigs())
+	admin.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(admin.Cfg))
 	t.Cleanup(admin.Nodes.Close)
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {

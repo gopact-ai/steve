@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/platformconfig"
@@ -21,9 +22,9 @@ func channelLivePolicy() config.Feishu {
 	}
 }
 
-func channelLivePatch() config.ChannelPatch {
+func channelLivePatch() channelsettings.Patch {
 	f := channelLivePolicy()
-	return config.ChannelPatch{Feishu: &config.FeishuChannelPatch{
+	return channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{
 		GroupPolicy: &f.GroupPolicy, AllowUnmentioned: &f.AllowUnmentioned,
 		AllowedSenders: &f.AllowedSenders, BlockedSenders: &f.BlockedSenders,
 	}}
@@ -210,7 +211,7 @@ func TestChannelsLiveMixedIdentityAndPolicyRemainPending(t *testing.T) {
 	patch.DefaultChannel = ChannelValue("console")
 	patch.Feishu.Enabled = ChannelValue(false)
 	patch.Feishu.AppID = ChannelValue("different-app")
-	patch.Feishu.AppSecret = &config.ChannelSecret{Action: "replace", Value: ChannelValue("rotated-private-secret")}
+	patch.Feishu.AppSecret = &channelsettings.Secret{Action: "replace", Value: ChannelValue("rotated-private-secret")}
 	patch.Feishu.Domain = ChannelValue(config.DomainLark)
 	patch.Feishu.OwnerOpenID = ChannelValue("different-owner")
 	after, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: patch})
@@ -229,7 +230,7 @@ func TestChannelsLiveMixedIdentityAndPolicyRemainPending(t *testing.T) {
 	if a.Cfg.Feishu.AppID != "different-app" || a.Cfg.Feishu.AppSecret != "rotated-private-secret" {
 		t.Fatal("mixed desired declaration was not saved")
 	}
-	after, err = s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: after.Revision, Channels: config.ChannelPatch{Feishu: &config.FeishuChannelPatch{GroupPolicy: ChannelValue(config.GroupPolicyOpen)}}})
+	after, err = s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: after.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: ChannelValue(config.GroupPolicyOpen)}}})
 	if err != nil || !after.PendingRestart || after.Effective.Feishu.GroupPolicy != config.GroupPolicyOpen || after.Effective.Feishu.AppID != before.Effective.Feishu.AppID {
 		t.Fatal("subsequent live update cleared pending restart identity", err)
 	}

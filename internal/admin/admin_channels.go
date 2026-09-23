@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/platformconfig"
@@ -13,7 +14,7 @@ import (
 
 type hubChannelsService struct {
 	admin         *Service
-	applied       config.ChannelSettings
+	applied       channelsettings.Settings
 	appliedSecret string
 	runtimeError  string
 	accessUpdater func(config.Feishu)
@@ -34,7 +35,7 @@ func (s *hubChannelsService) BindAccessUpdater(update func(config.Feishu)) {
 	}
 }
 
-func channelAccess(f config.FeishuChannelSetting) config.Feishu {
+func channelAccess(f channelsettings.FeishuSetting) config.Feishu {
 	return config.Feishu{
 		GroupPolicy:      f.GroupPolicy,
 		AllowUnmentioned: f.AllowUnmentioned,
@@ -73,7 +74,7 @@ func (s *hubChannelsService) viewLocked() consoleapi.ChannelsView {
 	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError}
 }
 
-func cloneChannelSettings(in config.ChannelSettings) config.ChannelSettings {
+func cloneChannelSettings(in channelsettings.Settings) channelsettings.Settings {
 	in.Feishu.AllowedSenders = append([]string{}, in.Feishu.AllowedSenders...)
 	in.Feishu.BlockedSenders = append([]string{}, in.Feishu.BlockedSenders...)
 	return in

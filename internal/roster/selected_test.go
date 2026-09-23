@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 type selectedNodes struct {
@@ -39,7 +39,7 @@ func TestForAgentConnectsOnlySelectedDestinationAndKeepsPlacementFacts(t *testin
 		{Name: "worker", Advert: nodewire.Advert{Node: "worker", Capabilities: []string{"gpu"}, Harnesses: []nodewire.Harness{{ID: "mock", Command: "mock", Slots: 3}}}},
 	}}
 	r.SetNodes(nodes)
-	r.SetNodeLevels(map[string]project.Level{"worker": project.LevelRestricted})
+	r.SetNodeLevels(map[string]datalevel.Level{"worker": datalevel.Restricted})
 	r.SetNodeRegions(map[string]string{"worker": "region-b"})
 	r.SetModels(fakeBook{"worker/mock": models.Observation{Current: "small", Available: []string{"small", "large"}}})
 	r.SetHubAdvert(func() nodewire.Advert {
@@ -54,7 +54,7 @@ func TestForAgentConnectsOnlySelectedDestinationAndKeepsPlacementFacts(t *testin
 	if nodes.statuses[0].Up {
 		t.Fatal("unrelated node was contacted")
 	}
-	if !c.Up || !c.Eligible || c.Agent.ID != "remote" || c.Node != "worker" || c.Harness != "mock" || c.Slots != 3 || c.Level != project.LevelRestricted || c.Region != "region-b" || c.Model != "small" || len(c.Models) != 2 {
+	if !c.Up || !c.Eligible || c.Agent.ID != "remote" || c.Node != "worker" || c.Harness != "mock" || c.Slots != 3 || c.Level != datalevel.Restricted || c.Region != "region-b" || c.Model != "small" || len(c.Models) != 2 {
 		t.Fatalf("placement facts = %+v", c)
 	}
 	adm, _, err := r.Admit(t.Context(), c, selected.Requires, nil, "turn")

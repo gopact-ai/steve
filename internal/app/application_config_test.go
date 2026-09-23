@@ -12,7 +12,9 @@ import (
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/platformconfig"
@@ -28,7 +30,7 @@ func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T
 		t.Run("node="+requestedNode, func(t *testing.T) {
 			a, _, book, _ := sharedSettingsFixture(t)
 			a.Projects = project.Open(book)
-			if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+			if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 				t.Fatal(err)
 			}
 			req := consoleapi.AddProjectRequest{ID: "new", Node: requestedNode, Path: "new-service", Level: "internal", Repo: "inplace"}
@@ -160,7 +162,7 @@ func TestSharedApplicationChannelSecretSurvivesReplicaAndStaysPrivate(t *testing
 	a, _, book, _ := sharedSettingsFixture(t)
 	channels := adminsvc.NewChannels(a, a.Cfg)
 	before, _ := channels.Channels(t.Context())
-	request := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: config.ChannelPatch{DefaultChannel: ChannelValue("feishu"), Feishu: &config.FeishuChannelPatch{AppSecret: &config.ChannelSecret{Action: "replace", Value: ChannelValue("rotated-private-secret")}, Domain: ChannelValue(config.DomainLark), AllowedSenders: ChannelValue([]string{"allowed-owner"}), GroupPolicy: ChannelValue(config.GroupPolicyAllowlist)}}}
+	request := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{DefaultChannel: ChannelValue("feishu"), Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "replace", Value: ChannelValue("rotated-private-secret")}, Domain: ChannelValue(config.DomainLark), AllowedSenders: ChannelValue([]string{"allowed-owner"}), GroupPolicy: ChannelValue(config.GroupPolicyAllowlist)}}}
 	after, err := channels.UpdateChannels(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)

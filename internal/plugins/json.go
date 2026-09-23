@@ -12,7 +12,7 @@ func ParseManifest(raw []byte) (Manifest, error) {
 	if len(raw) > MaxManifestBytes {
 		return m, fmt.Errorf("%w: manifest exceeds %d bytes", ErrInvalid, MaxManifestBytes)
 	}
-	if err := decodeStrict(raw, &m); err != nil {
+	if err := DecodeStrict(raw, &m); err != nil {
 		return m, err
 	}
 	if err := manifestShape().validate(raw); err != nil {
@@ -21,7 +21,7 @@ func ParseManifest(raw []byte) (Manifest, error) {
 	return m, m.Validate()
 }
 
-func decodeStrict(raw []byte, target any) error {
+func DecodeStrict(raw []byte, target any) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	if err := uniqueObjectKeys(d, 0); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalid, err)

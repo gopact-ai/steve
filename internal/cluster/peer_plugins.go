@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
@@ -88,7 +89,7 @@ func (p *Peer) authorizePluginRequest(ctx context.Context, req nodewire.PluginRe
 	switch req.Action {
 	case nodewire.PluginRuntimePrepare, nodewire.PluginRuntimeInspect:
 		if req.Action == nodewire.PluginRuntimeInspect && req.Runtime != nil {
-			if err := (&plugins.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declaration.Plugins, *req.Runtime); err != nil {
+			if err := (&pluginledger.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declaration.Plugins, *req.Runtime); err != nil {
 				return err
 			}
 		}
@@ -197,7 +198,7 @@ func authorizePluginRemoval(ctx context.Context, book *ledger.Ledger, declaratio
 		if record.PluginRuntimeID() == req.Runtime.ID {
 			return plugins.ErrRuntimeBusy
 		}
-		reservation, found, err := (&plugins.Library{Ledger: book}).RuntimeReservation(ctx, record.ID)
+		reservation, found, err := (&pluginledger.Library{Ledger: book}).RuntimeReservation(ctx, record.ID)
 		if err != nil {
 			return err
 		}
@@ -228,7 +229,7 @@ func authorizePluginRuntimeClose(ctx context.Context, book *ledger.Ledger, req n
 		if record.PluginRuntimeID() == req.Runtime.ID {
 			return plugins.ErrRuntimeBusy
 		}
-		reservation, found, err := (&plugins.Library{Ledger: book}).RuntimeReservation(ctx, record.ID)
+		reservation, found, err := (&pluginledger.Library{Ledger: book}).RuntimeReservation(ctx, record.ID)
 		if err != nil {
 			return err
 		}

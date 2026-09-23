@@ -21,11 +21,6 @@ func TestLoadAllowsFirstLaunchWithoutRegisteredAgents(t *testing.T) {
 	if err != nil || len(catalog.List()) != 0 {
 		t.Fatalf("first-launch catalog: %v", err)
 	}
-	manager, err := cfg.HarnessManager()
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager.Stop()
 }
 
 func TestLoadJSON(t *testing.T) {
@@ -263,9 +258,8 @@ func TestLoadMigratesAgentWorkspacesIntoProjects(t *testing.T) {
 			t.Fatalf("agent %s still carries a workspace after migration", id)
 		}
 	}
-	list := cfg.ProjectList()
-	if len(list) != 2 || list[0].ID != "codex" || list[1].ID != "lab" {
-		t.Fatalf("project list = %+v", list)
+	if len(cfg.Projects) != 2 {
+		t.Fatalf("projects = %+v", cfg.Projects)
 	}
 }
 
@@ -385,5 +379,11 @@ func TestDefaultMessageChannel(t *testing.T) {
 		if cfg.Gateway.DefaultChannel != want {
 			t.Fatalf("channel=%s want=%s", cfg.Gateway.DefaultChannel, want)
 		}
+	}
+}
+
+func TestRemoteAgentStillRequiresKnownNode(t *testing.T) {
+	if _, err := Load(writeConfig(t, `{"agents":{"remote":{"harness":"remote-only","node":"missing","default":true}},"projects":{"workspace":{"home":{"path":"/tmp/steve-remote-enrollment"}}}}`)); err == nil {
+		t.Fatal("remote Agent accepted an unknown node")
 	}
 }

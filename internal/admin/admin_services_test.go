@@ -9,13 +9,13 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/execution"
-	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/filedoc"
 )
 
 func TestHubRestartReceiptPrecedesStopAndSurvivesReadiness(t *testing.T) {
 	var stopped atomic.Int32
 	var sealed atomic.Bool
-	doc := &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")}
+	doc := &filedoc.Document{Path: filepath.Join(t.TempDir(), "restart.json")}
 	admin := &Service{}
 	gate := func() (func(), error) {
 		if !sealed.CompareAndSwap(false, true) {
@@ -78,7 +78,7 @@ func TestHubRestartRefusesBusyWithoutClosingAdmission(t *testing.T) {
 	}
 	defer running.Finish(nil)
 	var sealed atomic.Bool
-	s, err := NewServices(&Service{}, r, func() (func(), error) { sealed.Store(true); return func() { sealed.Store(false) }, nil }, func() { t.Error("stopped busy service") }, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+	s, err := NewServices(&Service{}, r, func() (func(), error) { sealed.Store(true); return func() { sealed.Store(false) }, nil }, func() { t.Error("stopped busy service") }, &filedoc.Document{Path: filepath.Join(t.TempDir(), "restart.json")})
 	if err != nil {
 		t.Fatal(err)
 	}

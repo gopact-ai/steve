@@ -81,7 +81,7 @@ func (s *Store) Secret(ref SecretRef) (string, error) {
 		return "", ErrUnavailable
 	}
 	var secret localSecret
-	if err := decodeStrict(raw, &secret); err != nil || secret.Reference != ref || secret.Value == "" || len(secret.Value) > MaxSecretBytes {
+	if err := DecodeStrict(raw, &secret); err != nil || secret.Reference != ref || secret.Value == "" || len(secret.Value) > MaxSecretBytes {
 		return "", ErrUnavailable
 	}
 	return secret.Value, nil
@@ -113,7 +113,7 @@ func (s *Store) Secrets() ([]SecretInfo, error) {
 			return nil, err
 		}
 		var secret localSecret
-		if err := decodeStrict(raw, &secret); err != nil {
+		if err := DecodeStrict(raw, &secret); err != nil {
 			return nil, err
 		}
 		if entry.Name() != secret.Reference.Name+"-"+secret.Reference.Revision+".json" || !nameShape.MatchString(secret.Reference.Name) || !secretRevision(secret.Reference.Revision) {

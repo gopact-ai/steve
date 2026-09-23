@@ -2,12 +2,10 @@ package config
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,12 +15,9 @@ import (
 
 	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/agent"
-	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/harness"
-	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plugins"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 const (
@@ -373,33 +368,33 @@ func StarterFeishu(feishu Feishu) *Config {
 	feishu.applyDefaults()
 	return &Config{
 		Agents: map[string]Agent{
-			harness.Codex: {
-				Aliases: []string{harness.Codex}, Harness: harness.Codex, Default: true,
+			"codex": {
+				Aliases: []string{"codex"}, Harness: "codex", Default: true,
 			},
 			"claude": {
-				Aliases: []string{"claude"}, Harness: harness.ClaudeCode,
+				Aliases: []string{"claude"}, Harness: "claude-code",
 			},
-			harness.Grok: {
-				Aliases: []string{harness.Grok, "grok-build"}, Harness: harness.Grok,
+			"grok": {
+				Aliases: []string{"grok", "grok-build"}, Harness: "grok",
 			},
-			harness.Kimi: {
-				Aliases: []string{harness.Kimi, "kimi-code"}, Harness: harness.Kimi,
+			"kimi": {
+				Aliases: []string{"kimi", "kimi-code"}, Harness: "kimi",
 			},
 		},
 		Projects: map[string]Project{
 			"workspace": {Home: ProjectHome{Path: "~/steve-workspace"}},
 		},
 		Harnesses: map[string]Harness{
-			harness.Codex: {
+			"codex": {
 				Adapter: "codex-acp", Permission: PermissionRead,
 			},
-			harness.ClaudeCode: {
+			"claude-code": {
 				Adapter: "claude-agent-acp", Permission: PermissionRead,
 			},
-			harness.Grok: {
+			"grok": {
 				Command: "grok", Args: []string{"agent", "--no-leader", "stdio"}, Permission: PermissionRead,
 			},
-			harness.Kimi: {
+			"kimi": {
 				Command: "kimi", Args: []string{"acp"}, Permission: PermissionRead,
 			},
 		},
@@ -644,7 +639,7 @@ func (c *Config) validateTopology() error {
 	if err := c.validateNodePlacement(); err != nil {
 		return err
 	}
-	if c.Gateway.Level != "" && !project.Level(c.Gateway.Level).Valid() {
+	if c.Gateway.Level != "" && !datalevel.Level(c.Gateway.Level).Valid() {
 		return fmt.Errorf("gateway.level %q is not public, internal, restricted or sealed", c.Gateway.Level)
 	}
 	if c.Gateway.DefaultProject != "" {
@@ -666,10 +661,10 @@ func (c *Config) validateTopology() error {
 	if _, err := c.AgentCatalog(); err != nil {
 		return err
 	}
-	// Not HarnessManager: a harness that names an adapter has no command
-	// until the adapter is fetched, and loading a file must not depend on
-	// the network. Loading checks the configuration; the manager checks
-	// that it can be run.
+	// Not configbuild.HarnessManager: a harness that names an adapter has
+	// no command until the adapter is fetched, and loading a file must not
+	// depend on the network. Loading checks the configuration; the manager
+	// checks that it can be run.
 	if err := c.validateHarnesses(); err != nil {
 		return err
 	}
@@ -705,7 +700,7 @@ func (c *Config) validateNodePlacement() error {
 				return fmt.Errorf("node %q is in region %q, which gateway.regions does not list", id, item.Region)
 			}
 		}
-		if item.Level != "" && !project.Level(item.Level).Valid() {
+		if item.Level != "" && !datalevel.Level(item.Level).Valid() {
 			return fmt.Errorf("node %q level %q is not public, internal, restricted or sealed", id, item.Level)
 		}
 	}
@@ -807,6 +802,9 @@ func (c *Config) resolvePaths() {
 	}
 }
 
+// AgentCatalog builds the in-memory catalog the agents{} section declares.
+// Load builds it too, so an alias clash or a missing default agent is
+// refused with the file rather than at first use.
 func (c *Config) AgentCatalog() (*agent.Catalog, error) {
 	configs := make(map[string]agent.Config, len(c.Agents))
 	for id, item := range c.Agents {
@@ -838,69 +836,10 @@ func (c *Config) validateHarnesses() error {
 	return nil
 }
 
-// PrepareAdapters fetches and verifies every adapter the configuration
-// names, filling in the command that starts it. It runs before the harness
-// manager is built, so a machine either has the pinned adapter or refuses
-// to start with a reason — there is no version to discover later.
-func (c *Config) PrepareAdapters(ctx context.Context) error {
-	install := &adapter.Installer{Dir: c.AdapterDir()}
-	for id, item := range c.Harnesses {
-		if item.Adapter == "" {
-			continue
-		}
-		got, err := install.Ensure(ctx, item.Adapter)
-		if err != nil {
-			return fmt.Errorf("harness %q: %w", id, err)
-		}
-		if !got.Cached {
-			slog.Info(fmt.Sprintf("adapter: installed %s@%s for harness %s", got.Package, got.Version, id), "harness", id)
-		}
-		item.Command = got.Command
-		c.Harnesses[id] = item
-	}
-	return nil
-}
-
 // AdapterDir is where fetched adapters live: beside the ledger, because
 // they are part of this deployment's state, not of anyone's home.
 func (c *Config) AdapterDir() string {
 	return filepath.Join(filepath.Dir(absolute(c.Gateway.StatePath)), "adapters")
-}
-
-func (c *Config) HarnessManager() (*harness.Manager, error) {
-	configs := make(map[string]harness.Config, len(c.Harnesses))
-	for id, item := range c.Harnesses {
-		configs[id] = harness.Config{
-			Command: item.Command, Args: item.Args, ProcessDir: item.ProcessDir, Env: item.Env, Permission: item.Permission,
-		}
-	}
-	manager, err := harness.NewManager(configs)
-	if err != nil {
-		return nil, err
-	}
-	if err := manager.SetRemotePermissions(c.RuntimePermissions); err != nil {
-		return nil, err
-	}
-	return manager, nil
-}
-
-// NodeConfigs is what the registry needs to reach each remote machine.
-func (c *Config) NodeConfigs() map[string]node.Config {
-	out := make(map[string]node.Config, len(c.Nodes))
-	for id, item := range c.Nodes {
-		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level, Region: item.Region, PeerAddr: item.PeerAddr}
-	}
-	return out
-}
-
-func (c *Config) CapabilityAssembler() *capability.Assembler {
-	servers := make(map[string]capability.MCPServer, len(c.MCPServers))
-	for id, item := range c.MCPServers {
-		servers[id] = capability.MCPServer{
-			Type: item.Type, Command: item.Command, Args: item.Args, Env: item.Env, URL: item.URL, Headers: item.Headers,
-		}
-	}
-	return capability.NewAssembler(servers)
 }
 
 // migrateProjects turns the pre-project layout — a workspace on every
@@ -946,37 +885,6 @@ func (c *Config) migrateProjects() error {
 	return nil
 }
 
-// ProjectList renders projects{} as the runtime's records.
-func (c *Config) ProjectList() []project.Project {
-	out := make([]project.Project, 0, len(c.Projects))
-	for id, item := range c.Projects {
-		p := project.Project{
-			ID: id, Level: project.Level(item.Level), Repo: project.RepoMode(item.Repo), Skills: item.Skills,
-			DurablePlaces: item.DurablePlaces, ExternalRemote: item.ExternalRemote, DefaultRole: project.Role(item.DefaultRole),
-			Home: project.Home{Node: item.Home.Node, Path: item.Home.Path},
-		}
-		if len(item.Grants) > 0 {
-			p.ConfigGrants = make(map[string]project.Role, len(item.Grants))
-			for principal, role := range item.Grants {
-				p.ConfigGrants[principal] = project.Role(role)
-			}
-		}
-		for _, ws := range item.Workspaces {
-			if p.Copies == nil {
-				p.Copies = map[string]project.Copy{}
-			}
-			copy := project.Copy{Node: ws.Node, Path: ws.Path, Origin: project.Origin(ws.Origin), Source: ws.Source}
-			if copy.Origin == project.OriginCloned {
-				copy.State = project.CopyProvisioning
-			}
-			p.Copies[ws.Node] = copy
-		}
-		out = append(out, p)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
-}
-
 // DefaultStatePath is where a Hub keeps its state unless configured otherwise.
 const DefaultStatePath = "~/.steve/state.json"
 
@@ -1020,10 +928,10 @@ func (c *Config) HubSlots() map[string]int {
 }
 
 // NodeLevels is the level the hub assigned each node.
-func (c *Config) NodeLevels() map[string]project.Level {
-	out := map[string]project.Level{}
+func (c *Config) NodeLevels() map[string]datalevel.Level {
+	out := map[string]datalevel.Level{}
 	for id, n := range c.Nodes {
-		out[id] = project.Level(n.Level).OrDefault()
+		out[id] = datalevel.Level(n.Level).OrDefault()
 	}
 	return out
 }
@@ -1033,14 +941,14 @@ func (c *Config) NodeLevels() map[string]project.Level {
 // project except a sealed one homed on a node, and Steve's own home, which
 // is restricted. A hub that could not hold what it stores would refuse
 // its own projects at the first turn.
-func (c *Config) HubLevel() project.Level {
+func (c *Config) HubLevel() datalevel.Level {
 	if c.Gateway.Level != "" {
-		return project.Level(c.Gateway.Level)
+		return datalevel.Level(c.Gateway.Level)
 	}
-	level := project.LevelRestricted
+	level := datalevel.Restricted
 	for _, p := range c.Projects {
-		candidate := project.Level(p.Level).OrDefault()
-		if candidate == project.LevelSealed && p.Home.Node != "" {
+		candidate := datalevel.Level(p.Level).OrDefault()
+		if candidate == datalevel.Sealed && p.Home.Node != "" {
 			continue
 		}
 		if !candidate.Admits(level) {
@@ -1048,23 +956,6 @@ func (c *Config) HubLevel() project.Level {
 		}
 	}
 	return level
-}
-
-// GrantList renders every configured grant.
-func (c *Config) GrantList() []project.Grant {
-	var out []project.Grant
-	for id, item := range c.Projects {
-		for principal, role := range item.Grants {
-			out = append(out, project.Grant{Project: id, Principal: principal, Role: project.Role(role), By: "config"})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Project != out[j].Project {
-			return out[i].Project < out[j].Project
-		}
-		return out[i].Principal < out[j].Principal
-	})
-	return out
 }
 
 // NodeRegions is the region of each node; unset means the hub's own.

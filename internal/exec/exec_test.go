@@ -3,7 +3,6 @@ package exec
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/ability"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/datalevel"
 
 	gopactsqlite "github.com/gopact-ai/gopact-ext/stores/sqlite"
 	"github.com/gopact-ai/gopact/workflow"
@@ -785,13 +787,13 @@ func TestPlacementRespectsTheProjectLevel(t *testing.T) {
 	book, _ := ledger.Open(t.TempDir(), ledger.Options{})
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
-	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Level: project.LevelRestricted, Home: project.Home{Path: t.TempDir()}}}); err != nil {
+	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Level: datalevel.Restricted, Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
 	art := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir(), Levels: map[string]string{"node-a": "public"}})
 	att := attempt.New(book)
 	r := testRoster(t, bothNodes())
-	r.SetNodeLevels(map[string]project.Level{"node-a": project.LevelPublic, "node-b": project.LevelRestricted})
+	r.SetNodeLevels(map[string]datalevel.Level{"node-a": datalevel.Public, "node-b": datalevel.Restricted})
 	runner := &fakeRunner{}
 	outcome := execute(t, plan.Plan{ProjectID: "p", ID: "lvl", TaskID: "tlvl", Goal: "g", Steps: []plan.Step{{
 		ID: "gpu-work", Goal: "needs the gpu box", Requires: []string{"gpu"},

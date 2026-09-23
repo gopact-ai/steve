@@ -9,9 +9,9 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/platformconfig"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 type applicationConfiguration struct {
@@ -83,7 +83,7 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 			return err
 		}
 		for id := range state.Members {
-			if node, ok := cfg.Nodes[id]; ok && !project.LevelRestricted.Admits(project.Level(node.Level).OrDefault()) {
+			if node, ok := cfg.Nodes[id]; ok && !datalevel.Restricted.Admits(datalevel.Level(node.Level).OrDefault()) {
 				return fmt.Errorf("节点 %s 保存完整协作账本，数据等级不能低于 restricted；低等级机器只能作为执行节点接入", id)
 			}
 		}

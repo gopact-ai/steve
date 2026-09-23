@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
@@ -86,7 +87,7 @@ func TestHistoryHTTPRejectsInvalidAndLegacyPagination(t *testing.T) {
 }
 
 func TestHistoryHTTPExpiredCursorAndSourceFailure(t *testing.T) {
-	doc := &ledger.FileDocument{Path: t.TempDir() + "/observations.json"}
+	doc := &filedoc.Document{Path: t.TempDir() + "/observations.json"}
 	obs := []readmodel.Observation{{At: time.Now().UTC(), Kind: "node.up", Subject: "first"}, {At: time.Now().UTC(), Kind: "node.up", Subject: "second"}}
 	raw, _ := json.Marshal(obs)
 	if err := doc.Save(raw); err != nil {

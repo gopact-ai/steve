@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -58,7 +59,7 @@ func TestDesktopWorkspaceMovesTheDefaultProjectDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { book.Close() })
 	admin.Projects = project.Open(book)
-	if err := (config.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
 		t.Fatal(err)
 	}
 	before := admin.Cfg.Projects["workspace"].Home.Path
@@ -111,7 +112,7 @@ func TestDesktopWorkspaceLeavesAProjectOnAnotherMachineAlone(t *testing.T) {
 	}
 	t.Cleanup(func() { book.Close() })
 	admin.Projects = project.Open(book)
-	if err := (config.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
 		t.Fatal(err)
 	}
 	// A shared declaration names this machine's own node on local projects;

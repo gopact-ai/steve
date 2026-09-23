@@ -14,13 +14,14 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -42,7 +43,7 @@ type MemberRemover interface {
 // them so a restart keeps them. A new machine gets a token of its own
 // and one command to run.
 type Service struct {
-	PluginLibrary *plugins.Library
+	PluginLibrary *pluginledger.Library
 	Observation   *LocalObservation
 	ClusterMode   bool
 	// Members, when set, takes a removed machine out of the cluster along
@@ -51,7 +52,7 @@ type Service struct {
 	ssh                *sshconnect.Service
 	releases           consoleapi.ReleaseProvider
 	Owner              string
-	MaterialLevel      project.Level
+	MaterialLevel      datalevel.Level
 	Materials          *material.Store
 	Console            *console.Service
 	Lifetime           context.Context

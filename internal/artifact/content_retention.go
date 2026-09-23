@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 )
 
@@ -19,8 +20,8 @@ func artifactRetentionRoots(key string, raw json.RawMessage, lookup contentrepli
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, err
 	}
-	if m == nil || m.ID != key || !shaPattern.MatchString(m.ID) || m.Project == "" ||
-		!m.Label.OrDefault().Valid() || m.Parent != "" && !shaPattern.MatchString(m.Parent) {
+	if m == nil || m.ID != key || !gitrepo.ValidSHA(m.ID) || m.Project == "" ||
+		!m.Label.OrDefault().Valid() || m.Parent != "" && !gitrepo.ValidSHA(m.Parent) {
 		return nil, contentreplica.ErrIntegrity
 	}
 	if m.Content == nil {
@@ -46,7 +47,7 @@ func artifactIndexRetentionRoots(key string, raw json.RawMessage, lookup content
 		return nil, err
 	}
 	project, commit, ok := strings.Cut(key, "/")
-	if !ok || project == "" || !shaPattern.MatchString(commit) {
+	if !ok || project == "" || !gitrepo.ValidSHA(commit) {
 		return nil, contentreplica.ErrIntegrity
 	}
 	m, found, err := lookup(id)

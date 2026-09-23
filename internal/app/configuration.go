@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/hubid"
@@ -65,10 +66,10 @@ func loadConfigured(path string, configure func(*config.Config) error) (*config.
 	if err := live.Apply(); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	if err := cfg.PrepareAdapters(context.Background()); err != nil {
+	if err := configbuild.PrepareAdapters(context.Background(), cfg); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	manager, err := adminsvc.HarnessRuntimeConfig(cfg).HarnessManager()
+	manager, err := configbuild.HarnessManager(adminsvc.HarnessRuntimeConfig(cfg))
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -84,7 +85,7 @@ func wireHome(cfg *config.Config, live *skills.Live) (*capability.Assembler, err
 	if err := home.BootstrapLocale(cfg.Gateway.HomePath, cfg.EffectiveOwnerID(), locale); err != nil {
 		return nil, err
 	}
-	assembler := cfg.CapabilityAssembler().SetHome(home.Dir{Path: cfg.Gateway.HomePath, Locale: locale}).SetLocale(locale)
+	assembler := configbuild.CapabilityAssembler(cfg).SetHome(home.Dir{Path: cfg.Gateway.HomePath, Locale: locale}).SetLocale(locale)
 	if live != nil && live.Map != nil {
 		assembler.SetSkills(live.Map)
 	}
