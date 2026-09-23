@@ -238,6 +238,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	}
 	defer s.releaseCanonical(ctx, &land, lease)
 	defer s.keepCanonical(ctx, lease)()
+	defer s.applying(land.ID)()
 	return s.finishRecovery(ctx, p, land, lease)
 }
 

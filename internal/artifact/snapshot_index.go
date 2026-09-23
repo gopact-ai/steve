@@ -120,7 +120,8 @@ func (r *Repo) pruneSnapshotIndexes(dir string, now time.Time) {
 	for _, entry := range entries {
 		name := entry.Name()
 		if rest, ok := strings.CutPrefix(name, "tmp-"); ok {
-			if _, busy := snapshotInUse.Load(filepath.Join(dir, name)); busy {
+			// git writes an index through a .lock beside it.
+			if _, busy := snapshotInUse.Load(filepath.Join(dir, strings.TrimSuffix(name, ".lock"))); busy {
 				continue
 			}
 			// One this old was left by a process that died mid-snapshot.

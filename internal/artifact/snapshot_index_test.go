@@ -127,10 +127,16 @@ func TestSnapshotIndexSweepSparesIndexesInUse(t *testing.T) {
 	if err := os.WriteFile(old, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(index+".lock", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	snapshotPruned.Delete(dir)
 	repo.pruneSnapshotIndexes(dir, time.Now().Add(48*time.Hour))
 	if _, err := os.Stat(index); err != nil {
 		t.Fatalf("an index in use was swept: %v", err)
+	}
+	if _, err := os.Stat(index + ".lock"); err != nil {
+		t.Fatalf("the lock of an index in use was swept: %v", err)
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatalf("an abandoned index was kept: %v", err)
