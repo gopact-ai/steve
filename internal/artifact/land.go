@@ -306,21 +306,53 @@ func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactI
 }
 
 // checkNoRecoveryPending refuses to land onto a canonical workspace that
-// an earlier, interrupted landing has half written and not yet recovered.
-// It is asked under the canonical lock, which a recovery in progress holds.
+// an earlier, interrupted landing has half written and not yet recovered:
+// one recovery-pending, or one left applying by a writer that lost its
+// lock. It is asked under the canonical lock, which a recovery in progress
+// holds.
 func (s *Store) checkNoRecoveryPending(ctx context.Context, p project.Project, self string) error {
-	pending, err := s.ledger.Operations(ctx, landKind, LandRecoveryPending)
+	pending, err := s.awaitingRecovery(ctx)
 	if err != nil {
 		return err
 	}
-	for _, op := range pending {
-		var other Landing
-		if err := json.Unmarshal(op.Data, &other); err != nil || other.Project != p.ID || op.ID == self {
+	for _, other := range pending {
+		if other.Project != p.ID || other.ID == self {
 			continue
 		}
-		return fmt.Errorf("%w: landing %s into %s", ErrRecoveryPending, op.ID, p.ID)
+		return fmt.Errorf("%w: landing %s into %s", ErrRecoveryPending, other.ID, p.ID)
 	}
 	return nil
+}
+
+// awaitingRecovery lists the landings nobody is finishing: those marked
+// recovery-pending, and those still applying whose canonical lock is
+// gone. The second kind is what a failed apply leaves when even recording
+// it for recovery was refused — the lock was lost underneath it — and,
+// unlisted, it would neither hold new landings off the half-written
+// workspace nor ever be retried. One whose lock cannot be checked is not
+// taken for dead.
+func (s *Store) awaitingRecovery(ctx context.Context) ([]Landing, error) {
+	var out []Landing
+	for _, state := range []string{LandRecoveryPending, LandApplying} {
+		ops, err := s.ledger.Operations(ctx, landKind, state)
+		if err != nil {
+			return nil, err
+		}
+		for _, op := range ops {
+			var land Landing
+			if err := json.Unmarshal(op.Data, &land); err != nil {
+				continue
+			}
+			land.ID, land.State = op.ID, op.State
+			if state == LandApplying && land.Lease != nil {
+				if err := s.ledger.CheckAny(ctx, *land.Lease); !errors.Is(err, ledger.ErrStale) {
+					continue
+				}
+			}
+			out = append(out, land)
+		}
+	}
+	return out, nil
 }
 
 // queueConflicted keeps a result that could not be merged or applied,

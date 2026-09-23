@@ -85,3 +85,59 @@ func TestRecoveryRecordsItsLockBeforeWriting(t *testing.T) {
 		t.Fatalf("state %s, recorded lease %+v borrowed=%v", op.State, stored.Lease, stored.Borrowed)
 	}
 }
+
+// orphanApplying leaves a landing in applying the way a failed apply whose
+// move to recovery-pending was refused does: its lock is gone, and nobody
+// is applying it any more.
+func orphanApplying(t *testing.T, store *Store, p project.Project, canonical string, live bool) (Landing, string) {
+	t.Helper()
+	lease, err := store.ledger.Acquire(t.Context(), "canonical:"+p.ID, "lost-landing", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !live {
+		if err := store.ledger.Release(t.Context(), lease); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return crashMidApplyAs(t, store, p, canonical, func(l *Landing) { l.Lease = &lease })
+}
+
+func TestAnOrphanedApplyingLandingBlocksNewLandingsAndIsRetried(t *testing.T) {
+	ctx := t.Context()
+	canonical := t.TempDir()
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	land, merged := orphanApplying(t, store, p, canonical, false)
+
+	if _, err := store.Land(ctx, p, land.Artifact, "again"); !errors.Is(err, ErrRecoveryPending) {
+		t.Fatalf("land over an orphaned apply = %v, want ErrRecoveryPending", err)
+	}
+	if read(t, canonical, "b") != "b0" {
+		t.Fatal("a new landing wrote over an orphaned one")
+	}
+	retried, err := store.RetryRecoveries(ctx)
+	if err != nil || len(retried) != 1 || retried[0].ID != land.ID || retried[0].State != LandCommitted {
+		t.Fatalf("retry = %+v err=%v", retried, err)
+	}
+	if read(t, canonical, "b") != "b1" || read(t, canonical, "c") != "c1" {
+		t.Fatalf("after retry b=%q c=%q", read(t, canonical, "b"), read(t, canonical, "c"))
+	}
+	if ref, _, _ := store.Resolve(ctx, CanonicalRef("p")); ref.Artifact != merged {
+		t.Fatalf("canonical = %s, want %s", ref.Artifact, merged)
+	}
+}
+
+// A landing still applying under a live lock is someone's work in
+// progress, not a recovery to take over.
+func TestTheRetryLeavesALiveApplyingLandingAlone(t *testing.T) {
+	ctx := t.Context()
+	canonical := t.TempDir()
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	land, _ := orphanApplying(t, store, p, canonical, true)
+	if retried, err := store.RetryRecoveries(ctx); err != nil || len(retried) != 0 {
+		t.Fatalf("retry = %+v err=%v", retried, err)
+	}
+	if state := landingState(t, store, land.ID); state != LandApplying {
+		t.Fatalf("state = %s, want %s", state, LandApplying)
+	}
+}

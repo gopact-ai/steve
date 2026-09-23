@@ -132,25 +132,21 @@ func (s *Store) noteRecoveryLeft(land Landing, err error) {
 		"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "state", land.State, "error", err.Error())
 }
 
-// RetryRecoveries finishes the landings that are still recovery-pending:
-// ones boot recovery could not finish, ones whose apply failed and could
-// not be inspected, or whose recovery was cut off in turn. It is run
+// RetryRecoveries finishes the landings nobody is finishing (see
+// awaitingRecovery): ones boot recovery could not finish, ones whose apply
+// failed and could not be inspected or not even recorded, or whose
+// recovery was cut off in turn. It is run
 // periodically. A landing whose canonical lock is busy, or whose own
 // driver is running, is skipped quietly until the next pass; any other
 // failure is logged and retried next pass. What was recovered — to
 // committed or to a conflict — is returned.
 func (s *Store) RetryRecoveries(ctx context.Context) ([]Landing, error) {
-	pending, err := s.ledger.Operations(ctx, landKind, LandRecoveryPending)
+	pending, err := s.awaitingRecovery(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []Landing
-	for _, op := range pending {
-		var land Landing
-		if err := json.Unmarshal(op.Data, &land); err != nil {
-			continue
-		}
-		land.State = op.State
+	for _, land := range pending {
 		if _, _, err := s.projects.Get(ctx, land.Project); errors.Is(err, project.ErrNotOwner) {
 			continue
 		} else if err != nil {
