@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -38,7 +39,7 @@ type data struct {
 
 // Open keeps the store in one JSON file; the gateway opens the ledger.
 func Open(path string) (*Store, error) {
-	return openWith(&ledger.FileDocument{Path: path})
+	return openWith(&filedoc.Document{Path: path})
 }
 
 // OpenLedger keeps the store in the ledger, importing a legacy file once.

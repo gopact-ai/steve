@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"encoding/json"
@@ -57,14 +57,14 @@ func TestSnapshotInheritedGitlinkLimitsAndLiteralNames(t *testing.T) {
 	}
 	index := filepath.Join(t.TempDir(), "index")
 	env := []string{"GIT_INDEX_FILE=" + index}
-	if _, err := repo.git(t.Context(), env, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+",nested"); err != nil {
+	if _, err := repo.Git(t.Context(), env, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+",nested"); err != nil {
 		t.Fatal(err)
 	}
-	tree, err := repo.git(t.Context(), env, "write-tree")
+	tree, err := repo.Git(t.Context(), env, "write-tree")
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, err := repo.git(t.Context(), nil, "commit-tree", strings.TrimSpace(tree), "-m", "gitlink")
+	parent, err := repo.Git(t.Context(), nil, "commit-tree", strings.TrimSpace(tree), "-m", "gitlink")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,13 +1,15 @@
-// Package artifact is the content-addressed layer: every result Steve
-// binds a name to is a git commit in a bare repository per project, and
-// every directory Steve runs an attempt in is materialised from one.
+// Package gitrepo is the git layer under artifacts: one bare shadow
+// repository per project and the operations a hub or node runs on it.
 //
 // The repository is a shadow of the user's directory, never the user's own
 // .git: a snapshot is taken with Steve's own index against a work tree, so
 // a directory that is not a git repository — or is one with its own
 // history — is versioned without being touched. Git is the transport too:
 // a bundle carries a commit's closure to a node and a result back.
-package artifact
+//
+// It keeps no ledger state, so a node runs these operations without
+// linking the hub's storage.
+package gitrepo
 
 import (
 	"bytes"
@@ -59,7 +61,7 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	// which is a process nobody waits for and a directory that is not
 	// free when its owner removes it.
 	for _, setting := range [][2]string{{"user.name", "steve"}, {"user.email", "steve@localhost"}, {"gc.auto", "0"}, {"gc.autoDetach", "false"}, {"maintenance.auto", "false"}} {
-		if _, err := r.git(ctx, nil, "config", setting[0], setting[1]); err != nil {
+		if _, err := r.Git(ctx, nil, "config", setting[0], setting[1]); err != nil {
 			return nil, err
 		}
 	}
@@ -71,6 +73,9 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 
+// ValidSHA reports whether s is a full SHA-1 or SHA-256 object name.
+func ValidSHA(s string) bool { return shaPattern.MatchString(s) }
+
 // Snapshot commits the current contents of workTree, with parent as the
 // previous snapshot (empty for the first). It returns the commit and
 // whether anything changed against the parent's tree; an unchanged tree
@@ -81,14 +86,14 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 // noise to remove. A user's directory is never modified: a nested
 // repository there is left alone and simply not part of the snapshot.
 func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, flatten bool) (sha string, changed bool, err error) {
-	sha, changed, _, err = r.snapshot(ctx, workTree, parent, message, flatten)
+	sha, changed, _, err = r.SnapshotWithNested(ctx, workTree, parent, message, flatten)
 	return sha, changed, err
 }
 
-// snapshot is Snapshot that also says which nested repositories of a
-// user's directory it left out, as slash-separated paths relative to the
-// directory: a landing must not write where its snapshot cannot see.
-func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, flatten bool) (sha string, changed bool, left []string, err error) {
+// SnapshotWithNested is Snapshot that also says which nested repositories
+// of a user's directory it left out, as slash-separated paths relative to
+// the directory: a landing must not write where its snapshot cannot see.
+func (r *Repo) SnapshotWithNested(ctx context.Context, workTree, parent, message string, flatten bool) (sha string, changed bool, left []string, err error) {
 	// A shell's cd followed a symlink at the workspace root. Resolve that
 	// root for Go's walk too, while leaving symlinks inside it untouched.
 	workTree, err = filepath.EvalSymlinks(workTree)
@@ -104,10 +109,10 @@ func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, f
 	if parent != "" {
 		// --reset replaces every entry with the parent's but keeps the
 		// stat data of those that match, which is what spares the hashing.
-		if _, err := r.git(ctx, env, "read-tree", "--reset", parent); err != nil {
+		if _, err := r.Git(ctx, env, "read-tree", "--reset", parent); err != nil {
 			// A cache git cannot read is only a cache: start without it.
 			os.Remove(index)
-			if _, err := r.git(ctx, env, "read-tree", parent); err != nil {
+			if _, err := r.Git(ctx, env, "read-tree", parent); err != nil {
 				return "", false, nil, fmt.Errorf("read parent tree: %w", err)
 			}
 		}
@@ -139,7 +144,7 @@ func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, f
 	if err := r.prepareSnapshotIndex(ctx, workTree, env, add[3:]); err != nil {
 		return "", false, nil, err
 	}
-	if _, err := r.git(ctx, env, add...); err != nil {
+	if _, err := r.Git(ctx, env, add...); err != nil {
 		return "", false, nil, fmt.Errorf("stage %s: %w", workTree, err)
 	}
 	// A nested repository staged as a gitlink would land as an empty
@@ -151,18 +156,18 @@ func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, f
 			left = append(left, links...)
 		}
 		slog.Warn(fmt.Sprintf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(links, ", ")), "worktree", workTree)
-		if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
+		if _, err := r.Git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
 			return "", false, nil, fmt.Errorf("drop gitlinks: %w", err)
 		}
 	}
-	tree, err := r.git(ctx, env, "write-tree")
+	tree, err := r.Git(ctx, env, "write-tree")
 	if err != nil {
 		return "", false, nil, err
 	}
 	tree = strings.TrimSpace(tree)
 	keep()
 	if parent != "" {
-		parentTree, err := r.git(ctx, nil, "rev-parse", parent+"^{tree}")
+		parentTree, err := r.Git(ctx, nil, "rev-parse", parent+"^{tree}")
 		if err != nil {
 			return "", false, nil, err
 		}
@@ -174,19 +179,19 @@ func (r *Repo) snapshot(ctx context.Context, workTree, parent, message string, f
 	if parent != "" {
 		args = append(args, "-p", parent)
 	}
-	out, err := r.git(ctx, nil, args...)
+	out, err := r.Git(ctx, nil, args...)
 	if err != nil {
 		return "", false, nil, err
 	}
 	sha = strings.TrimSpace(out)
-	return sha, true, left, r.pin(ctx, sha)
+	return sha, true, left, r.Pin(ctx, sha)
 }
 
 // pin gives a commit a ref so it is an artifact git will keep, and a name
 // a bundle can carry.
 // gitlinks lists the submodule entries in the index.
 func (r *Repo) gitlinks(ctx context.Context, env []string) ([]string, error) {
-	out, err := r.git(ctx, env, "ls-files", "--stage", "-z")
+	out, err := r.Git(ctx, env, "ls-files", "--stage", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("list index: %w", err)
 	}
@@ -267,8 +272,8 @@ func flattenNestedRepos(ctx context.Context, workTree string) ([]string, error) 
 	return found, err
 }
 
-func (r *Repo) pin(ctx context.Context, sha string) error {
-	_, err := r.git(ctx, nil, "update-ref", RefFor(sha), sha)
+func (r *Repo) Pin(ctx context.Context, sha string) error {
+	_, err := r.Git(ctx, nil, "update-ref", RefFor(sha), sha)
 	return err
 }
 
@@ -296,7 +301,7 @@ func (r *Repo) Checkout(ctx context.Context, sha, dir string) error {
 	}
 	defer cleanup()
 	env := []string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + dir}
-	if _, err := r.git(ctx, env, "read-tree", "--reset", "-u", sha); err != nil {
+	if _, err := r.Git(ctx, env, "read-tree", "--reset", "-u", sha); err != nil {
 		return fmt.Errorf("checkout %s into %s: %w", short(sha), dir, err)
 	}
 	return nil
@@ -317,15 +322,15 @@ func (r *Repo) Apply(ctx context.Context, from, sha, dir string) ([]string, erro
 	}
 	defer cleanup()
 	env := []string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + dir}
-	if _, err := r.git(ctx, env, "read-tree", from); err != nil {
+	if _, err := r.Git(ctx, env, "read-tree", from); err != nil {
 		return nil, err
 	}
 	// The fresh index has no stat data; refreshing it against the work
 	// tree is what lets the two-tree merge tell "unchanged" from "edited".
-	if _, err := r.git(ctx, env, "update-index", "--refresh", "-q", "--ignore-missing"); err != nil {
+	if _, err := r.Git(ctx, env, "update-index", "--refresh", "-q", "--ignore-missing"); err != nil {
 		return nil, fmt.Errorf("refresh %s: %w", dir, err)
 	}
-	if _, err := r.git(ctx, env, "read-tree", "-m", "-u", from, sha); err != nil {
+	if _, err := r.Git(ctx, env, "read-tree", "-m", "-u", from, sha); err != nil {
 		return nil, fmt.Errorf("apply %s..%s to %s: %w", short(from), short(sha), dir, err)
 	}
 	return paths, nil
@@ -336,9 +341,9 @@ func (r *Repo) Changed(ctx context.Context, from, to string) ([]string, error) {
 	var out string
 	var err error
 	if from == "" {
-		out, err = r.git(ctx, nil, "ls-tree", "-r", "--name-only", "-z", to)
+		out, err = r.Git(ctx, nil, "ls-tree", "-r", "--name-only", "-z", to)
 	} else {
-		out, err = r.git(ctx, nil, "diff-tree", "-r", "--name-only", "--no-commit-id", "-z", from, to)
+		out, err = r.Git(ctx, nil, "diff-tree", "-r", "--name-only", "--no-commit-id", "-z", from, to)
 	}
 	if err != nil {
 		return nil, err
@@ -376,7 +381,7 @@ func (r *Repo) MergeMarking(ctx context.Context, base, ours, theirs, message str
 	// Both sides descend from base — snapshots always name their parent —
 	// so git finds that base itself; naming it needs git 2.40, and the
 	// nodes are not all there yet.
-	out, err := r.git(ctx, nil, "merge-tree", "--write-tree", "--name-only", "-z", ours, theirs)
+	out, err := r.Git(ctx, nil, "merge-tree", "--write-tree", "--name-only", "-z", ours, theirs)
 	lines := strings.Split(out, "\x00")
 	if err != nil {
 		var exit *GitError
@@ -396,12 +401,12 @@ func (r *Repo) MergeMarking(ctx context.Context, base, ours, theirs, message str
 		return "", "", nil, err
 	}
 	tree := strings.TrimSpace(lines[0])
-	commit, err := r.git(ctx, nil, "commit-tree", tree, "-m", message, "-p", ours, "-p", theirs)
+	commit, err := r.Git(ctx, nil, "commit-tree", tree, "-m", message, "-p", ours, "-p", theirs)
 	if err != nil {
 		return "", "", nil, err
 	}
 	sha = strings.TrimSpace(commit)
-	return sha, "", nil, r.pin(ctx, sha)
+	return sha, "", nil, r.Pin(ctx, sha)
 }
 
 // markedCommit pins the conflicted tree as a commit parented on both
@@ -412,13 +417,13 @@ func (r *Repo) markedCommit(ctx context.Context, tree, ours, theirs, message str
 	if tree == "" {
 		return ""
 	}
-	commit, err := r.git(ctx, nil, "commit-tree", tree, "-m", "conflict while "+message, "-p", ours, "-p", theirs)
+	commit, err := r.Git(ctx, nil, "commit-tree", tree, "-m", "conflict while "+message, "-p", ours, "-p", theirs)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("artifact: keep conflicted tree %s: %v", short(tree), err), "tree", tree)
 		return ""
 	}
 	sha := strings.TrimSpace(commit)
-	if err := r.pin(ctx, sha); err != nil {
+	if err := r.Pin(ctx, sha); err != nil {
 		slog.Warn(fmt.Sprintf("artifact: pin conflicted commit %s: %v", short(sha), err), "commit", sha)
 		return ""
 	}
@@ -428,7 +433,7 @@ func (r *Repo) markedCommit(ctx context.Context, tree, ours, theirs, message str
 // Bundle writes a bundle carrying sha and its closure, minus what the
 // receiver already has, to path.
 func (r *Repo) Bundle(ctx context.Context, path, sha string, have []string) error {
-	if err := r.pin(ctx, sha); err != nil {
+	if err := r.Pin(ctx, sha); err != nil {
 		return err
 	}
 	args := []string{"bundle", "create", path, RefFor(sha)}
@@ -437,13 +442,13 @@ func (r *Repo) Bundle(ctx context.Context, path, sha string, have []string) erro
 			args = append(args, "^"+h)
 		}
 	}
-	_, err := r.git(ctx, nil, args...)
+	_, err := r.Git(ctx, nil, args...)
 	return err
 }
 
 // Unbundle fetches everything in a bundle into the repository.
 func (r *Repo) Unbundle(ctx context.Context, path string) error {
-	out, err := r.git(ctx, nil, "bundle", "list-heads", path)
+	out, err := r.Git(ctx, nil, "bundle", "list-heads", path)
 	if err != nil {
 		return err
 	}
@@ -452,7 +457,7 @@ func (r *Repo) Unbundle(ctx context.Context, path string) error {
 		if len(fields) != 2 {
 			continue
 		}
-		if _, err := r.git(ctx, nil, "fetch", "--quiet", path, fields[1]+":"+fields[1]); err != nil {
+		if _, err := r.Git(ctx, nil, "fetch", "--quiet", path, fields[1]+":"+fields[1]); err != nil {
 			return err
 		}
 	}
@@ -461,13 +466,13 @@ func (r *Repo) Unbundle(ctx context.Context, path string) error {
 
 // Has reports whether the repository holds the commit.
 func (r *Repo) Has(ctx context.Context, sha string) bool {
-	_, err := r.git(ctx, nil, "cat-file", "-e", sha+"^{commit}")
+	_, err := r.Git(ctx, nil, "cat-file", "-e", sha+"^{commit}")
 	return err == nil
 }
 
 // Parents returns a commit's parents.
 func (r *Repo) Parents(ctx context.Context, sha string) ([]string, error) {
-	out, err := r.git(ctx, nil, "rev-list", "--parents", "-n", "1", sha)
+	out, err := r.Git(ctx, nil, "rev-list", "--parents", "-n", "1", sha)
 	if err != nil {
 		return nil, err
 	}
@@ -489,8 +494,15 @@ func (r *Repo) tempIndex() (string, func(), error) {
 	return name, func() { os.Remove(name) }, nil
 }
 
-func (r *Repo) git(ctx context.Context, env []string, args ...string) (string, error) {
+// Git runs one git command against the repository; env adds to the
+// environment, and a GIT_WORK_TREE entry also sets the working directory.
+func (r *Repo) Git(ctx context.Context, env []string, args ...string) (string, error) {
 	return git(ctx, r.Dir, env, args...)
+}
+
+// GitInput is Git with input on the command's stdin.
+func (r *Repo) GitInput(ctx context.Context, env []string, input io.Reader, args ...string) (string, error) {
+	return gitInput(ctx, r.Dir, env, input, args...)
 }
 
 func git(ctx context.Context, gitDir string, env []string, args ...string) (string, error) {

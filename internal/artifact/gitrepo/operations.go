@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"context"
@@ -113,19 +113,19 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 	case ops.Init:
 		_, err = Open(ctx, req.Repo)
 	case ops.Snapshot:
-		result.Commit, result.Changed, result.Nested, err = r.snapshot(ctx, req.WorkTree, req.Parent, req.Message, req.Flatten)
+		result.Commit, result.Changed, result.Nested, err = r.SnapshotWithNested(ctx, req.WorkTree, req.Parent, req.Message, req.Flatten)
 	case ops.Checkout:
 		err = r.Checkout(ctx, req.Commit, req.WorkTree)
 	case ops.VerifyCheckout:
 		err = r.VerifyCheckout(ctx, req.Commit, req.WorkTree)
 	case ops.Has:
 		// Missing commits are a negative answer; process/start failures are errors.
-		_, err = r.git(ctx, nil, "cat-file", "-e", req.Commit+"^{commit}")
+		_, err = r.Git(ctx, nil, "cat-file", "-e", req.Commit+"^{commit}")
 		result.Has = err == nil
 		var exit *GitError
 		if errors.As(err, &exit) && exit.Code == 128 {
 			// Distinguish an absent object from an absent/unusable repository.
-			_, err = r.git(ctx, nil, "rev-parse", "--git-dir")
+			_, err = r.Git(ctx, nil, "rev-parse", "--git-dir")
 		}
 	case ops.Bundle:
 		if err = os.MkdirAll(filepath.Dir(req.Path), 0o700); err == nil {
@@ -240,11 +240,4 @@ func validateOperation(req ops.Request) error {
 		}
 	}
 	return nil
-}
-
-func (s *Store) operation(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
-	if node == "" {
-		return RunOperation(ctx, req)
-	}
-	return s.nodes.Artifact(ctx, node, req)
 }

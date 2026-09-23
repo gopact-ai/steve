@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"context"
@@ -68,7 +68,7 @@ func (r *Repo) prepareSnapshotIndex(ctx context.Context, workTree string, env, p
 		return err
 	}
 	if len(links) > 0 {
-		if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
+		if _, err := r.Git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
 			return fmt.Errorf("drop gitlinks: %w", err)
 		}
 		candidates, _, err = r.snapshotCandidates(ctx, env, paths)
@@ -106,7 +106,7 @@ func (r *Repo) prepareSnapshotIndex(ctx context.Context, workTree string, env, p
 // distinguishes an untracked filename that resembles staged-entry metadata.
 func (r *Repo) snapshotCandidates(ctx context.Context, env, paths []string) (files, links []string, err error) {
 	args := append([]string{"ls-files", "-t", "--stage", "--cached", "--others", "--exclude-standard", "-z", "--"}, paths...)
-	out, err := r.git(ctx, env, args...)
+	out, err := r.Git(ctx, env, args...)
 	if err != nil {
 		return nil, nil, err
 	}

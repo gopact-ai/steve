@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -35,7 +36,7 @@ func assembleAdministration(life lifetime, input inputAssembly, boot runtimeAsse
 	dashboard.SetSettings(adminsvc.NewSettings(admin, cfg))
 	channelSettings := adminsvc.NewChannels(admin, cfg)
 	dashboard.SetChannels(channelSettings)
-	var restartDocument ledger.Doc = &ledger.FileDocument{Path: filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "service-restarts.json")}
+	var restartDocument ledger.Doc = &filedoc.Document{Path: filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "service-restarts.json")}
 	if environment != nil {
 		restartDocument = book.Document("service-restarts")
 	}

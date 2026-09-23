@@ -11,7 +11,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/execution"
-	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -37,7 +37,7 @@ func TestRestartWhenIdleWaitsForRunningWorkThenApplies(t *testing.T) {
 	var stopped atomic.Int32
 	var sealed atomic.Bool
 	s, err := NewServices(&Service{}, registry, func() (func(), error) { sealed.Store(true); return func() { sealed.Store(false) }, nil },
-		func() { stopped.Add(1) }, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+		func() { stopped.Add(1) }, &filedoc.Document{Path: filepath.Join(t.TempDir(), "restart.json")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestWithdrawnRestartLeavesTheServiceRunning(t *testing.T) {
 	defer running.Finish(nil)
 	var stopped atomic.Int32
 	s, err := NewServices(&Service{}, registry, func() (func(), error) { return func() {}, nil },
-		func() { stopped.Add(1) }, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+		func() { stopped.Add(1) }, &filedoc.Document{Path: filepath.Join(t.TempDir(), "restart.json")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestWithdrawnRestartLeavesTheServiceRunning(t *testing.T) {
 func TestImmediateRestartSupersedesItsOwnWait(t *testing.T) {
 	var stopped atomic.Int32
 	s, err := NewServices(&Service{}, execution.New(context.Background(), nil), func() (func(), error) { return func() {}, nil },
-		func() { stopped.Add(1) }, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+		func() { stopped.Add(1) }, &filedoc.Document{Path: filepath.Join(t.TempDir(), "restart.json")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestNewerWaitTakesOverAnOlderOne(t *testing.T) {
 	}
 	var stopped atomic.Int32
 	s, err := NewServices(&Service{}, registry, func() (func(), error) { return func() {}, nil },
-		func() { stopped.Add(1) }, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+		func() { stopped.Add(1) }, &filedoc.Document{Path: filepath.Join(t.TempDir(), "restart.json")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestBusyRestartNamesTheExecutionHoldingIt(t *testing.T) {
 	}
 	defer running.Finish(nil)
 	s, err := NewServices(&Service{}, registry, func() (func(), error) { return func() {}, nil },
-		func() {}, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+		func() {}, &filedoc.Document{Path: filepath.Join(t.TempDir(), "restart.json")})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"context"
@@ -18,7 +18,7 @@ type treeEntry struct{ mode, sha string }
 var errNotAFile = errors.New("artifact: not a file")
 
 func (r *Repo) entry(ctx context.Context, commit, path string) (treeEntry, error) {
-	out, err := r.git(ctx, []string{"GIT_LITERAL_PATHSPECS=1"}, "ls-tree", "--full-tree", "-z", commit, "--", path)
+	out, err := r.Git(ctx, []string{"GIT_LITERAL_PATHSPECS=1"}, "ls-tree", "--full-tree", "-z", commit, "--", path)
 	if err != nil || out == "" {
 		return treeEntry{}, err
 	}
@@ -141,7 +141,7 @@ func (r *Repo) writePath(ctx context.Context, dir, commit, path string) error {
 		}
 		return err
 	}
-	body, err := r.git(ctx, nil, "cat-file", "blob", entry.sha)
+	body, err := r.Git(ctx, nil, "cat-file", "blob", entry.sha)
 	if err != nil {
 		return err
 	}

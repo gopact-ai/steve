@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import "time"
 
@@ -11,7 +11,8 @@ type ReviewLimits struct {
 	Timeout      time.Duration
 }
 
-func (p ReviewLimits) defaults() ReviewLimits {
+// WithDefaults fills each unset budget with its default.
+func (p ReviewLimits) WithDefaults() ReviewLimits {
 	if p.MaxChanges <= 0 {
 		p.MaxChanges = MaxChanges
 	}

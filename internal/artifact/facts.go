@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/project"
@@ -171,7 +172,7 @@ func (s *Store) generationOf(ctx context.Context, node string) int64 {
 // ensureOnNode makes sure the node holds the artifact, keeping the replica
 // record honest at every step: a known verified copy of this generation is
 // trusted; anything else is checked; a missing copy is pushed and checked.
-func (s *Store) ensureOnNode(ctx context.Context, p project.Project, node, bare string, hub *Repo, sha string) error {
+func (s *Store) ensureOnNode(ctx context.Context, p project.Project, node, bare string, hub *gitrepo.Repo, sha string) error {
 	gen := s.generationOf(ctx, node)
 	if r, ok := s.replica(ctx, sha, node); ok {
 		if r.State == ReplicaVerified && r.Generation == gen {

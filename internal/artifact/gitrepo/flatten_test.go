@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func TestSnapshotFlattensAnAgentsNestedRepo(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("snapshot: %v changed=%v", err, changed)
 	}
-	tree, err := repo.git(context.Background(), nil, "ls-tree", "-r", "--name-only", sha)
+	tree, err := repo.Git(context.Background(), nil, "ls-tree", "-r", "--name-only", sha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,14 +62,14 @@ func TestSnapshotDropsAnInheritedGitlink(t *testing.T) {
 	// Craft the poisoned parent: a commit whose tree says hostline is a submodule.
 	index := filepath.Join(t.TempDir(), "index")
 	env := []string{"GIT_INDEX_FILE=" + index}
-	if _, err := repo.git(ctx, env, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+",hostline"); err != nil {
+	if _, err := repo.Git(ctx, env, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+",hostline"); err != nil {
 		t.Fatal(err)
 	}
-	tree, err := repo.git(ctx, env, "write-tree")
+	tree, err := repo.Git(ctx, env, "write-tree")
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, err := repo.git(ctx, nil, "commit-tree", strings.TrimSpace(tree), "-m", "poisoned")
+	parent, err := repo.Git(ctx, nil, "commit-tree", strings.TrimSpace(tree), "-m", "poisoned")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,19 +90,19 @@ func TestSnapshotDropsAnInheritedGitlink(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("snapshot: %v changed=%v", err, changed)
 	}
-	if listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", sha); !strings.Contains(listing, "hostline/main.go") {
+	if listing, _ := repo.Git(ctx, nil, "ls-tree", "-r", "--name-only", sha); !strings.Contains(listing, "hostline/main.go") {
 		t.Fatalf("local snapshot hid the files under the gitlink:\n%s", listing)
 	}
 	// Through the same typed implementation that a node runs.
 	work2 := t.TempDir()
 	write(work2)
-	result, err := (LocalNodes{}).Artifact(ctx, "node", ops.Request{
+	result, err := RunOperation(ctx, ops.Request{
 		Op: ops.Snapshot, Repo: repo.Dir, WorkTree: work2, Parent: parent, Message: "files",
 	})
 	if err != nil || !result.Changed {
 		t.Fatalf("typed snapshot: changed=%v, %v", result.Changed, err)
 	}
-	if listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", result.Commit); !strings.Contains(listing, "hostline/main.go") {
+	if listing, _ := repo.Git(ctx, nil, "ls-tree", "-r", "--name-only", result.Commit); !strings.Contains(listing, "hostline/main.go") {
 		t.Fatalf("typed snapshot hid the files under the gitlink:\n%s", listing)
 	}
 }
@@ -143,7 +143,7 @@ func TestSnapshotLeavesAUsersNestedRepoAlone(t *testing.T) {
 			if err := os.Symlink(work, link); err != nil {
 				t.Fatal(err)
 			}
-			result, err := (LocalNodes{}).Artifact(ctx, "node", ops.Request{
+			result, err := RunOperation(ctx, ops.Request{
 				Op: ops.Snapshot, Repo: repo.Dir, WorkTree: link, Message: "m",
 			})
 			if err != nil {
@@ -159,11 +159,11 @@ func TestSnapshotLeavesAUsersNestedRepoAlone(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(sub, ".git")); err != nil {
 			t.Fatalf("typed=%v: the user's nested repository lost its .git: %v", viaTyped, err)
 		}
-		listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", sha)
+		listing, _ := repo.Git(ctx, nil, "ls-tree", "-r", "--name-only", sha)
 		if !strings.Contains(listing, "notes.md") || strings.Contains(listing, "vendored") {
 			t.Fatalf("typed=%v: tree = %q; want notes.md and no vendored entry", viaTyped, listing)
 		}
-		tree, err := repo.git(ctx, nil, "rev-parse", sha+"^{tree}")
+		tree, err := repo.Git(ctx, nil, "rev-parse", sha+"^{tree}")
 		if err != nil {
 			t.Fatal(err)
 		}

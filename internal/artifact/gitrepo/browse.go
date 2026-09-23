@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"bytes"
@@ -37,9 +37,9 @@ func (r *Repo) Tree(ctx context.Context, commit, dir string) ([]Entry, bool, err
 	if dir != "" {
 		spec = commit + ":" + dir
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.WithDefaults().Timeout)
 	defer cancel()
-	out, err := r.git(ctx, nil, "ls-tree", "-z", "-l", spec)
+	out, err := r.Git(ctx, nil, "ls-tree", "-z", "-l", spec)
 	if err != nil {
 		return nil, false, err
 	}
@@ -55,7 +55,7 @@ func (r *Repo) Tree(ctx context.Context, commit, dir string) ([]Entry, bool, err
 		if len(fields) < 4 {
 			continue
 		}
-		if len(entries) >= r.Review.defaults().MaxEntries {
+		if len(entries) >= r.Review.WithDefaults().MaxEntries {
 			truncated = true
 			break
 		}
@@ -95,30 +95,30 @@ func (r *Repo) File(ctx context.Context, commit, path string) (text string, size
 	if path == "" {
 		return "", 0, false, false, errors.New("a path is required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.WithDefaults().Timeout)
 	defer cancel()
 	spec := commit + ":" + path
-	kind, err := r.git(ctx, nil, "cat-file", "-t", spec)
+	kind, err := r.Git(ctx, nil, "cat-file", "-t", spec)
 	if err != nil {
 		return "", 0, false, false, err
 	}
 	if strings.TrimSpace(kind) != "blob" {
 		return "", 0, false, false, fmt.Errorf("%s is a %s, not a file", path, strings.TrimSpace(kind))
 	}
-	sizeText, err := r.git(ctx, nil, "cat-file", "-s", spec)
+	sizeText, err := r.Git(ctx, nil, "cat-file", "-s", spec)
 	if err != nil {
 		return "", 0, false, false, err
 	}
 	if size, err = strconv.ParseInt(strings.TrimSpace(sizeText), 10, 64); err != nil {
 		return "", 0, false, false, fmt.Errorf("size of %s: %w", path, err)
 	}
-	raw, err := r.gitBytes(ctx, r.Review.defaults().MaxFileBytes+1, "cat-file", "-p", spec)
+	raw, _, err := r.GitBounded(ctx, r.Review.WithDefaults().MaxFileBytes+1, "cat-file", "-p", spec)
 	if err != nil {
 		return "", size, false, false, err
 	}
-	truncated = int64(len(raw)) > int64(r.Review.defaults().MaxFileBytes) || size > int64(r.Review.defaults().MaxFileBytes)
-	if len(raw) > r.Review.defaults().MaxFileBytes {
-		raw = raw[:r.Review.defaults().MaxFileBytes]
+	truncated = int64(len(raw)) > int64(r.Review.WithDefaults().MaxFileBytes) || size > int64(r.Review.WithDefaults().MaxFileBytes)
+	if len(raw) > r.Review.WithDefaults().MaxFileBytes {
+		raw = raw[:r.Review.WithDefaults().MaxFileBytes]
 	}
 	if truncated && len(raw) > 0 {
 		start := len(raw) - 1
@@ -135,11 +135,10 @@ func (r *Repo) File(ctx context.Context, commit, path string) (text string, size
 	return string(raw), size, false, truncated, nil
 }
 
-// gitBytes runs git and returns at most max bytes of its stdout, stopping
-// the process once the limit is read.
-func (r *Repo) gitBytes(ctx context.Context, max int, args ...string) ([]byte, error) {
-	out, _, err := runBounded(ctx, r.Dir, max, args...)
-	return out, err
+// GitBounded runs git and returns at most max bytes of its stdout,
+// stopping the process once the limit is read; truncated says it did.
+func (r *Repo) GitBounded(ctx context.Context, max int, args ...string) (out []byte, truncated bool, err error) {
+	return runBounded(ctx, r.Dir, max, args...)
 }
 
 // cleanPath keeps a path inside the tree: no leading slash, no "..",
@@ -153,24 +152,4 @@ func cleanPath(p string) string {
 		parts = append(parts, seg)
 	}
 	return strings.Join(parts, "/")
-}
-
-// ---------------------------------------------------------------- store
-
-// Tree lists a snapshot directory of a project the hub keeps objects for.
-func (s *Store) Tree(ctx context.Context, projectID, commit, dir string) ([]Entry, bool, error) {
-	repo, err := s.reviewRepo(ctx, projectID, "", commit)
-	if err != nil {
-		return nil, false, err
-	}
-	return repo.Tree(ctx, commit, dir)
-}
-
-// File reads one file of such a snapshot.
-func (s *Store) File(ctx context.Context, projectID, commit, path string) (string, int64, bool, bool, error) {
-	repo, err := s.reviewRepo(ctx, projectID, "", commit)
-	if err != nil {
-		return "", 0, false, false, err
-	}
-	return repo.File(ctx, commit, path)
 }

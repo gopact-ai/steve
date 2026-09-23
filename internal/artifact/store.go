@@ -1,3 +1,8 @@
+// Package artifact is the content-addressed layer: every result Steve
+// binds a name to is a git commit in a bare repository per project, and
+// every directory Steve runs an attempt in is materialised from one. The
+// repositories and their git operations live in artifact/gitrepo; this
+// package keeps manifests, landings and replicas in the ledger.
 package artifact
 
 import (
@@ -15,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/contentreplica"
@@ -95,14 +101,14 @@ type Nodes interface {
 type Store struct {
 	// Policy supplies one atomic policy snapshot per request. Install it before
 	// use and never replace it while the store is running. Nil uses Limits/Review.
-	Policy           func() (Limits, ReviewLimits)
-	Review           ReviewLimits
+	Policy           func() (gitrepo.Limits, gitrepo.ReviewLimits)
+	Review           gitrepo.ReviewLimits
 	landingDriverTTL time.Duration
 	// renewTicks paces landing-driver renewals; nil means a real ticker.
 	renewTicks   func(time.Duration) (<-chan time.Time, func())
 	executions   *execution.Registry
 	Dir          string
-	Limits       Limits
+	Limits       gitrepo.Limits
 	ledger       *ledger.Ledger
 	projects     *project.Store
 	nodes        Nodes
@@ -174,7 +180,7 @@ func metadataOnly(p project.Project) bool {
 	return p.Level == datalevel.Sealed && p.Home.Node != ""
 }
 
-func (s *Store) policy() (Limits, ReviewLimits) {
+func (s *Store) policy() (gitrepo.Limits, gitrepo.ReviewLimits) {
 	if s.Policy != nil {
 		return s.Policy()
 	}
@@ -183,12 +189,12 @@ func (s *Store) policy() (Limits, ReviewLimits) {
 
 // Repo opens the project's shadow repository on the hub. Its policy is copied
 // at entry and stays fixed for every operation on the returned repository.
-func (s *Store) Repo(ctx context.Context, projectID string) (*Repo, error) {
+func (s *Store) Repo(ctx context.Context, projectID string) (*gitrepo.Repo, error) {
 	limits, review := s.policy()
 	return s.repoWithPolicy(ctx, projectID, limits, review)
 }
 
-func (s *Store) repoWithPolicy(ctx context.Context, projectID string, limits Limits, review ReviewLimits) (*Repo, error) {
+func (s *Store) repoWithPolicy(ctx context.Context, projectID string, limits gitrepo.Limits, review gitrepo.ReviewLimits) (*gitrepo.Repo, error) {
 	objectsAllowed := true
 	if s.replication != nil {
 		p, ok, err := s.projects.GetHistorical(ctx, projectID)
@@ -205,7 +211,7 @@ func (s *Store) repoWithPolicy(ctx context.Context, projectID string, limits Lim
 			}
 		}
 	}
-	r, err := Open(ctx, filepath.Join(s.Dir, "objects", projectID+".git"))
+	r, err := gitrepo.Open(ctx, filepath.Join(s.Dir, "objects", projectID+".git"))
 	if err == nil {
 		r.Limits, r.Review = limits, review
 		if s.replication != nil && objectsAllowed {
@@ -323,7 +329,7 @@ func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, parent
 	var changed bool
 	var nested []string
 	if p.Home.Node == "" {
-		sha, changed, nested, err = repo.snapshot(ctx, p.Home.Path, parent, message, false)
+		sha, changed, nested, err = repo.SnapshotWithNested(ctx, p.Home.Path, parent, message, false)
 	} else {
 		sha, changed, nested, err = s.snapshotOnNode(ctx, p.Home.Node, p, p.Home.Path, parent, message, repo, false)
 	}
@@ -426,7 +432,7 @@ func (s *Store) setHead(ctx context.Context, name, sha string) error {
 // snapshotOnNode snapshots a directory on a node into the node's shadow
 // repository and fetches the result to the hub. nested names the nested
 // git repositories of the directory the snapshot left out.
-func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (sha string, changed bool, nested []string, err error) {
+func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *gitrepo.Repo, flatten bool) (sha string, changed bool, nested []string, err error) {
 	_, _, state, err := s.nodes.Git(ctx, node)
 	if err != nil {
 		return "", false, nil, err
@@ -436,7 +442,7 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 	if err == nil || !trusted || ctx.Err() != nil {
 		return sha, changed, nested, err
 	}
-	var tooLarge TooLarge
+	var tooLarge gitrepo.TooLarge
 	if errors.As(err, &tooLarge) {
 		return "", false, nil, err
 	}
@@ -453,7 +459,7 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 // replica is verified there are not asked about again: on a distant node
 // each question is a round trip, and an unchanged snapshot used to cost
 // three of them. trusted reports whether anything was skipped that way.
-func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool, bare string, trust bool) (sha string, changed bool, nested []string, trusted bool, err error) {
+func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *gitrepo.Repo, flatten bool, bare string, trust bool) (sha string, changed bool, nested []string, trusted bool, err error) {
 	gen := s.generationOf(ctx, node)
 	if trust && s.shadowKnown(node, bare, gen) {
 		trusted = true
@@ -478,14 +484,14 @@ func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.P
 	}
 	result, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Snapshot, Repo: bare, WorkTree: dir, Parent: parent, Message: message, Flatten: flatten, Limits: ops.Limits(hub.Limits)})
 	if err != nil {
-		var tooLarge TooLarge
+		var tooLarge gitrepo.TooLarge
 		if errors.As(err, &tooLarge) {
 			return "", false, nil, trusted, tooLarge
 		}
 		return "", false, nil, trusted, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
 	}
 	sha, nested = result.Commit, result.Nested
-	if !shaPattern.MatchString(sha) {
+	if !gitrepo.ValidSHA(sha) {
 		return "", false, nil, trusted, fmt.Errorf("snapshot on %s returned %q", node, sha)
 	}
 	if !result.Changed {
@@ -531,7 +537,7 @@ func (s *Store) nodeHas(ctx context.Context, node, bare, sha string) bool {
 }
 
 // push carries an artifact hub → node as a bundle.
-func (s *Store) push(ctx context.Context, node, bare string, hub *Repo, sha string, have []string) error {
+func (s *Store) push(ctx context.Context, node, bare string, hub *gitrepo.Repo, sha string, have []string) error {
 	temp, err := os.CreateTemp("", "steve-push-*.bundle")
 	if err != nil {
 		return err
@@ -567,7 +573,7 @@ func (s *Store) push(ctx context.Context, node, bare string, hub *Repo, sha stri
 }
 
 // pull carries an artifact node → hub as a bundle.
-func (s *Store) pull(ctx context.Context, node, bare string, hub *Repo, sha string, have []string) error {
+func (s *Store) pull(ctx context.Context, node, bare string, hub *gitrepo.Repo, sha string, have []string) error {
 	_, _, state, err := s.nodes.Git(ctx, node)
 	if err != nil {
 		return err
@@ -1157,4 +1163,21 @@ func (s *Store) homeRegion(ctx context.Context, p project.Project) string {
 		return ""
 	}
 	return region
+}
+
+// operation runs an artifact operation here when node is empty (the hub's
+// own repository), otherwise on that node.
+func (s *Store) operation(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
+	if node == "" {
+		return gitrepo.RunOperation(ctx, req)
+	}
+	return s.nodes.Artifact(ctx, node, req)
+}
+
+// short is the abbreviated object name used in messages.
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }

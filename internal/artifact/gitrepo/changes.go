@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"bufio"
@@ -42,13 +42,13 @@ func (r *Repo) Changes(ctx context.Context, from, to string) ([]Change, bool, er
 	if from == "" {
 		from = EmptyTree
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.WithDefaults().Timeout)
 	defer cancel()
-	status, err := r.git(ctx, nil, "diff-tree", "-r", "-z", "--no-renames", "--name-status", from, to)
+	status, err := r.Git(ctx, nil, "diff-tree", "-r", "-z", "--no-renames", "--name-status", from, to)
 	if err != nil {
 		return nil, false, err
 	}
-	numstat, err := r.git(ctx, nil, "diff-tree", "-r", "-z", "--no-renames", "--numstat", from, to)
+	numstat, err := r.Git(ctx, nil, "diff-tree", "-r", "-z", "--no-renames", "--numstat", from, to)
 	if err != nil {
 		return nil, false, err
 	}
@@ -83,7 +83,7 @@ func (r *Repo) Changes(ctx context.Context, from, to string) ([]Change, bool, er
 		if st == "" || path == "" {
 			continue
 		}
-		if len(out) >= r.Review.defaults().MaxChanges {
+		if len(out) >= r.Review.WithDefaults().MaxChanges {
 			truncated = true
 			break
 		}
@@ -104,9 +104,9 @@ func (r *Repo) FileDiff(ctx context.Context, from, to, path string) (string, boo
 	if path == "" || strings.HasPrefix(path, "-") {
 		return "", false, errors.New("a path is required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.WithDefaults().Timeout)
 	defer cancel()
-	raw, truncated, err := runBounded(ctx, r.Dir, r.Review.defaults().MaxDiffBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", from, to, "--", path)
+	raw, truncated, err := runBounded(ctx, r.Dir, r.Review.WithDefaults().MaxDiffBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", from, to, "--", path)
 	if err != nil {
 		return "", false, err
 	}
@@ -147,68 +147,3 @@ func runBounded(ctx context.Context, gitDir string, max int, args ...string) ([]
 }
 
 // ---------------------------------------------------------------- store
-
-// Changes is the index of an attempt's change, by project: what the
-// snapshot pair differs in. A sealed project whose objects stay on its
-// own machine has nothing the hub may show.
-func (s *Store) Changes(ctx context.Context, projectID, from, to string) ([]Change, bool, error) {
-	repo, err := s.reviewRepo(ctx, projectID, from, to)
-	if err != nil {
-		return nil, false, err
-	}
-	return repo.Changes(ctx, from, to)
-}
-
-// FileDiff is one file of that change. The path must be in the index:
-// nothing is diffed that the index did not name.
-func (s *Store) FileDiff(ctx context.Context, projectID, from, to, path string) (string, bool, error) {
-	repo, err := s.reviewRepo(ctx, projectID, from, to)
-	if err != nil {
-		return "", false, err
-	}
-	changes, _, err := repo.Changes(ctx, from, to)
-	if err != nil {
-		return "", false, err
-	}
-	known := false
-	for _, c := range changes {
-		if c.Path == path {
-			known = true
-			if c.Binary {
-				return "", false, fmt.Errorf("%s is binary; no text diff", path)
-			}
-			break
-		}
-	}
-	if !known {
-		return "", false, fmt.Errorf("%s is not among the changed files", path)
-	}
-	return repo.FileDiff(ctx, from, to, path)
-}
-
-func (s *Store) reviewRepo(ctx context.Context, projectID, from, to string) (*Repo, error) {
-	limits, review := s.policy()
-	return s.reviewRepoWithPolicy(ctx, projectID, from, to, limits, review)
-}
-
-func (s *Store) reviewRepoWithPolicy(ctx context.Context, projectID, from, to string, limits Limits, review ReviewLimits) (*Repo, error) {
-	p, ok, err := s.projects.GetHistorical(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("no project %q", projectID)
-	}
-	if metadataOnly(p) {
-		return nil, fmt.Errorf("project %s is sealed and its data stays on %s; no diff here", p.ID, p.Home.Node)
-	}
-	for _, sha := range []string{from, to} {
-		if sha != "" && !shaPattern.MatchString(sha) {
-			return nil, fmt.Errorf("bad snapshot id %q", sha)
-		}
-	}
-	if to == "" {
-		return nil, errors.New("no after-snapshot: nothing changed, or the change was not captured")
-	}
-	return s.repoWithPolicy(ctx, projectID, limits, review)
-}

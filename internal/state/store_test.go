@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/filedoc"
 )
 
 func TestStorePersistsConversationSessions(t *testing.T) {
@@ -255,7 +255,7 @@ func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
 	if kept := reopened.Conversation("console:two"); len(kept.Sessions) != 1 {
 		t.Fatalf("another conversation was deleted: %#v", kept)
 	}
-	refs, err := PluginReferences(&ledger.FileDocument{Path: path})
+	refs, err := PluginReferences(&filedoc.Document{Path: path})
 	if err != nil {
 		t.Fatalf("plugin references: %v", err)
 	}

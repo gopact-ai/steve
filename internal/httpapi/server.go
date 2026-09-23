@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -969,7 +970,7 @@ func (s *Server) consoleAttemptTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tree.Entries == nil {
-		tree.Entries = []artifact.Entry{}
+		tree.Entries = []gitrepo.Entry{}
 	}
 	writeJSON(w, tree)
 }
@@ -998,7 +999,7 @@ func (s *Server) consoleAttemptChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if index.Changes == nil {
-		index.Changes = []artifact.Change{}
+		index.Changes = []gitrepo.Change{}
 	}
 	writeJSON(w, index)
 }

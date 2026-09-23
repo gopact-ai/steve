@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/approval"
-	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 )
 
 type ExecutionPolicy struct {
@@ -65,8 +65,8 @@ const (
 	DefaultPlanningAttempts = 2
 )
 
-// WithDefaults fills every unset policy. Snapshot and review budgets are the
-// artifact layer's own limits, which it also applies to a zero value.
+// WithDefaults fills every unset policy. Snapshot and review budgets are
+// the defaults artifact/gitrepo also applies to a zero value.
 func (p Policies) WithDefaults() Policies {
 	if p.Execution.StepTimeout == 0 {
 		p.Execution.StepTimeout = Duration(DefaultStepTimeout)
@@ -81,28 +81,28 @@ func (p Policies) WithDefaults() Policies {
 		p.Planning.Attempts = DefaultPlanningAttempts
 	}
 	if p.Snapshot.MaxFiles == 0 {
-		p.Snapshot.MaxFiles = artifact.MaxSnapshotFiles
+		p.Snapshot.MaxFiles = gitrepo.MaxSnapshotFiles
 	}
 	if p.Snapshot.MaxBytes == 0 {
-		p.Snapshot.MaxBytes = artifact.MaxSnapshotBytes
+		p.Snapshot.MaxBytes = gitrepo.MaxSnapshotBytes
 	}
 	if p.Snapshot.MaxFileBytes == 0 {
-		p.Snapshot.MaxFileBytes = artifact.MaxSnapshotFileBytes
+		p.Snapshot.MaxFileBytes = gitrepo.MaxSnapshotFileBytes
 	}
 	if p.Review.MaxChanges == 0 {
-		p.Review.MaxChanges = artifact.MaxChanges
+		p.Review.MaxChanges = gitrepo.MaxChanges
 	}
 	if p.Review.MaxDiffBytes == 0 {
-		p.Review.MaxDiffBytes = artifact.MaxDiffBytes
+		p.Review.MaxDiffBytes = gitrepo.MaxDiffBytes
 	}
 	if p.Review.MaxFileBytes == 0 {
-		p.Review.MaxFileBytes = artifact.MaxFileBytes
+		p.Review.MaxFileBytes = gitrepo.MaxFileBytes
 	}
 	if p.Review.MaxEntries == 0 {
-		p.Review.MaxEntries = artifact.MaxEntries
+		p.Review.MaxEntries = gitrepo.MaxEntries
 	}
 	if p.Review.Timeout == 0 {
-		p.Review.Timeout = Duration(artifact.DefaultReviewTimeout)
+		p.Review.Timeout = Duration(gitrepo.DefaultReviewTimeout)
 	}
 	if p.Landing.Conflicts == "" {
 		p.Landing.Conflicts = ConflictsByAgent

@@ -1,4 +1,4 @@
-package artifact
+package gitrepo
 
 import (
 	"context"
@@ -72,10 +72,10 @@ func (r *Repo) mergeLegacy(ctx context.Context, base, ours, theirs, message stri
 	if err != nil {
 		return "", nil, err
 	}
-	out, err := r.git(ctx, nil, "commit-tree", strings.TrimSpace(tree), "-m", message, "-p", ours, "-p", theirs)
+	out, err := r.Git(ctx, nil, "commit-tree", strings.TrimSpace(tree), "-m", message, "-p", ours, "-p", theirs)
 	if err != nil {
 		return "", nil, err
 	}
 	sha := strings.TrimSpace(out)
-	return sha, nil, r.pin(ctx, sha)
+	return sha, nil, r.Pin(ctx, sha)
 }
