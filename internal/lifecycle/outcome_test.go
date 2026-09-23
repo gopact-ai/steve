@@ -20,9 +20,10 @@ func TestOutcomeOfClassifiesHowARunEnded(t *testing.T) {
 		{"deadline", fmt.Errorf("prompt: %w", context.DeadlineExceeded), task.OutcomeTimeout},
 		{"canceled context", fmt.Errorf("prompt: %w", context.Canceled), task.OutcomeCancelled},
 		{"canceled turn", fmt.Errorf("prompt: %w", harness.ErrTurnCanceled), task.OutcomeCancelled},
-		// A remote session's error arrives as text, without its identity.
-		{"remote deadline", errors.New("node: " + context.DeadlineExceeded.Error()), task.OutcomeTimeout},
-		{"remote cancel", errors.New("node: " + context.Canceled.Error()), task.OutcomeCancelled},
+		// Only the error's identity counts: an agent's own HTTP call that
+		// timed out is a failure of the run, not the run timing out.
+		{"deadline text", errors.New(`Post "http://127.0.0.1/v1": ` + context.DeadlineExceeded.Error()), task.OutcomeError},
+		{"cancel text", errors.New("node: " + context.Canceled.Error()), task.OutcomeError},
 		{"failure", errors.New("exit status 1"), task.OutcomeError},
 	} {
 		if got := OutcomeOf(tc.err); got != tc.want {

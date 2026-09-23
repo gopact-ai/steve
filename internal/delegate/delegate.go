@@ -534,7 +534,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 			err = errors.New("delegate result has not been durably settled")
 		}
 		if err == nil {
-			err = s.finishFromRecord(retainedRecord, lifecycle.OutcomeOf(runErr))
+			err = s.finishFromRecord(retainedRecord, remoteOutcomeOf(runErr))
 		}
 		if err != nil {
 			binding := QuestionBinding{Conversation: conversationID, Transport: parent.Transport, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
@@ -985,7 +985,7 @@ func (d *delegation) settle(ctx context.Context, run lifecycle.Result, err error
 		if run.Managed {
 			result.Answer = run.Answer
 		}
-		outcome := lifecycle.OutcomeOf(err)
+		outcome := remoteOutcomeOf(err)
 		if d.publishErr != nil {
 			outcome = task.OutcomeError
 		}
