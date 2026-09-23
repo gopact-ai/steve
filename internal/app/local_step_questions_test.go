@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,33 +23,8 @@ import (
 // its own execution scope; the question lands in its task's conversation,
 // bound to that attempt rather than to the exchange that started the plan.
 func TestHubLocalStepAsksFromItsOwnExecution(t *testing.T) {
-	book, err := ledger.Open(t.TempDir(), ledger.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { book.Close() })
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	attempts := attempt.New(book)
 	conversation := "console:plan"
-	tracked, err := tasks.Create(task.Task{Goal: "plan", Channel: conversation, Transport: "console", AnchorMessage: console.AnchorMark + "plan-exchange", Member: "worker", Node: "hub", ProjectID: "p", Origin: "plan"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tasks.Begin(tracked.ID, "worker", "hub", ""); err != nil {
-		t.Fatal(err)
-	}
-	record, err := attempts.Open(t.Context(), attempt.Spec{TaskID: tracked.ID, TurnID: "plan/s1", Kind: attempt.KindStep, Project: "p", Harness: "mock", Agent: "worker", Scope: attempt.ScopeNone, By: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope, err := execution.New(t.Context(), tasks).Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: "plan/s1", AttemptID: record.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer scope.Finish(nil)
+	tasks, attempts, tracked, record, scope := localStepFixture(t, task.Task{Goal: "plan", Channel: conversation, Transport: "console", AnchorMessage: console.AnchorMark + "plan-exchange"})
 	cons := console.New(nil, "owner", nil)
 	ask, askUser := planQuestions(cons, tasks, attempts)
 
@@ -109,5 +85,56 @@ func TestHubLocalStepAsksFromItsOwnExecution(t *testing.T) {
 	defer chatCancel()
 	if _, err := askUser(chatCtx, view.Question{SessionID: "acp-step", Message: "?", AllowFreeText: true}); err == nil {
 		t.Fatal("a chat attempt asked through the plan path")
+	}
+}
+
+type localStepScope interface{ Context() context.Context }
+
+// localStepFixture runs one hub-local plan step of a task opened from
+// origin, inside the execution scope the hub gives it.
+func localStepFixture(t *testing.T, origin task.Task) (*task.Store, *attempt.Service, task.Task, attempt.Record, localStepScope) {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := attempt.New(book)
+	origin.Member, origin.Node, origin.ProjectID, origin.Origin = "worker", "hub", "p", "plan"
+	tracked, err := tasks.Create(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Begin(tracked.ID, "worker", "hub", ""); err != nil {
+		t.Fatal(err)
+	}
+	record, err := attempts.Open(t.Context(), attempt.Spec{TaskID: tracked.ID, TurnID: "plan/s1", Kind: attempt.KindStep, Project: "p", Harness: "mock", Agent: "worker", Scope: attempt.ScopeNone, By: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := execution.New(t.Context(), tasks).Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: "plan/s1", AttemptID: record.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { scope.Finish(nil) })
+	return tasks, attempts, tracked, record, scope
+}
+
+// A step of a task from another channel asks in a recovery conversation
+// that names where the task came from.
+func TestHubLocalStepFromAnotherChannelAsksInANamedRecoveryConversation(t *testing.T) {
+	tasks, attempts, tracked, _, scope := localStepFixture(t, task.Task{Goal: "plan", Channel: "stdio:session", Transport: "stdio"})
+	cons := console.New(nil, "owner", nil)
+	_, askUser := planQuestions(cons, tasks, attempts)
+	go askUser(scope.Context(), view.Question{SessionID: "acp-step", Message: "Which colour?", AllowFreeText: true})
+	q := awaitLocalChildQuestion(t, cons, "console:recovery:"+tracked.ID)
+	for _, summary := range cons.Summaries(t.Context()) {
+		if summary.ID == q.Conversation && (strings.Contains(summary.Title, "飞书") || !strings.Contains(summary.Title, "stdio")) {
+			t.Fatalf("recovery conversation misnames its source: %q", summary.Title)
+		}
 	}
 }

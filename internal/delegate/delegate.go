@@ -484,7 +484,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 			err = s.finishFromRecord(retainedRecord, outcomeOf(runErr))
 		}
 		if err != nil {
-			binding := QuestionBinding{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
+			binding := QuestionBinding{Conversation: conversationID, Transport: parent.Transport, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
 			s.reportRecovery(ctx, binding, "task-bookkeeping", "核对已提交的子任务结果和预算", "原执行结果尚未完整写入任务记录。", "预算或任务状态的持久化失败，不能提前宣布完成。", "建议恢复存储后核对同一次执行。")
 			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: binding.Attempt, NodeID: binding.Node, SessionID: binding.Session, Cause: err})
 			return

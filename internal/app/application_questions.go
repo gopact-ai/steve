@@ -90,8 +90,16 @@ func planWork(kind attempt.Kind) bool {
 	return kind == attempt.KindStep || kind == attempt.KindVerify || kind == attempt.KindPlan
 }
 
+// sourceChannel names where a task outside the console came from.
+func sourceChannel(transport string) string {
+	if transport == "" {
+		return "unknown"
+	}
+	return transport
+}
+
 func recoveryConversationOf(ctx context.Context, cons *console.Service, tracked task.Task) (string, error) {
-	return cons.EnsureRecoveryConversation(ctx, console.RecoveryConversation{ParentTaskID: tracked.ID, SourceChannel: "feishu", SourceConversation: tracked.Channel, Project: tracked.ProjectID})
+	return cons.EnsureRecoveryConversation(ctx, console.RecoveryConversation{ParentTaskID: tracked.ID, SourceChannel: sourceChannel(tracked.Transport), SourceConversation: tracked.Channel, Project: tracked.ProjectID})
 }
 
 // planQuestions answers plan steps and auxiliary executions, on a node or

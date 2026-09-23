@@ -21,7 +21,7 @@ func delegateQuestionBinding(ctx context.Context, cons *console.Service, binding
 	conversation := binding.Conversation
 	if !console.IsConsole(conversation) {
 		var err error
-		conversation, err = cons.EnsureRecoveryConversation(ctx, console.RecoveryConversation{ParentTaskID: binding.ParentTask, SourceChannel: "feishu", SourceConversation: binding.Conversation, Project: binding.Project})
+		conversation, err = cons.EnsureRecoveryConversation(ctx, console.RecoveryConversation{ParentTaskID: binding.ParentTask, SourceChannel: sourceChannel(binding.Transport), SourceConversation: binding.Conversation, Project: binding.Project})
 		if err != nil {
 			return consoleapi.PendingQuestion{}, err
 		}

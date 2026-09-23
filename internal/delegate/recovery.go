@@ -29,6 +29,9 @@ import (
 // approve it.
 type QuestionBinding struct {
 	Conversation, ParentTask, Task, Attempt, Node, Agent, Project, Session string
+	// Transport is the parent's channel, which names a recovery
+	// conversation when the parent's own is not a console one.
+	Transport string
 }
 
 type RecoveryQuestion struct {
@@ -83,7 +86,7 @@ func (s *Service) SetQuestionHandlers(
 }
 
 func questionBinding(parent, child task.Task, record attempt.Record) QuestionBinding {
-	return QuestionBinding{Conversation: parent.Channel, ParentTask: parent.ID, Task: child.ID, Attempt: record.ID, Node: record.Node, Agent: record.Agent, Project: record.Project, Session: record.Session}
+	return QuestionBinding{Conversation: parent.Channel, Transport: parent.Transport, ParentTask: parent.ID, Task: child.ID, Attempt: record.ID, Node: record.Node, Agent: record.Agent, Project: record.Project, Session: record.Session}
 }
 
 func (s *Service) ownerHandlers(binding QuestionBinding) (permission.AskFunc, acphost.AskUserFunc) {
