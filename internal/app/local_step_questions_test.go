@@ -90,4 +90,24 @@ func TestHubLocalStepAsksFromItsOwnExecution(t *testing.T) {
 	if _, err := askUser(ctx, view.Question{SessionID: "acp-step", Message: "?", AllowFreeText: true}); !errors.Is(err, consoleapi.ErrInvalidAnswer) {
 		t.Fatalf("unscoped question accepted: %v", err)
 	}
+	// A read-only probe names an execution but runs none.
+	probe := execution.WithProbeKey(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "plan/s1", AttemptID: record.ID})
+	if _, err := askUser(probe, view.Question{SessionID: "acp-step", Message: "?", AllowFreeText: true}); err == nil {
+		t.Fatal("a probe asked on behalf of an execution")
+	}
+	// Only plan work asks through this path; a turn has its own.
+	chat, err := attempts.Open(t.Context(), attempt.Spec{TaskID: tracked.ID, TurnID: "m1", Kind: attempt.KindChat, Project: "p", Harness: "mock", Agent: "worker", Scope: attempt.ScopeNone, By: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatScope, err := execution.New(t.Context(), tasks).Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: "chat", AttemptID: chat.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer chatScope.Finish(nil)
+	chatCtx, chatCancel := context.WithTimeout(chatScope.Context(), time.Second)
+	defer chatCancel()
+	if _, err := askUser(chatCtx, view.Question{SessionID: "acp-step", Message: "?", AllowFreeText: true}); err == nil {
+		t.Fatal("a chat attempt asked through the plan path")
+	}
 }

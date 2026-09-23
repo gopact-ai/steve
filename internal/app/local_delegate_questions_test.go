@@ -89,7 +89,9 @@ func TestHubLocalChildWaitsForItsOwnerInTheParentConversation(t *testing.T) {
 	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	delegation := delegate.New(tasks, roster.New(catalog), sessions, capability.NewAssembler(nil), artifacts, "hub")
 	delegation.SetLedger(attempt.New(book), artifacts)
-	delegation.MaxSilence = 150 * time.Millisecond
+	// Long enough that starting and finishing the child under load is
+	// not mistaken for silence; the waits below still exceed it.
+	delegation.MaxSilence = time.Second
 	delegation.InlineWait = 0
 	cons := console.New(nil, "owner", nil)
 	wireDelegateQuestions(delegation, cons)
@@ -114,12 +116,12 @@ func TestHubLocalChildWaitsForItsOwnerInTheParentConversation(t *testing.T) {
 		}
 		// Longer than the child's whole silence limit: a person thinking
 		// is not the agent hanging.
-		time.Sleep(3 * delegation.MaxSilence)
+		time.Sleep(delegation.MaxSilence * 3 / 2)
 		if _, err := cons.AnswerQuestion(t.Context(), q.ID, answer); err != nil {
 			t.Fatal(err)
 		}
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		child, _ := tasks.Get(started.TaskID)
 		if child.Result != nil && child.State.Terminal() {

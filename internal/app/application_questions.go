@@ -54,16 +54,20 @@ func planQuestionBinding(ctx context.Context, cons *console.Service, tasks *task
 // hub opened for it. The question belongs to the execution, not to the
 // exchange that started the plan: the step can outlive that turn.
 func localPlanQuestionBinding(ctx context.Context, cons *console.Service, tasks *task.Store, attempts *attempt.Service, sessionID string) (consoleapi.PendingQuestion, bool, error) {
+	// A running scope, not a read-only probe key, vouches for the asker.
 	key, scoped := execution.KeyOf(ctx)
-	if !scoped || key.AttemptID == "" || sessionID == "" || lifecycle.IsManaged(sessionID) {
+	if !scoped || execution.Token(ctx) == nil || key.AttemptID == "" || sessionID == "" || lifecycle.IsManaged(sessionID) {
 		return consoleapi.PendingQuestion{}, true, consoleapi.ErrInvalidAnswer
+	}
+	if err := execution.CheckExecution(ctx); err != nil {
+		return consoleapi.PendingQuestion{}, true, err
 	}
 	record, err := attempts.Get(ctx, key.AttemptID)
 	if err != nil {
 		return consoleapi.PendingQuestion{}, true, err
 	}
 	tracked, ok := tasks.Get(record.TaskID)
-	if !ok || record.TaskID != key.TaskID || lifecycle.IsManaged(record.Session) || tracked.ProjectID != record.Project {
+	if !ok || record.TaskID != key.TaskID || !planWork(record.Kind) || record.State.Terminal() || lifecycle.IsManaged(record.Session) || tracked.ProjectID != record.Project {
 		return consoleapi.PendingQuestion{}, true, errors.New("local plan question differs from its execution")
 	}
 	conversation := tracked.Channel
@@ -72,7 +76,18 @@ func localPlanQuestionBinding(ctx context.Context, cons *console.Service, tasks 
 			return consoleapi.PendingQuestion{}, true, err
 		}
 	}
+	// Like a delegated child's, the question names the recorded session
+	// once there is one, not the agent process's own id.
+	if record.Session != "" {
+		sessionID = record.Session
+	}
 	return consoleapi.PendingQuestion{Conversation: conversation, Project: record.Project, TaskID: record.TaskID, AttemptID: record.ID, SessionID: sessionID}, true, nil
+}
+
+// planWork is what asks through the plan path: steps, their checks and
+// planning itself. Turns and delegated children have their own.
+func planWork(kind attempt.Kind) bool {
+	return kind == attempt.KindStep || kind == attempt.KindVerify || kind == attempt.KindPlan
 }
 
 func recoveryConversationOf(ctx context.Context, cons *console.Service, tracked task.Task) (string, error) {
