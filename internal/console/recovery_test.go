@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,7 +21,11 @@ type recoveryDriver struct {
 	candidates []turn.RetainedChat
 }
 
-func (d *recoveryDriver) RetainedChats(context.Context) ([]turn.RetainedChat, error) {
+func (d *recoveryDriver) CheckRetainedChats(context.Context) error { return nil }
+
+// RetainedChatsFor returns every configured candidate; the console must match
+// the exchange itself and refuse more than one execution of it.
+func (d *recoveryDriver) RetainedChatsFor(context.Context, string, string) ([]turn.RetainedChat, error) {
 	if d.candidates != nil {
 		return d.candidates, nil
 	}
@@ -402,4 +407,34 @@ func TestOpenRecoveryQuestionIsWithdrawnWhenTheOriginalComesBack(t *testing.T) {
 	follow := nextCall(t, h)
 	follow.finish <- nil
 	awaitExchange(t, s, "e2")
+}
+
+type exchangeLookupDriver struct {
+	recoveryDriver
+	conversation, message string
+}
+
+func (d *exchangeLookupDriver) RetainedChatsFor(ctx context.Context, conversation, message string) ([]turn.RetainedChat, error) {
+	d.conversation, d.message = conversation, message
+	return d.recoveryDriver.RetainedChatsFor(ctx, conversation, message)
+}
+
+func TestFindRetainedAsksForTheExchangeAndRefusesTwoExecutions(t *testing.T) {
+	s := New(&echo{}, "owner", nil)
+	e := Exchange{ID: "e1", Conversation: "console:main"}
+	driver := &exchangeLookupDriver{recoveryDriver: recoveryDriver{candidates: []turn.RetainedChat{
+		{AttemptID: "other-conversation", Conversation: "console:other", MessageID: AnchorMark + e.ID},
+		{AttemptID: "original", Conversation: e.Conversation, MessageID: AnchorMark + e.ID},
+	}}}
+	found, ok, err := s.findRetained(t.Context(), driver, e)
+	if err != nil || !ok || found.AttemptID != "original" {
+		t.Fatalf("exchange execution = %+v found=%v err=%v", found, ok, err)
+	}
+	if driver.conversation != e.Conversation || driver.message != AnchorMark+e.ID {
+		t.Fatalf("looked up %q/%q instead of the exchange", driver.conversation, driver.message)
+	}
+	driver.candidates = append(driver.candidates, turn.RetainedChat{AttemptID: "second", Conversation: e.Conversation, MessageID: AnchorMark + e.ID})
+	if _, _, err := s.findRetained(t.Context(), driver, e); err == nil || !strings.Contains(err.Error(), "multiple executions reference the same exchange") {
+		t.Fatalf("two executions of one exchange were not refused: %v", err)
+	}
 }

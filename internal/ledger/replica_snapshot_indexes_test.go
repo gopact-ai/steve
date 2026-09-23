@@ -261,3 +261,30 @@ func runSnapshotIndexHelper(t *testing.T, role, dir string, checkpoint bool) {
 		t.Fatalf("consumer task accounting=%+v found=%v err=%v", value, ok, err)
 	}
 }
+
+func TestRestoreGenerationMovesAcrossEveryRestore(t *testing.T) {
+	source, err := Open(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	target, err := Open(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	before := target.RestoreGeneration()
+	if before%2 != 0 {
+		t.Fatalf("idle generation %d reads as a restore in progress", before)
+	}
+	snapshot, err := source.SnapshotReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := target.RestoreReplica(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if after := target.RestoreGeneration(); after == before || after%2 != 0 {
+		t.Fatalf("generation %d -> %d across a restore", before, after)
+	}
+}

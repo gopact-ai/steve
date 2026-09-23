@@ -44,7 +44,13 @@ func init() {
 }
 
 func (s *Service) liveRecords(ctx context.Context) ([]Record, error) {
-	rows, err := s.l.DB().QueryContext(ctx, liveAttemptQuery)
+	return s.indexedRecords(ctx, liveAttemptQuery, decode)
+}
+
+// indexedRecords decodes every row of a partial-index query in full, so a
+// malformed payload the index kept fails the read.
+func (s *Service) indexedRecords(ctx context.Context, query string, decode func(ledger.Operation) (Record, error)) ([]Record, error) {
+	rows, err := s.l.DB().QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

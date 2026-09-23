@@ -16,10 +16,11 @@ func BenchmarkUsageSummary(b *testing.B) {
 	for _, count := range []int{1000, 10000, 100000} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
 			records, tasks := usageBenchmarkRecords(count, now)
+			samples := usageSamples(records)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				runtime.KeepAlive(usage(records, now, tasks))
+				runtime.KeepAlive(usage(samples, now, tasks))
 			}
 		})
 	}

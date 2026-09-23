@@ -20,15 +20,19 @@ type usageHTTPSource struct {
 	calls  atomic.Int32
 }
 
-func (s *usageHTTPSource) ClosedAttempts(context.Context) ([]attempt.Record, error) {
+func (s *usageHTTPSource) UsageSamples(context.Context) ([]attempt.UsageSample, error) {
 	s.calls.Add(1)
-	return s.closed, s.err
+	samples := make([]attempt.UsageSample, 0, len(s.closed))
+	for _, r := range s.closed {
+		samples = append(samples, r.UsageSample())
+	}
+	return samples, s.err
 }
 
 func TestUsageEndpointIsGuardedIndependentAndFresh(t *testing.T) {
 	start := time.Now().Add(-time.Minute)
 	source := &usageHTTPSource{closed: []attempt.Record{{StartedAt: start, EndedAt: start.Add(time.Second), Usage: &attempt.Usage{Reported: true, Input: 17}}}}
-	// Only ClosedAttempts exists: calling Snapshot from /usage would panic.
+	// Only UsageSamples exists: calling Snapshot from /usage would panic.
 	model := readmodel.New(readmodel.Sources{Ledger: source})
 	server := serve(t, model, ServerConfig{Token: "usage-test"})
 	code, _, _ := taskMetaRequest(t, server, http.MethodGet, "/usage", "", "")
@@ -51,7 +55,7 @@ func TestUsageEndpointIsGuardedIndependentAndFresh(t *testing.T) {
 }
 
 func TestUsageEndpointRetainsReadFailureWithoutFabricatingZero(t *testing.T) {
-	source := &usageHTTPSource{err: errors.New("closed attempts unavailable")}
+	source := &usageHTTPSource{err: errors.New("usage samples unavailable")}
 	server := serve(t, readmodel.New(readmodel.Sources{Ledger: source}), ServerConfig{})
 	code, _, raw := taskMetaRequest(t, server, http.MethodGet, "/usage", "", "")
 	var got readmodel.UsageSnapshot

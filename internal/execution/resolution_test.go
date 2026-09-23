@@ -105,3 +105,36 @@ func TestResolveStoppedDoesNotFinishOwnerOrNativeHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestJoinedAttemptsNameOnlyEntriesAwaitingDurableResolution(t *testing.T) {
+	r, running, tasks := stopTestScope(t, t.Context())
+	if got := r.JoinedAttempts(); len(got) != 0 {
+		t.Fatalf("running owner listed as joined: %v", got)
+	}
+	other, err := tasks.Create(task.Task{Channel: "other", Member: "agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unresolved, err := r.Begin(t.Context(), Key{TaskID: other.ID, AttemptID: "attempt-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unresolved.Finish(errors.New("native stop unconfirmed"))
+	resolved, err := r.Begin(t.Context(), Key{TaskID: other.ID, AttemptID: "attempt-3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved.Finish(nil)
+	unnamed, err := r.Begin(t.Context(), Key{TaskID: other.ID, InstanceID: "no-attempt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unnamed.Finish(errors.New("unresolved without an attempt"))
+	if got := r.JoinedAttempts(); !reflect.DeepEqual(got, []string{"attempt-2"}) {
+		t.Fatalf("joined attempts = %v", got)
+	}
+	running.Finish(errors.New("original observer lost"))
+	if got := r.JoinedAttempts(); !reflect.DeepEqual(got, []string{"attempt-1", "attempt-2"}) {
+		t.Fatalf("joined attempts = %v", got)
+	}
+}

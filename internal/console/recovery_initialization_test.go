@@ -14,17 +14,22 @@ import (
 
 type initializationDriver struct {
 	recoveryDriver
-	chats, plans atomic.Int32
-	failChats    atomic.Bool
-	failPlans    atomic.Bool
+	checks, chats, plans atomic.Int32
+	failChecks           atomic.Bool
+	failPlans            atomic.Bool
 }
 
-func (d *initializationDriver) RetainedChats(ctx context.Context) ([]turn.RetainedChat, error) {
-	d.chats.Add(1)
-	if d.failChats.Load() {
-		return nil, errors.New("chat initialization unavailable")
+func (d *initializationDriver) CheckRetainedChats(context.Context) error {
+	d.checks.Add(1)
+	if d.failChecks.Load() {
+		return errors.New("chat initialization unavailable")
 	}
-	return d.recoveryDriver.RetainedChats(ctx)
+	return nil
+}
+
+func (d *initializationDriver) RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]turn.RetainedChat, error) {
+	d.chats.Add(1)
+	return d.recoveryDriver.RetainedChatsFor(ctx, conversation, messageID)
 }
 
 func (d *initializationDriver) RetainedPlans(context.Context) ([]turn.RetainedPlan, error) {
@@ -71,21 +76,21 @@ func TestRecoverChatsInitializedDriverSkipsIdleHistoryPreflight(t *testing.T) {
 	}
 	// A later history failure must not disable the already initialized
 	// generation's idle reconciliation.
-	driver.failChats.Store(true)
+	driver.failChecks.Store(true)
 	driver.failPlans.Store(true)
 	for range 3 {
 		if err := s.RecoverChats(t.Context(), driver); err != nil {
 			t.Fatalf("initialized driver repeated history preflight: %v", err)
 		}
 	}
-	if driver.chats.Load() != 1 || driver.plans.Load() != 1 {
-		t.Fatalf("idle reconciliation read history: chats=%d plans=%d", driver.chats.Load(), driver.plans.Load())
+	if driver.checks.Load() != 1 || driver.chats.Load() != 0 || driver.plans.Load() != 1 {
+		t.Fatalf("idle reconciliation read history: checks=%d chats=%d plans=%d", driver.checks.Load(), driver.chats.Load(), driver.plans.Load())
 	}
 	replacement := &initializationDriver{}
 	if err := s.RecoverChats(t.Context(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	if replacement.chats.Load() != 1 || replacement.plans.Load() != 1 {
+	if replacement.checks.Load() != 1 || replacement.plans.Load() != 1 {
 		t.Fatal("new driver skipped initialization")
 	}
 }
@@ -96,7 +101,7 @@ func TestRecoverChatsFailedInitializationRemainsRetryable(t *testing.T) {
 			s, _ := initializedRecoveryConsole(t)
 			driver := &initializationDriver{}
 			if failure == "chats" {
-				driver.failChats.Store(true)
+				driver.failChecks.Store(true)
 			} else {
 				driver.failPlans.Store(true)
 			}
@@ -109,19 +114,19 @@ func TestRecoverChatsFailedInitializationRemainsRetryable(t *testing.T) {
 			if installed != nil {
 				t.Fatal("failed initialization installed driver")
 			}
-			driver.failChats.Store(false)
+			driver.failChecks.Store(false)
 			driver.failPlans.Store(false)
 			if err := s.RecoverChats(t.Context(), driver); err != nil {
 				t.Fatal(err)
 			}
-			chats, plans := driver.chats.Load(), driver.plans.Load()
-			if chats != 2 || plans == 0 {
+			checks, plans := driver.checks.Load(), driver.plans.Load()
+			if checks != 2 || plans == 0 {
 				t.Fatal("failed initialization was not retried")
 			}
 			if err := s.RecoverChats(t.Context(), driver); err != nil {
 				t.Fatal(err)
 			}
-			if driver.chats.Load() != chats || driver.plans.Load() != plans {
+			if driver.checks.Load() != checks || driver.plans.Load() != plans {
 				t.Fatal("successful retry was not remembered")
 			}
 		})
@@ -170,7 +175,7 @@ func TestRecoverChatsInitializedDriverRestartsDetachedWorker(t *testing.T) {
 	if !detached {
 		t.Fatal("fixture did not detach the pending worker")
 	}
-	chats, plans := driver.chats.Load(), driver.plans.Load()
+	checks, chats, plans := driver.checks.Load(), driver.chats.Load(), driver.plans.Load()
 	if err := s.RecoverChats(t.Context(), driver); err != nil {
 		t.Fatal(err)
 	}
@@ -178,10 +183,10 @@ func TestRecoverChatsInitializedDriverRestartsDetachedWorker(t *testing.T) {
 	if got := awaitExchange(t, s, "e1"); got.State != consoleapi.ExchangeDone {
 		t.Fatalf("detached worker was not recovered: %+v", got)
 	}
-	// Only the restarted pending worker reads retained evidence; there is no
-	// extra full-history preflight from RecoverChats itself.
-	if driver.chats.Load() != chats+1 || driver.plans.Load() != plans+1 || driver.calls.Load() != 2 {
-		t.Fatalf("wrong recovery reads/calls: chats=%d plans=%d resumes=%d", driver.chats.Load()-chats, driver.plans.Load()-plans, driver.calls.Load())
+	// Only the restarted pending worker reads its exchange's retained
+	// evidence; RecoverChats itself repeats no history check.
+	if driver.checks.Load() != checks || driver.chats.Load() != chats+1 || driver.plans.Load() != plans+1 || driver.calls.Load() != 2 {
+		t.Fatalf("wrong recovery reads/calls: checks=%d chats=%d plans=%d resumes=%d", driver.checks.Load()-checks, driver.chats.Load()-chats, driver.plans.Load()-plans, driver.calls.Load())
 	}
 	s.mu.Lock()
 	running := s.running[e.Conversation]

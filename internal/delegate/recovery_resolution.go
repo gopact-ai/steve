@@ -1,7 +1,11 @@
 package delegate
 
 import (
+	"context"
+	"errors"
+
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -41,4 +45,27 @@ func (s *Service) resolveRecovered(record attempt.Record, tracked task.Task) {
 		s.executions.ResolveStopped(record.ID, *record.Execution)
 		return
 	}
+}
+
+// resolveJoined retries that projection for every execution identity still
+// registered after its owner and native stop handlers joined. Only those
+// identities can be resolved, so the settled history of other attempts is
+// not read.
+func (s *Service) resolveJoined(ctx context.Context) error {
+	for _, id := range s.executions.JoinedAttempts() {
+		record, err := s.attempts.Get(ctx, id)
+		if errors.Is(err, attempt.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !lifecycle.IsManaged(record.Session) {
+			continue
+		}
+		if tracked, ok := s.tasks.Get(record.TaskID); ok {
+			s.resolveRecovered(record, tracked)
+		}
+	}
+	return nil
 }

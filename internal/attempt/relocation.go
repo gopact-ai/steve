@@ -406,7 +406,9 @@ func (s *Service) relocationStopEvidence(old Record, tracked *task.Task, p Reloc
 
 // supersedeSourceTx retires the original in place: its leases are retired
 // as stopped and its record moves to superseded, one revision on, naming
-// the replacement and the evidence the stop rests on.
+// the replacement and the evidence the stop rests on. It writes the row
+// directly rather than through setRecordDataTx, so it drops any stop
+// projection mark itself: a superseded record is no confirmed task stop.
 func (s *Service) supersedeSourceTx(tx *ledger.Tx, old *Record, replacement, evidence string) error {
 	if err := tx.RetireStopped(old.Leases); err != nil {
 		return err
@@ -415,6 +417,7 @@ func (s *Service) supersedeSourceTx(tx *ledger.Tx, old *Record, replacement, evi
 	old.SupersededBy = replacement
 	old.Unsettled = false
 	old.StopEvidence = evidence
+	old.StopProjected = false
 	settled := true
 	old.SessionSettled = &settled
 	old.Revision++

@@ -21,10 +21,13 @@ const (
 	identityOrder   = identityStarted + ` DESC,updated_at DESC,id DESC`
 	taskIdentitySQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_task
 		WHERE kind='attempt' AND ` + identityTask + `=? ORDER BY ` + identityStarted + `,updated_at,id`
-	turnIdentitySQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_turn
-		WHERE kind='attempt' AND ` + identityTurn + `=? ORDER BY ` + identityOrder + ` LIMIT 1`
+	turnAttemptsSQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_turn
+		WHERE kind='attempt' AND ` + identityTurn + `=? ORDER BY ` + identityOrder
+	turnIdentitySQL     = turnAttemptsSQL + ` LIMIT 1`
 	liveTaskIdentitySQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_task_live
 		WHERE ` + liveAttemptPredicate + ` AND ` + identityTask + `=? ORDER BY ` + identityOrder + ` LIMIT 1`
+	tasksByUpdateSQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_task
+		WHERE kind='attempt' AND ` + identityTask + ` IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC,id DESC`
 	invalidIdentitySQL = `SELECT ` + identityColumns + ` FROM operations INDEXED BY operations_attempt_task
 		WHERE kind='attempt' AND ` + identityTask + ` IS NULL LIMIT 1`
 )
@@ -106,6 +109,12 @@ func checkIdentityRows(tx *ledger.ReadTx) error {
 		return err
 	}
 	return fmt.Errorf("attempt %s: invalid identity read index", r.ID)
+}
+
+// CheckReadable fails when any attempt cannot be decoded or is filed under
+// another identity. It reads only the identity index's invalid range.
+func (s *Service) CheckReadable(ctx context.Context) error {
+	return s.l.Read(ctx, checkIdentityRows)
 }
 
 func (s *Service) identityRecords(ctx context.Context, query, key string) ([]Record, error) {
