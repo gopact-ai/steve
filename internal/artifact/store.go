@@ -527,7 +527,12 @@ func (s *Store) HeadOf(ctx context.Context, workspaceID string) (string, error) 
 // moves the name meanwhile.
 func (s *Store) setCanonical(ctx context.Context, projectID string, held ledger.Lease, sha string) error {
 	// A lease another region issued cannot be checked inside this
-	// ledger's transaction; it is checked just before instead.
+	// ledger's transaction; it is checked just before instead. That
+	// leaves a window: the lease may run out between the check and the
+	// transaction, a new holder take the lock, and this move land over
+	// the new holder's. Only a holder that stopped renewing its lease can
+	// fall into it, as a renewed lease does not run out in the moment
+	// between check and transaction.
 	foreign := held.Region != "" && held.Region != s.ledger.Region()
 	if foreign {
 		if err := s.ledger.CheckAny(ctx, held); err != nil {
