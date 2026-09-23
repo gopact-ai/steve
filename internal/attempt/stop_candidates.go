@@ -58,7 +58,9 @@ func TaskStopOwed(r Record) bool {
 // StopCandidates is every attempt TaskStopOwed accepts, most recently
 // updated first. Its cost follows that set, not the settled history: stops
 // whose native session is unsettled, plus confirmed task stops until
-// MarkStopProjected records their accounting.
+// MarkStopProjected records their accounting. A confirmed stop whose task
+// was deleted before that has no accounting row left to project, so it is
+// never marked and stays in the index, read by every later pass.
 func (s *Service) StopCandidates(ctx context.Context) ([]Record, error) {
 	return s.indexedRecords(ctx, stopCandidateQuery, decodeIdentityRecord)
 }

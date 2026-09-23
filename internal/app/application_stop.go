@@ -211,6 +211,8 @@ func (s *applicationStops) resolveStopped(r attempt.Record) {
 	}
 }
 
+// accountingPending also reports true for a stop whose task is gone. Such a
+// stop is never marked projected and remains a stop candidate.
 func (s *applicationStops) accountingPending(r attempt.Record) bool {
 	tracked, ok := s.tasks.Get(r.TaskID)
 	if !ok {
