@@ -29,6 +29,7 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -333,13 +334,8 @@ func physicalFailureDomain() (string, error) {
 }
 
 func requireClusterLoopback(address string) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return errors.New("cluster UI needs an explicit loopback address")
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("cluster UI gateway must bind to loopback")
+	if !sameorigin.LoopbackIP(address) {
+		return errors.New("cluster UI gateway must bind to an explicit loopback address")
 	}
 	return nil
 }

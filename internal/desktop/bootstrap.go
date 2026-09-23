@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/localtoken"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
 const profileName = "desktop.json"
@@ -195,8 +195,7 @@ func localURL(raw string, allowZero bool) error {
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return errors.New("expected a plain local HTTP endpoint")
 	}
-	ip := net.ParseIP(u.Hostname())
-	if ip == nil || !ip.IsLoopback() || u.Port() == "" || (!allowZero && u.Port() == "0") {
+	if !sameorigin.LoopbackIP(u.Host) || u.Port() == "" || (!allowZero && u.Port() == "0") {
 		return errors.New("desktop requires an explicit loopback address and port")
 	}
 	return nil

@@ -33,6 +33,7 @@ import (
 	"github.com/gopact-ai/steve/internal/fsx"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -406,11 +407,11 @@ func validHubRoute(route coordination.Route) (bool, error) {
 // real ports: a tunnel's ends are fixed ports, never 0.
 func loopbackRoute(route coordination.Route) error {
 	for _, address := range []string{route.Raft, route.API} {
-		host, port, err := net.SplitHostPort(address)
+		_, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return errors.New("SSH 隧道端口需要写成 host:port")
 		}
-		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		if !sameorigin.LoopbackIP(address) {
 			return errors.New("SSH 隧道端口必须在目标机的回环地址上")
 		}
 		if number, err := strconv.Atoi(port); err != nil || number <= 0 || number > 65535 {

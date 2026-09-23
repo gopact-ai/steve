@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
 	"go.etcd.io/bbolt"
@@ -167,12 +168,7 @@ func Open(config Config) (*Service, error) {
 }
 
 func requireLoopback(address string) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("%w: invalid Raft address", ErrInvalid)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
+	if !sameorigin.LoopbackIP(address) {
 		return fmt.Errorf("%w: non-loopback Raft transport requires an authenticated StreamLayer", ErrInvalid)
 	}
 	return nil
