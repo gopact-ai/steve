@@ -329,7 +329,7 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		request.Header.Set("Authorization", "Bearer "+declaration.Gateway.ReadModelToken)
-		response, err := (&http.Client{Timeout: 15 * time.Second}).Do(request)
+		response, err := (&http.Client{Timeout: peerRequestTimeout}).Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -190,7 +190,7 @@ func PeerRequest(t *testing.T, peer *cluster.Peer, method, path string, body any
 	request.Header.Set("Authorization", "Bearer "+peer.UIToken)
 	request.Header.Set("Cookie", "local-secret-cookie")
 	request.Header.Set("Referer", peer.UiURL+"/?token="+peer.UIToken)
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: peerRequestTimeout}
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -202,3 +202,8 @@ func PeerRequest(t *testing.T, peer *cluster.Peer, method, path string, body any
 	}
 	return response.StatusCode, data
 }
+
+// peerRequestTimeout bounds one request to a test peer's UI. A console
+// send runs a whole turn, which under a loaded parallel test run can take
+// well over the few seconds it takes alone.
+const peerRequestTimeout = time.Minute
