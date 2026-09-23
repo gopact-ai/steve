@@ -129,12 +129,15 @@ func (g *Gateway) newResultUI(msg feishu.InboundMessage) *turnUI {
 	return ui
 }
 
+// closeProgress stops admitting progress patches and returns only once an
+// in-flight patch has been delivered or has failed.
 func (u *turnUI) closeProgress() {
 	u.stopProgress()
-	// A queued flush checks closed after acquiring sendMu; it cannot admit
-	// another patch after this barrier, even if its timer already fired.
+	// Admission is closed first: a queued flush checks closed after
+	// acquiring sendMu, so it cannot send another patch even if its timer
+	// already fired. Acquiring sendMu then waits for the one in flight.
 	u.sendMu.Lock()
-	u.sendMu.Unlock()
+	defer u.sendMu.Unlock()
 }
 
 func (u *turnUI) stopProgress() {
