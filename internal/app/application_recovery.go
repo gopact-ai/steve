@@ -161,16 +161,47 @@ func (r *applicationRecovery) reconcileTask(ctx context.Context, candidate task.
 	} else {
 		slog.Info("retaining stopped task without new continuation", "task", tracked.ID, "state", tracked.State)
 	}
-	// The row was opened by a process that is gone. The only end its
-	// execution has on record is when this process noticed it — after the
-	// outage, which is not work — so the row ends when it began: the turn
-	// stays charged, the downtime does not. A row that never reached an
-	// admitted execution ran nothing at all.
+	// The row was opened by a process that is gone. Its execution ended no
+	// later than the last activity that process persisted for it; the
+	// record's own end is when the outage was noticed, which is not work.
+	// So the row charges what ran before the crash and not the downtime. A
+	// row that never reached an admitted execution ran nothing at all.
 	if record.ID != "" {
-		return r.tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, row.StartedAt, task.OutcomeInterrupted, stoppedAccounting(record))
+		last, err := r.lastActivity(ctx, record.ID)
+		if err != nil {
+			return err
+		}
+		ended := row.StartedAt
+		if last.After(ended) {
+			ended = last
+		}
+		return r.tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, ended, task.OutcomeInterrupted, stoppedAccounting(record))
 	}
 	_, err := r.tasks.FinishUnstarted(tracked.ID, task.OutcomeInterrupted)
 	return err
+}
+
+// lastActivity is the latest moment an expired attempt's own execution left
+// on record. Every transition before the attempt became terminal was written
+// by the process running it, the settled-session evidence last of all; the
+// terminal edge is the sweeper or a later startup noticing the execution was
+// gone, so it and anything after it are not work. Zero when nothing is on
+// record.
+func (r *applicationRecovery) lastActivity(ctx context.Context, attemptID string) (time.Time, error) {
+	history, err := r.attempts.History(ctx, attemptID)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("attempt %s history: %w", attemptID, err)
+	}
+	var last time.Time
+	for _, event := range history {
+		if attempt.State(event.To).Terminal() {
+			break
+		}
+		if event.At.After(last) {
+			last = event.At
+		}
+	}
+	return last, nil
 }
 
 func (r *applicationRecovery) queue(ctx context.Context, t task.Task, key, completedAttempt string) error {

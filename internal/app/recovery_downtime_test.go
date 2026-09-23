@@ -10,13 +10,19 @@ import (
 
 // The hub is down between the two processes. Recovery settles the row the
 // dead process left open; the outage is not work the task did.
-const recoveryDowntime = 200 * time.Millisecond
+const recoveryDowntime = 300 * time.Millisecond
+
+// The bound execution ran this long before the process died: its session
+// settled, then the hub stopped before binding the result. That time is
+// work, and recovery must keep charging it.
+const recoveryWorked = 100 * time.Millisecond
 
 func TestStartupRecoveryDoesNotChargeDowntimeToInterruptedRow(t *testing.T) {
 	for name, bound := range map[string]bool{"row bound to an attempt expired at startup": true, "unbound row": false} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			first := openCrashProbe(t, dir)
+			first.worked = recoveryWorked
 			var taskID string
 			if bound {
 				taskID = first.seed(t, false, "").TaskID
@@ -44,11 +50,21 @@ func TestStartupRecoveryDoesNotChargeDowntimeToInterruptedRow(t *testing.T) {
 			if row.Open() || row.Outcome != task.OutcomeInterrupted {
 				t.Fatalf("interrupted row = %+v", row)
 			}
-			if !row.EndedAt.Equal(row.StartedAt) {
-				t.Errorf("interrupted row charged %s from %s to %s", row.EndedAt.Sub(row.StartedAt), row.StartedAt, row.EndedAt)
+			charged := row.EndedAt.Sub(row.StartedAt)
+			if bound {
+				// The row ends at the last activity the dead process
+				// persisted — its session settling — not when it began, and
+				// not when this process noticed it after the outage.
+				if charged < recoveryWorked || charged >= recoveryWorked+recoveryDowntime {
+					t.Errorf("interrupted row charged %s from %s to %s; want the %s it ran, without the %s outage", charged, row.StartedAt, row.EndedAt, recoveryWorked, recoveryDowntime)
+				}
+			} else if charged != 0 {
+				// A row that never reached an admitted execution ran nothing.
+				t.Errorf("unstarted row charged %s from %s to %s", charged, row.StartedAt, row.EndedAt)
 			}
-			// Only the continuation's own turn ran; it took far less than the outage.
-			if tracked.Budget.Elapsed >= recoveryDowntime {
+			// Only the work before the crash and the continuation's own turn
+			// ran; together they took far less than the outage.
+			if tracked.Budget.Elapsed >= recoveryWorked+recoveryDowntime {
 				t.Errorf("task elapsed %s includes the %s outage", tracked.Budget.Elapsed, recoveryDowntime)
 			}
 		})
