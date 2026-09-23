@@ -30,19 +30,6 @@ const SESSIONS_MAX = 460;
 // ConversationPatch is what a row can change about its conversation.
 export type ConversationPatch = { title?: string; archived?: boolean };
 
-// SessionsTree is the console's left column, a tree of two levels: a
-// project, and the threads in it. A thread is named by the agent's
-// summary of its first exchange, or by the owner; it can be renamed and
-// put away from its row. A thread is not owned by a workspace — its
-// agent can change, and with it where it runs — so where it runs now is
-// a badge on the row, from the server's own placement rule; a thread
-// whose agent has no workspace of the project on its machine carries a
-// mark instead. Steve's home sits apart at the bottom; a thread whose
-// project is not known any more goes under 未归属; what was put away is
-// folded under 已归档, and stays there while open.
-// notable says a task is worth a line of its own under its thread: it
-// is running, waits on the owner, was handed on, was planned, or fires
-// on a schedule. A one-turn chat task is the thread itself.
 // usual is what these threads have in common: the agent that answers
 // most of them and the place most of them run in. A project can have
 // workspaces on three machines and still run everything in the main
@@ -168,6 +155,18 @@ function ordered(list: Conversation[], sort: Ordering, locale: Locale): Conversa
 type Bucket = { key: string; label: string; icon: FC<{ className?: string }>; items: Conversation[] };
 const EMPTY_TASKS: Task[] = [];
 
+// SessionsTree is the console's left column. By default it is a tree of
+// projects and the threads in them; it can also group threads by machine
+// or agent, or list them ungrouped. A thread is named by the agent's
+// summary of its first exchange, or by the owner; it can be renamed and
+// put away from its row. A thread is not owned by a workspace — its
+// agent can change, and with it where it runs — so where it runs now is
+// a badge on the row, from the server's own placement rule; a thread
+// whose agent has no workspace of the project on its machine carries a
+// mark instead. In the project tree, a thread whose project is not known
+// any more goes under 未归属 and Steve's home sits apart below the
+// projects; what was put away is folded under 已归档, and stays there
+// while open.
 export const SessionsTree = memo(function SessionsTree({ list, projects, current, currentTransport = "console", onPick, onNew, onImport, onUpdate, onDelete, collapsed, onToggle, creating, resizable, tasks = EMPTY_TASKS, onTask }: { list: Conversation[]; projects: Project[]; current: string; currentTransport?: ConversationTransport; onPick: (id: string, transport?: ConversationTransport) => void; onNew: (project?: string) => void; onImport?: () => void; onUpdate: (id: string, patch: ConversationPatch) => void; onDelete: (id: string) => Promise<void>; collapsed?: boolean; onToggle?: () => void; creating?: boolean; resizable?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
