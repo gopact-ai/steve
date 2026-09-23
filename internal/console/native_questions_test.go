@@ -113,6 +113,11 @@ func TestNativeDelegateQuestionsKeepOriginalChildBindingAndParentConversation(t 
 						if _, err := service.RequestNativePermission(ctx, bad, ask); !errors.Is(err, consoleapi.ErrInvalidAnswer) {
 							t.Error("permission accepted wrong attempt", err)
 						}
+						local := base
+						local.SessionID, local.RequestID = "local-session", ""
+						if _, err := service.RequestLocalPermission(ctx, local, ask); !errors.Is(err, consoleapi.ErrInvalidAnswer) {
+							t.Error("a node permission reached the owner through the local entry", err)
+						}
 						return service.RequestNativePermission(ctx, base, ask)
 					},
 					func(ctx context.Context, q view.Question) (view.Answer, error) {
@@ -124,6 +129,11 @@ func TestNativeDelegateQuestionsKeepOriginalChildBindingAndParentConversation(t 
 							if _, err := service.RequestNativeQuestion(ctx, bad, q); !errors.Is(err, consoleapi.ErrInvalidAnswer) {
 								t.Error("question accepted wrong native binding", err)
 							}
+						}
+						local := base
+						local.SessionID, local.RequestID = "local-session", ""
+						if _, err := service.RequestLocalQuestion(ctx, local, q); !errors.Is(err, consoleapi.ErrInvalidAnswer) {
+							t.Error("a node callback reached the owner through the local entry", err)
 						}
 						if _, err := service.RequestNativeQuestion(context.Background(), base, q); !errors.Is(err, consoleapi.ErrInvalidAnswer) {
 							t.Error("question accepted forged callback context", err)

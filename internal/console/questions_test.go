@@ -53,7 +53,7 @@ func TestQuestionTextAnswerResumesOriginalRequestAndSurvivesRestart(t *testing.T
 			}
 			done := make(chan result, 1)
 			go func() {
-				answer, err := s.askUser(ctx, consoleapi.PendingQuestion{Conversation: "console:original", ExchangeID: "e-original", Project: "scratch", TaskID: "task-1", AttemptID: "attempt-1"}, question)
+				answer, err := s.askUser(ctx, consoleapi.PendingQuestion{Conversation: "console:original", ExchangeID: "e-original", Project: "scratch", TaskID: "task-1", AttemptID: "attempt-1"}, question, false)
 				done <- result{answer, err}
 			}()
 			q := pendingForTest(t, s)
@@ -121,7 +121,7 @@ func TestQuestionTextValidationKeepsPendingDecision(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go func() {
-		_, _ = s.awaitQuestion(ctx, consoleapi.PendingQuestion{Kind: "question", Project: "scratch", AllowFreeText: true, Options: []consoleapi.QuestionOption{{ID: "wait", Label: "Wait"}}})
+		_, _ = s.awaitQuestion(ctx, consoleapi.PendingQuestion{Kind: "question", Project: "scratch", AllowFreeText: true, Options: []consoleapi.QuestionOption{{ID: "wait", Label: "Wait"}}}, false)
 	}()
 	q := pendingForTest(t, s)
 	for _, bad := range []consoleapi.QuestionAnswer{
@@ -158,7 +158,7 @@ func TestPermissionAndChoiceOnlyQuestionRejectText(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			go func() {
-				_, _ = s.askUser(ctx, consoleapi.PendingQuestion{Project: "scratch"}, view.Question{Kind: kind, AllowFreeText: kind == "permission", Choices: []view.Choice{{Value: "allow", Label: "Allow once"}}})
+				_, _ = s.askUser(ctx, consoleapi.PendingQuestion{Project: "scratch"}, view.Question{Kind: kind, AllowFreeText: kind == "permission", Choices: []view.Choice{{Value: "allow", Label: "Allow once"}}}, false)
 			}()
 			q := pendingForTest(t, s)
 			if q.AllowFreeText {
@@ -195,7 +195,7 @@ func TestRecoveryQuestionWaitsUntilTheUserDecides(t *testing.T) {
 	defer cancel()
 	done := make(chan consoleapi.PendingQuestion, 1)
 	go func() {
-		q, _ := s.awaitQuestion(ctx, consoleapi.PendingQuestion{Kind: "recovery", Project: "p", Options: []consoleapi.QuestionOption{{ID: "retry"}}})
+		q, _ := s.awaitQuestion(ctx, consoleapi.PendingQuestion{Kind: "recovery", Project: "p", Options: []consoleapi.QuestionOption{{ID: "retry"}}}, false)
 		done <- q
 	}()
 	q := pendingForTest(t, s)
@@ -227,7 +227,7 @@ func TestNodeOwnedQuestionReplaysDurableAnswerInsteadOfAskingAgain(t *testing.T)
 	base := consoleapi.PendingQuestion{Conversation: "console:original", ExchangeID: "e1", Project: "p", TaskID: "task-1", AttemptID: "attempt-1"}
 	question := view.Question{SessionID: "ns_" + strings.Repeat("a", 64), RequestID: "nq_" + strings.Repeat("b", 64), Title: "Recovery", Message: "How should I continue?", AllowFreeText: true}
 	done := make(chan view.Answer, 1)
-	go func() { answer, _ := s.askUser(t.Context(), base, question); done <- answer }()
+	go func() { answer, _ := s.askUser(t.Context(), base, question, false); done <- answer }()
 	q := pendingForTest(t, s)
 	if !q.Deadline.IsZero() {
 		t.Fatalf("node-owned question can expire while its execution waits: %v", q.Deadline)
@@ -245,12 +245,12 @@ func TestNodeOwnedQuestionReplaysDurableAnswerInsteadOfAskingAgain(t *testing.T)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
 	question.Generation = 99
-	answer, err := restored.askUser(ctx, base, question)
+	answer, err := restored.askUser(ctx, base, question, false)
 	if err != nil || answer.Text != "Use the staging machine." || len(restored.Questions("")) != 1 {
 		t.Fatalf("durable answer was asked again: %+v %v", answer, err)
 	}
 	question.Message = "Changed operation requiring another decision"
-	if _, err := restored.askUser(ctx, base, question); !errors.Is(err, consoleapi.ErrQuestionConflict) {
+	if _, err := restored.askUser(ctx, base, question, false); !errors.Is(err, consoleapi.ErrQuestionConflict) {
 		t.Fatalf("changed question reused approval: %v", err)
 	}
 }
@@ -265,7 +265,7 @@ func TestNodeOwnedQuestionRebindsTheSameUnansweredQuestionID(t *testing.T) {
 	question := view.Question{SessionID: "ns_" + strings.Repeat("a", 64), RequestID: "nq_" + strings.Repeat("c", 64), Message: "Choose a machine", Choices: []view.Choice{{Value: "staging", Label: "Staging"}}}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
-	go func() { defer close(done); _, _ = s.askUser(ctx, base, question) }()
+	go func() { defer close(done); _, _ = s.askUser(ctx, base, question, false) }()
 	first := pendingForTest(t, s)
 	cancel()
 	<-done
@@ -274,7 +274,7 @@ func TestNodeOwnedQuestionRebindsTheSameUnansweredQuestionID(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed := make(chan view.Answer, 1)
-	go func() { answer, _ := restored.askUser(t.Context(), base, question); resumed <- answer }()
+	go func() { answer, _ := restored.askUser(t.Context(), base, question, false); resumed <- answer }()
 	second := pendingForTest(t, restored)
 	if second.ID != first.ID || second.RequestID != question.RequestID {
 		t.Fatalf("unanswered node question duplicated: old=%s new=%+v", first.ID, second)
@@ -297,7 +297,7 @@ func TestQuestionDecisionIsDurableValidatedAndSingleWinner(t *testing.T) {
 	defer cancel()
 	result := make(chan consoleapi.PendingQuestion, 1)
 	go func() {
-		q, _ := s.awaitQuestion(ctx, consoleapi.PendingQuestion{Conversation: "console:a", ExchangeID: "e1", Project: "scratch", Options: []consoleapi.QuestionOption{{ID: "Blue", Label: "Blue"}}})
+		q, _ := s.awaitQuestion(ctx, consoleapi.PendingQuestion{Conversation: "console:a", ExchangeID: "e1", Project: "scratch", Options: []consoleapi.QuestionOption{{ID: "Blue", Label: "Blue"}}}, false)
 		result <- q
 	}()
 	q := pendingForTest(t, s)
@@ -366,7 +366,7 @@ func TestQuestionCancellationExpiryAndRestartCloseOldRequests(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				_, _ = s.awaitQuestion(ctx, consoleapi.PendingQuestion{Conversation: "console:a", ExchangeID: "e1", Project: "scratch", Options: []consoleapi.QuestionOption{{ID: "yes"}}})
+				_, _ = s.awaitQuestion(ctx, consoleapi.PendingQuestion{Conversation: "console:a", ExchangeID: "e1", Project: "scratch", Options: []consoleapi.QuestionOption{{ID: "yes"}}}, false)
 			}()
 			q := pendingForTest(t, s)
 			if mode == "restart" {
