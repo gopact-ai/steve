@@ -8,9 +8,9 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 )
 
-// usage counts only the ledger's closed attempts. Tasks supply ownership and
+// usage counts only the ledger's settled attempts. Tasks supply ownership and
 // trigger metadata; their cached token totals never enter this accounting.
-func usage(closed []attempt.Record, now time.Time, tasks []Task) Usage {
+func usage(closed []attempt.UsageSample, now time.Time, tasks []Task) Usage {
 	roots := taskRoots(tasks)
 	all := newUsageTotals(time.Time{}, now)
 	periods := map[string]*usageWindow{

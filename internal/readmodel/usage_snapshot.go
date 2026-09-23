@@ -14,14 +14,15 @@ type UsageSnapshot struct {
 	Sources []SourceHealth `json:"sources"`
 }
 
-// UsageSummary reads only closed attempts and the task ownership metadata used
-// by usage. It neither builds the fleet snapshot nor caches results across reads.
+// UsageSummary reads only settled attempts' usage samples and the task
+// ownership metadata used by usage. It neither builds the fleet snapshot nor
+// caches the summary across reads.
 func (m *Model) UsageSummary(ctx context.Context) UsageSnapshot {
 	result := UsageSnapshot{At: time.Now(), Sources: []SourceHealth{{Name: "ledger-usage", Wired: m.src.Ledger != nil}}}
 	if m.src.Ledger == nil {
 		return result
 	}
-	closed, err := m.src.Ledger.ClosedAttempts(ctx)
+	closed, err := m.src.Ledger.UsageSamples(ctx)
 	if err != nil {
 		result.Sources[0].Error = err.Error()
 		if len(closed) == 0 {

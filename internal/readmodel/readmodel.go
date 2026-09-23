@@ -470,9 +470,10 @@ type LedgerSource interface {
 	Facts(ctx context.Context) (Facts, error)
 	// ProjectList lists every project, for the page and the context bar.
 	ProjectList(ctx context.Context) ([]project.Project, error)
-	// ClosedAttempts are every attempt that reached a terminal state: the
-	// authority on spend. HistoryEvents pages the journal chronologically.
-	ClosedAttempts(ctx context.Context) ([]attempt.Record, error)
+	// UsageSamples are the spend fields of every attempt that reached a
+	// terminal state: the authority on spend. HistoryEvents pages the journal
+	// chronologically.
+	UsageSamples(ctx context.Context) ([]attempt.UsageSample, error)
 	HistoryEvents(ctx context.Context, before *ledger.EventPosition, through *int64, limit int) ([]ledger.Event, int64, error)
 }
 

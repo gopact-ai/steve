@@ -40,8 +40,8 @@ func (s *sourceFixture) adapter() Ledger {
 func (s *sourceFixture) Live(context.Context) ([]attempt.Record, error) {
 	return s.live, s.fail["live"]
 }
-func (s *sourceFixture) Closed(context.Context) ([]attempt.Record, error) {
-	return []attempt.Record{{Spec: attempt.Spec{Agent: "local"}, State: attempt.Bound, StartedAt: time.Now().Add(-time.Minute), Usage: &attempt.Usage{Reported: true, Input: 100}}}, s.fail["usage"]
+func (s *sourceFixture) UsageSamples(context.Context) ([]attempt.UsageSample, error) {
+	return []attempt.UsageSample{{Agent: "local", StartedAt: time.Now().Add(-time.Minute), Usage: &attempt.Usage{Reported: true, Input: 100}}}, s.fail["usage"]
 }
 func (s *sourceFixture) Reservations(context.Context) ([]attempt.Reservation, error) {
 	return []attempt.Reservation{{ID: "reservation"}}, s.fail["reservations"]

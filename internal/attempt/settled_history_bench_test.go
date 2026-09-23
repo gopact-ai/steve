@@ -97,7 +97,14 @@ func BenchmarkSettledHistoryReads(b *testing.B) {
 			_, err := s.ForTasksByUpdate(ctx, []string{fixture.delegateTask})
 			return err
 		}},
-		{"usage", liveAndClosed},
+		{"usage", func(ctx context.Context, s *Service, _ settledHistoryFixture) error {
+			_, err := s.UsageSamples(ctx)
+			return err
+		}},
+		{"usage-first-read", func(ctx context.Context, s *Service, _ settledHistoryFixture) error {
+			_, err := New(s.l).UsageSamples(ctx)
+			return err
+		}},
 	} {
 		for _, n := range []int{1000, 10000, 50000} {
 			b.Run(fmt.Sprintf("%s/%d", read.name, n), func(b *testing.B) {

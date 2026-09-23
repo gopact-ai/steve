@@ -43,7 +43,7 @@ func TestUsageTaskTreesUseIntervalUnionsAndKeepAllDimensions(t *testing.T) {
 		record("", "a", "h1", "service", 600, 601, 30),
 		record("cycle-a", "a", "h1", "", 660, 661, 60),
 	}
-	p := usage(records, now, tasks).Periods["1d"]
+	p := recordUsage(records, now, tasks).Periods["1d"]
 	want := TaskDurationStats{Count: 5, Measured: 4, MinSeconds: 60, MaxSeconds: 1200, AverageSeconds: 360, TotalSeconds: 1440}
 	if p.Tasks != want {
 		t.Fatalf("root duration statistics=%+v want=%+v", p.Tasks, want)
@@ -85,7 +85,7 @@ func TestUsageThroughputUniformlyAllocatesAcrossPartialMinutesAndBuckets(t *test
 	a.EndedAt = day.Add(150 * time.Second)
 	b := usageRecord(day.Add(time.Minute), "b", "model", true, 60, 0)
 	b.EndedAt = day.Add(2 * time.Minute)
-	p := usage([]attempt.Record{a, b}, day.Add(3*time.Minute), nil).Periods["1d"]
+	p := recordUsage([]attempt.Record{a, b}, day.Add(3*time.Minute), nil).Periods["1d"]
 	closeTo(t, p.Throughput.WindowTPM, 60)
 	closeTo(t, p.Throughput.ActiveTPM, 90)
 	closeTo(t, p.Throughput.PeakTPM, 120)
@@ -93,7 +93,7 @@ func TestUsageThroughputUniformlyAllocatesAcrossPartialMinutesAndBuckets(t *test
 		t.Fatalf("throughput claimed exact generation speed or invented tasks: %+v", p)
 	}
 	a.StartedAt, a.EndedAt = day.Add(30*time.Minute), day.Add(150*time.Minute)
-	p = usage([]attempt.Record{a}, day.Add(150*time.Minute), nil).Periods["1d"]
+	p = recordUsage([]attempt.Record{a}, day.Add(150*time.Minute), nil).Periods["1d"]
 	for i, want := range []float64{.5, 1, 1} {
 		closeTo(t, p.Series[i].TPM, want)
 	}
@@ -108,7 +108,7 @@ func TestUsageUnreportedTokensAreZeroButCoverageAndContextRemain(t *testing.T) {
 	r := usageRecord(now.Add(-time.Minute), "a", "model", false, 120, 30)
 	r.Usage.CachedRead, r.Usage.CachedWrite, r.Usage.Context = 100, 20, 500
 	r.TaskID = "missing"
-	p := usage([]attempt.Record{r}, now, nil).Periods["1d"]
+	p := recordUsage([]attempt.Record{r}, now, nil).Periods["1d"]
 	if p.Total.Tokens != (Tokens{Context: 500}) || p.Total.Unreported != 1 || p.Throughput.WindowTPM != 0 || p.Throughput.PeakTPM != 0 || p.Tasks.Measured != 1 || p.Tasks.TotalSeconds != 60 {
 		t.Fatalf("missing token report fabricated spend or lost duration: %+v", p)
 	}
@@ -127,7 +127,7 @@ func TestUsageRangesKeepTaskAndThroughputCohortsConsistent(t *testing.T) {
 	b := usageRecord(day.Add(30*time.Minute), "a", "m", true, 120, 0)
 	b.EndedAt = day.Add(90 * time.Minute)
 	b.TaskID = "child"
-	u := usage([]attempt.Record{a, b}, day.Add(2*time.Hour), []Task{{ID: "root", Origin: "plan"}, {ID: "child", Parent: "root"}})
+	u := recordUsage([]attempt.Record{a, b}, day.Add(2*time.Hour), []Task{{ID: "root", Origin: "plan"}, {ID: "child", Parent: "root"}})
 	for _, tc := range []struct {
 		key     string
 		tokens  int64
@@ -162,7 +162,7 @@ func TestUsageZeroDurationIsMeasuredWithoutInventingThroughput(t *testing.T) {
 	missing := zero
 	missing.TaskID = "missing"
 	missing.EndedAt = time.Time{}
-	p := usage([]attempt.Record{zero, missing}, now, nil).Periods["1d"]
+	p := recordUsage([]attempt.Record{zero, missing}, now, nil).Periods["1d"]
 	if p.Tasks.Count != 2 || p.Tasks.Measured != 1 || p.Tasks.TotalSeconds != 0 || p.Tasks.AverageSeconds != 0 || p.Throughput.WindowTPM != 0 || p.Throughput.ActiveTPM != 0 || p.Throughput.PeakTPM != 0 || p.Throughput.UnmeasuredTokens != 200 {
 		t.Fatalf("zero/missing duration conflated or divided by zero: %+v", p)
 	}
@@ -209,7 +209,7 @@ func TestUsagePeriodsShareCalendarWindowsAndTotals(t *testing.T) {
 	for _, start := range starts {
 		records = append(records, usageRecord(start, "agent", "model", true, 1, 2))
 	}
-	u := usage(records, now, nil)
+	u := recordUsage(records, now, nil)
 	if u.Timezone != "hub" || u.Total.Attempts != len(starts) {
 		t.Fatalf("cumulative usage = %+v", u)
 	}
@@ -250,7 +250,7 @@ func TestUsageKeepsUnreportedAndUnknownDimensions(t *testing.T) {
 	missing.Usage = nil
 	zero := usageRecord(start, "same", "same", true, 0, 0)
 	zero.EndedAt = start.Add(-time.Second) // malformed duration must not reduce totals
-	u := usage([]attempt.Record{reported, contextOnly, missing, zero}, now, nil)
+	u := recordUsage([]attempt.Record{reported, contextOnly, missing, zero}, now, nil)
 	want := UsageRow{Key: "total", Attempts: 4, Unreported: 2, Seconds: 180,
 		Tokens: Tokens{Input: 10, Output: 5, Total: 15, CachedRead: 100, CachedWrite: 200, Context: 700}}
 	if u.Total != want {
@@ -290,7 +290,7 @@ func TestUsageHourlyBucketsFollowDST(t *testing.T) {
 			for at := start; at.Before(now); at = at.Add(time.Hour) {
 				records = append(records, usageRecord(at, "agent", "model", true, 1, 0))
 			}
-			u := usage(records, now, nil)
+			u := recordUsage(records, now, nil)
 			p := u.Periods["1d"]
 			if len(p.Series) != tc.hours || p.Total.Attempts != tc.hours {
 				t.Fatalf("%s has %d buckets and %d attempts, want %d", tc.name, len(p.Series), p.Total.Attempts, tc.hours)
@@ -374,4 +374,17 @@ func assertUsageSum(t *testing.T, want UsageRow, rows []UsageRow) {
 	if got != want {
 		t.Fatalf("rows sum to %+v, want %+v", got, want)
 	}
+}
+
+func usageSamples(records []attempt.Record) []attempt.UsageSample {
+	samples := make([]attempt.UsageSample, 0, len(records))
+	for _, r := range records {
+		samples = append(samples, r.UsageSample())
+	}
+	return samples
+}
+
+// recordUsage accounts settled records through the fields usage reads.
+func recordUsage(records []attempt.Record, now time.Time, tasks []Task) Usage {
+	return usage(usageSamples(records), now, tasks)
 }

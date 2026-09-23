@@ -258,6 +258,8 @@ type Service struct {
 	now func() time.Time
 	// TTL is how long a lease lives without renewal.
 	TTL time.Duration
+
+	usage usageCache
 }
 
 func New(l *ledger.Ledger) *Service {

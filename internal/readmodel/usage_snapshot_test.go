@@ -46,7 +46,7 @@ func TestUsageSummaryReadsOnlyUsageAndPreservesTaskMetadata(t *testing.T) {
 	if source.reads != 1 || response.At.IsZero() || response.Usage == nil {
 		t.Fatalf("usage read = %+v, calls=%d", response, source.reads)
 	}
-	want := usage(source.closed, response.At, []Task{{ID: root.ID, Title: title, Goal: root.Goal, Origin: root.Origin, ProjectID: root.ProjectID}, {ID: child.ID, Parent: root.ID}})
+	want := recordUsage(source.closed, response.At, []Task{{ID: root.ID, Title: title, Goal: root.Goal, Origin: root.Origin, ProjectID: root.ProjectID}, {ID: child.ID, Parent: root.ID}})
 	assertUsageEquivalent(t, *response.Usage, want)
 	source.closed[0].Usage.Input = 21
 	next := model.UsageSummary(t.Context())
@@ -93,9 +93,9 @@ func TestUsageSummaryDistinguishesEmptyFailurePartialAndUnwired(t *testing.T) {
 	}
 }
 
-func (l *usageLedgerFixture) ClosedAttempts(context.Context) ([]attempt.Record, error) {
+func (l *usageLedgerFixture) UsageSamples(context.Context) ([]attempt.UsageSample, error) {
 	l.reads++
-	return l.closed, l.err
+	return usageSamples(l.closed), l.err
 }
 
 func TestSnapshotDoesNotReadOrExposeUsage(t *testing.T) {

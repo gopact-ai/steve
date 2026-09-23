@@ -25,7 +25,7 @@ func TestUsageMatchesReference(t *testing.T) {
 		time.Date(2026, 11, 1, 23, 30, 0, 0, newYork),
 	} {
 		t.Run(now.Format(time.RFC3339), func(t *testing.T) {
-			assertUsageEquivalent(t, usage(nil, now, nil), referenceUsage(nil, now, nil))
+			assertUsageEquivalent(t, recordUsage(nil, now, nil), referenceUsage(nil, now, nil))
 			for seed := int64(0); seed < 12; seed++ {
 				t.Run(fmt.Sprint(seed), func(t *testing.T) {
 					records, tasks := usageEquivalenceRecords(now, seed)
@@ -34,16 +34,16 @@ func TestUsageMatchesReference(t *testing.T) {
 						t.Fatal(err)
 					}
 					want := referenceUsage(records, now, tasks)
-					assertUsageEquivalent(t, usage(records, now, tasks), want)
+					assertUsageEquivalent(t, recordUsage(records, now, tasks), want)
 					after, err := json.Marshal([]any{records, tasks})
 					if err != nil || string(before) != string(after) {
 						t.Fatal("usage modified its input records or tasks")
 					}
 					// A later request must not change a previously returned result,
 					// and changed inputs must not be hidden by a snapshot cache.
-					saved := usage(records, now, tasks)
+					saved := recordUsage(records, now, tasks)
 					records = append(records, usageRecord(now, "new", "new", true, 17, 13))
-					assertUsageEquivalent(t, usage(records, now.Add(time.Hour), tasks), referenceUsage(records, now.Add(time.Hour), tasks))
+					assertUsageEquivalent(t, recordUsage(records, now.Add(time.Hour), tasks), referenceUsage(records, now.Add(time.Hour), tasks))
 					assertUsageEquivalent(t, saved, want)
 				})
 			}
@@ -57,7 +57,7 @@ func TestUsageConcurrentCallsOwnResults(t *testing.T) {
 	want := referenceUsage(records, now, tasks)
 	results := make(chan Usage, 8)
 	for i := 0; i < cap(results); i++ {
-		go func() { results <- usage(records, now, tasks) }()
+		go func() { results <- recordUsage(records, now, tasks) }()
 	}
 	for i := 0; i < cap(results); i++ {
 		assertUsageEquivalent(t, <-results, want)
@@ -207,7 +207,8 @@ func TestUsageCurveMatchesReference(t *testing.T) {
 func TestUsageSummaryAllocationBudget(t *testing.T) {
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	records, tasks := usageBenchmarkRecords(1000, now)
-	allocs := testing.AllocsPerRun(3, func() { runtime.KeepAlive(usage(records, now, tasks)) })
+	samples := usageSamples(records)
+	allocs := testing.AllocsPerRun(3, func() { runtime.KeepAlive(usage(samples, now, tasks)) })
 	t.Logf("1000-task summary: %.0f allocs/run", allocs)
 	// Allow implementation/toolchain variation, but reject per-task copies of
 	// every span and singleton dimension set across all four calendar views.
