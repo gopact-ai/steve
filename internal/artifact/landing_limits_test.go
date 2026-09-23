@@ -1,7 +1,10 @@
 package artifact
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,5 +46,42 @@ func TestCanonicalLockOutlivesItsTTLWithoutADriver(t *testing.T) {
 	unlock()
 	if _, err := store.ledger.Acquire(t.Context(), "canonical:"+p.ID, "other", landTTL); err != nil {
 		t.Fatalf("canonical lock kept after the landing: %v", err)
+	}
+}
+
+// A recovery takes the canonical lock under a name of its own. The record
+// has to say so before anything is written: a process that dies mid-
+// recovery leaves that lock behind, and boot recovery only releases the
+// lock the landing recorded — otherwise the project waits out the TTL.
+func TestRecoveryRecordsItsLockBeforeWriting(t *testing.T) {
+	ctx := t.Context()
+	canonical := t.TempDir()
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	land, _ := crashMidApply(t, store, p, canonical)
+	if err := store.pendRecovery(ctx, &land); err != nil {
+		t.Fatal(err)
+	}
+	// The snapshot before recovery fails, the way a crash at that moment
+	// would stop it: after the lock was taken, before any path is written.
+	moved := canonical + ".away"
+	if err := os.Rename(canonical, moved); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.recoverLanding(ctx, land); err == nil {
+		t.Fatal("recovery without its directory succeeded")
+	}
+	if err := os.Rename(moved, canonical); err != nil {
+		t.Fatal(err)
+	}
+	op, _, err := store.ledger.Operation(ctx, land.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored Landing
+	if err := json.Unmarshal(op.Data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if op.State != LandRecoveryPending || stored.Lease == nil || !strings.HasPrefix(stored.Lease.Holder, "recovery:"+land.ID+":") || stored.Borrowed {
+		t.Fatalf("state %s, recorded lease %+v borrowed=%v", op.State, stored.Lease, stored.Borrowed)
 	}
 }

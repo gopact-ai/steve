@@ -239,6 +239,13 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	return s.finishRecovery(ctx, p, land, lease)
 }
 
+// sameLease says whether a recorded lease is the one held: renewals move
+// only its expiry.
+func sameLease(recorded *ledger.Lease, held ledger.Lease) bool {
+	return recorded != nil && recorded.Region == held.Region && recorded.Key == held.Key &&
+		recorded.Incarnation == held.Incarnation && recorded.Epoch == held.Epoch && recorded.Holder == held.Holder
+}
+
 // placeOf names a project directory, with the machine it is on.
 func placeOf(home project.Home) string {
 	if home.Node == "" {
@@ -258,13 +265,25 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 		return land, err
 	} else if !found {
 		return land, nil
-	} else if op.State != LandRecoveryPending {
+	} else {
 		var stored Landing
 		if err := json.Unmarshal(op.Data, &stored); err != nil {
 			return land, err
 		}
-		stored.State = op.State
-		return stored, nil
+		if op.State != LandRecoveryPending {
+			stored.State = op.State
+			return stored, nil
+		}
+		// A lock the recovery took for itself goes on the record before
+		// anything is written: if this process dies mid-recovery, boot
+		// recovery releases exactly the lock the record names, and the
+		// project does not wait out its TTL.
+		if !sameLease(stored.Lease, lease) {
+			land.Borrowed = false
+			if err := s.move(ctx, &land, LandRecoveryPending, LandRecoveryPending, nil); err != nil {
+				return land, fmt.Errorf("landing %s: record the recovery's lock: %w", land.ID, err)
+			}
+		}
 	}
 	// Recovery reads the merged snapshot where the canonical workspace
 	// lives. A landing cut off before it got there still has it on the hub,
