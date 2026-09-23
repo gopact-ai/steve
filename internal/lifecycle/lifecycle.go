@@ -82,9 +82,9 @@ type Drive struct {
 	Session harness.Runner
 	Prompt  string
 	Media   []harness.Media
-	// Turn routes the harness's permission and user questions through Ask
-	// and AskUser, which needs a TurnRunner; a chat turn and a node-owned
-	// session want that. Without it the plain Prompt is used.
+	// Turn uses the TurnRunner entry even with nobody to answer, as a
+	// node-owned session needs. A drive with Ask or AskUser always uses it:
+	// the harness's questions reach them rather than being dropped.
 	Turn bool
 	// Resume follows a command the node already accepted instead of
 	// sending Prompt; the session must be a ResumableRunner.
@@ -134,7 +134,7 @@ func (d Drive) Run(ctx context.Context) Outcome {
 		out.Answer, out.Activity, out.Err = resumable.ResumeTurn(ctx, d.Ask, d.AskUser, observe)
 	} else if d.Resume {
 		out.Err = errors.New("session cannot resume an accepted command")
-	} else if ok && d.Turn {
+	} else if ok && (d.Turn || d.Ask != nil || d.AskUser != nil) {
 		out.Answer, out.Activity, out.Err = turn.PromptTurn(ctx, d.Prompt, d.Media, d.Ask, d.AskUser, observe)
 	} else {
 		out.Answer, out.Activity, out.Err = d.Session.Prompt(ctx, d.Prompt, observe)
