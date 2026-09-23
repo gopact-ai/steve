@@ -468,6 +468,13 @@ func (s *Store) namedWhilePending(ctx context.Context, p project.Project, pendin
 // lease the holder snapshots under: the slot is what keeps the two apart.
 // It waits for the slot as long as ctx allows; the returned func gives it
 // back.
+//
+// The slot excludes only within this process. That is enough because a
+// lent lock never leaves the hub process that owns the project: the
+// in-place turn lending it and the LandUnder it lends it to both run
+// there. A lender waiting on the slot waits out one landing: its merge and
+// staging run under the landing's own ctx, and its write, from apply to
+// commit, is bounded by landTTL (see landingApplyContext).
 func (s *Store) writeCanonical(ctx context.Context, projectID string) (func(), error) {
 	slot, _ := s.writing.LoadOrStore(projectID, make(chan struct{}, 1))
 	ch := slot.(chan struct{})
