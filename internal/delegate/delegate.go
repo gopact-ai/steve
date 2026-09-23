@@ -365,7 +365,15 @@ func (s *Service) waitRegistered(ctx context.Context, entry *child, wait time.Du
 		s.mu.Unlock()
 		if done {
 			if tracked, ok := s.tasks.Get(id); ok {
-				s.flushIfIdle(ctx, tracked.Parent)
+				// The awaiter's request may be gone; the hand-off check is
+				// still owed and must read the parent's real state.
+				flushCtx := ctx
+				if ctx.Err() != nil {
+					var cancel context.CancelFunc
+					flushCtx, cancel = lifecycle.Cleanup(ctx)
+					defer cancel()
+				}
+				s.flushIfIdle(flushCtx, tracked.Parent)
 			}
 		}
 	}()

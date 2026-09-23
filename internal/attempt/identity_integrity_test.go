@@ -32,8 +32,8 @@ func TestIdentityReadsRejectCorruptLedgerEnvelope(t *testing.T) {
 				if _, _, err := s.LatestForTurn(t.Context(), "turn"); err == nil || !strings.Contains(err.Error(), id) {
 					t.Fatalf("LatestForTurn hid corrupt %s envelope: %v", id, err)
 				}
-				if id, found := s.LiveAttemptOf(t.Context(), "task"); found {
-					t.Fatalf("LiveAttemptOf accepted corrupt ledger state: %s", id)
+				if id, found, err := s.LiveAttemptOf(t.Context(), "task"); err == nil || found {
+					t.Fatalf("LiveAttemptOf hid corrupt ledger state: %s found=%v err=%v", id, found, err)
 				}
 				if _, _, err := s.LatestForSession(t.Context(), "node", "harness", "session"); err == nil {
 					t.Fatal("LatestForSession hid a corrupt envelope")

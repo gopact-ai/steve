@@ -989,13 +989,18 @@ func Describe(r Record) string {
 }
 
 // LiveAttemptOf is the id of the task's attempt in flight, if any: what a
-// side effect made on the task's behalf is claimed by.
-func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, bool) {
+// side effect made on the task's behalf is claimed by. A failed read is
+// reported, never folded into "nothing is live": callers that act on an
+// idle task must not act on one whose attempts they could not see.
+func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, bool, error) {
 	records, err := s.identityRecords(ctx, liveTaskIdentitySQL, taskID)
-	if err != nil || len(records) == 0 {
-		return "", false
+	if err != nil {
+		return "", false, fmt.Errorf("attempt: live attempt of task %s: %w", taskID, err)
 	}
-	return records[0].ID, true
+	if len(records) == 0 {
+		return "", false, nil
+	}
+	return records[0].ID, true, nil
 }
 
 // Reservation is capacity held ahead of an attempt: one endpoint slot,

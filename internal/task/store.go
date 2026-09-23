@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -217,25 +218,65 @@ func (s *Store) List(channel string) []Task {
 // CloseIdle ends chat tasks nobody has touched for longer than age: a
 // thread that stopped being spoken to has finished, and a task that
 // keeps counting as running for it misleads every list. Only tasks a
-// person opened by talking (no origin) are closed, only when nothing is
-// live on them, and only past the age. The closed tasks are returned.
-func (s *Store) CloseIdle(age time.Duration, live func(id string) bool) []Task {
+// person opened by talking (no origin) are closed, only when live
+// reports nothing in flight on them, and only past the age.
+//
+// A task whose liveness cannot be read stays open. Liveness is read
+// without the store lock, so each close re-checks the task under it: one
+// that was spoken to in the meantime is no longer quiet and stays open.
+// The closed tasks are returned; the error names every task that could
+// not be checked or closed.
+func (s *Store) CloseIdle(age time.Duration, live func(id string) (bool, error)) ([]Task, error) {
 	cutoff := s.now().Add(-age)
 	var closed []Task
+	var errs []error
 	for _, t := range s.List("") {
-		if t.State != StateRunning || t.Origin != "" || !t.UpdatedAt.Before(cutoff) {
+		if !quietChat(&t, cutoff) {
 			continue
 		}
-		if live != nil && live(t.ID) {
-			continue
+		if live != nil {
+			busy, err := live(t.ID)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("task %s: liveness unknown: %w", t.ID, err))
+				continue
+			}
+			if busy {
+				continue
+			}
 		}
-		done, err := s.Advance(t.ID, StateDone)
+		done, ok, err := s.closeQuiet(t.ID, cutoff)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("task %s: close: %w", t.ID, err))
 			continue
 		}
-		closed = append(closed, done)
+		if ok {
+			closed = append(closed, done)
+		}
 	}
-	return closed
+	return closed, errors.Join(errs...)
+}
+
+// quietChat is a running task a person opened by talking that nobody has
+// touched since cutoff.
+func quietChat(t *Task, cutoff time.Time) bool {
+	return t.State == StateRunning && t.Origin == "" && t.UpdatedAt.Before(cutoff)
+}
+
+// closeQuiet ends the task only if it is still quiet when the write is made.
+func (s *Store) closeQuiet(id string, cutoff time.Time) (Task, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stored, ok := s.data.Tasks[id]; !ok || !quietChat(stored, cutoff) {
+		return Task{}, false, nil
+	}
+	next := s.clone()
+	stored := next.Tasks[id]
+	stored.State = StateDone
+	stored.UpdatedAt = s.now()
+	if err := s.replaceLocked(next); err != nil {
+		return Task{}, false, err
+	}
+	return *stored.clone(), true, nil
 }
 
 // SetBudget raises the default budgets new tasks are created with.
