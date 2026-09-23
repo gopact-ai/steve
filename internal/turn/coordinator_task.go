@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/text"
-
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -17,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
