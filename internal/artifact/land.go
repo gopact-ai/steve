@@ -358,8 +358,8 @@ func (s *Store) queueConflicted(ctx context.Context, p project.Project, land Lan
 
 // lockCanonical takes the project's canonical lock for the landing, or
 // adopts the one the caller lends, which is released by nobody here. A
-// lock of the landing's own is renewed by the landing driver when there is
-// one, and the returned unlock stops that and gives the lock back. A lock
+// lock of the landing's own is kept alive while the landing works (see
+// keepCanonical), and the returned unlock stops that and gives it back. A lock
 // someone else holds comes back as it is: contention, not a conflict.
 func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Landing, held *ledger.Lease) (unlock func(), err error) {
 	if held != nil {
@@ -372,7 +372,7 @@ func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Land
 		return nil, err
 	}
 	land.Lease = &lease
-	untrack := trackLandingLease(ctx, lease)
+	untrack := s.keepCanonical(ctx, lease)
 	return func() {
 		untrack()
 		s.releaseCanonical(ctx, land, lease)

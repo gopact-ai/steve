@@ -2,6 +2,8 @@ package artifact
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -81,14 +83,48 @@ func landingHolder(ctx context.Context, fallback string) string {
 	}
 	return fallback
 }
-func trackLandingLease(ctx context.Context, lease ledger.Lease) func() {
+
+// keepCanonical keeps a canonical lock the landing took alive for as long
+// as the landing works: the landing driver renews it alongside its own
+// lease when there is one, and a landing without a driver — a direct
+// Land, a recovery run by boot or the periodic retry — renews it itself.
+// A renewal that fails stops renewing; the next fenced transition is what
+// refuses the lost lock. The returned func stops renewing and waits.
+func (s *Store) keepCanonical(ctx context.Context, lease ledger.Lease) func() {
 	if d, ok := ctx.Value(landingDriverKey{}).(*landingDriver); ok {
 		d.mu.Lock()
 		d.canonical = &lease
 		d.mu.Unlock()
 		return func() { d.mu.Lock(); d.canonical = nil; d.mu.Unlock() }
 	}
-	return func() {}
+	ticks := s.renewTicks
+	if ticks == nil {
+		ticks = renewTicks
+	}
+	lifetime, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tick, stop := ticks(landTTL / 3)
+		defer stop()
+		for {
+			select {
+			case <-lifetime.Done():
+				return
+			case <-tick:
+				if _, err := s.ledger.RenewAny(lifetime, lease, landTTL); err != nil {
+					if lifetime.Err() == nil {
+						slog.Warn(fmt.Sprintf("artifact: canonical lock %s lost while landing: %v", lease.Key, err), "lease", lease.Key, "holder", lease.Holder)
+					}
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // A user stop cannot abandon an admitted WAL, but driver loss must stop its

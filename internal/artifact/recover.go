@@ -235,7 +235,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
 	defer s.releaseCanonical(ctx, &land, lease)
-	defer trackLandingLease(ctx, lease)()
+	defer s.keepCanonical(ctx, lease)()
 	return s.finishRecovery(ctx, p, land, lease)
 }
 
