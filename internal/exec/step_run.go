@@ -334,7 +334,7 @@ func (r *stepRun) ended(e *lifecycle.Execution) {
 		r.result = *r.saved
 	case r.joined:
 		answer := e.Outcome.Answer
-		r.result = plan.StepResult{Answer: answer, Refs: ParseRefs(answer), Findings: parseFindings(answer), Usage: spendOf(e.Outcome.Last)}
+		r.result = plan.StepResult{Answer: answer, Refs: ParseRefs(answer), Findings: parseFindings(answer), Usage: lifecycle.Usage(e.Outcome.Last)}
 	}
 	r.result.AttemptID, r.result.ExecutionToken = r.record.ID, r.record.Execution
 	r.result.PlanRevision = r.p.Rev
@@ -718,10 +718,4 @@ func (r *stepRun) detachment(step *lifecycle.StepError, detached *execution.Reta
 		}
 		return agentexec.Blocked(r.record, "failure", "保存原步骤的失败结果", "原命令已经返回，但结果尚未持久保存。", "建议恢复存储后检查同一次执行。", detached)
 	}
-}
-
-// spendOf is a step's spend as the harness last reported it.
-func spendOf(last view.Progress) *attempt.Usage {
-	u := last.Usage
-	return &attempt.Usage{Model: last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
 }

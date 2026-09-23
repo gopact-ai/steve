@@ -182,7 +182,7 @@ func (s *stepSpend) wrap(next func(view.Progress), agentID string) func(view.Pro
 func (s *stepSpend) usage() *attempt.Usage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return spendOf(s.last)
+	return lifecycle.Usage(s.last)
 }
 
 func (a *AgentRunner) find(ctx context.Context, id string) (roster.Candidate, bool) {
