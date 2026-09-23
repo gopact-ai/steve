@@ -26,10 +26,7 @@ func recordingApplication(t *testing.T, calls *[]string, mu *sync.Mutex) func(co
 		if err != nil {
 			return nil, err
 		}
-		token, err := ClusterRandomToken()
-		if err != nil {
-			return nil, err
-		}
+		token := ClusterRandomToken()
 		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !ConstantToken(r.Header.Get("Authorization"), token) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)

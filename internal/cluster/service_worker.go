@@ -14,11 +14,8 @@ import (
 
 // Local process and MCP definitions belong to the physical worker after
 // activation; the shared application deliberately excludes them.
-func serviceWorker(peer PeerConfig, cfg *config.Config) (node.ServerConfig, error) {
-	token, err := ClusterRandomToken()
-	if err != nil {
-		return node.ServerConfig{}, err
-	}
+func serviceWorker(peer PeerConfig, cfg *config.Config) node.ServerConfig {
+	token := ClusterRandomToken()
 	worker := node.ServerConfig{Name: peer.NodeID, Listen: "127.0.0.1:0", Token: token,
 		Hubs: map[string]string{peer.ClusterID: token}, StateDir: filepath.Join(peer.DataDir, "node"), StateRoot: filepath.Dir(peer.DataDir),
 		Tools: slices.Clone(cfg.Gateway.Tools), Capabilities: slices.Clone(cfg.Gateway.Capabilities), Declares: slices.Clone(cfg.Gateway.Declares),
@@ -31,7 +28,7 @@ func serviceWorker(peer PeerConfig, cfg *config.Config) (node.ServerConfig, erro
 		worker.MCPServers[id] = node.MCPSpec{Type: spec.Type, Command: spec.Command, Args: slices.Clone(spec.Args),
 			Env: maps.Clone(spec.Env), URL: spec.URL, Headers: maps.Clone(spec.Headers)}
 	}
-	return worker, nil
+	return worker
 }
 
 // A service can initialize before its first run, with no adapter cache yet.

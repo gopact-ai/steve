@@ -41,10 +41,7 @@ func TestApplicationLiveSettingsPreserveNativeSessionAndExistingBudget(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := cluster.ClusterRandomToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := cluster.ClusterRandomToken()
 	worker := node.ServerConfig{Name: cfg.NodeID, Listen: "127.0.0.1:0", Token: token,
 		Hubs: map[string]string{cfg.ClusterID: token}, StateDir: filepath.Join(cfg.DataDir, "node"),
 		WorkspaceRoot: installed.Paths.Root, Harnesses: map[string]node.HarnessSpec{"mock": {

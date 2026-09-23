@@ -156,9 +156,7 @@ func exportProject(ctx context.Context, o Options, syncFile func(*os.File) error
 		return b, err
 	}
 	if o.TransferID == "" {
-		if o.TransferID, err = newTransferID(); err != nil {
-			return b, err
-		}
+		o.TransferID = newTransferID()
 	}
 	b.Owner, err = releasedOwner(ctx, projects, o, p.ID)
 	if err != nil {
@@ -340,12 +338,10 @@ func exportContent(ctx context.Context, o Options, book *ledger.Ledger, projects
 }
 
 // newTransferID names a transfer the caller did not name.
-func newTransferID() (string, error) {
+func newTransferID() string {
 	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
 }
 
 // releasedOwner is the ownership record the bundle carries: the current

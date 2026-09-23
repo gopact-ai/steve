@@ -392,9 +392,7 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 		return InstallPlan{}, err
 	}
 	var nonce [24]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return InstallPlan{}, fmt.Errorf("无法生成安装计划 ID")
-	}
+	rand.Read(nonce[:])
 	plan := InstallPlan{ID: hex.EncodeToString(nonce[:]), Request: req, Check: check, Script: template.Script, Effects: template.Effects, Steps: append(append([]Step{}, check.Steps...), template.Steps...), ExpiresAt: s.now().Add(s.ttl).UTC()}
 	plan.Binary = template.Binary
 	plan.ReviewID = template.ReviewID

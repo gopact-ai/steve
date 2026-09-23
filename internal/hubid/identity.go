@@ -59,9 +59,7 @@ func Resolve(stateDir, configured string) (string, error) {
 	id := configured
 	if id == "" {
 		var bytes [16]byte
-		if _, err := rand.Read(bytes[:]); err != nil {
-			return "", err
-		}
+		rand.Read(bytes[:])
 		id = "hub-" + hex.EncodeToString(bytes[:])
 	}
 	raw, _ := json.Marshal(Identity{ID: id})

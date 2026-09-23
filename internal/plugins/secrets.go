@@ -52,9 +52,7 @@ func (s *Store) PutSecret(ctx context.Context, name, value string) (SecretInfo, 
 	}
 	defer unlock()
 	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return SecretInfo{}, err
-	}
+	rand.Read(nonce[:])
 	ref := SecretRef{Name: name, Revision: hex.EncodeToString(nonce[:])}
 	record := localSecret{Reference: ref, Value: value, CreatedAt: time.Now().UTC()}
 	raw, err := json.Marshal(record)

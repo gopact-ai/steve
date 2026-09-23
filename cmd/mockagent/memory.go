@@ -84,9 +84,7 @@ func newMemorySession() (acp.SessionID, error) {
 		return "", errors.New("MOCKAGENT_MEMORY_DIR must be an existing absolute fixture directory")
 	}
 	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return "", err
-	}
+	rand.Read(random[:])
 	id := acp.SessionID("mock-memory-" + hex.EncodeToString(random[:]))
 	if err := writeMemory(fixtureMemory{Session: string(id), Model: "mock-fast", Mode: "agent"}); err != nil {
 		return "", err

@@ -35,7 +35,7 @@ func Resolve(dir string) (string, error) {
 		return "", err
 	}
 	var secret [32]byte
-	_, _ = rand.Read(secret[:]) // crypto/rand.Read never fails
+	rand.Read(secret[:])
 	if err := fsx.CreateFile(filepath.Join(dir, FileName), []byte(base64.RawURLEncoding.EncodeToString(secret[:]))); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", err
 	}

@@ -299,10 +299,7 @@ func TestServiceBootstrapReloadsLockedConfigurationAndPreservesCapabilities(t *t
 	if refreshed.Harnesses["mock"].Command != "/bin/true" {
 		t.Fatal("used the config read before locking")
 	}
-	worker, err := serviceWorker(PeerConfig{NodeID: "worker", ClusterID: "cluster", DataDir: filepath.Join(root, "cluster")}, refreshed)
-	if err != nil {
-		t.Fatal(err)
-	}
+	worker := serviceWorker(PeerConfig{NodeID: "worker", ClusterID: "cluster", DataDir: filepath.Join(root, "cluster")}, refreshed)
 	if !slices.Equal(worker.Tools, cfg.Gateway.Tools) || !slices.Equal(worker.Capabilities, cfg.Gateway.Capabilities) || !slices.Equal(worker.Declares, cfg.Gateway.Declares) {
 		t.Fatal("worker lost physical capability declarations")
 	}

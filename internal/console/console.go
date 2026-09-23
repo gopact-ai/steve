@@ -903,7 +903,7 @@ func newReplyID() string {
 	var raw [4]byte
 	// crypto/rand.Read never returns an error; it aborts the program
 	// instead when the platform cannot supply randomness.
-	_, _ = rand.Read(raw[:])
+	rand.Read(raw[:])
 	return fmt.Sprintf("r%x%x", time.Now().UnixNano()/1000, raw)
 }
 

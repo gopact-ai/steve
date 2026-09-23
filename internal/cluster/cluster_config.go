@@ -189,10 +189,7 @@ func PrepareDesktopCluster(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	id, err := clusterRandomID("cluster-")
-	if err != nil {
-		return "", err
-	}
+	id := clusterRandomID("cluster-")
 	dir := filepath.Join(installed.Paths.Root, "cluster")
 	if _, err := os.Stat(dir); err == nil {
 		if _, err := os.Stat(filepath.Join(dir, "raft")); err == nil {
@@ -259,10 +256,7 @@ func createClusterAuthority(c PeerConfig) error {
 	if err != nil {
 		return err
 	}
-	token, err := ClusterRandomToken()
-	if err != nil {
-		return err
-	}
+	token := ClusterRandomToken()
 	for _, file := range []struct {
 		path string
 		data []byte
@@ -295,19 +289,15 @@ func IssueNodeCertificate(ca *x509.Certificate, caKey ed25519.PrivateKey, cluste
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), nil
 }
 
-func clusterRandomID(prefix string) (string, error) {
+func clusterRandomID(prefix string) string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return prefix + hex.EncodeToString(b[:]), nil
+	rand.Read(b[:])
+	return prefix + hex.EncodeToString(b[:])
 }
-func ClusterRandomToken() (string, error) {
+func ClusterRandomToken() string {
 	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+	rand.Read(b[:])
+	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 
 // Raw machine identifiers never enter configuration, logs or network replies.

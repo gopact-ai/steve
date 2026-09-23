@@ -90,10 +90,7 @@ func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
 	}
 	nodeID := options.NodeID
 	if nodeID == "" {
-		nodeID, err = clusterRandomID("node-")
-		if err != nil {
-			return "", err
-		}
+		nodeID = clusterRandomID("node-")
 	}
 	ui := options.UIAddress
 	if ui == "" {
@@ -110,10 +107,7 @@ func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
 		CertFile: filepath.Join(dir, "node.pem"), KeyFile: filepath.Join(dir, "node-key.pem"),
 		OwnerTokenFile: filepath.Join(dir, "owner-control-token"), WorkerConfigFile: filepath.Join(dir, "node.json")}
 	peer.RaftBindAddress, peer.PeerBindAddress = peer.RaftAddress, peer.PeerAddress
-	worker, err := serviceWorker(peer, cfg)
-	if err != nil {
-		return "", err
-	}
+	worker := serviceWorker(peer, cfg)
 	if err := publishClusterBootstrap(root, path, peer, &worker); err != nil {
 		return "", err
 	}

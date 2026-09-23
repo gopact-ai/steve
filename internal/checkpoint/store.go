@@ -203,7 +203,7 @@ func copyChecked(ctx context.Context, into io.Writer, content io.Reader, ref Blo
 func tempName() string {
 	var value [16]byte
 	// crypto/rand.Read never returns an error: it fills or crashes.
-	_, _ = rand.Read(value[:])
+	rand.Read(value[:])
 	return "tmp/" + hex.EncodeToString(value[:])
 }
 

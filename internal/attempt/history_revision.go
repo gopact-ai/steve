@@ -68,9 +68,7 @@ func storedHistoryRevisionTx(tx ledger.Reader, taskID string) (string, bool, err
 
 func writeHistoryRevisionTx(tx *ledger.Tx, taskID string) error {
 	var nonce [32]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
+	rand.Read(nonce[:])
 	return tx.PutBinding(historyRevisionKind, taskID, hex.EncodeToString(nonce[:]))
 }
 

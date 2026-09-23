@@ -282,10 +282,7 @@ func (s *Store) RequestPairing(openID string) (string, error) {
 	if pending, ok := s.data.Pairing.Pending[openID]; ok && pending.Code != "" {
 		return pending.Code, nil
 	}
-	code, err := newPairingCode()
-	if err != nil {
-		return "", err
-	}
+	code := newPairingCode()
 	next := cloneData(s.data)
 	if next.Pairing.Pending == nil {
 		next.Pairing.Pending = map[string]PendingPair{}
@@ -369,16 +366,14 @@ func (s *Store) refreshPairingLocked() {
 	}
 }
 
-func newPairingCode() (string, error) {
+func newPairingCode() string {
 	const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 	raw := make([]byte, 8)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate pairing code: %w", err)
-	}
+	rand.Read(raw)
 	for i, b := range raw {
 		raw[i] = alphabet[int(b)%len(alphabet)]
 	}
-	return string(raw), nil
+	return string(raw)
 }
 
 func (s *Store) Onboarded() bool {

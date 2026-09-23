@@ -413,6 +413,6 @@ func token(bytes int) string {
 	raw := make([]byte, bytes)
 	// crypto/rand.Read never returns an error; it aborts the program
 	// instead when the platform cannot supply randomness.
-	_, _ = rand.Read(raw)
+	rand.Read(raw)
 	return hex.EncodeToString(raw)
 }

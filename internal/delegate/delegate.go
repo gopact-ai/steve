@@ -671,10 +671,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	candidate roster.Candidate, req agentmcp.DelegateRequest, progress func(view.Progress)) (result agentmcp.DelegateResult, runErr error) {
 	result = agentmcp.DelegateResult{TaskID: child.ID, Agent: candidate.Agent.ID, Node: candidate.Node}
 
-	extras, revoke, err := s.childToken(ctx, conversationID, delegatedBy, parent, child, candidate)
-	if err != nil {
-		return result, err
-	}
+	extras, revoke := s.childToken(ctx, conversationID, delegatedBy, parent, child, candidate)
 	defer func() { revoke(runErr) }()
 
 	caps, err := s.assembler.AssembleExtra(candidate.Agent, home.ModeGuest, extras)
@@ -776,17 +773,15 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 // reached through its node's loopback endpoint when it runs remotely, and
 // revoked by the returned func when the run ends — unless the run detached
 // from a session that is still using it.
-func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy string, parent, child task.Task, candidate roster.Candidate) ([]capability.Extra, func(runErr error), error) {
+func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy string, parent, child task.Task, candidate roster.Candidate) ([]capability.Extra, func(runErr error)) {
 	keep := func(error) {}
 	if s.gate == nil {
-		return nil, keep, nil
+		return nil, keep
 	}
-	token, err := newToken()
-	if err != nil {
-		return nil, keep, err
-	}
+	token := newToken()
 	endpoint := ""
 	if candidate.Node != "" && s.endpoints != nil {
+		var err error
 		endpoint, err = s.endpoints.MCPEndpoint(ctx, candidate.Node)
 		if err != nil {
 			// Losing milestone cards is a degradation; losing the
@@ -797,7 +792,7 @@ func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy st
 		}
 	}
 	if candidate.Node != "" && endpoint == "" {
-		return nil, keep, nil
+		return nil, keep
 	}
 	extras := s.gate.Delegated(conversationID, candidate.Agent.ID, child.ID, delegatedBy, token, endpoint)
 	return extras, func(runErr error) {
@@ -805,7 +800,7 @@ func (s *Service) childToken(ctx context.Context, conversationID, delegatedBy st
 		if !errors.As(runErr, &detached) {
 			s.gate.Revoke(token)
 		}
-	}, nil
+	}
 }
 
 func (s *Service) delegationContext(child task.Task, candidate roster.Candidate, req agentmcp.DelegateRequest) (ctxpack.Context, error) {
@@ -1269,12 +1264,10 @@ func goal(request string) string {
 	return text.Clip(line, goalLimit)
 }
 
-func newToken() (string, error) {
+func newToken() string {
 	var buf [24]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", fmt.Errorf("mint token: %w", err)
-	}
-	return hex.EncodeToString(buf[:]), nil
+	rand.Read(buf[:])
+	return hex.EncodeToString(buf[:])
 }
 
 // parentLease finds the canonical lease the parent's in-place attempt holds.

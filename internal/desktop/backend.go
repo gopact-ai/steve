@@ -94,10 +94,7 @@ func PublishEndpoint(configPath, address string) (func(), error) {
 	if err := readJSON(paths.Profile, &p); err != nil {
 		return nil, err
 	}
-	instance, err := randomID()
-	if err != nil {
-		return nil, err
-	}
+	instance := randomID()
 	value := endpoint{NodeID: p.NodeID, URL: address, PID: os.Getpid(), Instance: instance}
 	if err := replaceJSON(paths.Endpoint, value); err != nil {
 		return nil, err

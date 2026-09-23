@@ -51,10 +51,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			token, err := cluster.ClusterRandomToken()
-			if err != nil {
-				t.Fatal(err)
-			}
+			token := cluster.ClusterRandomToken()
 			worker := node.ServerConfig{
 				Name: cfg.NodeID, Listen: "127.0.0.1:0", Token: token,
 				Hubs: map[string]string{cfg.ClusterID: token}, StateDir: filepath.Join(cfg.DataDir, "node"),
@@ -87,9 +84,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 			}
 			continuityRequest(t, first, http.MethodPut, "/console/preferences", preferences)
 			var random [24]byte
-			if _, err := rand.Read(random[:]); err != nil {
-				t.Fatal(err)
-			}
+			rand.Read(random[:])
 			marker := hex.EncodeToString(random[:])
 			reply := continuitySend(t, first, conversation, "fixture-remember "+marker, "remember-once")
 			if reply.Error != "" || !strings.Contains(reply.Text, "memory: stored") {

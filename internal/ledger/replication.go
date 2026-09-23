@@ -374,9 +374,7 @@ func (w *writeTx) Commit() error {
 		return err
 	}
 	var id [16]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		return err
-	}
+	rand.Read(id[:])
 	commandID := "ledger-" + hex.EncodeToString(id[:])
 	_, err = w.replicator.Propose(w.ctx, ReplicatedWrite{ID: commandID, ExpectedVersion: w.position.Version, CoordinatorEpoch: w.position.CoordinatorEpoch, Payload: payload})
 	if err != nil {

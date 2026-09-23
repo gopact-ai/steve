@@ -376,9 +376,7 @@ func (g *gate) send(ctx context.Context, phase, input string) (reply, error) {
 
 func (g *gate) run(ctx context.Context) error {
 	var nonce [4]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return fmt.Errorf("create run ID: %w", err)
-	}
+	rand.Read(nonce[:])
 	id := g.started.UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(nonce[:])
 	g.conversation = "console:e2e-fleet-" + id
 	g.filename = "e2e-fleet-" + id + ".txt"

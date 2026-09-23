@@ -172,9 +172,7 @@ func (s *Service) tryFailover(expected Assignment) {
 			continue
 		}
 		var random [16]byte
-		if _, err := rand.Read(random[:]); err != nil {
-			return
-		}
+		rand.Read(random[:])
 		_, err = s.transfer(ctx, TransferRequest{ID: "automatic/" + hex.EncodeToString(random[:]), Actor: "system", ExpectedEpoch: expected.Epoch, TargetNodeID: id, Reason: "coordinator_unreachable"}, true)
 		if err == nil {
 			return

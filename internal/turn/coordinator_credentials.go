@@ -35,10 +35,7 @@ func (t *chatTurn) prepareCredentials(ctx context.Context, saved state.Session, 
 		return saved, caps, errors.New("conversation credential refresh requires the built-in platform MCP")
 	}
 	if saved.PendingAgentToken == "" {
-		token, err := newAgentToken()
-		if err != nil {
-			return saved, caps, err
-		}
+		token := newAgentToken()
 		saved.PendingAgentToken = token
 		// Persist the replacement before preparing it or starting a native
 		// resume. A crash retries exactly this credential and context.

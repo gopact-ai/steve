@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nativehistory"
 	"log/slog"
 	"sort"
 	"strings"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
@@ -277,7 +277,7 @@ func newID() string {
 	var b [8]byte
 	// crypto/rand.Read never returns an error; it aborts the program
 	// instead when the platform cannot supply randomness.
-	_, _ = rand.Read(b[:])
+	rand.Read(b[:])
 	return "att-" + hex.EncodeToString(b[:])
 }
 

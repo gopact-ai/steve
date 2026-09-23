@@ -95,10 +95,7 @@ func Bootstrap(options Options) (*Installation, error) {
 		if _, err := os.Lstat(paths.Config); !errors.Is(err, os.ErrNotExist) {
 			return nil, errors.New("desktop configuration already exists without a desktop profile; choose a new state directory")
 		}
-		id, err := randomID()
-		if err != nil {
-			return nil, err
-		}
+		id := randomID()
 		saved = profile{Version: 1, NodeID: id}
 		if err := createJSON(paths.Profile, saved); err != nil {
 			return nil, err
@@ -187,12 +184,10 @@ func IsManagedConfig(configPath string) bool {
 	return readJSON(filepath.Join(filepath.Dir(configPath), profileName), &p) == nil && p.validate() == nil
 }
 
-func randomID() (string, error) {
+func randomID() string {
 	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", err
-	}
-	return "node-" + hex.EncodeToString(value[:]), nil
+	rand.Read(value[:])
+	return "node-" + hex.EncodeToString(value[:])
 }
 
 func localURL(raw string, allowZero bool) error {

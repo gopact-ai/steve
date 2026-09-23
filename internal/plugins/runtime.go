@@ -87,9 +87,7 @@ func (s *Store) PrepareRuntime(ctx context.Context, id string, selection Selecti
 		return record, s.sync(filepath.Join(s.Dir, "runtime-commands"))
 	}
 	var nonce [32]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return RuntimeRecord{}, err
-	}
+	rand.Read(nonce[:])
 	ref := RuntimeRef{ID: hex.EncodeToString(nonce[:]), Selection: selection}
 	// The command is durable before any directory is prepared. An interrupted
 	// operation keeps its native identity rather than allocating another home.

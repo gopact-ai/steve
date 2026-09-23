@@ -311,9 +311,7 @@ func (s *Store) fetchDirect(ctx context.Context, p project.Project, source, targ
 		_, _ = s.nodes.Artifact(ctx, source, ops.Request{Op: ops.Remove, Path: sourceBlob})
 	}()
 	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return err
-	}
+	rand.Read(raw[:])
 	token := hex.EncodeToString(raw[:])
 	if err := direct.Grant(ctx, source, token, name, 2*time.Minute); err != nil {
 		return fmt.Errorf("grant on %s: %w", source, err)

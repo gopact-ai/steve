@@ -362,9 +362,7 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 	r.current = g
 	r.mu.Unlock()
 	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return err
-	}
+	rand.Read(random[:])
 	fence, err := r.beginWriter(ctx, coordination.WriterRequest{ID: "writer-" + hex.EncodeToString(random[:]), CallerNodeID: g.NodeID, CoordinatorEpoch: assignment.Epoch, ExpectedGeneration: expectedWriter})
 	if err != nil {
 		r.revoke(g, err)

@@ -611,9 +611,7 @@ func (g *Gateway) handleApprovalAction(action feishu.CardAction) feishu.CardToas
 
 func newRequestID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return hex.EncodeToString([]byte(time.Now().UTC().Format("150405.000000000")))
-	}
+	rand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }
 
