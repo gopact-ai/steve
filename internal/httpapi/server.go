@@ -243,13 +243,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// guard checks the token when one is configured. Loopback-only deployments
-// leave it empty and rely on the bind address, which is the same posture the
-// messaging server already takes.
+// guard checks the token. A standalone Hub always has one (configured or
+// generated); an empty token remains only for servers assembled in tests.
 func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.token != "" && !s.authorized(r) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			http.Error(w, "unauthorized: open the address `steve dash -config <config>` prints", http.StatusUnauthorized)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !(strings.HasPrefix(r.URL.Path, "/console/services/") && strings.HasSuffix(r.URL.Path, "/restart")) {

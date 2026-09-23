@@ -175,7 +175,7 @@ func (h *Hub) baseEnvironment() []string {
 		"GIT_COMMITTER_NAME=Steve Lab", "GIT_COMMITTER_EMAIL=lab@steve.invalid"}
 }
 
-var dashboardLine = regexp.MustCompile(`steve: dashboard on (http://[^\s]+)`)
+var consoleLine = regexp.MustCompile(`steve: console on (http://[^\s]+)`)
 
 func (h *Hub) ready(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -194,7 +194,7 @@ func (h *Hub) ready(ctx context.Context) error {
 		}
 		if h.URL == "" {
 			raw, _ := os.ReadFile(filepath.Join(h.Dir, "hub.log"))
-			if match := dashboardLine.FindSubmatch(raw); len(match) == 2 {
+			if match := consoleLine.FindSubmatch(raw); len(match) == 2 {
 				h.URL = string(match[1])
 			}
 		}

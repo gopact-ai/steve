@@ -61,7 +61,9 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 			slog.Error(fmt.Sprintf("steve: read model: %v", err))
 		}
 	})
-	slog.Info(fmt.Sprintf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL()))
+	// The console needs its token, which stays out of logs; dash prints the
+	// signed-in address from the same configuration.
+	slog.Info(fmt.Sprintf("steve: console on %s  (open it: steve dash -config %s)", dashboard.URL(), *configPath))
 
 	background.Go(func(ctx context.Context) { runScheduleDispatcher(ctx, schedules, cons, gw, coordinator) })
 

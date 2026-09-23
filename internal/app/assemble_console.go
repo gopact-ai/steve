@@ -9,10 +9,12 @@ import (
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/httpapi"
+	"github.com/gopact-ai/steve/internal/localtoken"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -44,11 +46,14 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	repos := projection.Repos()
 	shipper := projection.Shipper()
 	view := projection.View()
-	httpConfig := httpapi.ServerConfig{
-		Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken,
-	}
+	var (
+		httpConfig httpapi.ServerConfig
+		err        error
+	)
 	if environment != nil && environment.HTTPConfig != nil {
 		httpConfig = *environment.HTTPConfig
+	} else if httpConfig, err = consoleServerConfig(cfg); err != nil {
+		return nil, err
 	}
 	dashboard, err := httpapi.NewServer(view, httpConfig)
 	if err != nil {
@@ -163,3 +168,20 @@ func (v *consoleValues) Dashboard() *httpapi.Server { return v.dashboard }
 func (v *consoleValues) Materials() *material.Store { return v.materials }
 
 func (v *consoleValues) Reconciliations() *reconciliationWorkers { return v.reconciliations }
+
+// consoleServerConfig never serves the console without a token. Loopback keeps
+// other machines out, not other users and processes on this one. A generated
+// token stays out of the configuration: restarts compare the configured token
+// with the one the process booted with, and it is not the owner's setting.
+func consoleServerConfig(cfg *config.Config) (httpapi.ServerConfig, error) {
+	served := httpapi.ServerConfig{Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken}
+	if served.Token != "" {
+		return served, nil
+	}
+	token, err := localtoken.Resolve(filepath.Dir(cfg.Gateway.StatePath))
+	if err != nil {
+		return httpapi.ServerConfig{}, fmt.Errorf("console token: %w", err)
+	}
+	served.Token = token
+	return served, nil
+}

@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/cluster"
+	appconfig "github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/localtoken"
 )
 
 type consoleConnection struct {
@@ -81,8 +83,9 @@ func (value *connectionString) UnmarshalJSON(data []byte) error {
 }
 
 type connectionGateway struct {
-	Address connectionString `json:"read_model_addr"`
-	Token   connectionString `json:"read_model_token"`
+	Address   connectionString `json:"read_model_addr"`
+	Token     connectionString `json:"read_model_token"`
+	StatePath connectionString `json:"state_path"`
 }
 
 func (gateway *connectionGateway) UnmarshalJSON(data []byte) error {
@@ -129,7 +132,18 @@ func readConsoleConnection(path string) (consoleConnection, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return consoleConnection{}, fmt.Errorf("inspect cluster sidecar: %w", err)
 	}
-	return consoleConnection{URL: address, Token: string(config.Gateway.Token)}, nil
+	token := string(config.Gateway.Token)
+	if token == "" {
+		// The Hub generated one; before its first start there is none.
+		token, err = localtoken.Read(appconfig.StateDir(string(config.Gateway.StatePath)))
+		if errors.Is(err, os.ErrNotExist) {
+			token, err = "", nil
+		}
+		if err != nil {
+			return consoleConnection{}, fmt.Errorf("read console token: %w", err)
+		}
+	}
+	return consoleConnection{URL: address, Token: token}, nil
 }
 
 func readConsoleJSON(path string, target any) error {
