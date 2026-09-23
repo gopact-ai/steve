@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -58,16 +57,15 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	seen := map[string]bool{}
 	var pending []attempt.Record
 	for _, r := range candidates {
-		if seen[r.ID] || r.State == attempt.Superseded || (!strings.HasPrefix(r.Session, "ns_") && !attempt.PendingSessionOpen(r)) || r.Node == "" || r.Execution == nil {
+		if seen[r.ID] || !attempt.TaskStopOwed(r) {
 			continue
 		}
 		seen[r.ID] = true
-		if r.State.Terminal() && !r.Unsettled && r.SessionSettled != nil && *r.SessionSettled && (r.StopEvidence != "task-stop/"+r.ID || !s.accountingPending(r)) {
-			if r.StopEvidence == "task-stop/"+r.ID {
-				// The durable projection may have completed before the local
-				// owner or its stop handler joined. Retry only memory cleanup.
-				s.resolveStopped(r)
-			}
+		if r.State.Terminal() && !r.Unsettled && r.SessionSettled != nil && *r.SessionSettled && !s.accountingPending(r) {
+			// The task stop and its durable projection both committed, but
+			// the local owner or its stop handler may have joined only
+			// afterwards. Retry only memory cleanup.
+			s.resolveStopped(r)
 			continue
 		}
 		if _, ok := s.tasks.Get(r.TaskID); ok && errors.Is(s.tasks.CheckExecution(*r.Execution), task.ErrExecutionStopped) {

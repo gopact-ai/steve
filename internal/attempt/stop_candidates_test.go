@@ -14,17 +14,6 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-// stopNeeded is what a durable task stop pass acts on: an execution that
-// still needs a native stop, or one whose stop committed but whose
-// in-memory owner may not have been released yet.
-func stopNeeded(r Record) bool {
-	if r.State == Superseded || (!strings.HasPrefix(r.Session, "ns_") && !PendingSessionOpen(r)) || r.Node == "" || r.Execution == nil {
-		return false
-	}
-	settled := r.State.Terminal() && !r.Unsettled && r.SessionSettled != nil && *r.SessionSettled
-	return !settled || r.StopEvidence == "task-stop/"+r.ID
-}
-
 func insertAttemptRow(t testing.TB, s *Service, id, state, data string) {
 	t.Helper()
 	if _, err := s.l.DB().Exec(`INSERT INTO operations VALUES(?,'attempt',?,1,1,?,'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`, id, state, data); err != nil {
@@ -68,6 +57,8 @@ func TestStopCandidatesSelectOnlyExecutionsAStopPassActsOn(t *testing.T) {
 		{"process stop evidence", func(r *Record) { r.StopEvidence = "process-stop/" + r.ID }, false},
 		{"superseded", func(r *Record) { r.State = Superseded; r.SessionSettled = &no }, false},
 		{"hub session", func(r *Record) { r.Session = "hub-1"; r.SessionSettled = &no }, false},
+		{"pending session open", func(r *Record) { r.State, r.Session, r.Unsettled = Leased, "", true }, true},
+		{"live without a node session", func(r *Record) { r.State, r.Session = Running, "" }, false},
 		{"no node", func(r *Record) { r.Node = ""; r.SessionSettled = &no }, false},
 		{"no execution", func(r *Record) { r.Execution = nil; r.SessionSettled = &no }, false},
 	} {
@@ -78,16 +69,15 @@ func TestStopCandidatesSelectOnlyExecutionsAStopPassActsOn(t *testing.T) {
 			raw, _ := json.Marshal(r)
 			insertAttemptRow(t, s, r.ID, string(r.State), string(raw))
 			got := stopCandidateIDs(t, s)
-			if (len(got) == 1) != tc.want || stopNeeded(r) != tc.want {
-				t.Fatalf("candidates=%v needed=%v want=%v", got, stopNeeded(r), tc.want)
+			if (len(got) == 1) != tc.want || TaskStopOwed(r) != tc.want {
+				t.Fatalf("candidates=%v needed=%v want=%v", got, TaskStopOwed(r), tc.want)
 			}
 		})
 	}
 }
 
-// Every combination the stop pass reads must be selected, and settled
-// history it would skip must not be read at all. The live set is always
-// included, so the result is a superset of Live.
+// The index selects exactly the records TaskStopOwed accepts: every
+// combination the stop pass acts on, and nothing it would skip.
 func TestStopCandidatesMatchTheStopPassOverRandomHistory(t *testing.T) {
 	s, _ := newService(t)
 	random := rand.New(rand.NewSource(7))
@@ -121,7 +111,7 @@ func TestStopCandidatesMatchTheStopPassOverRandomHistory(t *testing.T) {
 		raw, _ := json.Marshal(r)
 		insertAttemptRow(t, s, r.ID, string(r.State), string(raw))
 		every = append(every, r.ID)
-		if stopNeeded(r) || !r.State.Terminal() || r.Unsettled {
+		if TaskStopOwed(r) {
 			want[r.ID] = true
 		}
 	}
@@ -135,19 +125,10 @@ func TestStopCandidatesMatchTheStopPassOverRandomHistory(t *testing.T) {
 	if !slices.Equal(got, expected) {
 		t.Fatalf("stop candidates differ from the stop pass:\n got %v\nwant %v", got, expected)
 	}
-	live, err := s.Live(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range live {
-		if !slices.Contains(got, r.ID) {
-			t.Fatalf("live execution %s missing from stop candidates", r.ID)
-		}
-	}
 }
 
 func TestStopCandidatesFailOnMalformedHistory(t *testing.T) {
-	for _, raw := range []string{`{`, `[]`, `null`, `{"usage":{"input":"unknown"}}`} {
+	for _, raw := range []string{`{`, `[]`, `null`, `{"usage":{"input":"unknown"}}`, `{"id":"other","state":"bound"}`, `{"state":"bound"}`} {
 		s, _ := newService(t)
 		insertAttemptRow(t, s, "bad", "bound", raw)
 		if _, err := s.StopCandidates(t.Context()); err == nil || !strings.Contains(err.Error(), "bad") {
