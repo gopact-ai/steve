@@ -96,7 +96,7 @@ URL、header、参数和环境值使用同一个引用结构：`text` 为字面�
 
 第一条命令从 stdin 读取至 EOF。不要把值写在命令行参数里。得到的 `{name, revision}` 可以用于节点部署配置；协调端只读取引用和可用性，不能查询凭据值。包清单的 `settings` 声明仍决定它是普通配置还是 secret，不能用普通配置字段绕过类型检查。
 
-节点的 `plugin_packages.v1` 协议目前提供 prepare、inspect 和凭据元数据查询；它校验部署的项目范围、目标节点、包摘要、普通配置、凭据版本和平台/解释器需求。内部 `Selection` 固定会话的部署集合，通过 `plugin_runtimes.v1` 准备并绑定实际运行目录。`plugins.Library` 可把包内容按项目复制到独立节点，并从同一账本记录恢复；本地 CLI 的独立缓存不自动加入该库。
+节点的 `plugin_packages.v1` 协议目前提供 prepare、inspect 和凭据元数据查询；它校验部署的项目范围、目标节点、包摘要、普通配置、凭据版本和平台/解释器需求。内部 `Selection` 固定会话的部署集合，通过 `plugin_runtimes.v1` 准备并绑定实际运行目录。`pluginledger.Library` 可把包内容按项目复制到独立节点，并从同一账本记录恢复；本地 CLI 的独立缓存不自动加入该库。
 
 ## 部署到节点需要协调者
 
