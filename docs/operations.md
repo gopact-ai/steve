@@ -566,9 +566,9 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 共享账本模式下，由节点持有的原生会话使用任务、执行和输入回执恢复。协调实例退出只会断开观察，健康执行节点可继续运行；新协调实例核对原记录后接回同一次执行。手动接入的独立执行节点升级后也使用这条路径。以下进程流 journal 与独立部署重启说明是另一条恢复路径，不应把流断开或重启当作原生执行停止的证据。
 
-[internal/node/transport.go](../internal/node/transport.go) 按协商特性选择传输方式。双方支持 `process_journal.v1` 时，node 保留 harness 进程与有界输入/输出 journal；连接恢复后按 stream ID、已读输出位置与 `ResumeAck.HaveIn` 续接，回放缺失输出并避免重复输入。默认续接宽限 10 分钟，由 node 的 `STEVE_NODE_SESSION_GRACE` 可调整；等待重连期间相关静默时钟暂停。
+[internal/node/transport.go](../internal/node/transport.go) 要求执行节点声明 `process_journal.v1`，未声明的节点在握手时即被拒绝并提示升级。node 保留 harness 进程与有界输入/输出 journal；连接恢复后按 stream ID、已读输出位置与 `ResumeAck.HaveIn` 续接，回放缺失输出并避免重复输入。默认续接宽限 10 分钟，由 node 的 `STEVE_NODE_SESSION_GRACE` 可调整；等待重连期间相关静默时钟暂停。
 
-旧节点没有此能力，断线仍会结束流。超过宽限、node 进程已消失、日志超出保留范围（`too old`）、日志写入失败或不可续接都会失败；journal 有界，不保证无限期回放。显式结束、取消和干净关闭不按网络故障保留进程。
+超过宽限、node 进程已消失、日志超出保留范围（`too old`）、日志写入失败或不可续接都会失败；journal 有界，不保证无限期回放。显式结束、取消和干净关闭不按网络故障保留进程。
 
 独立部署的协调服务重启是另一条路径：先将缺少停止证据的旧执行隔离，回收已确认静止的未完成 attempt，再应用配置、恢复未完成落地及符合条件的任务和队列，并补投递已完成子任务的结果。隔离中的任务和暂停任务不会自动续跑；中断超过 24 小时的会话任务留在停止状态，缺少消息锚点的聊天任务不能自动回复。重启不承诺恢复旧 hub 内存中的 ACP 连接，也不表示旧 node 进程已经停止。
 

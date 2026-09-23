@@ -85,6 +85,12 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 		socket.Close()
 		return nil, err
 	}
+	// Every agent stream is journaled so it survives a dropped link; a node
+	// that cannot keep one is an older build to upgrade, not one to serve.
+	if !nodewire.HasFeature(advert.Features, nodewire.FeatureJournal) {
+		socket.Close()
+		return nil, fmt.Errorf("%w: node %s lacks %s; upgrade it", nodewire.ErrVersionMismatch, name, nodewire.FeatureJournal)
+	}
 	// Clearing a deadline on a live socket cannot fail in a way the mux's
 	// first read would not report.
 	_ = socket.SetDeadline(time.Time{})
@@ -110,11 +116,7 @@ func (c *conn) close() {
 		c.released.Store(true)
 		// This connection is being given up; how its socket went down
 		// is not news to anyone.
-		if nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureJournal) {
-			_ = c.mux.CloseGracefully()
-		} else {
-			_ = c.mux.Close()
-		}
+		_ = c.mux.CloseGracefully()
 	})
 }
 

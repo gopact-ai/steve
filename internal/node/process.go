@@ -69,7 +69,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 		closeStream(stream, "unknown stream kind")
 		return
 	}
-	if req.Stream != "" && !journal.ValidID(req.Stream) {
+	if !journal.ValidID(req.Stream) {
 		closeStream(stream, "invalid stream id")
 		return
 	}
@@ -84,7 +84,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 		p.attach(stream, req)
 		return
 	}
-	if p != nil && req.Stream != "" {
+	if p != nil {
 		s.processMu.Unlock()
 		closeStream(stream, "process stream already exists")
 		return
@@ -128,24 +128,17 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	if req.Plugin != nil {
 		p.pluginRuntimeID = req.Plugin.ID
 	}
-	if req.Stream != "" {
-		p.journal, err = journal.New(s.conf().StateDir, req.Stream, journal.Options{})
-		if err != nil {
-			slog.Warn(fmt.Sprintf("steve-node: stream %s not resumable: %v", req.Stream, err), "stream", req.Stream)
-		}
+	p.journal, err = journal.New(s.conf().StateDir, req.Stream, journal.Options{})
+	if err != nil {
+		slog.Warn(fmt.Sprintf("steve-node: stream %s not resumable: %v", req.Stream, err), "stream", req.Stream)
 	}
 	// Publish only after the initial attachment exists, so an immediate
 	// reconnect cannot be superseded later by the original open.
 	a, err := p.replace(stream, req)
-	// Legacy streams still need shutdown bookkeeping, but can never resume.
-	key := req.Stream
-	if key == "" {
-		key = fmt.Sprintf("legacy-%p", p)
-	}
-	s.processes[key] = p
+	s.processes[req.Stream] = p
 	s.processWG.Add(1)
 	s.processMu.Unlock()
-	slog.Info(fmt.Sprintf("steve-node: process stream %s started on %s", key, req.Harness), "stream", key, "harness", req.Harness)
+	slog.Info(fmt.Sprintf("steve-node: process stream %s started on %s", req.Stream, req.Harness), "stream", req.Stream, "harness", req.Harness)
 	// Start draining only after publication; an immediately exiting process
 	// must still deliver its last lines and close reason to its attachment.
 	if err != nil {
@@ -301,7 +294,7 @@ func (p *agentProcess) detach(a *attachment) {
 		return
 	}
 	p.attached = nil
-	kill := p.id == "" || errors.Is(a.stream.Err(), io.EOF)
+	kill := errors.Is(a.stream.Err(), io.EOF)
 	if p.exit == "" {
 		if kill {
 			p.released = true
@@ -333,10 +326,6 @@ func (p *agentProcess) readInput(a *attachment) {
 	// Input ends when the attachment or the process goes; detach handles
 	// the first and the process waiter the second, so the pump's own
 	// error adds nothing.
-	if p.id == "" {
-		_, _ = io.Copy(p.proc.Stdin(), a.stream)
-		return
-	}
 	_ = readLines(a.stream, func(line []byte, complete bool) error {
 		p.inputMu.Lock()
 		p.mu.Lock()
@@ -361,7 +350,7 @@ func (p *agentProcess) readInput(a *attachment) {
 		p.mu.Unlock()
 		_, err := p.proc.Stdin().Write(line)
 		p.inputMu.Unlock()
-		if err == nil && complete && p.id != "" {
+		if err == nil && complete {
 			// An ack that cannot be sent means the attachment is going,
 			// which its Done channel already reports.
 			_ = a.stream.AckInput(haveIn)
@@ -419,15 +408,7 @@ func (p *agentProcess) run(ctx context.Context) {
 	}()
 	// Output ends with the process; Wait below is where its fate is read,
 	// so the pump's own error adds nothing.
-	if p.id == "" {
-		// Old hubs do not promise newline framing or reconnect support.
-		_, _ = io.Copy(writerFunc(func(b []byte) (int, error) {
-			p.emit(outputLine{data: append([]byte(nil), b...)}, false)
-			return len(b), nil
-		}), p.proc.Stdout())
-	} else {
-		_ = readLines(p.proc.Stdout(), func(b []byte, complete bool) error { p.emit(outputLine{data: b}, complete); return nil })
-	}
+	_ = readLines(p.proc.Stdout(), func(b []byte, complete bool) error { p.emit(outputLine{data: b}, complete); return nil })
 	err := p.proc.Wait()
 	p.kill()
 	code := 0
@@ -468,10 +449,6 @@ func (p *agentProcess) run(ctx context.Context) {
 	p.emit(outputLine{exit: fmt.Sprintf("exit %d", code)}, true)
 	slog.Info(fmt.Sprintf("steve-node: stream %s ended: exit %d", p.id, code), "stream", p.id)
 }
-
-type writerFunc func([]byte) (int, error)
-
-func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
 
 // readLines discards a trailing partial line on loss. An oversized line is
 // streamed in bounded fragments, but makes the process non-resumable.
