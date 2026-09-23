@@ -9,7 +9,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
-import { fetchAttemptChanges, fetchAttemptDiff, fetchAttemptFile } from "@/lib/api";
+import { fetchAttemptChanges, fetchAttemptDiff, fetchAttemptFile } from "@/lib/api/work";
 import type { ChangeIndex, FileDiff, FileView, TreeEntry } from "@/lib/types";
 import { CodeTree } from "./code-tree";
 import { DiffView } from "./diff-view";

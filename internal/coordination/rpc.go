@@ -186,7 +186,6 @@ func (h *rpcHandler) serveRead(w http.ResponseWriter, r *http.Request, action st
 	}
 	state, err := h.service.ReadState(r.Context())
 	h.reply(w, state, err)
-	return
 }
 
 func (h *rpcHandler) decodeCommand(w http.ResponseWriter, r *http.Request, target any) bool {

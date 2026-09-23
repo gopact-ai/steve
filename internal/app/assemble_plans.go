@@ -71,7 +71,7 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 		verifiers.TimeoutSource = func() time.Duration { return time.Duration(settings.Load().Policies.Execution.VerifyTimeout) }
 	}
 	supervisor := exec.NewSupervisor(
-		choosePlannerWithSettings(cfg, catalog, auxiliary, boot.Settings()),
+		choosePlanner(cfg, catalog, auxiliary, boot.Settings()),
 		exec.Deps{
 			Roster: fleet, Runner: stepRunner, Budget: taskBudget{tasks: tasks},
 			// Verification runs where the work is: a command on the step's

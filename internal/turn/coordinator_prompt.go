@@ -10,6 +10,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -24,8 +27,6 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
-	"sync"
-	"time"
 )
 
 func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (result Result, err error) {
@@ -407,9 +408,4 @@ func (t *turnSpend) model() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.used
-}
-
-func promptTurn(ctx context.Context, runner harness.Runner, prompt string, req Request) (string, []string, error) {
-	out := lifecycle.Drive{Session: runner, Prompt: prompt, Media: req.Images, Turn: true, Ask: req.OnAsk, AskUser: req.OnAskUser, Observe: req.OnProgress}.Run(ctx)
-	return out.Answer, out.Activity, out.Err
 }

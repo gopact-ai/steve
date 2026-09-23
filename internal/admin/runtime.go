@@ -61,11 +61,6 @@ var (
 	hubSequence   atomic.Int64
 )
 
-// hubAdvert describes the hub's own machine the way a node's advert
-// describes a node: the same harness check against this PATH, the same
-// identity, so the fleet has one shape for every machine.
-func hubAdvert(cfg *config.Config) nodewire.Advert { return ObservedHubAdvert(cfg, nil) }
-
 func ObservedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewire.Advert {
 	ConfigMu.RLock()
 	defer ConfigMu.RUnlock()

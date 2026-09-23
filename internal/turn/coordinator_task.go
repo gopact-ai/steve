@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/text"
 	"log/slog"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -133,17 +133,6 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		return "", fmt.Errorf("admit turn for task %s: %w", tracked.ID, err)
 	}
 	return tracked.ID, nil
-}
-
-// finishTask closes the attempt with what the turn cost and the model it
-// ran on, as the progress stream reported them.
-func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, model string) {
-	if c.tasks == nil || id == "" {
-		return
-	}
-	if _, err := c.tasks.FinishAs(id, outcome(turnErr), tokens, 0, model); err != nil {
-		slog.Error(fmt.Sprintf("turn: finish task %s: %v", id, err), "task", id)
-	}
 }
 
 // onboarding reports a turn running under the synthetic conversation the
