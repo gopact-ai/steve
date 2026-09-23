@@ -143,7 +143,6 @@ func TestInstallLogIsBounded(t *testing.T) {
 
 type reportingRecovery struct {
 	*recoveryBackend
-	late func(string)
 }
 
 func (b *reportingRecovery) ResumeRegistration(ctx context.Context, id string) (InstallResult, error) {

@@ -183,14 +183,14 @@ func TestDropDuringReplayAndSupersedingAttachment(t *testing.T) {
 	}
 	_ = mux.Close()
 	mux = m.connection(t)
-	s, r = openProcess(t, mux, nodewire.OpenRequest{Stream: "again", Resume: true, AfterIn: 20})
+	_, r = openProcess(t, mux, nodewire.OpenRequest{Stream: "again", Resume: true, AfterIn: 20})
 	if _, err := nodewire.ReadResumeAck(r); err != nil {
 		t.Fatal(err)
 	}
 	expectLine(t, r, line)
 	_ = mux.Close()
 	mux = m.connection(t)
-	s, r = openProcess(t, mux, nodewire.OpenRequest{Stream: "again", Resume: true, AfterIn: 20, AfterOut: 1})
+	_, r = openProcess(t, mux, nodewire.OpenRequest{Stream: "again", Resume: true, AfterIn: 20, AfterOut: 1})
 	if _, err := nodewire.ReadResumeAck(r); err != nil {
 		t.Fatal(err)
 	}

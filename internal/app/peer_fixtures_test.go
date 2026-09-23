@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -19,7 +18,6 @@ import (
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
-	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/hashicorp/raft"
@@ -206,35 +204,4 @@ func PeerRequest(t *testing.T, peer *cluster.Peer, method, path string, body any
 		t.Fatal(err)
 	}
 	return response.StatusCode, data
-}
-
-// PromoteVoter gives a machine a vote so it can be handed the coordinator
-// role. Machines join replicating only, which is what keeps quorum on the
-// node that enrolled them.
-func PromoteVoter(t *testing.T, peer *cluster.Peer, target *cluster.Peer) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for attempt := 0; ; attempt++ {
-		view, err := peer.Coordination(context.Background())
-		if err != nil {
-			t.Fatalf("read coordination: %v", err)
-		}
-		voting := false
-		for _, node := range view.Nodes {
-			if node.ID == target.Config.NodeID {
-				voting = node.Voter
-			}
-		}
-		if voting {
-			return
-		}
-		status, body := PeerRequest(t, peer, http.MethodPut, "/console/coordination/voting", consoleapi.CoordinatorVoting{CommandID: fmt.Sprintf("promote-%s-%d", target.Config.NodeID, attempt), ExpectedRevision: view.Revision, NodeID: target.Config.NodeID, Voting: true})
-		if status == http.StatusOK {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("promote %s: %d %s", target.Config.NodeID, status, body)
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
 }

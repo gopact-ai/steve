@@ -782,15 +782,14 @@ func TestRetryTakesOverThePreviousAttempt(t *testing.T) {
 
 // Placement refuses a machine whose level does not reach the project's.
 func TestPlacementRespectsTheProjectLevel(t *testing.T) {
-	art, att := stores(t)
 	book, _ := ledger.Open(t.TempDir(), ledger.Options{})
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
 	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Level: project.LevelRestricted, Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
-	art = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir(), Levels: map[string]string{"node-a": "public"}})
-	att = attempt.New(book)
+	art := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir(), Levels: map[string]string{"node-a": "public"}})
+	att := attempt.New(book)
 	r := testRoster(t, bothNodes())
 	r.SetNodeLevels(map[string]project.Level{"node-a": project.LevelPublic, "node-b": project.LevelRestricted})
 	runner := &fakeRunner{}

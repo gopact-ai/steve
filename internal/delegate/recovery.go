@@ -521,18 +521,6 @@ func retainedFailure(record attempt.Record, answer string, cause error) (*attemp
 	return &attempt.Result{Summary: text.Clip(result.Answer, 200), Output: output}, nil
 }
 
-func (s *Service) failRetainedResult(ctx context.Context, record attempt.Record, result agentmcp.DelegateResult, cause error, usage *attempt.Usage) (attempt.Record, error) {
-	failed, err := retainedFailure(record, result.Answer, cause)
-	if err != nil {
-		return attempt.Record{}, err
-	}
-	return s.attempts.Advance(ctx, record.ID, attempt.Failed, "delegate", func(r *attempt.Record) {
-		r.Error = cause.Error()
-		r.Usage = usage
-		r.Result = failed
-	})
-}
-
 func (s *Service) canSettleStopped(ctx context.Context, cause error) bool {
 	token := execution.Token(ctx)
 	return token != nil && acphost.PromptSettled(cause) && errors.Is(s.tasks.CheckExecution(*token), task.ErrExecutionStopped)
