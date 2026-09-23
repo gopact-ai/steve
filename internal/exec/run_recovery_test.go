@@ -78,7 +78,7 @@ func recoveryWorldAt(t *testing.T, now func() time.Time) *runWorld {
 		if err := os.WriteFile(filepath.Join(req.Workspace, req.StepID), []byte(req.StepID), 0600); err != nil {
 			return plan.StepResult{}, err
 		}
-		return plan.StepResult{Answer: req.StepID, Usage: &plan.Usage{Reported: true, Input: 10}}, nil
+		return plan.StepResult{Answer: req.StepID, Usage: &attempt.Usage{Reported: true, Input: 10}}, nil
 	})}, workflow.NewMemoryStore())
 	w.sup.SetPlans(plans)
 	w.sup.SetLedger(book, "test")

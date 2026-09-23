@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -428,7 +429,7 @@ func TestDurableNormalInputWaitsWithoutReservingDispatchBehindLiveOwner(t *testi
 type rejectedIngressProbe struct{}
 
 func (rejectedIngressProbe) Handle(context.Context, turn.Request) (turn.Result, error) {
-	return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Message: "previous execution requires reconciliation"}}
+	return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Message: "previous execution requires reconciliation"}}
 }
 
 func TestDurableObservedPreAdmissionRejectionIsNotUnknownNativeDispatch(t *testing.T) {

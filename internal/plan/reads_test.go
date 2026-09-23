@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -244,7 +245,7 @@ func TestPlanReadRowsOwnNestedResultFields(t *testing.T) {
 	}
 	progress := p.Steps[0]
 	progress.Touches = []string{"original"}
-	progress.Result = &StepResult{ExecutionToken: &task.ExecutionToken{TaskID: "task"}, Usage: &Usage{Input: 1}, Findings: []Finding{{Invalidates: []string{"original"}}}}
+	progress.Result = &StepResult{ExecutionToken: &task.ExecutionToken{TaskID: "task"}, Usage: &attempt.Usage{Input: 1}, Findings: []Finding{{Invalidates: []string{"original"}}}}
 	if _, err := s.Advance(p.ID, progress); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +309,7 @@ func TestPlanMutationResultsAndInputsCannotChangeCommittedReadState(t *testing.T
 			nested.Touches = []string{"original"}
 			nested.Result = &StepResult{
 				ExecutionToken: &task.ExecutionToken{TaskID: "root"},
-				Usage:          &Usage{Input: 1},
+				Usage:          &attempt.Usage{Input: 1},
 				Findings:       []Finding{{Invalidates: []string{"original"}}},
 			}
 			input := Plan{TaskID: "root", Execution: &task.ExecutionToken{TaskID: "root"}, Steps: []Step{nested}}

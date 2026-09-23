@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -177,7 +178,7 @@ func TestUnverifiedRecoveryPersistsAskUserThenRechecksWithoutNewPrompt(t *testin
 	var ready atomic.Bool
 	driver := &recoveryDriver{resume: func(ctx context.Context, id string, req turn.Request) (turn.Result, error) {
 		if !ready.Load() {
-			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "已检查原执行。节点暂时无法连接，请恢复后重新检查。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+			return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "已检查原执行。节点暂时无法连接，请恢复后重新检查。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
 		}
 		return turn.Result{Text: "retained result", Attempt: id}, nil
 	}}
@@ -343,7 +344,7 @@ func TestRecoveryRejoinsShortOutageWithoutAskingTheOwner(t *testing.T) {
 	driver := &recoveryDriver{resume: func(_ context.Context, id string, _ turn.Request) (turn.Result, error) {
 		if !back.Load() {
 			back.Store(true)
-			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+			return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
 		}
 		return turn.Result{Text: "retained result", Attempt: id}, nil
 	}}
@@ -374,7 +375,7 @@ func TestOpenRecoveryQuestionIsWithdrawnWhenTheOriginalComesBack(t *testing.T) {
 	driver := &probingDriver{}
 	driver.resume = func(_ context.Context, id string, _ turn.Request) (turn.Result, error) {
 		if !driver.reachable.Load() {
-			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+			return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
 		}
 		return turn.Result{Text: "retained result", Attempt: id}, nil
 	}
@@ -436,5 +437,20 @@ func TestFindRetainedAsksForTheExchangeAndRefusesTwoExecutions(t *testing.T) {
 	driver.candidates = append(driver.candidates, turn.RetainedChat{AttemptID: "second", Conversation: e.Conversation, MessageID: AnchorMark + e.ID})
 	if _, _, err := s.findRetained(t.Context(), driver, e); err == nil || !strings.Contains(err.Error(), "multiple executions reference the same exchange") {
 		t.Fatalf("two executions of one exchange were not refused: %v", err)
+	}
+}
+
+func TestRecoveryQuestionsSpeakTheExchangeLanguage(t *testing.T) {
+	en := &exchangeRecovery{e: &queuedExchange{Locale: "en"}}
+	q := en.blockedBy(errors.New("not found"), nil).Question
+	if q.Kind != "recovery" || q.Title != "The original execution needs verifying" || !strings.HasPrefix(q.Message, "Checked this conversation's execution records.") {
+		t.Fatalf("question = %+v", q)
+	}
+	if len(q.Choices) != 2 || q.Choices[0].Value != "retry" || q.Choices[0].Label != "Recheck the original execution" || q.Choices[1].Label != "Wait for now" {
+		t.Fatalf("choices = %+v", q.Choices)
+	}
+	zh := (&exchangeRecovery{e: &queuedExchange{Locale: "zh"}}).blockedBy(errors.New("not found"), nil).Question
+	if zh.Title != "原执行需要核实" || zh.Choices[0].Label != "重新检查原执行" || zh.Choices[1].Label != "暂时等待" {
+		t.Fatalf("zh question = %+v", zh)
 	}
 }

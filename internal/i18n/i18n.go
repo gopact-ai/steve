@@ -300,6 +300,27 @@ const (
 	QuotedMessage          Key = "quoted_message"
 	ImagePlaceholder       Key = "image_placeholder"
 	ImageDownloadFailed    Key = "image_download_failed"
+
+	// Recovery questions: what blocks a recovery and what the owner may do.
+	RecoveryTitleExecution    Key = "recovery_title_execution"
+	RecoveryTitleTask         Key = "recovery_title_task"
+	RecoveryAttempted         Key = "recovery_attempted"
+	RecoveryTried             Key = "recovery_tried"
+	RecoveryDiagnostics       Key = "recovery_diagnostics"
+	RecoveryStopUnconfirmed   Key = "recovery_stop_unconfirmed"
+	RecoveryRetry             Key = "recovery_retry"
+	RecoveryRetryExecution    Key = "recovery_retry_execution"
+	RecoveryRetryTask         Key = "recovery_retry_task"
+	RecoveryRecheck           Key = "recovery_recheck"
+	RecoveryWait              Key = "recovery_wait"
+	RecoveryWaitConditions    Key = "recovery_wait_conditions"
+	RecoveryWaitReconnect     Key = "recovery_wait_reconnect"
+	RecoveryContextTitle      Key = "recovery_context_title"
+	RecoveryContextMessage    Key = "recovery_context_message"
+	RecoveryRelocationTitle   Key = "recovery_relocation_title"
+	RecoveryRelocationMessage Key = "recovery_relocation_message"
+	RecoveryUnverifiedTitle   Key = "recovery_unverified_title"
+	RecoveryUnverifiedMessage Key = "recovery_unverified_message"
 )
 
 type Catalog struct {

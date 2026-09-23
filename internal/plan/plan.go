@@ -8,8 +8,10 @@
 package plan
 
 import (
-	"github.com/gopact-ai/steve/internal/task"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // StepState tracks one step through the executor.
@@ -95,19 +97,9 @@ type StepResult struct {
 	Verified  bool      `json:"verified,omitempty"`
 	StartedAt time.Time `json:"started_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
-	// Usage is what the step's turn cost and the model it ran on.
-	Usage *Usage `json:"usage,omitempty"`
-}
-
-// Usage is a step's spend as the harness reported it.
-type Usage struct {
-	Model       string `json:"model,omitempty"`
-	Input       int64  `json:"input,omitempty"`
-	Output      int64  `json:"output,omitempty"`
-	CachedRead  int64  `json:"cached_read,omitempty"`
-	CachedWrite int64  `json:"cached_write,omitempty"`
-	Context     int64  `json:"context,omitempty"`
-	Reported    bool   `json:"reported"`
+	// Usage is what the step's turn cost and the model it ran on, in the
+	// shape its attempt records it.
+	Usage *attempt.Usage `json:"usage,omitempty"`
 }
 
 // Step is one unit of work. Placement is expressed as Requires rather than a

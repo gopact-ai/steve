@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -201,7 +202,7 @@ func TestRecoveryAdmissionProofCannotOverrideRetainedExecutionOrLookupError(t *t
 			driver.proven.Store(true)
 			driver.candidates = []turn.RetainedChat{{Conversation: "console:main", MessageID: "web-e1", TaskID: "task", AttemptID: "live"}}
 			driver.resume = func(context.Context, string, turn.Request) (turn.Result, error) {
-				return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Message: "original execution is unreachable"}}
+				return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Message: "original execution is unreachable"}}
 			}
 			if err := s.RecoverChats(t.Context(), driver); err != nil {
 				t.Fatal(err)

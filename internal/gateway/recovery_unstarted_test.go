@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -176,7 +177,7 @@ func TestGatewayInputKeepsRecoveringAnAttemptThatMayHoldWork(t *testing.T) {
 			g := New(p)
 			g.BindChannel(ch)
 			g.SetRecoveryLedger(book)
-			var blocked *turn.RecoveryBlocked
+			var blocked *agentexec.RecoveryBlocked
 			if err := g.processAcceptedFixture(inboundFixture()); !errors.As(err, &blocked) {
 				t.Fatalf("recovery outcome = %v; want the coordinator's block", err)
 			}

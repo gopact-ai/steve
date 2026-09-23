@@ -26,7 +26,7 @@ func TestStepOutcomesRecordObservedUsage(t *testing.T) {
 			p := plan.Plan{ID: "plan", ProjectID: "p", TaskID: "task"}
 			s := step("work", "do work", []string{"basic"})
 			var workspace string
-			want := &plan.Usage{Model: "model", Input: 100, Output: 20, CachedRead: 30, CachedWrite: 40, Context: 500, Reported: true}
+			want := &attempt.Usage{Model: "model", Input: 100, Output: 20, CachedRead: 30, CachedWrite: 40, Context: 500, Reported: true}
 			deps := Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: runnerFunc(func(_ context.Context, req StepRequest) (plan.StepResult, error) {
 				workspace = req.Workspace
 				if err := os.WriteFile(filepath.Join(workspace, "result.txt"), []byte("done"), 0600); err != nil {
@@ -47,7 +47,7 @@ func TestStepOutcomesRecordObservedUsage(t *testing.T) {
 				t.Fatalf("run error=%v", err)
 			}
 			records, err := att.ForTask(t.Context(), p.TaskID)
-			if err != nil || len(records) != 1 || !records[0].State.Terminal() || records[0].Usage == nil || *records[0].Usage != *attemptUsage(want) {
+			if err != nil || len(records) != 1 || !records[0].State.Terminal() || records[0].Usage == nil || *records[0].Usage != *want {
 				t.Fatalf("closed=%+v err=%v", records, err)
 			}
 			if _, err := os.Stat(workspace); !os.IsNotExist(err) {
@@ -86,7 +86,7 @@ func TestStepCannotBindAfterItsLeaseWasRevoked(t *testing.T) {
 	s.Verify = &plan.Verify{Kind: plan.VerifyCommand, Command: "verify"}
 	deps := Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: runnerFunc(func(_ context.Context, req StepRequest) (plan.StepResult, error) {
 		workspace = req.Workspace
-		return plan.StepResult{Answer: "done", Usage: &plan.Usage{Input: 10, Reported: true}}, nil
+		return plan.StepResult{Answer: "done", Usage: &attempt.Usage{Input: 10, Reported: true}}, nil
 	}), Verifier: verifyFunc(func(StepRequest) error {
 		_, err := att.ExpireAll(t.Context(), "lost owner")
 		return err
@@ -106,7 +106,7 @@ func TestStepCannotBindAfterItsLeaseWasRevoked(t *testing.T) {
 func TestStepUsageDistinguishesExplicitZeroFromMissing(t *testing.T) {
 	for _, reported := range []bool{false, true} {
 		spent := stepSpend{last: view.Progress{Usage: view.Usage{Reported: reported, ContextTokens: 500}}}
-		u := attemptUsage(spent.usage())
+		u := spent.usage()
 		if u == nil || u.Reported != reported || u.Context != 500 || u.Input != 0 || u.Output != 0 {
 			t.Fatalf("usage=%+v reported=%v", u, reported)
 		}
@@ -144,7 +144,7 @@ func TestStepCompletionFailureRetainsWorkspaceAndDoesNotRetry(t *testing.T) {
 		deps := Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: runnerFunc(func(_ context.Context, req StepRequest) (plan.StepResult, error) {
 			calls++
 			workspace = req.Workspace
-			return plan.StepResult{Answer: "done", Usage: &plan.Usage{Input: 100, Reported: true}}, nil
+			return plan.StepResult{Answer: "done", Usage: &attempt.Usage{Input: 100, Reported: true}}, nil
 		})}
 		_, err = runStepWithRecovery(t.Context(), plan.Plan{ID: "plan", ProjectID: "p", TaskID: "task"}, step("work", "work", []string{"basic"}), nil, deps)
 		if !errors.Is(err, ErrCompletion) || calls != 1 {

@@ -334,13 +334,13 @@ func (r *stepRun) ended(e *lifecycle.Execution) {
 		r.result = *r.saved
 	case r.joined:
 		answer := e.Outcome.Answer
-		r.result = plan.StepResult{Answer: answer, Refs: ParseRefs(answer), Findings: parseFindings(answer), Usage: spendOf(e.Outcome.Last)}
+		r.result = plan.StepResult{Answer: answer, Refs: ParseRefs(answer), Findings: parseFindings(answer), Usage: lifecycle.Usage(e.Outcome.Last)}
 	}
 	r.result.AttemptID, r.result.ExecutionToken = r.record.ID, r.record.Execution
 	r.result.PlanRevision = r.p.Rev
 	r.result.Agent, r.result.Node = r.record.Agent, r.record.Node
 	r.result.StartedAt, r.result.EndedAt = r.started, time.Now()
-	e.Usage = attemptUsage(r.result.Usage)
+	e.Usage = r.result.Usage
 }
 
 // finish is the step's completion: its session settled, what it made
@@ -424,7 +424,7 @@ func (r *stepRun) advance(ctx context.Context, to attempt.State) error {
 	updated, err := r.deps.Attempts.Advance(ctx, r.record.ID, to, "exec", func(rec *attempt.Record) {
 		if r.managed {
 			rec.Result = &attempt.Result{Summary: clipSummary(r.result.Answer), Artifact: r.result.Artifact, Output: output}
-			rec.Usage = attemptUsage(r.result.Usage)
+			rec.Usage = r.result.Usage
 		}
 	})
 	if err == nil {
@@ -517,7 +517,7 @@ func (r *stepRun) bind(ctx context.Context, published artifact.Manifest) (attemp
 	}
 	completion := attempt.Completion{
 		Result: attempt.Result{Summary: clipSummary(r.result.Answer), Artifact: published.ID, Refs: refNames(r.result.Refs)},
-		Usage:  attemptUsage(r.result.Usage), Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version},
+		Usage:  r.result.Usage, Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version},
 	}
 	r.result.Refs = append(r.result.Refs, plan.Ref{Kind: "artifact", Value: published.ID})
 	if completion.Result.Output, err = encodeStepOutput(r.p, r.step, r.upstream, r.result); err != nil {
@@ -718,10 +718,4 @@ func (r *stepRun) detachment(step *lifecycle.StepError, detached *execution.Reta
 		}
 		return agentexec.Blocked(r.record, "failure", "保存原步骤的失败结果", "原命令已经返回，但结果尚未持久保存。", "建议恢复存储后检查同一次执行。", detached)
 	}
-}
-
-// spendOf is a step's spend as the harness last reported it.
-func spendOf(last view.Progress) *plan.Usage {
-	u := last.Usage
-	return &plan.Usage{Model: last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
 }

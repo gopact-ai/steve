@@ -19,6 +19,20 @@ import (
 
 var ErrNodeReceiptPending = errors.New("node receipt lacks exact committed result, accounting or delivery")
 
+// accountedEnding says whether a chat attempt's accounting records how it
+// ended: a Bound attempt answered, so ok; a Failed or BindConflict one did
+// not, and failed, was cancelled or timed out.
+func accountedEnding(state attempt.State, outcome task.Outcome) bool {
+	if state == attempt.Bound {
+		return outcome == task.OutcomeOK
+	}
+	switch outcome {
+	case task.OutcomeError, task.OutcomeCancelled, task.OutcomeTimeout:
+		return true
+	}
+	return false
+}
+
 // ReadNodeReceiptProof joins owner readers under one committed local snapshot.
 // Callers on a follower must first wait for the required committed version.
 // Unsupported delivery owners, unknown usage and incomplete settlement retain
@@ -72,15 +86,11 @@ func ReadNodeReceiptProof(ctx context.Context, book *ledger.Ledger, receipt node
 		if err != nil {
 			return err
 		}
-		outcome := task.OutcomeError
-		if record.State == attempt.Bound {
-			outcome = task.OutcomeOK
-		}
 		// Chat binds the primary row admitted for this exact worker and node;
 		// independent plan/verification accounting cannot stand in for it.
 		if !found || accounting.Independent || accounting.Node != record.Node || accounting.Member != record.Agent ||
 			accounting.ExecutionEpoch != record.Execution.Epoch || accounting.EndedAt.IsZero() ||
-			accounting.Outcome != outcome || accounting.UsageKnown == nil || !*accounting.UsageKnown ||
+			!accountedEnding(record.State, accounting.Outcome) || accounting.UsageKnown == nil || !*accounting.UsageKnown ||
 			accounting.Model != u.Model || accounting.Tokens != (task.Tokens{Input: u.Input, Output: u.Output,
 			CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Total: u.Input + u.Output}) {
 			return ErrNodeReceiptPending

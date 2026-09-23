@@ -58,17 +58,17 @@ func (c *Coordinator) SetSupervisor(s Supervisor, plans *plan.Store, fleet *rost
 
 func (c *Coordinator) planExecutionResult(ctx context.Context, planID string, outcome exec.Outcome, runErr error) (Result, error) {
 	title := c.text.T(i18n.CardPlan)
-	if blocked := planRecoveryError(runErr); blocked != nil {
+	if blocked := c.planRecoveryError(runErr); blocked != nil {
 		return Result{Title: title}, blocked
 	}
 	if runErr != nil {
 		runs, lookupErr := c.supervisor.OpenRuns(ctx)
 		if lookupErr != nil {
-			return Result{Title: title}, retainedBlocked("plan-state", "读取计划的执行状态", "暂时无法确认计划是否已经完成。", lookupErr.Error(), "建议恢复存储后重新检查原计划。", errors.Join(runErr, lookupErr))
+			return Result{Title: title}, c.retainedBlocked("plan-state", "读取计划的执行状态", "暂时无法确认计划是否已经完成。", lookupErr.Error(), "建议恢复存储后重新检查原计划。", errors.Join(runErr, lookupErr))
 		}
 		for _, run := range runs {
 			if run.PlanID == planID {
-				return Result{Title: title}, retainedBlocked("plan-state", "读取原计划的持久执行阶段", "计划尚未完整完成。", runErr.Error(), "建议恢复执行条件后重新检查，保留已完成步骤。", runErr)
+				return Result{Title: title}, c.retainedBlocked("plan-state", "读取原计划的持久执行阶段", "计划尚未完整完成。", runErr.Error(), "建议恢复执行条件后重新检查，保留已完成步骤。", runErr)
 			}
 		}
 	}

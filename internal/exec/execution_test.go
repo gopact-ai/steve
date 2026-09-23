@@ -48,7 +48,7 @@ func TestTaskPauseReachesPlanStepAndBlocksLateResult(t *testing.T) {
 	deps := Deps{Executions: r, Workspaces: art, Artifacts: art, Attempts: att, Roster: testRoster(t, bothNodes()), Runner: runnerFunc(func(ctx context.Context, req StepRequest) (plan.StepResult, error) {
 		entered <- ctx
 		<-release
-		return plan.StepResult{Answer: "late", Usage: &plan.Usage{Input: 7, Reported: true}}, nil
+		return plan.StepResult{Answer: "late", Usage: &attempt.Usage{Input: 7, Reported: true}}, nil
 	})}
 	go func() {
 		_, err := runStep(t.Context(), plan.Plan{ID: "plan", ProjectID: "p", TaskID: tracked.ID}, step("work", "work", []string{"basic"}), nil, deps)

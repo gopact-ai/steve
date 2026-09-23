@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -90,7 +91,7 @@ func (c *Coordinator) finishChatAccounting(ctx context.Context, id string, recor
 			return c.SettleChatAccounting(ctx, current.ID)
 		}
 	}
-	_, err := c.tasks.FinishAs(id, outcome(turnErr), tokens, 0, model)
+	_, err := c.tasks.FinishAs(id, lifecycle.OutcomeOf(turnErr), tokens, 0, model)
 	return err
 }
 

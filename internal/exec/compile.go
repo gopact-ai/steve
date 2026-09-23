@@ -640,10 +640,3 @@ const factsBudget = 4 << 10
 // ErrCompletion means the result could not be committed. Its workspace is
 // retained; retrying the agent would hide the original completion conflict.
 var ErrCompletion = errors.New("execution result was not committed")
-
-func attemptUsage(u *plan.Usage) *attempt.Usage {
-	if u == nil {
-		return nil
-	}
-	return &attempt.Usage{Model: u.Model, Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Context: u.Context, Reported: u.Reported}
-}

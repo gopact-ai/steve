@@ -69,7 +69,7 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 		proposed, err = c.supervisor.Plan(ctx, planner.Request{Goal: goal, TaskID: tracked.ID, ProjectID: tracked.ProjectID, Roster: candidates, TurnsLeft: tracked.Budget.MaxTurns - tracked.Budget.Turns})
 	}
 	if err != nil {
-		if blocked := planRecoveryError(err); blocked != nil {
+		if blocked := c.planRecoveryError(err); blocked != nil {
 			return Result{Title: title}, blocked
 		}
 		return Result{Title: title, Text: c.text.T(i18n.PlanFailed, err)}, nil
@@ -79,7 +79,7 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 	proposed.ProjectID, proposed.Execution = tracked.ProjectID, execution.Token(ctx)
 	stored, err := c.plans.Create(proposed)
 	if err != nil {
-		return Result{Title: title}, retainedBlocked("plan-store", "保存已生成的计划", "规划结果尚未保存到任务。", err.Error(), "建议恢复存储后重新核对已提交的规划结果。", err)
+		return Result{Title: title}, c.retainedBlocked("plan-store", "保存已生成的计划", "规划结果尚未保存到任务。", err.Error(), "建议恢复存储后重新核对已提交的规划结果。", err)
 	}
 	outcome, runErr := c.supervisor.Execute(ctx, stored)
 	if runErr == nil {
