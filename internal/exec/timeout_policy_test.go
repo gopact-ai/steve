@@ -83,10 +83,15 @@ func timeoutConsumer(t *testing.T, kind string, fallback time.Duration, source f
 	return func(ctx context.Context) error { return verifier.Verify(ctx, req, check, plan.StepResult{}) }
 }
 
+// consumerTimeoutSlack is how long a consumer may take to be observed
+// after its deadline is set. The policies under test differ by minutes, so
+// a loaded test run cannot blur one into another.
+const consumerTimeoutSlack = 10 * time.Second
+
 func checkConsumerTimeout(ctx context.Context, spec, want time.Duration, agent bool) error {
 	deadline, ok := ctx.Deadline()
 	remaining := time.Until(deadline)
-	if !ok || remaining > want || remaining < want-time.Second {
+	if !ok || remaining > want || remaining < want-consumerTimeoutSlack {
 		return fmt.Errorf("remaining=%s want=%s (deadline=%v)", remaining, want, ok)
 	}
 	if agent && spec != want {
