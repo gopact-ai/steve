@@ -72,7 +72,7 @@ func TestConsoleReleaseRefusesChangedExportAndRollsBackAllOwners(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(before, after) {
 				t.Fatal("failed release committed console freeze", err)
 			}
-			loaded, err := task.OpenLedger(book, "")
+			loaded, err := task.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

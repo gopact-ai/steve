@@ -23,7 +23,7 @@ func executionWorld(t *testing.T) (*world, *execution.Registry) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

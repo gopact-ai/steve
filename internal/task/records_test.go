@@ -2,11 +2,8 @@ package task
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -38,7 +35,7 @@ func taskRecordBook(t *testing.T) (*Store, *ledger.Ledger) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = book.Close() })
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +99,7 @@ func TestTaskRecordSmallWritesIgnoreTenThousandHistoricalAttempts(t *testing.T) 
 			if len(replicated.payloads) != before {
 				t.Fatal("identical settlement produced another mutation")
 			}
-			reopened, err := OpenLedger(book, "")
+			reopened, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,36 +115,6 @@ func TestTaskRecordSmallWritesIgnoreTenThousandHistoricalAttempts(t *testing.T) 
 				t.Fatalf("history rows=%d want=%d", len(got.Attempts), wantRows)
 			}
 		})
-	}
-}
-
-func TestTaskOpenLedgerIgnoresLegacyDocumentsAndFiles(t *testing.T) {
-	_, book := taskRecordBook(t)
-	legacy := filepath.Join(t.TempDir(), "tasks.json")
-	if err := os.WriteFile(legacy, []byte(`{"next_id":100,"tasks":{"99":{"id":"99","goal":"legacy"}}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := book.Document("tasks").Save([]byte(`{"next_id":200,"tasks":{"199":{"id":"199","goal":"old-document"}}}`)); err != nil {
-		t.Fatal(err)
-	}
-	s, err := OpenLedger(book, legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(s.List("")) != 0 {
-		t.Fatal("legacy document remained authoritative")
-	}
-	if _, err := os.Stat(legacy); err != nil {
-		t.Fatal("legacy file was imported or retired", err)
-	}
-	row, err := s.Create(Task{Goal: "record"})
-	if err != nil || row.ID != "1" {
-		t.Fatalf("new record=%+v err=%v", row, err)
-	}
-	var old map[string]any
-	raw, _, err := book.Document("tasks").Load()
-	if err != nil || json.Unmarshal(raw, &old) != nil || old["next_id"] != float64(200) {
-		t.Fatal("record backend dual-wrote legacy document")
 	}
 }
 
@@ -170,7 +137,7 @@ func TestTaskRecordRejectedReplicationRollsBackMemoryAndDurableRows(t *testing.T
 	if _, err := s.Begin(child.ID, "child", "node", ""); !errors.Is(err, denied) {
 		t.Fatalf("begin err=%v", err)
 	}
-	reopened, err := OpenLedger(book, "")
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +148,7 @@ func TestTaskRecordRejectedReplicationRollsBackMemoryAndDurableRows(t *testing.T
 	if _, err := s.Begin(child.ID, "child", "node", ""); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err = OpenLedger(book, "")
+	reopened, err = OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -36,7 +36,7 @@ func TestTaskPauseReachesPlanStepAndBlocksLateResult(t *testing.T) {
 	}
 	art := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	att := attempt.New(book)
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestVerifierCanUseWorkersSingleEndpointSlotAfterSessionClosed(t *testing.T)
 	}
 	art := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	att := attempt.New(book)
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

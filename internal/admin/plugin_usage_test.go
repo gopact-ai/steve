@@ -43,7 +43,7 @@ func installedRuntime(t *testing.T) (*PluginService, plugins.RuntimeRef) {
 
 func TestRemovalPreservesArchivedSessionsAndUnconfirmedProcesses(t *testing.T) {
 	service, ref := installedRuntime(t)
-	sessions, err := state.OpenLedger(service.Library.Ledger, "")
+	sessions, err := state.OpenLedger(service.Library.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRemovalRejectsOfflineUnverifiableTarget(t *testing.T) {
 	service, ref := installedRuntime(t)
 	// Retained references to a machine stay blockers even if current config no
 	// longer targets that machine; a lost connection is not stop evidence.
-	sessions, err := state.OpenLedger(service.Library.Ledger, "")
+	sessions, err := state.OpenLedger(service.Library.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

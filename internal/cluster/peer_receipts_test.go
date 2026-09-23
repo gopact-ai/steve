@@ -89,7 +89,7 @@ func TestNodeReceiptProofRejectsAccountingIdentitySubstitution(t *testing.T) {
 
 func committedConsoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string) (nodewire.SessionReceipt, consoleapi.Reply) {
 	t.Helper()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestPeerNodeReceiptAuthorityRequiresExactActivationAndOriginalProof(t *test
 		}
 	}
 	// Revoking execution must not revoke cleanup of an already committed input.
-	tasks, err := task.OpenLedger(active.Ledger, "")
+	tasks, err := task.OpenLedger(active.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

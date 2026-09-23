@@ -28,7 +28,7 @@ func TestDeletedTxProvesOnlyAWholeDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

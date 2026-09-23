@@ -17,7 +17,7 @@ func retainedSQLiteRegistry(t *testing.T) (*Registry, *task.Store, task.Task) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

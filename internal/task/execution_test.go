@@ -14,7 +14,7 @@ func TestSetAsideRevokesWholeTreeAndSurvivesResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	s, err := OpenLedger(l, "")
+	s, err := OpenLedger(l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestSetAsideRevokesWholeTreeAndSurvivesResume(t *testing.T) {
 	if err := s.CheckExecution(old); !errors.Is(err, ErrExecutionStopped) {
 		t.Fatal("resume revived stale permission")
 	}
-	reloaded, err := OpenLedger(l, "")
+	reloaded, err := OpenLedger(l)
 	if err != nil {
 		t.Fatal(err)
 	}

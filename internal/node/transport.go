@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -46,16 +44,9 @@ func (t remoteTransport) Start(ctx context.Context) (acphost.Process, error) {
 		return nil, err
 	}
 	req := nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: t.harness, Plugin: t.plugin.Clone(), Stream: hex.EncodeToString(nonce[:])}
-	resumable := nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureJournal)
-	if !resumable {
-		req.Stream = ""
-	}
 	stream, err := c.mux.Open(req)
 	if err != nil {
 		return nil, fmt.Errorf("open session stream on %q: %w", t.node, err)
-	}
-	if !resumable {
-		return legacyRemoteProcess{stream: stream}, nil
 	}
 	return newRemoteProcess(t, c, stream), nil
 }
@@ -79,23 +70,4 @@ func (c *conn) harnessTrouble(harnessID string) string {
 		}
 	}
 	return "not advertised"
-}
-
-// remoteProcess is the agent running on the node. Its stdio is one stream;
-// closing that stream is what tells the node to kill the child.
-type legacyRemoteProcess struct{ stream *nodewire.Stream }
-
-func (p legacyRemoteProcess) Stdout() io.ReadCloser { return p.stream }
-func (p legacyRemoteProcess) Stdin() io.WriteCloser { return p.stream }
-
-func (p legacyRemoteProcess) Wait() error {
-	<-p.stream.Done()
-	return nil
-}
-
-func (p legacyRemoteProcess) Kill() { _ = p.stream.Close() }
-
-func (p legacyRemoteProcess) Stopped() bool {
-	err := p.stream.Err()
-	return err != nil && strings.HasPrefix(err.Error(), nodewire.ExitPrefix)
 }

@@ -183,7 +183,7 @@ Add a machine from the console's resources page using its name, data level and a
 
 The target needs Git, authenticated harnesses and a `steve-node` binary matching its OS and CPU architecture. The hub can serve a binary built with `CGO_ENABLED=0` through `gateway.node_binary`, or you can copy it with `scp`; see [node deployment](docs/operations.md#部署-node). The hub URL in the bootstrap command must be reachable from the node. Bootstrap copies only harness `command` / `args`, not authentication, environment or other harness settings, and it does not update an existing executable. Start nodes and locally provided wrappers such as `nodectl` from a login shell.
 
-After negotiating **`process_journal.v1`**, a dropped connection leaves the node process alive. The hub reattaches using acknowledged input and output sequence numbers, with a default **10-minute** grace period. Legacy nodes, expired grace, unavailable replay logs or a lost node process still cause failure. A Hub restart first quarantines executions without proof that they stopped, then recovers settled attempts and eligible tasks. This is separate from reattaching the original process stream.
+Every node must declare **`process_journal.v1`**; one that does not is refused at the handshake. A dropped connection leaves the node process alive. The hub reattaches using acknowledged input and output sequence numbers, with a default **10-minute** grace period. Expired grace, unavailable replay logs or a lost node process still cause failure. A Hub restart first quarantines executions without proof that they stopped, then recovers settled attempts and eligible tasks. This is separate from reattaching the original process stream.
 
 On a remote node the platform's share of a turn is almost entirely round trips: admission and the two snapshots around the turn are one trip each. The hub logs one `turn: timing` line per turn with every phase's duration.
 
@@ -212,7 +212,6 @@ The isolated lab requires Linux, a local Docker engine and a matching Go toolcha
 - [docs/plugins-local.md](docs/plugins-local.md): local capability package preview, pinned preparation and command reference (Chinese).
 - [docs/plugins.md](docs/plugins.md): plugin implementation plan (Chinese), covering capability packages, version and node binding, and acceptance stages.
 - [docs/operations.md](docs/operations.md): configuration keys, deployment, gates and troubleshooting.
-- [docs/history/](docs/history/): archived console and capability proposals and the collaboration audit.
 - Code: entry points in [cmd/](cmd/), core implementation in [internal/](internal/), console in [web/console/](web/console/), acceptance checks in [e2e/](e2e/).
 
 ## License

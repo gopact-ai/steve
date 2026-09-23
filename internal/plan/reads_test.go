@@ -19,7 +19,7 @@ func TestPlanHotReadsIgnoreClosedPlansAndRevisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s, err := OpenLedger(book, "")
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestPlanHotReadsIgnoreClosedPlansAndRevisions(t *testing.T) {
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_plan`); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := OpenLedger(book, "")
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestPlanReadIndexDoesNotHideMalformedHistory(t *testing.T) {
 			if err := book.Document("plans").Save([]byte(raw)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := OpenLedger(book, ""); err == nil {
+			if _, err := OpenLedger(book); err == nil {
 				t.Fatal("corrupt owner history became an apparently complete query")
 			}
 		})
@@ -297,7 +297,7 @@ func TestPlanMutationResultsAndInputsCannotChangeCommittedReadState(t *testing.T
 				t.Fatal(err)
 			}
 			defer book.Close()
-			s, err := OpenLedger(book, "")
+			s, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -344,7 +344,7 @@ func TestPlanMutationResultsAndInputsCannotChangeCommittedReadState(t *testing.T
 					err != nil || lastErr != nil || !reflect.DeepEqual(first, got) || !reflect.DeepEqual(tail, last) {
 					t.Fatal("caller mutation bypassed durable state, read index or cursor")
 				}
-				reopened, err := OpenLedger(book, "")
+				reopened, err := OpenLedger(book)
 				if err != nil {
 					t.Fatal(err)
 				}

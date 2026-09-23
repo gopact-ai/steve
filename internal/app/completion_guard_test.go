@@ -44,11 +44,11 @@ func assembledCompletion(t *testing.T) completionFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := state.OpenLedger(book, "")
+	sessions, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func assembledCompletion(t *testing.T) completionFixture {
 
 func (f completionFixture) complete(t *testing.T, exchange string, want bool) {
 	t.Helper()
-	beforeStore, err := task.OpenLedger(f.book, "")
+	beforeStore, err := task.OpenLedger(f.book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func (f completionFixture) complete(t *testing.T, exchange string, want bool) {
 	if (err == nil) != want || after.CompletedByUser != want || strings.Contains(result.Text, "is completed") != want {
 		t.Fatalf("completion: want=%v root=%+v result=%+v err=%v", want, after, result, err)
 	}
-	reopened, err := task.OpenLedger(f.book, "")
+	reopened, err := task.OpenLedger(f.book)
 	if err != nil {
 		t.Fatal(err)
 	}

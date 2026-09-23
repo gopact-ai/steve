@@ -32,7 +32,7 @@ func assembleLedger(boot runtimeAssembly) (ledgerAssembly, error) {
 	for _, r := range recovery.Expired {
 		slog.Info(fmt.Sprintf("steve: recovered settled attempt: %s", attempt.Describe(r)), "attempt", r.ID, "task", r.TaskID, "node", r.Node)
 	}
-	store, err := state.OpenLedger(book, cfg.Gateway.StatePath)
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		return nil, err
 	}

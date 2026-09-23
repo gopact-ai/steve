@@ -104,7 +104,7 @@ func TestLifecycleReceiptDomainIsTheSameForRunAndReattach(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer book.Close()
-				tasks, err := task.OpenLedger(book, "")
+				tasks, err := task.OpenLedger(book)
 				if err != nil {
 					t.Fatal(err)
 				}

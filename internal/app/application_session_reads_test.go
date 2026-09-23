@@ -16,7 +16,7 @@ func TestSessionBindingReadsOnlyItsCommittedAttemptAndTaskHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestSessionBindingReadsOnlyItsCommittedAttemptAndTaskHeader(t *testing.T) {
 	if _, err := book.DB().Exec(`INSERT INTO bindings(kind,id,data,updated_at) VALUES('task-attempt','unrelated','invalid','2026-09-19T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := task.OpenLedger(book, ""); err == nil {
+	if _, err := task.OpenLedger(book); err == nil {
 		t.Fatal("fixture did not distinguish header reads from full-store loads")
 	}
 	key := execution.Key{TaskID: tracked.ID, AttemptID: record.ID}

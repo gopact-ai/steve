@@ -37,7 +37,7 @@ func TestGatewayResumeInputCannotBorrowLaterAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestGatewayConsumedResumeRecoversDispatchReceiptNotPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestGatewayManualWakeDoesNotDispatchPendingStartupAccounting(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

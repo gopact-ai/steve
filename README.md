@@ -183,7 +183,7 @@ macOS 上运行 `make desktop` 构建原生 App，构建脚本会输出 `Steve.a
 
 目标机器需要 Git、已认证的 harness 和适配目标 OS/CPU 架构的 `steve-node`。hub 可通过 `gateway.node_binary` 提供用 `CGO_ENABLED=0` 构建的二进制，也可手工 `scp`；完整步骤见 [node 部署](docs/operations.md#部署-node)。引导命令中的 hub 地址必须从 node 可达。引导只复制 hub harness 的 `command` / `args`，不复制认证、环境或其他 harness 配置，也不更新已存在的可执行二进制。node 和 `nodectl` 等自备启动脚本都应从登录 shell 启动。
 
-协商了 **`process_journal.v1`** 的连接中断后，node 保留进程，hub 根据进程流的输入确认和输出序号续接；默认宽限 **10 分钟**。旧节点、超过宽限、日志不可回放或 node 进程已丢失时仍会失败。Hub 重启先隔离缺少停止证据的执行，再回收已确认静止的 attempt 并恢复符合条件的任务；这不等同于续接原进程流。
+执行节点必须声明 **`process_journal.v1`**，未声明的在握手时即被拒绝。连接中断后，node 保留进程，hub 根据进程流的输入确认和输出序号续接；默认宽限 **10 分钟**。超过宽限、日志不可回放或 node 进程已丢失时仍会失败。Hub 重启先隔离缺少停止证据的执行，再回收已确认静止的 attempt 并恢复符合条件的任务；这不等同于续接原进程流。
 
 远端回合的平台开销几乎全是往返：每回合的准入、回合前后两次快照各是一次到节点的往返，hub 日志里每回合一行 `turn: timing` 给出各阶段耗时。
 
@@ -213,7 +213,6 @@ agent 用 `steve_delegate` 交出一件有界工作；调用短暂等待后返�
 - [docs/plugins-local.md](docs/plugins-local.md)：插件页面操作、作者清单、节点凭据与固定版本参考。
 - [docs/plugins.md](docs/plugins.md)：插件系统契约：能力包、版本与节点绑定、分阶段验收。
 - [docs/operations.md](docs/operations.md)：逐键配置参考、部署、门禁与排障。
-- [docs/history/](docs/history/)：旧控制台方案、能力清单方案与协作审计，作为历史记录保存。
 - 代码入口：[cmd/](cmd/)、核心实现 [internal/](internal/)、控制台 [web/console/](web/console/)、验收 [e2e/](e2e/)。
 
 ## License

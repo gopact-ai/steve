@@ -76,8 +76,8 @@ const (
 	StreamSkills = "skills"
 	// StreamRelease tells the node an attempt is over: the bindings it
 	// minted for it are dropped and the servers behind them stopped. The
-	// command is the attempt id. With FeatureJournal, a nonempty Stream
-	// instead releases that entire process, independently of attempt bindings.
+	// command is the attempt id. A nonempty Stream instead releases that
+	// entire process, independently of attempt bindings.
 	StreamRelease = "release"
 	// StreamConfig reads or rewrites what a node offers — its AI tools,
 	// the commands it checks for, its MCP servers, its declarations — so

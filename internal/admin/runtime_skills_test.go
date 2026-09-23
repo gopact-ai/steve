@@ -180,7 +180,7 @@ func TestSkillShipperReturnsDirectErrors(t *testing.T) {
 			peer := newSkillPeer(t, "remote")
 			switch failure {
 			case "unsupported":
-				peer.features = nil
+				peer.features = []string{nodewire.FeatureJournal}
 			case "offline":
 				peer.offline.Store(true)
 			default:
@@ -298,7 +298,7 @@ type skillPeer struct {
 
 func newSkillPeer(t *testing.T, name string) *skillPeer {
 	t.Helper()
-	p := &skillPeer{name: name, dir: t.TempDir(), features: []string{nodewire.FeatureSkills}, t: t}
+	p := &skillPeer{name: name, dir: t.TempDir(), features: []string{nodewire.FeatureJournal, nodewire.FeatureSkills}, t: t}
 	p.failure.Store("")
 	return p
 }

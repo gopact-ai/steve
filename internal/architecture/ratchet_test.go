@@ -15,9 +15,8 @@ import (
 	"testing"
 )
 
-// The ratchets below hold the line on what the refactoring plan
-// (docs/refactor.md) is removing: they fail when a new offender appears
-// and when the baseline still lists one that is gone. Regenerate a
+// The ratchets below only let the codebase improve: they fail when a new
+// offender appears and when the baseline still lists one that is gone. Regenerate a
 // baseline after removing offenders with RATCHET_UPDATE=1.
 
 const (

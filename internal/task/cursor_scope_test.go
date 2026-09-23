@@ -107,7 +107,7 @@ func TestScopedTaskCursorTracksAncestorsFiltersAndFailedWrites(t *testing.T) {
 	if _, err := s.book.DB().Exec(`DROP TRIGGER reject_cursor`); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := OpenLedger(s.book, "")
+	reopened, err := OpenLedger(s.book)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -97,6 +97,3 @@ and isolated browser interactions. Its fleet job runs disposable gates, not real
 Run `make test` and `make test-console` locally; install the test browser with
 `cd web/console && npm ci && npx playwright install chromium` first. Configuration, deployment and troubleshooting are in
 [operations](docs/operations.md).
-
-Historical background and the regressions these gates cover: [console §21](docs/history/console.md#21-跨机器协作-e2e2026-09-04)
-and [§27](docs/history/console.md#27-稳定性治理2026-09-05).

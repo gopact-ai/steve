@@ -74,7 +74,7 @@ func retainedPlanFixture(t *testing.T) (*Coordinator, *retainedPlanSupervisor, R
 			t.Fatal(err)
 		}
 	}
-	plans, err := plan.OpenLedger(book, "")
+	plans, err := plan.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 	for _, resumed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "recover", true: "revoked"}[resumed], func(t *testing.T) {
 			c, _, book, _, _ := retainedChatFixture(t)
-			plans, err := plan.OpenLedger(book, "")
+			plans, err := plan.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

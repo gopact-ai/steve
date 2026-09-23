@@ -36,7 +36,7 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
 	t.Cleanup(a.Nodes.Close)
 	a.ClusterMode = true
-	store, err := state.OpenLedger(book, "")
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

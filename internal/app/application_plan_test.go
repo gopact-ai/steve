@@ -195,7 +195,7 @@ func testPlanHandover(t *testing.T, llm bool) {
 	if err != nil || len(records) != wantCount || !foundOriginal {
 		t.Fatalf("plan replayed or failed its original step: %+v %v", records, err)
 	}
-	tasks, err := task.OpenLedger(active.Ledger, "")
+	tasks, err := task.OpenLedger(active.Ledger)
 	if err != nil {
 		t.Fatal(err)
 	}

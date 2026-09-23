@@ -11,7 +11,7 @@ import (
 // the way the owner discards a conversation.
 func deleteReceiptTask(t *testing.T, book *ledger.Ledger) {
 	t.Helper()
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

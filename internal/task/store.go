@@ -49,8 +49,8 @@ type data struct {
 	Meta   map[string]Meta  `json:"meta,omitempty"`
 }
 
-// Open keeps the store in one JSON file. It is what tests use and what a
-// pre-ledger deployment wrote; the gateway itself opens the ledger.
+// Open keeps the store in one JSON file, for tests; the gateway opens the
+// ledger.
 func Open(path string) (*Store, error) {
 	return openWith(&filedoc.Document{Path: path})
 }

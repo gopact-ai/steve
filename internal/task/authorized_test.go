@@ -15,7 +15,7 @@ func authorizedWorld(t *testing.T) (*Store, *ledger.Ledger, Task, ExecutionToken
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	store, err := OpenLedger(book, "")
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestSpawnAuthorizedRejectsRevokedExecutionAndGuardWithoutChangingTasks(t *t
 			if len(s.List("chat")) != 1 {
 				t.Fatal("rejected command changed task cache")
 			}
-			stored, err := OpenLedger(book, "")
+			stored, err := OpenLedger(book)
 			if err != nil || len(stored.List("chat")) != 1 {
 				t.Fatal("rejected command persisted a child")
 			}
@@ -93,7 +93,7 @@ func TestSpawnAndConsumptionShareAuthorizedTaskTransaction(t *testing.T) {
 	if err := s.SetDeliveryAuthorized(t.Context(), token, child.ID, DeliveryDelivered, guard); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := OpenLedger(book, "")
+	loaded, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestSpawnAndConsumptionShareAuthorizedTaskTransaction(t *testing.T) {
 }
 func TestSpawnAuthorizedDoesNotOverwriteAnotherTaskStoreSnapshot(t *testing.T) {
 	s, book, _, token := authorizedWorld(t)
-	other, err := OpenLedger(book, "")
+	other, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

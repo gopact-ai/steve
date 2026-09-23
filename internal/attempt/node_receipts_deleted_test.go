@@ -15,7 +15,7 @@ func completedReceiptOfDeletedTask(t *testing.T) (*Service, Completion) {
 	if _, err := service.Complete(t.Context(), record.ID, "test", completion); err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(service.l, "")
+	tasks, err := task.OpenLedger(service.l)
 	if err != nil {
 		t.Fatal(err)
 	}

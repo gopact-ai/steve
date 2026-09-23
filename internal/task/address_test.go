@@ -17,7 +17,7 @@ func TestTaskAddressSurvivesReloadAndCannotRebind(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer book.Close()
-			store, err := OpenLedger(book, "")
+			store, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -46,7 +46,7 @@ func TestTaskAddressSurvivesReloadAndCannotRebind(t *testing.T) {
 			if child.Address() != want {
 				t.Fatalf("child address = %+v", child.Address())
 			}
-			reopened, err := OpenLedger(book, "")
+			reopened, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -97,7 +97,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	for _, l := range recovered {
 		slog.Info(fmt.Sprintf("steve: recovered landing %s of %s into %s: %s", l.ID, l.Artifact, l.Project, l.State), "landing", l.ID, "artifact", l.Artifact, "project", l.Project)
 	}
-	tasks, err := task.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "tasks.json"))
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		return nil, fmt.Errorf("open tasks: %w", err)
 	}
@@ -112,11 +112,11 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		}
 	}
 	coordinator.SetTasks(tasks, adminsvc.NodeName())
-	schedules, err := schedule.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "schedules.json"))
+	schedules, err := schedule.OpenLedger(book)
 	if err != nil {
 		return nil, fmt.Errorf("open schedules: %w", err)
 	}
-	plans, err := plan.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "plans.json"))
+	plans, err := plan.OpenLedger(book)
 	if err != nil {
 		return nil, fmt.Errorf("open plans: %w", err)
 	}

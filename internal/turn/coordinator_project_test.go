@@ -181,13 +181,13 @@ func TestProjectSwitchClosesTheConversationsTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	store, err := state.OpenLedger(book, "")
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, book)
-	tasks, err := task.OpenLedger(book, "")
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

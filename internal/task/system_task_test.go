@@ -73,7 +73,7 @@ func TestSystemTaskStaysOutOfTaskListsButKeepsItsAccounting(t *testing.T) {
 		}
 	}
 	check(t, s)
-	reopened, err := OpenLedger(book, "")
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -85,7 +85,7 @@ func newRealFleet(t *testing.T) *realFleet {
 		project.Project{ID: "real-a", Home: project.Home{Node: nodeA, Path: realHome(nodeA, "real-a")}},
 		project.Project{ID: "real-b", Home: project.Home{Node: nodeB, Path: realHome(nodeB, "real-b")}},
 	)
-	tasks, err := task.OpenLedger(ledgerOf(t, dir), "")
+	tasks, err := task.OpenLedger(ledgerOf(t, dir))
 	if err != nil {
 		t.Fatal(err)
 	}
