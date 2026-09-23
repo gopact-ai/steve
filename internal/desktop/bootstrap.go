@@ -3,7 +3,6 @@ package desktop
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/localtoken"
 )
 
 const profileName = "desktop.json"
@@ -58,7 +58,7 @@ func DefaultStateDir() (string, error) {
 
 func installationPaths(root string) Paths {
 	return Paths{Root: root, Config: filepath.Join(root, "config.json"), Profile: filepath.Join(root, profileName),
-		Identity: filepath.Join(root, "node-identity.json"), Token: filepath.Join(root, "loopback-token"),
+		Identity: filepath.Join(root, "node-identity.json"), Token: filepath.Join(root, localtoken.FileName),
 		Endpoint: filepath.Join(root, "backend.json"), Process: filepath.Join(root, ".desktop-process.json"), Log: filepath.Join(root, "backend.log")}
 }
 
@@ -120,21 +120,9 @@ func Bootstrap(options Options) (*Installation, error) {
 	if identity.ID != saved.NodeID {
 		return nil, errors.New("desktop profile and node identity disagree")
 	}
-	token, err := readPrivate(paths.Token)
-	if errors.Is(err, os.ErrNotExist) {
-		var bytes [32]byte
-		if _, err := rand.Read(bytes[:]); err != nil {
-			return nil, err
-		}
-		token = []byte(base64.RawURLEncoding.EncodeToString(bytes[:]))
-		if err := createPrivate(paths.Token, token); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, fmt.Errorf("read loopback token: %w", err)
-	}
-	if len(token) < 40 || strings.ContainsAny(string(token), "\r\n\t ") {
-		return nil, errors.New("desktop loopback token is invalid")
+	token, err := localtoken.Resolve(paths.Root)
+	if err != nil {
+		return nil, fmt.Errorf("desktop loopback token: %w", err)
 	}
 	if _, err := readPrivate(paths.Config); errors.Is(err, os.ErrNotExist) {
 		enabled := false
@@ -149,7 +137,7 @@ func Bootstrap(options Options) (*Installation, error) {
 			Gateway: config.Gateway{HubID: saved.NodeID, OwnerID: "owner-" + strings.TrimPrefix(saved.NodeID, "node-"),
 				Locale: "zh", DefaultChannel: "console", PromptTimeout: config.Duration(10 * time.Minute),
 				StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"),
-				ReadModelAddr: "127.0.0.1:0", ReadModelToken: string(token)},
+				ReadModelAddr: "127.0.0.1:0", ReadModelToken: token},
 		}
 		if err := createJSON(paths.Config, cfg); err != nil {
 			return nil, err
@@ -164,7 +152,7 @@ func Bootstrap(options Options) (*Installation, error) {
 	if err := cfg.ValidateChannels(); err != nil {
 		return nil, err
 	}
-	if cfg.Gateway.HubID != saved.NodeID || filepath.Clean(filepath.Dir(cfg.Gateway.StatePath)) != root || cfg.Gateway.ReadModelToken != string(token) {
+	if cfg.Gateway.HubID != saved.NodeID || filepath.Clean(filepath.Dir(cfg.Gateway.StatePath)) != root || cfg.Gateway.ReadModelToken != token {
 		return nil, errors.New("desktop configuration does not match its persisted local identity, state directory, or access token")
 	}
 	address := "http://" + cfg.Gateway.ReadModelAddr
@@ -177,7 +165,7 @@ func Bootstrap(options Options) (*Installation, error) {
 	if err := privateDirectory(filepath.Join(root, "home")); err != nil {
 		return nil, fmt.Errorf("prepare desktop home workspace: %w", err)
 	}
-	return &Installation{Paths: paths, NodeID: saved.NodeID, URL: address, Token: string(token)}, nil
+	return &Installation{Paths: paths, NodeID: saved.NodeID, URL: address, Token: token}, nil
 }
 
 func (p profile) validate() error {

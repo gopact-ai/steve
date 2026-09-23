@@ -20,6 +20,7 @@
 | `material` | 不可变内容引用、选择范围、批注与受限 blob 存储 | ledger；不依赖 UI 或模型会话 |
 | `transfer` | 停服状态下导出和导入完整项目，重映射运行身份 | 各领域的导出/导入契约；不运行模型或安装版本 |
 | `hubid` | 持久 Hub 身份 | 本地原子文件；不以主机名或心跳推断归属 |
+| `localtoken`、`sameorigin` | 本机控制台的生成 token；本地 HTTP 面拒绝其他网站（Host 与写请求 Origin） | 标准库；每个直接面向浏览器的监听入口都要经过 `sameorigin` |
 | `node`、`nodewire`、`acphost` | 节点连接、可续接进程流、ACP 会话 | 协议、进程与资源接口 |
 | `channel`、`channel/feishu`、`gateway`、`card` | 消息通道、飞书投递及卡片 | 协调入口与呈现数据 |
 

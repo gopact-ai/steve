@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/localtoken"
 	runtimestore "github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -91,7 +92,7 @@ func lockExistingPeer(root string) (func(), error) {
 	}
 	// Authority is only published after these files exist. Missing credentials
 	// in an established installation must not be silently regenerated.
-	for _, name := range []string{"config.json", "node-identity.json", "loopback-token"} {
+	for _, name := range []string{"config.json", "node-identity.json", localtoken.FileName} {
 		if _, err := ReadClusterPrivate(filepath.Join(root, name)); err != nil {
 			return nil, err
 		}

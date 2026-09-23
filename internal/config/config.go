@@ -406,7 +406,7 @@ func StarterFeishu(feishu Feishu) *Config {
 		MCPServers: map[string]MCPServer{},
 		Feishu:     feishu,
 		Gateway: Gateway{
-			PromptTimeout: Duration(10 * time.Minute), StatePath: "~/.steve/state.json",
+			PromptTimeout: Duration(10 * time.Minute), StatePath: DefaultStatePath,
 		},
 	}
 }
@@ -568,7 +568,7 @@ func (c *Config) applyDefaults() {
 		c.Gateway.OfflineReminderAfter = Duration(DefaultOfflineReminder)
 	}
 	if c.Gateway.StatePath == "" {
-		c.Gateway.StatePath = "~/.steve/state.json"
+		c.Gateway.StatePath = DefaultStatePath
 	}
 	if c.Gateway.ReadModelAddr == "" {
 		c.Gateway.ReadModelAddr = "127.0.0.1:7710"
@@ -975,6 +975,20 @@ func (c *Config) ProjectList() []project.Project {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// DefaultStatePath is where a Hub keeps its state unless configured otherwise.
+const DefaultStatePath = "~/.steve/state.json"
+
+// StateDir is the directory a gateway.state_path names, resolved as Load
+// resolves it: "~" against this user's home and a relative path against the
+// working directory. Clients use it to find what the Hub keeps there without
+// loading the whole configuration.
+func StateDir(statePath string) string {
+	if statePath == "" {
+		statePath = DefaultStatePath
+	}
+	return filepath.Dir(absolute(statePath))
 }
 
 func absolute(path string) string {
