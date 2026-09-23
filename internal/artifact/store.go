@@ -336,7 +336,8 @@ func (s *Store) SnapshotCanonicalUnder(ctx context.Context, p project.Project, h
 // on disk is no base: it is the snapshot the canonical name is at, which
 // is left where it is. A landing names its snapshot before it writes, so
 // with no name yet the holder is not one: the base is then cut as the
-// lineage's first snapshot, and naming it is left to the holder.
+// lineage's first snapshot, and naming it is left to the holder — unless
+// the holder named one meanwhile, which is then the base.
 func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, message string) (string, error) {
 	var base string
 	err := s.underCanonical(ctx, p, by, func(held ledger.Lease) error {
@@ -358,7 +359,17 @@ func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, messag
 		return "", fmt.Errorf("project %s has no canonical snapshot to start from yet: %w", p.ID, err)
 	}
 	m, _, _, err := s.cutCanonical(ctx, p, "", by, message)
-	return m.ID, err
+	if err != nil {
+		return "", err
+	}
+	// The holder may have named its first snapshot while the base was cut,
+	// and written on: the cut may hold those writes half done, and stands
+	// off the lineage the name now starts. The holder's snapshot is the
+	// base then.
+	if head, err = s.CanonicalOf(ctx, p.ID); err != nil || head != "" {
+		return head, err
+	}
+	return m.ID, nil
 }
 
 // CanonicalBaseUnder is CanonicalBase for a caller holding the canonical

@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
@@ -139,5 +140,40 @@ func TestIsolatedBaseBeforeAnyCanonicalSnapshotLeavesTheNameToTheLockHolder(t *t
 	}
 	if head := canonicalOf(t, store, "p"); head != "" {
 		t.Fatalf("canonical = %s, want it left unnamed for the lock holder", head)
+	}
+}
+
+// The holder may name its first snapshot, and write on, while that base
+// is being cut: once it has, its snapshot is the base, not the cut, which
+// may hold its writes half done and stands off the lineage the name
+// starts.
+func TestIsolatedBaseBeforeAnyCanonicalSnapshotTakesTheHoldersOnceNamed(t *testing.T) {
+	ctx := t.Context()
+	local := &localNode{root: t.TempDir(), state: t.TempDir()}
+	canonical := filepath.Join(local.root, "proj")
+	write(t, canonical, "a", "a0")
+	store, p := newStore(t, local, project.Home{Node: "node-a", Path: canonical})
+	node := &failingNode{localNode: local}
+	store.nodes = node
+	held, err := store.acquireCanonical(ctx, p, "att-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first string
+	node.before = onFirst(ops.Snapshot, func() {
+		m, _, err := store.SnapshotCanonicalUnder(ctx, p, held, "", "att-turn", "before turn")
+		if err != nil {
+			t.Error(err)
+		}
+		first = m.ID
+		write(t, canonical, "a", "a-half")
+	})
+
+	ws, err := store.Materialize(ctx, project.Request{Project: "p", Node: "node-a", Isolated: true, Owner: "att-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == "" || ws.Base != first || read(t, ws.Path, "a") != "a0" {
+		t.Fatalf("isolated base = %s with a=%s, want the holder's first snapshot %s", ws.Base, read(t, ws.Path, "a"), first)
 	}
 }
