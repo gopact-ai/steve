@@ -109,6 +109,8 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 	}
 	l.applyMu.Lock()
 	defer l.applyMu.Unlock()
+	l.restoreGeneration.Add(1)
+	defer l.restoreGeneration.Add(1)
 	// A captured checkpoint can finish persisting concurrently with Restore.
 	// Invalidate its physical-pruning callback before replacing any live facts.
 	l.snapshotGeneration++
