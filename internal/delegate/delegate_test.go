@@ -432,13 +432,15 @@ func stores(t *testing.T) (*artifact.Store, *attempt.Service, string) {
 func TestAChildIsCutForSilenceNotForWork(t *testing.T) {
 	w := newWorld(t)
 	w.running(t, "codex")
-	// The idle clock includes ledger/session setup. Leave enough room for
-	// that work under the race detector on shared CI runners, while the
-	// active child still runs for longer than one whole silence window.
-	w.service.MaxSilence = time.Second
+	// The idle clock includes ledger/session setup, which can take more than
+	// a second under the race detector on shared CI runners. The window
+	// leaves room for it; the active child still works for longer than one
+	// whole window.
+	const silence = 3 * time.Second
+	w.service.MaxSilence = silence
 
 	w.sessions.run = func(ctx context.Context, progress func(view.Progress)) (string, error) {
-		for i := 0; i < 40; i++ { // 2s of work, never 1s of silence
+		for i := 0; i < 80; i++ { // 4s of work, never a window of silence
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -460,7 +462,7 @@ func TestAChildIsCutForSilenceNotForWork(t *testing.T) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
-		case <-time.After(4 * time.Second):
+		case <-time.After(3 * silence):
 			return "too late", nil
 		}
 	}
