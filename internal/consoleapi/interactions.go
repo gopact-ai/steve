@@ -37,6 +37,9 @@ type PendingQuestion struct {
 	ExchangeID   string `json:"exchange_id"`
 	Project      string `json:"project,omitempty"`
 	TaskID       string `json:"task_id,omitempty"`
+	// ParentTaskID is set when TaskID is a delegated child asking in its
+	// parent's conversation, so the owner can tell which child is waiting.
+	ParentTaskID string `json:"parent_task_id,omitempty"`
 	AttemptID    string `json:"attempt_id,omitempty"`
 	SessionID    string `json:"session_id,omitempty"`
 	Generation   uint64 `json:"generation,omitempty"`

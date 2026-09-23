@@ -29,7 +29,7 @@ func delegateQuestionBinding(ctx context.Context, cons *console.Service, binding
 	if !lifecycle.IsManaged(binding.Session) {
 		requestID = ""
 	}
-	return consoleapi.PendingQuestion{Conversation: conversation, Project: binding.Project, TaskID: binding.Task, AttemptID: binding.Attempt, SessionID: binding.Session, RequestID: requestID}, nil
+	return consoleapi.PendingQuestion{Conversation: conversation, Project: binding.Project, TaskID: binding.Task, ParentTaskID: binding.ParentTask, AttemptID: binding.Attempt, SessionID: binding.Session, RequestID: requestID}, nil
 }
 
 // wireDelegateQuestions puts a child's questions before the owner in its

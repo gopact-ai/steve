@@ -297,6 +297,21 @@ try {
     assert.equal(f.answers.length, answersBeforeSwitch, "changing the approval mode never answers the request for the owner");
     console.log("PASS resolved requests name their machine, stay reachable in full, and offer the approval mode as a way out");
 
+    // A delegated child asks in its parent's thread; the owner has to see
+    // which child is waiting, pending and afterwards in the record.
+    const child = makeQuestion("q-child", { title: "Pick the child colour", agent: "builder", task_id: "11", parent_task_id: "7" });
+    await show(child);
+    await panel.getByText("From builder · Subtask #11", { exact: true }).waitFor();
+    f.questions = [{ ...child, state: "answered", answer: { command_id: "child", decision: "accept", choice: "wait" } }];
+    await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, text: "q-child", at });
+    await panel.locator("details.question-history").evaluate((element) => { element.open = true; });
+    await panel.locator(".question-done-who", { hasText: "builder · Subtask #11" }).waitFor();
+    const own = makeQuestion("q-own", { title: "Pick the root colour", agent: "builder" });
+    await show(own);
+    await panel.getByText("From builder", { exact: true }).waitFor();
+    assert.equal(await panel.getByText("Subtask #", { exact: false }).count(), 0, "a thread's own request names no child");
+    console.log("PASS a delegated child's request names the child that is waiting");
+
     // Choices stand side by side, so they have to read as one row: a
     // two-line description must not leave its neighbour's card short.
     await show(makeQuestion("q-even", { title: "Pick where to continue", options: [{ id: "stop", label: "Stop and retry with this plan", description: "I have reviewed and accept the external retry risk listed in this plan; this plan only." }, { id: "wait", label: "Wait for the original node", description: "Keep the task as it is." }] }));

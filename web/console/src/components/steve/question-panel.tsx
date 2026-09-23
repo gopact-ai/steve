@@ -85,7 +85,10 @@ function QuestionCard({ question, refresh, onResolved }: { question: PendingQues
     // Who is waiting reads as a person would say it — the agent and the
     // machine's name — because a thread can have several agents asking
     // from several machines and the requests look otherwise identical.
-    const asker = whoIs(nodeLabelOf, question.agent, question.node);
+    // A delegated child asks in its parent's thread, so the request also
+    // says which child is waiting.
+    const child = question.parent_task_id && question.task_id ? t("materials.childTask", { id: question.task_id }) : "";
+    const asker = [whoIs(nodeLabelOf, question.agent, question.node), child].filter(Boolean).join(" · ");
     const key = `steve.question.answer:${question.id}`;
     const [draft, setDraft] = useState(() => readDraft(key));
     const [busy, setBusy] = useState(false);

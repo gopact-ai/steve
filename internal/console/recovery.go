@@ -144,7 +144,7 @@ func (s *Service) RequestRecovery(ctx context.Context, binding consoleapi.Pendin
 	question.Kind = "recovery"
 	question.SessionID = binding.SessionID
 	question.Generation = binding.Generation
-	return s.askUser(ctx, consoleapi.PendingQuestion{Conversation: binding.Conversation, ExchangeID: binding.ExchangeID, Project: binding.Project, TaskID: binding.TaskID, AttemptID: binding.AttemptID, SessionID: binding.SessionID, Generation: binding.Generation, Locale: binding.Locale}, question, false)
+	return s.askUser(ctx, consoleapi.PendingQuestion{Conversation: binding.Conversation, ExchangeID: binding.ExchangeID, Project: binding.Project, TaskID: binding.TaskID, ParentTaskID: binding.ParentTaskID, AttemptID: binding.AttemptID, SessionID: binding.SessionID, Generation: binding.Generation, Locale: binding.Locale}, question, false)
 }
 
 // continueDetached preserves a managed exchange when its observer fails while

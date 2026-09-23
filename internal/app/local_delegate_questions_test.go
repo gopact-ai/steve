@@ -109,7 +109,7 @@ func TestHubLocalChildWaitsForItsOwnerInTheParentConversation(t *testing.T) {
 	answers := []consoleapi.QuestionAnswer{{CommandID: "grant", Decision: "accept", Choice: "allow"}, {CommandID: "colour", Decision: "accept", Choice: "Blue"}}
 	for _, answer := range answers {
 		q := awaitLocalChildQuestion(t, cons, conversation)
-		if q.ExchangeID != "" || q.TaskID != started.TaskID || q.AttemptID == "" || q.SessionID != "hub-child-session" || q.Project != "p" || !q.Deadline.IsZero() {
+		if q.ExchangeID != "" || q.ParentTaskID != parent.ID || q.TaskID != started.TaskID || q.AttemptID == "" || q.SessionID != "hub-child-session" || q.Project != "p" || !q.Deadline.IsZero() {
 			t.Fatalf("child question lost its own execution: %+v", q)
 		}
 		// Longer than the child's whole silence limit: a person thinking
