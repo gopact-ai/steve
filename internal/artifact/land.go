@@ -171,6 +171,14 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		return land, err
 	}
 	defer unlock()
+	// A lent lock is still its lender's to snapshot under: the slot keeps
+	// the lender off the workspace from the snapshot merged onto to the
+	// commit.
+	done, err := s.writeCanonical(ctx, p.ID)
+	if err != nil {
+		return land, err
+	}
+	defer done()
 	if err := s.checkNoRecoveryPending(ctx, p, land.ID); err != nil {
 		return land, err
 	}

@@ -126,6 +126,11 @@ type Store struct {
 	recoveryNotes sync.Map
 	// inApply holds the landings this process is applying right now.
 	inApply sync.Map
+	// writing holds, by project, a one-slot channel taken by whoever in
+	// this process writes the canonical workspace or cuts it under a lock
+	// it shares: a landing under a lent lock and its lender (see
+	// writeCanonical).
+	writing sync.Map
 }
 
 func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }
@@ -323,10 +328,30 @@ func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent
 
 // SnapshotCanonicalUnder is SnapshotCanonical for a caller already holding
 // the canonical lock, which held is: an in-place turn snapshotting the
-// directory it works in. The name moves fenced on that lock.
+// directory it works in. The name moves fenced on that lock. A landing
+// the holder lent the lock to is waited for; with one waiting for
+// recovery, the workspace is half written and the snapshot is the one
+// the name is at, unchanged.
 func (s *Store) SnapshotCanonicalUnder(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string) (Manifest, bool, error) {
-	m, changed, _, err := s.snapshotCanonical(ctx, p, held, parent, by, message)
-	return m, changed, err
+	var m Manifest
+	var changed bool
+	err := s.underLent(ctx, p, func() error {
+		var err error
+		m, changed, _, err = s.snapshotCanonical(ctx, p, held, parent, by, message)
+		return err
+	})
+	if !errors.Is(err, ErrRecoveryPending) {
+		return m, changed, err
+	}
+	head, err := s.namedWhilePending(ctx, p, err)
+	if err != nil {
+		return Manifest{}, false, err
+	}
+	m, found, err := s.Manifest(ctx, head)
+	if err == nil && !found {
+		err = fmt.Errorf("canonical snapshot %s of %s is not recorded", short(head), p.ID)
+	}
+	return m, false, err
 }
 
 // CanonicalBase is the canonical snapshot new work starts from. With the
@@ -342,7 +367,7 @@ func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, messag
 	var base string
 	err := s.underCanonical(ctx, p, by, func(held ledger.Lease) error {
 		var err error
-		base, err = s.CanonicalBaseUnder(ctx, p, held, by, message)
+		base, err = s.canonicalBaseUnder(ctx, p, held, by, message)
 		return err
 	})
 	if !errors.Is(err, ledger.ErrHeld) && !errors.Is(err, ErrRecoveryPending) {
@@ -375,14 +400,78 @@ func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, messag
 // CanonicalBaseUnder is CanonicalBase for a caller holding the canonical
 // lock, which held is: an in-place turn handing work to a child. What the
 // holder has written so far is the base, snapshotted under its lock on top
-// of the canonical name, which moves there.
+// of the canonical name, which moves there. A landing the holder lent the
+// lock to is waited for; with one waiting for recovery, the workspace is
+// half written and the base is the snapshot the name is at, left there.
 func (s *Store) CanonicalBaseUnder(ctx context.Context, p project.Project, held ledger.Lease, by, message string) (string, error) {
+	var base string
+	err := s.underLent(ctx, p, func() error {
+		var err error
+		base, err = s.canonicalBaseUnder(ctx, p, held, by, message)
+		return err
+	})
+	if errors.Is(err, ErrRecoveryPending) {
+		return s.namedWhilePending(ctx, p, err)
+	}
+	return base, err
+}
+
+// canonicalBaseUnder is CanonicalBaseUnder for a caller that has already
+// ruled out anyone else writing the workspace under its lock.
+func (s *Store) canonicalBaseUnder(ctx context.Context, p project.Project, held ledger.Lease, by, message string) (string, error) {
 	parent, err := s.CanonicalOf(ctx, p.ID)
 	if err != nil {
 		return "", err
 	}
 	m, _, _, err := s.snapshotCanonical(ctx, p, held, parent, by, message)
 	return m.ID, err
+}
+
+// underLent runs fn for a holder of the canonical lock once no landing it
+// lent the lock to is writing (see writeCanonical), and only if none is
+// waiting to be recovered: that is ErrRecoveryPending.
+func (s *Store) underLent(ctx context.Context, p project.Project, fn func() error) error {
+	done, err := s.writeCanonical(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := s.checkNoRecoveryPending(ctx, p, ""); err != nil {
+		return err
+	}
+	return fn()
+}
+
+// namedWhilePending is the snapshot the canonical name is at, which stands
+// for the workspace while a landing waiting for recovery has it half
+// written. With no name there is nothing to stand for it: pending is
+// the error then.
+func (s *Store) namedWhilePending(ctx context.Context, p project.Project, pending error) (string, error) {
+	head, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return "", err
+	}
+	if head == "" {
+		return "", pending
+	}
+	return head, nil
+}
+
+// writeCanonical takes the project's slot for writing its canonical
+// workspace in this process. The canonical lock keeps other holders out,
+// but a holder lends its lock to landings, and those write under the same
+// lease the holder snapshots under: the slot is what keeps the two apart.
+// It waits for the slot as long as ctx allows; the returned func gives it
+// back.
+func (s *Store) writeCanonical(ctx context.Context, projectID string) (func(), error) {
+	slot, _ := s.writing.LoadOrStore(projectID, make(chan struct{}, 1))
+	ch := slot.(chan struct{})
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait for the canonical workspace of %s: %w", projectID, context.Cause(ctx))
+	}
 }
 
 // underCanonical runs fn under the project's canonical lock, taken for it

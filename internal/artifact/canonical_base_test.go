@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -206,5 +207,75 @@ func TestIsolatedBaseLeavesTheLandingDriversLockAlone(t *testing.T) {
 	d.mu.Unlock()
 	if renewing == nil || renewing.Key != landing.Key {
 		t.Fatalf("the driver renews %+v after the cut, want its landing's lock %s", renewing, landing.Key)
+	}
+}
+
+// A base cut under a lock lent to a landing waits for that landing: while
+// it writes the canonical workspace path by path, what is on disk is half
+// of it, and the name is the landing's to move.
+func TestBaseUnderALentLockWaitsForTheLandingOnIt(t *testing.T) {
+	store, p, node, _, result := commitFixture(t)
+	lender, err := store.acquireCanonical(t.Context(), p, "att-parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.fail = ops.Apply
+	type cut struct {
+		base string
+		err  error
+	}
+	cuts := make(chan cut, 1)
+	node.before = onNth(ops.WritePath, 1, func() {
+		go func() {
+			base, err := store.CanonicalBaseUnder(t.Context(), p, lender, "att-child", "base for att-child")
+			cuts <- cut{base, err}
+		}()
+		select {
+		case c := <-cuts:
+			cuts <- c
+		case <-time.After(time.Second):
+		}
+	})
+
+	land, err := store.LandUnder(t.Context(), p, result, "test", lender)
+	if err != nil || land.State != LandCommitted {
+		t.Fatalf("land = %+v err=%v", land, err)
+	}
+	c := <-cuts
+	if c.err != nil {
+		t.Fatal(c.err)
+	}
+	if changed, err := store.Changed(t.Context(), "p", land.Merged, c.base); err != nil || len(changed) != 0 {
+		t.Fatalf("base %s differs from the landed %s in %v (%v): cut from a half-written workspace", short(c.base), short(land.Merged), changed, err)
+	}
+}
+
+// A landing under a lent lock that could not be recovered leaves the
+// workspace half written: a base cut under that lock is the snapshot the
+// canonical name is at, not the half-written workspace, and the name
+// stays for the recovery to move.
+func TestBaseUnderALentLockIsNotCutFromAWorkspaceAwaitingRecovery(t *testing.T) {
+	store, p, node, _, result := commitFixture(t)
+	lender, err := store.acquireCanonical(t.Context(), p, "att-parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.fail = ops.Apply
+	node.before = onNth(ops.WritePath, 2, func() { node.down = true })
+	land, err := store.LandUnder(t.Context(), p, result, "test", lender)
+	if !errors.Is(err, ErrRecoveryPending) {
+		t.Fatalf("land = %+v err=%v, want it waiting for recovery", land, err)
+	}
+	node.down, node.fail, node.before = false, "", nil
+
+	base, err := store.CanonicalBaseUnder(t.Context(), p, lender, "att-child", "base for att-child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base != land.Now {
+		t.Fatalf("base = %s, want %s the canonical name is at", short(base), short(land.Now))
+	}
+	if head := canonicalOf(t, store, "p"); head != land.Now {
+		t.Fatalf("canonical = %s, want it left at %s", short(head), short(land.Now))
 	}
 }
