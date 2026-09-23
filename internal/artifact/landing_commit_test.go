@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func commitFixture(t *testing.T) (*Store, project.Project, *failingNode, string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := store.canonicalRef(ctx, "p")
+	base := canonicalOf(t, store, "p")
 	write(t, ws.Path, "a", "a1")
 	write(t, ws.Path, "b", "b1")
 	result, _, err := store.Publish(ctx, ws, base, "att-1", "step")
@@ -48,21 +49,33 @@ func onFirst(kind ops.Kind, fn func()) func(ops.Request) {
 	}
 }
 
-// moveCanonicalInPlace is someone snapshotting the canonical workspace
-// in place, with an edit of their own, while the landing holds the lock.
-func moveCanonicalInPlace(t *testing.T, store *Store, p project.Project, canonical string) func() string {
-	var moved string
-	return func() string {
-		if moved == "" {
-			ctx := context.Background()
-			write(t, canonical, "user", "edit")
-			m, _, err := store.SnapshotCanonical(ctx, p, store.CanonicalOf(ctx, p.ID), "someone", "in place")
-			if err != nil {
-				t.Error(err)
+// onNth runs fn ahead of the nth operation of kind.
+func onNth(kind ops.Kind, n int, fn func()) func(ops.Request) {
+	seen := 0
+	return func(req ops.Request) {
+		if req.Op == kind {
+			seen++
+			if seen == n {
+				fn()
 			}
-			moved = m.ID
 		}
-		return moved
+	}
+}
+
+// displaceCanonical moves the canonical name to another snapshot behind a
+// landing's back, which nothing holding the canonical lock does: the
+// commit's own check is what is left to catch it.
+func displaceCanonical(t *testing.T, store *Store, to string) func() {
+	return func() {
+		ctx := context.Background()
+		ref, _, err := store.Resolve(ctx, CanonicalRef("p"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := store.Bind(ctx, CanonicalRef("p"), ref.Version, to); err != nil {
+			t.Error(err)
+		}
 	}
 }
 
@@ -78,23 +91,35 @@ func unreadableCanonical(t *testing.T, store *Store) (breakIt, repair func()) {
 }
 
 // The landing merged onto the canonical snapshot it took under the lock.
-// A canonical name moved away from it before the commit is a commit
-// conflict; the landing must not move the name back over the newer one.
-func TestLandingCommitConflictsWhenTheCanonicalNameMovedWhileApplying(t *testing.T) {
+// A canonical name found elsewhere at commit is not a verdict on the
+// landing, which wrote every path: it stays applying, the name is not
+// moved back over whatever it points at, and recovery commits it against
+// a fresh snapshot.
+func TestLandingWhoseCanonicalNameMovedIsLeftForRecovery(t *testing.T) {
 	store, p, node, canonical, result := commitFixture(t)
-	move := moveCanonicalInPlace(t, store, p, canonical)
-	node.before = onFirst(ops.Apply, func() { move() })
+	node.before = onFirst(ops.Apply, displaceCanonical(t, store, result))
 
 	land, err := store.Land(t.Context(), p, result, "test")
 	var conflict Conflict
-	if !errors.As(err, &conflict) || conflict.State != LandCommitConflict {
-		t.Fatalf("land = %+v err=%v, want a commit conflict", land, err)
+	if !errors.Is(err, ErrRecoveryPending) || errors.As(err, &conflict) {
+		t.Fatalf("land = %+v err=%v, want ErrRecoveryPending", land, err)
 	}
-	if state := landingState(t, store, land.ID); state != LandCommitConflict {
-		t.Fatalf("recorded state = %s, want %s", state, LandCommitConflict)
+	if state := landingState(t, store, land.ID); state != LandApplying {
+		t.Fatalf("recorded state = %s, want %s left for recovery", state, LandApplying)
 	}
-	if ref, _, _ := store.Resolve(t.Context(), CanonicalRef("p")); ref.Artifact != move() {
-		t.Fatalf("canonical = %s, want the snapshot taken meanwhile %s (merged %s)", ref.Artifact, move(), land.Merged)
+	if ref, _, _ := store.Resolve(t.Context(), CanonicalRef("p")); ref.Artifact != result {
+		t.Fatalf("canonical = %s, want it left where it was moved, %s", ref.Artifact, result)
+	}
+
+	recovered, err := store.RetryRecoveries(t.Context())
+	if err != nil || len(recovered) != 1 || recovered[0].State != LandCommitted {
+		t.Fatalf("recovered = %+v err=%v", recovered, err)
+	}
+	if ref, _, _ := store.Resolve(t.Context(), CanonicalRef("p")); ref.Artifact != land.Merged {
+		t.Fatalf("canonical = %s, want merged %s", ref.Artifact, land.Merged)
+	}
+	if read(t, canonical, "a") != "a1" || read(t, canonical, "b") != "b1" {
+		t.Fatal("the landing is not in the canonical workspace")
 	}
 }
 
@@ -130,23 +155,29 @@ func TestLandingThatCannotReadTheCanonicalNameIsLeftForRecovery(t *testing.T) {
 
 // Recovery merges nothing: it finishes onto the snapshot it took under its
 // own lock. A canonical name moved away from that snapshot before its
-// commit is a commit conflict as well.
-func TestRecoveryCommitConflictsWhenTheCanonicalNameMovedWhileWriting(t *testing.T) {
+// commit leaves it recovery-pending, and the next retry commits it.
+func TestRecoveryWhoseCanonicalNameMovedStaysPending(t *testing.T) {
 	store, p, node, canonical, result := commitFixture(t)
 	node.fail = ops.Apply
-	move := moveCanonicalInPlace(t, store, p, canonical)
-	node.before = onFirst(ops.WritePath, func() { move() })
+	node.before = onFirst(ops.WritePath, displaceCanonical(t, store, result))
 
 	land, err := store.Land(t.Context(), p, result, "test")
-	var conflict Conflict
-	if !errors.As(err, &conflict) || conflict.State != LandCommitConflict {
-		t.Fatalf("land = %+v err=%v, want a commit conflict", land, err)
+	if !errors.Is(err, ErrRecoveryPending) {
+		t.Fatalf("land = %+v err=%v, want ErrRecoveryPending", land, err)
 	}
-	if state := landingState(t, store, land.ID); state != LandCommitConflict {
-		t.Fatalf("recorded state = %s, want %s", state, LandCommitConflict)
+	if state := landingState(t, store, land.ID); state != LandRecoveryPending {
+		t.Fatalf("recorded state = %s, want %s", state, LandRecoveryPending)
 	}
-	if ref, _, _ := store.Resolve(t.Context(), CanonicalRef("p")); ref.Artifact != move() {
-		t.Fatalf("canonical = %s, want the snapshot taken meanwhile %s (merged %s)", ref.Artifact, move(), land.Merged)
+
+	recovered, err := store.RetryRecoveries(t.Context())
+	if err != nil || len(recovered) != 1 || recovered[0].State != LandCommitted {
+		t.Fatalf("recovered = %+v err=%v", recovered, err)
+	}
+	if ref, _, _ := store.Resolve(t.Context(), CanonicalRef("p")); ref.Artifact != land.Merged {
+		t.Fatalf("canonical = %s, want merged %s", ref.Artifact, land.Merged)
+	}
+	if read(t, canonical, "a") != "a1" || read(t, canonical, "b") != "b1" {
+		t.Fatal("the landing is not in the canonical workspace")
 	}
 }
 
@@ -176,5 +207,21 @@ func TestRecoveryThatCannotReadTheCanonicalNameStaysPending(t *testing.T) {
 	}
 	if ref, _, _ := store.Resolve(t.Context(), CanonicalRef("p")); ref.Artifact != land.Merged {
 		t.Fatalf("canonical = %s, want merged %s", ref.Artifact, land.Merged)
+	}
+}
+
+// A canonical name gone at commit is reported as absent, not as an empty
+// snapshot id.
+func TestLandingCommitSaysACanonicalNameIsAbsent(t *testing.T) {
+	store, p, node, _, result := commitFixture(t)
+	node.before = onFirst(ops.Apply, func() {
+		if _, err := store.ledger.DB().Exec(`DELETE FROM names WHERE name = ?`, CanonicalRef("p")); err != nil {
+			t.Error(err)
+		}
+	})
+
+	_, err := store.Land(t.Context(), p, result, "test")
+	if err == nil || !strings.Contains(err.Error(), "canonical of p is absent") {
+		t.Fatalf("err = %v, want the canonical name reported absent", err)
 	}
 }

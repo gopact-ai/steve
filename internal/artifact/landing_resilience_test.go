@@ -144,7 +144,7 @@ func TestRecoveryBringsTheMergedSnapshotToTheHomeNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := store.canonicalRef(ctx, "p")
+	base := canonicalOf(t, store, "p")
 	write(t, ws.Path, "a", "a1")
 	write(t, ws.Path, "b", "b1")
 	result, _, err := store.Publish(ctx, ws, base, "att-1", "step")
@@ -322,7 +322,7 @@ func TestApplyConflictIsBlockedUntilItsPathsChange(t *testing.T) {
 	}
 
 	write(t, canonical, "other", "moved")
-	if _, _, err := store.SnapshotCanonical(ctx, p, store.canonicalRef(ctx, "p"), "user", "moved"); err != nil {
+	if _, _, err := store.SnapshotCanonical(ctx, p, canonicalOf(t, store, "p"), "user", "moved"); err != nil {
 		t.Fatal(err)
 	}
 	if again, err := store.LandPending(ctx, p); err != nil || len(again) != 0 {
@@ -346,7 +346,7 @@ func TestApplyConflictIsRetriedWhenOneOfItsPathsChanges(t *testing.T) {
 	ctx := t.Context()
 	store, p, _, canonical, _ := applyConflicted(t)
 	write(t, canonical, "a", "a-by-hand-again")
-	if _, _, err := store.SnapshotCanonical(ctx, p, store.canonicalRef(ctx, "p"), "user", "moved"); err != nil {
+	if _, _, err := store.SnapshotCanonical(ctx, p, canonicalOf(t, store, "p"), "user", "moved"); err != nil {
 		t.Fatal(err)
 	}
 	if again, err := store.LandPending(ctx, p); err != nil || len(again) != 1 {
@@ -373,7 +373,7 @@ func TestRecoveredConflictIsNotRetriedForItsOwnWrites(t *testing.T) {
 	if stuck, _ := store.Stuck(ctx, "p"); len(stuck) != 1 || stuck[0].Artifact != land.Artifact {
 		t.Fatalf("stuck = %+v", stuck)
 	}
-	if _, _, err := store.SnapshotCanonical(ctx, p, store.canonicalRef(ctx, "p"), "user", "after recovery"); err != nil {
+	if _, _, err := store.SnapshotCanonical(ctx, p, canonicalOf(t, store, "p"), "user", "after recovery"); err != nil {
 		t.Fatal(err)
 	}
 	if again, err := store.LandPending(ctx, p); err != nil || len(again) != 0 {
@@ -483,7 +483,7 @@ func TestRecoveryRefusesPathsInsideANestedRepository(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			now, _, err := store.SnapshotCanonical(ctx, p, store.canonicalRef(ctx, "p"), "test", "now")
+			now, _, err := store.SnapshotCanonical(ctx, p, canonicalOf(t, store, "p"), "test", "now")
 			if err != nil {
 				t.Fatal(err)
 			}

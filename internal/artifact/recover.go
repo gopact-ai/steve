@@ -232,7 +232,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	// The recovery holds the lock under a name of its own. The landing's
 	// own name would re-enter a lock the landing still holds while it
 	// recovers its failed apply in place, and the two would run at once.
-	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, "recovery:"+land.ID+":"+attempt.NewID()), landTTL)
+	lease, err := s.acquireCanonical(ctx, p, landingHolder(ctx, "recovery:"+land.ID+":"+attempt.NewID()))
 	if err != nil {
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
@@ -306,7 +306,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	// repositories the canonical workspace has, and it is the canonical a
 	// conflict is blocked on — the interrupted round's own writes included,
 	// so those turning up in a later snapshot do not start it again.
-	onto, _, nested, err := s.snapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before recovering "+short(land.Artifact))
+	onto, nested, err := s.snapshotUnderLanding(ctx, p, lease, land.ID, "before recovering "+short(land.Artifact))
 	if err != nil {
 		return land, fmt.Errorf("landing %s: snapshot before recovery: %w", land.ID, err)
 	}
@@ -340,8 +340,9 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 		}
 	}
 	// The recovery wrote relative to its own snapshot, where the canonical
-	// name was left; a name moved from there meanwhile is a commit conflict.
-	// Any other failure leaves the landing recovery-pending for a retry.
+	// name was left. A commit that does not go through — the name is not
+	// there, or cannot be read — leaves the landing recovery-pending: the
+	// next retry snapshots again and commits against that.
 	committed := land
 	committed.State = LandCommitted
 	committed.EndedAt = s.now().UTC()
@@ -360,11 +361,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			return tx.SetData(op, committed)
 		})
 	if err != nil {
-		if !errors.Is(err, ledger.ErrConflict) {
-			return land, fmt.Errorf("landing %s: commit recovery: %w", land.ID, err)
-		}
-		s.failed(ctx, &land, LandRecoveryPending, LandCommitConflict, err.Error(), land.Paths)
-		return land, nil
+		return land, fmt.Errorf("landing %s: commit recovery: %w", land.ID, err)
 	}
 	land = committed
 	if _, err := s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact) + " (recovered)", Canonical: true}); err != nil {

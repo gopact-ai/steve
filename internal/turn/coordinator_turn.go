@@ -165,7 +165,7 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 		return nil, nil
 	}
 	req.stage(view.StageSnapshot)
-	before, _, serr := c.snapshot(ctx, p, workspace, "", e.Record.ID, "before turn "+req.MessageID)
+	before, _, serr := c.snapshot(ctx, p, workspace, e.Record.Leases, "", e.Record.ID, "before turn "+req.MessageID)
 	if serr != nil {
 		return nil, fmt.Errorf("before-snapshot: %w", serr)
 	}

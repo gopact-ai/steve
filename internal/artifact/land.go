@@ -24,7 +24,13 @@ import (
 //	locked   → merge-conflicted     (both sides changed the same paths)
 //	locked   → apply-conflicted     (paths fall inside a nested repository)
 //	applying → apply-conflicted     (a path changed under the WAL)
-//	applying → commit-conflicted    (the canonical name moved off the snapshot merged onto)
+//	applying → recovery-pending     (the apply failed; see recover.go)
+//
+// The commit moves the canonical name from the snapshot the landing merged
+// onto to the merged one. Only a holder of the canonical lock moves the
+// name, so it is still there; should it not be, the fully written landing
+// is not failed for it but stays applying, and recovery commits it against
+// a fresh snapshot, as it does any landing whose commit did not go through.
 //
 // A landing's record is opened once the canonical lock is held: a lock
 // someone else holds is contention, returned as ledger.ErrHeld, and leaves
@@ -95,7 +101,6 @@ const (
 	LandCommitted       = "committed"
 	LandMergeConflicted = "merge-conflicted"
 	LandApplyConflicted = "apply-conflicted"
-	LandCommitConflict  = "commit-conflicted"
 	landKind            = "landing"
 	landTTL             = 5 * time.Minute
 )
@@ -180,7 +185,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	// against the same canonical would only reach it again.
 	defer func() {
 		var conflict Conflict
-		if errors.As(err, &conflict) && conflict.State != LandCommitConflict && !land.Recoverable {
+		if errors.As(err, &conflict) && !land.Recoverable {
 			s.queueConflicted(ctx, p, land, conflict, by, source)
 		}
 	}()
@@ -229,7 +234,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 // accept its holder as the writer — or, with no lock lent, be unheld.
 func (s *Store) checkLandingWriter(ctx context.Context, p project.Project, held *ledger.Lease) (borrowedHolder string, err error) {
 	if held != nil {
-		if held.Key != "canonical:"+p.ID {
+		if held.Key != canonicalLock(p.ID) {
 			return "", fmt.Errorf("landing lease %s does not own project %s", held.Key, p.ID)
 		}
 		if err := s.ledger.CheckAny(ctx, *held); err != nil {
@@ -370,8 +375,12 @@ func (s *Store) queueConflicted(ctx context.Context, p project.Project, land Lan
 	// have ended; the canonical it is blocked on must still be read.
 	ctx = context.WithoutCancel(ctx)
 	id := p.ID + "/" + land.Artifact
-	blocked := &Blocked{Landing: land.ID, State: conflict.State, Canonical: s.CanonicalOf(ctx, p.ID), Marked: conflict.Marked, Paths: conflict.Paths, Reason: conflict.Reason, At: s.now().UTC()}
 	err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		canonical, _, err := tx.Name(CanonicalRef(p.ID))
+		if err != nil {
+			return fmt.Errorf("read canonical of %s: %w", p.ID, err)
+		}
+		blocked := &Blocked{Landing: land.ID, State: conflict.State, Canonical: canonical.Artifact, Marked: conflict.Marked, Paths: conflict.Paths, Reason: conflict.Reason, At: s.now().UTC()}
 		raw, err := tx.Bindings(pendingKind)
 		if err != nil {
 			return err
@@ -404,7 +413,7 @@ func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Land
 		land.Lease, land.Borrowed = &lease, true
 		return func() {}, nil
 	}
-	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
+	lease, err := s.acquireCanonical(ctx, p, landingHolder(ctx, land.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +433,7 @@ func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Land
 // before anything is written. The project's repository comes back for
 // applying.
 func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landing) (*Repo, error) {
-	now, _, nested, err := s.snapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(land.Artifact))
+	now, nested, err := s.snapshotUnderLanding(ctx, p, *land.Lease, land.ID, "before landing "+short(land.Artifact))
 	if err != nil {
 		if !land.Recoverable {
 			s.failed(ctx, land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
@@ -584,12 +593,25 @@ func landPathEffect(land Landing, path string) ledger.EffectID {
 	return ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}
 }
 
+// snapshotUnderLanding snapshots the canonical workspace under the lock a
+// landing or its recovery holds, parented on the canonical name read under
+// that lock, and moves the name to it.
+func (s *Store) snapshotUnderLanding(ctx context.Context, p project.Project, held ledger.Lease, by, message string) (Manifest, []string, error) {
+	parent, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return Manifest{}, nil, err
+	}
+	m, _, nested, err := s.snapshotCanonical(ctx, p, held, parent, by, message)
+	return m, nested, err
+}
+
 // commitLanding moves the canonical name from the snapshot the landing
 // merged onto to the merged snapshot, in the same transaction as the
 // committed state, fenced on the lock, then signs for the merged snapshot
-// as the project's new canonical. A name that moved underneath is a commit
-// conflict. Any other failure leaves the written landing applying, for
-// recovery to commit once its lock is gone.
+// as the project's new canonical. A commit that does not go through —
+// the name is not where the landing left it, or it cannot be read — leaves
+// the written landing applying, for recovery to commit once its lock is
+// gone.
 func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Landing) error {
 	committed := *land
 	committed.State = LandCommitted
@@ -602,11 +624,9 @@ func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Land
 			return tx.SetData(op, committed)
 		})
 	if err != nil {
-		if errors.Is(err, ledger.ErrConflict) {
-			s.failed(ctx, land, LandApplying, LandCommitConflict, err.Error(), land.Paths)
-			return Conflict{State: LandCommitConflict, Paths: land.Paths}
-		}
-		return fmt.Errorf("landing %s: commit: %w", land.ID, err)
+		slog.Warn(fmt.Sprintf("artifact: landing %s into %s is written but not committed; left applying for recovery: %v", land.ID, land.Project, err),
+			"landing", land.ID, "project", land.Project, "artifact", land.Artifact, "error", err.Error())
+		return fmt.Errorf("%w: landing %s is written; its commit: %w", ErrRecoveryPending, land.ID, err)
 	}
 	*land = committed
 	_, err = s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact), Canonical: true})
@@ -616,14 +636,18 @@ func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Land
 // moveCanonical moves the project's canonical name to merged, inside a
 // landing's commit. onto is the canonical snapshot the landing took under
 // its lock and wrote relative to; the name must still be there. A name
-// found anywhere else was moved by someone else meanwhile: a conflict.
+// found anywhere else is a conflict with the commit.
 func moveCanonical(tx *ledger.Tx, projectID, onto, merged string) error {
-	current, _, err := tx.Name(CanonicalRef(projectID))
+	current, found, err := tx.Name(CanonicalRef(projectID))
 	if err != nil {
 		return fmt.Errorf("read canonical of %s: %w", projectID, err)
 	}
-	if current.Artifact != onto {
-		return fmt.Errorf("%w: canonical of %s moved to %s from %s, which the landing wrote onto", ledger.ErrConflict, projectID, short(current.Artifact), short(onto))
+	if !found || current.Artifact != onto {
+		at := "absent"
+		if found {
+			at = short(current.Artifact)
+		}
+		return fmt.Errorf("%w: canonical of %s is %s, not %s, which the landing wrote onto", ledger.ErrConflict, projectID, at, short(onto))
 	}
 	if onto == merged {
 		return nil

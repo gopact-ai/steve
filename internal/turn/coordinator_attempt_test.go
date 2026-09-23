@@ -60,7 +60,7 @@ func TestAfterSnapshotFailureKeepsReplyAndCaptureError(t *testing.T) {
 	if err != nil || record.State != attempt.Bound || record.Result == nil || record.Result.Artifact != "" || record.Result.CaptureError != want {
 		t.Fatalf("capture failure was not persisted: %+v, %v", record, err)
 	}
-	if head := c.artifacts.CanonicalOf(t.Context(), record.Project); head != record.Base {
-		t.Fatalf("failed capture moved the canonical head: %s", head)
+	if head, err := c.artifacts.CanonicalOf(t.Context(), record.Project); err != nil || head != record.Base {
+		t.Fatalf("failed capture moved the canonical head: %s, %v", head, err)
 	}
 }

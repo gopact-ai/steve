@@ -28,7 +28,7 @@ func crashMidApplyAs(t *testing.T, store *Store, p project.Project, canonical st
 	write(t, canonical, "b", "b0")
 	write(t, canonical, "c", "c0")
 	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
-	base := store.canonicalRef(ctx, "p")
+	base := canonicalOf(t, store, "p")
 	write(t, ws.Path, "a", "a1")
 	write(t, ws.Path, "b", "b1")
 	write(t, ws.Path, "c", "c1")
@@ -176,7 +176,7 @@ func TestSealedProjectStaysAtItsHomeAndTheHubKeepsMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := store.canonicalRef(ctx, "p")
+	base := canonicalOf(t, store, "p")
 	hub, _ := store.Repo(ctx, "p")
 	if hub.Has(ctx, base) {
 		t.Fatal("sealed objects reached the hub")
@@ -227,7 +227,7 @@ func TestLandingRecordsExpectedOldAndMergedBeforeApplying(t *testing.T) {
 	write(t, canonical, "a", "a0")
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
 	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
-	base := store.canonicalRef(ctx, "p")
+	base := canonicalOf(t, store, "p")
 	write(t, ws.Path, "a", "a1")
 	result, _, _ := store.Publish(ctx, ws, base, "att-1", "step")
 	land, err := store.Land(ctx, p, result.ID, "test")
