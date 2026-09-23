@@ -195,8 +195,8 @@ func (c commands) pathOn(ctx context.Context, node string) string {
 	return strings.TrimSpace(out)
 }
 
-// planBase snapshots the project's canonical workspace as the plan's
-// starting point, the way /plan does.
+// planBase is the canonical snapshot the plan starts from, the way /plan
+// does.
 func (c commands) planBase(ctx context.Context, tracked task.Task) (string, error) {
 	if c.artifacts == nil {
 		return "", nil
@@ -205,11 +205,7 @@ func (c commands) planBase(ctx context.Context, tracked task.Task) (string, erro
 	if err != nil || !ok {
 		return "", err
 	}
-	base, _, err := c.artifacts.SnapshotCanonical(ctx, p, c.artifacts.CanonicalOf(ctx, p.ID), "plan", "base of plan for task #"+tracked.ID)
-	if err != nil {
-		return "", err
-	}
-	return base.ID, nil
+	return c.artifacts.CanonicalBase(ctx, p, "plan", "base of plan for task #"+tracked.ID)
 }
 
 // shellQuote makes one word safe for /bin/sh.

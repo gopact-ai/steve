@@ -232,7 +232,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	// The recovery holds the lock under a name of its own. The landing's
 	// own name would re-enter a lock the landing still holds while it
 	// recovers its failed apply in place, and the two would run at once.
-	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, "recovery:"+land.ID+":"+attempt.NewID()), landTTL)
+	lease, err := s.acquireCanonical(ctx, p, landingHolder(ctx, "recovery:"+land.ID+":"+attempt.NewID()))
 	if err != nil {
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
@@ -306,7 +306,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	// repositories the canonical workspace has, and it is the canonical a
 	// conflict is blocked on — the interrupted round's own writes included,
 	// so those turning up in a later snapshot do not start it again.
-	_, _, nested, err := s.snapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before recovering "+short(land.Artifact))
+	onto, nested, err := s.snapshotUnderLanding(ctx, p, lease, land.ID, "before recovering "+short(land.Artifact))
 	if err != nil {
 		return land, fmt.Errorf("landing %s: snapshot before recovery: %w", land.ID, err)
 	}
@@ -339,16 +339,23 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			return land, err
 		}
 	}
-	current, _, _ := s.ledger.Name(ctx, CanonicalRef(p.ID))
-	land.State = LandCommitted
-	land.EndedAt = s.now().UTC()
+	target, err := s.recoveredCanonical(ctx, p, land, onto.ID)
+	if err != nil {
+		return land, fmt.Errorf("landing %s: snapshot after recovery: %w", land.ID, err)
+	}
+	// The recovery wrote relative to its own snapshot, where the canonical
+	// name was left. A commit that does not go through — the name is not
+	// there, or cannot be read — leaves the landing recovery-pending: the
+	// next retry snapshots again and commits against that.
+	committed := land
+	committed.State = LandCommitted
+	committed.Error = ""
+	committed.EndedAt = s.now().UTC()
 	_, err = s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", landingFence(ctx, []ledger.Lease{lease}),
 		map[string]any{"paths": land.Paths, "rewritten": stale, "round": land.Round},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
-			if current.Artifact != land.Merged {
-				if _, err := tx.CompareAndSetName(CanonicalRef(p.ID), current.Version, land.Merged); err != nil {
-					return err
-				}
+			if err := moveCanonical(tx, p.ID, onto.ID, target); err != nil {
+				return err
 			}
 			// The result has landed now. A queue entry for it — the pass
 			// that started this landing stopped at recovery-pending and
@@ -356,17 +363,37 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			if _, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id = ?`, pendingKind, p.ID+"/"+land.Artifact); err != nil {
 				return err
 			}
-			return tx.SetData(op, land)
+			return tx.SetData(op, committed)
 		})
 	if err != nil {
-		land.State = LandRecoveryPending
-		s.failed(ctx, &land, LandRecoveryPending, LandCommitConflict, err.Error(), land.Paths)
-		return land, nil
+		s.pendCommit(ctx, &land, LandRecoveryPending, err)
+		return land, fmt.Errorf("landing %s: commit recovery: %w", land.ID, err)
 	}
+	land = committed
 	if _, err := s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact) + " (recovered)", Canonical: true}); err != nil {
 		return land, err
 	}
 	return land, nil
+}
+
+// recoveredCanonical is the snapshot the canonical name moves to once a
+// recovery has written the landing's paths onto onto. That is the merged
+// snapshot when it is what the workspace now holds: onto and the merged
+// snapshot differ in the landing's paths only. Anything else that differs
+// was written after the landing merged — by the holder that lent it the
+// lock, or by hand — and the merged snapshot would name a workspace older
+// than the one on disk: what is on disk is cut instead, under the lock the
+// recovery holds.
+func (s *Store) recoveredCanonical(ctx context.Context, p project.Project, land Landing, onto string) (string, error) {
+	differs, err := s.changedBetween(ctx, p, onto, land.Merged)
+	if err != nil {
+		return "", err
+	}
+	if len(outside(differs, land.Paths)) == 0 {
+		return land.Merged, nil
+	}
+	after, _, _, err := s.cutCanonical(ctx, p, onto, land.ID, "recovered "+short(land.Artifact))
+	return after.ID, err
 }
 
 // inspectPaths sorts a landing's paths by what the canonical workspace

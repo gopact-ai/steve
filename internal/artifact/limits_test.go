@@ -34,7 +34,7 @@ func TestStorePreservesSnapshotTooLarge(t *testing.T) {
 					t.Fatalf("store swallowed or wrapped the limit: changed=%v, %v", changed, err)
 				}
 			}
-			if head := store.CanonicalOf(t.Context(), p.ID); head != "" {
+			if head := canonicalOf(t, store, p.ID); head != "" {
 				t.Fatalf("failed snapshot moved the canonical head: %s", head)
 			}
 		})

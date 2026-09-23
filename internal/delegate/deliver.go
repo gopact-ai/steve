@@ -176,7 +176,16 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	s.deliverMu.Lock()
 	defer s.deliverMu.Unlock()
 	if unlessLive && s.attempts != nil {
-		if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
+		_, live, err := s.attempts.LiveAttemptOf(ctx, parentID)
+		if err != nil {
+			// Unknown is not idle. A running turn delivers what it composes;
+			// otherwise the periodic reconciliation retries.
+			if ctx.Err() == nil {
+				slog.Warn("delegate: result delivery deferred: parent liveness unknown", "parent", parentID, "error", err)
+			}
+			return
+		}
+		if live {
 			return
 		}
 	}

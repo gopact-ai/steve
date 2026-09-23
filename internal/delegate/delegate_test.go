@@ -102,13 +102,14 @@ func (fakeEndpoints) MCPEndpoint(_ context.Context, nodeName string) (string, er
 // --- fixture -----------------------------------------------------------
 
 type world struct {
-	book     *ledger.Ledger
-	tasks    *task.Store
-	sessions *fakeSessions
-	gate     *agentmcp.Server
-	service  *Service
-	attempts *attempt.Service
-	home     string // the project's main directory
+	book      *ledger.Ledger
+	tasks     *task.Store
+	sessions  *fakeSessions
+	gate      *agentmcp.Server
+	service   *Service
+	attempts  *attempt.Service
+	artifacts *artifact.Store
+	home      string // the project's main directory
 }
 
 func newWorld(t *testing.T) *world {
@@ -150,7 +151,7 @@ func newWorld(t *testing.T) *world {
 	service.SetGate(gate)
 	service.SetEndpoints(fakeEndpoints{})
 	gate.SetDelegator(service)
-	return &world{tasks: tasks, sessions: sessions, gate: gate, service: service, attempts: att, home: home}
+	return &world{tasks: tasks, sessions: sessions, gate: gate, service: service, attempts: att, artifacts: art, home: home}
 }
 
 // running opens a task for the caller, the way a chat turn would.

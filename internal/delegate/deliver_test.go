@@ -268,3 +268,85 @@ func TestDeliverySaysWhereTheChildsFilesAre(t *testing.T) {
 	}
 	_ = parent
 }
+
+// An awaiter whose request went away still checks, on leaving, whether its
+// finished child can be handed over. A running parent turn delivers that
+// result itself, so the departing awaiter must not freeze a delivery batch.
+func TestAnAwaiterThatWentAwayLeavesResultsToTheRunningTurn(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	box := &mailbox{}
+	w.service.SetDeliverer(box.deliver)
+	if _, err := w.attempts.Open(t.Context(), attempt.Spec{TaskID: parent.ID, Kind: attempt.KindChat, Project: "p", Agent: "codex", Harness: "mock",
+		Workspace: project.Workspace{ID: "canonical:p", Project: "p", Path: w.home, Kind: project.KindCanonical}, Scope: attempt.ScopeUnrestricted}); err != nil {
+		t.Fatal(err)
+	}
+	first, release := startBlocked(t, w, "codex")
+	release()
+	w.service.mu.Lock()
+	entry := w.service.pending[first.TaskID]
+	w.service.mu.Unlock()
+	if entry == nil {
+		t.Fatal("child not tracked")
+	}
+	select {
+	case <-entry.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("child never ended")
+	}
+
+	gone, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := w.service.wait(gone, entry, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := w.tasks.Get(first.TaskID); c.Delivery != nil {
+		t.Fatalf("departing awaiter prepared a delivery while the parent's turn ran: %+v", c.Delivery)
+	}
+	if box.count() != 0 {
+		t.Fatalf("delivered %d while the parent's turn ran", box.count())
+	}
+}
+
+// The same departing awaiter, once the parent's turn is over, hands the
+// finished child over at once: its own cancellation is no reason to leave
+// the result for a later reconciliation pass.
+func TestAnAwaiterThatWentAwayHandsResultsToAnIdleParent(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	box := &mailbox{}
+	w.service.SetDeliverer(box.deliver)
+	live, err := w.attempts.Open(t.Context(), attempt.Spec{TaskID: parent.ID, Kind: attempt.KindChat, Project: "p", Agent: "codex", Harness: "mock",
+		Workspace: project.Workspace{ID: "canonical:p", Project: "p", Path: w.home, Kind: project.KindCanonical}, Scope: attempt.ScopeUnrestricted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, release := startBlocked(t, w, "codex")
+	release()
+	w.service.mu.Lock()
+	entry := w.service.pending[first.TaskID]
+	w.service.mu.Unlock()
+	if entry == nil {
+		t.Fatal("child not tracked")
+	}
+	select {
+	case <-entry.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("child never ended")
+	}
+	if _, err := w.attempts.Fail(t.Context(), live.ID, "turn", "turn over"); err != nil {
+		t.Fatal(err)
+	}
+
+	gone, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := w.service.wait(gone, entry, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if box.count() != 1 {
+		t.Fatalf("departing awaiter delivered %d result message(s) to the idle parent, want 1", box.count())
+	}
+	if c, _ := w.tasks.Get(first.TaskID); c.Delivery == nil || c.Delivery.State != task.DeliveryDelivered {
+		t.Fatalf("child delivery = %+v", c.Delivery)
+	}
+}

@@ -283,18 +283,23 @@ func endpointKey(node, harness string) string {
 	return "endpoint:" + node + "/" + harness
 }
 
+// busyWith reads a refused acquire of key as Busy, with the holder the
+// refusal names, whichever region issued the lease.
+func busyWith(key string, err error) (Busy, bool) {
+	var held ledger.Held
+	if errors.As(err, &held) {
+		return Busy{Resource: key, Holder: held.Holder, Until: held.Until}, true
+	}
+	return Busy{Resource: key}, errors.Is(err, ledger.ErrHeld)
+}
+
 // Hold takes a resource's lease for the caller — an admin action that
 // must not race a turn, such as forgetting a copy — and returns how to let
 // go. A resource someone holds is reported as Busy.
 func (s *Service) Hold(ctx context.Context, region, key, holder string) (func(), error) {
 	lease, err := s.l.AcquireIn(ctx, region, key, holder, s.TTL)
 	if err != nil {
-		if errors.Is(err, ledger.ErrHeld) {
-			current, ok, _ := s.l.LeaseOf(ctx, key)
-			busy := Busy{Resource: key}
-			if ok {
-				busy.Holder, busy.Until = current.Holder, current.ExpiresAt
-			}
+		if busy, ok := busyWith(key, err); ok {
 			return nil, busy
 		}
 		return nil, err
@@ -351,12 +356,8 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 	take := func(region, key string) error {
 		lease, err := s.l.AcquireIn(ctx, region, key, spec.ID, s.TTL)
 		if err != nil {
-			if errors.Is(err, ledger.ErrHeld) {
-				holder, until := "", time.Time{}
-				if current, ok, _ := s.l.LeaseOf(ctx, key); ok && (region == "" || region == s.l.Region()) {
-					holder, until = current.Holder, current.ExpiresAt
-				}
-				return Busy{Resource: key, Holder: holder, Until: until}
+			if busy, ok := busyWith(key, err); ok {
+				return busy
 			}
 			return err
 		}
@@ -986,13 +987,18 @@ func Describe(r Record) string {
 }
 
 // LiveAttemptOf is the id of the task's attempt in flight, if any: what a
-// side effect made on the task's behalf is claimed by.
-func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, bool) {
+// side effect made on the task's behalf is claimed by. A failed read is
+// reported, never folded into "nothing is live": callers that act on an
+// idle task must not act on one whose attempts they could not see.
+func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, bool, error) {
 	records, err := s.identityRecords(ctx, liveTaskIdentitySQL, taskID)
-	if err != nil || len(records) == 0 {
-		return "", false
+	if err != nil {
+		return "", false, fmt.Errorf("attempt: live attempt of task %s: %w", taskID, err)
 	}
-	return records[0].ID, true
+	if len(records) == 0 {
+		return "", false, nil
+	}
+	return records[0].ID, true, nil
 }
 
 // Reservation is capacity held ahead of an attempt: one endpoint slot,

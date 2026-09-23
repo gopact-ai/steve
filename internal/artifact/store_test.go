@@ -112,7 +112,7 @@ func TestIsolatedWorkspacesOnTheHubFromBaseWithInputsAndPublish(t *testing.T) {
 	if a.Path == b.Path || a.Kind != project.KindWorktree || read(t, a.Path, "README") != "hello" {
 		t.Fatalf("worktrees = %+v / %+v", a, b)
 	}
-	base := store.canonicalRef(ctx, "p")
+	base := canonicalOf(t, store, "p")
 	if base == "" {
 		t.Fatal("the base snapshot was not named as the project's canonical")
 	}
@@ -180,7 +180,7 @@ func TestWorkspacesOnANodeTravelAsBundles(t *testing.T) {
 	if !strings.HasPrefix(ws.Path, filepath.Join(node.root, "worktrees")) || read(t, ws.Path, "f") != "0" {
 		t.Fatalf("node worktree = %+v", ws)
 	}
-	base := store.canonicalRef(ctx, "p")
+	base := canonicalOf(t, store, "p")
 	hub, _ := store.Repo(ctx, "p")
 	if !hub.Has(ctx, base) {
 		t.Fatal("the canonical snapshot taken on the node did not reach the hub")
@@ -208,4 +208,15 @@ func TestWorkspacesOnANodeTravelAsBundles(t *testing.T) {
 	if err != nil || changed || same.ID != result.ID {
 		t.Fatalf("unchanged publish = %+v changed=%v err=%v", same, changed, err)
 	}
+}
+
+// canonicalOf reads the project's canonical name, failing the test when it
+// cannot be read.
+func canonicalOf(t *testing.T, store *Store, projectID string) string {
+	t.Helper()
+	head, err := store.CanonicalOf(context.Background(), projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return head
 }
