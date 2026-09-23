@@ -206,7 +206,7 @@ func TestApplicationMCPMemoryRechecksOriginalGrantInsideWriteTransaction(t *test
 			if err := gate.BindExecution(t.Context(), agentmcp.Binding{ConversationID: "chat", AgentID: "agent"}, scope); err != nil {
 				t.Fatal(err)
 			}
-			profile, err := prepareApplicationMemory(t.Context(), &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(t.TempDir(), "state.json")}}, book)
+			profile, err := prepareApplicationMemoryWithSettings(t.Context(), &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(t.TempDir(), "state.json")}}, book, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

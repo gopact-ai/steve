@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -37,7 +38,7 @@ func TestDelegationSettlesReportedUsageOnSuccessAndFailure(t *testing.T) {
 				t.Fatalf("delegate=%+v err=%v", out, err)
 			}
 			records, err := w.attempts.ForTask(t.Context(), out.TaskID)
-			if err != nil || len(records) != 1 || !records[0].State.Terminal() || records[0].Usage == nil || *records[0].Usage != *attemptUsage(p) {
+			if err != nil || len(records) != 1 || !records[0].State.Terminal() || records[0].Usage == nil || *records[0].Usage != *lifecycle.Usage(p) {
 				t.Fatalf("closed=%+v err=%v", records, err)
 			}
 			if (records[0].State == attempt.Bound) == failed {

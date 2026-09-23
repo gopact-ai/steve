@@ -1414,8 +1414,6 @@ func (s *Service) Fleet(ctx context.Context, _ string, caller string, requires [
 	return b.String(), nil
 }
 
-func attemptUsage(p view.Progress) *attempt.Usage { return lifecycle.Usage(p) }
-
 func (s *Service) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {
 	if tracked, ok := s.tasks.Get(id); ok && tracked.State == to {
 		if token := execution.Token(ctx); token != nil {

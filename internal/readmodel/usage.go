@@ -467,14 +467,6 @@ func (g *usageGroup) curve(scratch *usageScratch) usageCurve {
 	return scratch.curve()
 }
 
-func makeUsageCurve(spans []rateSpan) usageCurve {
-	scratch := usageScratch{events: make([]usageEvent, 0, 2*len(spans))}
-	for _, span := range spans {
-		scratch.events = append(scratch.events, usageEvent{at: span.start, delta: span.rate, active: 1}, usageEvent{at: span.end, delta: -span.rate, active: -1})
-	}
-	return scratch.curve()
-}
-
 func (scratch *usageScratch) curve() usageCurve {
 	events := scratch.events
 	sort.Slice(events, func(i, j int) bool { return events[i].at.Before(events[j].at) })

@@ -11,6 +11,16 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
+// makeUsageCurve builds the curve production derives from a group's samples
+// directly from rate spans, so tests can check the algorithm in isolation.
+func makeUsageCurve(spans []rateSpan) usageCurve {
+	scratch := usageScratch{events: make([]usageEvent, 0, 2*len(spans))}
+	for _, span := range spans {
+		scratch.events = append(scratch.events, usageEvent{at: span.start, delta: span.rate, active: 1}, usageEvent{at: span.end, delta: -span.rate, active: -1})
+	}
+	return scratch.curve()
+}
+
 func usageRecord(start time.Time, agent, model string, reported bool, input, output int64) attempt.Record {
 	return attempt.Record{Spec: attempt.Spec{Agent: agent}, State: attempt.Bound, StartedAt: start, EndedAt: start.Add(time.Minute),
 		Usage: &attempt.Usage{Model: model, Reported: reported, Input: input, Output: output}}
