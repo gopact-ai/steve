@@ -11,8 +11,11 @@ build:
 	CGO_ENABLED=0 $(GO) build -o steve ./cmd/steve
 	CGO_ENABLED=0 $(GO) build -o steve-node ./cmd/steve-node
 
+# Under the race detector app and cluster each run close to go test's
+# default ten minutes per package; the replicated-ledger cases write
+# thousands of durable entries one at a time.
 test:
-	$(GO) test -race ./cmd/... ./internal/... ./e2e/...
+	$(GO) test -race -timeout 30m ./cmd/... ./internal/... ./e2e/...
 
 test-console:
 	npm --prefix web/console run test:boundaries
