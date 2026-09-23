@@ -189,11 +189,11 @@ func TestUsageSamplesFailOnMalformedHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			insertAttemptRow(t, s, "broken", string(Bound), data)
-			if name == "no revision" {
-				s = New(s.l)
-			}
 			if got, err := s.UsageSamples(t.Context()); err == nil {
 				t.Fatalf("malformed history read as %+v", got)
+			}
+			if got, err := New(s.l).UsageSamples(t.Context()); err == nil {
+				t.Fatalf("a first read accepted malformed history as %+v", got)
 			}
 		})
 	}
@@ -241,5 +241,57 @@ func TestUsageSamplesReadChangedTasksThroughTheTaskIndex(t *testing.T) {
 	defer diagnostic.Close()
 	if plan := queryPlan(t, diagnostic, usageTasksSQL, `["`+fixture.delegateTask+`"]`); !strings.Contains(plan, "operations_attempt_task") || strings.Contains(plan, "SCAN operations\n") {
 		t.Fatalf("unbounded query plan:\n%s", plan)
+	}
+}
+
+// A read revision that disappears while its task still has attempts is the
+// same corrupt history for a reader that cached the task as for a first read.
+func TestUsageSamplesRefuseHistoryWhoseRevisionDisappeared(t *testing.T) {
+	s, _ := newService(t)
+	putUsageRow(t, s.l, Record{Spec: Spec{ID: "a1", TaskID: "t1"}, State: Bound}, 1, usageRevision("r1"))
+	putUsageRow(t, s.l, Record{Spec: Spec{ID: "a2", TaskID: "t2"}, State: Bound}, 2, usageRevision("r2"))
+	if _, err := s.UsageSamples(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.l.DB().Exec(`DELETE FROM bindings WHERE kind=? AND id='t1'`, historyRevisionKind); err != nil {
+		t.Fatal(err)
+	}
+	for name, reader := range map[string]*Service{"cached": s, "first": New(s.l)} {
+		if got, err := reader.UsageSamples(t.Context()); err == nil || !strings.Contains(err.Error(), "no read revision") {
+			t.Fatalf("%s read of history without a revision = %+v, %v", name, got, err)
+		}
+	}
+}
+
+// A restore that lands while cached tasks are being compared must not leave
+// the pre-restore history as the answer: the read starts over in full.
+func TestUsageSamplesRereadInFullWhenARestoreLandsDuringTheRead(t *testing.T) {
+	source, _ := newService(t)
+	target, _ := newService(t)
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	revision := usageRevision("same")
+	putUsageRow(t, target.l, Record{Spec: Spec{ID: "a1", TaskID: "t1", Agent: "before"}, State: Bound, StartedAt: at}, 1, revision)
+	if _, err := target.UsageSamples(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	putUsageRow(t, source.l, Record{Spec: Spec{ID: "a1", TaskID: "t1", Agent: "after"}, State: Failed, StartedAt: at}, 1, revision)
+	snapshot, err := source.l.SnapshotReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restores := 0
+	target.usage.afterRead = func() {
+		if restores++; restores == 1 {
+			if err := target.l.RestoreReplica(snapshot); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	got, err := target.UsageSamples(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restores != 2 || len(got) != 1 || got[0].Agent != "after" {
+		t.Fatalf("reads=%d samples after a restore during the read = %+v", restores, got)
 	}
 }
