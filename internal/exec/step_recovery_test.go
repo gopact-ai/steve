@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/plan"
 )
 
@@ -30,7 +31,7 @@ func TestBoundOutputRestoresProjectionWithoutAnotherInvocation(t *testing.T) {
 	step := step("build", "build", []string{"basic"})
 	deps := Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Recorder: cache, Runner: runnerFunc(func(context.Context, StepRequest) (plan.StepResult, error) {
 		calls++
-		return plan.StepResult{Answer: "full answer with every detail", Refs: []plan.Ref{{Kind: "git", Value: "ref", Note: "note"}}, Findings: []plan.Finding{{Text: "observation", Invalidates: []string{"later"}}}, Usage: &plan.Usage{Input: 100, Context: 500, Reported: true}}, nil
+		return plan.StepResult{Answer: "full answer with every detail", Refs: []plan.Ref{{Kind: "git", Value: "ref", Note: "note"}}, Findings: []plan.Finding{{Text: "observation", Invalidates: []string{"later"}}}, Usage: &attempt.Usage{Input: 100, Context: 500, Reported: true}}, nil
 	})}
 	first, err := runStepWithRecovery(t.Context(), p, step, nil, deps)
 	if !errors.Is(err, ErrProjection) || calls != 1 {

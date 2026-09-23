@@ -179,7 +179,7 @@ func (s *stepSpend) wrap(next func(view.Progress), agentID string) func(view.Pro
 	}
 }
 
-func (s *stepSpend) usage() *plan.Usage {
+func (s *stepSpend) usage() *attempt.Usage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return spendOf(s.last)

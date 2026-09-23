@@ -340,7 +340,7 @@ func (r *stepRun) ended(e *lifecycle.Execution) {
 	r.result.PlanRevision = r.p.Rev
 	r.result.Agent, r.result.Node = r.record.Agent, r.record.Node
 	r.result.StartedAt, r.result.EndedAt = r.started, time.Now()
-	e.Usage = attemptUsage(r.result.Usage)
+	e.Usage = r.result.Usage
 }
 
 // finish is the step's completion: its session settled, what it made
@@ -424,7 +424,7 @@ func (r *stepRun) advance(ctx context.Context, to attempt.State) error {
 	updated, err := r.deps.Attempts.Advance(ctx, r.record.ID, to, "exec", func(rec *attempt.Record) {
 		if r.managed {
 			rec.Result = &attempt.Result{Summary: clipSummary(r.result.Answer), Artifact: r.result.Artifact, Output: output}
-			rec.Usage = attemptUsage(r.result.Usage)
+			rec.Usage = r.result.Usage
 		}
 	})
 	if err == nil {
@@ -517,7 +517,7 @@ func (r *stepRun) bind(ctx context.Context, published artifact.Manifest) (attemp
 	}
 	completion := attempt.Completion{
 		Result: attempt.Result{Summary: clipSummary(r.result.Answer), Artifact: published.ID, Refs: refNames(r.result.Refs)},
-		Usage:  attemptUsage(r.result.Usage), Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version},
+		Usage:  r.result.Usage, Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version},
 	}
 	r.result.Refs = append(r.result.Refs, plan.Ref{Kind: "artifact", Value: published.ID})
 	if completion.Result.Output, err = encodeStepOutput(r.p, r.step, r.upstream, r.result); err != nil {
@@ -721,7 +721,7 @@ func (r *stepRun) detachment(step *lifecycle.StepError, detached *execution.Reta
 }
 
 // spendOf is a step's spend as the harness last reported it.
-func spendOf(last view.Progress) *plan.Usage {
+func spendOf(last view.Progress) *attempt.Usage {
 	u := last.Usage
-	return &plan.Usage{Model: last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
+	return &attempt.Usage{Model: last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
 }
