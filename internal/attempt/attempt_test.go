@@ -527,3 +527,28 @@ func TestReleasingAReservationReportsTheSlotItLeavesHeld(t *testing.T) {
 		t.Fatalf("a stale reservation lease was reported: %q", out.String())
 	}
 }
+
+// A canonical lock another region issued is busy with a holder named, as
+// a local one is: whoever is refused can tell who is writing.
+func TestBusyNamesTheHolderOfAnotherRegionsLock(t *testing.T) {
+	s, c := newService(t)
+	west, err := ledger.Open(t.TempDir(), ledger.Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer west.Close()
+	west.SetRegion("west")
+	s.l.SetRegion("east")
+	s.l.RegisterIssuer("west", west)
+	ctx := context.Background()
+	taken, err := west.Acquire(ctx, "canonical:p", "snapshot:plan:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Open(ctx, Spec{ID: "a1", Kind: KindChat, Project: "p", Node: "node-w", Harness: "codex", CanonicalRegion: "west",
+		Workspace: project.Workspace{ID: "canonical:p", Project: "p", Node: "node-w", Path: t.TempDir(), Kind: project.KindCanonical}, Scope: ScopeUnrestricted})
+	var busy Busy
+	if !errors.As(err, &busy) || busy.Holder != "snapshot:plan:1" || !busy.Until.Equal(taken.ExpiresAt) {
+		t.Fatalf("open = %v (%+v), want busy with the west holder", err, busy)
+	}
+}

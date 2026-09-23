@@ -34,6 +34,20 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Held is an acquire refused because another holder's lease is live: who
+// holds it, and until when. It is ErrHeld.
+type Held struct {
+	Key    string
+	Holder string
+	Until  time.Time
+}
+
+func (h Held) Error() string {
+	return fmt.Sprintf("%v: %s by %s until %s", ErrHeld, h.Key, h.Holder, h.Until.Format(time.RFC3339))
+}
+
+func (h Held) Is(target error) bool { return target == ErrHeld }
+
 // Errors callers are expected to distinguish.
 var (
 	// ErrStale is a lease that does not match the ledger exactly: wrong
@@ -457,7 +471,7 @@ func (l *Ledger) Acquire(ctx context.Context, key, holder string, ttl time.Durat
 		if current != "" && current != holder {
 			until, _ := time.Parse(time.RFC3339Nano, expires)
 			if until.After(now) {
-				return Lease{}, fmt.Errorf("%w: %s by %s until %s", ErrHeld, key, current, until.Format(time.RFC3339))
+				return Lease{}, Held{Key: key, Holder: current, Until: until}
 			}
 		}
 	}

@@ -54,7 +54,12 @@ func IssuerHandler(l *Ledger, token string) http.Handler {
 			w.WriteHeader(code)
 			// A body that cannot be written means the client has gone; the
 			// refusal stands in the ledger whether or not it reads it.
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error(), "kind": kindOf(err)})
+			body := map[string]any{"error": err.Error(), "kind": kindOf(err)}
+			var held Held
+			if errors.As(err, &held) {
+				body["held"] = held
+			}
+			_ = json.NewEncoder(w).Encode(body)
 			return
 		}
 		lease.Region = l.Region()
@@ -150,6 +155,7 @@ func (h *HTTPIssuer) call(ctx context.Context, path string, body any) (Lease, er
 		Lease Lease  `json:"lease"`
 		Error string `json:"error"`
 		Kind  string `json:"kind"`
+		Held  *Held  `json:"held"`
 	}
 	// An error body may be plain text from http.Error; a success body must
 	// carry the lease.
@@ -165,6 +171,9 @@ func (h *HTTPIssuer) call(ctx context.Context, path string, body any) (Lease, er
 		case "stale":
 			return Lease{}, fmt.Errorf("%w: %s", ErrStale, msg)
 		case "held":
+			if out.Held != nil {
+				return Lease{}, *out.Held
+			}
 			return Lease{}, fmt.Errorf("%w: %s", ErrHeld, msg)
 		}
 		return Lease{}, fmt.Errorf("region issuer %s: %s", h.URL, msg)

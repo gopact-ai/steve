@@ -71,3 +71,32 @@ func TestLeasesOfAnotherRegionAreIssuedAndCheckedThere(t *testing.T) {
 		t.Fatalf("local lease = %+v err=%v", local, err)
 	}
 }
+
+// A refused acquire says who holds the lease and until when, whichever
+// region issued it: over HTTP as in-process.
+func TestARefusedAcquireNamesTheHolderInEveryRegion(t *testing.T) {
+	c := &clock{t: time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)}
+	east := open(t, t.TempDir(), c)
+	east.SetRegion("east")
+	west := open(t, t.TempDir(), c)
+	west.SetRegion("west")
+	server := httptest.NewServer(IssuerHandler(west, "west-token"))
+	defer server.Close()
+	east.RegisterIssuer("west", NewHTTPIssuer(server.URL, "west-token"))
+	ctx := context.Background()
+
+	for _, region := range []string{"", "west"} {
+		taken, err := east.AcquireIn(ctx, region, "canonical:p", "first", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = east.AcquireIn(ctx, region, "canonical:p", "second", time.Minute)
+		var held Held
+		if !errors.Is(err, ErrHeld) || !errors.As(err, &held) {
+			t.Fatalf("region %q: refusal = %v, want a Held", region, err)
+		}
+		if held.Key != "canonical:p" || held.Holder != "first" || !held.Until.Equal(taken.ExpiresAt) {
+			t.Fatalf("region %q: held = %+v, want first until %s", region, held, taken.ExpiresAt)
+		}
+	}
+}
