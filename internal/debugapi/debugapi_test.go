@@ -119,8 +119,41 @@ func TestInjectMessageDoesNotAcknowledgeRejectedAcceptance(t *testing.T) {
 	gw := &fakeGateway{err: errors.New("durable acceptance refused")}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/message", strings.NewReader(`{"text":"hi","message_id":"original"}`))
+	req.Host = "127.0.0.1:7711"
 	Handler(gw, Defaults{ChatID: "chat", SenderOpenID: "owner"}).ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "original") {
 		t.Fatalf("rejected input was accepted or lost retry identity: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Loopback keeps other machines out, not pages open in the owner's browser.
+func TestInjectionRefusesOtherSites(t *testing.T) {
+	gw := &fakeGateway{msgs: make(chan feishu.InboundMessage, 1), action: make(chan feishu.CardAction, 1)}
+	srv := httptest.NewServer(Handler(gw, Defaults{ChatID: "oc_chat", SenderOpenID: "ou_owner"}))
+	defer srv.Close()
+	for _, tc := range []struct{ path, host, origin string }{
+		{"/message", "", "https://evil.example"},
+		{"/card", "", "https://evil.example"},
+		{"/message", "evil.example", ""},
+	} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+tc.path, strings.NewReader(`{"text":"hi"}`))
+		req.Header.Set("Content-Type", "text/plain")
+		if tc.host != "" {
+			req.Host = tc.host
+		}
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%+v: status = %d, want 403", tc, resp.StatusCode)
+		}
+	}
+	if len(gw.msgs) != 0 || len(gw.action) != 0 {
+		t.Fatal("a refused request reached the gateway")
 	}
 }

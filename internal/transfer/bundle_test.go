@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -340,7 +341,7 @@ func TestPublicTargetRejectsRestrictedProjectBeforeExtraction(t *testing.T) {
 	projects := project.Open(book)
 	projects.SetHubID("source")
 	p, _, _ := projects.Get(t.Context(), "p")
-	p.Level = project.LevelRestricted
+	p.Level = datalevel.Restricted
 	if err := projects.Declare(t.Context(), []project.Project{p}); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +352,7 @@ func TestPublicTargetRejectsRestrictedProjectBeforeExtraction(t *testing.T) {
 	}
 	target := filepath.Join(t.TempDir(), "unused-state")
 	home := filepath.Join(t.TempDir(), "unused-home")
-	if _, err := Import(t.Context(), ImportOptions{StateDir: target, HubID: "target", ExpectedSource: "source", Input: path, Home: home, TargetLevel: project.LevelPublic}); err == nil {
+	if _, err := Import(t.Context(), ImportOptions{StateDir: target, HubID: "target", ExpectedSource: "source", Input: path, Home: home, TargetLevel: datalevel.Public}); err == nil {
 		t.Fatal("low-level target accepted restricted data")
 	}
 	for _, name := range []string{target, home} {

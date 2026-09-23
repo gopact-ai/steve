@@ -9,12 +9,15 @@ import (
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/httpapi"
+	"github.com/gopact-ai/steve/internal/localtoken"
 	"github.com/gopact-ai/steve/internal/material"
-	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
 func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, planning plansAssembly, projection readModelAssembly) (consoleAssembly, error) {
@@ -44,11 +47,9 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	repos := projection.Repos()
 	shipper := projection.Shipper()
 	view := projection.View()
-	httpConfig := httpapi.ServerConfig{
-		Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken,
-	}
-	if environment != nil && environment.HTTPConfig != nil {
-		httpConfig = *environment.HTTPConfig
+	httpConfig, err := consoleServerConfig(environment, cfg)
+	if err != nil {
+		return nil, err
 	}
 	dashboard, err := httpapi.NewServer(view, httpConfig)
 	if err != nil {
@@ -79,12 +80,12 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	})
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.
-	projects.Levels = func(node string) project.Level {
+	projects.Levels = func(node string) datalevel.Level {
 		level, err := nodes.Level(context.Background(), node)
 		if err != nil {
 			return ""
 		}
-		return project.Level(level)
+		return datalevel.Level(level)
 	}
 	admin := &adminsvc.Service{Lifetime: ctx, Cfg: cfg, Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, View: view,
 		LiveSkills: live, Shipper: shipper, Observation: observation, Coordinator: coordinator, HomePath: cfg.Gateway.HomePath, Memory: memories, Artifacts: artifacts}
@@ -163,3 +164,26 @@ func (v *consoleValues) Dashboard() *httpapi.Server { return v.dashboard }
 func (v *consoleValues) Materials() *material.Store { return v.materials }
 
 func (v *consoleValues) Reconciliations() *reconciliationWorkers { return v.reconciliations }
+
+// consoleServerConfig takes the listener a cluster member was handed as is.
+// Otherwise it never serves the console without a token. Loopback keeps
+// other machines out, not other users and processes on this one. A generated
+// token stays out of the configuration: restarts compare the configured token
+// with the one the process booted with, and it is not the owner's setting.
+func consoleServerConfig(environment *Environment, cfg *config.Config) (httpapi.ServerConfig, error) {
+	if environment != nil && environment.HTTPConfig != nil {
+		return *environment.HTTPConfig, nil
+	}
+	served := httpapi.ServerConfig{Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken}
+	// Serving the network is the owner's decision, token included; the
+	// server refuses a network bind without one.
+	if served.Token != "" || !sameorigin.LoopbackListener(served.Addr) {
+		return served, nil
+	}
+	token, err := localtoken.Resolve(filepath.Dir(cfg.Gateway.StatePath))
+	if err != nil {
+		return httpapi.ServerConfig{}, fmt.Errorf("console token: %w", err)
+	}
+	served.Token = token
+	return served, nil
+}

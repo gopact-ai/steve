@@ -145,10 +145,10 @@ Prepare Go 1.27+, Git, Node.js with npm, and an authenticated coding agent. Stev
 4. Leave run active and open the console from another terminal:
 
    ```bash
-   ./steve dash
+   ./steve dash -config config.json
    ```
 
-   The default address is `http://127.0.0.1:7710`. Send `/project use workspace`, then `@codex List this project's files and explain their purpose`. In the composer, **Enter sends** and Shift+Enter inserts a newline. When a tool asks for permissions beyond the `read` policy, approve or decline the request within the current turn; see the [permission reference](docs/operations.md#harnessesname).
+   It prints the console address with its sign-in token (default `http://127.0.0.1:7710`). Without `gateway.read_model_token`, the Hub generates `loopback-token` in its state directory on first start. Send `/project use workspace`, then `@codex List this project's files and explain their purpose`. In the composer, **Enter sends** and Shift+Enter inserts a newline. When a tool asks for permissions beyond the `read` policy, approve or decline the request within the current turn; see the [permission reference](docs/operations.md#harnessesname).
 
 For Feishu/Lark, `./steve setup` accepts an existing application and `./steve setup -create-app` uses the official device flow. Confirm your application-scoped `open_id`. Once configured, Feishu/Lark and the console can be used together. See [console access and credentials](docs/operations.md#控制台与凭据) for remote access, custom addresses and tokens.
 

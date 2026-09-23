@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/node/journal"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -76,7 +76,7 @@ func (s *Server) saveRestarts(records map[string]restartRecord) error {
 	if err != nil {
 		return err
 	}
-	return (&ledger.FileDocument{Path: s.restartPath()}).Save(raw)
+	return (&filedoc.Document{Path: s.restartPath()}).Save(raw)
 }
 
 func (s *Server) startRestartControl(cancel context.CancelFunc) error {

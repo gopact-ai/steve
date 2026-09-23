@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/skills"
 )
@@ -25,7 +25,7 @@ func (r *Registry) Files(ctx context.Context, name string, req nodewire.FileRequ
 	if err := r.operation(ctx, name, nodewire.StreamFiles, nodewire.FeatureFiles, req, &reply); err != nil {
 		return "", err
 	}
-	return reply.Data, artifact.DecodeFailure(reply.Error)
+	return reply.Data, gitrepo.DecodeFailure(reply.Error)
 }
 
 func (s *Server) runFiles(ctx context.Context, stream *nodewire.Stream) {
@@ -38,7 +38,7 @@ func (s *Server) runFiles(ctx context.Context, stream *nodewire.Stream) {
 		reply.Error = &nodewire.OperationFailure{Code: "invalid_request", Message: err.Error()}
 	} else {
 		data, err := runFileOperation(ctx, req)
-		reply.Data, reply.Error = data, artifact.EncodeFailure(err)
+		reply.Data, reply.Error = data, gitrepo.EncodeFailure(err)
 	}
 	if err := json.NewEncoder(stream).Encode(reply); err != nil {
 		slog.Error(fmt.Sprintf("steve-node: files reply: %v", err))
@@ -96,7 +96,7 @@ func cloneRepository(ctx context.Context, dest, source string) error {
 		if errors.As(err, &exit) {
 			code = exit.ExitCode()
 		}
-		return &artifact.GitError{Command: "clone", Code: code, Stderr: strings.TrimSpace(string(out)) + ": " + err.Error()}
+		return &gitrepo.GitError{Command: "clone", Code: code, Stderr: strings.TrimSpace(string(out)) + ": " + err.Error()}
 	}
 	if _, err := os.Lstat(dest); err == nil {
 		return fmt.Errorf("clone destination %s: %w", dest, os.ErrExist)

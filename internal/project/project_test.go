@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -23,12 +24,12 @@ func TestDeclareNormalizesAndSealedIsDurableAtHome(t *testing.T) {
 	ctx := context.Background()
 	if err := s.Declare(ctx, []Project{
 		{ID: "steve", Home: Home{Path: "/w/steve"}},
-		{ID: "secret", Level: LevelSealed, Home: Home{Node: "vault", Path: "/v"}},
+		{ID: "secret", Level: datalevel.Sealed, Home: Home{Node: "vault", Path: "/v"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	steve, ok, _ := s.Get(ctx, "steve")
-	if !ok || steve.Level != LevelInternal || steve.Repo != RepoInPlace || !steve.Durable("") {
+	if !ok || steve.Level != datalevel.Internal || steve.Repo != RepoInPlace || !steve.Durable("") {
 		t.Fatalf("defaults = %+v", steve)
 	}
 	secret, _, _ := s.Get(ctx, "secret")
@@ -46,7 +47,7 @@ func TestDeclareNormalizesAndSealedIsDurableAtHome(t *testing.T) {
 			t.Fatalf("declared %+v", bad)
 		}
 	}
-	if !LevelInternal.Admits(LevelSealed) || LevelSealed.Admits(LevelInternal) {
+	if !datalevel.Internal.Admits(datalevel.Sealed) || datalevel.Sealed.Admits(datalevel.Internal) {
 		t.Fatal("level order is wrong")
 	}
 }
@@ -103,11 +104,11 @@ func TestMaterializeServesCanonicalAtHomeOnly(t *testing.T) {
 
 func TestCopiesPlaceATurnAwayFromHome(t *testing.T) {
 	s := openStore(t)
-	s.Levels = func(node string) Level {
+	s.Levels = func(node string) datalevel.Level {
 		if node == "node-low" {
-			return LevelPublic
+			return datalevel.Public
 		}
-		return LevelRestricted
+		return datalevel.Restricted
 	}
 	ctx := context.Background()
 	_ = s.Declare(ctx, []Project{{ID: "p", Home: Home{Node: "", Path: "/srv/p"}}, {ID: "q", Home: Home{Node: "node-a", Path: "/srv/q"}}})
@@ -164,7 +165,7 @@ func TestCopiesPlaceATurnAwayFromHome(t *testing.T) {
 	if _, err := s.SetCopy(ctx, "q", Copy{Node: "node-low", Path: "/tmp/q"}); err == nil {
 		t.Fatal("copy on a machine below the project's level accepted")
 	}
-	_ = s.Declare(ctx, []Project{{ID: "s", Level: LevelSealed, Home: Home{Node: "node-a", Path: "/srv/s"}}})
+	_ = s.Declare(ctx, []Project{{ID: "s", Level: datalevel.Sealed, Home: Home{Node: "node-a", Path: "/srv/s"}}})
 	if _, err := s.SetCopy(ctx, "s", Copy{Node: "node-b", Path: "/tmp/s"}); err == nil {
 		t.Fatal("sealed project copy accepted")
 	}

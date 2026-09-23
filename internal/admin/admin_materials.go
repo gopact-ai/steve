@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -29,7 +30,7 @@ func (a *Service) materialProject(ctx context.Context, id string) error {
 	if !p.Level.OrDefault().Admits(a.MaterialLevel.OrDefault()) {
 		return material.ErrScope
 	}
-	if p.Level == project.LevelSealed && p.Home.Node != "" {
+	if p.Level == datalevel.Sealed && p.Home.Node != "" {
 		return errors.New("sealed project content cannot be captured on this hub")
 	}
 	if a.Cfg == nil || a.materialOwner() == "" {

@@ -9,7 +9,7 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/platformconfig"
-	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 func LogicalAgentSession(channel, taskID, agentID string) string {
@@ -91,6 +91,6 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 		if !found {
 			return coordination.ErrNotReady
 		}
-		return (&plugins.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declared.Plugins, *record.PluginRuntime)
+		return (&pluginledger.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declared.Plugins, *record.PluginRuntime)
 	})
 }

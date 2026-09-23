@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/filedoc"
 )
 
 type testReplicator struct {
@@ -589,7 +591,7 @@ func TestReplicaRestoreIntentRepairsIncarnationAcrossEitherCrashBoundary(t *test
 			if err := book.AttachReplication(&testReplicator{book: book}); err != nil {
 				t.Fatal(err)
 			}
-			if err := (&FileDocument{Path: filepath.Join(dir, replicaRestoreFile)}).Save([]byte(`{"from":1,"to":2}`)); err != nil {
+			if err := (&filedoc.Document{Path: filepath.Join(dir, replicaRestoreFile)}).Save([]byte(`{"from":1,"to":2}`)); err != nil {
 				t.Fatal(err)
 			}
 			if committed {

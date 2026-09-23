@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -107,8 +108,8 @@ func TestArtifactOperationsRoundTripWithoutPOSIXTools(t *testing.T) {
 				t.Fatalf("platform nested repository not flattened: %v", err)
 			}
 			_, err := registry.Artifact(t.Context(), name, nodewire.ArtifactRequest{Op: nodewire.ArtifactSnapshot, Repo: bare, WorkTree: work, Flatten: true, Limits: nodewire.SnapshotLimits{MaxFiles: 1}})
-			var limit artifact.TooLarge
-			if !errors.As(err, &limit) || limit != (artifact.TooLarge{Which: "files", Have: 2, Limit: 1}) {
+			var limit gitrepo.TooLarge
+			if !errors.As(err, &limit) || limit != (gitrepo.TooLarge{Which: "files", Have: 2, Limit: 1}) {
 				t.Fatalf("limit type lost: %T %v", err, err)
 			}
 			call(nodewire.ArtifactRequest{Op: nodewire.ArtifactApply, From: base.Commit, Commit: flattened.Commit, WorkTree: checkout})
@@ -148,7 +149,7 @@ func TestArtifactOperationsRoundTripWithoutPOSIXTools(t *testing.T) {
 				t.Fatalf("bundle cleanup: %v", err)
 			}
 			_, err = registry.Artifact(t.Context(), name, nodewire.ArtifactRequest{Op: nodewire.ArtifactCheckout, Repo: bare, Commit: strings.Repeat("f", 40), WorkTree: t.TempDir()})
-			var gitErr *artifact.GitError
+			var gitErr *gitrepo.GitError
 			if !errors.As(err, &gitErr) || gitErr.Code == 0 || gitErr.Command != "read-tree" {
 				t.Fatalf("git status type lost: %T %v", err, err)
 			}
@@ -176,7 +177,7 @@ func TestArtifactMergeConflictTypeAcrossWire(t *testing.T) {
 			artifactWrite(t, work, path, "theirs\n")
 			theirs := call(nodewire.ArtifactRequest{Op: nodewire.ArtifactSnapshot, WorkTree: work, Parent: base}).Commit
 			_, err := registry.Artifact(t.Context(), "n", nodewire.ArtifactRequest{Op: nodewire.ArtifactMerge, Repo: bare, Base: base, Ours: ours, Theirs: theirs, LegacyMerge: legacy})
-			var conflict artifact.MergeConflict
+			var conflict gitrepo.MergeConflict
 			if !errors.As(err, &conflict) || !reflect.DeepEqual(conflict.Paths, []string{path}) {
 				t.Fatalf("conflict type or paths lost: %T %v", err, err)
 			}

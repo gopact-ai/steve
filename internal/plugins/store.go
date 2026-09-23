@@ -145,7 +145,7 @@ func (s *Store) Read(digest string) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	if contentDigest(raw) != digest {
+	if ContentDigest(raw) != digest {
 		return Bundle{}, ErrIntegrity
 	}
 	bundle, err := DecodeBundle(raw)

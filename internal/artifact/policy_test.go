@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
 type testArtifactPolicy struct {
-	limits Limits
-	review ReviewLimits
+	limits gitrepo.Limits
+	review gitrepo.ReviewLimits
 }
 
 func TestStorePolicyPinsRepoAndRefreshesConsumers(t *testing.T) {
@@ -23,10 +24,10 @@ func TestStorePolicyPinsRepoAndRefreshesConsumers(t *testing.T) {
 	write(t, work, "b", "abcdefgh")
 	store, p := newStore(t, &localNode{}, project.Home{Path: work})
 	var current atomic.Pointer[testArtifactPolicy]
-	old := &testArtifactPolicy{Limits{MaxFiles: 2, MaxBytes: 16, MaxFileBytes: 8}, ReviewLimits{MaxFileBytes: 8, MaxEntries: 2, MaxChanges: 2, MaxDiffBytes: 4096}}
+	old := &testArtifactPolicy{gitrepo.Limits{MaxFiles: 2, MaxBytes: 16, MaxFileBytes: 8}, gitrepo.ReviewLimits{MaxFileBytes: 8, MaxEntries: 2, MaxChanges: 2, MaxDiffBytes: 4096}}
 	current.Store(old)
 	var calls atomic.Int64
-	store.Policy = func() (Limits, ReviewLimits) {
+	store.Policy = func() (gitrepo.Limits, gitrepo.ReviewLimits) {
 		calls.Add(1)
 		policy := current.Load()
 		return policy.limits, policy.review
@@ -36,13 +37,13 @@ func TestStorePolicyPinsRepoAndRefreshesConsumers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {
-		t.Fatalf("Repo sampled policy %d times", calls.Load())
+		t.Fatalf("gitrepo.Repo sampled policy %d times", calls.Load())
 	}
 	sha, _, err := repo.Snapshot(t.Context(), work, "", "initial", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	current.Store(&testArtifactPolicy{Limits{MaxFileBytes: 1}, ReviewLimits{MaxFileBytes: 3, MaxEntries: 1, MaxChanges: 1, MaxDiffBytes: 20}})
+	current.Store(&testArtifactPolicy{gitrepo.Limits{MaxFileBytes: 1}, gitrepo.ReviewLimits{MaxFileBytes: 3, MaxEntries: 1, MaxChanges: 1, MaxDiffBytes: 20}})
 	if _, _, err := repo.Snapshot(t.Context(), work, sha, "pinned", false); err != nil {
 		t.Fatalf("old repo changed limits: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestStorePolicyPinsRepoAndRefreshesConsumers(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err = fresh.Snapshot(t.Context(), work, sha, "new limits", false)
-	var large TooLarge
+	var large gitrepo.TooLarge
 	if !errors.As(err, &large) || large.Limit != 1 {
 		t.Fatalf("fresh snapshot ignored limits: %v", err)
 	}
@@ -98,17 +99,17 @@ func TestStorePolicyRemoteSnapshotPinsBeforeNodeWork(t *testing.T) {
 	inner := &localNode{root: t.TempDir(), state: t.TempDir()}
 	store, p := newStore(t, inner, project.Home{Node: "node", Path: work})
 	var current atomic.Pointer[testArtifactPolicy]
-	current.Store(&testArtifactPolicy{limits: Limits{MaxFileBytes: 8}})
-	store.Policy = func() (Limits, ReviewLimits) { p := current.Load(); return p.limits, p.review }
+	current.Store(&testArtifactPolicy{limits: gitrepo.Limits{MaxFileBytes: 8}})
+	store.Policy = func() (gitrepo.Limits, gitrepo.ReviewLimits) { p := current.Load(); return p.limits, p.review }
 	store.nodes = &policySwitchNode{localNode: inner, switchPolicy: func() {
-		current.Store(&testArtifactPolicy{limits: Limits{MaxFileBytes: 1}})
+		current.Store(&testArtifactPolicy{limits: gitrepo.Limits{MaxFileBytes: 1}})
 	}}
 	first, _, err := store.SnapshotCanonical(t.Context(), p, "", "test", "old policy")
 	if err != nil {
 		t.Fatalf("in-flight remote snapshot changed policy: %v", err)
 	}
 	_, _, err = store.SnapshotCanonical(t.Context(), p, first.ID, "test", "new policy")
-	var large TooLarge
+	var large gitrepo.TooLarge
 	if !errors.As(err, &large) || large.Limit != 1 {
 		t.Fatalf("remote snapshot ignored new limits: %v", err)
 	}
@@ -123,9 +124,9 @@ func TestStorePolicyFileContentSamplesOnceAndRefreshesTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	var current atomic.Pointer[testArtifactPolicy]
-	current.Store(&testArtifactPolicy{review: ReviewLimits{Timeout: time.Minute}})
+	current.Store(&testArtifactPolicy{review: gitrepo.ReviewLimits{Timeout: time.Minute}})
 	var calls atomic.Int64
-	store.Policy = func() (Limits, ReviewLimits) {
+	store.Policy = func() (gitrepo.Limits, gitrepo.ReviewLimits) {
 		calls.Add(1)
 		p := current.Load()
 		return p.limits, p.review
@@ -137,7 +138,7 @@ func TestStorePolicyFileContentSamplesOnceAndRefreshesTimeout(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("capture sampled policy %d times", calls.Load())
 	}
-	current.Store(&testArtifactPolicy{review: ReviewLimits{Timeout: time.Nanosecond}})
+	current.Store(&testArtifactPolicy{review: gitrepo.ReviewLimits{Timeout: time.Nanosecond}})
 	if _, err := store.FileContent(t.Context(), p.ID, snap.ID, "a", 8); err == nil {
 		t.Fatal("new capture ignored timeout")
 	}
@@ -152,12 +153,12 @@ func TestStorePolicyConcurrentConsumers(t *testing.T) {
 		t.Fatal(err)
 	}
 	policies := []*testArtifactPolicy{
-		{limits: Limits{MaxFileBytes: 3}, review: ReviewLimits{MaxFileBytes: 3}},
-		{limits: Limits{MaxFileBytes: 8}, review: ReviewLimits{MaxFileBytes: 8}},
+		{limits: gitrepo.Limits{MaxFileBytes: 3}, review: gitrepo.ReviewLimits{MaxFileBytes: 3}},
+		{limits: gitrepo.Limits{MaxFileBytes: 8}, review: gitrepo.ReviewLimits{MaxFileBytes: 8}},
 	}
 	var current atomic.Pointer[testArtifactPolicy]
 	current.Store(policies[0])
-	store.Policy = func() (Limits, ReviewLimits) { p := current.Load(); return p.limits, p.review }
+	store.Policy = func() (gitrepo.Limits, gitrepo.ReviewLimits) { p := current.Load(); return p.limits, p.review }
 	stop := make(chan struct{})
 	var writer sync.WaitGroup
 	writer.Go(func() {

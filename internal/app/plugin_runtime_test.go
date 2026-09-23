@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 func runtimeTestBundle(t *testing.T, version, text string) plugins.Bundle {
@@ -55,7 +56,7 @@ func TestPluginSessionsKeepOldVersionAcrossUpgradeAndGlobalRestart(t *testing.T)
 	t.Cleanup(func() { book.Close() })
 	state := t.TempDir()
 	store := &plugins.Store{Dir: filepath.Join(state, "plugins")}
-	library := &plugins.Library{Store: store, Ledger: book}
+	library := &pluginledger.Library{Store: store, Ledger: book}
 	original := runtimeTestBundle(t, "1.0.0", "PLUGIN_ORIGINAL")
 	if _, err := library.Add(t.Context(), "p", original); err != nil {
 		t.Fatal(err)

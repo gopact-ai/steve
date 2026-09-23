@@ -71,7 +71,7 @@ func Dash(args []string) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("read model at %s answered %s", connection.URL, res.Status)
+		return answered("read model", connection.URL, res)
 	}
 	page := connection.URL
 	if connection.Token != "" {
@@ -79,6 +79,15 @@ func Dash(args []string) error {
 	}
 	fmt.Println(page)
 	return nil
+}
+
+// answered reports a response the command cannot use. A refused token is the
+// one case the user can fix from here, so it names the flags that do.
+func answered(surface, url string, res *http.Response) error {
+	if res.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%s at %s refused the token; pass -config with the Hub's config, or -token", surface, url)
+	}
+	return fmt.Errorf("%s at %s answered %s", surface, url, res.Status)
 }
 
 // defaultReadModelURL is where `steve run` puts the read model unless the
@@ -126,13 +135,13 @@ func Say(args []string) error {
 		} `json:"reply"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return fmt.Errorf("console at %s answered %s", connection.URL, res.Status)
+		return answered("console", connection.URL, res)
 	}
 	if res.StatusCode != http.StatusOK {
 		if out.Error != "" {
 			return errors.New(out.Error)
 		}
-		return fmt.Errorf("console at %s answered %s", connection.URL, res.Status)
+		return answered("console", connection.URL, res)
 	}
 	if out.Reply.Title != "" {
 		fmt.Println("== " + out.Reply.Title)

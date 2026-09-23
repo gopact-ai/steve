@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/channelsettings"
 )
 
 func channelPtr[T any](v T) *T { return &v }
@@ -56,7 +58,7 @@ func TestChannelPatchPreservesIdentitySecretsAndExplicitClears(t *testing.T) {
 	c.Feishu.AllowedSenders = []string{"allowed"}
 	c.Feishu.BlockedSenders = []string{"blocked"}
 	before, _ := json.Marshal(c)
-	next, err := c.PatchChannels(ChannelPatch{DefaultChannel: channelPtr("console"), Feishu: &FeishuChannelPatch{Enabled: channelPtr(false), OwnerOpenID: channelPtr("new-im-owner"), AllowedSenders: channelPtr([]string{}), BlockedSenders: channelPtr([]string{})}})
+	next, err := c.PatchChannels(channelsettings.Patch{DefaultChannel: channelPtr("console"), Feishu: &channelsettings.FeishuPatch{Enabled: channelPtr(false), OwnerOpenID: channelPtr("new-im-owner"), AllowedSenders: channelPtr([]string{}), BlockedSenders: channelPtr([]string{})}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +82,7 @@ func TestChannelPatchPreservesIdentitySecretsAndExplicitClears(t *testing.T) {
 	if reloaded.FeishuEnabled() || reloaded.Feishu.AppSecret != c.Feishu.AppSecret || reloaded.EffectiveOwnerID() != "im-owner" {
 		t.Fatal("disable or independent console identity did not survive reload")
 	}
-	cleared, err := reloaded.PatchChannels(ChannelPatch{Feishu: &FeishuChannelPatch{AppSecret: &ChannelSecret{Action: "clear"}}})
+	cleared, err := reloaded.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "clear"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +96,7 @@ func TestChannelPatchPreservesIdentitySecretsAndExplicitClears(t *testing.T) {
 	if reloaded.Feishu.AppSecret != "" || reloaded.ChannelSettings().Feishu.AppSecretConfigured {
 		t.Fatal("explicit secret clear was not persisted")
 	}
-	reenabled, err := reloaded.PatchChannels(ChannelPatch{DefaultChannel: channelPtr("feishu"), Feishu: &FeishuChannelPatch{Enabled: channelPtr(true), Domain: channelPtr("lark"), AppSecret: &ChannelSecret{Action: "replace", Value: channelPtr("rotated-private-secret")}}})
+	reenabled, err := reloaded.PatchChannels(channelsettings.Patch{DefaultChannel: channelPtr("feishu"), Feishu: &channelsettings.FeishuPatch{Enabled: channelPtr(true), Domain: channelPtr("lark"), AppSecret: &channelsettings.Secret{Action: "replace", Value: channelPtr("rotated-private-secret")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,18 +113,18 @@ func TestChannelPatchRejectsInvalidAndUnsafeCombinations(t *testing.T) {
 	c, _ := channelConfigFixture(t)
 	for _, tc := range []struct {
 		name  string
-		patch ChannelPatch
+		patch channelsettings.Patch
 	}{
-		{"disabled default", ChannelPatch{Feishu: &FeishuChannelPatch{Enabled: channelPtr(false)}}},
-		{"clear enabled", ChannelPatch{Feishu: &FeishuChannelPatch{AppSecret: &ChannelSecret{Action: "clear"}}}},
-		{"clear with value", ChannelPatch{Feishu: &FeishuChannelPatch{AppSecret: &ChannelSecret{Action: "clear", Value: channelPtr("do-not-echo")}}}},
-		{"replace empty", ChannelPatch{Feishu: &FeishuChannelPatch{AppSecret: &ChannelSecret{Action: "replace", Value: channelPtr(" ")}}}},
-		{"unknown secret action", ChannelPatch{Feishu: &FeishuChannelPatch{AppSecret: &ChannelSecret{Action: "do-not-echo"}}}},
-		{"unknown default", ChannelPatch{DefaultChannel: channelPtr("do-not-echo")}},
-		{"unknown domain", ChannelPatch{Feishu: &FeishuChannelPatch{Domain: channelPtr("do-not-echo")}}},
-		{"unknown group policy", ChannelPatch{Feishu: &FeishuChannelPatch{GroupPolicy: channelPtr("do-not-echo")}}},
-		{"empty allowed sender", ChannelPatch{Feishu: &FeishuChannelPatch{AllowedSenders: channelPtr([]string{" "})}}},
-		{"empty blocked sender", ChannelPatch{Feishu: &FeishuChannelPatch{BlockedSenders: channelPtr([]string{""})}}},
+		{"disabled default", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{Enabled: channelPtr(false)}}},
+		{"clear enabled", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "clear"}}}},
+		{"clear with value", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "clear", Value: channelPtr("do-not-echo")}}}},
+		{"replace empty", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "replace", Value: channelPtr(" ")}}}},
+		{"unknown secret action", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "do-not-echo"}}}},
+		{"unknown default", channelsettings.Patch{DefaultChannel: channelPtr("do-not-echo")}},
+		{"unknown domain", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{Domain: channelPtr("do-not-echo")}}},
+		{"unknown group policy", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: channelPtr("do-not-echo")}}},
+		{"empty allowed sender", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AllowedSenders: channelPtr([]string{" "})}}},
+		{"empty blocked sender", channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{BlockedSenders: channelPtr([]string{""})}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := c.PatchChannels(tc.patch)
@@ -135,7 +137,7 @@ func TestChannelPatchRejectsInvalidAndUnsafeCombinations(t *testing.T) {
 		})
 	}
 	c.Gateway.OwnerID, c.Feishu.OwnerOpenID = "", ""
-	if _, err := c.PatchChannels(ChannelPatch{}); err == nil {
+	if _, err := c.PatchChannels(channelsettings.Patch{}); err == nil {
 		t.Fatal("channel edit without an existing console identity was accepted")
 	}
 }
@@ -168,17 +170,17 @@ func TestDisabledChannelLoadAndOptionValidation(t *testing.T) {
 func TestChannelPatchPreservesLegacyGroupRestrictionUnlessExplicit(t *testing.T) {
 	c, _ := channelConfigFixture(t)
 	c.Feishu.AllowedSenders = []string{"allowed"}
-	for _, patch := range []ChannelPatch{{}, {Feishu: &FeishuChannelPatch{Domain: channelPtr("lark")}}} {
+	for _, patch := range []channelsettings.Patch{{}, {Feishu: &channelsettings.FeishuPatch{Domain: channelPtr("lark")}}} {
 		next, err := c.PatchChannels(patch)
 		if err != nil || next.Feishu.GroupPolicy != GroupPolicyAllowlist {
 			t.Fatalf("unrelated save widened old open+allowlist: %v", err)
 		}
 	}
-	next, err := c.PatchChannels(ChannelPatch{Feishu: &FeishuChannelPatch{GroupPolicy: channelPtr(GroupPolicyOpen)}})
+	next, err := c.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: channelPtr(GroupPolicyOpen)}})
 	if err != nil || next.Feishu.GroupPolicy != GroupPolicyOpen {
 		t.Fatalf("explicit group policy was not honored: %v", err)
 	}
-	unchanged, err := next.PatchChannels(ChannelPatch{Feishu: &FeishuChannelPatch{Domain: channelPtr("lark")}})
+	unchanged, err := next.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{Domain: channelPtr("lark")}})
 	if err != nil || unchanged.Feishu.GroupPolicy != GroupPolicyOpen {
 		t.Fatalf("unrelated edit undid explicit group policy: %v", err)
 	}
@@ -188,7 +190,7 @@ func TestChannelDomainChangeDoesNotChangeConsoleLocale(t *testing.T) {
 	c, path := channelConfigFixture(t)
 	c.Feishu.Domain = DomainLark
 	c.Gateway.Locale = ""
-	next, err := c.PatchChannels(ChannelPatch{Feishu: &FeishuChannelPatch{Domain: channelPtr(DomainFeishu)}})
+	next, err := c.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{Domain: channelPtr(DomainFeishu)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +205,7 @@ func TestChannelDomainChangeDoesNotChangeConsoleLocale(t *testing.T) {
 		t.Fatal("independent locale did not survive reload", err)
 	}
 	reloaded.Gateway.Locale = "zh"
-	next, err = reloaded.PatchChannels(ChannelPatch{Feishu: &FeishuChannelPatch{Domain: channelPtr(DomainLark)}})
+	next, err = reloaded.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{Domain: channelPtr(DomainLark)}})
 	if err != nil || next.Gateway.Locale != "zh" {
 		t.Fatal("explicit console locale was replaced", err)
 	}

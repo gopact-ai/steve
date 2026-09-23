@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/project"
@@ -57,7 +58,7 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 		return result, nil
 	}
 	p, ok, err := c.projects.Get(ctx, binding.ProjectID)
-	if err != nil || !ok || p.Level != project.LevelSealed {
+	if err != nil || !ok || p.Level != datalevel.Sealed {
 		return result, nil
 	}
 	if c.isOwner(req) {

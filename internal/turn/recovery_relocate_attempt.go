@@ -8,11 +8,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/checkpoint"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -20,9 +25,6 @@ import (
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
-	"log/slog"
-	"strings"
-	"time"
 )
 
 func (c *Coordinator) inspectRelocation(ctx context.Context, r attempt.Record) (*attempt.RetainedEvidence, error) {
@@ -110,7 +112,7 @@ func (c *Coordinator) relocationTarget(ctx context.Context, original attempt.Rec
 		if !ok {
 			return agent.Agent{}, roster.Candidate{}, errors.New("项目记录缺失")
 		}
-		if p.Level == project.LevelSealed || !p.Level.OrDefault().Admits(candidate.Level.OrDefault()) {
+		if p.Level == datalevel.Sealed || !p.Level.OrDefault().Admits(candidate.Level.OrDefault()) {
 			reasons = append(reasons, candidate.Node+": 数据等级不允许")
 			continue
 		}

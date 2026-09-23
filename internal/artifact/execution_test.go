@@ -3,9 +3,10 @@ package artifact
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"

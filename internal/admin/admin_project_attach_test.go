@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -21,7 +22,7 @@ func TestEnsureProjectWorkspaceAttachesTheProjectWhereTheAgentRuns(t *testing.T)
 	if err := config.Save(a.Path, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.EnsureProjectWorkspace(t.Context(), "p", ""); err != nil {

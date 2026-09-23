@@ -10,18 +10,19 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
 type pluginAPIStub struct{ updated int }
 
 func (*pluginAPIStub) Plugins(context.Context) (consoleapi.PluginsView, error) {
-	return consoleapi.PluginsView{Revision: "revision", Packages: []plugins.PackageRecord{}, Installations: []consoleapi.PluginInstallationView{}}, nil
+	return consoleapi.PluginsView{Revision: "revision", Packages: []pluginledger.PackageRecord{}, Installations: []consoleapi.PluginInstallationView{}}, nil
 }
 func (*pluginAPIStub) PreviewPlugin(context.Context, plugins.Source) (consoleapi.PluginPreview, error) {
 	return consoleapi.PluginPreview{Digest: "digest"}, nil
 }
-func (*pluginAPIStub) ImportPlugin(context.Context, consoleapi.PluginImportRequest) (plugins.PackageRecord, error) {
-	return plugins.PackageRecord{Project: "p", Digest: "digest"}, nil
+func (*pluginAPIStub) ImportPlugin(context.Context, consoleapi.PluginImportRequest) (pluginledger.PackageRecord, error) {
+	return pluginledger.PackageRecord{Project: "p", Digest: "digest"}, nil
 }
 func (p *pluginAPIStub) UpdatePlugin(_ context.Context, _ string, req consoleapi.PluginUpdateRequest) (consoleapi.PluginsView, error) {
 	p.updated++

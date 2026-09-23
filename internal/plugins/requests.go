@@ -94,7 +94,7 @@ func (s *Store) readPreparation(id string) (preparation, bool, error) {
 		return preparation{}, false, err
 	}
 	var p preparation
-	if err := decodeStrict(raw, &p); err != nil {
+	if err := DecodeStrict(raw, &p); err != nil {
 		return p, false, err
 	}
 	if p.Schema != Schema || p.CommandID != id || !ValidID(p.ID) || !validVersion(p.Version) || !digestShape.MatchString(p.Digest) {

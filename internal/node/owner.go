@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/filedoc"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -98,7 +98,7 @@ func (s *Server) writeOwner(o hubOwner) error {
 	if err != nil {
 		return err
 	}
-	return (&ledger.FileDocument{Path: s.ownerPath()}).Save(raw)
+	return (&filedoc.Document{Path: s.ownerPath()}).Save(raw)
 }
 
 func (s *Server) processesStopped(hub string) bool {
@@ -183,7 +183,7 @@ func AdoptWithEvidence(stateDir, hub, actor, evidence string) error {
 	if err != nil {
 		return err
 	}
-	if err := (&ledger.FileDocument{Path: filepath.Join(stateDir, "last-adoption.json")}).Save(raw); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(stateDir, "last-adoption.json")}).Save(raw); err != nil {
 		return err
 	}
 	return s.writeOwner(hubOwner{Hub: hub, LastSeen: record.At, Released: true})

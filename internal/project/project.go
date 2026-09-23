@@ -28,38 +28,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
-
-// Level is the data level the hub assigns a project. Levels order
-// public < internal < restricted < sealed; an artifact's label is the
-// maximum over its closure and a node may only hold what its own level
-// admits.
-type Level string
-
-const (
-	LevelPublic     Level = "public"
-	LevelInternal   Level = "internal"
-	LevelRestricted Level = "restricted"
-	LevelSealed     Level = "sealed"
-)
-
-var levelOrder = map[Level]int{LevelPublic: 0, LevelInternal: 1, LevelRestricted: 2, LevelSealed: 3}
-
-// Admits reports whether data at level l may sit at a place of level at.
-func (l Level) Admits(at Level) bool { return levelOrder[at] >= levelOrder[l] }
-
-// Valid says whether the level is one of the four.
-func (l Level) Valid() bool { _, ok := levelOrder[l]; return ok }
-
-// OrDefault is internal when unset.
-func (l Level) OrDefault() Level {
-	if l == "" {
-		return LevelInternal
-	}
-	return l
-}
 
 // RepoMode is the user's explicit choice of how agents touch the project.
 type RepoMode string
@@ -83,9 +55,9 @@ type Home struct {
 
 // Project is the logical record plus its home binding.
 type Project struct {
-	ID    string   `json:"id"`
-	Level Level    `json:"level"`
-	Repo  RepoMode `json:"repo"`
+	ID    string          `json:"id"`
+	Level datalevel.Level `json:"level"`
+	Repo  RepoMode        `json:"repo"`
 	// Skills are the skill sources pinned for this project.
 	Skills []string `json:"skills,omitempty"`
 	// DurablePlaces are the nodes an artifact must reach to count as
@@ -126,9 +98,9 @@ func (p Project) normalized() (Project, error) {
 		return p, fmt.Errorf("project id %q may not contain slashes or spaces", p.ID)
 	}
 	if p.Level == "" {
-		p.Level = LevelInternal
+		p.Level = datalevel.Internal
 	}
-	if _, ok := levelOrder[p.Level]; !ok {
+	if !p.Level.Valid() {
 		return p, fmt.Errorf("project %s: level %q is not public, internal, restricted or sealed", p.ID, p.Level)
 	}
 	switch p.Repo {
@@ -141,7 +113,7 @@ func (p Project) normalized() (Project, error) {
 	if p.Home.Path == "" {
 		return p, fmt.Errorf("project %s: home.path is required", p.ID)
 	}
-	if p.Level == LevelSealed && !p.Durable(p.Home.Node) {
+	if p.Level == datalevel.Sealed && !p.Durable(p.Home.Node) {
 		p.DurablePlaces = append(p.DurablePlaces, p.Home.Node)
 	}
 	if p.DefaultRole != "" && !p.DefaultRole.Valid() {
@@ -177,7 +149,7 @@ func (p Project) normalized() (Project, error) {
 // the home machine, an absolute directory, a state, and — for a sealed
 // project — not at all.
 func (p Project) copyShape(node string, c Copy) (Copy, error) {
-	if p.Level == LevelSealed {
+	if p.Level == datalevel.Sealed {
 		return c, fmt.Errorf("project %s is sealed: its data stays at %s, so it cannot have copies", p.ID, nodeLabel(p.Home.Node))
 	}
 	if node == p.Home.Node {
@@ -425,7 +397,7 @@ type Store struct {
 	guards      []DeclarationGuard
 	// Levels answers a machine's data level, when the store is given a way
 	// to know; a copy may only sit where the project's level admits.
-	Levels func(node string) Level
+	Levels func(node string) datalevel.Level
 }
 
 // admits checks a copy's machine against the project's level.
@@ -923,7 +895,7 @@ func (s *Store) Access(ctx context.Context, projectID, principal, owner string) 
 		return p.DefaultRole, nil
 	}
 	switch p.Level.OrDefault() {
-	case LevelRestricted, LevelSealed:
+	case datalevel.Restricted, datalevel.Sealed:
 		return RoleNone, nil
 	}
 	return RoleWrite, nil

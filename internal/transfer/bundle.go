@@ -19,7 +19,9 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/exec"
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
@@ -395,7 +397,7 @@ func writeBundle(o Options, b Bundle, syncFile func(*os.File) error) (string, er
 		return "", err
 	}
 	temp := o.Output + ".partial-" + o.TransferID
-	if err := (&ledger.FileDocument{Path: temp}).Save(wrapped); err != nil {
+	if err := (&filedoc.Document{Path: temp}).Save(wrapped); err != nil {
 		return "", err
 	}
 	if err := syncTransferPath(temp, syncFile); err != nil {
@@ -496,7 +498,7 @@ func Read(path string) (Bundle, error) {
 }
 
 type ImportOptions struct {
-	TargetLevel                                  project.Level
+	TargetLevel                                  datalevel.Level
 	StateDir, HubID, ExpectedSource, Home, Input string
 	Finalize                                     func(project.Project) error
 }
@@ -895,7 +897,7 @@ func (r importRun) claimInstall() (marker string, retry bool, err error) {
 	if err := r.refuseOccupiedTargets(); err != nil {
 		return "", false, err
 	}
-	if err := (&ledger.FileDocument{Path: marker}).Save(markerBytes); err != nil {
+	if err := (&filedoc.Document{Path: marker}).Save(markerBytes); err != nil {
 		return "", false, err
 	}
 	return marker, false, nil
@@ -939,7 +941,7 @@ func (r importRun) installFiles(ctx context.Context, book *ledger.Ledger, retry 
 	}
 	if len(r.b.GitHistory) > 0 {
 		history := filepath.Join(r.o.StateDir, "artifacts", "source-history", r.id+".bundle")
-		if err := (&ledger.FileDocument{Path: history}).Save(r.b.GitHistory); err != nil {
+		if err := (&filedoc.Document{Path: history}).Save(r.b.GitHistory); err != nil {
 			return err
 		}
 	}
@@ -968,7 +970,7 @@ func (r importRun) installMemory() error {
 		} else if !os.IsNotExist(err) {
 			return err
 		}
-		if err := (&ledger.FileDocument{Path: path}).Save(raw); err != nil {
+		if err := (&filedoc.Document{Path: path}).Save(raw); err != nil {
 			return err
 		}
 	}

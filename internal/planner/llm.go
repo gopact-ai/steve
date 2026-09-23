@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/budget"
 	"github.com/gopact-ai/steve/internal/plan"
 )
 
@@ -67,11 +68,6 @@ type LLM struct {
 	Policy func() (time.Duration, int)
 }
 
-const (
-	DefaultTimeout  = 3 * time.Minute
-	DefaultAttempts = 2
-)
-
 func (l LLM) Name() string { return "llm:" + l.Agent }
 
 func (l LLM) Plan(ctx context.Context, req Request) (plan.Plan, error) {
@@ -84,10 +80,10 @@ func (l LLM) Plan(ctx context.Context, req Request) (plan.Plan, error) {
 		timeout, attempts = l.Policy()
 	}
 	if timeout <= 0 {
-		timeout = DefaultTimeout
+		timeout = budget.PlanningTimeout
 	}
 	if attempts <= 0 {
-		attempts = DefaultAttempts
+		attempts = budget.PlanningAttempts
 	}
 	source := planningSource{Goal: req.Goal, TaskID: req.TaskID, ProjectID: req.ProjectID, Trigger: req.Trigger,
 		Current: req.Current, TurnsLeft: req.TurnsLeft, Brief: renderPrompt(req), Attempts: attempts}
@@ -111,7 +107,7 @@ func (l LLM) ResumePlan(ctx context.Context, id string) (plan.Plan, error) {
 	}
 	timeout := spec.Timeout
 	if timeout <= 0 {
-		timeout = DefaultTimeout
+		timeout = budget.PlanningTimeout
 	}
 	return l.run(ctx, source, spec.Agent, timeout, id)
 }

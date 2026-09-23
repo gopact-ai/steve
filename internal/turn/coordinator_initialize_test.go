@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -63,7 +64,7 @@ func TestInitializeConversationRequiresProjectReadAccess(t *testing.T) {
 	}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
 	c.SetIdentity("owner", nil)
-	if err := c.projects.Declare(t.Context(), []project.Project{{ID: "private", Level: project.LevelRestricted, Home: project.Home{Path: t.TempDir()}}, {ID: "readable", DefaultRole: project.RoleRead, Home: project.Home{Path: t.TempDir()}}}); err != nil {
+	if err := c.projects.Declare(t.Context(), []project.Project{{ID: "private", Level: datalevel.Restricted, Home: project.Home{Path: t.TempDir()}}, {ID: "readable", DefaultRole: project.RoleRead, Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, projectID := range []string{"missing", "private"} {

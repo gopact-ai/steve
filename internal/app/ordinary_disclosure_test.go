@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -47,9 +48,9 @@ func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T
 			defer f.close(t)
 			r := f.seed(t, true, "", "feishu")
 			projects := project.Open(f.book)
-			level := project.LevelPublic
+			level := datalevel.Public
 			if strings.HasPrefix(mode, "sealed") {
-				level = project.LevelSealed
+				level = datalevel.Sealed
 			}
 			if err := projects.Declare(f.ctx, []project.Project{{ID: "p", Level: level,
 				Home: project.Home{Path: t.TempDir()}, DefaultRole: project.RoleWrite}}); err != nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gopact-ai/steve/internal/filedoc"
 	"modernc.org/sqlite"
 )
 
@@ -114,7 +115,7 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 	if incarnation < l.Incarnation() {
 		return fmt.Errorf("ledger: snapshot incarnation %d predates local %d", incarnation, l.Incarnation())
 	}
-	if err := (&FileDocument{Path: filepath.Join(l.dir, replicaMarker)}).Save([]byte("1\n")); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(l.dir, replicaMarker)}).Save([]byte("1\n")); err != nil {
 		return err
 	}
 	l.mu.Lock()
@@ -124,7 +125,7 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := (&FileDocument{Path: filepath.Join(l.dir, replicaRestoreFile)}).Save(intent); err != nil {
+	if err := (&filedoc.Document{Path: filepath.Join(l.dir, replicaRestoreFile)}).Save(intent); err != nil {
 		return err
 	}
 	conn, err := l.db.Conn(context.Background())

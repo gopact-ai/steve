@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -38,7 +39,7 @@ func TestC9SealedProjectLivesAndLandsOnItsOldGitNode(t *testing.T) {
 	reg.EnsureConnected(t.Context())
 	dir := t.TempDir()
 	_, _, artifacts := declareProjects(t, dir, reg,
-		project.Project{ID: "vault-b", Level: project.LevelSealed, Home: project.Home{Node: nodeB, Path: canonical}},
+		project.Project{ID: "vault-b", Level: datalevel.Sealed, Home: project.Home{Node: nodeB, Path: canonical}},
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

@@ -16,9 +16,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/project"
 )
 
 const artifactContentKind = "artifact-content"
@@ -51,12 +52,12 @@ func (s *Store) prepareContent(ctx context.Context, m Manifest) (contentreplica.
 	if err != nil {
 		return contentreplica.Manifest{}, err
 	}
-	if !m.Label.OrDefault().Admits(project.Level(scope.Level)) {
+	if !m.Label.OrDefault().Admits(datalevel.Level(scope.Level)) {
 		return contentreplica.Manifest{}, contentreplica.ErrPlacement
 	}
 	// The source repo is already complete when receipt/record is called. Open
 	// directly: calling Store.Repo here would recursively restore this record.
-	repo, err := Open(ctx, filepath.Join(s.Dir, "objects", m.Project+".git"))
+	repo, err := gitrepo.Open(ctx, filepath.Join(s.Dir, "objects", m.Project+".git"))
 	if err != nil {
 		return contentreplica.Manifest{}, err
 	}
@@ -113,7 +114,7 @@ func (s *Store) prepareContent(ctx context.Context, m Manifest) (contentreplica.
 			// Periodic full bundles bound dependency depth. A malformed
 			// existing chain is not a reason to silently start a new one.
 			if len(chain) < contentreplica.MaxBundleDepth {
-				if _, err := repo.git(ctx, nil, "merge-base", "--is-ancestor", m.Parent, m.ID); err != nil {
+				if _, err := repo.Git(ctx, nil, "merge-base", "--is-ancestor", m.Parent, m.ID); err != nil {
 					return contentreplica.Manifest{}, fmt.Errorf("artifact bundle base is not an ancestor: %w", err)
 				}
 				baseCommit = m.Parent
@@ -126,12 +127,12 @@ func (s *Store) prepareContent(ctx context.Context, m Manifest) (contentreplica.
 	if limited, ok := s.replication.(objectLimiter); ok {
 		maxBytes = limited.MaxObjectBytes()
 	}
-	if err := repo.pin(ctx, m.ID); err != nil {
+	if err := repo.Pin(ctx, m.ID); err != nil {
 		return contentreplica.Manifest{}, err
 	}
 	hash := sha256.New()
 	output := &bundleWriter{into: io.MultiWriter(file, hash), limit: maxBytes}
-	args := []string{"--no-replace-objects", "bundle", "create", "-", RefFor(m.ID)}
+	args := []string{"--no-replace-objects", "bundle", "create", "-", gitrepo.RefFor(m.ID)}
 	if baseCommit != "" {
 		args = append(args, "^"+baseCommit)
 	}
@@ -171,7 +172,7 @@ func (w *bundleWriter) Write(p []byte) (int, error) {
 
 // restoreContent rebuilds a missing project cache from the ledger's immutable
 // project/commit indexes and their immutable bundle dependencies.
-func (s *Store) restoreContent(ctx context.Context, projectID string, repo *Repo) error {
+func (s *Store) restoreContent(ctx context.Context, projectID string, repo *gitrepo.Repo) error {
 	index, err := s.ledger.Bindings(ctx, artifactContentKind)
 	if err != nil {
 		return err
@@ -199,7 +200,7 @@ func (s *Store) restoreContent(ctx context.Context, projectID string, repo *Repo
 		verified := map[string]int64{}
 		repaired := false
 		for _, commit := range commits {
-			if !shaPattern.MatchString(commit) {
+			if !gitrepo.ValidSHA(commit) {
 				return contentreplica.ErrIntegrity
 			}
 			var id string
@@ -235,7 +236,7 @@ func (s *Store) restoreContent(ctx context.Context, projectID string, repo *Repo
 	return fmt.Errorf("%w: Git cache changed during repair", contentreplica.ErrIntegrity)
 }
 
-func (s *Store) restoreBundle(ctx context.Context, repo *Repo, commit string, manifest contentreplica.Manifest, verified map[string]int64) error {
+func (s *Store) restoreBundle(ctx context.Context, repo *gitrepo.Repo, commit string, manifest contentreplica.Manifest, verified map[string]int64) error {
 	chain, err := contentreplica.Closure(ctx, s.ledger, manifest.ID)
 	if err != nil {
 		return err
@@ -245,7 +246,7 @@ func (s *Store) restoreBundle(ctx context.Context, repo *Repo, commit string, ma
 		return err
 	}
 	defer os.RemoveAll(stagingDir)
-	staging, err := Open(ctx, filepath.Join(stagingDir, "objects.git"))
+	staging, err := gitrepo.Open(ctx, filepath.Join(stagingDir, "objects.git"))
 	if err != nil {
 		return err
 	}
@@ -285,13 +286,13 @@ func (s *Store) restoreBundle(ctx context.Context, repo *Repo, commit string, ma
 	if _, err := s.verifyContentCommitWith(ctx, repo, commit, verified); err != nil {
 		return fmt.Errorf("verify repaired content: %w", err)
 	}
-	_, err = repo.git(ctx, nil, "-c", "core.fsync=all", "update-ref", RefFor(commit), commit)
+	_, err = repo.Git(ctx, nil, "-c", "core.fsync=all", "update-ref", gitrepo.RefFor(commit), commit)
 	return err
 }
 
 // Imports into a private repository only. Git verifies prerequisites against
 // the previously verified base, never against the public, possibly bad cache.
-func (s *Store) importContentBundle(ctx context.Context, staging *Repo, manifest contentreplica.Manifest) (contentreplica.Manifest, error) {
+func (s *Store) importContentBundle(ctx context.Context, staging *gitrepo.Repo, manifest contentreplica.Manifest) (contentreplica.Manifest, error) {
 	commit := manifest.Object.Key
 	file, err := os.CreateTemp("", "steve-artifact-restore-*.bundle")
 	if err != nil {
@@ -314,7 +315,7 @@ func (s *Store) importContentBundle(ctx context.Context, staging *Repo, manifest
 	}
 	// Verify and import only the expected ref; a malformed bundle cannot
 	// overwrite unrelated project refs even when its byte digest was correct.
-	heads, err := staging.git(ctx, nil, "bundle", "list-heads", file.Name())
+	heads, err := staging.Git(ctx, nil, "bundle", "list-heads", file.Name())
 	if err != nil {
 		return manifest, err
 	}
@@ -323,13 +324,13 @@ func (s *Store) importContentBundle(ctx context.Context, staging *Repo, manifest
 		return manifest, errors.New("artifact content bundle has unexpected refs")
 	}
 	fields := strings.Fields(lines[0])
-	if len(fields) != 2 || fields[0] != commit || fields[1] != RefFor(commit) {
+	if len(fields) != 2 || fields[0] != commit || fields[1] != gitrepo.RefFor(commit) {
 		return manifest, contentreplica.ErrIntegrity
 	}
-	if _, err := staging.git(ctx, nil, "bundle", "verify", file.Name()); err != nil {
+	if _, err := staging.Git(ctx, nil, "bundle", "verify", file.Name()); err != nil {
 		return manifest, err
 	}
-	if _, err := staging.git(ctx, nil, "fetch", "--quiet", file.Name(), RefFor(commit)+":"+RefFor(commit)); err != nil {
+	if _, err := staging.Git(ctx, nil, "fetch", "--quiet", file.Name(), gitrepo.RefFor(commit)+":"+gitrepo.RefFor(commit)); err != nil {
 		return manifest, err
 	}
 	_, err = s.verifyContentCommit(ctx, staging, commit)

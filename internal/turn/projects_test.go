@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
@@ -72,7 +73,7 @@ func workspaceOf(t *testing.T, c *Coordinator, agentID string) string {
 // gateway does at boot.
 func useHome(t *testing.T, c *Coordinator, dir string) {
 	t.Helper()
-	if err := c.projects.Declare(context.Background(), []project.Project{{ID: "home", Level: project.LevelRestricted, Home: project.Home{Path: dir}}}); err != nil {
+	if err := c.projects.Declare(context.Background(), []project.Project{{ID: "home", Level: datalevel.Restricted, Home: project.Home{Path: dir}}}); err != nil {
 		t.Fatal(err)
 	}
 	c.homeProject = "home"

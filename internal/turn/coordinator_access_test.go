@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -24,7 +25,7 @@ func TestAccessIsGrantedNotAssumed(t *testing.T) {
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	coordinator.SetIdentity("ou_owner", home.Dir{Path: t.TempDir()})
 	ctx := context.Background()
-	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: project.LevelRestricted, Home: project.Home{Path: workspaceOf(t, coordinator, "codex")}}}); err != nil {
+	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: datalevel.Restricted, Home: project.Home{Path: workspaceOf(t, coordinator, "codex")}}}); err != nil {
 		t.Fatal(err)
 	}
 	// The hub is internal in tests; a restricted project needs a hub that
@@ -69,7 +70,7 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 	coordinator.SetIdentity("ou_owner", home.Dir{Path: t.TempDir()})
 	ctx := context.Background()
 	dir := workspaceOf(t, coordinator, "codex")
-	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: project.LevelSealed, Home: project.Home{Path: dir}, DefaultRole: project.RoleWrite}}); err != nil {
+	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: datalevel.Sealed, Home: project.Home{Path: dir}, DefaultRole: project.RoleWrite}}); err != nil {
 		t.Fatal(err)
 	}
 	// The test hub must be cleared for sealed data for the turn to run.

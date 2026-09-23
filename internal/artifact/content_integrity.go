@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 )
 
@@ -43,19 +44,19 @@ func (l ContentLimits) effective() (ContentLimits, error) {
 // verifyContentCommit verifies every object in the selected commit's closure,
 // including blob hashes. cat-file -e alone only proves the commit object exists;
 // fsck over a whole cache would also fail on unrelated, unreferenced damage.
-func (s *Store) verifyContentCommit(ctx context.Context, repo *Repo, commit string) ([]string, error) {
+func (s *Store) verifyContentCommit(ctx context.Context, repo *gitrepo.Repo, commit string) ([]string, error) {
 	return s.verifyContentCommitWith(ctx, repo, commit, map[string]int64{})
 }
 
-func (s *Store) verifyContentCommitWith(ctx context.Context, repo *Repo, commit string, verified map[string]int64) ([]string, error) {
-	if !shaPattern.MatchString(commit) {
+func (s *Store) verifyContentCommitWith(ctx context.Context, repo *gitrepo.Repo, commit string, verified map[string]int64) ([]string, error) {
+	if !gitrepo.ValidSHA(commit) {
 		return nil, contentreplica.ErrIntegrity
 	}
 	limits, err := s.ContentLimits.effective()
 	if err != nil {
 		return nil, err
 	}
-	raw, truncated, err := runBounded(ctx, repo.Dir, limits.MaxObjects*65, "--no-replace-objects", "rev-list", "--objects", "--no-object-names", commit)
+	raw, truncated, err := repo.GitBounded(ctx, limits.MaxObjects*65, "--no-replace-objects", "rev-list", "--objects", "--no-object-names", commit)
 	if err != nil {
 		return nil, fmt.Errorf("%w: incomplete Git closure: %w", contentreplica.ErrIntegrity, err)
 	}
@@ -105,7 +106,7 @@ func (s *Store) verifyContentCommitWith(ctx context.Context, repo *Repo, commit 
 	}()
 	reader := bufio.NewReader(output)
 	for _, id := range pending {
-		if !shaPattern.MatchString(id) || len(id) != len(commit) {
+		if !gitrepo.ValidSHA(id) || len(id) != len(commit) {
 			return nil, contentreplica.ErrIntegrity
 		}
 		header, err := reader.ReadString('\n')
@@ -160,7 +161,7 @@ func (s *Store) verifyContentCommitWith(ctx context.Context, repo *Repo, commit 
 // expandContentPacks removes packs from the private staging object's search
 // path before unpacking them. Unpacking beside an existing pack can otherwise
 // skip the very objects being repaired. Target repository data is untouched.
-func expandContentPacks(ctx context.Context, repo *Repo) error {
+func expandContentPacks(ctx context.Context, repo *gitrepo.Repo) error {
 	packDir := filepath.Join(repo.Dir, "objects", "pack")
 	entries, err := os.ReadDir(packDir)
 	if os.IsNotExist(err) {
@@ -187,7 +188,7 @@ func expandContentPacks(ctx context.Context, repo *Repo) error {
 		if err != nil {
 			return err
 		}
-		_, err = gitInput(ctx, repo.Dir, []string{"GIT_OBJECT_DIRECTORY=" + filepath.Join(repo.Dir, "objects"), "GIT_ALTERNATE_OBJECT_DIRECTORIES="}, file, "unpack-objects")
+		_, err = repo.GitInput(ctx, []string{"GIT_OBJECT_DIRECTORY=" + filepath.Join(repo.Dir, "objects"), "GIT_ALTERNATE_OBJECT_DIRECTORIES="}, file, "unpack-objects")
 		file.Close()
 		if err != nil {
 			return err
@@ -199,7 +200,7 @@ func expandContentPacks(ctx context.Context, repo *Repo) error {
 // Install exact verified IDs as loose objects. This avoids both fetch
 // negotiation skipping a known commit and an old corrupt pack being preferred
 // over a newly imported pack. Unrelated objects and worktree metadata remain.
-func installVerifiedObjects(source, target *Repo, ids []string) error {
+func installVerifiedObjects(source, target *gitrepo.Repo, ids []string) error {
 	src, err := os.OpenRoot(filepath.Join(source.Dir, "objects"))
 	if err != nil {
 		return err
@@ -254,7 +255,7 @@ func installVerifiedObjects(source, target *Repo, ids []string) error {
 // A corrupt old pack can be chosen before a newly written loose object.
 // Retain it outside Git's lookup path after verified replacements are on disk;
 // never delete its unrelated, potentially useful objects during recovery.
-func quarantineInvalidContentPacks(ctx context.Context, repo *Repo) error {
+func quarantineInvalidContentPacks(ctx context.Context, repo *gitrepo.Repo) error {
 	root, err := os.OpenRoot(filepath.Join(repo.Dir, "objects"))
 	if err != nil {
 		return err

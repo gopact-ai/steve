@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
@@ -423,7 +424,7 @@ func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Land
 // inside a nested repository the snapshot left out end it apply-conflicted
 // before anything is written. The project's repository comes back for
 // applying.
-func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landing) (*Repo, error) {
+func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landing) (*gitrepo.Repo, error) {
 	now, _, nested, err := s.snapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(land.Artifact))
 	if err != nil {
 		if !land.Recoverable {
@@ -522,7 +523,7 @@ func nestedReason(repos []string) string {
 // path journaled before and confirmed after, so a landing cut off here is
 // recovered per path. A write that fails may have written some paths
 // first, so it is recovered the same way, at once, durable or not.
-func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landing, repo *Repo) error {
+func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landing, repo *gitrepo.Repo) error {
 	journal := s.ledger.Journal()
 	for _, path := range land.Paths {
 		if _, err := journal.Started(landPathEffect(*land, path), "", nil); err != nil {
@@ -630,7 +631,7 @@ func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, 
 		LegacyMerge: s.LegacyMerge || !ops.GitAtLeast(version, 2, 38),
 	})
 	if err != nil {
-		var conflict MergeConflict
+		var conflict gitrepo.MergeConflict
 		if errors.As(err, &conflict) {
 			return "", conflict.Marked, conflict.Paths, nil
 		}
@@ -653,7 +654,7 @@ func (s *Store) changedOnNode(ctx context.Context, p project.Project, from, to s
 // so does recovery of a landing cut off while applying. A hub workspace
 // reads the hub's repository, where the merge was made; a sealed project
 // was merged at its home.
-func (s *Store) stageMerged(ctx context.Context, p project.Project, land *Landing, hub *Repo) error {
+func (s *Store) stageMerged(ctx context.Context, p project.Project, land *Landing, hub *gitrepo.Repo) error {
 	if p.Home.Node == "" || metadataOnly(p) {
 		return nil
 	}

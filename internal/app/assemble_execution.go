@@ -10,6 +10,7 @@ import (
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/gateway"
@@ -70,13 +71,13 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		artifacts.SetReplication(environment.Content)
 	}
 	artifacts.Direct = cfg.Gateway.DirectTransfer
-	artifacts.Limits = artifact.Limits{MaxFiles: cfg.Policies.Snapshot.MaxFiles, MaxBytes: cfg.Policies.Snapshot.MaxBytes, MaxFileBytes: cfg.Policies.Snapshot.MaxFileBytes}
-	artifacts.Review = artifact.ReviewLimits{MaxChanges: cfg.Policies.Review.MaxChanges, MaxDiffBytes: cfg.Policies.Review.MaxDiffBytes, MaxFileBytes: cfg.Policies.Review.MaxFileBytes, MaxEntries: cfg.Policies.Review.MaxEntries, Timeout: time.Duration(cfg.Policies.Review.Timeout)}
+	artifacts.Limits = gitrepo.Limits{MaxFiles: cfg.Policies.Snapshot.MaxFiles, MaxBytes: cfg.Policies.Snapshot.MaxBytes, MaxFileBytes: cfg.Policies.Snapshot.MaxFileBytes}
+	artifacts.Review = gitrepo.ReviewLimits{MaxChanges: cfg.Policies.Review.MaxChanges, MaxDiffBytes: cfg.Policies.Review.MaxDiffBytes, MaxFileBytes: cfg.Policies.Review.MaxFileBytes, MaxEntries: cfg.Policies.Review.MaxEntries, Timeout: time.Duration(cfg.Policies.Review.Timeout)}
 	if settings := boot.Settings(); settings != nil {
-		artifacts.Policy = func() (artifact.Limits, artifact.ReviewLimits) {
+		artifacts.Policy = func() (gitrepo.Limits, gitrepo.ReviewLimits) {
 			p := settings.Load().Policies
-			return artifact.Limits{MaxFiles: p.Snapshot.MaxFiles, MaxBytes: p.Snapshot.MaxBytes, MaxFileBytes: p.Snapshot.MaxFileBytes},
-				artifact.ReviewLimits{MaxChanges: p.Review.MaxChanges, MaxDiffBytes: p.Review.MaxDiffBytes, MaxFileBytes: p.Review.MaxFileBytes, MaxEntries: p.Review.MaxEntries, Timeout: time.Duration(p.Review.Timeout)}
+			return gitrepo.Limits{MaxFiles: p.Snapshot.MaxFiles, MaxBytes: p.Snapshot.MaxBytes, MaxFileBytes: p.Snapshot.MaxFileBytes},
+				gitrepo.ReviewLimits{MaxChanges: p.Review.MaxChanges, MaxDiffBytes: p.Review.MaxDiffBytes, MaxFileBytes: p.Review.MaxFileBytes, MaxEntries: p.Review.MaxEntries, Timeout: time.Duration(p.Review.Timeout)}
 		}
 	}
 	coordinator.SetArtifacts(artifacts)
