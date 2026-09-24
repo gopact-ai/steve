@@ -194,7 +194,9 @@ func TestFarEndOpensOnlyAllowedTargets(t *testing.T) {
 	hubIn, farOut := io.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
-	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, nil, []string{allowed}) }()
+	go func() {
+		served <- sshconnect.ServeLink(ctx, farIn, farOut, sshconnect.ServeLinkOptions{Logs: io.Discard, Allowed: []string{allowed}})
+	}()
 	reader := bufio.NewReader(hubIn)
 	if banner, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(banner) != "STEVE-LINK/1" {
 		t.Fatalf("the far end did not announce itself: %q %v", banner, err)
@@ -280,7 +282,9 @@ func TestFarEndStopsWithItsContextWhileTheHubIsSilent(t *testing.T) {
 	hubIn, farOut := io.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
-	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, nil, nil) }()
+	go func() {
+		served <- sshconnect.ServeLink(ctx, farIn, farOut, sshconnect.ServeLinkOptions{Logs: io.Discard})
+	}()
 	if _, err := bufio.NewReader(hubIn).ReadString('\n'); err != nil {
 		t.Fatal(err)
 	}
@@ -292,5 +296,40 @@ func TestFarEndStopsWithItsContextWhileTheHubIsSilent(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("the far end waited for the hub before stopping")
+	}
+}
+
+// The far end binds each listen address through Listen, and the listener
+// it is given is the one it serves and closes when the session ends.
+func TestFarEndBindsItsListenAddressesThroughListen(t *testing.T) {
+	farIn, _ := io.Pipe()
+	hubIn, farOut := io.Pipe()
+	ctx, cancel := context.WithCancel(t.Context())
+	var asked []string
+	var given net.Listener
+	options := sshconnect.ServeLinkOptions{
+		Logs:    io.Discard,
+		Listens: []sshconnect.PortForward{{Listen: "127.0.0.1:7", Target: "127.0.0.1:8"}},
+		Listen: func(network, address string) (net.Listener, error) {
+			asked = append(asked, network+" "+address)
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			given = listener
+			return listener, err
+		},
+	}
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, options) }()
+	if _, err := bufio.NewReader(hubIn).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0] != "tcp 127.0.0.1:7" {
+		t.Fatalf("the far end bound %v", asked)
+	}
+	cancel()
+	if err := <-served; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := given.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("the listener given to the far end is still open: %v", err)
 	}
 }

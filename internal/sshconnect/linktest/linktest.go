@@ -62,7 +62,7 @@ func (l *Launcher) Start(_ context.Context, args []string) (*sshconnect.Session,
 		if junk != "" {
 			_, _ = io.WriteString(farOut, junk)
 		}
-		err := sshconnect.ServeLinkWith(ctx, farIn, farOut, io.Discard, listens, allowed, l.bind)
+		err := sshconnect.ServeLink(ctx, farIn, farOut, sshconnect.ServeLinkOptions{Logs: io.Discard, Listens: listens, Allowed: allowed, Listen: l.bind})
 		far.end(err)
 	}()
 	l.mu.Lock()
@@ -190,12 +190,12 @@ func (l *Launcher) Reserve(t testing.TB) string {
 
 // bind opens a far end's listen address: a reserved one through its held
 // socket, any other on the network.
-func (l *Launcher) bind(address string) (net.Listener, error) {
+func (l *Launcher) bind(network, address string) (net.Listener, error) {
 	l.mu.Lock()
 	port := l.reserved[address]
 	l.mu.Unlock()
 	if port == nil {
-		return net.Listen("tcp", address)
+		return net.Listen(network, address)
 	}
 	return port.take()
 }
