@@ -12,7 +12,6 @@ import (
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/workflowstore"
 )
 
@@ -86,8 +85,6 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	supervisor.SetPlans(plans)
 	supervisor.SetLedger(book, boot.NodeName())
 	supervisor.SetTasks(tasks)
-	coordinator.SetSupervisor(supervisor, plans, fleet)
-	coordinator.SetPlanRecoveryOwner(func(tracked task.Task) bool { return environment != nil && tracked.Transport == "console" })
 	coordinator.SetRepair(nodes, nodes)
 	coordinator.SetProber(func(ctx context.Context, node, harnessID string) error {
 		dir := probeDir(node)

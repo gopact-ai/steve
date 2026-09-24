@@ -112,10 +112,14 @@ type AgentGate interface {
 	DescribeExtras(token, endpoint string) []capability.Extra
 }
 
-// NodeEndpoints resolves the messaging URL an agent on a given node must
-// call. Only remote placements consult it.
-type NodeEndpoints interface {
+// Nodes is what a coordinator asks of the machines agents run on.
+type Nodes interface {
+	// MCPEndpoint resolves the messaging URL an agent on node must call.
+	// Only remote placements consult it.
 	MCPEndpoint(ctx context.Context, node string) (string, error)
+	// RegisterIdle holds a prompt's silence clock while node is
+	// disconnected, until unregister is called.
+	RegisterIdle(node string, clock idle.Clock) (unregister func())
 }
 
 // Injected is what a turn actually gave the agent, kept so "what did it
@@ -175,16 +179,17 @@ type coordinatorState struct {
 	runtime     Runtime
 	promptClock promptClock
 	// autoResolveSource is read only at operation boundaries; a saved
-	// setting never interrupts a live turn.
+	// setting never interrupts a live turn. Nil never hands a merge
+	// conflict to an agent unasked.
 	autoResolveSource func() bool
 	channelOwners     map[string]string
 	home              home.Loader
 	homePath          string
 	skills            *skills.Live
-	gate              AgentGate
-	endpoints         NodeEndpoints
-	RegisterIdle      idle.Registrar
-	tasks             *task.Store
+	// gate is Callbacks.AgentGate: nil when its port cannot be bound.
+	gate  AgentGate
+	nodes Nodes
+	tasks *task.Store
 
 	consoleCompletionGuard ConsoleCompletionGuard
 
@@ -203,23 +208,23 @@ type coordinatorState struct {
 	probeAll   func(ctx context.Context) []models.Result
 	projects   *project.Store
 	// attach gives a project a directory on the machine an agent runs on
-	// when it has none there; nil refuses the turn instead.
+	// when it has none there.
 	attach    func(ctx context.Context, projectID, node string) error
 	attempts  *attempt.Service
 	artifacts *artifact.Store
 	// resolving guards a merge-conflict resolution in flight, which runs
 	// far longer than the sweep interval that may ask for it again.
-	resolving map[string]bool
-	// autoResolve lets the sweeper hand a merge conflict to an agent
-	// without anyone asking.
-	autoResolve bool
+	resolving   map[string]bool
 	intents     *intent.Service
 	disclosures heldDisclosures
 	// defaultProject binds a fresh conversation; homeProject binds the
 	// owner's DM, where Steve's own home directory is the project.
-	defaultProject    string
-	homeProject       string
-	node              string
+	defaultProject string
+	homeProject    string
+	node           string
+	// supervisor, attach, gate and the callbacks below are set once by
+	// Wire. gate, afterTurn and turnPreface may be nil and are checked
+	// where they are used; the rest are never nil once wired.
 	resumer           func(TaskResume) error
 	resumeDispatcher  func(TaskResume)
 	notifier          func(TaskNotice)
@@ -252,8 +257,8 @@ type Deps struct {
 	// each time one of them starts.
 	Timeout       time.Duration
 	TimeoutSource func() time.Duration
-	// AutoResolveSource, when set, decides at each sweep whether a merge
-	// conflict is handed to an agent, in place of SetAutoResolve.
+	// AutoResolveSource decides at each sweep whether a merge conflict is
+	// handed to an agent without anyone asking; nil never does.
 	AutoResolveSource func() bool
 	Text              i18n.Catalog
 	// Owner is the baseline owner identity; ChannelOwners registers each
@@ -276,6 +281,27 @@ type Deps struct {
 	// Node is the name tasks record as the machine that tracks them.
 	Node      string
 	Schedules *schedule.Store
+	// OfflineAfter is how long a turn runs before its completion also
+	// earns a plain-text ping; zero keeps Steve quiet.
+	OfflineAfter time.Duration
+	// ConsoleCompletionGuard checks the console's facts inside the
+	// transaction closing a task tree; nil refuses to close one while any
+	// console fact exists.
+	ConsoleCompletionGuard ConsoleCompletionGuard
+	// Nodes resolves remote messaging endpoints and holds a prompt's
+	// silence clock while its node is disconnected. Without it a remote
+	// agent's turn is refused while messaging is on, and a disconnection
+	// counts as silence.
+	Nodes Nodes
+	// PlanRecoveryOwner reports a task whose transport resumes its own
+	// retained plan, preserving the original exchange, progress and asks;
+	// ResumePlans leaves such a task alone. Nil leaves none alone.
+	PlanRecoveryOwner func(task.Task) bool
+	// Plans holds every plan the planning verbs draft and run.
+	Plans *plan.Store
+	// Fleet admits and places agents on the machines they run on; without
+	// it no admission runs and /fleet reports a hub alone.
+	Fleet *roster.Roster
 }
 
 // dependency is one Deps field New refuses to build without.
@@ -294,6 +320,7 @@ func (d Deps) required() []dependency {
 		{"Skills", d.Skills == nil}, {"Projects", d.Projects == nil}, {"Memory", d.Memory == nil},
 		{"Attempts", d.Attempts == nil}, {"Artifacts", d.Artifacts == nil}, {"Intents", d.Intents == nil},
 		{"Executions", d.Executions == nil}, {"Tasks", d.Tasks == nil}, {"Schedules", d.Schedules == nil},
+		{"Plans", d.Plans == nil},
 	}
 }
 
@@ -327,6 +354,9 @@ func New(deps Deps) (*Coordinator, error) {
 			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
+			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
+			nodes: deps.Nodes, planRecoveryOwner: deps.PlanRecoveryOwner,
+			plans: deps.Plans, fleet: deps.Fleet,
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},
@@ -341,32 +371,12 @@ func placement(selected agent.Agent) harness.Placement {
 	return harness.Placement{Node: selected.Node, Harness: selected.Harness}
 }
 
-// SetWorkspaceAttach wires what gives a project a directory on a machine
-// that has none. Without it a turn on such a machine is refused, which is
-// how a hub with no management service still behaves.
-func (c *Coordinator) SetWorkspaceAttach(attach func(ctx context.Context, projectID, node string) error) {
-	c.attach = attach
-}
-
-// SetAgentGate enables the send primitive: each session gets the messaging
-// MCP server injected with its own conversation-bound token.
-// SetNodeEndpoints wires the resolver remote placements need for messaging.
-func (c *Coordinator) SetNodeEndpoints(e NodeEndpoints) { c.endpoints = e }
-
-func (c *Coordinator) SetAgentGate(gate AgentGate) {
-	c.gate = gate
-}
-
 // ReviveSession clears the taint a crash left on the member's session so a
 // resume turn can run against it. The session is exactly as consistent as
 // the agent's own disk state, which the agent reloads on session/load.
 func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 	return c.store.ClearTaint(conversationID, agentID)
 }
-
-// SetAutoResolve decides whether a landing that stops at a merge conflict
-// is handed to an agent without anyone asking.
-func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
 
 // promptClock bounds how long a prompt may go without progress.
 type promptClock struct {
@@ -394,10 +404,7 @@ func (c *Coordinator) promptTimeout() time.Duration { return c.promptClock.limit
 
 // autoResolves is whether a merge conflict goes to an agent unasked.
 func (c *Coordinator) autoResolves() bool {
-	if c.autoResolveSource != nil {
-		return c.autoResolveSource()
-	}
-	return c.autoResolve
+	return c.autoResolveSource != nil && c.autoResolveSource()
 }
 
 func injectionMode(chatType protocol.ChatType, sender, owner string) home.Mode {

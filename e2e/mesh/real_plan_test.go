@@ -136,10 +136,11 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turntest.New(t, func(o *turntest.Options) {
+	coordinator := turntest.Unwired(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, f.assembler, f.manager, 15*time.Minute
 		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
+		o.Plans, o.Fleet = f.plans, f.roster
 	})
 
 	brain, _ := f.catalog.Resolve("claude")
@@ -161,7 +162,7 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	supervisor.SetTasks(f.tasks)
 	supervisor.SetExecution(f.executions)
 	supervisor.Runs().Observe(f.view)
-	coordinator.SetSupervisor(supervisor, f.plans, f.roster)
+	coordinator.Wire(turntest.Callbacks(turn.Callbacks{Supervisor: supervisor}))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
@@ -278,13 +279,13 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turntest.New(t, func(o *turntest.Options) {
+	coordinator := turntest.Unwired(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, f.assembler, f.manager, 15*time.Minute
 		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
+		o.Nodes = f.registry
 	})
-	coordinator.SetAgentGate(gate)
-	coordinator.SetNodeEndpoints(f.registry)
+	coordinator.Wire(turntest.Callbacks(turn.Callbacks{AgentGate: gate}))
 
 	started := time.Now()
 	result, err := coordinator.Handle(ctx, turn.Request{

@@ -37,9 +37,6 @@ type Resolution struct {
 func (c commands) resolveCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	ctx = agentexec.WithProgress(ctx, req.OnProgress)
 	title := c.text.T(i18n.CardResolve)
-	if c.supervisor == nil || c.plans == nil {
-		return Result{Title: title, Text: c.text.T(i18n.ResolveDisabled)}, nil
-	}
 	binding, err := c.bindingFor(ctx, req)
 	if err != nil {
 		var user UserError
@@ -99,9 +96,6 @@ func (c *Coordinator) AutoResolveConflicts(ctx context.Context, p project.Projec
 // ResolveConflicts works through every queued result of the project that
 // is stuck on a merge conflict. It costs nothing when none is.
 func (c *Coordinator) ResolveConflicts(ctx context.Context, p project.Project) []Resolution {
-	if c.supervisor == nil || c.plans == nil {
-		return nil
-	}
 	stuck, err := c.artifacts.Stuck(ctx, p.ID)
 	if err != nil || len(stuck) == 0 {
 		return nil
@@ -114,9 +108,6 @@ func (c *Coordinator) ResolveConflicts(ctx context.Context, p project.Project) [
 // action taken on one of them names the artifact rather than the project
 // it happens to belong to.
 func (c *Coordinator) ResolveOneConflict(ctx context.Context, p project.Project, artifactID string) []Resolution {
-	if c.supervisor == nil || c.plans == nil {
-		return nil
-	}
 	stuck, err := c.artifacts.Stuck(ctx, p.ID)
 	if err != nil {
 		return nil

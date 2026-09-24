@@ -81,13 +81,8 @@ func (c *Coordinator) workspaceFor(ctx context.Context, req Request, selected ag
 		// hand: an agent is chosen for what it can do, and the project
 		// follows it. Only when that cannot be done is the old refusal,
 		// which names where the project is, worth reading.
-		attached, attachErr := c.attachWorkspace(ctx, binding.ProjectID, selected.Node)
-		if attachErr != nil {
+		if attachErr := c.attachWorkspace(ctx, binding.ProjectID, selected.Node); attachErr != nil {
 			return project.Workspace{}, UserError{Text: attachErr.Error()}
-		}
-		if !attached {
-			return project.Workspace{}, UserError{Text: c.text.T(i18n.ProjectNotHome,
-				binding.ProjectID, notHome.PlaceList(), selected.ID, placeLabel(selected.Node), placeLabel(selected.Node), protocol.CommandProject)}
 		}
 		workspace, err = c.projects.Materialize(ctx, project.Request{Project: binding.ProjectID, Node: selected.Node})
 		if err != nil {
@@ -102,20 +97,15 @@ func (c *Coordinator) workspaceFor(ctx context.Context, req Request, selected ag
 }
 
 // attachWorkspace gives the project a directory on a machine that has
-// none. It reports whether one was attached; a hub without the wiring, or
-// a project that refuses copies, reports false so the caller can say
-// where the project is instead. A failure that is worth reading — a clone
-// that broke, a copy still being made — is returned as it is.
-func (c *Coordinator) attachWorkspace(ctx context.Context, projectID, node string) (bool, error) {
-	if c.attach == nil {
-		return false, nil
-	}
+// none. A failure that is worth reading — a clone that broke, a copy
+// still being made — is returned as it is.
+func (c *Coordinator) attachWorkspace(ctx context.Context, projectID, node string) error {
 	if err := c.attach(ctx, projectID, node); err != nil {
 		slog.Warn(fmt.Sprintf("turn: project %s could not be given a workspace on %s: %v", projectID, placeLabel(node), err), "project", projectID, "node", node)
-		return false, err
+		return err
 	}
 	slog.Info(fmt.Sprintf("turn: project %s was given a workspace on %s", projectID, placeLabel(node)), "project", projectID, "node", node)
-	return true, nil
+	return nil
 }
 
 // sessionDrifted says whether a saved session was opened under a different

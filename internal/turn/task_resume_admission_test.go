@@ -8,7 +8,10 @@ import (
 )
 
 func TestTaskResumeDoesNotReplaceAnOutstandingGrantOnAnotherClick(t *testing.T) {
-	c, _ := completionCoordinator(t, &fakeRunner{reply: "must not run"})
+	accepted := 0
+	c, _ := completionCoordinator(t, &fakeRunner{reply: "must not run"}, withCallbacks(func(cb *Callbacks) {
+		cb.Resumer = func(TaskResume) error { accepted++; return nil }
+	}))
 	row, err := c.tasks.Create(task.Task{Transport: "console", Channel: "console:resume", Member: "codex"})
 	if err != nil {
 		t.Fatal(err)
@@ -16,8 +19,6 @@ func TestTaskResumeDoesNotReplaceAnOutstandingGrantOnAnotherClick(t *testing.T) 
 	if _, err := c.tasks.SetAside(row.ID, task.StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	accepted := 0
-	c.SetResumer(func(TaskResume) error { accepted++; return nil })
 	for _, id := range []string{"click-1", "click-2"} {
 		if _, err := c.Handle(t.Context(), Request{Channel: row.Transport, ConversationID: row.Channel, MessageID: id, Input: "/tasks resume " + row.ID}); err != nil {
 			t.Fatal(err)

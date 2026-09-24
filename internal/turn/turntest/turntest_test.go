@@ -61,3 +61,18 @@ func TestDefaultMemoryLivesInTheCoordinatorsHome(t *testing.T) {
 		}
 	}
 }
+
+func TestNewWiresTheCoordinator(t *testing.T) {
+	c := turntest.New(t)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a coordinator turntest.New built was not wired")
+		}
+	}()
+	c.Wire(turntest.Callbacks(turn.Callbacks{}))
+}
+
+func TestUnwiredLeavesWireToTheTest(t *testing.T) {
+	// Wire panics on a coordinator that is already wired.
+	turntest.Unwired(t).Wire(turntest.Callbacks(turn.Callbacks{}))
+}

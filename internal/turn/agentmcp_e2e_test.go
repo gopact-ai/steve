@@ -103,8 +103,8 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(manager.Stop)
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
-	coordinator.SetAgentGate(gate)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second,
+		withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
 	gate.Anchor("chat", channel.Address{Channel: "feishu", Conversation: "chat", Message: "om_user_1"})
 
 	result, err := handle(coordinator, context.Background(), "mcpfull now")

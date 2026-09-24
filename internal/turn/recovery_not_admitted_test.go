@@ -42,10 +42,9 @@ func (m failingPreparationManager) SupportsHTTPMCP(context.Context, harness.Plac
 
 func TestConfirmNeverAdmittedAfterRealPrepareSessionErrorAndRestart(t *testing.T) {
 	runner := &fakeRunner{reply: "must not run"}
-	c, _, book := taskCoordinatorBook(t, runner, withOwner("owner"))
+	c, _, book := taskCoordinatorBook(t, runner, withOwner("owner"), withCallbacks(func(cb *Callbacks) { cb.AgentGate = &fakeGate{} }))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	c.runtime = failingPreparationManager{manager}
-	c.SetAgentGate(&fakeGate{})
 	req := Request{Channel: "console", ConversationID: "console:proof", MessageID: "web-e1", ExchangeID: "e1", SenderOpenID: "owner", Input: "normal question", Mentioned: true}
 	if _, err := c.Handle(t.Context(), req); err == nil {
 		t.Fatal("preparation unexpectedly succeeded")
