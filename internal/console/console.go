@@ -232,13 +232,6 @@ func orUnknown(in *consoleapi.Injected) string {
 	return "由 " + in.Agent
 }
 
-// SendCommandWith is SendCommand with quotes carried along: the block
-// goes ahead of the line in the prompt the agent sees, while the
-// transcript keeps the line as typed.
-func (s *Service) SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (consoleapi.Reply, error) {
-	return s.sendCommand(ctx, conversation, input, commandID, quotes)
-}
-
 // SetInspector wires where a reply's changes come from.
 func (s *Service) SetInspector(i Inspector) { s.inspector = i }
 
