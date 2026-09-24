@@ -122,9 +122,9 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	if err != nil {
 		return nil, err
 	}
-	// Agents manage standing work through Schedules, which reads the same
+	// Agents manage standing work through a Scheduler, which reads the same
 	// stores and owners as the coordinator but none of its runtime state.
-	scheduler, err := turn.NewSchedules(turn.ScheduleDeps{
+	scheduler, err := turn.NewScheduler(turn.SchedulerDeps{
 		Attempts: attempts, Tasks: tasks, Projects: projects, Schedules: schedules, Text: catalogText,
 		Owner: cfg.EffectiveOwnerID(), ChannelOwners: channelOwners,
 	})
@@ -153,7 +153,7 @@ type executionAssembly interface {
 	Intents() *intent.Service
 	Memories() *memory.Service
 	Plans() *plan.Store
-	Scheduler() *turn.Schedules
+	Scheduler() *turn.Scheduler
 	Schedules() *schedule.Store
 	Tasks() *task.Store
 }
@@ -167,7 +167,7 @@ type executionValues struct {
 	intents     *intent.Service
 	memories    *memory.Service
 	plans       *plan.Store
-	scheduler   *turn.Schedules
+	scheduler   *turn.Scheduler
 	schedules   *schedule.Store
 	tasks       *task.Store
 }
@@ -188,7 +188,7 @@ func (v *executionValues) Memories() *memory.Service { return v.memories }
 
 func (v *executionValues) Plans() *plan.Store { return v.plans }
 
-func (v *executionValues) Scheduler() *turn.Schedules { return v.scheduler }
+func (v *executionValues) Scheduler() *turn.Scheduler { return v.scheduler }
 
 func (v *executionValues) Schedules() *schedule.Store { return v.schedules }
 

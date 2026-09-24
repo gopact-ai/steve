@@ -17,13 +17,13 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-var _ agentmcp.Scheduler = (*Schedules)(nil)
+var _ agentmcp.Scheduler = (*Scheduler)(nil)
 
-// Schedules manages standing work on behalf of an agent's fixed execution.
+// Scheduler manages standing work on behalf of an agent's fixed execution.
 // It depends only on durable state: it reads attempts, tasks and project
 // bindings and creates or deletes stored schedules, keeping no runtime state
 // of its own, so it runs apart from any Coordinator.
-type Schedules struct {
+type Scheduler struct {
 	attempts  *attempt.Service
 	tasks     *task.Store
 	projects  *project.Store
@@ -32,10 +32,10 @@ type Schedules struct {
 	owners    channelOwners
 }
 
-// ScheduleDeps is everything Schedules is built with. Attempts, Tasks,
-// Projects, Schedules and Text are required; NewSchedules refuses deps
+// SchedulerDeps is everything a Scheduler is built with. Attempts, Tasks,
+// Projects, Schedules and Text are required; NewScheduler refuses deps
 // missing any of them. Owner and ChannelOwners are optional.
-type ScheduleDeps struct {
+type SchedulerDeps struct {
 	Attempts  *attempt.Service
 	Tasks     *task.Store
 	Projects  *project.Store
@@ -47,15 +47,15 @@ type ScheduleDeps struct {
 	ChannelOwners map[string]string
 }
 
-func (d ScheduleDeps) required() []dependency {
+func (d SchedulerDeps) required() []dependency {
 	return []dependency{
 		{"Attempts", d.Attempts == nil}, {"Tasks", d.Tasks == nil}, {"Projects", d.Projects == nil},
 		{"Schedules", d.Schedules == nil}, {"Text", d.Text.IsZero()},
 	}
 }
 
-// NewSchedules builds Schedules from deps, or reports every dependency missing.
-func NewSchedules(deps ScheduleDeps) (*Schedules, error) {
+// NewScheduler builds a Scheduler from deps, or reports every dependency missing.
+func NewScheduler(deps SchedulerDeps) (*Scheduler, error) {
 	if missing := absent(deps.required()); len(missing) > 0 {
 		return nil, fmt.Errorf("turn: missing schedule dependencies: %s", strings.Join(missing, ", "))
 	}
@@ -63,14 +63,14 @@ func NewSchedules(deps ScheduleDeps) (*Schedules, error) {
 	if err != nil {
 		return nil, fmt.Errorf("turn: %w", err)
 	}
-	return &Schedules{
+	return &Scheduler{
 		attempts: deps.Attempts, tasks: deps.Tasks, projects: deps.Projects,
 		schedules: deps.Schedules, text: deps.Text, owners: owners,
 	}, nil
 }
 
 // AuthorizeSchedules also gates stored receipt replays in the MCP server.
-func (s *Schedules) AuthorizeSchedules(ctx context.Context, binding agentmcp.Binding, creating bool) error {
+func (s *Scheduler) AuthorizeSchedules(ctx context.Context, binding agentmcp.Binding, creating bool) error {
 	identity, err := s.scheduleIdentity(ctx, binding)
 	if err != nil {
 		return err
@@ -83,7 +83,7 @@ func (s *Schedules) AuthorizeSchedules(ctx context.Context, binding agentmcp.Bin
 
 // scheduleIdentity reconstructs the current caller from its fixed execution,
 // not the newest attempt or the in-memory conversation mode (lost on restart).
-func (s *Schedules) scheduleIdentity(ctx context.Context, binding agentmcp.Binding) (task.Task, error) {
+func (s *Scheduler) scheduleIdentity(ctx context.Context, binding agentmcp.Binding) (task.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return task.Task{}, err
 	}
@@ -140,7 +140,7 @@ func (s *Schedules) scheduleIdentity(ctx context.Context, binding agentmcp.Bindi
 
 // Schedule creates standing work only from a human chat turn. Both one-shot
 // and recurring recursion are refused: chaining one-shots is also a loop.
-func (s *Schedules) Schedule(ctx context.Context, binding agentmcp.Binding, req agentmcp.ScheduleRequest) (schedule.Job, error) {
+func (s *Scheduler) Schedule(ctx context.Context, binding agentmcp.Binding, req agentmcp.ScheduleRequest) (schedule.Job, error) {
 	identity, err := s.scheduleIdentity(ctx, binding)
 	if err != nil {
 		return schedule.Job{}, err
@@ -164,7 +164,7 @@ func scheduleVisible(job schedule.Job, identity task.Task) bool {
 }
 
 // Schedules only exposes jobs in this execution's conversation and project.
-func (s *Schedules) Schedules(ctx context.Context, binding agentmcp.Binding) ([]schedule.Job, error) {
+func (s *Scheduler) Schedules(ctx context.Context, binding agentmcp.Binding) ([]schedule.Job, error) {
 	identity, err := s.scheduleIdentity(ctx, binding)
 	if err != nil {
 		return nil, err
@@ -179,7 +179,7 @@ func (s *Schedules) Schedules(ctx context.Context, binding agentmcp.Binding) ([]
 }
 
 // CancelSchedule keeps the durable store's unresolved-firing protection.
-func (s *Schedules) CancelSchedule(ctx context.Context, binding agentmcp.Binding, id string) (schedule.Job, error) {
+func (s *Scheduler) CancelSchedule(ctx context.Context, binding agentmcp.Binding, id string) (schedule.Job, error) {
 	identity, err := s.scheduleIdentity(ctx, binding)
 	if err != nil {
 		return schedule.Job{}, err

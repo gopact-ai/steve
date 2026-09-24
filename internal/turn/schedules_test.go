@@ -21,7 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-// Only the MCP grant adapter is replaced. Schedules, task/attempt/project
+// Only the MCP grant adapter is replaced. Scheduler, task/attempt/project
 // state, schedule persistence and HTTP tool dispatch are the real implementations.
 type scheduleGrantStore struct {
 	mu   sync.Mutex
@@ -115,7 +115,7 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 	if err := gate.SetStore(&scheduleGrantStore{data: map[string]json.RawMessage{}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	gate.SetScheduler(schedulesFor(t, c))
+	gate.SetScheduler(schedulerFor(t, c))
 	gate.Extras("chat", "codex", "schedule-token", "")
 	scope := agentmcp.GrantScope{TaskID: tracked.ID, TaskEpoch: tracked.ExecutionEpoch, AttemptID: r.ID, ExecutionGeneration: attempt.SessionExecutionEpoch(r), NodeID: r.Node, SessionID: r.Session}
 	if err := gate.BindExecution(t.Context(), agentmcp.Binding{ConversationID: "chat", AgentID: "codex"}, scope); err != nil {
@@ -133,10 +133,10 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 	return scheduleMCPFixture{c: c, jobs: jobs, gate: gate, book: book, tracked: tracked, scope: scope}
 }
 
-// schedulesFor builds Schedules over c's stores and owners.
-func schedulesFor(t *testing.T, c *Coordinator) *Schedules {
+// schedulerFor builds a Scheduler over c's stores and owners.
+func schedulerFor(t *testing.T, c *Coordinator) *Scheduler {
 	t.Helper()
-	s, err := NewSchedules(ScheduleDeps{
+	s, err := NewScheduler(SchedulerDeps{
 		Attempts: c.attempts, Tasks: c.tasks, Projects: c.projects, Schedules: c.schedules, Text: c.text,
 		Owner: c.owners.baseline, ChannelOwners: c.owners.byChannel,
 	})
@@ -327,7 +327,7 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	}
 	before := c.store.Conversation("chat").Sessions["codex"]
 	// Adding platform tools changes guidance, not the MCP connection or token.
-	gate.SetScheduler(schedulesFor(t, c))
+	gate.SetScheduler(schedulerFor(t, c))
 	second, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "continue"})
 	if err != nil {
 		t.Fatalf("schedule upgrade broke the existing conversation: %v", err)
@@ -342,19 +342,19 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	}
 }
 
-func TestNewSchedulesRefusesMissingDependenciesAndInvalidOwners(t *testing.T) {
-	_, err := NewSchedules(ScheduleDeps{})
+func TestNewSchedulerRefusesMissingDependenciesAndInvalidOwners(t *testing.T) {
+	_, err := NewScheduler(SchedulerDeps{})
 	if want := "turn: missing schedule dependencies: Attempts, Tasks, Projects, Schedules, Text"; err == nil || err.Error() != want {
-		t.Fatalf("NewSchedules with nothing: %v, want %q", err, want)
+		t.Fatalf("NewScheduler with nothing: %v, want %q", err, want)
 	}
 	var deps Deps
 	fillDeps(t, testLedger(t), &deps)
-	full := ScheduleDeps{Attempts: deps.Attempts, Tasks: deps.Tasks, Projects: deps.Projects, Schedules: deps.Schedules, Text: deps.Text, Owner: "owner", ChannelOwners: map[string]string{"feishu": "ou_owner"}}
-	if _, err := NewSchedules(full); err != nil {
+	full := SchedulerDeps{Attempts: deps.Attempts, Tasks: deps.Tasks, Projects: deps.Projects, Schedules: deps.Schedules, Text: deps.Text, Owner: "owner", ChannelOwners: map[string]string{"feishu": "ou_owner"}}
+	if _, err := NewScheduler(full); err != nil {
 		t.Fatal(err)
 	}
 	full.ChannelOwners = map[string]string{"console": "owner"}
-	if _, err := NewSchedules(full); err == nil {
-		t.Fatal("NewSchedules accepted an owner for the console channel")
+	if _, err := NewScheduler(full); err == nil {
+		t.Fatal("NewScheduler accepted an owner for the console channel")
 	}
 }
