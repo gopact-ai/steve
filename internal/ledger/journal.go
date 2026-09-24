@@ -166,10 +166,16 @@ func (j *Journal) Reconcile() ([]Outcome, error) {
 	return out, nil
 }
 
+// readAll reads every entry. A ledger-backed journal reads from the read pool
+// without taking mu: an effect write takes mu after committing, under the
+// writer lock, and must not wait for a pooled connection through it. mu
+// guards only the file of a journal without a ledger.
 func (j *Journal) readAll() ([]Entry, error) {
 	if j.ledger != nil {
 		return effectEntries(j.ledger.reads, 0)
 	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	return j.readFileAll()
 }
 
