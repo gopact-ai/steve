@@ -32,8 +32,9 @@ type Schedules struct {
 	owners    channelOwners
 }
 
-// ScheduleDeps is everything Schedules is built with. NewSchedules refuses
-// one missing anything ScheduleDeps.required lists.
+// ScheduleDeps is everything Schedules is built with. Attempts, Tasks,
+// Projects, Schedules and Text are required; NewSchedules refuses deps
+// missing any of them. Owner and ChannelOwners are optional.
 type ScheduleDeps struct {
 	Attempts  *attempt.Service
 	Tasks     *task.Store
