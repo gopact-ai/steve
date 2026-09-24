@@ -99,6 +99,17 @@ func TestConsoleConnectionConfigAndSidecar(t *testing.T) {
 	}
 }
 
+// Every console requires a token; -config supplies it, so -token is not
+// described as something only a network console needs.
+func TestConsoleTokenFlagDescribesWhereTheTokenComesFrom(t *testing.T) {
+	flags := flag.NewFlagSet("client-test", flag.ContinueOnError)
+	addConsoleClientFlags(flags)
+	usage := flags.Lookup("token").Usage
+	if strings.Contains(usage, "not on loopback") || !strings.Contains(usage, "-config") {
+		t.Fatalf("-token usage = %q", usage)
+	}
+}
+
 func TestConsoleConnectionOverrides(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -132,6 +143,11 @@ func TestConsoleConnectionOverrides(t *testing.T) {
 			if test.wantError {
 				if err == nil || !strings.Contains(err.Error(), "origin") || strings.Contains(err.Error(), "owner-token") {
 					t.Fatalf("wanted safe origin error, got %v", err)
+				}
+				// Every console requires a token, so the way out is that
+				// console's token, never connecting without one.
+				if !strings.Contains(err.Error(), "-token") || strings.Contains(err.Error(), "without credentials") {
+					t.Fatalf("origin error %q does not point to -token", err)
 				}
 				return
 			}
