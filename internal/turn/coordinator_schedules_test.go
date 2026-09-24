@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/task"
@@ -217,6 +218,29 @@ func TestScheduleMCPRefusesGuestGroupChildAndMismatchedExecution(t *testing.T) {
 				t.Fatal("refused request mutated schedules")
 			}
 		})
+	}
+}
+
+// A stored receipt is replayed only after the current caller is authorized
+// again, so a retry after the conversation moved to another project is refused.
+func TestScheduleMCPReplayRefusedAfterProjectRebinding(t *testing.T) {
+	f := newScheduleMCPFixture(t, nil)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); bad {
+		t.Fatalf("owner's native session was refused: %s", text)
+	}
+	if err := f.c.projects.Declare(t.Context(), []project.Project{{ID: "elsewhere", Home: project.Home{Node: "laptop", Path: t.TempDir()}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.c.projects.Bind(t.Context(), f.tracked.Channel, "elsewhere", f.tracked.Requester); err != nil {
+		t.Fatal(err)
+	}
+	for tool, args := range map[string]any{"steve_schedule": createScheduleArgs(), "steve_schedules": map[string]any{}} {
+		if text, bad := scheduleToolCall(t, f.gate, tool, args); !bad || !strings.Contains(text, "project binding changed") {
+			t.Fatalf("%s after rebinding: %s", tool, text)
+		}
+	}
+	if len(f.jobs.List("")) != 1 {
+		t.Fatal("refused replay mutated schedules")
 	}
 }
 
