@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gopact-ai/steve/internal/channel"
-
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
