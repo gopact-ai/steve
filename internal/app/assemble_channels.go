@@ -77,8 +77,8 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	// /tasks resume re-enters through the same path a crash recovery does:
 	// a notice at the anchor becomes the new anchor, and the continuation
 	// arrives as an ordinary message.
-	var callbacks turn.Callbacks
-	callbacks.Notifier = func(n turn.TaskNotice) {
+	var routes taskRoutes
+	routes.Notifier = func(n turn.TaskNotice) {
 		err := routeTask(n.Transport, func() error { cons.Notice(n); return nil }, func() error {
 			gw.Notify(gateway.Notice{TaskID: n.TaskID, MessageID: n.MessageID, Requester: n.Requester, Text: n.Text})
 			return nil
@@ -87,7 +87,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 			slog.Error("task notice not routed", "task", n.TaskID, "error", err)
 		}
 	}
-	callbacks.Resumer = func(r turn.TaskResume) error {
+	routes.Resumer = func(r turn.TaskResume) error {
 		return routeTask(r.Transport, func() error {
 			return cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member, catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), r.Admission, coordinator.ReviveSession)
 		}, func() error {
@@ -96,7 +96,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	}
 	gw.SetRecoveryLedger(book)
 	gw.SetIngressLifetime(ctx, page.Reconciliations())
-	callbacks.ResumeDispatcher = func(r turn.TaskResume) {
+	routes.ResumeDispatcher = func(r turn.TaskResume) {
 		// Acceptance and owner authorization are already durable. Waking a
 		// consumer is best-effort; startup/runtime recovery uses the same input.
 		page.Reconciliations().Go(func() {
@@ -108,7 +108,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 			}
 		})
 	}
-	return &channelsValues{channel: channel, callbacks: callbacks, startup: channelStartup{
+	return &channelsValues{channel: channel, routes: routes, startup: channelStartup{
 		owner: cfg.Feishu.OwnerOpenID, home: cfg.Gateway.HomePath, timeout: time.Duration(cfg.Gateway.PromptTimeout),
 	}}, nil
 }
@@ -116,9 +116,15 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 type channelsAssembly interface {
 	Channel() *feishu.Channel
 	Startup() channelStartup
-	// Callbacks are the coordinator's Notifier, Resumer and
-	// ResumeDispatcher.
-	Callbacks() turn.Callbacks
+	Routes() taskRoutes
+}
+
+// taskRoutes are the coordinator's Notifier, Resumer and ResumeDispatcher,
+// routed to the channel a task came from.
+type taskRoutes struct {
+	Notifier         func(turn.TaskNotice)
+	Resumer          func(turn.TaskResume) error
+	ResumeDispatcher func(turn.TaskResume)
 }
 
 type channelStartup struct {
@@ -127,11 +133,11 @@ type channelStartup struct {
 }
 
 type channelsValues struct {
-	channel   *feishu.Channel
-	callbacks turn.Callbacks
-	startup   channelStartup
+	channel *feishu.Channel
+	routes  taskRoutes
+	startup channelStartup
 }
 
-func (v *channelsValues) Channel() *feishu.Channel  { return v.channel }
-func (v *channelsValues) Startup() channelStartup   { return v.startup }
-func (v *channelsValues) Callbacks() turn.Callbacks { return v.callbacks }
+func (v *channelsValues) Channel() *feishu.Channel { return v.channel }
+func (v *channelsValues) Startup() channelStartup  { return v.startup }
+func (v *channelsValues) Routes() taskRoutes       { return v.routes }

@@ -49,8 +49,8 @@ func assembledResumeWithGate(t *testing.T, command string, gate *resumeInputGate
 	return assembledResumeAt(t, t.TempDir(), command, gate)
 }
 
-// adjust changes the callbacks the channels built before they are wired.
-func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate, adjust ...func(*turn.Callbacks)) resumeFixture {
+// adjust changes the routes the channels built before they are wired.
+func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate, adjust ...func(*taskRoutes)) resumeFixture {
 	t.Helper()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -121,11 +121,11 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate,
 	if err != nil {
 		t.Fatal(err)
 	}
-	callbacks := channels.Callbacks()
+	routes := channels.Routes()
 	for _, change := range adjust {
-		change(&callbacks)
+		change(&routes)
 	}
-	coordinator.Wire(turntest.Callbacks(callbacks))
+	coordinator.Wire(turntest.Callbacks(coordinatorCallbacks(nil, nil, messagingCallbacks{}, routes)))
 	return resumeFixture{book, tasks, sessions, coordinator, cons}
 }
 
@@ -240,7 +240,7 @@ func TestTaskResumeDormantGrantSurvivesActualSQLiteReopen(t *testing.T) {
 			dir, bin := t.TempDir(), resumeAgent(t)
 			// A crash can happen after CAS and before the best-effort wake.
 			// Removing only that wake leaves real channel acceptance/owner CAS.
-			f := assembledResumeAt(t, dir, bin, nil, func(cb *turn.Callbacks) { cb.ResumeDispatcher = func(turn.TaskResume) {} })
+			f := assembledResumeAt(t, dir, bin, nil, func(r *taskRoutes) { r.ResumeDispatcher = func(turn.TaskResume) {} })
 			before := f.paused(t, "console")
 			if !authorize {
 				if _, err := f.book.DB().Exec(`CREATE TRIGGER refuse_task_resume BEFORE UPDATE ON bindings WHEN NEW.kind='task' BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {

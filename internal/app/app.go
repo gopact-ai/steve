@@ -126,17 +126,21 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 // wireCoordinator hands the coordinator the callbacks the stages after
 // execution built around it.
 func wireCoordinator(work executionAssembly, planning plansAssembly, management administrationAssembly, delegates delegationAssembly, channels channelsAssembly) {
-	messaging, routes := delegates.Callbacks(), channels.Callbacks()
-	work.Coordinator().Wire(turn.Callbacks{
-		Supervisor:       planning.Supervisor(),
-		WorkspaceAttach:  management.WorkspaceAttach(),
+	work.Coordinator().Wire(coordinatorCallbacks(planning.Supervisor(), management.WorkspaceAttach(), delegates.Messaging(), channels.Routes()))
+}
+
+// coordinatorCallbacks assembles turn.Callbacks from what each stage built.
+func coordinatorCallbacks(supervisor turn.Supervisor, attach func(ctx context.Context, projectID, node string) error, messaging messagingCallbacks, routes taskRoutes) turn.Callbacks {
+	return turn.Callbacks{
+		Supervisor:       supervisor,
+		WorkspaceAttach:  attach,
 		AgentGate:        messaging.AgentGate,
 		AfterTurn:        messaging.AfterTurn,
 		TurnPreface:      messaging.TurnPreface,
 		Notifier:         routes.Notifier,
 		Resumer:          routes.Resumer,
 		ResumeDispatcher: routes.ResumeDispatcher,
-	})
+	}
 }
 
 // Run waits for the application lifetime and joins shutdown before returning.
