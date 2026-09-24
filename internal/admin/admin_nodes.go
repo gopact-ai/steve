@@ -30,7 +30,7 @@ import (
 // NodeSettings reads what a machine offers: the hub's own from its
 // config, a node's from the node.
 func (a *Service) NodeSettings(ctx context.Context, name string) (nodewire.Settings, error) {
-	if name == NodeName() && !a.ClusterMode {
+	if name == a.NodeName && !a.ClusterMode {
 		return a.hubSettings(), nil
 	}
 	return a.Nodes.Settings(ctx, name)
@@ -40,7 +40,7 @@ func (a *Service) NodeSettings(ctx context.Context, name string) (nodewire.Setti
 // force: on the hub, the config file and the running manager, assembler,
 // roster and launch probe; on a node, the node itself.
 func (a *Service) SetNodeSettings(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
-	if name != NodeName() || a.ClusterMode {
+	if name != a.NodeName || a.ClusterMode {
 		return a.Nodes.Configure(ctx, name, set)
 	}
 	a.Mu.Lock()
@@ -241,7 +241,7 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 		if _, exists := c.Nodes[name]; exists {
 			return fmt.Errorf("机器 %s 已经存在", name)
 		}
-		if name == NodeName() {
+		if name == a.NodeName {
 			return fmt.Errorf("%s 是 hub 自己", name)
 		}
 		if c.Nodes == nil {
@@ -319,7 +319,7 @@ func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Co
 // configuration is kept so the machine stays on the page to try again.
 func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
-	if name == "" || name == NodeName() || name == "hub" {
+	if name == "" || name == a.NodeName || name == "hub" {
 		return fmt.Errorf("%q 是 hub 自己，不能移除", name)
 	}
 	// Placement checks and removal share the same administration boundary as

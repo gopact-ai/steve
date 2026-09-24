@@ -22,10 +22,6 @@ import (
 )
 
 func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T) {
-	t.Setenv("STEVE_NODE", "node-a")
-	previous, _ := adminsvc.LocalNodeIdentity.Load().(string)
-	adminsvc.LocalNodeIdentity.Store("")
-	t.Cleanup(func() { adminsvc.LocalNodeIdentity.Store(previous) })
 	for _, requestedNode := range []string{"", "hub", "node-a"} {
 		t.Run("node="+requestedNode, func(t *testing.T) {
 			a, _, book, _ := sharedSettingsFixture(t)
@@ -80,6 +76,7 @@ func sharedSettingsFixture(t *testing.T) (*adminsvc.Service, *applicationConfigu
 		t.Fatal(err)
 	}
 	a.ClusterMode = true
+	a.NodeName = shared.local.ID
 	a.WriteConfig = shared.Save
 	a.WriteConfigContext = shared.SaveContext
 	a.ConfigRevision = shared.Revision

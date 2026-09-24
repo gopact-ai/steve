@@ -52,7 +52,7 @@ func desktopAdminFixture(t *testing.T) (*Service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Service{ConfigStore: NewConfigStore(cfg), Path: install.Paths.Config, Catalog: catalog, Manager: manager,
+	return &Service{NodeName: "node-hub", ConfigStore: NewConfigStore(cfg), Path: install.Paths.Config, Catalog: catalog, Manager: manager,
 		LiveSkills: &skills.Live{Map: skillMap, After: func() error { t.Fatal("enrollment restarted existing agents"); return nil }}}, bin
 }
 

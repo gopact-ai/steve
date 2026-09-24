@@ -152,8 +152,8 @@ func TestHubNodeSettingsDerivesEnvOnlyForRunningHarness(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(manager.Stop)
-			a := &Service{ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog, Manager: manager, Assembler: configbuild.CapabilityAssembler(cfg), Fleet: roster.New(catalog)}
-			set, err := a.NodeSettings(t.Context(), NodeName())
+			a := &Service{NodeName: "node-hub", ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog, Manager: manager, Assembler: configbuild.CapabilityAssembler(cfg), Fleet: roster.New(catalog)}
+			set, err := a.NodeSettings(t.Context(), a.NodeName)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,7 +161,7 @@ func TestHubNodeSettingsDerivesEnvOnlyForRunningHarness(t *testing.T) {
 				t.Errorf("settings GET exposes runtime Env: %v", set.Harnesses[harness.Codex].Env)
 			}
 			set.Tools = []string{"git"}
-			if _, err := a.SetNodeSettings(t.Context(), NodeName(), set); err != nil {
+			if _, err := a.SetNodeSettings(t.Context(), a.NodeName, set); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

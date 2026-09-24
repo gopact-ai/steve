@@ -36,7 +36,7 @@ func hubNodeSettingsFixture(t *testing.T) *Service {
 func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	a := hubNodeSettingsFixture(t)
 	original := a.cfg().Harnesses["mock"]
-	before, err := a.NodeSettings(t.Context(), NodeName())
+	before, err := a.NodeSettings(t.Context(), a.NodeName)
 	if err != nil || before.Revision == "" {
 		t.Fatalf("GET revision=%q err=%v", before.Revision, err)
 	}
@@ -45,7 +45,7 @@ func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for range 2 {
-		wg.Go(func() { _, err := a.SetNodeSettings(t.Context(), NodeName(), set); results <- err })
+		wg.Go(func() { _, err := a.SetNodeSettings(t.Context(), a.NodeName, set); results <- err })
 	}
 	wg.Wait()
 	close(results)
@@ -65,20 +65,20 @@ func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(a.cfg().Harnesses["mock"], original) {
 		t.Fatal("unrelated edit lost Adapter/Slots/Permission/Env")
 	}
-	set, _ = a.NodeSettings(t.Context(), NodeName())
+	set, _ = a.NodeSettings(t.Context(), a.NodeName)
 	h := set.Harnesses["mock"]
 	h.Adapter, h.Slots, h.Permission, h.Env = nil, nil, nil, nil
 	set.Harnesses["mock"] = h
 	m := set.MCPServers["remote"]
 	m.Env, m.Headers = nil, nil
 	set.MCPServers["remote"] = m
-	if _, err := a.SetNodeSettings(t.Context(), NodeName(), set); err != nil {
+	if _, err := a.SetNodeSettings(t.Context(), a.NodeName, set); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(a.cfg().Harnesses["mock"], original) || a.cfg().MCPServers["remote"].Env["SECRET"] != "kept" || a.cfg().MCPServers["remote"].Headers["Authorization"] != "kept" {
 		t.Fatal("omitted fields cleared data")
 	}
-	set, _ = a.NodeSettings(t.Context(), NodeName())
+	set, _ = a.NodeSettings(t.Context(), a.NodeName)
 	h = set.Harnesses["mock"]
 	zero := 0
 	h.Slots = &zero
@@ -96,7 +96,7 @@ func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &posted); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.SetNodeSettings(t.Context(), NodeName(), posted); err != nil {
+	if _, err := a.SetNodeSettings(t.Context(), a.NodeName, posted); err != nil {
 		t.Fatal(err)
 	}
 	got := a.cfg().Harnesses["mock"]
@@ -115,21 +115,21 @@ func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 		t.Fatal("persisted adapter pin changed")
 	}
 	posted.Revision = ""
-	if _, err := a.SetNodeSettings(t.Context(), NodeName(), posted); !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
+	if _, err := a.SetNodeSettings(t.Context(), a.NodeName, posted); !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
 		t.Fatalf("empty revision accepted: %v", err)
 	}
 }
 
 func TestHubNodeSettingsFileFailureDoesNotAdvanceRevision(t *testing.T) {
 	a := hubNodeSettingsFixture(t)
-	before, _ := a.NodeSettings(t.Context(), NodeName())
+	before, _ := a.NodeSettings(t.Context(), a.NodeName)
 	set := before
 	set.Tools = []string{"git"}
 	a.WriteConfig = func(string, *config.Config) error { return errors.New("save unavailable") }
-	if _, err := a.SetNodeSettings(t.Context(), NodeName(), set); err == nil {
+	if _, err := a.SetNodeSettings(t.Context(), a.NodeName, set); err == nil {
 		t.Fatal("failed save reported success")
 	}
-	after, _ := a.NodeSettings(t.Context(), NodeName())
+	after, _ := a.NodeSettings(t.Context(), a.NodeName)
 	if before.Revision != after.Revision {
 		t.Fatal("failed save consumed base revision")
 	}

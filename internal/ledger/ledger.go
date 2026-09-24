@@ -111,8 +111,10 @@ type Ledger struct {
 	replicationRequired bool
 	replicaWriter       bool
 
-	region  string
-	issuers map[string]Issuer
+	// regionMu guards region and issuers.
+	regionMu sync.RWMutex
+	region   string
+	issuers  map[string]Issuer
 }
 
 // Options tune an Open.

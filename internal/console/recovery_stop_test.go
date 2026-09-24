@@ -299,9 +299,6 @@ func TestUnconfirmedChildStopKeepsFinishedParentExchangeReserved(t *testing.T) {
 // exchange must notice that on its own: parking on a card the owner can
 // only read leaves the conversation running forever with nothing to do.
 func TestUnconfirmedStopSettlesOnceARecheckConfirmsIt(t *testing.T) {
-	previous := recoveryStopInterval.Load()
-	recoveryStopInterval.Store(int64(20 * time.Millisecond))
-	defer recoveryStopInterval.Store(previous)
 	doc := recoveryDocument()
 	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
@@ -318,6 +315,7 @@ func TestUnconfirmedStopSettlesOnceARecheckConfirmsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := impatient(New(&echo{}, "owner", nil))
+	restored.recoveryStopEvery = 20 * time.Millisecond
 	restored.EnableRetainedRecovery(t.Context())
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)

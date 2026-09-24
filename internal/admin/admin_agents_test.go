@@ -52,7 +52,7 @@ func agentAdminFixture(t *testing.T) *Service {
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	return &Service{ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog}
+	return &Service{NodeName: "node-hub", ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog}
 }
 
 func TestAgentChangesPublishAnAlreadyCommittedConfiguration(t *testing.T) {

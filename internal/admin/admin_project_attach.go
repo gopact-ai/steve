@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -50,7 +49,7 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 		case project.CopyProvisioning:
 			return a.awaitCopy(ctx, projectID, nodeKey)
 		case project.CopyFailed:
-			return fmt.Errorf("%s 上的项目副本没有建成：%s", nodewire.Name(nodeKey), existing.Error)
+			return fmt.Errorf("%s 上的项目副本没有建成：%s", a.name(nodeKey), existing.Error)
 		}
 	}
 	origin := "adopt"
@@ -84,11 +83,11 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 // a clone needs. A machine that cannot answer is not guessed about.
 func (a *Service) missingDir(ctx context.Context, nodeKey, path string) (bool, error) {
 	if nodeKey != "" && a.Nodes == nil {
-		return false, fmt.Errorf("还不能查看 %s 上的目录", nodewire.Name(nodeKey))
+		return false, fmt.Errorf("还不能查看 %s 上的目录", a.name(nodeKey))
 	}
 	found, err := a.inspect(ctx, nodeKey, path)
 	if err != nil {
-		return false, fmt.Errorf("检查 %s 上的 %s 失败：%w", nodewire.Name(nodeKey), path, err)
+		return false, fmt.Errorf("检查 %s 上的 %s 失败：%w", a.name(nodeKey), path, err)
 	}
 	return len(found) == 1 && found[0].Missing, nil
 }
@@ -109,14 +108,14 @@ func (a *Service) awaitCopy(ctx context.Context, projectID, nodeKey string) erro
 		made, found := p.CopyOn(nodeKey)
 		switch {
 		case !found:
-			return fmt.Errorf("%s 上的项目副本不见了", nodewire.Name(nodeKey))
+			return fmt.Errorf("%s 上的项目副本不见了", a.name(nodeKey))
 		case made.State == project.CopyReady:
 			return nil
 		case made.State == project.CopyFailed:
-			return fmt.Errorf("%s 上的项目副本没有建成：%s", nodewire.Name(nodeKey), made.Error)
+			return fmt.Errorf("%s 上的项目副本没有建成：%s", a.name(nodeKey), made.Error)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%w：正在把 %s 复制到 %s，完成后再说一次", ErrWorkspacePreparing, projectID, nodewire.Name(nodeKey))
+			return fmt.Errorf("%w：正在把 %s 复制到 %s，完成后再说一次", ErrWorkspacePreparing, projectID, a.name(nodeKey))
 		}
 		select {
 		case <-ctx.Done():

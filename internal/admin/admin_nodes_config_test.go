@@ -30,12 +30,12 @@ func TestFailedMachineConfigurationSaveChangesNothing(t *testing.T) {
 			return a.RemoveNode(t.Context(), "node-test")
 		}},
 		{"hub settings", hubNodeSettingsFixture, func(t *testing.T, a *Service) error {
-			set, err := a.NodeSettings(t.Context(), NodeName())
+			set, err := a.NodeSettings(t.Context(), a.NodeName)
 			if err != nil {
 				t.Fatal(err)
 			}
 			set.Tools = []string{"git"}
-			_, err = a.SetNodeSettings(t.Context(), NodeName(), set)
+			_, err = a.SetNodeSettings(t.Context(), a.NodeName, set)
 			return err
 		}},
 	} {

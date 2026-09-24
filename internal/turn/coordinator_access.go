@@ -40,7 +40,12 @@ type held struct {
 	at     time.Time
 }
 
-var disclosuresMu sync.Mutex
+// heldDisclosures are a coordinator's held answers by disclosure id,
+// guarded by mu.
+type heldDisclosures struct {
+	mu   sync.Mutex
+	byID map[string]held
+}
 
 // gateDisclosure holds back the answer of a turn on a sealed project until
 // the owner approves it leaving. The requester gets the id; the content
@@ -72,12 +77,12 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 	}); err != nil {
 		return Result{}, err
 	}
-	disclosuresMu.Lock()
-	if c.disclosures == nil {
-		c.disclosures = map[string]held{}
+	c.disclosures.mu.Lock()
+	if c.disclosures.byID == nil {
+		c.disclosures.byID = map[string]held{}
 	}
-	c.disclosures[id] = h
-	disclosuresMu.Unlock()
+	c.disclosures.byID[id] = h
+	c.disclosures.mu.Unlock()
 	slog.Info(fmt.Sprintf("turn: sealed answer for %s held as disclosure %s (%d chars)", req.ConversationID, id, len(result.Text)), "conversation", req.ConversationID, "project", p.ID, "attempt", result.Attempt)
 	return Result{AgentID: result.AgentID, Attempt: result.Attempt, Title: c.text.T(i18n.CardDisclosure),
 		Text: c.text.T(i18n.DisclosurePending, len([]rune(result.Text)), p.ID, protocol.CommandApprove, id)}, nil

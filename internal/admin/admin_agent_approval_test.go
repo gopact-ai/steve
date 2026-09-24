@@ -88,5 +88,5 @@ func approvalAdminFixture(t *testing.T, intent string) *Service {
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	return &Service{ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog}
+	return &Service{NodeName: "node-hub", ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog}
 }

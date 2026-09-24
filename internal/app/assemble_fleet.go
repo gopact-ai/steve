@@ -23,7 +23,7 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	cfg := boot.Config()
 	ctx := boot.Context()
 	manager := boot.Manager()
-	nodewire.SetSelf(adminsvc.NodeName())
+	nodewire.SetSelf(boot.NodeName())
 	// Machines are stored by identity and read by name. Everything said to
 	// a person resolves the one into the other from here on; a machine
 	// nobody has named still reads as its identity. The names are kept in
@@ -64,7 +64,9 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
 	observation, closeObservation := newLocalObservation(ctx, boot.ConfigStore())
 	life.Defer(func() { closeObservation() })
-	fleet.SetHubAdvert(func() nodewire.Advert { return adminsvc.ObservedHubAdvert(boot.ConfigStore(), observation) })
+	fleet.SetHubAdvert(func() nodewire.Advert {
+		return adminsvc.ObservedHubAdvert(boot.NodeName(), boot.ConfigStore(), observation)
+	})
 	fleet.SetHubLevel(cfg.HubLevel())
 	return &fleetValues{fleet: fleet, nodes: nodes, observation: observation, projects: projects}, nil
 }

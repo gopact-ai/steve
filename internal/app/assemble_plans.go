@@ -8,7 +8,6 @@ import (
 
 	gopactsqlite "github.com/gopact-ai/gopact-ext/stores/sqlite"
 	"github.com/gopact-ai/gopact/workflow"
-	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/models"
@@ -85,7 +84,7 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	)
 	supervisor.SetExecution(executions)
 	supervisor.SetPlans(plans)
-	supervisor.SetLedger(book, adminsvc.NodeName())
+	supervisor.SetLedger(book, boot.NodeName())
 	supervisor.SetTasks(tasks)
 	coordinator.SetSupervisor(supervisor, plans, fleet)
 	coordinator.SetPlanRecoveryOwner(func(tracked task.Task) bool { return environment != nil && tracked.Transport == "console" })
