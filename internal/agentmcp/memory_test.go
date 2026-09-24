@@ -87,3 +87,38 @@ func TestRecallToolServesADelegatedTask(t *testing.T) {
 		t.Fatalf("delegated recall: %s, %v", out, err)
 	}
 }
+
+// writeRecorder answers steve_remember and steve_forget and keeps the
+// delegatedBy each was given.
+type writeRecorder struct {
+	Memorizer
+	rememberedBy, forgotBy string
+}
+
+func (m *writeRecorder) Remember(_ context.Context, _, _, delegatedBy, _, _, _, _ string) (memory.Receipt, memory.Scope, error) {
+	m.rememberedBy = delegatedBy
+	return memory.Receipt{ID: "g1", New: true}, memory.Global, nil
+}
+
+func (m *writeRecorder) Forget(_ context.Context, _, _, delegatedBy, _, _ string) (memory.Item, error) {
+	m.forgotBy = delegatedBy
+	return memory.Item{ID: "g1", Scope: memory.Global, Text: "likes go"}, nil
+}
+
+// The coordinator refuses a delegated task's writes by delegatedBy, so
+// the tools pass it on.
+func TestRememberAndForgetToolsPassOnWhoDelegatedTheTask(t *testing.T) {
+	m := &writeRecorder{}
+	s := &Server{}
+	s.SetMemorizer(m)
+	bind := binding{conversationID: "chat", agentID: "codex", delegatedBy: "parent"}
+	if _, err := s.steveRemember(t.Context(), bind, json.RawMessage(`{"scope":"global","text":"likes go"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.steveForget(t.Context(), bind, json.RawMessage(`{"scope":"global","id":"g1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if m.rememberedBy != "parent" || m.forgotBy != "parent" {
+		t.Fatalf("delegatedBy reached the memorizer as %q from steve_remember and %q from steve_forget, want parent", m.rememberedBy, m.forgotBy)
+	}
+}
