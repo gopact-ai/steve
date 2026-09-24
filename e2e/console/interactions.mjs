@@ -2673,7 +2673,8 @@ checks["board-overview"] = async (f) => {
     await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     const summary = f.page.getByRole("region", { name: "主任务统计" });
-    await summary.getByText("主任务", { exact: true }).waitFor();
+    // The counts read 未知 until the state arrives; wait for the count itself.
+    await summary.filter({ hasText: /主任务\s*5/ }).waitFor();
     assert.match(await summary.innerText(), /主任务\s+5/);
     // Owner summary counts all roots, including archived roots. A paused
     // child of an archived root is not a new root when that root is hidden.
