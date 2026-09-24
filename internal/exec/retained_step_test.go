@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -594,7 +595,7 @@ func TestStepSettlementBlocksAsBefore(t *testing.T) {
 // own recovery is the step's to report.
 func TestDeferredStepLeavesNothingUnresolvedOfItsOwn(t *testing.T) {
 	verifier := attempt.Record{Spec: attempt.Spec{ID: "v1", TaskID: "t", Node: "n1"}, State: attempt.Running, Session: "ns_v"}
-	waiting := agentexec.Blocked(verifier, "observer", "连接原验证的节点", "原验证暂时不能安全接续。", "建议恢复原节点后重新检查。", nil)
+	waiting := agentexec.Blocked(verifier, "observer", agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreNode}, nil)
 	record := attempt.Record{Spec: attempt.Spec{ID: "a1", TaskID: "t", Node: "n1"}, State: attempt.Verifying, Session: "ns_1"}
 	r := &stepRun{record: record, managed: true, closed: true}
 	deferred := r.blocked("verify", waiting)
@@ -606,7 +607,7 @@ func TestDeferredStepLeavesNothingUnresolvedOfItsOwn(t *testing.T) {
 	if err != waiting || unresolved != nil || r.record.State != attempt.Verifying {
 		t.Fatalf("deferred step: result=%+v err=%v unresolved=%v state=%s", result, err, unresolved, r.record.State)
 	}
-	own := agentexec.Blocked(record, "observer", "连接原步骤的节点", "原步骤暂时不能安全接续。", "建议恢复原节点后重新检查。", nil)
+	own := agentexec.Blocked(record, "observer", agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreNode}, nil)
 	if err := r.blocked("verify", own); err != own {
 		t.Fatalf("this attempt's own block = %v, want it as it is", err)
 	}
@@ -693,8 +694,12 @@ func TestStepRetainedUnreachableIsRecoveryQuestionNotNewAttempt(t *testing.T) {
 	p, work, deps, sessions, _ := retainedStepFixture(t)
 	sessions.inspectErr = errors.New("node offline")
 	_, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
-	if err == nil || !strings.Contains(err.Error(), "原") {
+	var blocked *agentexec.RecoveryBlocked
+	if !errors.As(err, &blocked) || !strings.HasPrefix(blocked.Question.Message, "Tried: ") {
 		t.Fatalf("missing actionable recovery diagnosis: %v", err)
+	}
+	if q := blocked.Question; containsHan(q.Title + q.Message) {
+		t.Fatalf("question is not in English: %+v", q)
 	}
 	records, _ := deps.Attempts.ForTask(t.Context(), p.TaskID)
 	if len(records) != 1 || records[0].State != attempt.Running {
@@ -708,7 +713,7 @@ func TestRetainedStepResumesVerificationWithoutRepeatingItsNativeInput(t *testin
 	deps.Verifier = verifyFunc(func(StepRequest) error {
 		calls++
 		if calls == 1 {
-			return agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: "retained-verifier", TaskID: p.TaskID}}, "node", "检查原验证执行", "验证节点暂时离线。", "建议恢复验证节点后核对。", harness.ErrStopUnconfirmed)
+			return agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: "retained-verifier", TaskID: p.TaskID}}, "node", agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreNode}, harness.ErrStopUnconfirmed)
 		}
 		return nil
 	})

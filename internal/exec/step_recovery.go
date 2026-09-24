@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/plan"
 )
 
@@ -112,10 +113,10 @@ func restoreStep(ctx context.Context, p plan.Plan, step *plan.Step, upstream []R
 		}
 		if found && r.State.Terminal() && !r.Unsettled {
 			if err := agentexec.SettleBudget(deps.Budget, r, nil); err != nil {
-				return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", "核对原步骤的用量与预算", "原执行已结束，但预算结算尚未完成。", "建议恢复存储后重新检查。", err)
+				return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", agentexec.Diagnosis{Attempted: i18n.ExecTriedCheckStepUsage, Problem: i18n.ExecProblemEndedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorage}, err)
 			}
 			if err := cleanupFailedStep(ctx, deps, r); err != nil {
-				return plan.StepResult{}, false, agentexec.Blocked(r, "cleanup", "释放已结束步骤的原会话", "失败结果已保存，但原会话或工作区尚未释放。", "建议恢复原节点后重新检查。", err)
+				return plan.StepResult{}, false, agentexec.Blocked(r, "cleanup", agentexec.Diagnosis{Attempted: i18n.ExecTriedReleaseStepSession, Problem: i18n.ExecProblemSessionHeld, Recommendation: i18n.ExecAdviceRestoreNode}, err)
 			}
 		}
 		return plan.StepResult{}, false, nil
@@ -145,7 +146,7 @@ func restoreStep(ctx context.Context, p plan.Plan, step *plan.Step, upstream []R
 		scope.Finish(nil)
 	}
 	if err := agentexec.SettleBudget(deps.Budget, r, nil); err != nil {
-		return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", "核对已提交步骤的用量与预算", "步骤结果已提交，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", err)
+		return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", agentexec.Diagnosis{Attempted: i18n.ExecTriedCheckCommittedUsage, Problem: i18n.ExecProblemCommittedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, err)
 	}
 	step.Attempts = max(step.Attempts, output.Attempts)
 	return output.Result, true, nil

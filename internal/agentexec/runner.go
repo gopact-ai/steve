@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -112,7 +113,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	}
 	key := auxiliaryKey(spec)
 	if !r.claim(key) {
-		return out, Blocked(attempt.Record{Spec: attempt.Spec{TaskID: spec.TaskID}}, "busy", "检查原执行占用", "相同规划或验证请求已有观察者。", "建议等待这次执行完成后核对。", nil)
+		return out, Blocked(attempt.Record{Spec: attempt.Spec{TaskID: spec.TaskID}}, "busy", Diagnosis{Attempted: i18n.ExecTriedCheckOccupancy, Problem: i18n.ExecProblemAuxObserved, Recommendation: i18n.ExecAdviceAwaitExecution}, nil)
 	}
 	defer r.release(key)
 	if spec.TurnID != "" {
@@ -122,11 +123,11 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		}
 		if found && prior.Kind == spec.Kind && (nodewire.IsManagedSession(prior.Session) || PendingOpen(prior)) {
 			if prior.TaskID != spec.TaskID || prior.WorkID != identity {
-				return out, Blocked(prior, "work", "核对原规划或验证请求", "同一请求标识对应的输入条件已经变化。", "建议核对原任务与已有执行，不重发原命令。", nil)
+				return out, Blocked(prior, "work", Diagnosis{Attempted: i18n.ExecTriedMatchAuxRequest, Problem: i18n.ExecProblemInputChanged, Recommendation: i18n.ExecAdviceNoResend}, nil)
 			}
 			input, err := originalInput(prior)
 			if err != nil {
-				return out, Blocked(prior, "input", "读取原执行的请求与工作身份", "原请求记录不完整或无法核对。", "建议核对原任务和执行记录，不构造另一份原始请求。", err)
+				return out, Blocked(prior, "input", Diagnosis{Attempted: i18n.ExecTriedReadRequest, Problem: i18n.ExecProblemRequestUnreadable, Recommendation: i18n.ExecAdviceCheckRecords}, err)
 			}
 			// Select the durable policy while holding the same claim that
 			// fences admission and recovery. A live caller timeout is not the
@@ -398,20 +399,20 @@ func (a *auxiliary) settle(run lifecycle.Result, err error) (runErr, unresolved 
 		// failed before any prompt. Preserve the admitted preparation;
 		// this observer may leave without claiming native process exit.
 		unresolved = &execution.NodePreparationObserverDetached{AttemptID: record.ID, NodeID: record.Node, OpenCommandID: attempt.InputCommandID(record) + "/open", Cause: err}
-		return Blocked(record, "session-record", "保存原节点已返回的会话标识", "节点已经打开会话，但会话标识尚未写入执行记录；原始任务输入还未发送。", "建议恢复存储后核对原节点的打开回执，不重新打开会话。", unresolved), unresolved
+		return Blocked(record, "session-record", Diagnosis{Attempted: i18n.ExecTriedSaveSessionID, Problem: i18n.ExecProblemSessionUnrecorded, Recommendation: i18n.ExecAdviceCheckOpenReceipt}, unresolved), unresolved
 	case run.Unsettled && record.State.Terminal():
 		// The result is committed, but the close did not confirm the
 		// process exited: the worktree, the slot and the budget wait for
 		// someone who can.
 		unresolved = &UnsettledError{AttemptID: record.ID, Cause: errors.Join(err, run.CleanupErr)}
-		return Blocked(record, "cleanup", "释放已结束执行的工作区", "执行结果已保存，但原进程未确认退出，工作区尚未释放。", "建议核对原节点与进程，确认停止后重新检查。", unresolved), unresolved
+		return Blocked(record, "cleanup", Diagnosis{Attempted: i18n.ExecTriedReleaseWorkspace, Problem: i18n.ExecProblemProcessAlive, Recommendation: i18n.ExecAdviceConfirmProcessStop}, unresolved), unresolved
 	case run.Unsettled:
 		unresolved = &UnsettledError{AttemptID: record.ID, Cause: err}
 		if pending := PendingNodeOpen(record, err); pending != nil {
 			unresolved = pending
 		}
 		if PendingOpen(record) {
-			return Blocked(record, "open", "按原执行标识请求打开节点会话", "原节点未返回完整的打开回执，会话可能已经创建。", "建议恢复原节点连接后核对打开记录，保留原任务等待处理。", unresolved), unresolved
+			return Blocked(record, "open", Diagnosis{Attempted: i18n.ExecTriedOpenExecution, Problem: i18n.ExecProblemOpenUnacknowledged, Recommendation: i18n.ExecAdviceCheckOpenExecution}, unresolved), unresolved
 		}
 		return unresolved, unresolved
 	case errors.As(err, &detached):
@@ -427,19 +428,19 @@ func (a *auxiliary) settle(run lifecycle.Result, err error) (runErr, unresolved 
 				code = "output"
 			}
 		}
-		return Blocked(record, code, "保存原规划或验证执行的结果", "原执行或其结果尚未完整确认。", "建议恢复节点与存储后检查同一次执行。", detached), detached
+		return Blocked(record, code, Diagnosis{Attempted: i18n.ExecTriedSaveAuxResult, Problem: i18n.ExecProblemAuxUnconfirmed, Recommendation: i18n.ExecAdviceRestoreBoth}, detached), detached
 	}
 	if !record.State.Terminal() {
 		return err, nil
 	}
 	if a.reserved {
 		if budgetErr := SettleBudget(a.runner.budget, record, err); budgetErr != nil {
-			return Blocked(record, "accounting", "保存原执行的用量与预算", "执行结果已保存，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", budgetErr), nil
+			return Blocked(record, "accounting", Diagnosis{Attempted: i18n.ExecTriedSaveExecutionUsage, Problem: i18n.ExecProblemResultUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, budgetErr), nil
 		}
 	}
 	if run.CleanupErr != nil {
 		if run.Managed {
-			return Blocked(record, "cleanup", "释放已结束执行的工作区", "执行结果已保存，但原工作区尚未释放。", "建议恢复节点连接后重新检查。", run.CleanupErr), nil
+			return Blocked(record, "cleanup", Diagnosis{Attempted: i18n.ExecTriedReleaseWorkspace, Problem: i18n.ExecProblemWorkspaceHeld, Recommendation: i18n.ExecAdviceReconnectNode}, run.CleanupErr), nil
 		}
 		return errors.Join(err, run.CleanupErr), nil
 	}

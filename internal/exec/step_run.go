@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ctxpack"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -265,7 +266,7 @@ func (r *stepRun) reserve(ctx context.Context, e *lifecycle.Execution) (context.
 // session for this attempt that this process cannot name.
 func (r *stepRun) openFailure(cause error) error {
 	if pending := agentexec.PendingNodeOpen(r.record, cause); pending != nil {
-		return agentexec.Blocked(r.record, "open", "按原步骤标识请求打开节点会话", "原节点未返回完整的打开回执，会话可能已经创建。", "建议恢复原节点后核对打开记录，不重新提交原步骤。", pending)
+		return agentexec.Blocked(r.record, "open", agentexec.Diagnosis{Attempted: i18n.ExecTriedOpenStep, Problem: i18n.ExecProblemOpenUnacknowledged, Recommendation: i18n.ExecAdviceCheckOpenStep}, pending)
 	}
 	return cause
 }
@@ -453,7 +454,7 @@ func (r *stepRun) verify(ctx context.Context, published artifact.Manifest, start
 		return r.blocked("attestation", err)
 	}
 	if r.managed && step.Verify.Kind == plan.VerifyCommand && stepPhase(startingPhase) >= stepPhase(attempt.Verifying) && !passed {
-		return r.blocked("verify-command", errors.New("原 shell 验证缺少可接续的调用回执，请先核对结果"))
+		return r.blocked("verify-command", errors.New("the original shell verification has no call receipt to resume from; check its result first"))
 	}
 	var verifyErr error
 	if !passed {
@@ -615,7 +616,7 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 		unresolved = err
 		if errors.Is(r.promptErr, harness.ErrStopUnconfirmed) {
 			r.result.Error = err.Error()
-			err = agentexec.Blocked(r.record, "failure", "保存原步骤的失败结果", "原命令已经返回，但结果尚未持久保存。", "建议恢复存储后检查同一次执行。", err)
+			err = agentexec.Blocked(r.record, "failure", agentexec.Diagnosis{Attempted: i18n.ExecTriedSaveStepFailure, Problem: i18n.ExecProblemFailureUnsaved, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, err)
 		}
 	case err != nil:
 		switch {
@@ -633,9 +634,9 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 	if r.reserved && r.record.State.Terminal() && !r.record.Unsettled {
 		if budgetErr := agentexec.SettleBudget(r.deps.Budget, r.record, err); budgetErr != nil {
 			if err == nil {
-				return r.result, agentexec.Blocked(r.record, "accounting", "保存步骤的用量与预算", "步骤结果已经提交，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", budgetErr), unresolved
+				return r.result, agentexec.Blocked(r.record, "accounting", agentexec.Diagnosis{Attempted: i18n.ExecTriedSaveStepUsage, Problem: i18n.ExecProblemCommittedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, budgetErr), unresolved
 			}
-			unresolved = agentexec.Blocked(r.record, "accounting", "保存原步骤的用量与预算", "失败结果已保存，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", budgetErr)
+			unresolved = agentexec.Blocked(r.record, "accounting", agentexec.Diagnosis{Attempted: i18n.ExecTriedSaveOriginalStepUsage, Problem: i18n.ExecProblemFailureUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, budgetErr)
 			return r.result, r.unresolvedFailure(err, prompted, &unresolved), unresolved
 		}
 	}
@@ -650,7 +651,7 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 			return r.result, nil, nil
 		}
 		// A failed step's session is closed again when the step is restored.
-		unresolved = agentexec.Blocked(r.record, "cleanup", "释放已结束步骤的原会话", "失败结果已保存，但原会话或工作区尚未释放。", "建议恢复原节点后重新检查。", run.CleanupErr)
+		unresolved = agentexec.Blocked(r.record, "cleanup", agentexec.Diagnosis{Attempted: i18n.ExecTriedReleaseStepSession, Problem: i18n.ExecProblemSessionHeld, Recommendation: i18n.ExecAdviceRestoreNode}, run.CleanupErr)
 		return r.result, r.unresolvedFailure(err, prompted, &unresolved), unresolved
 	}
 	return r.result, err, unresolved
@@ -669,9 +670,9 @@ func (r *stepRun) unresolvedFailure(cause error, prompted bool, unresolved *erro
 	}
 	if r.joined {
 		*unresolved = retainedStepDetached(r.record, *unresolved)
-		return agentexec.Blocked(r.record, "failure", "连接原步骤的节点并核对已接受命令", "原步骤暂时不能安全接续。", "建议恢复原节点或存储，再检查同一次执行。", *unresolved)
+		return agentexec.Blocked(r.record, "failure", agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreEitherCheck}, *unresolved)
 	}
-	return agentexec.Blocked(r.record, "failure", "保存原步骤的失败结果", "原命令已经返回，但结果尚未持久保存。", "建议恢复存储后检查同一次执行。", *unresolved)
+	return agentexec.Blocked(r.record, "failure", agentexec.Diagnosis{Attempted: i18n.ExecTriedSaveStepFailure, Problem: i18n.ExecProblemFailureUnsaved, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, *unresolved)
 }
 
 // detachment is a detached observer in the step's words: which stage it
@@ -694,7 +695,7 @@ func (r *stepRun) detachment(step *lifecycle.StepError, detached *execution.Reta
 		if stage == "" {
 			stage = "completion"
 		}
-		return agentexec.Blocked(r.record, stage, "保存原步骤的产物、验证与结果", "原命令已返回，但步骤还没有完整提交。", "建议恢复原节点或存储，继续核对这次执行。", detached)
+		return agentexec.Blocked(r.record, stage, agentexec.Diagnosis{Attempted: i18n.ExecTriedCommitStep, Problem: i18n.ExecProblemStepUncommitted, Recommendation: i18n.ExecAdviceRestoreEitherCheck}, detached)
 	case r.joined:
 		// A joined observer that lost the prompt — unsettled, cancelled —
 		// is an observer's loss; only a settled end whose marker or failure
@@ -709,13 +710,13 @@ func (r *stepRun) detachment(step *lifecycle.StepError, detached *execution.Reta
 				r.result.Error = r.promptErr.Error()
 			}
 		}
-		return agentexec.Blocked(r.record, code, "连接原步骤的节点并核对已接受命令", "原步骤暂时不能安全接续。", "建议恢复原节点或存储，再检查同一次执行。", detached)
+		return agentexec.Blocked(r.record, code, agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreEitherCheck}, detached)
 	case at == lifecycle.StepSettle:
-		return agentexec.Blocked(r.record, "marker", "保存原步骤的结束回执", "原命令结果已经返回，但结束回执尚未保存。", "建议恢复存储后重新核对原步骤。", detached)
+		return agentexec.Blocked(r.record, "marker", agentexec.Diagnosis{Attempted: i18n.ExecTriedSaveStepMarker, Problem: i18n.ExecProblemMarkerUnsaved, Recommendation: i18n.ExecAdviceRestoreStorageStep}, detached)
 	default:
 		if r.promptErr != nil && !r.refused {
 			r.result.Error = r.promptErr.Error()
 		}
-		return agentexec.Blocked(r.record, "failure", "保存原步骤的失败结果", "原命令已经返回，但结果尚未持久保存。", "建议恢复存储后检查同一次执行。", detached)
+		return agentexec.Blocked(r.record, "failure", agentexec.Diagnosis{Attempted: i18n.ExecTriedSaveStepFailure, Problem: i18n.ExecProblemFailureUnsaved, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, detached)
 	}
 }

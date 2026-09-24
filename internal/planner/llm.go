@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/budget"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/plan"
 )
 
@@ -99,11 +100,11 @@ func (l LLM) ResumePlan(ctx context.Context, id string) (plan.Plan, error) {
 	}
 	spec, err := executor.OriginalSpec(ctx, id)
 	if err != nil {
-		return plan.Plan{}, agentexec.Blocked(attempt.Record{ID: id}, "planning-source", "读取原规划请求", "无法读取原规划所依据的目标和输入。", "建议恢复原请求记录后重新检查。", err)
+		return plan.Plan{}, agentexec.Blocked(attempt.Record{ID: id}, "planning-source", agentexec.Diagnosis{Attempted: i18n.ExecTriedReadPlanning, Problem: i18n.ExecProblemPlanningUnreadable, Recommendation: i18n.ExecAdviceRestoreRequest}, err)
 	}
 	var source planningSource
 	if len(spec.Source) == 0 || json.Unmarshal(spec.Source, &source) != nil || spec.Kind != attempt.KindPlan || source.TaskID != spec.TaskID || source.ProjectID != spec.Project || source.Round < 0 || source.Round >= source.Attempts || source.Brief == "" || spec.TurnID != planningTurn(source.request(), source.Round) {
-		return plan.Plan{}, agentexec.Blocked(attempt.Record{ID: id, TaskID: spec.TaskID}, "planning-source", "核对原规划请求与执行标识", "规划请求缺失或与这次执行不一致。", "建议核对原任务记录，不构造另一份规划请求。", nil)
+		return plan.Plan{}, agentexec.Blocked(attempt.Record{ID: id, TaskID: spec.TaskID}, "planning-source", agentexec.Diagnosis{Attempted: i18n.ExecTriedMatchPlanning, Problem: i18n.ExecProblemPlanningMismatch, Recommendation: i18n.ExecAdviceNoNewPlanning}, nil)
 	}
 	timeout := spec.Timeout
 	if timeout <= 0 {

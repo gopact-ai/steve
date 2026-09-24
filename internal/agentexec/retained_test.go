@@ -253,8 +253,13 @@ func TestAuxiliaryRetainedChangedInputIsBlockedWithoutReplay(t *testing.T) {
 	w, sessions, spec := retainedAuxFixture(t)
 	next := New(sessions, w.runner.roster, w.runner.workspaces, w.attempts, execution.New(t.Context(), w.tasks), w.runner.budget)
 	_, err := next.Prompt(t.Context(), spec, "different verification", nil)
-	if err == nil || !strings.Contains(err.Error(), "原") {
+	var blocked *RecoveryBlocked
+	if !errors.As(err, &blocked) {
 		t.Fatalf("changed work accepted: %v", err)
+	}
+	// With no language of its own, the execution layer asks in English.
+	if q := blocked.Question; !strings.HasPrefix(q.Message, "Tried: ") || containsHan(q.Title+q.Message) {
+		t.Fatalf("question is not in English: %+v", q)
 	}
 	sessions.mu.Lock()
 	defer sessions.mu.Unlock()

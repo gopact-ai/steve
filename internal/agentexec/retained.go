@@ -33,11 +33,30 @@ type RecoveryBlocked struct {
 	AttemptID, TaskID string
 	Question          view.Question
 	Cause             error
+
+	// diagnosis keeps what the execution layer found, so that the question
+	// can be asked again in the language of the exchange it reaches.
+	diagnosis *diagnosed
+}
+
+type diagnosed struct {
+	record attempt.Record
+	code   string
+	Diagnosis
 }
 
 func (e *RecoveryBlocked) Error() string            { return e.Question.Message }
 func (e *RecoveryBlocked) Unwrap() error            { return e.Cause }
 func (e *RecoveryBlocked) UnsettledAttempt() string { return e.AttemptID }
+
+// In is the block asked in text's language. A block the execution layer
+// raised is asked again from its diagnosis; any other is returned as is.
+func (e *RecoveryBlocked) In(text i18n.Catalog) *RecoveryBlocked {
+	if e == nil || e.diagnosis == nil {
+		return e
+	}
+	return BlockedIn(text, e.diagnosis.record, e.diagnosis.code, e.diagnosis.Diagnosis, e.Cause)
+}
 
 // RecoveryQuestion is the question every recovery block asks: check again,
 // as retry describes, or wait with the task and its progress kept.
@@ -46,23 +65,31 @@ func RecoveryQuestion(requestID, title, message string, retry, wait view.Choice)
 	return view.Question{RequestID: requestID, Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{retry, wait}}
 }
 
-// Blocked is BlockedIn the default language: the execution layer has no
-// request of its own to take one from.
-func Blocked(record attempt.Record, code, attempted, problem, recommendation string, cause error) *RecoveryBlocked {
-	return BlockedIn(i18n.Catalog{}, record, code, attempted, problem, recommendation, cause)
+// Diagnosis is what the execution layer tried for an attempt, what stops
+// it, and what the owner may do about it.
+type Diagnosis struct {
+	Attempted, Problem, Recommendation i18n.Key
+}
+
+// Blocked is BlockedIn English: the execution layer has no request of its
+// own to take a language from. The exchange asks it in its own through In.
+func Blocked(record attempt.Record, code string, d Diagnosis, cause error) *RecoveryBlocked {
+	return BlockedIn(i18n.New(i18n.LocaleEN), record, code, d, cause)
 }
 
 // BlockedIn is the block of an attempt the execution layer could not
 // settle, asked in text's language.
-func BlockedIn(text i18n.Catalog, record attempt.Record, code, attempted, problem, recommendation string, cause error) *RecoveryBlocked {
+func BlockedIn(text i18n.Catalog, record attempt.Record, code string, d Diagnosis, cause error) *RecoveryBlocked {
+	problem := text.T(d.Problem)
 	if cause != nil {
 		problem += "\n" + text.T(i18n.RecoveryDiagnostics, cause.Error())
 	}
-	message := text.T(i18n.RecoveryAttempted, attempted) + "\n\n" + problem + "\n\n" + text.T(i18n.RecoveryStopUnconfirmed) + "\n\n" + recommendation
+	message := text.T(i18n.RecoveryAttempted, text.T(d.Attempted)) + "\n\n" + problem + "\n\n" + text.T(i18n.RecoveryStopUnconfirmed) + "\n\n" + text.T(d.Recommendation)
 	question := RecoveryQuestion("execution-recovery/"+record.ID+"/"+code, text.T(i18n.RecoveryTitleExecution), message,
 		view.Choice{Label: text.T(i18n.RecoveryRetry), Detail: text.T(i18n.RecoveryRetryExecution)},
 		view.Choice{Label: text.T(i18n.RecoveryWait), Detail: text.T(i18n.RecoveryWaitConditions)})
-	return &RecoveryBlocked{AttemptID: record.ID, TaskID: record.TaskID, Cause: cause, Question: question}
+	return &RecoveryBlocked{AttemptID: record.ID, TaskID: record.TaskID, Cause: cause, Question: question,
+		diagnosis: &diagnosed{record: record, code: code, Diagnosis: d}}
 }
 
 type auxiliaryInput struct {
@@ -133,7 +160,7 @@ func (r *Runner) ResumeAttempt(ctx context.Context, id string, validate func(str
 	spec := Spec{TaskID: record.TaskID, TurnID: record.TurnID, Kind: record.Kind}
 	key := auxiliaryKey(spec)
 	if !r.claim(key) {
-		return Result{}, Blocked(record, "busy", "检查原执行的观察者", "原执行已有一个观察者正在处理。", "建议等待这次观察完成后重新检查。", nil)
+		return Result{}, Blocked(record, "busy", Diagnosis{Attempted: i18n.ExecTriedObserver, Problem: i18n.ExecProblemObserved, Recommendation: i18n.ExecAdviceAwaitObserver}, nil)
 	}
 	defer r.release(key)
 	return r.resumeAttempt(ctx, record, validate)
@@ -141,10 +168,10 @@ func (r *Runner) ResumeAttempt(ctx context.Context, id string, validate func(str
 func (r *Runner) resumeAttempt(parent context.Context, record attempt.Record, validate func(string) error) (out Result, runErr error) {
 	out.Attempt = record
 	if _, err := originalInput(record); err != nil {
-		return out, Blocked(record, "input", "读取原执行的请求与工作身份", "原请求记录不完整或无法核对。", "建议核对原任务和执行记录，不构造另一份原始请求。", err)
+		return out, Blocked(record, "input", Diagnosis{Attempted: i18n.ExecTriedReadRequest, Problem: i18n.ExecProblemRequestUnreadable, Recommendation: i18n.ExecAdviceCheckRecords}, err)
 	}
 	if (record.Kind != attempt.KindPlan && record.Kind != attempt.KindVerify) || !nodewire.IsManagedSession(record.Session) || record.Execution == nil || record.WorkID == "" {
-		return out, Blocked(record, "identity", "检查原规划或验证执行的身份", "原执行缺少稳定的工作或原生会话标识。", "建议核对任务记录后继续。", nil)
+		return out, Blocked(record, "identity", Diagnosis{Attempted: i18n.ExecTriedAuxIdentity, Problem: i18n.ExecProblemNoIdentity, Recommendation: i18n.ExecAdviceCheckTask}, nil)
 	}
 	scope, err := r.executions.BeginAccepted(parent, execution.Key{TaskID: record.TaskID, InstanceID: record.TurnID, AttemptID: record.ID}, record.Execution)
 	if err != nil {
@@ -155,19 +182,19 @@ func (r *Runner) resumeAttempt(parent context.Context, record attempt.Record, va
 	ctx := scope.Context()
 	if record.State.Terminal() {
 		if record.Unsettled {
-			return out, Blocked(record, "unsettled", "检查已结束执行的停止记录", "原执行的停止状态仍未确认。", "建议核对原节点与外部操作后继续。", harness.ErrStopUnconfirmed)
+			return out, Blocked(record, "unsettled", Diagnosis{Attempted: i18n.ExecTriedStopRecord, Problem: i18n.ExecProblemStopUnconfirmed, Recommendation: i18n.ExecAdviceCheckNodeEffects}, harness.ErrStopUnconfirmed)
 		}
 		if err := SettleBudget(r.budget, record, nil); err != nil {
-			return out, Blocked(record, "accounting", "核对原执行的持久预算记录", "原执行已结束，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", err)
+			return out, Blocked(record, "accounting", Diagnosis{Attempted: i18n.ExecTriedBudgetRecord, Problem: i18n.ExecProblemEndedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, err)
 		}
 		if err := r.cleanupAuxiliary(ctx, record); err != nil {
-			return out, Blocked(record, "cleanup", "释放已结束执行的工作区", "执行结果已保存，但原工作区尚未释放。", "建议恢复节点连接后重新检查。", err)
+			return out, Blocked(record, "cleanup", Diagnosis{Attempted: i18n.ExecTriedReleaseWorkspace, Problem: i18n.ExecProblemWorkspaceHeld, Recommendation: i18n.ExecAdviceReconnectNode}, err)
 		}
 		return decodeAuxiliary(record, validate)
 	}
 	retain := func(code string, cause error) (Result, error) {
 		unresolved = &execution.RetainedObserverDetached{AttemptID: record.ID, NodeID: record.Node, SessionID: record.Session, Cause: errors.Join(harness.ErrStopUnconfirmed, cause)}
-		return out, Blocked(record, code, "按原任务、会话和命令标识核对执行", "原规划或验证执行暂时不能安全接续。", "建议恢复原节点或存储后重新检查。", unresolved)
+		return out, Blocked(record, code, Diagnosis{Attempted: i18n.ExecTriedMatchIdentity, Problem: i18n.ExecProblemAuxUnsafe, Recommendation: i18n.ExecAdviceRestoreEither}, unresolved)
 	}
 	manager, ok := r.sessions.(retainedSessions)
 	if !ok {
@@ -238,7 +265,7 @@ func decodeAuxiliary(record attempt.Record, validate func(string) error) (out Re
 	out.Attempt, out.Usage = record, record.Usage
 	var saved auxiliaryOutput
 	if record.Result == nil || len(record.Result.Output) == 0 || json.Unmarshal(record.Result.Output, &saved) != nil || saved.WorkID != record.WorkID {
-		return out, Blocked(record, "output", "读取原执行的完整结果", "已提交结果缺失或工作标识不一致。", "建议核对执行记录与已保存输出。", nil)
+		return out, Blocked(record, "output", Diagnosis{Attempted: i18n.ExecTriedReadOutput, Problem: i18n.ExecProblemOutputMissing, Recommendation: i18n.ExecAdviceCheckOutput}, nil)
 	}
 	out.Answer = saved.Answer
 	if saved.Validation {
@@ -248,11 +275,11 @@ func decodeAuxiliary(record attempt.Record, validate func(string) error) (out Re
 		return out, errors.New(saved.Error)
 	}
 	if record.State != attempt.Bound {
-		return out, Blocked(record, "state", "核对结果的提交状态", "这份结果没有完整提交。", "建议核对原执行后继续。", nil)
+		return out, Blocked(record, "state", Diagnosis{Attempted: i18n.ExecTriedCommitState, Problem: i18n.ExecProblemNotCommitted, Recommendation: i18n.ExecAdviceCheckExecution}, nil)
 	}
 	if validate != nil {
 		if err := validate(out.Answer); err != nil {
-			return out, Blocked(record, "validation", "重新核对已提交输出", "当前校验条件与原执行的已提交结果不一致。", "建议确认原任务条件后继续。", err)
+			return out, Blocked(record, "validation", Diagnosis{Attempted: i18n.ExecTriedRevalidate, Problem: i18n.ExecProblemValidationChanged, Recommendation: i18n.ExecAdviceConfirmConditions}, err)
 		}
 	}
 	return out, nil
