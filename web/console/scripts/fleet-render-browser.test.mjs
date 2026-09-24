@@ -113,6 +113,9 @@ try {
         errors.push(`Unknown fixture request: ${url.pathname}`); return route.abort();
     });
     const settle = async () => { await page.clock.runFor(500); await page.waitForFunction(() => document.querySelector("#ready")?.textContent); };
+    // A read is counted when its request reaches the fixture, a moment after
+    // the timer that sends it.
+    const readsOf = async (key, count) => { for (let i = 0; i < 40 && reads[key] < count; i++) await new Promise((resolve) => setTimeout(resolve, 25)); return reads[key]; };
     const reset = () => page.evaluate(() => { window.renders = {}; });
     const counts = () => page.evaluate(() => window.renders);
     await page.goto(origin);
@@ -131,7 +134,7 @@ try {
     assert.deepEqual(reads, before, "Events still debounce the existing state request");
 
     await settle();
-    assert.equal(reads.state, before.state + 1, "The existing 250ms snapshot refresh still runs");
+    assert.equal(await readsOf("state", before.state + 1), before.state + 1, "The existing 250ms snapshot refresh still runs");
     // The read is counted when it is requested; its readers render once
     // the response has been handled.
     await page.waitForFunction(() => (window.renders.snapshot || 0) > 0, null, { timeout: 5000 }).catch(() => assert.fail("A new snapshot reaches its readers"));
@@ -150,7 +153,7 @@ try {
     await reset();
     await page.evaluate(() => window.emit({ kind: "task.updated", at: "task" }));
     await settle();
-    assert.equal(reads.usage, before.usage + 1, "Relevant usage invalidation is retained");
+    assert.equal(await readsOf("usage", before.usage + 1), before.usage + 1, "Relevant usage invalidation is retained");
     revision++;
     await page.evaluate(() => window.emit({ kind: "node.updated", at: "node" }));
     await settle();
@@ -173,16 +176,16 @@ try {
     await page.clock.runFor(3100);
     await settle();
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "live");
-    assert.ok(reads.state > reconnect.state && reads.coordination > reconnect.coordination && reads.usage > reconnect.usage, "Reconnect recovery is retained");
+    for (const key of ["state", "coordination", "usage"]) {
+        assert.ok(await readsOf(key, reconnect[key] + 1) > reconnect[key], `Reconnect recovery is retained for ${key}`);
+    }
 
     // Settle the reconnect burst, then measure the floor alone. It counts
     // from the reconnect's snapshot, which lands a little after the stream
     // opens, so each window keeps a margin from the 60s mark.
     await page.clock.runFor(1000);
     const quiet = reads.state;
-    // A read is counted when its request reaches the fixture, a moment after
-    // the timer that sends it.
-    const stateReads = async (count) => { for (let i = 0; i < 40 && reads.state < count; i++) await new Promise((resolve) => setTimeout(resolve, 25)); return reads.state; };
+    const stateReads = (count) => readsOf("state", count);
     await page.clock.runFor(55_000);
     assert.equal(await stateReads(quiet + 1), quiet, "A live stream does not re-read /state on the 10s floor");
     await page.clock.runFor(6_000);
