@@ -241,7 +241,7 @@ func TestUnpinnedInterfaceProbesOnlyShrink(t *testing.T) {
 		current = append(current, iface)
 	}
 	ratchetWith(t, "unpinned_interface_probes", current, func(iface string) string {
-		return fmt.Sprintf("probed in %s. If one production type implements it, pin that type with `var _ %s = …` in a contracts_test.go of a package that can name both. If several production types satisfy or lack it on purpose, add it to openCapabilities with the reason.",
+		return fmt.Sprintf("probed in %s. If one production type implements it, pin that type with `var _ %s = (*T)(nil)` or `T{}` in a contracts_test.go of a package that can name both; a test fake does not pin it. If several production types satisfy or lack it on purpose, add it to openCapabilities with the reason.",
 			strings.Join(unpinned[iface], ", "), path.Base(iface))
 	})
 }
