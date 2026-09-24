@@ -8,7 +8,6 @@ import (
 // The only production implementation of capabilities httpapi probes for.
 var (
 	_ consoleapi.ExchangeIdentity = (*Service)(nil)
-	_ consoleapi.Interactions     = (*Service)(nil)
 )
 
 // The only production implementation of capabilities console probes its
