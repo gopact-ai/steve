@@ -14,7 +14,8 @@ import (
 // SetIngressLifetime shares the application's close-before-join worker owner
 // and the driver that resumes the retained chat of an accepted input whose
 // dispatch must be recovered from its admitted attempt; a nil driver leaves
-// such an input pending. Wire it before accepting channel callbacks.
+// such an input pending for the running reconciler. Wire it before accepting
+// channel callbacks.
 func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorkers, driver RecoveryDriver) {
 	g.ingressContext, g.ingressWorkers, g.ingressDriver = ctx, workers, driver
 }

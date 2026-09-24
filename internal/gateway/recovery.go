@@ -29,6 +29,9 @@ type recoveryInput struct {
 	Admission task.ResumeAdmission `json:"admission,omitzero"`
 }
 
+// RecoveryDriver resumes, by attempt id, the retained chat of an attempt
+// that was already admitted, without running its input again through
+// Handle. The gateway delivers only a result whose Attempt is that id.
 type RecoveryDriver interface {
 	ResumeRetainedChat(context.Context, string, turn.Request) (turn.Result, error)
 }
