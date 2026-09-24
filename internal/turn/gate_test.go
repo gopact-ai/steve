@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/idle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
@@ -159,6 +160,15 @@ func (f fakeEndpoints) MCPEndpoint(_ context.Context, node string) (string, erro
 
 // RegisterIdle holds no clock: these tests never disconnect a node.
 func (fakeEndpoints) RegisterIdle(string, idle.Clock) func() { return func() {} }
+
+// Refresh and Files answer nothing: these tests never repair a machine.
+func (fakeEndpoints) Refresh(_ context.Context, node string) (nodewire.Advert, error) {
+	return nodewire.Advert{}, errors.New("no advert for " + node)
+}
+
+func (fakeEndpoints) Files(_ context.Context, node string, _ nodewire.FileRequest) (string, error) {
+	return "", errors.New("no files on " + node)
+}
 
 // idleNodes records the idle clocks a coordinator registers per node.
 type idleNodes struct {

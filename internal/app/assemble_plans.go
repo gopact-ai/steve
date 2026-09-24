@@ -85,7 +85,6 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	supervisor.SetPlans(plans)
 	supervisor.SetLedger(book, boot.NodeName())
 	supervisor.SetTasks(tasks)
-	coordinator.SetRepair(nodes, nodes)
 	coordinator.SetProber(func(ctx context.Context, node, harnessID string) error {
 		dir := probeDir(node)
 		if dir == "" {

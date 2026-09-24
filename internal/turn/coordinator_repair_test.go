@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/exec"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -98,6 +99,20 @@ func (f *flipNodes) Refresh(_ context.Context, name string) (nodewire.Advert, er
 
 type recordCommands struct{ lines []string }
 
+// repairMachines is the node registry a repair reads: adverts that change
+// when refreshed, and file facts from each machine. No agent in these tests
+// needs messaging or a held silence clock.
+type repairMachines struct {
+	*flipNodes
+	*recordCommands
+}
+
+func (repairMachines) MCPEndpoint(_ context.Context, node string) (string, error) {
+	return "", errors.New("no messaging endpoint on " + node)
+}
+
+func (repairMachines) RegisterIdle(string, idle.Clock) func() { return func() {} }
+
 func (r *recordCommands) Files(_ context.Context, node string, req nodewire.FileRequest) (string, error) {
 	r.lines = append(r.lines, node+": "+string(req.Op))
 	return "/home/u/.local/bin:/usr/bin:/bin", nil
@@ -129,10 +144,10 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
 	sup := &fakeSupervisor{}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"),
-		withDeps(func(d *Deps) { d.Fleet = fleet }), withCallbacks(func(cb *Callbacks) { cb.Supervisor = sup }))
 	cmds := &recordCommands{}
-	c.SetRepair(nodes, cmds)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"),
+		withDeps(func(d *Deps) { d.Fleet, d.Nodes = fleet, repairMachines{nodes, cmds} }),
+		withCallbacks(func(cb *Callbacks) { cb.Supervisor = sup }))
 	return c, sup, nodes, cmds, tasks
 }
 

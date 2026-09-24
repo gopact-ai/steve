@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
@@ -120,6 +121,11 @@ type Nodes interface {
 	// RegisterIdle holds a prompt's silence clock while node is
 	// disconnected, until unregister is called.
 	RegisterIdle(node string, clock idle.Clock) (unregister func())
+	// Refresh asks node to check itself again, so its advert reflects a
+	// repair that just ran.
+	Refresh(ctx context.Context, node string) (nodewire.Advert, error)
+	// Files reads platform file facts on node; "" is the hub.
+	Files(ctx context.Context, node string, req nodewire.FileRequest) (string, error)
 }
 
 // Injected is what a turn actually gave the agent, kept so "what did it
@@ -202,8 +208,6 @@ type coordinatorState struct {
 	supervisor Supervisor
 	plans      *plan.Store
 	fleet      *roster.Roster
-	refresher  Refresher
-	files      MachineFiles
 	probeOne   func(ctx context.Context, node, harness string) error
 	probeAll   func(ctx context.Context) []models.Result
 	projects   *project.Store
@@ -288,10 +292,12 @@ type Deps struct {
 	// transaction closing a task tree; nil refuses to close one while any
 	// console fact exists.
 	ConsoleCompletionGuard ConsoleCompletionGuard
-	// Nodes resolves remote messaging endpoints and holds a prompt's
-	// silence clock while its node is disconnected. Without it a remote
-	// agent's turn is refused while messaging is on, and a disconnection
-	// counts as silence.
+	// Nodes resolves remote messaging endpoints, holds a prompt's silence
+	// clock while its node is disconnected, and refreshes and reads the
+	// machines a repair works on. Without it a remote agent's turn is
+	// refused while messaging is on, a disconnection counts as silence, a
+	// repair leaves the machine's advert as it was, and the PATH a repair
+	// reports is unknown.
 	Nodes Nodes
 	// PlanRecoveryOwner reports a task whose transport resumes its own
 	// retained plan, preserving the original exchange, progress and asks;

@@ -130,8 +130,8 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	c.finishPlanTask(ctx, tracked.ID)
 	// The verify command passed on that machine; now let the machine say
 	// so itself, which is what every placement decision reads.
-	if fix.Broken.Node != "" && c.refresher != nil {
-		if _, err := c.refresher.Refresh(ctx, fix.Broken.Node); err != nil {
+	if fix.Broken.Node != "" && c.nodes != nil {
+		if _, err := c.nodes.Refresh(ctx, fix.Broken.Node); err != nil {
 			slog.Error(fmt.Sprintf("turn: refresh %s after repair: %v", fix.Broken.Node, err), "node", fix.Broken.Node)
 		}
 	}
@@ -181,10 +181,10 @@ func (c commands) repairProject(ctx context.Context, fix roster.Fix) (string, er
 // pathOn reads the PATH the steve process on a machine actually has, so
 // the helper installs somewhere that process will look.
 func (c commands) pathOn(ctx context.Context, node string) string {
-	if c.files == nil {
+	if c.nodes == nil {
 		return "(unknown)"
 	}
-	out, err := c.files.Files(ctx, node, nodewire.FileRequest{Op: nodewire.FileSearchPath})
+	out, err := c.nodes.Files(ctx, node, nodewire.FileRequest{Op: nodewire.FileSearchPath})
 	if err != nil || strings.TrimSpace(out) == "" {
 		return "(unknown)"
 	}
