@@ -28,13 +28,13 @@ import (
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type receiptChatHandler struct {
+type receiptChatCoordinator struct {
 	turntest.IdleCoordinator
 	answer func(context.Context, turn.Request) (turn.Result, error)
 }
 
-func (h receiptChatHandler) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
-	return h.answer(ctx, req)
+func (c receiptChatCoordinator) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
+	return c.answer(ctx, req)
 }
 
 type receiptAckFunc func(context.Context, string, nodewire.SessionReceiptRequest) error
@@ -118,7 +118,7 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 	var record attempt.Record
 	var bound harness.NodeSessionContext
 	workdir := t.TempDir()
-	cons := console.New(receiptChatHandler{answer: func(ctx context.Context, req turn.Request) (turn.Result, error) {
+	cons := console.New(receiptChatCoordinator{answer: func(ctx context.Context, req turn.Request) (turn.Result, error) {
 		tracked, err := tasks.Create(task.Task{Channel: req.ConversationID, Transport: req.Channel, Requester: req.SenderOpenID,
 			Member: "mock", ProjectID: "p", Goal: "receipt closure"})
 		if err != nil {

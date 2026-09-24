@@ -17,13 +17,13 @@ import (
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type firingHandler struct {
+type firingCoordinator struct {
 	turntest.IdleCoordinator
 	calls atomic.Int32
 }
 
-func (h *firingHandler) Handle(context.Context, turn.Request) (turn.Result, error) {
-	h.calls.Add(1)
+func (c *firingCoordinator) Handle(context.Context, turn.Request) (turn.Result, error) {
+	c.calls.Add(1)
 	return turn.Result{Text: "done"}, nil
 }
 
@@ -66,8 +66,8 @@ func TestConsoleScheduleCrashGapReplaysOnlyItsDurableExchange(t *testing.T) {
 	if err != nil || len(due) != 1 {
 		t.Fatalf("due=%+v %v", due, err)
 	}
-	h := &firingHandler{}
-	page := console.New(h, "owner", nil)
+	coordinator := &firingCoordinator{}
+	page := console.New(coordinator, "owner", nil)
 	page.SetInspector(firingInspector{})
 	if err := page.PersistLedger(book); err != nil {
 		t.Fatal(err)
@@ -104,8 +104,8 @@ func TestConsoleScheduleCrashGapReplaysOnlyItsDurableExchange(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if im.calls != 0 || h.calls.Load() != 1 {
-		t.Fatalf("route/replay duplicated work: IM=%d executions=%d", im.calls, h.calls.Load())
+	if im.calls != 0 || coordinator.calls.Load() != 1 {
+		t.Fatalf("route/replay duplicated work: IM=%d executions=%d", im.calls, coordinator.calls.Load())
 	}
 	if _, ok := restarted.Get(job.ID); ok {
 		t.Fatal("accepted one-shot was not consumed")
