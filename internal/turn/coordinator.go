@@ -271,19 +271,29 @@ type Deps struct {
 	Schedules *schedule.Store
 }
 
+// dependency is one Deps field New refuses to build without.
+type dependency struct {
+	name   string
+	absent bool
+}
+
+// required is every Deps field New refuses to build without. Each is named
+// after the Coordinator field it fills, lower-cased: a field on this list is
+// never nil once New returns.
+func (d Deps) required() []dependency {
+	return []dependency{
+		{"Catalog", d.Catalog == nil}, {"Store", d.Store == nil}, {"Assembler", d.Assembler == nil},
+		{"Runtime", d.Runtime == nil}, {"Text", d.Text.IsZero()}, {"Home", d.Home == nil},
+		{"Skills", d.Skills == nil}, {"Projects", d.Projects == nil}, {"Memory", d.Memory == nil},
+		{"Attempts", d.Attempts == nil}, {"Artifacts", d.Artifacts == nil}, {"Intents", d.Intents == nil},
+		{"Executions", d.Executions == nil}, {"Tasks", d.Tasks == nil}, {"Schedules", d.Schedules == nil},
+	}
+}
+
 // New builds a Coordinator from deps, or reports every dependency missing.
 func New(deps Deps) (*Coordinator, error) {
 	var missing []string
-	for _, dep := range []struct {
-		name   string
-		absent bool
-	}{
-		{"Catalog", deps.Catalog == nil}, {"Store", deps.Store == nil}, {"Assembler", deps.Assembler == nil},
-		{"Runtime", deps.Runtime == nil}, {"Text", deps.Text.IsZero()}, {"Home", deps.Home == nil},
-		{"Skills", deps.Skills == nil}, {"Projects", deps.Projects == nil}, {"Memory", deps.Memory == nil},
-		{"Attempts", deps.Attempts == nil}, {"Artifacts", deps.Artifacts == nil}, {"Intents", deps.Intents == nil},
-		{"Executions", deps.Executions == nil}, {"Tasks", deps.Tasks == nil}, {"Schedules", deps.Schedules == nil},
-	} {
+	for _, dep := range deps.required() {
 		if dep.absent {
 			missing = append(missing, dep.name)
 		}
