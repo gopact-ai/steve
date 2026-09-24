@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/idle"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -118,7 +119,21 @@ func (r *recordCommands) Files(_ context.Context, node string, req nodewire.File
 	return "/home/u/.local/bin:/usr/bin:/bin", nil
 }
 
-func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes, *recordCommands, *task.Store) {
+// recordProbes records the harnesses probed one at a time and answers a
+// probe of every harness with results.
+type recordProbes struct {
+	probed  []string
+	results []models.Result
+}
+
+func (r *recordProbes) Probe(_ context.Context, node, harness string) error {
+	r.probed = append(r.probed, node+"/"+harness)
+	return nil
+}
+
+func (r *recordProbes) ProbeAll(context.Context) []models.Result { return r.results }
+
+func repairCoordinator(t *testing.T, opts ...testOption) (*Coordinator, *fakeSupervisor, *flipNodes, *recordCommands, *task.Store) {
 	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex":   {Harness: "codex", Default: true},
@@ -145,9 +160,12 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	fleet.SetNodes(nodes)
 	sup := &fakeSupervisor{}
 	cmds := &recordCommands{}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"),
+	opts = append([]testOption{
+		withTasks(tasks, "laptop"),
 		withDeps(func(d *Deps) { d.Fleet, d.Nodes = fleet, repairMachines{nodes, cmds} }),
-		withCallbacks(func(cb *Callbacks) { cb.Supervisor = sup }))
+		withCallbacks(func(cb *Callbacks) { cb.Supervisor = sup }),
+	}, opts...)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, opts...)
 	return c, sup, nodes, cmds, tasks
 }
 
@@ -167,12 +185,8 @@ func say(t *testing.T, c *Coordinator, input string) Result {
 // the same machine, verified by a command there, and re-checks the machine
 // afterwards so the roster — not the helper — says whether it worked.
 func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
-	c, sup, nodes, cmds, tasks := repairCoordinator(t)
-	var probed []string
-	c.SetProber(func(_ context.Context, node, harness string) error {
-		probed = append(probed, node+"/"+harness)
-		return nil
-	}, nil)
+	probes := &recordProbes{}
+	c, sup, nodes, cmds, tasks := repairCoordinator(t, withDeps(func(d *Deps) { d.Prober = probes }))
 
 	// A healthy agent has nothing to repair.
 	if res := say(t, c, "/repair builder"); !strings.Contains(res.Text, "没有坏") {
@@ -217,8 +231,8 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 	if len(nodes.refreshd) != 1 || nodes.refreshd[0] != "node-a" {
 		t.Fatalf("refreshed = %v", nodes.refreshd)
 	}
-	if len(probed) != 1 || probed[0] != "node-a/kimi" {
-		t.Fatalf("probed = %v", probed)
+	if len(probes.probed) != 1 || probes.probed[0] != "node-a/kimi" {
+		t.Fatalf("probed = %v", probes.probed)
 	}
 	if !strings.Contains(res.Text, "修好了") || !strings.Contains(res.Text, "builder") {
 		t.Fatalf("reply = %q", res.Text)
@@ -238,6 +252,22 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no repair task on record")
+	}
+}
+
+// `/fleet probe` reports what probing every harness found, a failure as
+// its error.
+func TestFleetProbeReportsEveryHarness(t *testing.T) {
+	probes := &recordProbes{results: []models.Result{
+		{Endpoint: models.Endpoint{Node: "node-a", Harness: "kimi"}, Observation: models.Observation{Current: "k2"}},
+		{Endpoint: models.Endpoint{Node: "node-a", Harness: "codex"}, Err: errors.New("handshake timed out")},
+	}}
+	c, _, _, _, _ := repairCoordinator(t, withDeps(func(d *Deps) { d.Prober = probes }))
+	res := say(t, c, "/fleet probe")
+	for _, want := range []string{"kimi** · k2", "✗ **node-a · codex", "handshake timed out"} {
+		if !strings.Contains(res.Text, want) {
+			t.Fatalf("probe report lacks %q: %q", want, res.Text)
+		}
 	}
 }
 

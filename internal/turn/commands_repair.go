@@ -25,12 +25,9 @@ import (
 // changed or a harness was just installed.
 func (c commands) probeCmd(ctx context.Context) Result {
 	title := c.text.T(i18n.CardFleet)
-	if c.probeAll == nil {
-		return Result{Title: title, Text: c.text.T(i18n.FleetLocal)}
-	}
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
-	results := c.probeAll(ctx)
+	results := c.prober.ProbeAll(ctx)
 	if len(results) == 0 {
 		return Result{Title: title, Text: c.text.T(i18n.FleetProbeNothing)}
 	}
@@ -137,10 +134,8 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	}
 	// A harness that just started existing has never reported a model;
 	// ask it, so the fleet's column fills without waiting for real work.
-	if c.probeOne != nil {
-		if err := c.probeOne(ctx, fix.Broken.Node, fix.Broken.Harness); err != nil {
-			slog.Error(fmt.Sprintf("turn: probe %s after repair: %v", agentID, err), "agent", agentID, "node", fix.Broken.Node)
-		}
+	if err := c.prober.Probe(ctx, fix.Broken.Node, fix.Broken.Harness); err != nil {
+		slog.Error(fmt.Sprintf("turn: probe %s after repair: %v", agentID, err), "agent", agentID, "node", fix.Broken.Node)
 	}
 	for _, item := range c.fleet.All(ctx) {
 		if item.Agent.ID != agentID {

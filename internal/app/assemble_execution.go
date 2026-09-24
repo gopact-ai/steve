@@ -24,7 +24,7 @@ import (
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
-func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly) (executionAssembly, error) {
+func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, modelInfo modelsAssembly) (executionAssembly, error) {
 	environment := input.Environment()
 	background := boot.Background()
 	book := boot.Book()
@@ -117,7 +117,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		Executions: executions, Tasks: tasks, Node: boot.NodeName(), Schedules: schedules,
 		OfflineAfter: time.Duration(cfg.Gateway.OfflineReminderAfter), ConsoleCompletionGuard: console.CheckTaskCompletionTx,
 		Nodes: nodes, PlanRecoveryOwner: planRecoveryOwner(environment != nil),
-		Plans: plans, Fleet: machines.Fleet(),
+		Plans: plans, Fleet: machines.Fleet(), Prober: modelInfo.ModelProbe(),
 	})
 	if err != nil {
 		return nil, err

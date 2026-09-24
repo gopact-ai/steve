@@ -24,6 +24,7 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/project"
@@ -36,8 +37,8 @@ import (
 
 // fillDeps fills every dependency d leaves unset, the way turntest does
 // for other packages: an empty agent catalog, a runtime that starts no
-// agent, an empty home and skill set, the Chinese catalog, and every store
-// on book. Stores built from another default follow what d sets.
+// agent, a prober that finds nothing, an empty home and skill set, the
+// Chinese catalog, and every store on book. Stores built from another default follow what d sets.
 //
 // It repeats turntest.Deps, which imports this package and so cannot be
 // used from its own tests; change both together.
@@ -63,6 +64,9 @@ func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	}
 	if d.Runtime == nil {
 		d.Runtime = noRuntime{}
+	}
+	if d.Prober == nil {
+		d.Prober = noProber{}
 	}
 	if d.Text.IsZero() {
 		d.Text = i18n.New(i18n.LocaleZH)
@@ -415,3 +419,10 @@ func TestFillDepsKeepsDefaultMemoryInTheCoordinatorsHome(t *testing.T) {
 		}
 	}
 }
+
+// noProber probes nothing and finds nothing.
+type noProber struct{}
+
+func (noProber) Probe(context.Context, string, string) error { return nil }
+
+func (noProber) ProbeAll(context.Context) []models.Result { return nil }

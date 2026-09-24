@@ -128,6 +128,15 @@ type Nodes interface {
 	Files(ctx context.Context, node string, req nodewire.FileRequest) (string, error)
 }
 
+// ModelProber asks harnesses which models they run.
+type ModelProber interface {
+	// Probe asks one harness on node, the way a repair does for a harness
+	// that just appeared.
+	Probe(ctx context.Context, node, harness string) error
+	// ProbeAll asks every harness on every machine, known or not.
+	ProbeAll(ctx context.Context) []models.Result
+}
+
 // Injected is what a turn actually gave the agent, kept so "what did it
 // see" can be answered from the record rather than recomputed from a
 // configuration that may since have changed.
@@ -208,8 +217,7 @@ type coordinatorState struct {
 	supervisor Supervisor
 	plans      *plan.Store
 	fleet      *roster.Roster
-	probeOne   func(ctx context.Context, node, harness string) error
-	probeAll   func(ctx context.Context) []models.Result
+	prober     ModelProber
 	projects   *project.Store
 	// attach gives a project a directory on the machine an agent runs on
 	// when it has none there.
@@ -308,6 +316,8 @@ type Deps struct {
 	// Fleet admits and places agents on the machines they run on; without
 	// it no admission runs and /fleet reports a hub alone.
 	Fleet *roster.Roster
+	// Prober answers `/fleet probe` and fills a repaired harness's model.
+	Prober ModelProber
 }
 
 // dependency is one Deps field New refuses to build without.
@@ -326,7 +336,7 @@ func (d Deps) required() []dependency {
 		{"Skills", d.Skills == nil}, {"Projects", d.Projects == nil}, {"Memory", d.Memory == nil},
 		{"Attempts", d.Attempts == nil}, {"Artifacts", d.Artifacts == nil}, {"Intents", d.Intents == nil},
 		{"Executions", d.Executions == nil}, {"Tasks", d.Tasks == nil}, {"Schedules", d.Schedules == nil},
-		{"Plans", d.Plans == nil},
+		{"Plans", d.Plans == nil}, {"Prober", d.Prober == nil},
 	}
 }
 
@@ -362,7 +372,7 @@ func New(deps Deps) (*Coordinator, error) {
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
 			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
 			nodes: deps.Nodes, planRecoveryOwner: deps.PlanRecoveryOwner,
-			plans: deps.Plans, fleet: deps.Fleet,
+			plans: deps.Plans, fleet: deps.Fleet, prober: deps.Prober,
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},

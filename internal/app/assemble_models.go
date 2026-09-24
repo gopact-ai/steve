@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/turn"
 	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
@@ -90,10 +91,35 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 	return &modelsValues{endpoints: endpoints, probeDir: probeDir, prober: prober, seen: seen}, nil
 }
 
+// modelProbe probes harnesses in each machine's probe directory.
+type modelProbe struct {
+	prober    *models.Prober
+	probeDir  func(node string) string
+	endpoints func(ctx context.Context) []models.Endpoint
+}
+
+// Probe asks one harness on node, and fails when node has no known state
+// directory to probe in.
+func (p modelProbe) Probe(ctx context.Context, node, harnessID string) error {
+	dir := p.probeDir(node)
+	if dir == "" {
+		return fmt.Errorf("no state dir known for %s", nodewire.Place(node))
+	}
+	_, err := p.prober.Probe(ctx, models.Endpoint{Node: node, Harness: harnessID, Workdir: dir})
+	return err
+}
+
+// ProbeAll asks every eligible harness, including those already seen.
+func (p modelProbe) ProbeAll(ctx context.Context) []models.Result {
+	return p.prober.ProbeAll(ctx, p.endpoints(ctx), true)
+}
+
 type modelsAssembly interface {
 	Endpoints() func(ctx context.Context) []models.Endpoint
 	ProbeDir() func(node string) string
 	Prober() *models.Prober
+	// ModelProbe probes harnesses on demand, for the coordinator.
+	ModelProbe() turn.ModelProber
 	Seen() *models.Book
 }
 
@@ -109,5 +135,9 @@ func (v *modelsValues) Endpoints() func(ctx context.Context) []models.Endpoint {
 func (v *modelsValues) ProbeDir() func(node string) string { return v.probeDir }
 
 func (v *modelsValues) Prober() *models.Prober { return v.prober }
+
+func (v *modelsValues) ModelProbe() turn.ModelProber {
+	return modelProbe{prober: v.prober, probeDir: v.probeDir, endpoints: v.endpoints}
+}
 
 func (v *modelsValues) Seen() *models.Book { return v.seen }
