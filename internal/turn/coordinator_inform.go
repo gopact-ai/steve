@@ -58,7 +58,7 @@ func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string)
 		return Whereabouts{}, fmt.Errorf("no agent %q", agentID)
 	}
 	w := Whereabouts{Agent: selected.ID, Node: placeLabel(selected.Node), Harness: selected.Harness, Model: selected.Model, Mode: string(c.modeOf(conversationID)), MCPServers: append([]string{"steve"}, selected.MCPServers...), Skills: []string{}}
-	if c.skills != nil && c.skills.Map != nil {
+	if c.skills.Map != nil {
 		w.Skills = c.skills.Map.EnabledNames()
 	}
 	if id, _, _, err := c.projectFor(ctx, conversationID); err == nil && id != "" {

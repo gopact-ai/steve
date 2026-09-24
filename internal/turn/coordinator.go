@@ -342,13 +342,6 @@ func (c *Coordinator) SetWorkspaceAttach(attach func(ctx context.Context, projec
 	c.attach = attach
 }
 
-// SetSkills sets the live skill set.
-//
-// Deprecated: set Deps.Skills.
-func (c *Coordinator) SetSkills(live *skills.Live) {
-	c.skills = live
-}
-
 // SetAgentGate enables the send primitive: each session gets the messaging
 // MCP server injected with its own conversation-bound token.
 // SetNodeEndpoints wires the resolver remote placements need for messaging.
