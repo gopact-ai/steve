@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -186,8 +187,8 @@ func TestDurableResultRequiresRealProviderReceipt(t *testing.T) {
 		t.Fatalf("durable result sent %d receipted and %d unreceipted replies, want 1 and 0", ch.texts.Load(), ch.replies.Load())
 	}
 	r, _, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/reply")
-	if err != nil || r.Error == "" {
-		t.Fatalf("missing provider receipt became success: %+v %v", r, err)
+	if err != nil || !strings.Contains(r.Error, channel.ErrOutcomeUnknown.Error()) {
+		t.Fatalf("reply receipt = %+v, %v; want an unknown outcome", r, err)
 	}
 }
 
