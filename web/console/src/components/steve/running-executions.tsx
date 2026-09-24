@@ -69,7 +69,7 @@ function AdmissionBadge({ a }: { a: Attempt }) {
     const adm = a.admission;
     const req = (a.requires || []).join(" ");
     if (!adm) return <span className="text-tertiary">{req ? tr("fleet.unrecordedRequirements", { requirements: req }) : "—"}</span>;
-    const who = ({ node: tr("fleet.nodeDecision"), hub: tr("fleet.hubDecision"), cached: tr("fleet.cachedDecision"), legacy: tr("fleet.legacyDecision") } as Record<string, string>)[adm.source] || adm.source;
+    const who = ({ node: tr("fleet.nodeDecision"), hub: tr("fleet.hubDecision"), cached: tr("fleet.cachedDecision") } as Record<string, string>)[adm.source] || adm.source;
     const color = adm.verdict === 1 ? "success" : adm.verdict === 0 ? "error" : "warning";
     const rev = adm.generation ? `@${adm.generation}/${adm.sequence}` : "";
     return (

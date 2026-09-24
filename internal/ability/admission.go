@@ -12,8 +12,7 @@ import "time"
 // re-checking its own offers on a fresh observation; "hub" is the hub
 // evaluating the part of the requirement it owns (models, and hub-local
 // machines); "cached" is a verdict from the hub's last accepted snapshot
-// because the node could not be asked; "legacy" is a node that does not
-// speak the admission protocol at all.
+// because the node could not be asked.
 type Admission struct {
 	Node       string       `json:"node,omitempty"`
 	Source     string       `json:"source"`

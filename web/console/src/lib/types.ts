@@ -65,7 +65,7 @@ export interface Health {
     root?: string; state_root?: string; workspace_bytes?: number; state_bytes?: number; space_at?: string; space_partial?: boolean;
 }
 export interface Admission {
-    node?: string; source: "node" | "hub" | "cached" | "legacy"; verdict: number; code?: string;
+    node?: string; source: "node" | "hub" | "cached"; verdict: number; code?: string;
     generation?: number; sequence?: number; digest?: string; atoms?: { atom: string; verdict: number; code?: string }[]; at: string;
 }
 export interface Attempt {
