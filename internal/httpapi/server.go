@@ -1156,18 +1156,7 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if !s.consoleSubmissionIdentity(w, r, req) {
 		return
 	}
-	var reply consoleapi.Reply
-	var err error
-	if extended, ok := s.console.(consoleapi.Submissions); ok {
-		reply, err = extended.SendSubmission(r.Context(), req)
-	} else if len(req.Refs) > 0 {
-		http.Error(w, "material submission is not supported", http.StatusNotImplemented)
-		return
-	} else if len(req.Quotes) > 0 {
-		reply, err = s.console.SendCommandWith(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
-	} else {
-		reply, err = s.console.SendCommand(r.Context(), req.Conversation, req.Input, req.CommandID)
-	}
+	reply, err := s.console.SendSubmission(r.Context(), req)
 	w.Header().Set("Content-Type", "application/json")
 	if errors.Is(err, consoleapi.ErrCommandConflict) {
 		w.WriteHeader(http.StatusConflict)
@@ -1295,21 +1284,11 @@ func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"suggestions": items})
 }
 
-// localizedVerbs is a console that can name its verbs in the language of
-// the request; one that cannot lists them once for every language.
-type localizedVerbs interface {
-	VerbsFor(context.Context) []consoleapi.Verb
-}
-
 func (s *Server) consoleVerbs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	verbs := []consoleapi.Verb{}
 	if s.console != nil {
-		if localized, ok := s.console.(localizedVerbs); ok {
-			verbs = append(verbs, localized.VerbsFor(r.Context())...)
-		} else {
-			verbs = append(verbs, s.console.Verbs()...)
-		}
+		verbs = append(verbs, s.console.VerbsFor(r.Context())...)
 	}
 	writeJSON(w, map[string]any{"verbs": verbs})
 }

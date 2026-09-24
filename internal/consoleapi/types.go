@@ -15,10 +15,6 @@ import (
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-// Console is what the page needs to act, not only to watch: send a line as
-// the owner into a conversation and read what came back. The token that
-// guards the read model is the owner's credential here; without a
-// console wired, the endpoints answer that acting is off.
 // QuoteRef points at one stored line of a thread to carry with a message.
 type QuoteRef struct {
 	Conversation string `json:"conversation"`
@@ -40,15 +36,20 @@ type ConversationInitializer interface {
 	InitializeConversation(ctx context.Context, conversation, project string) error
 }
 
+// Console is what the page needs to act, not only to watch: send a line as
+// the owner into a conversation and read what came back. The token that
+// guards the read model is the owner's credential here; without a
+// console wired, the endpoints answer that acting is off.
 type Console interface {
-	Send(ctx context.Context, conversation, input string) (Reply, error)
-	// SendCommand is Send with an idempotency key from the page.
-	SendCommand(ctx context.Context, conversation, input, commandID string) (Reply, error)
-	// SendCommandWith carries quotes of other lines along with the input.
-	SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (Reply, error)
-	Enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef) (Exchange, error)
-	// EnqueueCommand durably accepts or replays one conversation/client key.
-	EnqueueCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (Exchange, error)
+	Submissions
+	Interactions
+	ConversationInitializer
+	ExchangeIdentity
+	LocalizedVerbs
+	// SubmissionCapabilities says which optional submission fields the
+	// console honours, material references and interactive requests, so the
+	// page can tell a hub that preserves them from one that only accepts them.
+	SubmissionCapabilities() (materialRefs, interactiveRequests bool)
 	Queue(conversation string) []Exchange
 	DeleteQueued(id string) error
 	EditQueued(id, input string) (Exchange, error)
@@ -59,12 +60,11 @@ type Console interface {
 	Conversations() []string
 	Summaries(ctx context.Context) []Conversation
 	Update(ctx context.Context, conversation string, patch ConversationPatch) error
-	// Context is where a conversation stands; Verbs is what it can be told.
+	// Context is where a conversation stands; VerbsFor is what it can be told.
 	Context(ctx context.Context, conversation string) (Context, error)
 	// Setup is what the conversation's agent works with: the assembled
 	// instructions and the pieces they are made of.
 	Setup(ctx context.Context, conversation, agent string) (Setup, error)
-	Verbs() []Verb
 	// Suggest completes a line the page is typing, by the coordinator's
 	// rules: verbs, agents, projects, this conversation's tasks.
 	Suggest(ctx context.Context, conversation, line string) []Suggestion
@@ -244,6 +244,11 @@ type AddAgentRequest struct {
 // Admin changes the fleet at runtime and persists the change: the page
 // adds machines and agents without a restart.
 type Admin interface {
+	MaterialAdmin
+	NativeHistoryService
+	NodeAgentService
+	VersionService
+	AttemptQueries
 	AddNode(ctx context.Context, req AddNodeRequest) (AddNodeResult, error)
 	// RemoveNode forgets a machine: nothing may still live on it.
 	RemoveNode(ctx context.Context, name string) error
