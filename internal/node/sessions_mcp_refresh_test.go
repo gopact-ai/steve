@@ -267,10 +267,10 @@ func TestMCPAuthorizationRefreshDoesNotWeakenConfigHash(t *testing.T) {
 	// Without the proof the fresh header stays in the full hash, which then
 	// no longer matches the source: the resume fails closed.
 	raw, _ := json.Marshal(req)
-	var legacy map[string]json.RawMessage
-	_ = json.Unmarshal(raw, &legacy)
-	delete(legacy, "mcp_authorization_refresh")
-	raw, _ = json.Marshal(legacy)
+	var withoutProof map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &withoutProof)
+	delete(withoutProof, "mcp_authorization_refresh")
+	raw, _ = json.Marshal(withoutProof)
 	var decoded nodewire.SessionRequest
 	_ = json.Unmarshal(raw, &decoded)
 	if decoded.MCPAuthorizationRefresh != nil || sessionConfigHash(decoded) == old.ConfigHash {
