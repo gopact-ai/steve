@@ -12,6 +12,9 @@ import (
 // application read it. Each application owns one; two applications in one
 // process do not wait for each other.
 //
+// A nil *ConfigStore holds no configuration: Read passes nil to its
+// function and Update refuses every change.
+//
 // The configuration changes only through Update, which edits a clone and
 // then copies it over the configuration in force. A map or slice reachable
 // from a published configuration is therefore never changed afterwards.
@@ -29,27 +32,24 @@ func NewConfigStore(cfg *config.Config) *ConfigStore {
 	return &ConfigStore{cfg: cfg}
 }
 
-// noConfiguration is the store of every service built without one: it
-// holds no configuration, so it cannot be changed.
-var noConfiguration ConfigStore
-
-// configStore is what holds the service's configuration.
-func (a *Service) configStore() *ConfigStore {
-	if a.ConfigStore != nil {
-		return a.ConfigStore
-	}
-	return &noConfiguration
-}
-
 // cfg is the service's configuration, or nil when it has none. Callers
 // hold the store while they use it.
-func (a *Service) cfg() *config.Config { return a.configStore().cfg }
+func (a *Service) cfg() *config.Config {
+	if a.ConfigStore == nil {
+		return nil
+	}
+	return a.ConfigStore.cfg
+}
 
 // Read runs read with the configuration held still. read must not keep
 // the *config.Config after it returns; a map or slice it reaches may be
 // kept and read later, since a published configuration's collections are
 // never changed.
 func (s *ConfigStore) Read(read func(*config.Config)) {
+	if s == nil {
+		read(nil)
+		return
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	read(s.cfg)
@@ -78,7 +78,7 @@ func (s *ConfigStore) Update(change func(*config.Config) error, save func(*confi
 // the saved configuration is in place and before any reader sees it.
 // published must be quick and must not use the store.
 func (s *ConfigStore) update(change, save func(*config.Config) error, published func(*config.Config)) error {
-	if s.cfg == nil {
+	if s == nil || s.cfg == nil {
 		return errNoConfiguration
 	}
 	s.write.Lock()
@@ -106,5 +106,14 @@ func (s *ConfigStore) update(change, save func(*config.Config) error, published 
 
 // rlock and runlock hold the configuration still for code in this package
 // that reads it through Service.cfg.
-func (s *ConfigStore) rlock()   { s.mu.RLock() }
-func (s *ConfigStore) runlock() { s.mu.RUnlock() }
+func (s *ConfigStore) rlock() {
+	if s != nil {
+		s.mu.RLock()
+	}
+}
+
+func (s *ConfigStore) runlock() {
+	if s != nil {
+		s.mu.RUnlock()
+	}
+}

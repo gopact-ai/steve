@@ -116,9 +116,9 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 	}
 	a.Assembler.SetServers(caps)
 	a.Fleet.SetHubCapabilities(set.Capabilities)
-	a.configStore().rlock()
+	a.ConfigStore.rlock()
 	slots := a.cfg().HubSlots()
-	a.configStore().runlock()
+	a.ConfigStore.runlock()
 	a.Fleet.SetHubSlots(slots)
 	if a.Observation != nil {
 		a.Observation.Launch.Wake()
@@ -134,9 +134,9 @@ func (a *Service) hubHarnessSettings(settings map[string]nodewire.HarnessSetting
 		if !NameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
 			return nil, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
 		}
-		a.configStore().rlock()
+		a.ConfigStore.rlock()
 		item := a.cfg().Harnesses[id]
-		a.configStore().runlock()
+		a.ConfigStore.runlock()
 		if h.Adapter != nil && *h.Adapter != item.Adapter {
 			return nil, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
 		}
@@ -171,9 +171,9 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 
 	servers := make(map[string]config.MCPServer, len(settings))
 	for id, m := range settings {
-		a.configStore().rlock()
+		a.ConfigStore.rlock()
 		old := a.cfg().MCPServers[id]
-		a.configStore().runlock()
+		a.ConfigStore.runlock()
 		if m.Env == nil {
 			m.Env = old.Env
 		}
@@ -202,8 +202,8 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 }
 
 func (a *Service) hubSettings() nodewire.Settings {
-	a.configStore().rlock()
-	defer a.configStore().runlock()
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
 	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.cfg().Gateway.Tools...),
 		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.cfg().Gateway.Declares...), Capabilities: append([]string{}, a.cfg().Gateway.Capabilities...)}
 	for id, h := range a.cfg().Harnesses {
@@ -350,9 +350,9 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 			}
 		}
 	}
-	a.configStore().rlock()
+	a.ConfigStore.rlock()
 	_, inConfig := a.cfg().Nodes[name]
-	a.configStore().runlock()
+	a.ConfigStore.runlock()
 	if !inConfig {
 		return fmt.Errorf("没有叫 %q 的机器", name)
 	}
@@ -387,7 +387,7 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 // their credentials.
 func (a *Service) Bootstrap(name, token string) (string, bool) {
 	a.Mu.Lock()
-	a.configStore().rlock()
+	a.ConfigStore.rlock()
 	n, ok := a.cfg().Nodes[name]
 	harnesses := make(map[string]nodebootstrap.Harness, len(a.cfg().Harnesses))
 	for id, h := range a.cfg().Harnesses {
@@ -398,7 +398,7 @@ func (a *Service) Bootstrap(name, token string) (string, bool) {
 		}
 	}
 	binary, hubURL := a.cfg().Gateway.NodeBinary, a.hubURL
-	a.configStore().runlock()
+	a.ConfigStore.runlock()
 	a.Mu.Unlock()
 	if !ok || token == "" || subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) != 1 {
 		return "", false
@@ -423,8 +423,8 @@ func (a *Service) Bootstrap(name, token string) (string, bool) {
 func (a *Service) NodeBinary(token string) (string, bool) {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	a.configStore().rlock()
-	defer a.configStore().runlock()
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
 	if a.cfg().Gateway.NodeBinary == "" || token == "" {
 		return "", false
 	}

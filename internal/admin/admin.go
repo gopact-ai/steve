@@ -150,7 +150,7 @@ func (a *Service) updateConfig(ctx context.Context, change func(*config.Config) 
 // updateConfigThen is updateConfig that runs published once the saved
 // configuration is in place, before any reader sees it.
 func (a *Service) updateConfigThen(ctx context.Context, change func(*config.Config) error, published func(*config.Config)) error {
-	return a.configStore().update(change, func(candidate *config.Config) error { return a.saveConfig(ctx, candidate) }, published)
+	return a.ConfigStore.update(change, func(candidate *config.Config) error { return a.saveConfig(ctx, candidate) }, published)
 }
 
 // saveConfig persists candidate without touching the configuration in

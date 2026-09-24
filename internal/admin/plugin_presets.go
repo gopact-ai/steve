@@ -26,11 +26,11 @@ func pluginAgentView(id string, item config.Agent) consoleapi.PluginAgentView {
 }
 
 func (s *PluginService) PreviewPluginPreset(ctx context.Context, id string, req consoleapi.PluginPresetRequest) (consoleapi.PluginPresetPreview, error) {
-	s.Admin.configStore().rlock()
+	s.Admin.ConfigStore.rlock()
 	cfg := *s.Admin.cfg()
 	cfg.Plugins = config.ClonePluginInstallations(cfg.Plugins)
 	cfg.Agents = maps.Clone(cfg.Agents)
-	s.Admin.configStore().runlock()
+	s.Admin.ConfigStore.runlock()
 	return s.presetPreview(ctx, id, req, &cfg)
 }
 
@@ -123,9 +123,9 @@ func (s *PluginService) ApplyPluginPreset(ctx context.Context, id string, req co
 	} else if found {
 		return saved, s.Library.FinishOperation(ctx, operation, nil)
 	}
-	s.Admin.configStore().rlock()
+	s.Admin.ConfigStore.rlock()
 	existing := s.Admin.cfg().Agents[req.AgentID].PluginOrigin.Clone()
-	s.Admin.configStore().runlock()
+	s.Admin.ConfigStore.runlock()
 	if existing != nil && existing.CommandID == req.CommandID && existing.Applied != nil {
 		restored := presetResult(existing)
 		if err := s.Library.Ledger.PutBinding(ctx, "plugin-preset-result", req.CommandID, restored); err != nil {

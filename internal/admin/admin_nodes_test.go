@@ -106,11 +106,11 @@ func TestNodeMutationsSynchronizeWithConfigurationReaders(t *testing.T) {
 	go func() {
 		defer readers.Done()
 		for ctx.Err() == nil {
-			admin.configStore().rlock()
+			admin.ConfigStore.rlock()
 			_, _ = json.Marshal(admin.cfg())
 			_ = admin.cfg().NodeLevels()
 			_ = admin.cfg().NodeRegions()
-			admin.configStore().runlock()
+			admin.ConfigStore.runlock()
 			runtime.Gosched()
 		}
 	}()

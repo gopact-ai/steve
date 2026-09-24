@@ -60,8 +60,8 @@ func NewChannels(admin *Service, startup *config.Config) *hubChannelsService {
 }
 
 func (s *hubChannelsService) Channels(context.Context) (consoleapi.ChannelsView, error) {
-	s.admin.configStore().rlock()
-	defer s.admin.configStore().runlock()
+	s.admin.ConfigStore.rlock()
+	defer s.admin.ConfigStore.runlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.viewLocked(), nil

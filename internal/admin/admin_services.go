@@ -67,7 +67,7 @@ type Services struct {
 
 func NewServices(admin *Service, executions *execution.Registry, seal func() (func(), error), stop context.CancelFunc, doc ledger.Doc) (*Services, error) {
 	s := &Services{admin: admin, executions: executions, sealWrites: seal, stop: stop, doc: doc}
-	admin.configStore().Read(func(cfg *config.Config) {
+	admin.ConfigStore.Read(func(cfg *config.Config) {
 		if cfg != nil {
 			s.boot = cfg.Clone()
 		}
@@ -466,8 +466,8 @@ func (s *Services) preflight() error {
 	if s.admin.Path == "" {
 		return nil
 	}
-	s.admin.configStore().rlock()
-	defer s.admin.configStore().runlock()
+	s.admin.ConfigStore.rlock()
+	defer s.admin.ConfigStore.runlock()
 	if s.admin.cfg() != nil {
 		if err := s.admin.cfg().CheckFileRevision(s.admin.Path); err != nil {
 			return serviceFailure("conflict", "The configuration file changed outside the console; validate and deploy it before restarting")

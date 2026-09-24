@@ -155,7 +155,7 @@ func TestConfigStoreUpdateWithNothingToChangeSavesNothing(t *testing.T) {
 // the way another writer's change would appear.
 func publishUnsaved(t *testing.T, a *Service, change func(*config.Config)) {
 	t.Helper()
-	err := a.configStore().update(func(c *config.Config) error {
+	err := a.ConfigStore.update(func(c *config.Config) error {
 		change(c)
 		return nil
 	}, func(*config.Config) error { return nil }, nil)
@@ -218,11 +218,30 @@ func TestServiceWithoutAConfigurationCannotChangeOne(t *testing.T) {
 	if !errors.Is(err, errNoConfiguration) || changed {
 		t.Fatalf("updateConfig = %v, changed=%v", err, changed)
 	}
-	a.configStore().Read(func(cfg *config.Config) {
+	a.ConfigStore.Read(func(cfg *config.Config) {
 		if cfg != nil {
 			t.Errorf("a service without a configuration read %+v", cfg)
 		}
 	})
+}
+
+// A nil store holds no configuration: it reads none and refuses changes.
+func TestNilConfigStoreHoldsNoConfiguration(t *testing.T) {
+	var store *ConfigStore
+	read := false
+	store.Read(func(cfg *config.Config) {
+		read = true
+		if cfg != nil {
+			t.Errorf("a nil store read %+v", cfg)
+		}
+	})
+	if !read {
+		t.Fatal("Read did not run its function")
+	}
+	err := store.Update(func(*config.Config) error { return nil }, func(*config.Config) error { return nil })
+	if !errors.Is(err, errNoConfiguration) {
+		t.Fatalf("Update = %v", err)
+	}
 }
 
 // Two changes made while the first is still being saved both stay: the

@@ -52,8 +52,8 @@ func (s *PluginService) coordinator(node string) error {
 }
 
 func (s *PluginService) snapshot() (string, map[string]plugins.Installation) {
-	s.Admin.configStore().rlock()
-	defer s.Admin.configStore().runlock()
+	s.Admin.ConfigStore.rlock()
+	defer s.Admin.ConfigStore.runlock()
 	items := config.ClonePluginInstallations(s.Admin.cfg().Plugins)
 	return pluginRevision(items), items
 }
@@ -76,11 +76,11 @@ func (s *PluginService) Plugins(ctx context.Context) (consoleapi.PluginsView, er
 	}
 	view := consoleapi.PluginsView{Operations: operations, Revision: revision, Packages: packages, Installations: []consoleapi.PluginInstallationView{}}
 	view.Agents = []consoleapi.PluginAgentView{}
-	s.Admin.configStore().rlock()
+	s.Admin.ConfigStore.rlock()
 	for id, item := range s.Admin.cfg().Agents {
 		view.Agents = append(view.Agents, pluginAgentView(id, item))
 	}
-	s.Admin.configStore().runlock()
+	s.Admin.ConfigStore.runlock()
 	slices.SortFunc(view.Agents, func(a, b consoleapi.PluginAgentView) int { return strings.Compare(a.ID, b.ID) })
 	ids := make([]string, 0, len(items))
 	for id := range items {
@@ -160,10 +160,10 @@ func (s *PluginService) ImportPlugin(ctx context.Context, req consoleapi.PluginI
 	if req.CommandID == "" || req.Project == "" || req.Digest == "" {
 		return record, plugins.ErrInvalid
 	}
-	s.Admin.configStore().rlock()
+	s.Admin.ConfigStore.rlock()
 	declared, exists := s.Admin.cfg().Projects[req.Project]
 	level := s.Admin.cfg().HubLevel()
-	s.Admin.configStore().runlock()
+	s.Admin.ConfigStore.runlock()
 	if !exists {
 		return record, errors.New("plugin import project is unknown")
 	}
@@ -201,11 +201,11 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req console
 		s.RuntimeGate.Lock()
 		defer s.RuntimeGate.Unlock()
 	}
-	s.Admin.configStore().rlock()
+	s.Admin.ConfigStore.rlock()
 	candidate := *s.Admin.cfg()
 	candidate.Plugins = config.ClonePluginInstallations(s.Admin.cfg().Plugins)
 	revision := pluginRevision(candidate.Plugins)
-	s.Admin.configStore().runlock()
+	s.Admin.ConfigStore.runlock()
 	if req.BaseRevision == "" || req.BaseRevision != revision {
 		return consoleapi.PluginsView{}, consoleapi.ErrSettingsConflict
 	}

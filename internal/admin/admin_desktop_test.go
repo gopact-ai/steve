@@ -351,7 +351,7 @@ func TestSetLocalWorkspaceRootIsNotSaved(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.SetLocalWorkspaceRoot("/work/here")
-	a.configStore().Read(func(c *config.Config) {
+	a.ConfigStore.Read(func(c *config.Config) {
 		if c.Gateway.WorkspaceRoot != "/work/here" {
 			t.Errorf("workspace root = %q", c.Gateway.WorkspaceRoot)
 		}
