@@ -9,12 +9,6 @@ import (
 var _ Channel = (*feishu.Channel)(nil)
 
 // The only production implementation of capabilities gateway probes its
-// channel for.
-var (
-	_ cardPoster = (*feishu.Channel)(nil)
-)
-
-// The only production implementation of capabilities gateway probes its
 // processor for.
 var (
 	_ RecoveryDriver     = (*turn.Coordinator)(nil)
