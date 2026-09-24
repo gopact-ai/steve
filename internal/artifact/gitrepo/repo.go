@@ -184,7 +184,7 @@ func (r *Repo) SnapshotWithNested(ctx context.Context, workTree, parent, message
 		return "", false, nil, err
 	}
 	sha = strings.TrimSpace(out)
-	return sha, true, left, r.Pin(ctx, sha)
+	return sha, true, left, r.pinNew(ctx, sha)
 }
 
 // gitlinks lists the submodule entries in the index.
@@ -271,8 +271,20 @@ func flattenNestedRepos(ctx context.Context, workTree string) ([]string, error) 
 }
 
 // Pin gives a commit a ref so it is an artifact git will keep, and a name
-// a bundle can carry.
+// a bundle can carry. A commit whose ref already names it is left alone:
+// writing the same value again would only wait for the ref lock.
 func (r *Repo) Pin(ctx context.Context, sha string) error {
+	// Any failure to read the ref, including its absence, leaves the
+	// verdict to the write, which reports what is really wrong.
+	if out, err := r.Git(ctx, nil, "rev-parse", "--verify", "--quiet", RefFor(sha)); err == nil && strings.TrimSpace(out) == sha {
+		return nil
+	}
+	return r.pinNew(ctx, sha)
+}
+
+// pinNew is Pin for a commit git has just written, whose ref is almost
+// never there yet: reading it first would only add a process.
+func (r *Repo) pinNew(ctx context.Context, sha string) error {
 	_, err := r.GitRefWrite(ctx, "update-ref", RefFor(sha), sha)
 	return err
 }
@@ -422,7 +434,7 @@ func (r *Repo) MergeMarking(ctx context.Context, base, ours, theirs, message str
 		return "", "", nil, err
 	}
 	sha = strings.TrimSpace(commit)
-	return sha, "", nil, r.Pin(ctx, sha)
+	return sha, "", nil, r.pinNew(ctx, sha)
 }
 
 // markedCommit pins the conflicted tree as a commit parented on both
@@ -439,7 +451,7 @@ func (r *Repo) markedCommit(ctx context.Context, tree, ours, theirs, message str
 		return ""
 	}
 	sha := strings.TrimSpace(commit)
-	if err := r.Pin(ctx, sha); err != nil {
+	if err := r.pinNew(ctx, sha); err != nil {
 		slog.Warn(fmt.Sprintf("artifact: pin conflicted commit %s: %v", short(sha), err), "commit", sha)
 		return ""
 	}
