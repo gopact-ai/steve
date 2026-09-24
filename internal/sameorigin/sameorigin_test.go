@@ -76,6 +76,17 @@ func TestLoopbackListener(t *testing.T) {
 	}
 }
 
+// Host names ignore case, so LOCALHOST listens where localhost does. Only
+// letter case is ignored: Unicode folding would also match the long s in
+// "localhoſt", which does not name this machine.
+func TestLoopbackListenerIgnoresTheCaseOfLocalhost(t *testing.T) {
+	for addr, want := range map[string]bool{"LOCALHOST:7710": true, "LocalHost:7710": true, "localhoſt:7710": false} {
+		if got := LoopbackListener(addr); got != want {
+			t.Errorf("LoopbackListener(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
 func TestLoopbackIPRequiresLiteralLoopbackAddress(t *testing.T) {
 	for addr, want := range map[string]bool{
 		"127.0.0.1:7710": true, "[::1]:0": true, "127.0.0.2:1": true, "[::ffff:127.0.0.1]:1": true,

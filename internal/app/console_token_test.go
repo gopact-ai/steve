@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,5 +52,42 @@ func TestNetworkConsoleStillNeedsAConfiguredToken(t *testing.T) {
 	}
 	if _, err := localtoken.Read(state); err == nil {
 		t.Fatal("a token was generated for a network bind")
+	}
+}
+
+// loadConsoleConfig loads a configuration whose console listens on addr with
+// token, for a Hub that keeps its state in dir.
+func loadConsoleConfig(t *testing.T, dir, addr, token string) *config.Config {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"gateway":  map[string]string{"read_model_addr": addr, "read_model_token": token, "state_path": filepath.Join(dir, "state.json")},
+		"projects": map[string]any{"p": map[string]any{"home": map[string]string{"path": filepath.Join(dir, "home")}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+// A loopback console gets the generated token however the configuration
+// spells its listener, and is served on the listener that spelling names.
+func TestLoopbackConsoleSpellingsStillGetAGeneratedToken(t *testing.T) {
+	for _, c := range []struct{ addr, token, wantAddr string }{
+		{"LOCALHOST:7710", "", "LOCALHOST:7710"},
+	} {
+		dir := t.TempDir()
+		served, err := consoleServerConfig(nil, loadConsoleConfig(t, dir, c.addr, c.token))
+		stored, readErr := localtoken.Read(dir)
+		if err != nil || readErr != nil || served.Token != stored || served.Addr != c.wantAddr {
+			t.Errorf("read_model_addr %q, read_model_token %q: served on %q (want %q), generated token served: %v, err: %v", c.addr, c.token, served.Addr, c.wantAddr, readErr == nil && served.Token == stored, err)
+		}
 	}
 }

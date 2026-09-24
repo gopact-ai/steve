@@ -60,3 +60,31 @@ func TestLoopbackConsoleRefusesOtherSites(t *testing.T) {
 		t.Fatalf("same-origin POST = %d, want 200", code)
 	}
 }
+
+// A console on LOCALHOST listens on loopback like one on localhost, so a
+// rebound Host is refused even when the page has the owner's token.
+func TestUpperCaseLocalhostConsoleRefusesReboundHosts(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
+	server := serve(t, model, ServerConfig{Addr: "LOCALHOST:0", Token: testToken})
+
+	read := func(host string) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, server.URL()+"/state", nil)
+		if host != "" {
+			req.Host = host
+		}
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	if code := read("evil.example:7710"); code != http.StatusForbidden {
+		t.Fatalf("rebound host read = %d, want 403", code)
+	}
+	if code := read(""); code != http.StatusOK {
+		t.Fatalf("read on the console's own address = %d, want 200", code)
+	}
+}

@@ -591,7 +591,7 @@ func TestConsoleConnectionReadsTheGeneratedToken(t *testing.T) {
 	if err := os.Chmod(filepath.Join(state, localtoken.FileName), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for addr, want := range map[string]string{"localhost:8800": token, "[::1]:8800": token, "192.0.2.10:8800": "", "hub.localhost:8800": "", "hub.example:8800": ""} {
+	for addr, want := range map[string]string{"localhost:8800": token, "LOCALHOST:8800": token, "[::1]:8800": token, "192.0.2.10:8800": "", "hub.localhost:8800": "", "hub.example:8800": ""} {
 		remote := filepath.Join(t.TempDir(), "config.json")
 		data, _ := json.Marshal(map[string]any{"gateway": map[string]string{"read_model_addr": addr, "state_path": filepath.Join(state, "state.json")}})
 		writeClientFixture(t, remote, string(data))

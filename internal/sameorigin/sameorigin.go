@@ -52,18 +52,21 @@ func Guard(next http.Handler, reach Reach) http.Handler {
 
 // LoopbackListener reports whether a listen address ("host:port") only
 // accepts connections from this machine. It is stricter than a Host header:
-// a bare ":port" listens everywhere, and only "localhost" among names is
-// trusted to resolve to loopback.
+// a bare ":port" listens everywhere, and only "localhost", in any letter
+// case, among names is trusted to resolve to loopback.
 func LoopbackListener(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	return err == nil && LoopbackName(host)
 }
 
 // LoopbackName reports whether host, without a port, names this machine
-// for a connection: exactly "localhost" or a loopback IP. Subdomains of
-// localhost and other spellings are left to the resolver, so they are not.
+// for a connection: "localhost" in any letter case, or a loopback IP.
+// Subdomains of localhost and other spellings are left to the resolver, so
+// they are not.
 func LoopbackName(host string) bool {
-	if host == "localhost" {
+	// Host names ignore letter case. strings.EqualFold would go further and
+	// match "localhoſt" (long s), which does not name this machine.
+	if strings.ToLower(host) == "localhost" {
 		return true
 	}
 	ip, err := netip.ParseAddr(host)
