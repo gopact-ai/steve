@@ -13,7 +13,6 @@ var _ Channel = (*feishu.Channel)(nil)
 var (
 	_ cardPoster  = (*feishu.Channel)(nil)
 	_ textReplier = (*feishu.Channel)(nil)
-	_ topicSeeder = (*feishu.Channel)(nil)
 )
 
 // The only production implementation of capabilities gateway probes its

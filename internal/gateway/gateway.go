@@ -217,20 +217,13 @@ func silentListen(msg feishu.InboundMessage) bool {
 	return msg.ChatType == protocol.ChatGroup && !msg.Mentioned
 }
 
-// topicSeeder is the channel capability /t rides on: reply into a fresh
-// thread and report where it landed.
-type topicSeeder interface {
-	ReplyThread(context.Context, string, string) (string, string, error)
-}
-
 // seedTopic turns "/t <task>" into a new topic thread running that task —
 // the entry point for parallel work in one chat. The anchor reply carries
 // the task text so the topic's preview says what it is about; the task then
 // runs as if it had been sent inside the new thread, so its card, answer and
 // session all live there, isolated from the flat chat's own session.
 func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
-	seeder, ok := g.ch.(topicSeeder)
-	if !ok {
+	if g.ch == nil {
 		g.reply(msg.MessageID, g.text.T(i18n.TopicFailed))
 		return
 	}
@@ -245,7 +238,7 @@ func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	anchor, thread, err := seeder.ReplyThread(ctx, msg.MessageID, task)
+	anchor, thread, err := g.ch.ReplyThread(ctx, msg.MessageID, task)
 	cancel()
 	if err != nil || anchor == "" || thread == "" {
 		slog.Error(fmt.Sprintf("gateway: seed topic failed: %v", err), "conversation", conversationID(msg), "message", msg.MessageID)
