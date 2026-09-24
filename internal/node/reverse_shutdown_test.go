@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -11,44 +12,65 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
-// Shutdown closes the reverse MCP listener and later waits for the
-// goroutine serving it. A handshake still in flight must not bind another
-// listener after that close: nothing would close it, and Serve would wait
-// for it forever.
+// Once closeMCP has run, listenMCP returns errMCPClosed and no listener,
+// whether or not one was bound before. Shutdown waits for the goroutine
+// serving the listener it closed, and nothing would close one bound
+// afterwards.
 func TestReverseMCPListenerIsNotBoundOnceShutdownClosedIt(t *testing.T) {
-	for name, boundBefore := range map[string]bool{"never bound": false, "bound before": true} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		boundBefore bool
+	}{{"never bound", false}, {"bound before", true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			s := NewServer(ServerConfig{Name: "n", Token: "token", StateDir: t.TempDir()})
 			// Closing again ends whatever a failing run bound.
 			t.Cleanup(s.closeMCP)
-			if boundBefore {
+			if tc.boundBefore {
 				if _, err := s.listenMCP(); err != nil {
 					t.Fatal(err)
 				}
 			}
 			s.closeMCP()
-			if listener, err := s.listenMCP(); err == nil {
+			listener, err := s.listenMCP()
+			if listener != nil {
 				t.Fatalf("listenMCP after closeMCP returned %s", listener.Addr())
+			}
+			if !errors.Is(err, errMCPClosed) {
+				t.Fatalf("listenMCP after closeMCP: %v, want %v", err, errMCPClosed)
 			}
 		})
 	}
 }
 
-// A node that has begun shutting down takes no hub: the handshake stops
-// before the advert and claims nothing.
+// Once shutdown has closed the reverse listener, a handshake claims nothing
+// and sends no advert.
 func TestAHandshakeAfterShutdownClosedTheReverseListenerClaimsNothing(t *testing.T) {
 	s := NewServer(ServerConfig{Name: "n", Token: "token", StateDir: t.TempDir()})
 	t.Cleanup(s.closeMCP)
 	s.closeMCP()
 	node, hub := net.Pipe()
 	t.Cleanup(func() { _ = hub.Close() })
-	t.Cleanup(func() { _ = node.Close() })
+	dialed := make(chan error, 1)
 	go func() {
-		_, _ = nodewire.Dial(hub, nodewire.Hello{Hub: "hub", Token: "token"})
+		_, err := nodewire.Dial(hub, nodewire.Hello{Hub: "hub", Token: "token"})
+		dialed <- err
 	}()
 	claim := &hubClaim{}
-	if _, ok := s.handshake(node, claim); ok || claim.claimed {
+	_, ok := s.handshake(node, claim)
+	// As handle does after a failed handshake, close the node's end; a Dial
+	// still waiting on the pipe then returns.
+	_ = node.Close()
+	var dialErr error
+	select {
+	case dialErr = <-dialed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Dial did not return after the node closed its end")
+	}
+	if ok || claim.claimed {
 		t.Fatalf("handshake after closeMCP: ok=%v claimed=%v", ok, claim.claimed)
+	}
+	if dialErr == nil {
+		t.Fatal("Dial received an advert")
 	}
 }
 
