@@ -221,7 +221,7 @@ func TestOrdinaryTopicUnknownSeedDoesNotDispatchOrReseed(t *testing.T) {
 	}
 	msg := inboundFixture()
 	msg.ConversationID, msg.Text = msg.ChatID, "/t original work"
-	if err := g.processAcceptedFixture(msg); err == nil {
+	if err := g.processAcceptedFixture(msg, p); err == nil {
 		t.Fatal("seed receipt fault was hidden")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_topic_receipt`); err != nil {

@@ -18,12 +18,6 @@ import (
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type ordinaryDisclosureProcessor struct{ *ordinaryCompletionProbe }
-
-func (p ordinaryDisclosureProcessor) ResumeRetainedChat(ctx context.Context, id string, req turn.Request) (turn.Result, error) {
-	return p.coordinator.ResumeRetainedChat(ctx, id, req)
-}
-
 type ordinaryDisclosureChannel struct {
 	textOnlyGatewayChannel
 	mu    sync.Mutex
@@ -68,12 +62,11 @@ func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T
 			}
 			p := &ordinaryCompletionProbe{coordinator: f.c, task: r.TaskID, attempt: r.ID}
 			ch := &ordinaryDisclosureChannel{}
-			processor := ordinaryDisclosureProcessor{p}
-			g := gateway.New(processor)
+			g := gateway.New(p)
 			g.BindChannel(ch)
 			g.SetRecoveryLedger(f.book)
 			workers := &reconciliationWorkers{}
-			g.SetIngressLifetime(f.ctx, workers, processor)
+			g.SetIngressLifetime(f.ctx, workers, f.c)
 			if err := g.HandleMessage(feishu.InboundMessage{
 				ConversationID: crashConversation, ChatID: "console", MessageID: "web-original",
 				SenderOpenID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,

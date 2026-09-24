@@ -70,7 +70,7 @@ func TestOrdinaryAcknowledgementRefusalRestartsWithoutRepeatingReply(t *testing.
 		WHEN NEW.kind='gateway-input' BEGIN SELECT RAISE(ABORT,'ack unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("ack refusal was hidden")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_ack`); err != nil {
@@ -181,7 +181,7 @@ func TestDurableResultRequiresRealProviderReceipt(t *testing.T) {
 	g := New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("fabricated successful provider receipt")
 	}
 	if ch.texts.Load() != 1 || ch.replies.Load() != 0 {
@@ -217,7 +217,7 @@ func TestDurableUnknownFinalPatchNeverFallsBackToAnotherReply(t *testing.T) {
 	g := New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); !errors.Is(err, channel.ErrOutcomeUnknown) {
+	if err := g.processAcceptedFixture(inboundFixture(), p); !errors.Is(err, channel.ErrOutcomeUnknown) {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -249,7 +249,7 @@ func TestDurableSilentListeningRecordsPolicyNotExternalDelivery(t *testing.T) {
 	msg := inboundFixture()
 	msg.ChatType, msg.Mentioned = protocol.ChatGroup, false
 	for range 2 {
-		if err := g.processAcceptedFixture(msg); err != nil {
+		if err := g.processAcceptedFixture(msg, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -276,12 +276,13 @@ func TestTopicOwnershipRejectsUnprovenOrUnrelatedRoute(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer book.Close()
-			g := New(&durableInputProbe{})
+			p := &durableInputProbe{}
+			g := New(p)
 			g.BindChannel(&ingressTopicChannel{})
 			g.SetRecoveryLedger(book)
 			msg := inboundFixture()
 			msg.ConversationID, msg.Text = msg.ChatID, "/t original"
-			if err := g.processAcceptedFixture(msg); err != nil {
+			if err := g.processAcceptedFixture(msg, p); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := book.DB().Exec(mutation); err != nil {
@@ -378,7 +379,7 @@ func TestDurableIngressCannotDeliverUnsettledOrDifferentAttemptResult(t *testing
 			g := New(mismatchedIngressResult{attempt: returned})
 			g.BindChannel(ch)
 			g.SetRecoveryLedger(book)
-			if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+			if err := g.processAcceptedFixture(inboundFixture(), nil); err == nil {
 				t.Fatal("unproven native result became delivery authority")
 			}
 			if _, exists, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/reply"); err != nil || exists {
@@ -456,7 +457,7 @@ func TestDurableObservedPreAdmissionRejectionIsNotUnknownNativeDispatch(t *testi
 	g := New(rejectedIngressProbe{})
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); err != nil {
+	if err := g.processAcceptedFixture(inboundFixture(), nil); err != nil {
 		t.Fatalf("observed rejection without any OnTurnReady stranded as unknown native execution: %v", err)
 	}
 	if _, exists, _ := book.CommandReceipt(t.Context(), "gateway-input/input-message/attempt"); exists {
@@ -545,7 +546,7 @@ func TestDurableResultRetainsUserErrorAndCancellationRendering(t *testing.T) {
 				WHEN NEW.kind='gateway-input-reply' BEGIN SELECT RAISE(ABORT,'defer reply'); END`); err != nil {
 				t.Fatal(err)
 			}
-			if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+			if err := g.processAcceptedFixture(inboundFixture(), nil); err == nil {
 				t.Fatal("failed to defer rendering")
 			}
 			if _, err := book.DB().Exec(`DROP TRIGGER defer_rendering`); err != nil {

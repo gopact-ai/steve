@@ -49,7 +49,7 @@ func TestGatewayDurableInputRecoversAfterCompletionBeforeReply(t *testing.T) {
 		WHEN NEW.kind='gateway-input-reply' BEGIN SELECT RAISE(ABORT,'reply reservation unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil || !strings.Contains(err.Error(), "reply reservation unavailable") {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil || !strings.Contains(err.Error(), "reply reservation unavailable") {
 		t.Fatalf("completion-to-reply failure hidden: %v", err)
 	}
 	if p.calls.Load() != 1 || ch.results.Load() != 0 {
@@ -93,7 +93,7 @@ func TestGatewayDurableInputRecoversUnknownDispatchByOriginalReceipt(t *testing.
 		WHEN NEW.kind='gateway-input-dispatch' BEGIN SELECT RAISE(ABORT,'dispatch unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("dispatch receipt failure hidden")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_input_dispatch`); err != nil {
@@ -121,7 +121,7 @@ func TestGatewayDurableReplyUnknownStaysPendingAndVisible(t *testing.T) {
 		WHEN NEW.kind='gateway-input-reply' BEGIN SELECT RAISE(ABORT,'reply receipt unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("reply receipt failure hidden")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_input_reply`); err != nil {
@@ -151,7 +151,7 @@ func TestGatewayCompletedAttemptKeepsItsOriginalInputOwner(t *testing.T) {
 		WHEN NEW.kind='gateway-input-reply' BEGIN SELECT RAISE(ABORT,'reply reservation unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("reply window not injected")
 	}
 	r := revivalFixture()
@@ -174,12 +174,15 @@ func TestGatewayCompletedAttemptKeepsItsOriginalInputOwner(t *testing.T) {
 	}
 }
 
-func (g *Gateway) processAcceptedFixture(msg feishu.InboundMessage) error {
+// processAcceptedFixture accepts msg and consumes it on the calling
+// goroutine. A dispatch that must be recovered from its admitted attempt
+// resumes through driver, as ingress resumes it through the driver
+// SetIngressLifetime wires.
+func (g *Gateway) processAcceptedFixture(msg feishu.InboundMessage, driver RecoveryDriver) error {
 	ctx, key, input := context.Background(), "gateway-input/"+msg.MessageID, gatewayInput{Message: msg}
 	if err := g.acceptInput(ctx, key, input); err != nil {
 		return err
 	}
-	driver, _ := g.processor.(RecoveryDriver)
 	claim, err := g.claimOrdinary(ctx, key, conversationID(input.Message), true, true)
 	if err != nil {
 		return err

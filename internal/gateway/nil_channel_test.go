@@ -44,7 +44,7 @@ func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 			g.SetRecoveryLedger(book)
 			msg := inboundFixture()
 			msg.ConversationID, msg.Text = msg.ChatID, tc.text
-			if err := g.processAcceptedFixture(msg); err == nil ||
+			if err := g.processAcceptedFixture(msg, p); err == nil ||
 				!strings.Contains(err.Error(), "gateway reply channel is not available") {
 				t.Fatalf("input without a channel = %v; want the missing channel", err)
 			}
@@ -81,7 +81,7 @@ func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 			WHEN NEW.kind='gateway-input-dispatch' BEGIN SELECT RAISE(ABORT,'dispatch unavailable'); END`); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.processAcceptedFixture(inboundFixture()); err == nil || !strings.Contains(err.Error(), "dispatch unavailable") {
+		if err := g.processAcceptedFixture(inboundFixture(), p); err == nil || !strings.Contains(err.Error(), "dispatch unavailable") {
 			t.Fatalf("unfinished dispatch = %v", err)
 		}
 		if _, err := book.DB().Exec(`DROP TRIGGER reject_input_dispatch`); err != nil {

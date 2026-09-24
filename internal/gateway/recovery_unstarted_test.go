@@ -136,7 +136,7 @@ func TestGatewayInputWhoseAttemptEndedWithoutANativeSessionDeliversItsFailure(t 
 	g := New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); err != nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err != nil {
 		t.Fatalf("an attempt that can never resume left its input pending: %v", err)
 	}
 	for range 2 {
@@ -179,7 +179,7 @@ func TestGatewayInputKeepsRecoveringAnAttemptThatMayHoldWork(t *testing.T) {
 			g.BindChannel(ch)
 			g.SetRecoveryLedger(book)
 			var blocked *agentexec.RecoveryBlocked
-			if err := g.processAcceptedFixture(inboundFixture()); !errors.As(err, &blocked) {
+			if err := g.processAcceptedFixture(inboundFixture(), p); !errors.As(err, &blocked) {
 				t.Fatalf("recovery outcome = %v; want the coordinator's block", err)
 			}
 			if pendingInputs(t, book) != 1 || len(ch.sent()) != 0 || p.resumes.Load() != 1 {
@@ -259,7 +259,7 @@ func TestGatewayPendingRecoveryLogsOncePerReason(t *testing.T) {
 	g := New(p)
 	g.BindChannel(&textChannel{})
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("expected the input to stay pending")
 	}
 	pass := func() {
