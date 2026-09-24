@@ -2,6 +2,9 @@ package node
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -51,14 +54,20 @@ func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
 	if err := registry.PushSkills(t.Context(), "host-base", skills.Bundle{Hash: c.getAdvert().Skills}); err != nil {
 		t.Errorf("push skills: %v", err)
 	}
-	if _, err := registry.Files(t.Context(), "host-base", nodewire.FileRequest{}); err != nil && strings.Contains(err.Error(), "needs an upgrade") {
+	made := filepath.Join(dir, "made-by-the-node")
+	if _, err := registry.Files(t.Context(), "host-base", nodewire.FileRequest{Op: nodewire.FileMkdir, Path: made}); err != nil {
 		t.Errorf("files: %v", err)
+	} else if info, err := os.Stat(made); err != nil || !info.IsDir() {
+		t.Errorf("files: the node made no directory: %v", err)
 	}
-	if _, err := registry.Artifact(t.Context(), "host-base", nodewire.ArtifactRequest{}); err != nil && strings.Contains(err.Error(), "needs an upgrade") {
-		t.Errorf("artifact: %v", err)
+	// Only the node validates an artifact request, so a typed refusal of an
+	// empty one is the node's answer.
+	var refused *nodewire.OperationFailure
+	if _, err := registry.Artifact(t.Context(), "host-base", nodewire.ArtifactRequest{}); !errors.As(err, &refused) || refused.Code != "invalid_request" {
+		t.Errorf("artifact = %v, want the node's refusal of an empty request", err)
 	}
-	if _, err := registry.AgentTools(t.Context(), "host-base"); err != nil && strings.Contains(err.Error(), "upgrade") {
-		t.Errorf("agent tools: %v", err)
+	if discovery, err := registry.AgentTools(t.Context(), "host-base"); err != nil || discovery.Revision == "" {
+		t.Errorf("agent tools = %+v, %v; want the node's discovery", discovery, err)
 	}
 }
 
