@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -500,6 +501,10 @@ type Model struct {
 	mu   sync.Mutex
 	subs map[int]chan Event
 	next int
+	// epoch names this model's run of the stream and published counts its
+	// events; together they are each event's stream id (see EventID).
+	epoch     string
+	published uint64
 	// recent keeps the last events so a renderer that attaches mid-flight
 	// has something to show immediately instead of a blank screen.
 	recent       []Event
@@ -548,6 +553,10 @@ type Event struct {
 	// Data carries an observation's facts apart from its sentence, so a
 	// live page can say them the same way the history page does.
 	Data map[string]string `json:"data,omitempty"`
+	// Cursor is the event's place in the model's stream, in publication
+	// order. The stream carries it as the event's id rather than in the
+	// event itself.
+	Cursor uint64 `json:"-"`
 }
 
 const recentKept = 200
@@ -556,7 +565,7 @@ func New(src Sources) *Model {
 	if src.Plans != nil && src.Tasks != nil {
 		src.Plans.SetTaskProjection(src.Tasks.SetPlanBindings)
 	}
-	return &Model{src: src, subs: map[int]chan Event{}}
+	return &Model{src: src, subs: map[int]chan Event{}, epoch: strconv.FormatInt(time.Now().UnixNano(), 36)}
 }
 
 // AttemptRow is one turn of a task: who ran it, on what, for how long,
@@ -1095,6 +1104,8 @@ func (m *Model) Publish(ev Event) {
 		ev.At = time.Now()
 	}
 	m.mu.Lock()
+	m.published++
+	ev.Cursor = m.published
 	m.noteActivity(ev)
 	m.recent = append(m.recent, ev)
 	if len(m.recent) > recentKept {
@@ -1219,12 +1230,16 @@ func (m *Model) noteActivity(ev Event) {
 // channel is closed when ctx ends, when cancel is called, or when the
 // subscriber falls behind and an event could not be delivered to it.
 func (m *Model) Subscribe(ctx context.Context) (<-chan Event, func()) {
-	ch := make(chan Event, 64)
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.subscribeLocked(ctx)
+}
+
+func (m *Model) subscribeLocked(ctx context.Context) (<-chan Event, func()) {
+	ch := make(chan Event, 64)
 	id := m.next
 	m.next++
 	m.subs[id] = ch
-	m.mu.Unlock()
 	stop := func() {
 		m.mu.Lock()
 		if existing, ok := m.subs[id]; ok {

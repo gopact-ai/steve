@@ -29,7 +29,8 @@ try {
     const compile = path.join(temp, "wire.ts");
     const queue = JSON.parse(fixture.queue.body), ack = JSON.parse(fixture.ack.body);
     const contract = (value, type) => `(${JSON.stringify(value)} satisfies ${type});`;
-    const parseSSE = (stream) => stream.trim().split("\n\n").map((frame) => JSON.parse(frame.replace(/^data: /, "")));
+    const parseSSE = (stream) => stream.trim().split("\n\n").map((frame) => JSON.parse(frame.split("\n").find((line) => line.startsWith("data: ")).slice("data: ".length)));
+    const sseIDs = (stream) => stream.trim().split("\n\n").map((frame) => frame.split("\n").find((line) => line.startsWith("id: "))?.slice("id: ".length));
     await writeFile(compile, `import type { Exchange, Event, Reply, Snapshot, WorkPage, Task, TaskDetail, AccountingItem, NativeAttempt, Plan } from ${JSON.stringify(types)};\n` +
         Object.entries({ state: "Snapshot", tasks: "WorkPage<Task>", detail: "TaskDetail", accounting: "WorkPage<AccountingItem>", plans: "WorkPage<Plan>", attempts: "WorkPage<NativeAttempt>" }).map(([name,type]) => contract(JSON.parse(fixture.work[name].body), type)).join("\n") +
         contract(queue.queue, "Exchange[]") + contract(ack, "Exchange") + contract(fixture.events, "Event[]")
@@ -156,6 +157,7 @@ try {
     assert.equal(nano.live.turn.answer, "newer", "real Go SSE nanoseconds and zone offsets survive ordering");
     const events = parseSSE(fixture.sse);
     assert.deepEqual(events, fixture.events, "real SSE frame encoder preserves event identities and payloads");
+    assert.deepEqual(sseIDs(fixture.sse), fixture.events.map((_, i) => `wire.${i + 1}`), "every SSE frame carries its stream id");
     let state = createConversationProjection("console:wire");
     for (const event of events) state = reduceConversation(state, { type: "events", events: [event] });
     assert.equal(state.live, null);
