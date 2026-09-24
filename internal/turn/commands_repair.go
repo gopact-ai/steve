@@ -223,11 +223,12 @@ func shellQuote(word string) string {
 
 // repairHint is the /fleet line under a blocked agent that says who could
 // fix it, so the answer to "why is kimi blocked" comes with a next step.
-func (c commands) repairHint(ctx context.Context, item roster.Candidate) string {
-	if item.Eligible || c.fleet == nil {
+// all is the fleet /fleet already described.
+func (c commands) repairHint(item roster.Candidate, all []roster.Candidate) string {
+	if item.Eligible {
 		return ""
 	}
-	fix, err := c.fleet.Repair(ctx, item.Agent.ID)
+	fix, err := roster.RepairFrom(all, item.Agent.ID)
 	if err != nil {
 		return ""
 	}

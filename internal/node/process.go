@@ -159,16 +159,17 @@ func (p *agentProcess) replace(stream *nodewire.Stream, req nodewire.OpenRequest
 	if req.Harness != p.harness {
 		return nil, errors.New("harness does not match process stream")
 	}
+	if req.Resume {
+		// An unresumable stream says so even after its lost link released
+		// it; that is the cause the hub needs to report.
+		if err := p.resumeErr(); err != nil {
+			return nil, err
+		}
+	}
 	if p.released && p.exit == "" {
 		return nil, errors.New("process stream released")
 	}
 	if req.Resume {
-		if p.journal == nil {
-			return nil, journal.ErrUnresumable
-		}
-		if err := p.journal.Err(); err != nil {
-			return nil, err
-		}
 		if req.AfterIn < p.haveIn {
 			return nil, errors.New("input cursor behind accepted input")
 		}
@@ -189,6 +190,15 @@ func (p *agentProcess) replace(stream *nodewire.Stream, req nodewire.OpenRequest
 		go func() { closeStream(old.stream, "superseded") }()
 	}
 	return a, nil
+}
+
+// resumeErr says why no attachment can resume this process, or nil.
+// The caller holds p.mu.
+func (p *agentProcess) resumeErr() error {
+	if p.journal == nil {
+		return journal.ErrUnresumable
+	}
+	return p.journal.Err()
 }
 
 func (p *agentProcess) attach(stream *nodewire.Stream, req nodewire.OpenRequest) {
@@ -294,7 +304,9 @@ func (p *agentProcess) detach(a *attachment) {
 		return
 	}
 	p.attached = nil
-	kill := errors.Is(a.stream.Err(), io.EOF)
+	// A clean close ends the process, and so does any loss when no later
+	// attachment could resume it: the grace period only waits for one.
+	kill := errors.Is(a.stream.Err(), io.EOF) || p.resumeErr() != nil
 	if p.exit == "" {
 		if kill {
 			p.released = true

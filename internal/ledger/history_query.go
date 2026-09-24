@@ -46,7 +46,7 @@ func (l *Ledger) HistoryEvents(ctx context.Context, before *EventPosition, throu
 	if limit < 1 || limit > 201 {
 		return nil, 0, fmt.Errorf("ledger: history limit must be between 1 and 201")
 	}
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.reads.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, 0, err
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -27,7 +28,7 @@ import (
 func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	b := &snapshotBuilder{m: m, snap: Snapshot{At: time.Now(), Hub: m.src.Hub}}
 	b.fleet()
-	b.agents(ctx)
+	b.agents()
 	b.sources()
 	b.schedules()
 	b.liveAttempts(ctx)
@@ -93,11 +94,14 @@ func (b *snapshotBuilder) fleet() {
 }
 
 // agents is the roster: each agent with its placement, its admission
-// verdict per requirement, and who could repair it when blocked.
-func (b *snapshotBuilder) agents(ctx context.Context) {
+// verdict per requirement, and who could repair it when blocked. It reads
+// the fleet as the node registry knows it and dials no machine: a page
+// read must not wait on an offline node.
+func (b *snapshotBuilder) agents() {
 	m, snap := b.m, &b.snap
 	if m.src.Roster != nil {
-		for _, c := range m.src.Roster.All(ctx) {
+		all := m.src.Roster.Known()
+		for _, c := range all {
 			a := Agent{
 				ID: c.Agent.ID, Node: m.place(c.Node), Harness: c.Harness, Snapshot: c.Snapshot,
 				Model: c.Model, Models: c.Models, Eligible: c.Eligible, Why: c.Why, Reason: c.Reason, ReasonDetail: c.ReasonDetail,
@@ -111,7 +115,7 @@ func (b *snapshotBuilder) agents(ctx context.Context) {
 				}
 			}
 			if !c.Eligible {
-				if fix, err := m.src.Roster.Repair(ctx, c.Agent.ID); err == nil {
+				if fix, err := roster.RepairFrom(all, c.Agent.ID); err == nil {
 					a.Repair = fix.Helper.Agent.ID
 				}
 			}

@@ -272,20 +272,38 @@ func (r *Roster) SetHubCapabilities(caps []string) {
 	r.hubCaps = append([]string(nil), caps...)
 }
 
-// All reports every configured agent with its current standing. This is what
-// /status, the read model and `doctor` render.
+// All reports every configured agent with its current standing, first dialing
+// any node that is not connected. This is what /status and `doctor` render.
 func (r *Roster) All(ctx context.Context) []Candidate {
-	return r.describeAgents(ctx, r.catalog.List(), true)
+	return r.describeAgents(ctx, r.catalog.List(), dialAll)
+}
+
+// Known reports every agent as All does, but from what the node source
+// already knows: it dials no machine, so an offline node costs a reader
+// nothing. Views that only display the fleet use it; the node registry's
+// own redial loop keeps those facts current.
+func (r *Roster) Known() []Candidate {
+	return r.describeAgents(context.Background(), r.catalog.List(), dialNone)
 }
 
 // ForAgent describes an already selected agent with the same placement facts
 // and admission evidence as All, connecting only to its machine. An unrelated
 // offline node must not delay a turn whose destination is already known.
 func (r *Roster) ForAgent(ctx context.Context, selected agent.Agent) Candidate {
-	return r.describeAgents(ctx, []agent.Agent{selected}, false)[0]
+	return r.describeAgents(ctx, []agent.Agent{selected}, dialSelected)[0]
 }
 
-func (r *Roster) describeAgents(ctx context.Context, agents []agent.Agent, allNodes bool) []Candidate {
+// dialing is which machines a description connects to before reading
+// their status.
+type dialing int
+
+const (
+	dialNone dialing = iota
+	dialSelected
+	dialAll
+)
+
+func (r *Roster) describeAgents(ctx context.Context, agents []agent.Agent, dial dialing) []Candidate {
 	needsHub := false
 	selectedNodes := map[string]bool{}
 	for _, a := range agents {
@@ -305,10 +323,11 @@ func (r *Roster) describeAgents(ctx context.Context, agents []agent.Agent, allNo
 	r.mu.RUnlock()
 
 	byNode := map[string]node.Status{}
-	if nodes != nil && (allNodes || len(selectedNodes) > 0) {
-		if allNodes {
+	if nodes != nil && (dial != dialSelected || len(selectedNodes) > 0) {
+		switch dial {
+		case dialAll:
 			nodes.EnsureConnected(ctx)
-		} else {
+		case dialSelected:
 			names := make([]string, 0, len(selectedNodes))
 			for name := range selectedNodes {
 				names = append(names, name)
@@ -627,7 +646,12 @@ type Fix struct {
 // is down, or a model the harness does not offer, is not fixed by running
 // something on the node.
 func (r *Roster) Repair(ctx context.Context, agentID string) (Fix, error) {
-	all := r.All(ctx)
+	return RepairFrom(r.All(ctx), agentID)
+}
+
+// RepairFrom is Repair judged on candidates already described, so a
+// caller repairing several agents describes the fleet once.
+func RepairFrom(all []Candidate, agentID string) (Fix, error) {
 	var broken *Candidate
 	for i := range all {
 		if all[i].Agent.ID == agentID {

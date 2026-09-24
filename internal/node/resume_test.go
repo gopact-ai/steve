@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -261,11 +263,8 @@ func TestNewOutputWhileReplayIsBlockedEntersJournalThenLive(t *testing.T) {
 	expectLine(t, r, "live\n")
 }
 
-func TestUnresumableProcessKeepsRunningAndGraceKillsDetachedProcess(t *testing.T) {
+func TestUnresumableProcessKeepsRunningAndRefusesResume(t *testing.T) {
 	m := newMemoryNode(t, "/bin/cat")
-	cfg := m.s.conf()
-	cfg.SessionGrace = 40 * time.Millisecond
-	m.s.cfg.Store(&cfg)
 	mux := m.connection(t)
 	s, r := openProcess(t, mux, nodewire.OpenRequest{Stream: "broken"})
 	p := m.process(t, "broken")
@@ -279,6 +278,44 @@ func TestUnresumableProcessKeepsRunningAndGraceKillsDetachedProcess(t *testing.T
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { p.mu.Lock(); defer p.mu.Unlock(); return p.exit != "" })
+}
+
+// A process that no attachment can ever resume has nothing to wait for
+// once its link is lost: the grace period is only for reconnection.
+func TestUnresumableProcessEndsWhenItsLinkIsLost(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, m *memoryNode, id string)
+		after func(p *agentProcess)
+	}{
+		{name: "journal never opened", setup: func(t *testing.T, m *memoryNode, id string) {
+			// An existing stream directory keeps the journal from opening.
+			if err := os.MkdirAll(filepath.Join(m.s.conf().StateDir, "streams", id), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "journal failed", after: func(p *agentProcess) { p.journal.Disable(errors.New("disk full")) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMemoryNode(t, "/bin/cat")
+			cfg := m.s.conf()
+			cfg.SessionGrace = time.Hour
+			m.s.cfg.Store(&cfg)
+			if tc.setup != nil {
+				tc.setup(t, m, "lost")
+			}
+			mux := m.connection(t)
+			s, r := openProcess(t, mux, nodewire.OpenRequest{Stream: "lost"})
+			p := m.process(t, "lost")
+			if tc.after != nil {
+				tc.after(p)
+			}
+			_, _ = io.WriteString(s, "running\n")
+			expectLine(t, r, "running\n")
+			_ = mux.Close()
+			waitFor(t, func() bool { p.mu.Lock(); defer p.mu.Unlock(); return p.exit != "" })
+		})
+	}
 }
 
 func TestReadLinesDropsPartialButBoundsOversizedLines(t *testing.T) {
