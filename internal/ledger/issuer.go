@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 )
 
@@ -26,19 +25,17 @@ const DefaultRegion = "default"
 // ErrUnknownRegion is a lease for a region no issuer is registered for.
 var ErrUnknownRegion = errors.New("ledger: unknown region")
 
-var regionMu sync.RWMutex
-
 // SetRegion names the region this ledger issues for.
 func (l *Ledger) SetRegion(region string) {
-	regionMu.Lock()
-	defer regionMu.Unlock()
+	l.regionMu.Lock()
+	defer l.regionMu.Unlock()
 	l.region = region
 }
 
 // Region is this ledger's own region.
 func (l *Ledger) Region() string {
-	regionMu.RLock()
-	defer regionMu.RUnlock()
+	l.regionMu.RLock()
+	defer l.regionMu.RUnlock()
 	if l.region == "" {
 		return DefaultRegion
 	}
@@ -47,8 +44,8 @@ func (l *Ledger) Region() string {
 
 // RegisterIssuer wires the issuer of another region.
 func (l *Ledger) RegisterIssuer(region string, issuer Issuer) {
-	regionMu.Lock()
-	defer regionMu.Unlock()
+	l.regionMu.Lock()
+	defer l.regionMu.Unlock()
 	if l.issuers == nil {
 		l.issuers = map[string]Issuer{}
 	}
@@ -59,8 +56,8 @@ func (l *Ledger) issuerFor(region string) (Issuer, bool) {
 	if region == "" || region == l.Region() {
 		return nil, true
 	}
-	regionMu.RLock()
-	defer regionMu.RUnlock()
+	l.regionMu.RLock()
+	defer l.regionMu.RUnlock()
 	issuer, ok := l.issuers[region]
 	return issuer, ok
 }
