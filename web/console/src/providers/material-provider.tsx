@@ -1,4 +1,4 @@
-import { createContext, useEffect, useRef, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useRef, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useFleet } from "@/lib/fleet";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { addDraftMaterial } from "@/lib/drafts";
@@ -6,6 +6,7 @@ import { refKey } from "@/lib/api/material";
 import type { Material, MaterialRef, DraftMaterial, MaterialAnnotation } from "@/lib/types";
 import { useI18n } from "./locale-provider";
 import { AnnotationEditor } from "@/components/steve/annotation-editor";
+import { FloatingNotice } from "@/components/steve/floating-notice";
 
 export interface MaterialTarget { conversation: string; project: string; title: string }
 interface Editor { material: Material; ref: MaterialRef; annotation?: MaterialAnnotation }
@@ -25,7 +26,6 @@ export function MaterialProvider({ children }: { children: ReactNode }) {
     const [revision, setRevision] = useState(0);
     const [sideRequest, setSideRequest] = useState<{ project: string; nonce: number } | null>(null);
     const [notice, setNotice] = useState("");
-    useEffect(()=>{if(!notice)return;const timer=window.setTimeout(()=>setNotice(""),4000);return()=>window.clearTimeout(timer)},[notice]);
     const changed = useCallback(() => setRevision((value) => value + 1), []);
     const storageKey = useCallback((project: string) => `steve.material.pins:${window.location.origin}:${hubNode}:${project}`, [hubNode]);
     // pins is also called during render, so a hub change must publish the new
@@ -47,7 +47,7 @@ export function MaterialProvider({ children }: { children: ReactNode }) {
     const value = useMemo(() => ({ target, setTarget, add, pin, unpin, pins, annotate: setEditor, sideRequest, revision, changed }),
         [target, add, pin, unpin, pins, sideRequest, revision, changed]);
     return <Context.Provider value={value}>{children}
-        {notice && <div role="status" className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 z-[140] flex max-w-sm items-center gap-3 rounded-lg border border-secondary bg-primary p-3 text-sm text-primary shadow-lg"><span>{notice}</span><button type="button" className="pointer-events-auto" aria-label={t("materials.close")} onClick={() => setNotice("")}>×</button></div>}
+        {notice && <FloatingNotice text={notice} closeLabel={t("materials.close")} onClose={() => setNotice("")} />}
         {editor && <AnnotationEditor key={editor.annotation?.id || refKey(editor.ref)} material={editor.material} anchor={editor.ref} annotation={editor.annotation} onClose={() => setEditor(null)} onSaved={() => { changed(); setNotice(t("materials.saved")); }} />}
     </Context.Provider>;
 }

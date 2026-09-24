@@ -45,7 +45,8 @@ try {
     const page = await context.newPage();
     page.setDefaultTimeout(10000);
     const errors = [], reads = { en: 0, zh: 0 };
-    let hold = null, fail = false;
+    let hold = null;
+    const failing = { en: false, zh: false };
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.addInitScript(({ conversation }) => {
         if (!sessionStorage.getItem("locale-fixture")) { localStorage.setItem("steve.ui.locale", "en"); sessionStorage.setItem("locale-fixture", "1"); }
@@ -58,7 +59,7 @@ try {
         if (url.origin !== origin) { errors.push(`External request: ${url.origin}`); return route.abort(); }
         for (const locale of ["en", "zh"]) if (p === catalog[locale]) {
             reads[locale]++;
-            if (locale === "zh" && fail) { fail = false; return route.abort("failed"); }
+            if (failing[locale]) { failing[locale] = false; return route.abort("failed"); }
             if (locale === "zh" && hold) await hold.promise;
             return route.continue();
         }
@@ -123,14 +124,28 @@ try {
     await page.evaluate(() => localStorage.setItem("steve.ui.locale", "en"));
     await page.reload({ waitUntil: "domcontentloaded" });
     await language.waitFor();
-    fail = true;
+    failing.zh = true;
     await language.getByText("中文", { exact: true }).click();
     await fetched(3);
     assert.equal(await language.isVisible(), true, "messages that cannot be fetched leave the current language in place");
     assert.equal(await page.evaluate(() => document.documentElement.lang), "en");
     assert.equal(await page.evaluate(() => localStorage.getItem("steve.ui.locale")), "en", "a switch that did not happen is not saved");
-    assert.deepEqual(errors.filter((error) => !/Failed to fetch dynamically imported module/.test(error)), []);
-    console.log("PASS first paint fetches one language; a failed fetch keeps the page; switching keeps the page mounted and in its old language until the new one arrives");
+    await page.getByRole("status").filter({ hasText: "The selected language could not be loaded" }).waitFor();
+
+    // The first paint cannot fall back to an old language: it says so in
+    // both, without the messages, and offers to load the page again.
+    failing.en = true;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const failure = page.getByRole("alert");
+    await failure.waitFor();
+    assert.match(await failure.innerText(), /Steve could not load/);
+    assert.match(await failure.innerText(), /无法加载/);
+    assert.equal(reads.en, 4, "the failed messages are asked for once, not retried in a loop");
+    await failure.getByRole("button", { name: /Reload/ }).click();
+    await language.waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.lang), "en");
+    assert.deepEqual(errors, []);
+    console.log("PASS first paint fetches one language; a failed first paint offers a reload; a failed switch keeps the page; switching keeps the page mounted and in its old language until the new one arrives");
     await context.close();
 } finally {
     await browser?.close();

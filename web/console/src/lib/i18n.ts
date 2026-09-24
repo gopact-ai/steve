@@ -14,6 +14,7 @@ export type Translator = <Key extends MessageKey>(key: Key, ...args: Translation
 // translate is synchronous: whoever picks a language loads it first.
 const catalogs: Partial<Record<Locale, Record<MessageKey, string>>> = {};
 const loading: Partial<Record<Locale, Promise<void>>> = {};
+const failed = new Set<Locale>();
 const importers: Record<Locale, () => Promise<Record<MessageKey, string>>> = {
     zh: () => import("./i18n/catalog-zh.ts").then((module) => module.zh),
     en: () => import("./i18n/catalog-en.ts").then((module) => module.en),
@@ -22,10 +23,19 @@ let current: Locale | undefined;
 
 export const localeLoaded = (locale: Locale) => !!catalogs[locale];
 
+// A view waiting with use() is handed the same promise on every render, a
+// failed one included: a fresh promise per render would suspend again
+// instead of reaching the error boundary.
 export function loadLocale(locale: Locale): Promise<void> {
-    // A failed fetch is not remembered here; whether the module is fetched
-    // again is up to the browser, which may keep the failure for the page.
-    return loading[locale] ??= importers[locale]().then((messages) => { catalogs[locale] = messages; }, (error) => { delete loading[locale]; throw error; });
+    return loading[locale] ??= importers[locale]().then((messages) => { catalogs[locale] = messages; }, (error) => { failed.add(locale); throw error; });
+}
+
+/** A deliberate switch asks again for messages whose last fetch failed.
+ *  Whether the module is fetched again is the browser's choice; some keep
+ *  a failed import for the life of the page, and only a reload helps. */
+export function requestLocale(locale: Locale): Promise<void> {
+    if (failed.delete(locale)) delete loading[locale];
+    return loadLocale(locale);
 }
 
 /** The language the page is drawn in, for text produced away from a view. */

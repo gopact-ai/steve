@@ -40,6 +40,7 @@ export const commonEn = {
     "connection.lastCoordinator": "Last coordinated by {node}",
     "connection.coordinatorRole": "Assigns tasks and saves collaboration progress",
     "common.cancel": "Cancel",
+    "common.languageUnavailable": "The selected language could not be loaded; the page stays in its current language. Reload the page to try again.",
     "common.close": "Close",
     "common.details": "Details",
     "common.save": "Save",
