@@ -8,15 +8,20 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 )
 
 // coordinatorSurface is how much of turn.Coordinator a reader has to hold
 // in mind: the exported methods callers can reach (including those promoted
 // from coordinatorState), the fields of coordinatorState, and the nil checks
-// on those fields that make a dependency look optional.
+// on those fields. requiredNilChecks are the checks on fields Deps.required
+// lists, which New never leaves nil; nilChecks are those on every other
+// field.
 type coordinatorSurface struct {
-	methods, fields, nilChecks int
+	methods, fields, nilChecks, requiredNilChecks int
 }
 
 // measureCoordinator reads the surface from the given non-test files of one
@@ -30,6 +35,11 @@ type coordinatorSurface struct {
 //
 // A local declared from such an x.f, as in `if d := x.f; d == nil`, is
 // checked the same way. An embedded field counts under its type's name.
+//
+// A field is required when Deps.required lists it: each string that opens
+// an entry there is a Deps field name, and the coordinator field it fills is
+// that name lower-cased. A list that is missing, empty or names no field of
+// Coordinator or coordinatorState is an error.
 //
 // The analysis is syntactic: a coordinator reached any other way is missed.
 func measureCoordinator(files []string) (coordinatorSurface, error) {
@@ -48,6 +58,8 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 	views := map[string]bool{}
 	holders := map[string]map[string]bool{}
 	declared := map[string]bool{}
+	// members are the fields of Coordinator and coordinatorState.
+	members := map[string]bool{}
 	for _, syntax := range parsed {
 		ast.Inspect(syntax, func(n ast.Node) bool {
 			spec, ok := n.(*ast.TypeSpec)
@@ -60,6 +72,11 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 			}
 			declared[spec.Name.Name] = true
 			for _, field := range fields.Fields.List {
+				if spec.Name.Name == "Coordinator" {
+					for _, name := range field.Names {
+						members[name.Name] = true
+					}
+				}
 				if spec.Name.Name == "coordinatorState" {
 					_, table := field.Type.(*ast.MapType)
 					names := make([]string, 0, len(field.Names))
@@ -70,6 +87,7 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 						names = append(names, embeddedName(field.Type))
 					}
 					for _, name := range names {
+						members[name] = true
 						surface.fields++
 						if !table {
 							dependencies[name] = true
@@ -102,6 +120,15 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 	}
 	if surface.fields == 0 {
 		return coordinatorSurface{}, errors.New("coordinatorState has no fields: the ratchet no longer measures it")
+	}
+	required, err := requiredFields(parsed)
+	if err != nil {
+		return coordinatorSurface{}, err
+	}
+	for field := range required {
+		if !members[field] {
+			return coordinatorSurface{}, fmt.Errorf("method Deps.required lists a dependency that fills no coordinator field %s", field)
+		}
 	}
 	for _, syntax := range parsed {
 		for _, decl := range syntax.Decls {
@@ -142,32 +169,43 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 				}
 				return true
 			})
-			dependency := func(expr ast.Expr) bool {
+			// dependency is the field expr reads when it is x.f for a
+			// dependency f, or "".
+			dependency := func(expr ast.Expr) string {
 				selector, ok := expr.(*ast.SelectorExpr)
 				if !ok || !dependencies[selector.Sel.Name] {
-					return false
+					return ""
 				}
-				root, ok := selector.X.(*ast.Ident)
-				return (ok && roots[root.Name]) || held(selector.X)
+				if root, ok := selector.X.(*ast.Ident); (ok && roots[root.Name]) || held(selector.X) {
+					return selector.Sel.Name
+				}
+				return ""
 			}
 			// aliases are locals declared from a dependency, as in
-			// `if x := recv.f; x == nil`.
-			aliases := map[string]bool{}
+			// `if x := recv.f; x == nil`, by the field they hold.
+			aliases := map[string]string{}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				assign, ok := n.(*ast.AssignStmt)
 				if !ok || assign.Tok != token.DEFINE || len(assign.Lhs) != len(assign.Rhs) {
 					return true
 				}
 				for i, value := range assign.Rhs {
-					if local, ok := assign.Lhs[i].(*ast.Ident); ok && dependency(value) {
-						aliases[local.Name] = true
+					if local, ok := assign.Lhs[i].(*ast.Ident); ok && dependency(value) != "" {
+						aliases[local.Name] = dependency(value)
 					}
 				}
 				return true
 			})
-			checked := func(expr ast.Expr) bool {
-				ident, ok := expr.(*ast.Ident)
-				return dependency(expr) || (ok && aliases[ident.Name])
+			// checked is the field expr reads, directly or through an
+			// alias, or "".
+			checked := func(expr ast.Expr) string {
+				if field := dependency(expr); field != "" {
+					return field
+				}
+				if ident, ok := expr.(*ast.Ident); ok {
+					return aliases[ident.Name]
+				}
+				return ""
 			}
 			isNil := func(expr ast.Expr) bool {
 				ident, ok := expr.(*ast.Ident)
@@ -178,7 +216,18 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 				if !ok || (bin.Op != token.EQL && bin.Op != token.NEQ) {
 					return true
 				}
-				if (checked(bin.X) && isNil(bin.Y)) || (isNil(bin.X) && checked(bin.Y)) {
+				field := ""
+				switch {
+				case isNil(bin.Y):
+					field = checked(bin.X)
+				case isNil(bin.X):
+					field = checked(bin.Y)
+				}
+				switch {
+				case field == "":
+				case required[field]:
+					surface.requiredNilChecks++
+				default:
 					surface.nilChecks++
 				}
 				return true
@@ -186,6 +235,46 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 		}
 	}
 	return surface, nil
+}
+
+// requiredFields reads Deps.required: the coordinator field each entry's
+// leading string names, lower-cased.
+func requiredFields(parsed []*ast.File) (map[string]bool, error) {
+	fields := map[string]bool{}
+	found := false
+	for _, syntax := range parsed {
+		for _, decl := range syntax.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "required" || fn.Recv == nil || len(fn.Recv.List) == 0 || typeName(fn.Recv.List[0].Type) != "Deps" || fn.Body == nil {
+				continue
+			}
+			found = true
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				entry, ok := n.(*ast.CompositeLit)
+				if !ok || len(entry.Elts) == 0 {
+					return true
+				}
+				lit, ok := entry.Elts[0].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				name, err := strconv.Unquote(lit.Value)
+				if err != nil || name == "" {
+					return true
+				}
+				first, size := utf8.DecodeRuneInString(name)
+				fields[string(unicode.ToLower(first))+name[size:]] = true
+				return true
+			})
+		}
+	}
+	if !found {
+		return nil, errors.New("no method Deps.required: the ratchet cannot tell required dependencies from optional ones")
+	}
+	if len(fields) == 0 {
+		return nil, errors.New("method Deps.required lists no dependency")
+	}
+	return fields, nil
 }
 
 // embeddedName is the field name an embedded type is reached by.
@@ -223,7 +312,7 @@ func TestCoordinatorSurfaceCountsReceiverRootedNilChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := coordinatorSurface{methods: 3, fields: 6, nilChecks: 10}
+	want := coordinatorSurface{methods: 3, fields: 6, nilChecks: 6, requiredNilChecks: 4}
 	if got != want {
 		t.Fatalf("coordinator surface = %+v, want %+v", got, want)
 	}
@@ -246,6 +335,26 @@ func TestCoordinatorSurfaceRefusesMissingTypes(t *testing.T) {
 	}
 }
 
+// The required list is read from Deps.required, so it cannot drift from
+// what New refuses; a list that is gone or names no coordinator field
+// must stop the measurement rather than count nothing as required.
+func TestCoordinatorSurfaceRefusesAnUnusableRequiredList(t *testing.T) {
+	const types = "package turn\n\ntype Coordinator struct{ *coordinatorState }\n\ntype coordinatorState struct{ tasks *int }\n\ntype Deps struct{ Tasks, Plans *int }\n\ntype dependency struct {\n\tname   string\n\tabsent bool\n}\n"
+	for name, source := range map[string]string{
+		"no list":       types,
+		"empty list":    types + "\nfunc (d Deps) required() []dependency { return nil }\n",
+		"unknown field": types + "\nfunc (d Deps) required() []dependency { return []dependency{{\"Plans\", d.Plans == nil}} }\n",
+	} {
+		file := filepath.Join(t.TempDir(), "coordinator.go")
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if surface, err := measureCoordinator([]string{file}); err == nil {
+			t.Errorf("%s: measured %+v", name, surface)
+		}
+	}
+}
+
 // Every dependency the coordinator can be built without is a second way
 // for it to run, reachable only from tests; every exported method and
 // shared field widens what a change has to reason about. None may grow.
@@ -261,9 +370,12 @@ func TestCoordinatorSurfaceOnlyShrinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if surface.requiredNilChecks != 0 {
+		t.Errorf("internal/turn: %d nil checks on dependencies Deps.required lists; New never leaves those nil, so drop the checks", surface.requiredNilChecks)
+	}
 	ratchetWith(t, "coordinator_surface", []string{
 		fmt.Sprintf("internal/turn.Coordinator exported methods %d", surface.methods),
 		fmt.Sprintf("internal/turn.coordinatorState fields %d", surface.fields),
-		fmt.Sprintf("internal/turn.coordinatorState nil dependency checks %d", surface.nilChecks),
+		fmt.Sprintf("internal/turn.coordinatorState nil optional dependency checks %d", surface.nilChecks),
 	}, func(string) string { return "keep the entry and lower its number instead" })
 }

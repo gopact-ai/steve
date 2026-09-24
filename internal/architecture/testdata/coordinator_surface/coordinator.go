@@ -17,6 +17,20 @@ type coordinatorState struct {
 
 type other struct{ tasks *int }
 
+type Deps struct {
+	Tasks *int
+	Text  string
+}
+
+type dependency struct {
+	name   string
+	absent bool
+}
+
+func (d Deps) required() []dependency {
+	return []dependency{{"Tasks", d.Tasks == nil}, {"Text", d.Text == ""}}
+}
+
 func (c *Coordinator) Exported()      {}
 func (c Coordinator) Value()          {}
 func (c *Coordinator) unexported()    {}
