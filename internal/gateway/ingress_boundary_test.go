@@ -504,7 +504,7 @@ func TestDurableTopicSeedsParallelThreadWhileOriginalChatIsServing(t *testing.T)
 }
 
 type ingressTextReceipt struct {
-	textOnlyChannel
+	nopChannel
 	texts []string
 }
 
