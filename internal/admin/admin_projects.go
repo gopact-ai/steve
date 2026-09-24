@@ -48,13 +48,10 @@ func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config
 	}
 	defer release()
 	err = controller.Commit(ctx, candidate, func() error {
-		a.configStore().Lock()
-		defer a.configStore().Unlock()
-		saveErr := a.PersistConfig(candidate)
-		if saveErr == nil || config.Committed(saveErr) {
-			a.Cfg.Projects = candidate.Projects
-		}
-		return saveErr
+		return a.updateConfig(a.lifetime(), func(c *config.Config) error {
+			c.Projects = config.CloneProjects(candidate).Projects
+			return nil
+		})
 	})
 	var pending *configbuild.ProjectionPendingError
 	if !errors.As(err, &pending) && (err == nil || config.Committed(err)) {

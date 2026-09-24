@@ -129,3 +129,22 @@ func TestProjectManagementRetryReconcilesCommittedCandidate(t *testing.T) {
 		t.Fatalf("retry did not reconcile new project: %v", err)
 	}
 }
+
+// The configuration can be read while a project change is being saved.
+func TestConfigurationReadDuringAProjectSave(t *testing.T) {
+	a, _ := projectAdminFixture(t)
+	a.Cfg.Gateway.OwnerID = "owner"
+	settings := NewSettings(a, a.Cfg)
+	finished := readsDuringSave(t, a, func() error {
+		return a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Path: "new"})
+	}, func() error {
+		_, err := settings.Settings(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the configuration waited for a project save")
+	}
+	if _, ok := a.Cfg.Projects["new"]; !ok {
+		t.Fatal("the saved project was not published")
+	}
+}
