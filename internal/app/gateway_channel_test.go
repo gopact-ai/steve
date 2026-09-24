@@ -9,8 +9,9 @@ import (
 )
 
 // textOnlyGatewayChannel implements the gateway channel with successful
-// no-ops and refuses every card, so final answers take the receipted text
-// fallback. Fakes embed it and override the calls they observe.
+// no-ops and refuses every card and topic thread, so final answers take the
+// receipted text fallback and a /t seed fails. Fakes embed it and override
+// the calls they observe.
 type textOnlyGatewayChannel struct{}
 
 var _ gateway.Channel = textOnlyGatewayChannel{}
@@ -24,7 +25,7 @@ func (textOnlyGatewayChannel) ReplyCard(context.Context, string, []byte) (string
 }
 func (textOnlyGatewayChannel) PatchCard(context.Context, string, []byte) error { return nil }
 func (textOnlyGatewayChannel) ReplyThread(context.Context, string, string) (string, string, error) {
-	return "", "", nil
+	return "", "", errors.New("topic refused")
 }
 func (textOnlyGatewayChannel) EnrichInput(_ context.Context, msg feishu.InboundMessage) feishu.InboundMessage {
 	return msg

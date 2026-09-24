@@ -7,12 +7,15 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 )
 
-var errCardRefused = errors.New("card refused")
+var (
+	errCardRefused  = errors.New("card refused")
+	errTopicRefused = errors.New("topic refused")
+)
 
-// nopChannel refuses every card definitively, so a final answer takes the
-// receipted text fallback. Every other call succeeds without a message id,
-// and receipted text without an id is an unknown outcome. Fakes embed it and
-// override only the calls they observe.
+// nopChannel refuses every card and topic thread definitively, so a final
+// answer takes the receipted text fallback and a /t seed fails. Every other
+// call succeeds without a message id, and receipted text without an id is an
+// unknown outcome. Fakes embed it and override only the calls they observe.
 type nopChannel struct{}
 
 var _ Channel = nopChannel{}
@@ -24,7 +27,7 @@ func (nopChannel) ReplyCard(context.Context, string, []byte) (string, error) {
 }
 func (nopChannel) PatchCard(context.Context, string, []byte) error { return nil }
 func (nopChannel) ReplyThread(context.Context, string, string) (string, string, error) {
-	return "", "", nil
+	return "", "", errTopicRefused
 }
 func (nopChannel) EnrichInput(_ context.Context, msg feishu.InboundMessage) feishu.InboundMessage {
 	return msg
