@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func TestHandleMessageRejectsFailedDurableAcceptance(t *testing.T) {
@@ -37,6 +38,7 @@ func TestHandleMessageRejectsFailedDurableAcceptance(t *testing.T) {
 }
 
 type ingressProbe struct {
+	turntest.IdleCoordinator
 	calls   atomic.Int32
 	entered chan turn.Request
 	release chan struct{}

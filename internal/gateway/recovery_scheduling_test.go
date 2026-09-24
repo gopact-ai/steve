@@ -8,6 +8,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,7 @@ import (
 )
 
 type concurrentResumeProbe struct {
+	turntest.IdleCoordinator
 	tasks   *task.Store
 	entered chan string
 	release chan struct{}
@@ -145,6 +147,7 @@ func TestGatewayIndependentManualResumeDoesNotWaitForOtherNativeTurn(t *testing.
 }
 
 type blockedRecoveryProbe struct {
+	turntest.IdleCoordinator
 	calls, resumes atomic.Int32
 	entered        chan struct{}
 	release        chan struct{}

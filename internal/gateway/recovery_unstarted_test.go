@@ -27,6 +27,7 @@ const unstartedFailure = "before-snapshot: content has insufficient durable repl
 // recorded for recovery. Recovery is the coordinator's own: the probe hands
 // the retained attempt to a real coordinator over the same ledger.
 type unstartedProbe struct {
+	turntest.IdleCoordinator
 	calls, resumes atomic.Int32
 	taskID         string
 	coordinator    *turn.Coordinator
@@ -223,6 +224,7 @@ func (h *pendingLogCounter) logged() []string {
 // changingProbe leaves its dispatch to recovery and then stays blocked on
 // every resume, with a reason the test can change between passes.
 type changingProbe struct {
+	turntest.IdleCoordinator
 	mu     sync.Mutex
 	reason string
 }

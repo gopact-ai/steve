@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -109,6 +110,7 @@ func (c *progressCards) PatchCard(_ context.Context, _ string, payload []byte) e
 }
 
 type streamingCardProcessor struct {
+	turntest.IdleCoordinator
 	requests chan turn.Request
 	release  chan struct{}
 }

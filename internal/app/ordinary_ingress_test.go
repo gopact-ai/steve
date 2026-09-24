@@ -10,12 +10,14 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // Native completion already exists. The only substituted dependency is native
 // admission; attempt evidence, task accounting, gateway input and recovery all
 // use their production owners and the same real SQLite ledger.
 type ordinaryCompletionProbe struct {
+	turntest.IdleCoordinator
 	coordinator   *turn.Coordinator
 	task, attempt string
 	calls         atomic.Int32

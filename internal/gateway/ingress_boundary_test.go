@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -229,7 +230,7 @@ func TestDurableUnknownFinalPatchNeverFallsBackToAnotherReply(t *testing.T) {
 	}
 }
 
-type emptyListenProbe struct{}
+type emptyListenProbe struct{ turntest.IdleCoordinator }
 
 func (emptyListenProbe) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, nil
@@ -354,7 +355,10 @@ func TestDurableHistoryCardReplaysItsOriginalAcceptanceOnly(t *testing.T) {
 	}
 }
 
-type mismatchedIngressResult struct{ attempt string }
+type mismatchedIngressResult struct {
+	turntest.IdleCoordinator
+	attempt string
+}
 
 func (p mismatchedIngressResult) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	req.OnTurnReady("task", "admitted-attempt")
@@ -435,7 +439,7 @@ func TestDurableNormalInputWaitsWithoutReservingDispatchBehindLiveOwner(t *testi
 	}
 }
 
-type rejectedIngressProbe struct{}
+type rejectedIngressProbe struct{ turntest.IdleCoordinator }
 
 func (rejectedIngressProbe) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Message: "previous execution requires reconciliation"}}

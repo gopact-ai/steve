@@ -8,6 +8,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func TestConfirmedAttemptDeliveryTxRequiresFullOriginalProof(t *testing.T) {
@@ -54,7 +55,7 @@ func TestConfirmedAttemptDeliveryTxRequiresFullOriginalProof(t *testing.T) {
 	}
 }
 
-type suppressedReceiptProbe struct{}
+type suppressedReceiptProbe struct{ turntest.IdleCoordinator }
 
 func (suppressedReceiptProbe) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	req.OnTurnReady("original-task", "original-attempt")

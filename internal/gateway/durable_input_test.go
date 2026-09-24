@@ -11,9 +11,13 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type durableInputProbe struct{ calls, resumes atomic.Int32 }
+type durableInputProbe struct {
+	turntest.IdleCoordinator
+	calls, resumes atomic.Int32
+}
 
 func (p *durableInputProbe) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	p.calls.Add(1)

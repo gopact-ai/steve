@@ -1,9 +1,13 @@
 package gateway
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gopact-ai/steve/internal/turn/turntest"
+)
 
 func TestConversationBusyFollowsOriginalInputOwnership(t *testing.T) {
-	g := New(nil)
+	g := New(turntest.IdleCoordinator{})
 	if g.ConversationBusy("original") {
 		t.Fatal("idle conversation was busy")
 	}

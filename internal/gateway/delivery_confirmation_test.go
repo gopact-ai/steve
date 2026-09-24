@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func TestDeliveryConfirmationWaitsForParentAndBindsTask(t *testing.T) {
@@ -93,7 +94,10 @@ func TestManualResumeRetainsExpectedTask(t *testing.T) {
 	}
 }
 
-type failedContinuationProcessor struct{ failure error }
+type failedContinuationProcessor struct {
+	turntest.IdleCoordinator
+	failure error
+}
 
 func (p failedContinuationProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, p.failure
