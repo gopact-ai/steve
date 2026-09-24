@@ -1,10 +1,12 @@
 package architecture
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -27,13 +29,12 @@ type coordinatorSurface struct {
 //   - a local declared from recv.h, as in `x := recv.h` or `x, y := recv.h, v`.
 //
 // The analysis is syntactic: a coordinator reached any other way is missed.
-func measureCoordinator(t *testing.T, files []string) coordinatorSurface {
-	t.Helper()
+func measureCoordinator(files []string) (coordinatorSurface, error) {
 	parsed := make([]*ast.File, 0, len(files))
 	for _, file := range files {
 		syntax, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
 		if err != nil {
-			t.Fatal(err)
+			return coordinatorSurface{}, err
 		}
 		parsed = append(parsed, syntax)
 	}
@@ -43,6 +44,7 @@ func measureCoordinator(t *testing.T, files []string) coordinatorSurface {
 	// holders name the fields through which other structs hold one.
 	views := map[string]bool{}
 	holders := map[string]map[string]bool{}
+	declared := map[string]bool{}
 	for _, syntax := range parsed {
 		ast.Inspect(syntax, func(n ast.Node) bool {
 			spec, ok := n.(*ast.TypeSpec)
@@ -53,6 +55,7 @@ func measureCoordinator(t *testing.T, files []string) coordinatorSurface {
 			if !ok {
 				return false
 			}
+			declared[spec.Name.Name] = true
 			for _, field := range fields.Fields.List {
 				if spec.Name.Name == "coordinatorState" {
 					_, table := field.Type.(*ast.MapType)
@@ -79,6 +82,16 @@ func measureCoordinator(t *testing.T, files []string) coordinatorSurface {
 			}
 			return false
 		})
+	}
+	// Without the types, every count would read zero and the ratchet would
+	// pass whatever the package became.
+	for _, name := range []string{"Coordinator", "coordinatorState"} {
+		if !declared[name] {
+			return coordinatorSurface{}, fmt.Errorf("no struct type %s: rename the ratchet along with it", name)
+		}
+	}
+	if surface.fields == 0 {
+		return coordinatorSurface{}, errors.New("coordinatorState has no fields: the ratchet no longer measures it")
 	}
 	for _, syntax := range parsed {
 		for _, decl := range syntax.Decls {
@@ -143,7 +156,7 @@ func measureCoordinator(t *testing.T, files []string) coordinatorSurface {
 			})
 		}
 	}
-	return surface
+	return surface, nil
 }
 
 // typeName is the name of a type or of the type a pointer points to, or ""
@@ -160,10 +173,30 @@ func typeName(expr ast.Expr) string {
 
 func TestCoordinatorSurfaceCountsReceiverRootedNilChecks(t *testing.T) {
 	file := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", "coordinator_surface", "coordinator.go")
-	got := measureCoordinator(t, []string{file})
+	got, err := measureCoordinator([]string{file})
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := coordinatorSurface{methods: 3, fields: 5, nilChecks: 8}
 	if got != want {
 		t.Fatalf("coordinator surface = %+v, want %+v", got, want)
+	}
+}
+
+// A rename must not turn the ratchet into one that always passes: without
+// the types it measures, every count would read as zero.
+func TestCoordinatorSurfaceRefusesMissingTypes(t *testing.T) {
+	renamed := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", "coordinator_surface_renamed", "coordinator.go")
+	if surface, err := measureCoordinator([]string{renamed}); err == nil {
+		t.Errorf("measured %+v from a package without Coordinator and coordinatorState", surface)
+	}
+	emptied := filepath.Join(t.TempDir(), "coordinator.go")
+	source := "package turn\n\ntype Coordinator struct{ *coordinatorState }\n\ntype coordinatorState struct{}\n"
+	if err := os.WriteFile(emptied, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if surface, err := measureCoordinator([]string{emptied}); err == nil {
+		t.Errorf("measured %+v from a coordinatorState with no fields", surface)
 	}
 }
 
@@ -178,7 +211,10 @@ func TestCoordinatorSurfaceOnlyShrinks(t *testing.T) {
 			files = append(files, file)
 		}
 	}
-	surface := measureCoordinator(t, files)
+	surface, err := measureCoordinator(files)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ratchetWith(t, "coordinator_surface", []string{
 		fmt.Sprintf("internal/turn.Coordinator exported methods %d", surface.methods),
 		fmt.Sprintf("internal/turn.coordinatorState fields %d", surface.fields),
