@@ -17,7 +17,7 @@ func (r *Registry) AgentTools(ctx context.Context, name string) (agenttools.Disc
 		return agenttools.Discovery{}, err
 	}
 	if reply.Discovery == nil || reply.Discovery.Revision == "" {
-		return agenttools.Discovery{}, fmt.Errorf("node %q does not support agent discovery; update steve-node", name)
+		return agenttools.Discovery{}, fmt.Errorf("node %q returned no agent discovery", name)
 	}
 	return *reply.Discovery, nil
 }
@@ -44,9 +44,6 @@ func (r *Registry) agentToolsStream(ctx context.Context, name, verb string, requ
 	c, err := r.connect(ctx, name)
 	if err != nil {
 		return agentToolsReply{}, err
-	}
-	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureConfigRevision) {
-		return agentToolsReply{}, nodewire.ErrSettingsRevisionUnsupported
 	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamConfig, Command: verb})
 	if err != nil {

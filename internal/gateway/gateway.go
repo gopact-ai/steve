@@ -41,23 +41,37 @@ type liveTurn struct {
 	running bool
 }
 
-type recaller interface {
-	DeleteMessage(context.Context, string) error
-}
-
 // maxLiveTurns bounds the retry history; turns are dropped oldest first.
 const maxLiveTurns = 64
 
 // approvalTimeout caps how long a turn waits for a human to tap the card.
 const approvalTimeout = 3 * time.Minute
 
-type replier interface {
-	Reply(context.Context, string, string) error
-}
-
-type reactor interface {
-	AddReaction(context.Context, string, string) (string, error)
-	RemoveReaction(context.Context, string, string) error
+// Channel is the Feishu transport the gateway replies through. When Feishu
+// is not configured or fails to start, the gateway has no channel at all,
+// never a partial one: accepted input and queued recovery stay pending for a
+// gateway that has one, Notify posts nothing, and child result delivery,
+// schedule fires and task resumes return an error.
+type Channel interface {
+	// Reply posts text without reporting the new message's id.
+	Reply(ctx context.Context, messageID, text string) error
+	// ReplyText posts text and returns the new message's id.
+	ReplyText(ctx context.Context, messageID, text string) (string, error)
+	// ReplyCard posts a card and returns its message id.
+	ReplyCard(ctx context.Context, messageID string, payload []byte) (string, error)
+	// PatchCard replaces a posted card in place.
+	PatchCard(ctx context.Context, messageID string, payload []byte) error
+	// ReplyThread starts a topic thread on a message and returns the anchor
+	// message's id and the thread's id.
+	ReplyThread(ctx context.Context, messageID, text string) (string, string, error)
+	// EnrichInput reads an accepted message's optional remote context.
+	EnrichInput(ctx context.Context, msg feishu.InboundMessage) feishu.InboundMessage
+	// AddReaction reacts to a message and returns the reaction's id.
+	AddReaction(ctx context.Context, messageID, emoji string) (string, error)
+	// RemoveReaction removes a reaction AddReaction returned.
+	RemoveReaction(ctx context.Context, messageID, reactionID string) error
+	// DeleteMessage recalls a message the gateway posted.
+	DeleteMessage(ctx context.Context, messageID string) error
 }
 
 type processor interface {
@@ -87,7 +101,7 @@ type Gateway struct {
 	ingressContext context.Context
 	ingressWorkers RecoveryWorkers
 	processor      processor
-	ch             replier
+	ch             Channel
 	text           i18n.Catalog
 	gate           agentAnchor
 
@@ -129,7 +143,12 @@ func New(processor processor) *Gateway {
 	}
 }
 
-func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
+// BindChannel sets the channel the gateway replies through. Bind once,
+// before Feishu delivers messages and before recovery runs; the channel is
+// read without a lock. ch must be usable, never a nil *feishu.Channel: any
+// non-nil value counts as a channel. It is not called when Feishu is not
+// configured or fails to start, and the gateway then has no channel.
+func (g *Gateway) BindChannel(ch Channel) { g.ch = ch }
 
 // SetAgentGate wires the messaging MCP server; call before Start.
 func (g *Gateway) SetAgentGate(gate agentAnchor) { g.gate = gate }
@@ -204,20 +223,13 @@ func silentListen(msg feishu.InboundMessage) bool {
 	return msg.ChatType == protocol.ChatGroup && !msg.Mentioned
 }
 
-// topicSeeder is the channel capability /t rides on: reply into a fresh
-// thread and report where it landed.
-type topicSeeder interface {
-	ReplyThread(context.Context, string, string) (string, string, error)
-}
-
 // seedTopic turns "/t <task>" into a new topic thread running that task —
 // the entry point for parallel work in one chat. The anchor reply carries
 // the task text so the topic's preview says what it is about; the task then
 // runs as if it had been sent inside the new thread, so its card, answer and
 // session all live there, isolated from the flat chat's own session.
 func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
-	seeder, ok := g.ch.(topicSeeder)
-	if !ok {
+	if g.ch == nil {
 		g.reply(msg.MessageID, g.text.T(i18n.TopicFailed))
 		return
 	}
@@ -232,7 +244,7 @@ func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	anchor, thread, err := seeder.ReplyThread(ctx, msg.MessageID, task)
+	anchor, thread, err := g.ch.ReplyThread(ctx, msg.MessageID, task)
 	cancel()
 	if err != nil || anchor == "" || thread == "" {
 		slog.Error(fmt.Sprintf("gateway: seed topic failed: %v", err), "conversation", conversationID(msg), "message", msg.MessageID)
@@ -565,16 +577,12 @@ func (g *Gateway) handleRetryAction(action feishu.CardAction) feishu.CardToast {
 }
 
 func (g *Gateway) recall(cardID string) {
-	if cardID == "" {
-		return
-	}
-	r, ok := g.ch.(recaller)
-	if !ok {
+	if cardID == "" || g.ch == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := r.DeleteMessage(ctx, cardID); err != nil {
+	if err := g.ch.DeleteMessage(ctx, cardID); err != nil {
 		slog.Error(fmt.Sprintf("gateway: recall card failed: %v", err), "card", cardID)
 	}
 }
@@ -612,13 +620,12 @@ func newRequestID() string {
 }
 
 func (g *Gateway) ack(messageID string) string {
-	r, ok := g.ch.(reactor)
-	if !ok || messageID == "" {
+	if g.ch == nil || messageID == "" {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	id, err := r.AddReaction(ctx, messageID, thinkingEmoji)
+	id, err := g.ch.AddReaction(ctx, messageID, thinkingEmoji)
 	if err != nil {
 		slog.Error(fmt.Sprintf("gateway: ack reaction failed: %v", err), "message", messageID)
 		return ""
@@ -627,16 +634,12 @@ func (g *Gateway) ack(messageID string) string {
 }
 
 func (g *Gateway) unack(messageID, reactionID string) {
-	if reactionID == "" {
-		return
-	}
-	r, ok := g.ch.(reactor)
-	if !ok {
+	if reactionID == "" || g.ch == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := r.RemoveReaction(ctx, messageID, reactionID); err != nil {
+	if err := g.ch.RemoveReaction(ctx, messageID, reactionID); err != nil {
 		slog.Error(fmt.Sprintf("gateway: clear reaction failed: %v", err), "message", messageID)
 	}
 }

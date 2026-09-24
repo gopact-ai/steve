@@ -12,7 +12,6 @@ import (
 const SettingsRevisionConflictCode = "settings_revision_conflict"
 
 var ErrSettingsRevisionConflict = errors.New("node settings changed; reload before saving")
-var ErrSettingsRevisionUnsupported = errors.New("node does not support settings revision checks; upgrade it before editing")
 
 func SettingsRevision(settings Settings) string {
 	settings.Revision = ""

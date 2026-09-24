@@ -2,12 +2,18 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/state"
 )
@@ -176,6 +182,72 @@ func TestRuntimeUsageSurvivesAnOlderCoordinatorDeploymentLedger(t *testing.T) {
 				t.Fatalf("unrelated old runtime blocked removal: %v", err)
 			}
 		})
+	}
+}
+
+// A node's inventory says which installation each of its runtimes belongs
+// to. A runtime it attributes to none is not listed, whatever the
+// coordinator's deployment ledger says of its deployments.
+func TestNodeInventorySaysWhichRuntimesAnInstallationOwns(t *testing.T) {
+	service, ref := installedRuntime(t)
+	on := func(id string) plugins.RuntimeRef {
+		r := *ref.Clone()
+		r.ID, r.Selection.Node = strings.Repeat(id, 64), "worker"
+		return r
+	}
+	owned, unattributed := on("c"), on("d")
+	registry := node.NewRegistry("hub", map[string]node.Config{"worker": {DialContext: inventoryNode(t, "worker",
+		plugins.RuntimeInfo{Ref: owned, Installations: []string{"tools"}},
+		plugins.RuntimeInfo{Ref: unattributed})}})
+	t.Cleanup(registry.Close)
+	service.Admin.Nodes = registry
+	service.Admin.cfg().Plugins["tools"].Targets["worker"] = plugins.Configuration{}
+	usage, err := service.PluginUsage(t.Context(), "tools")
+	if err != nil || len(usage.Errors) != 0 {
+		t.Fatalf("usage = %+v, %v", usage, err)
+	}
+	var listed []string
+	for _, info := range usage.Runtimes {
+		listed = append(listed, info.Ref.ID)
+	}
+	if !slices.Contains(listed, owned.ID) || slices.Contains(listed, unattributed.ID) {
+		t.Fatalf("runtimes = %v, want %s listed and %s left out", listed, owned.ID, unattributed.ID)
+	}
+}
+
+// inventoryNode dials a node that answers every plugins stream with the
+// runtimes given.
+func inventoryNode(t *testing.T, name string, runtimes ...plugins.RuntimeInfo) func(context.Context, string) (net.Conn, error) {
+	reply, err := json.Marshal(nodewire.PluginReply{Runtimes: runtimes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func(context.Context, string) (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			if _, err := nodewire.Accept(server, "", nodewire.Advert{Node: name}); err != nil {
+				return
+			}
+			mux := nodewire.NewMux(server, false)
+			defer mux.Close()
+			for {
+				stream, err := mux.Accept(t.Context())
+				if err != nil {
+					return
+				}
+				if stream.Request().Kind == nodewire.StreamPlugins {
+					if size, err := nodewire.ReadSize(stream); err == nil {
+						_, _ = io.CopyN(io.Discard, stream, size)
+					}
+					_ = nodewire.WriteSize(stream, int64(len(reply)))
+					_, _ = stream.Write(reply)
+				}
+				_ = stream.Close()
+			}
+		}()
+		t.Cleanup(func() { client.Close() })
+		return client, nil
 	}
 }
 

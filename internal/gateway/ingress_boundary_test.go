@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -157,9 +158,17 @@ func (c *actionRecallChannel) DeleteMessage(context.Context, string) error {
 	return nil
 }
 
-type noReceiptChannel struct{ calls atomic.Int32 }
+// noReceiptChannel accepts text but never returns the provider message id.
+type noReceiptChannel struct {
+	nopChannel
+	replies, texts atomic.Int32
+}
 
-func (c *noReceiptChannel) Reply(context.Context, string, string) error { c.calls.Add(1); return nil }
+func (c *noReceiptChannel) Reply(context.Context, string, string) error { c.replies.Add(1); return nil }
+func (c *noReceiptChannel) ReplyText(context.Context, string, string) (string, error) {
+	c.texts.Add(1)
+	return "", nil
+}
 
 func TestDurableResultRequiresRealProviderReceipt(t *testing.T) {
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
@@ -174,12 +183,12 @@ func TestDurableResultRequiresRealProviderReceipt(t *testing.T) {
 	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
 		t.Fatal("fabricated successful provider receipt")
 	}
-	if ch.calls.Load() != 0 {
-		t.Fatal("unsupported channel delivered without a receipt")
+	if ch.texts.Load() != 1 || ch.replies.Load() != 0 {
+		t.Fatalf("durable result sent %d receipted and %d unreceipted replies, want 1 and 0", ch.texts.Load(), ch.replies.Load())
 	}
 	r, _, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/reply")
-	if err != nil || r.Error == "" {
-		t.Fatalf("missing provider receipt became success: %+v %v", r, err)
+	if err != nil || !strings.Contains(r.Error, channel.ErrOutcomeUnknown.Error()) {
+		t.Fatalf("reply receipt = %+v, %v; want an unknown outcome", r, err)
 	}
 }
 
@@ -495,7 +504,10 @@ func TestDurableTopicSeedsParallelThreadWhileOriginalChatIsServing(t *testing.T)
 	}
 }
 
-type ingressTextReceipt struct{ texts []string }
+type ingressTextReceipt struct {
+	nopChannel
+	texts []string
+}
 
 func (c *ingressTextReceipt) Reply(context.Context, string, string) error {
 	return errors.New("non-receipted reply")

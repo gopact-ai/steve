@@ -26,15 +26,8 @@ import (
 func (s *Server) advert() nodewire.Advert {
 	adv := Advertise(s.conf().Name, s.conf().Harnesses, s.conf().Capabilities)
 	adv.Snapshot = s.snapshot()
-	adv.Features = nodewire.Features()
-	if s.sessions != nil {
-		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions, nodewire.FeatureNativeResume)
-		if _, ok := s.conf().SessionAuthorizer.(NodeReceiptAuthorizer); ok {
-			adv.Features = append(adv.Features, nodewire.FeatureNodeReceipts)
-		}
-		if nativehistory.StorageSupported {
-			adv.Features = append(adv.Features, nodewire.FeatureNativeHistory)
-		}
+	if s.sessions != nil && nativehistory.StorageSupported {
+		adv.Features = append(adv.Features, nodewire.FeatureNativeHistory)
 	}
 	s.restart.mu.Lock()
 	if s.restart.enabled && s.conf().StateDir != "" {

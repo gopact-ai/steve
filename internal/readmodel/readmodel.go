@@ -246,13 +246,16 @@ type Node struct {
 	Capabilities []string  `json:"capabilities,omitempty"`
 	Harnesses    []Harness `json:"harnesses,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
-	Level        string    `json:"level,omitempty"`
-	Region       string    `json:"region,omitempty"`
+	// ProtocolMismatch is set when the hub's last attempt to connect was
+	// refused because the machine and the hub share no protocol version.
+	ProtocolMismatch *ProtocolMismatch `json:"protocol_mismatch,omitempty"`
+	Level            string            `json:"level,omitempty"`
+	Region           string            `json:"region,omitempty"`
 	// Snapshot is what the machine says it can do, entry by entry, with
 	// the evidence and coverage behind each.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
-	// Features are the protocol features the machine negotiated; a node
-	// without execution_admission.v1 cannot be asked for a final word.
+	// Features are the optional capabilities the machine's advert lists;
+	// nodewire.Advert.Features says which those are.
 	Features []string `json:"features,omitempty"`
 	// Health is the machine's room to work, as of its last advert.
 	Health *nodewire.Health `json:"health,omitempty"`
@@ -260,6 +263,23 @@ type Node struct {
 	// project names a directory relative to it.
 	ProjectsRoot string `json:"projects_root,omitempty"`
 }
+
+// ProtocolMismatch is the protocol version a machine speaks, Node, against
+// the range HubMin–HubMax the hub speaks, and Upgrade, the side that has to
+// be upgraded for the two to connect: UpgradeNode when the machine runs an
+// older steve than the hub, UpgradeHub when it runs a newer one.
+type ProtocolMismatch struct {
+	Node    int    `json:"node"`
+	HubMin  int    `json:"hub_min"`
+	HubMax  int    `json:"hub_max"`
+	Upgrade string `json:"upgrade"`
+}
+
+// The sides a protocol mismatch can ask to upgrade.
+const (
+	UpgradeNode = "node"
+	UpgradeHub  = "hub"
+)
 
 type Harness struct {
 	ID    string `json:"id"`

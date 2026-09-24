@@ -41,7 +41,6 @@ export const mcpZh = {
     "mcp.importMachine": "从机器导入",
     "mcp.importHint": "查看本机 AI 工具已配置的 MCP 服务。导入时密钥保留在原机器。",
     "mcp.noMachines": "没有机器。",
-    "mcp.nodeUpgrade": "需更新 node",
     "mcp.none": "没有",
     "mcp.imported": "已导入",
     "mcp.projectReadOnly": "项目级配置仅支持查看",

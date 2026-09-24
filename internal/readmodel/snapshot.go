@@ -650,6 +650,12 @@ func nodes(statuses []node.Status) []Node {
 			Capabilities: s.Advert.Capabilities, LastError: s.LastError, Level: s.Level, Region: s.Region,
 			Harnesses: harnesses(s.Advert), ProjectsRoot: nodewire.ProjectsDir(s.Advert.WorkspaceRoot),
 		}
+		if m := s.Mismatch; m != nil {
+			n.ProtocolMismatch = &ProtocolMismatch{Node: m.Node, HubMin: m.HubMin, HubMax: m.HubMax, Upgrade: UpgradeNode}
+			if m.HubBehind() {
+				n.ProtocolMismatch.Upgrade = UpgradeHub
+			}
+		}
 		out = append(out, n)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -80,16 +81,18 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 		socket.Close()
 		return nil, err
 	}
-	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub, Features: nodewire.Features()})
+	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub})
 	if err != nil {
 		socket.Close()
+		// The registry names the node; this says which side is behind.
+		var mismatch *nodewire.VersionMismatch
+		if errors.As(err, &mismatch) {
+			if mismatch.HubBehind() {
+				return nil, fmt.Errorf("%w; upgrade this hub to a build that speaks v%d", err, mismatch.Node)
+			}
+			return nil, fmt.Errorf("%w; replace steve or steve-node on that machine with this build (only a machine that joined a desktop app cluster over SSH can be upgraded from the console)", err)
+		}
 		return nil, err
-	}
-	// Every agent stream is journaled so it survives a dropped link; a node
-	// that cannot keep one is an older build to upgrade, not one to serve.
-	if !nodewire.HasFeature(advert.Features, nodewire.FeatureJournal) {
-		socket.Close()
-		return nil, fmt.Errorf("%w: node %s lacks %s; upgrade it", nodewire.ErrVersionMismatch, name, nodewire.FeatureJournal)
 	}
 	// Clearing a deadline on a live socket cannot fail in a way the mux's
 	// first read would not report.

@@ -25,6 +25,7 @@ func (p ordinaryDisclosureProcessor) ResumeRetainedChat(ctx context.Context, id 
 }
 
 type ordinaryDisclosureChannel struct {
+	textOnlyGatewayChannel
 	mu    sync.Mutex
 	texts []string
 }

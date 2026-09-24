@@ -20,12 +20,6 @@ func (r *Registry) Plugins(ctx context.Context, name string, request nodewire.Pl
 	if err != nil {
 		return nodewire.PluginReply{}, err
 	}
-	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeaturePlugins) {
-		return nodewire.PluginReply{}, fmt.Errorf("%w: node %s does not support plugin packages", plugins.ErrIncompatible, name)
-	}
-	if (request.Action == nodewire.PluginRuntimePrepare || request.Action == nodewire.PluginRuntimeInspect) && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
-		return nodewire.PluginReply{}, plugins.ErrIncompatible
-	}
 	request.Node = name
 	if request.Authority.ClusterID == "" {
 		request.Authority.ClusterID = r.hub

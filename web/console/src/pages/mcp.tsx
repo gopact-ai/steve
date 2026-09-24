@@ -130,7 +130,7 @@ const steveToolSummaries: Record<string, string> = {
                                         <Server01 className="size-3.5 text-fg-quaternary" />
                                         <span className="font-medium text-primary">{m.name}</span>
                                         {m.hub && <Badge type="pill-color" size="sm" color="brand">hub</Badge>}
-                                        {m.unsupported ? <Badge type="pill-color" size="sm" color="warning">{tr("mcp.nodeUpgrade")}</Badge> : m.own.length === 0 ? <span className="text-xs text-quaternary">{tr("mcp.none")}</span> : null}
+                                        {m.own.length === 0 && <span className="text-xs text-quaternary">{tr("mcp.none")}</span>}
                                     </div>
                                     {m.own.length > 0 && (
                                         <ul className="ml-5 flex flex-col divide-y divide-secondary">

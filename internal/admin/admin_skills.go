@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -104,7 +103,6 @@ func (a *Service) Skills(ctx context.Context) (consoleapi.SkillsView, error) {
 		item := consoleapi.SkillNode{Name: name}
 		if adv, err := a.Nodes.Advert(ctx, name); err == nil {
 			item.Up = true
-			item.Takes = slices.Contains(adv.Features, nodewire.FeatureSkills)
 			item.Synced = want != "" && adv.Skills == want
 		}
 		view.Nodes = append(view.Nodes, item)

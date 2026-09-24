@@ -33,7 +33,13 @@ func (a *Service) Versions(ctx context.Context) (consoleapi.Versions, error) {
 	}
 	if a.Nodes != nil {
 		for _, n := range a.Nodes.Statuses() {
-			v.Nodes = append(v.Nodes, consoleapi.VersionNode{Name: n.Name, Version: n.Advert.BuildVersion, OS: n.Advert.OS, Arch: n.Advert.Arch, Online: n.Up, MatchesHub: n.Advert.BuildVersion == v.Hub, Protocol: n.Advert.Version, Features: n.Advert.Features})
+			one := consoleapi.VersionNode{Name: n.Name, Version: n.Advert.BuildVersion, OS: n.Advert.OS, Arch: n.Advert.Arch, Online: n.Up, MatchesHub: n.Advert.BuildVersion == v.Hub, Protocol: n.Advert.Version, Features: n.Advert.Features}
+			// A node refused for its protocol sent no advert, only the
+			// version it speaks.
+			if n.Mismatch != nil {
+				one.Protocol = n.Mismatch.Node
+			}
+			v.Nodes = append(v.Nodes, one)
 		}
 	}
 	if a.releases != nil {

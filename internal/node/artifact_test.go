@@ -189,7 +189,7 @@ func TestArtifactMergeConflictTypeAcrossWire(t *testing.T) {
 }
 
 // Cancellation closes only this operation stream and never falls back to Exec.
-func TestArtifactCancellationAndFeatureNegotiation(t *testing.T) {
+func TestArtifactCancellation(t *testing.T) {
 	client, peer := net.Pipe()
 	hub := nodewire.NewMux(client, true)
 	node := nodewire.NewMux(peer, false)
@@ -198,12 +198,6 @@ func TestArtifactCancellationAndFeatureNegotiation(t *testing.T) {
 	r := NewRegistry("hub", map[string]Config{"n": {}})
 	r.live["n"] = c
 	t.Cleanup(r.Close)
-	_, err := r.Artifact(t.Context(), "n", nodewire.ArtifactRequest{Op: nodewire.ArtifactInit})
-	var unsupported *nodewire.OperationFailure
-	if !errors.As(err, &unsupported) || unsupported.Code != "unsupported" {
-		t.Fatalf("legacy node = %v", err)
-	}
-	c.setAdvert(nodewire.Advert{Features: []string{nodewire.FeatureArtifact}})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	result := make(chan error, 1)
@@ -336,7 +330,7 @@ func TestArtifactOperationsRemainOutsidePeerGrants(t *testing.T) {
 	if err := socket.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := nodewire.Dial(socket, nodewire.Hello{Hub: "peer:test", Token: "one-blob", Features: nodewire.Features()}); err != nil {
+	if _, err := nodewire.Dial(socket, nodewire.Hello{Hub: "peer:test", Token: "one-blob"}); err != nil {
 		t.Fatal(err)
 	}
 	mux := nodewire.NewMux(socket, true)

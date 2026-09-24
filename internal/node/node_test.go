@@ -39,12 +39,16 @@ func buildMockAgent(t *testing.T) string {
 }
 
 // startNode runs a real steve-node in-process and returns its address.
-func startNode(t *testing.T, cfg ServerConfig) *Server {
+// Each prepare step runs on the server before it starts serving.
+func startNode(t *testing.T, cfg ServerConfig, prepare ...func(*Server)) *Server {
 	t.Helper()
 	if cfg.Listen == "" {
 		cfg.Listen = "127.0.0.1:0"
 	}
 	server := NewServer(cfg)
+	for _, step := range prepare {
+		step(server)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
@@ -388,9 +392,6 @@ func TestNodeReportsASnapshot(t *testing.T) {
 	if snap == nil || snap.Schema != ability.Schema || snap.Digest == "" || snap.ReceivedAt.IsZero() {
 		t.Fatalf("snapshot = %+v", snap)
 	}
-	if !nodewire.HasFeature(advert.Features, nodewire.FeatureManifest) {
-		t.Fatalf("features = %v", advert.Features)
-	}
 	got := map[string]ability.Availability{}
 	for _, c := range snap.Offers {
 		got[c.Key()] = c.Availability
@@ -517,8 +518,8 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Skills != "" || !nodewire.HasFeature(before.Features, nodewire.FeatureSkills) {
-		t.Fatalf("fresh node advert = skills %q features %v", before.Skills, before.Features)
+	if before.Skills != "" {
+		t.Fatalf("fresh node advert = skills %q", before.Skills)
 	}
 	if _, err := os.Stat(filepath.Join(state, "runtimes", "codex")); err != nil {
 		t.Fatalf("no isolated codex home: %v", err)
@@ -613,9 +614,6 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 	}
 	if raw, _ := json.Marshal(advert); strings.Contains(string(raw), "SECRET-42") {
 		t.Fatal("the advert carries the MCP secret")
-	}
-	if !nodewire.HasFeature(advert.Features, nodewire.FeatureMCP) {
-		t.Fatalf("features = %v", advert.Features)
 	}
 	var echo, web ability.Capability
 	for _, c := range advert.Snapshot.Offers {
@@ -957,28 +955,6 @@ func TestHubConfiguresANode(t *testing.T) {
 	}
 	if *again.Harnesses["codex"].Slots != 0 || len(again.Harnesses["codex"].Env) != 0 || len(again.MCPServers["private"].Env) != 0 || len(again.MCPServers["private"].Headers) != 0 {
 		t.Fatal("explicit clear was lost in actual wire encoding")
-	}
-	connection, err := registry.connect(t.Context(), "host-13")
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldAdvert := connection.getAdvert()
-	oldAdvert.Features = append([]string(nil), oldAdvert.Features...)
-	for i, feature := range oldAdvert.Features {
-		if feature == nodewire.FeatureConfigRevision {
-			oldAdvert.Features = append(oldAdvert.Features[:i:i], oldAdvert.Features[i+1:]...)
-			break
-		}
-	}
-	connection.setAdvert(oldAdvert)
-	unprotected := again
-	unprotected.Tools = append(append([]string(nil), again.Tools...), "must-not-apply")
-	if _, err := registry.Configure(t.Context(), "host-13", unprotected); !errors.Is(err, nodewire.ErrSettingsRevisionUnsupported) {
-		t.Fatalf("old node accepted unprotected set: %v", err)
-	}
-	unchanged, err := registry.Settings(t.Context(), "host-13")
-	if err != nil || unchanged.Revision != again.Revision {
-		t.Fatalf("unsupported revision set reached node: %+v %v", unchanged, err)
 	}
 }
 

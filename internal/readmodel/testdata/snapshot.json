@@ -68,7 +68,7 @@
             "assurance": "existence"
           }
         ],
-        "source": "legacy"
+        "source": "synthesized"
       }
     },
     {
@@ -149,7 +149,7 @@
             ]
           }
         ],
-        "source": "legacy"
+        "source": "synthesized"
       }
     },
     {
@@ -171,7 +171,7 @@
           "tag": "complete"
         },
         "offers": null,
-        "source": "legacy"
+        "source": "synthesized"
       }
     }
   ],
@@ -279,7 +279,7 @@
             ]
           }
         ],
-        "source": "legacy"
+        "source": "synthesized"
       }
     },
     {
@@ -349,7 +349,7 @@
             ]
           }
         ],
-        "source": "legacy"
+        "source": "synthesized"
       }
     },
     {
@@ -437,7 +437,7 @@
             ]
           }
         ],
-        "source": "legacy"
+        "source": "synthesized"
       }
     }
   ],

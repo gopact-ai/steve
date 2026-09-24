@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -19,9 +20,14 @@ type lostPreparationReply struct {
 	native  string
 }
 
-func TestNodePreparationUnsupportedNodeDoesNotClaimNativeOpenWasDispatched(t *testing.T) {
-	server := startNode(t, ServerConfig{Name: "worker", Token: "unsupported-session", StateDir: t.TempDir()})
-	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "unsupported-session"}})
+// A native open that never reached the node created nothing there, so it
+// fails without holding the execution; a resume names a native session
+// that already exists, and not reaching the node says nothing about it.
+func TestNodePreparationUnreachableNodeDoesNotClaimNativeOpenWasDispatched(t *testing.T) {
+	refused := errors.New("connection refused")
+	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: "worker.example:7701", Token: "unreachable-session", DialContext: func(context.Context, string) (net.Conn, error) {
+		return nil, refused
+	}}})
 	defer registry.Close()
 	manager, _ := harness.NewManager(nil)
 	manager.SetTransports(registry)
@@ -29,13 +35,34 @@ func TestNodePreparationUnsupportedNodeDoesNotClaimNativeOpenWasDispatched(t *te
 	request := nodeSessionRequest("open")
 	ctx := harness.WithNodeSession(t.Context(), harness.NodeSessionContext{Authority: request.Authority, Binding: request.Binding, CommandID: "never-dispatched"})
 	_, err := manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, "", t.TempDir(), nil)
+	var unsent *nodewire.SessionNotDispatched
 	var uncertain *harness.NodeSessionOpenUncertain
-	if err == nil || errors.As(err, &uncertain) || errors.Is(err, harness.ErrStopUnconfirmed) {
-		t.Fatalf("unsupported capability falsely quarantined an execution that never opened: %v", err)
+	if !errors.As(err, &unsent) || !errors.Is(err, refused) || errors.As(err, &uncertain) || errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("open that never reached the node = %v, want it failed without holding the execution", err)
 	}
-	_, err = manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, "ns_"+strings.Repeat("0", 64), t.TempDir(), nil)
-	if !errors.As(err, &uncertain) || !errors.Is(err, harness.ErrStopUnconfirmed) {
-		t.Fatalf("unsupported capability invented safety for a previously existing native session: %v", err)
+	resumed := "ns_" + strings.Repeat("0", 64)
+	_, err = manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, resumed, t.TempDir(), nil)
+	if !errors.As(err, &uncertain) || !errors.Is(err, harness.ErrStopUnconfirmed) || uncertain.SessionID != resumed {
+		t.Fatalf("resume that never reached the node = %v, want the existing native session held as uncertain", err)
+	}
+}
+
+// A node that runs without node sessions refuses an open before it holds
+// anything, so the hub fails the open without holding the execution.
+func TestNodePreparationNodeWithoutSessionsRefusesOpenAsNotStarted(t *testing.T) {
+	server := startNode(t, ServerConfig{Name: "worker", Token: "no-sessions", StateDir: t.TempDir()})
+	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "no-sessions"}})
+	defer registry.Close()
+	manager, _ := harness.NewManager(nil)
+	manager.SetTransports(registry)
+	defer manager.Stop()
+	request := nodeSessionRequest("open")
+	ctx := harness.WithNodeSession(t.Context(), harness.NodeSessionContext{Authority: request.Authority, Binding: request.Binding, CommandID: "refused-by-node"})
+	_, err := manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, "", t.TempDir(), nil)
+	var refused *nodewire.SessionOpenNotStarted
+	var uncertain *harness.NodeSessionOpenUncertain
+	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "node sessions are not enabled") || errors.As(err, &uncertain) || errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("open refused by a node without sessions = %v, want it failed without holding the execution", err)
 	}
 }
 

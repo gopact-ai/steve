@@ -125,43 +125,6 @@ type AdmitReply struct {
 	Error     string            `json:"error,omitempty"`
 }
 
-// Features a node or hub may support beyond the base protocol. The
-// handshake exchanges them; a hub opens a stream only to a node that
-// lists the feature it needs, and treats a node without one as older,
-// never as broken.
-const (
-	FeatureJournal   = "process_journal.v1"
-	FeatureManifest  = "manifest.v1"
-	FeatureAdmission = "execution_admission.v1"
-	// FeatureSkills says the node takes skill bundles: a content-addressed
-	// tar the hub puts in its blob directory and asks it to materialize
-	// into every harness home it isolates.
-	FeatureSkills = "skill_bundle.v1"
-	// FeatureMCP says the node binds its own MCP servers at admission and
-	// hands back a secret-free launcher for each, instead of the hub
-	// shipping commands and env in session/new.
-	FeatureMCP = "node_mcp_binding.v1"
-	// FeatureConfig says the node takes its offers from the hub over
-	// StreamConfig and writes them to its own config file.
-	FeatureConfig         = "node_config.v1"
-	FeatureConfigRevision = "node_config_revision.v1"
-	// FeatureInspect says the node answers StreamInspect.
-	FeatureInspect = "inspect.v1"
-	// FeatureMCPProbe says the node answers StreamMCPProbe and reports
-	// its coding agents' own MCP servers in its advert.
-	FeatureMCPProbe = "mcp_probe.v1"
-	// FeatureOwnSkills says the node reports its coding agents' own
-	// skills in its advert, so an empty list means none, not "too old".
-	FeatureOwnSkills = "own_skills.v1"
-	FeatureArtifact  = "artifact_ops.v1"
-	FeatureFiles     = "file_ops.v1"
-)
-
-// Features is what this build supports.
-func Features() []string {
-	return []string{FeaturePluginRuntimes, FeaturePlugins, FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureConfigRevision, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal, FeatureArtifact, FeatureFiles}
-}
-
 // HasFeature says whether a list names a feature.
 func HasFeature(list []string, feature string) bool {
 	for _, f := range list {
@@ -172,16 +135,17 @@ func HasFeature(list []string, feature string) bool {
 	return false
 }
 
-// Synthesize builds a snapshot for an advert that carries none — an
-// older node. It knows only what the old fields say: harnesses and tag
+// Synthesize builds a snapshot for an advert that carries none: one whose
+// snapshot the hub dropped for failing validation, or the empty advert of
+// a machine that has not connected. It knows only the harnesses and tag
 // words. Coverage is partial for everything else, so a requirement on a
-// tool is unknown there, not absent; the source says legacy.
+// tool is unknown there, not absent; the source says synthesized.
 func Synthesize(adv Advert, now time.Time) *ability.Snapshot {
 	if adv.Snapshot != nil {
 		return adv.Snapshot
 	}
 	s := &ability.Snapshot{
-		Schema: ability.Schema, Node: adv.Node, GeneratedAt: now, ReceivedAt: now, Source: "legacy",
+		Schema: ability.Schema, Node: adv.Node, GeneratedAt: now, ReceivedAt: now, Source: "synthesized",
 		Coverage: map[ability.Kind]ability.Coverage{ability.Harness: ability.Complete, ability.Tag: ability.Complete},
 	}
 	for _, h := range adv.Harnesses {
