@@ -114,3 +114,27 @@ func TestAdmitWorkerLeavesNothingBehindWhenTheConfigurationIsNotSaved(t *testing
 		t.Fatal("the unsaved worker reached the registry")
 	}
 }
+
+// A worker saved without its directory synced stays recorded; when it
+// cannot be reached either, both failures are reported.
+func TestAdmitWorkerReportsAnUnsyncedSaveAlongWithAnUnreachableWorker(t *testing.T) {
+	admin := workerAdmissionFixture(t)
+	admin.WriteConfig = func(path string, cfg *config.Config) error {
+		if err := config.Save(path, cfg); err != nil {
+			return err
+		}
+		return &config.CommittedError{Err: errors.New("sync config directory")}
+	}
+	unreachable := errors.New("worker unreachable")
+	dial := func(context.Context, string) (net.Conn, error) { return nil, unreachable }
+	err := admin.AdmitWorker(t.Context(), "node-test", node.Config{Addr: "127.0.0.1:1", Token: "test-node-token", DialContext: dial})
+	if !config.Committed(err) {
+		t.Fatalf("the unsynced save was not reported: %v", err)
+	}
+	if !errors.Is(err, unreachable) {
+		t.Fatalf("the unreachable worker was not reported: %v", err)
+	}
+	if _, ok := admin.Cfg.Nodes["node-test"]; !ok {
+		t.Fatal("the saved worker was not recorded")
+	}
+}

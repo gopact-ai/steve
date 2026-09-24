@@ -273,7 +273,8 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 // token is refused with coordination.ErrConflict. When the configuration
 // cannot be saved, nothing is recorded and the worker is not dialed; when
 // it is saved but its directory cannot be synced, the worker is recorded
-// and dialed and that error returned.
+// and dialed, and that error is returned along with any failure to reach
+// the worker.
 func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Config) error {
 	next := config.Node{Addr: worker.Addr, Token: worker.Token, Level: string(datalevel.Level(worker.Level).OrDefault())}
 	a.Mu.Lock()
@@ -307,7 +308,7 @@ func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Co
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
 	if _, err := a.Nodes.Refresh(ctx, nodeID); err != nil {
-		return err
+		return errors.Join(saveErr, err)
 	}
 	return saveErr
 }
