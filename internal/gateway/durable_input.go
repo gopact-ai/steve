@@ -14,10 +14,6 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-type inputEnricher interface {
-	EnrichInput(context.Context, feishu.InboundMessage) feishu.InboundMessage
-}
-
 func (g *Gateway) acceptInput(ctx context.Context, key string, input gatewayInput) error {
 	if key == "" || input.Message.MessageID == "" || conversationID(input.Message) == "" {
 		return errors.New("gateway durable input requires its original message and conversation")
@@ -44,10 +40,8 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 	if err != nil {
 		return err
 	}
-	if !dispatched {
-		if enricher, ok := g.ch.(inputEnricher); ok {
-			msg = enricher.EnrichInput(ctx, msg)
-		}
+	if !dispatched && g.ch != nil {
+		msg = g.ch.EnrichInput(ctx, msg)
 	}
 	input.Message = msg
 	guard := g.topicGuard(msg)

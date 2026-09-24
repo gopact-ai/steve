@@ -11,12 +11,9 @@ var _ Channel = (*feishu.Channel)(nil)
 // The only production implementation of capabilities gateway probes its
 // channel for.
 var (
-	_ cardPoster    = (*feishu.Channel)(nil)
-	_ inputEnricher = (*feishu.Channel)(nil)
-	_ reactor       = (*feishu.Channel)(nil)
-	_ recaller      = (*feishu.Channel)(nil)
-	_ textReplier   = (*feishu.Channel)(nil)
-	_ topicSeeder   = (*feishu.Channel)(nil)
+	_ cardPoster  = (*feishu.Channel)(nil)
+	_ textReplier = (*feishu.Channel)(nil)
+	_ topicSeeder = (*feishu.Channel)(nil)
 )
 
 // The only production implementation of capabilities gateway probes its

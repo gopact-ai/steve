@@ -41,10 +41,6 @@ type liveTurn struct {
 	running bool
 }
 
-type recaller interface {
-	DeleteMessage(context.Context, string) error
-}
-
 // maxLiveTurns bounds the retry history; turns are dropped oldest first.
 const maxLiveTurns = 64
 
@@ -74,11 +70,6 @@ type Channel interface {
 	RemoveReaction(ctx context.Context, messageID, reactionID string) error
 	// DeleteMessage recalls a message the gateway posted.
 	DeleteMessage(ctx context.Context, messageID string) error
-}
-
-type reactor interface {
-	AddReaction(context.Context, string, string) (string, error)
-	RemoveReaction(context.Context, string, string) error
 }
 
 type processor interface {
@@ -587,16 +578,12 @@ func (g *Gateway) handleRetryAction(action feishu.CardAction) feishu.CardToast {
 }
 
 func (g *Gateway) recall(cardID string) {
-	if cardID == "" {
-		return
-	}
-	r, ok := g.ch.(recaller)
-	if !ok {
+	if cardID == "" || g.ch == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := r.DeleteMessage(ctx, cardID); err != nil {
+	if err := g.ch.DeleteMessage(ctx, cardID); err != nil {
 		slog.Error(fmt.Sprintf("gateway: recall card failed: %v", err), "card", cardID)
 	}
 }
@@ -634,13 +621,12 @@ func newRequestID() string {
 }
 
 func (g *Gateway) ack(messageID string) string {
-	r, ok := g.ch.(reactor)
-	if !ok || messageID == "" {
+	if g.ch == nil || messageID == "" {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	id, err := r.AddReaction(ctx, messageID, thinkingEmoji)
+	id, err := g.ch.AddReaction(ctx, messageID, thinkingEmoji)
 	if err != nil {
 		slog.Error(fmt.Sprintf("gateway: ack reaction failed: %v", err), "message", messageID)
 		return ""
@@ -649,16 +635,12 @@ func (g *Gateway) ack(messageID string) string {
 }
 
 func (g *Gateway) unack(messageID, reactionID string) {
-	if reactionID == "" {
-		return
-	}
-	r, ok := g.ch.(reactor)
-	if !ok {
+	if reactionID == "" || g.ch == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := r.RemoveReaction(ctx, messageID, reactionID); err != nil {
+	if err := g.ch.RemoveReaction(ctx, messageID, reactionID); err != nil {
 		slog.Error(fmt.Sprintf("gateway: clear reaction failed: %v", err), "message", messageID)
 	}
 }

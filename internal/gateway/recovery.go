@@ -387,12 +387,10 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 func (g *Gateway) recoveryNotice(ctx context.Context, book *ledger.Ledger, key string, input recoveryInput, sender textReplier) (string, error) {
 	raw, _, err := book.Command(ctx, key+"/notice", "gateway-recovery-notice", input.Requester, func(ctx context.Context) (json.RawMessage, error) {
 		if !input.Manual {
-			if recall, ok := g.ch.(recaller); ok {
-				for _, id := range append([]string{input.OpenCard}, input.Interim...) {
-					if id != "" {
-						if err := recall.DeleteMessage(ctx, id); err != nil {
-							return nil, noticeError(err)
-						}
+			for _, id := range append([]string{input.OpenCard}, input.Interim...) {
+				if id != "" {
+					if err := g.ch.DeleteMessage(ctx, id); err != nil {
+						return nil, noticeError(err)
 					}
 				}
 			}
