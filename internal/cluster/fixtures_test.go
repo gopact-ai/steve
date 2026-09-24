@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,19 +26,4 @@ func SshCheckFixture() sshconnect.CheckResult {
 		check.Tools = append(check.Tools, sshconnect.Tool{Name: name, Available: true})
 	}
 	return check
-}
-
-func FreeEnrollmentPorts(t *testing.T) (string, string) {
-	t.Helper()
-	first, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer first.Close()
-	second, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Close()
-	return first.Addr().String(), second.Addr().String()
 }

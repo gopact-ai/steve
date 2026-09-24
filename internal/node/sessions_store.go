@@ -186,7 +186,7 @@ func (s *SessionService) loadRecord(store *sessionRecords, id string) error {
 		for id, command := range next.Commands {
 			if command.State.Active() {
 				command.State = nodewire.SessionCommandUncertain
-				command.Error = "node service restarted without a live ACP callback"
+				command.Error, command.ErrorCode = "node service restarted without a live ACP callback", nodewire.SessionErrorFailed
 				command.Settled = false
 				next.Commands[id] = command
 			}

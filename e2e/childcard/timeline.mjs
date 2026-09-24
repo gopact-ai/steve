@@ -101,6 +101,7 @@ try {
         sessionStorage.setItem("timeline-loads", String(Number(sessionStorage.getItem("timeline-loads") || 0) + 1));
         window.sources = [];
         window.EventSource = class {
+            addEventListener() {}
             constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); }
             close() { window.sources = window.sources.filter((s) => s !== this); }
         };

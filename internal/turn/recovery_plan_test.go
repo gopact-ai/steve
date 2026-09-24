@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/channel"
 	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -129,7 +129,7 @@ func TestRetainedPlanningCannotAdoptResumedTaskEpoch(t *testing.T) {
 
 func TestRetainedPlanKeepsRecoveryQuestionInOriginalExchange(t *testing.T) {
 	c, sup, identity, req := retainedPlanFixture(t)
-	sup.err = agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: identity.AttemptID, TaskID: identity.TaskID}}, "offline", "联系原规划节点", "原节点暂时离线。", "建议恢复节点后重新检查。", errors.New("node unreachable"))
+	sup.err = agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: identity.AttemptID, TaskID: identity.TaskID}}, "offline", agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreNode}, errors.New("node unreachable"))
 	result, err := c.ResumeRetainedPlan(t.Context(), identity, req)
 	var blocked *agentexec.RecoveryBlocked
 	if !errors.As(err, &blocked) || result.Text != "" || !strings.Contains(blocked.Question.Message, "node unreachable") || sup.planned != 0 || sup.executed != 0 {
@@ -204,7 +204,7 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 // is already the exchange's own and passes through unchanged.
 func TestPlanRecoveryErrorMarksOnlyExecutionQuestionsStopUnconfirmed(t *testing.T) {
 	c, _, _, _, _ := retainedChatFixture(t)
-	execution := agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: "att-1", TaskID: "task-1"}}, "offline", "联系原节点", "原节点暂时离线。", "建议恢复节点后重新检查。", nil)
+	execution := agentexec.Blocked(attempt.Record{Spec: attempt.Spec{ID: "att-1", TaskID: "task-1"}}, "offline", agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreNode}, nil)
 	var surfaced *agentexec.RecoveryBlocked
 	err := c.planRecoveryError(fmt.Errorf("step: %w", execution))
 	if !errors.As(err, &surfaced) || !errors.Is(err, harness.ErrStopUnconfirmed) || surfaced.AttemptID != "" || surfaced.TaskID != "" || surfaced.Question.RequestID != execution.Question.RequestID {
@@ -216,6 +216,26 @@ func TestPlanRecoveryErrorMarksOnlyExecutionQuestionsStopUnconfirmed(t *testing.
 	own := c.retainedBlocked("plan-conditions", "检查", "问题", "原因", "建议", errors.New("no machine"))
 	if got := c.planRecoveryError(fmt.Errorf("plan: %w", own)); got != own || errors.Is(got, harness.ErrStopUnconfirmed) {
 		t.Fatalf("coordinator question changed: %v", got)
+	}
+}
+
+// The execution layer asks in English; the question reaches the exchange in
+// the exchange's language.
+func TestPlanRecoveryErrorAsksExecutionQuestionsInTheExchangeLanguage(t *testing.T) {
+	c, _, _, _, _ := retainedChatFixture(t)
+	record := attempt.Record{Spec: attempt.Spec{ID: "att-1", TaskID: "task-1"}}
+	diagnosis := agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreNode}
+	execution := agentexec.Blocked(record, "offline", diagnosis, errors.New("node unreachable"))
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		var surfaced *agentexec.RecoveryBlocked
+		err := c.localized(locale).planRecoveryError(fmt.Errorf("step: %w", execution))
+		want := agentexec.BlockedIn(i18n.New(locale), record, "offline", diagnosis, execution.Cause).Question
+		if !errors.As(err, &surfaced) || surfaced.Question.Title != want.Title || surfaced.Question.Message != want.Message || surfaced.Question.RequestID != want.RequestID {
+			t.Fatalf("%s question = %+v, want %+v", locale, surfaced, want)
+		}
+		if surfaced.AttemptID != "" || surfaced.TaskID != "" || !errors.Is(err, harness.ErrStopUnconfirmed) {
+			t.Fatalf("%s question still names its attempt or lost its stop: %#v", locale, surfaced)
+		}
 	}
 }
 

@@ -22,12 +22,21 @@ func (a *retentionApplication) Apply(AppliedCommand) ([]byte, error) {
 }
 func (a *retentionApplication) Snapshot() ([]byte, error) { return json.Marshal(a.calls) }
 func (a *retentionApplication) Restore(raw []byte) error  { return json.Unmarshal(raw, &a.calls) }
-func (a *retentionApplication) SnapshotCheckpoint(floor uint64) ([]byte, func() error, error) {
+func (a *retentionApplication) SnapshotCheckpoint(floor uint64) (Checkpoint, error) {
 	a.checkpoints++
 	a.floor = floor
 	raw, err := a.Snapshot()
-	return raw, func() error { a.persisted++; return nil }, err
+	return retentionCheckpoint{app: a, raw: raw}, err
 }
+
+type retentionCheckpoint struct {
+	app *retentionApplication
+	raw []byte
+}
+
+func (c retentionCheckpoint) Encode() ([]byte, error) { return c.raw, nil }
+func (c retentionCheckpoint) Persisted() error        { c.app.persisted++; return nil }
+func (retentionCheckpoint) Release()                  {}
 
 func applicationReceiptMachine() (*machine, *retentionApplication) {
 	app := &retentionApplication{}

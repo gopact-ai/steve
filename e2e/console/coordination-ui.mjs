@@ -16,7 +16,7 @@ const at = "2026-09-07T01:00:00Z";
 const node = (id, name, eligible = false) => ({ id, name, online: true, voter: true, auto_eligible: eligible, ready: true, local: id === "a" });
 const f = { view: { enabled: true, cluster_id: "cluster-one", node_id: "a", coordinator_id: "b", epoch: 1, revision: 1, authoritative: true, observed_at: at, auto_failover: false, ready: true, reason: "", nodes: [node("a", "laptop", true), node("b", "dev-box", true), node("c", "build-node")], events: [] }, calls: [], errors: [], reset: false, resetBeforeCommit: false, hideReceipts: false, readError: false, hold: false, release: null, reject: false };
 page.on("pageerror", (error) => f.errors.push(String(error)));
-await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((item) => item !== this); } }; });
+await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { addEventListener() {} constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((item) => item !== this); } }; });
 const response = () => ({ ...f.view, events: f.hideReceipts ? [] : f.view.events });
 await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;

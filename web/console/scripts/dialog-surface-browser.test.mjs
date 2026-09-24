@@ -92,7 +92,7 @@ try {
         await page.addInitScript(({ theme }) => {
             localStorage.setItem("steve.ui.locale", "en");
             localStorage.setItem("ui-theme", theme);
-            window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+            window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
         }, { theme });
         await context.route("**/*", async (route) => {
             const req = route.request(), url = new URL(req.url()), p = url.pathname;

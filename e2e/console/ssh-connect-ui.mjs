@@ -19,7 +19,7 @@ const phases = ["preflight", "registration", "upload", "installation", "connecti
 const f = { candidates: [candidate], checks: [], plans: [], installs: [], abandons: [], browses: [], statuses: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false, phase: "upload", log: [] };
 const finalLog = [{ at, stream: "steve", text: "Running the installer on the machine" }, { at, stream: "stdout", text: "Node process started" }, { at, stream: "stderr", text: "Node startup did not remain running; inspect ~/steve-node.log" }];
 page.on("pageerror", (error) => f.errors.push(String(error)));
-await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() {} }; });
+await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { addEventListener() {} constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() {} }; });
 const routeRequest = async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
@@ -280,7 +280,7 @@ try {
     const successContext = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
     try {
         const successPage = await successContext.newPage(); successPage.setDefaultTimeout(6500);
-        await successPage.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} }; });
+        await successPage.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} }; });
         await successPage.route("**/*", routeRequest);
         await successPage.goto(url + "#/fleet");
         await successPage.getByRole("button", { name: "Connect with SSH", exact: true }).click();
@@ -332,7 +332,7 @@ try {
             await scopedPage.addInitScript(({ locale, check }) => {
                 localStorage.setItem("steve.ui.locale", locale);
                 localStorage.setItem(`steve.ssh.connect:${new URL(".", window.location.href).href}`, JSON.stringify({ request: { alias: "dev-box", name: "saved-worker", addr: "10.0.0.9:7701", level: "internal" }, check }));
-                window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+                window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
             }, { locale, check });
             await scopedPage.route("**/*", routeRequest);
             await scopedPage.goto(url + "#/fleet");
@@ -366,7 +366,7 @@ try {
         await oldPage.addInitScript(({ check }) => {
             localStorage.setItem("steve.ui.locale", "en");
             localStorage.setItem(`steve.ssh.connect:${new URL(".", window.location.href).href}`, JSON.stringify({ request: { alias: "dev-box", name: "old-worker", addr: "10.0.0.9:7701", level: "internal" }, check }));
-            window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+            window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
         }, { check: oldCheck });
         await oldPage.route("**/*", routeRequest);
         await oldPage.goto(url + "#/fleet");
@@ -401,7 +401,7 @@ try {
             const request = { alias: "dev-box", name: "reviewed-worker", addr: "10.0.0.9:7701", level: "internal" };
             localStorage.setItem("steve.ui.locale", "en");
             localStorage.setItem(`steve.ssh.connect:${new URL(".", window.location.href).href}`, JSON.stringify({ request, check, plan: { id: "saved-reviewed-plan", request, check, steps: [], effects: ["Original reviewed effect"], ready: false, expires_at: "2030-01-01T00:00:00Z" } }));
-            window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+            window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
         }, { check: oldCheck });
         await reviewedPage.route("**/*", routeRequest);
         await reviewedPage.goto(url + "#/fleet");

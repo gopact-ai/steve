@@ -72,7 +72,7 @@ try {
             localStorage.setItem("steve.ui.locale", locale);
             sessionStorage.setItem("steve.conversation", conversation);
             window.lazyDocument = "same-document";
-            window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+            window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
             // Count only inert-attribute subscriptions, not React Aria's
             // legitimate child-list observers while a modal is mounted.
             const inertObservers = new Set();

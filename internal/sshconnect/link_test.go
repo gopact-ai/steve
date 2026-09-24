@@ -54,16 +54,6 @@ func echoServer(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-func freePort(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	return listener.Addr().String()
-}
-
 // echoThrough dials address, sends a line and expects it back.
 func echoThrough(t *testing.T, address, line string) error {
 	t.Helper()
@@ -100,7 +90,8 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 		defer mu.Unlock()
 		seen = append(seen, status)
 	}
-	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: "127.0.0.1:25407", Target: "127.0.0.1:7712"}}, Outbound: []sshconnect.PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }, OnChange: record})
+	inbound := sessions.Reserve(t)
+	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: inbound, Target: "127.0.0.1:7712"}}, Outbound: []sshconnect.PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }, OnChange: record})
 	t.Cleanup(link.Close)
 	first := link.Status()
 	if len(first.Outbound) != 2 || first.Outbound[0].Listen == "" || first.Outbound[0].Listen == first.Outbound[1].Listen {
@@ -112,7 +103,7 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 		t.Fatalf("link did not come up: %v", err)
 	}
 	args := strings.Join(sessions.Launches()[0], " ")
-	for _, want := range []string{"-T", "-o BatchMode=yes", "-o ClearAllForwardings=yes", `-- dev exec "$HOME/.steve-peer/bin/steve" link --listen '127.0.0.1:25407=127.0.0.1:7712' --allow '127.0.0.1:7702' --allow '127.0.0.1:7701'`} {
+	for _, want := range []string{"-T", "-o BatchMode=yes", "-o ClearAllForwardings=yes", `-- dev exec "$HOME/.steve-peer/bin/steve" link --listen '` + inbound + `=127.0.0.1:7712' --allow '127.0.0.1:7702' --allow '127.0.0.1:7701'`} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("session arguments lack %q: %s", want, args)
 		}
@@ -151,8 +142,8 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 // While the session is down, a dial at a local port is refused at once.
 func TestLinkCarriesTrafficBothWaysAndRefusesWhileDown(t *testing.T) {
 	hubEcho, machineEcho := echoServer(t), echoServer(t)
-	inbound := freePort(t)
 	sessions := &linktest.Launcher{}
+	inbound := sessions.Reserve(t)
 	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: inbound, Target: hubEcho}}, Outbound: []sshconnect.PortForward{{Target: machineEcho}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return time.Hour }})
 	t.Cleanup(link.Close)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -203,7 +194,9 @@ func TestFarEndOpensOnlyAllowedTargets(t *testing.T) {
 	hubIn, farOut := io.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
-	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, nil, []string{allowed}) }()
+	go func() {
+		served <- sshconnect.ServeLink(ctx, farIn, farOut, sshconnect.ServeLinkOptions{Logs: io.Discard, Allowed: []string{allowed}})
+	}()
 	reader := bufio.NewReader(hubIn)
 	if banner, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(banner) != "STEVE-LINK/1" {
 		t.Fatalf("the far end did not announce itself: %q %v", banner, err)
@@ -289,7 +282,9 @@ func TestFarEndStopsWithItsContextWhileTheHubIsSilent(t *testing.T) {
 	hubIn, farOut := io.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
-	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, nil, nil) }()
+	go func() {
+		served <- sshconnect.ServeLink(ctx, farIn, farOut, sshconnect.ServeLinkOptions{Logs: io.Discard})
+	}()
 	if _, err := bufio.NewReader(hubIn).ReadString('\n'); err != nil {
 		t.Fatal(err)
 	}
@@ -301,5 +296,40 @@ func TestFarEndStopsWithItsContextWhileTheHubIsSilent(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("the far end waited for the hub before stopping")
+	}
+}
+
+// The far end binds each listen address through Listen, and the listener
+// it is given is the one it serves and closes when the session ends.
+func TestFarEndBindsItsListenAddressesThroughListen(t *testing.T) {
+	farIn, _ := io.Pipe()
+	hubIn, farOut := io.Pipe()
+	ctx, cancel := context.WithCancel(t.Context())
+	var asked []string
+	var given net.Listener
+	options := sshconnect.ServeLinkOptions{
+		Logs:    io.Discard,
+		Listens: []sshconnect.PortForward{{Listen: "127.0.0.1:7", Target: "127.0.0.1:8"}},
+		Listen: func(network, address string) (net.Listener, error) {
+			asked = append(asked, network+" "+address)
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			given = listener
+			return listener, err
+		},
+	}
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, options) }()
+	if _, err := bufio.NewReader(hubIn).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0] != "tcp 127.0.0.1:7" {
+		t.Fatalf("the far end bound %v", asked)
+	}
+	cancel()
+	if err := <-served; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := given.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("the listener given to the far end is still open: %v", err)
 	}
 }

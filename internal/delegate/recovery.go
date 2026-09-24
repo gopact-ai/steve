@@ -283,7 +283,7 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 		// a question raised while the node was unreachable is answered by
 		// it and must not stay open over a child that is over.
 		s.clearRecovery(record.ID)
-		s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, errors.New(record.Error), view.Progress{})
+		s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, recordedFailure(result, record.Error), view.Progress{})
 		return true
 	}
 	if record.State != attempt.Running {

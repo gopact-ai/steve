@@ -3,11 +3,13 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/gopact-ai/steve/internal/filedoc"
 	"modernc.org/sqlite"
@@ -34,43 +36,77 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 	if l.replicaWriter {
 		return nil, ErrReplicaWriteBypass
 	}
-	path, incarnation, _, cleanup, err := l.captureReplicaDatabase()
+	boundary, err := l.replicaBoundary()
+	if err != nil {
+		return nil, err
+	}
+	path, cleanup, err := boundary.copy()
+	boundary.release()
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
 	// The private backup is detached from the live database. Preparing its
-	// read schema and framing it need not hold the apply lock; only the
-	// SQLite backup defines the committed boundary.
-	return encodeReplicaSnapshot(path, incarnation)
+	// read schema and framing it need not hold the apply lock; the read
+	// transaction the backup copied defines the committed boundary.
+	return encodeReplicaSnapshot(path, boundary.incarnation)
 }
 
-func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error) {
-	l.applyMu.Lock()
-	defer l.applyMu.Unlock()
-	if _, err := l.replicationState(); err != nil {
-		return "", 0, 0, nil, err
-	}
-	path, cleanup, err := l.replicaTemp(nil)
+// replicaBoundary is the database as of one committed boundary: a read
+// transaction on a pooled read connection, begun under applyMu so that it
+// follows every applied batch and precedes the next. Copying it runs from
+// that transaction's WAL snapshot without applyMu or the writer connection,
+// so batches applied and writes made after the boundary neither wait for
+// the copy nor appear in it.
+type replicaBoundary struct {
+	l                       *Ledger
+	conn                    *sql.Conn
+	incarnation, generation uint64
+	once                    sync.Once
+}
+
+// replicaBoundary opens a boundary. The read connection is taken before
+// applyMu: a path holding applyMu must not wait for the read pool.
+func (l *Ledger) replicaBoundary() (*replicaBoundary, error) {
+	ctx := context.Background()
+	conn, err := l.reads.Conn(ctx)
 	if err != nil {
-		return "", 0, 0, nil, err
+		return nil, err
 	}
-	complete := false
-	defer func() {
-		if !complete {
-			cleanup()
-		}
-	}()
-	conn, err := l.db.Conn(context.Background())
+	b := &replicaBoundary{l: l, conn: conn}
+	if err := b.begin(ctx); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return b, nil
+}
+
+// begin opens the read transaction under applyMu and reads the incarnation
+// in it, which fixes the transaction's snapshot.
+func (b *replicaBoundary) begin(ctx context.Context) error {
+	b.l.applyMu.Lock()
+	defer b.l.applyMu.Unlock()
+	if _, err := b.l.replicationState(); err != nil {
+		return err
+	}
+	if _, err := b.conn.ExecContext(ctx, `BEGIN`); err != nil {
+		return err
+	}
+	if err := b.conn.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'incarnation'`).Scan(&b.incarnation); err != nil {
+		_, _ = b.conn.ExecContext(ctx, `ROLLBACK`)
+		return err
+	}
+	b.generation = b.l.snapshotGeneration
+	return nil
+}
+
+// copy backs the boundary's snapshot up into a private file.
+func (b *replicaBoundary) copy() (string, func(), error) {
+	path, cleanup, err := b.l.replicaTemp(nil)
 	if err != nil {
-		return "", 0, 0, nil, err
+		return "", nil, err
 	}
-	defer conn.Close()
-	var incarnation uint64
-	if err := conn.QueryRowContext(context.Background(), `SELECT value FROM meta WHERE key = 'incarnation'`).Scan(&incarnation); err != nil {
-		return "", 0, 0, nil, err
-	}
-	if err := conn.Raw(func(raw any) error {
+	if err := b.conn.Raw(func(raw any) error {
 		provider, ok := raw.(backupSource)
 		if !ok {
 			return errors.New("ledger: SQLite online backup unavailable")
@@ -79,13 +115,30 @@ func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error
 		if err != nil {
 			return err
 		}
+		if b.l.backupStarted != nil {
+			b.l.backupStarted()
+		}
+		// With a read transaction already open on the source connection,
+		// the backup reads through it rather than beginning its own, and
+		// one step copies every page before the transaction ends.
 		_, stepErr := backup.Step(-1)
 		return errors.Join(stepErr, backup.Finish())
 	}); err != nil {
-		return "", 0, 0, nil, fmt.Errorf("snapshot ledger: %w", err)
+		cleanup()
+		return "", nil, fmt.Errorf("snapshot ledger: %w", err)
 	}
-	complete = true
-	return path, incarnation, l.snapshotGeneration, cleanup, nil
+	return path, cleanup, nil
+}
+
+// release ends the read transaction and returns its connection to the pool.
+// A failed rollback leaves the connection unusable, so it is discarded.
+func (b *replicaBoundary) release() {
+	b.once.Do(func() {
+		if _, err := b.conn.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+			_ = b.conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+		_ = b.conn.Close()
+	})
 }
 
 // RestoreReplica durably replaces application state through SQLite's atomic

@@ -7,6 +7,7 @@ import type { Event, Snapshot } from "./types";
 import { NodeNamesContext, useNodeNames } from "./node-name";
 import { serviceWatch } from "./service-watch";
 import { statePoll } from "./state-poll";
+import { eventCursor } from "./event-cursor";
 
 export type Live = "connecting" | "live" | "reconnecting" | "unauthorized";
 
@@ -152,8 +153,15 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         let retry: number | null = null;
         let reconnecting = false;
         const watch = serviceWatch({ now: Date.now, ensure: desktopEnsureService(), after: 10_000, every: 30_000 });
+        // A reconnect resumes after the last event delivered; one the
+        // stream replays anyway is not delivered twice.
+        const cursor = eventCursor();
         const connect = () => {
-            source = new EventSource(eventsURL());
+            source = new EventSource(eventsURL(cursor.last()));
+            // The stream could not continue after the last event: some may
+            // be missing, so the snapshot is re-read and the replay that
+            // follows is taken as new.
+            source.addEventListener("reset", () => { cursor.reset(); void load(); });
             source.onopen = () => {
                 watch.up();
                 floor.live(true);
@@ -161,6 +169,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
                 if (reconnecting) { reconnecting = false; void load(); }
             };
             source.onmessage = (e) => {
+                if (!cursor.accept(e.lastEventId)) return;
                 const ev = JSON.parse(e.data) as Event;
                 // The console follows its own traffic and the progress of
                 // work asked from it; everything else is the activity feed.

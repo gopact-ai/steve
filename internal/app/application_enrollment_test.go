@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/cluster"
+	"github.com/gopact-ai/steve/internal/cluster/clustertest"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -61,7 +62,7 @@ func TestClusterEnrollmentPeerProcess(t *testing.T) {
 	raftConfig.CommitTimeout = 10 * time.Millisecond
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	peer, err := OpenClusterPeer(ctx, cluster.PeerOptions{ConfigPath: configPath, RaftConfig: raftConfig, PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-process-machine-" + settings.NodeID, nil }})
+	peer, err := OpenClusterPeer(ctx, cluster.PeerOptions{ConfigPath: configPath, RaftConfig: raftConfig, PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-process-machine-" + settings.NodeID, nil }, Listen: inheritedListen(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,9 @@ type enrollmentProcess struct {
 	next       atomic.Uint64
 }
 
-func startEnrollmentProcess(t *testing.T, configPath string) *enrollmentProcess {
+// startEnrollmentProcess runs a node in its own process. held, when given,
+// are ports the process inherits and serves instead of binding them itself.
+func startEnrollmentProcess(t *testing.T, configPath string, held *clustertest.Ports) *enrollmentProcess {
 	t.Helper()
 	logPath := filepath.Join(filepath.Dir(configPath), "test-process.log")
 	output, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
@@ -128,12 +131,25 @@ func startEnrollmentProcess(t *testing.T, configPath string) *enrollmentProcess 
 	command := exec.Command(os.Args[0], "-test.run=^TestClusterEnrollmentPeerProcess$")
 	command.Env = append(os.Environ(), "STEVE_ENROLLMENT_TEST_HELPER=1", "STEVE_ENROLLMENT_TEST_CONFIG="+configPath)
 	command.Stdout, command.Stderr = output, output
+	if held != nil {
+		command.ExtraFiles = held.Files(t)
+		defer func() {
+			for _, file := range command.ExtraFiles {
+				file.Close()
+			}
+		}()
+		command.Env = append(command.Env, "STEVE_ENROLLMENT_TEST_LISTENERS=1")
+	}
 	input, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
+	}
+	if held != nil {
+		// The node's process serves the sockets now; this one lets go.
+		held.Release()
 	}
 	process := &enrollmentProcess{t: t, cmd: command, input: input, done: make(chan error, 1), root: filepath.Dir(configPath), configPath: configPath}
 	go func() { process.done <- command.Wait(); output.Close() }()
@@ -181,19 +197,17 @@ func (p *enrollmentProcess) call(command enrollmentChildCommand) enrollmentChild
 	return enrollmentChildReply{}
 }
 
-func FreeEnrollmentPorts(t *testing.T) (string, string) {
-	t.Helper()
-	first, err := net.Listen("tcp", "127.0.0.1:0")
+// inheritedListen binds through the Raft and peer sockets a parent test
+// passed to this process as its first two extra files, if it passed any.
+func inheritedListen(t *testing.T) func(network, address string) (net.Listener, error) {
+	if os.Getenv("STEVE_ENROLLMENT_TEST_LISTENERS") != "1" {
+		return nil
+	}
+	ports, err := clustertest.Inherit([]*os.File{os.NewFile(3, "raft"), os.NewFile(4, "peer")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
-	second, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Close()
-	return first.Addr().String(), second.Addr().String()
+	return ports.Listen
 }
 
 func waitEnrollmentStatus(t *testing.T, sourceConfig string, targetConfig string) {
@@ -237,7 +251,7 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	if err := cluster.SaveClusterJSON(options.ClusterPath, settings, false); err != nil {
 		t.Fatal(err)
 	}
-	source := startEnrollmentProcess(t, options.ConfigPath)
+	source := startEnrollmentProcess(t, options.ConfigPath, nil)
 	ready := source.call(enrollmentChildCommand{Action: "ready"})
 	if ready.Error != "" {
 		t.Fatal(ready.Error)
@@ -249,7 +263,8 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	var importedNodes []cluster.PeerImportResult
 	var importedProcesses []*enrollmentProcess
 	for index, name := range []string{"peer-alpha", "peer-beta"} {
-		peerAddress, raftAddress := FreeEnrollmentPorts(t)
+		machinePorts := clustertest.HoldEnrollmentPorts(t)
+		peerAddress, raftAddress := machinePorts.Peer, machinePorts.Raft
 		request := cluster.PeerEnrollmentRequest{Alias: name, Name: name, PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 		preview := source.call(enrollmentChildCommand{Action: "preview", Request: request})
 		if preview.Error != "" {
@@ -286,7 +301,7 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, name, "cluster", "ca-key.pem")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("source CA private key was copied to another node")
 		}
-		importedProcesses = append(importedProcesses, startEnrollmentProcess(t, imported.ConfigPath))
+		importedProcesses = append(importedProcesses, startEnrollmentProcess(t, imported.ConfigPath, machinePorts))
 		waitEnrollmentStatus(t, source.configPath, imported.ConfigPath)
 		completed := source.call(enrollmentChildCommand{Action: "complete", ID: id})
 		if completed.Error != "" || !completed.Result.Ready {

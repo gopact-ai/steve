@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,8 +95,8 @@ func TestConsoleWireFixture(t *testing.T) {
 		{At: at.Add(8 * time.Second), Kind: "run.finished", RunID: "run", Seq: 7, TaskID: "child", Rev: 2, State: "done"},
 	}
 	stream := httptest.NewRecorder()
-	for _, event := range events {
-		writeEvent(stream, event)
+	for i, event := range events {
+		writeEvent(stream, "wire."+strconv.Itoa(i+1), event)
 	}
 	out := map[string]any{
 		"queue": queue, "empty": empty, "ack": ack, "errors": errorResponses,
@@ -123,7 +124,7 @@ func TestConsoleWireFixture(t *testing.T) {
 		{At: at.Add(123900001 * time.Nanosecond), Kind: "console.progress", Conversation: conversation, ExchangeID: "nano", Progress: &consoleapi.Progress{Answer: "newer"}},
 		{At: at.Add(123900000 * time.Nanosecond).In(time.FixedZone("offset", 8*60*60)), Kind: "console.progress", Conversation: conversation, ExchangeID: "nano", Progress: &consoleapi.Progress{Answer: "older"}},
 	} {
-		writeEvent(nano, event)
+		writeEvent(nano, "nano.1", event)
 	}
 	out["nano_sse"] = nano.Body.String()
  out["work"] = workWireFixture(t, at)

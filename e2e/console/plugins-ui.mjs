@@ -18,7 +18,7 @@ const runtimeRef = { id: "c".repeat(64), selection: { project: "p", node: "", ha
 f.usage = { references: [{ kind: "archive", owner: "chat/reviewer", runtime: runtimeRef }], runtimes: [{ ref: runtimeRef, command_id: "runtime", created_at: at, retired: false, uses: [{ id: "host", kind: "host", stopped: false }], packages: [{ id: manifest.id, version: "0.9.0", digest: "e".repeat(64) }] }], errors: {} };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 page.on("dialog", (dialog) => dialog.accept());
-await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} }; });
+await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} }; });
 await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }

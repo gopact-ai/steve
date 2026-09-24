@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -51,7 +52,7 @@ func resumeRetainedStep(parent context.Context, p plan.Plan, step plan.Step, ups
 		return plan.StepResult{}, err
 	}
 	if record.Kind != attempt.KindStep || record.WorkID != hash || record.TaskID != p.TaskID || record.Project != p.ProjectID || record.TurnID != p.ID+"/"+step.ID || record.Execution == nil {
-		return plan.StepResult{}, agentexec.Blocked(record, "identity", "核对原步骤的工作定义、计划与任务标识", "原步骤与当前计划定义不一致。", "建议核对原计划与已完成结果后继续。", ErrRecovery)
+		return plan.StepResult{}, agentexec.Blocked(record, "identity", agentexec.Diagnosis{Attempted: i18n.ExecTriedMatchStep, Problem: i18n.ExecProblemStepChanged, Recommendation: i18n.ExecAdviceCheckPlan}, ErrRecovery)
 	}
 	if deps.Executions == nil {
 		return plan.StepResult{}, fmt.Errorf("%w: retained step execution registry unavailable", ErrRecovery)
@@ -65,10 +66,10 @@ func resumeRetainedStep(parent context.Context, p plan.Plan, step plan.Step, ups
 	ctx := scope.Context()
 	blocked := func(code string, cause error) (plan.StepResult, error) {
 		unresolved = retainedStepDetached(record, cause)
-		return plan.StepResult{}, agentexec.Blocked(record, code, "连接原步骤的节点并核对已接受命令", "原步骤暂时不能安全接续。", "建议恢复原节点或存储，再检查同一次执行。", unresolved)
+		return plan.StepResult{}, agentexec.Blocked(record, code, agentexec.Diagnosis{Attempted: i18n.ExecTriedReachStepNode, Problem: i18n.ExecProblemStepUnsafe, Recommendation: i18n.ExecAdviceRestoreEitherCheck}, unresolved)
 	}
 	if record.State == attempt.Verifying && step.Verify != nil && step.Verify.Kind == plan.VerifyCommand && (record.SessionSettled == nil || !*record.SessionSettled) {
-		return blocked("verify-command", errors.New("原 shell 验证的停止状态未知，不能用先前 Agent 回执替代"))
+		return blocked("verify-command", errors.New("the original shell verification's stop is unknown; an earlier agent receipt cannot stand in for it"))
 	}
 	runner, ok := deps.Runner.(retainedStepRunner)
 	if !ok {

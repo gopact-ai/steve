@@ -115,6 +115,7 @@ await context.addInitScript(({ A, B }) => {
     localStorage.setItem("steve.side-conversation:q", JSON.stringify({ id: B, project: "q", title: "q", excerpt: "", bindingLocale: "en", bound: true }));
     window.sources = [];
     window.EventSource = class {
+        addEventListener() {}
         constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); }
         close() { window.sources = window.sources.filter((s) => s !== this); }
     };

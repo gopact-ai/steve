@@ -26,7 +26,7 @@ try {
     await page.addInitScript(() => {
         localStorage.setItem("steve.ui.locale", "en");
         window.sources = [];
-        window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((s) => s !== this); } };
+        window.EventSource = class { addEventListener() {} constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((s) => s !== this); } };
         window.emit = (event) => window.sources.forEach((source) => source.onmessage?.({ data: JSON.stringify(event) }));
     });
     await page.route("**/*", async (route) => {
