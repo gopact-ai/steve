@@ -395,7 +395,6 @@ type SkillNode struct {
 	Name   string `json:"name"`
 	Up     bool   `json:"up"`
 	Synced bool   `json:"synced"`
-	Takes  bool   `json:"takes"`
 }
 
 // MachineSkills is what one machine's AI tools have of their own.
@@ -479,11 +478,10 @@ type PlatformTool struct {
 
 // MCPMachine is what one machine's coding agents configured themselves.
 type MCPMachine struct {
-	Name        string   `json:"name"`
-	Hub         bool     `json:"hub,omitempty"`
-	Up          bool     `json:"up"`
-	Unsupported bool     `json:"unsupported,omitempty"`
-	Own         []MCPOwn `json:"own"`
+	Name string   `json:"name"`
+	Hub  bool     `json:"hub,omitempty"`
+	Up   bool     `json:"up"`
+	Own  []MCPOwn `json:"own"`
 }
 
 // MCPOwn is one of those; Adopted says the machine's settings already
