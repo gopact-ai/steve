@@ -99,6 +99,10 @@ func TestStoppedChildResolvesJoinedObserverAfterAccounting(t *testing.T) {
 	}
 }
 
+// waitDelegateRecoveryOwner waits until the child's last recovery pass has
+// ended. A pass skips a child whose previous pass is still running, leaving it
+// to the reconciler's next tick, so a test that changes what the node reports
+// waits here before the pass that should see the change.
 func waitDelegateRecoveryOwner(t *testing.T, service *Service, taskID string) {
 	t.Helper()
 	service.mu.Lock()

@@ -85,7 +85,7 @@ flowchart LR
 | 事情 | 做法 | 为什么这么做 |
 |---|---|---|
 | 接入 agent | 每种工具的官方 ACP adapter 以 stdio 子进程方式启动；Steve 为每个 harness 准备隔离 home（`runtimes/<harness>`），只链接凭据、复制筛选后的模型/provider 配置。 | 复用你已经登录的工具与模型额度，不重做一遍 API 接入；隔离 home 不把你终端里的 hooks、技能目录、MCP 清单带进服务器。 |
-| 协调节点 ↔ 执行节点 | 协调节点主动拨号，一条 token 认证的 TCP 连接上多路复用多条流（会话、进程流、产物操作、文件、MCP 探测、重启）；连接时交换 advert 与 feature 列表（`process_journal.v1`、`artifact_ops.v1`、`node_config_revision.v1` …）。 | 节点只开一个端口；新旧版本靠 feature 协商共存，缺能力时报"节点需要升级"而不是静默降级。 |
+| 协调节点 ↔ 执行节点 | 协调节点主动拨号，一条 token 认证的 TCP 连接上多路复用多条流（会话、进程流、产物操作、文件、MCP 探测、重启）；连接时协商协议版本（当前双方只接受 v2）并交换 advert；advert 的 feature 列表只列 v2 节点可能缺少的能力（`native_history.v1`、`service_restart.v1`）。 | 节点只开一个端口；协议版本不符的节点在握手时被拒绝并提示升级，缺少可选能力时明确报错，而不是静默降级。 |
 | 断线续接 | 节点持有 agent 进程和有界的输入/输出 journal；重连后按流 ID、已读输出位置和已确认输入续接，默认宽限 10 分钟。 | 网络抖动或协调节点重启不该杀掉正在写代码的 agent；续接依据是回执和序号，不是"再发一次 prompt"。 |
 | 节点自持会话 | 节点保存会话、每条输入的回执和执行授权；换协调节点后新实例核对原记录再接回同一次执行，`inspect-open` / `cancel-open` 处理创建回执丢失的情况。 | 交接只改变协调职责，不等于原任务停止；查不到记录不等于没创建过，只有持久的取消墓碑才证明不会再启动。 |
 | 平台能力 | Steve 自己是一个 MCP 服务器（`steve_delegate` / `steve_await` / `steve_remember` / `steve_projects` …），token 按会话签发；节点上的 agent 通过节点回程通道调回协调节点。 | "怎么协作"是服务器上的工具，控制权在平台而不是在提示词里；每个会话的 token 让委派、记忆写入都能记名。 |
@@ -183,7 +183,7 @@ macOS 上运行 `make desktop` 构建原生 App，构建脚本会输出 `Steve.a
 
 目标机器需要 Git、已认证的 harness 和适配目标 OS/CPU 架构的 `steve-node`。hub 可通过 `gateway.node_binary` 提供用 `CGO_ENABLED=0` 构建的二进制，也可手工 `scp`；完整步骤见 [node 部署](docs/operations.md#部署-node)。引导命令中的 hub 地址必须从 node 可达。引导只复制 hub harness 的 `command` / `args`，不复制认证、环境或其他 harness 配置，也不更新已存在的可执行二进制。node 和 `nodectl` 等自备启动脚本都应从登录 shell 启动。
 
-执行节点必须声明 **`process_journal.v1`**，未声明的在握手时即被拒绝。连接中断后，node 保留进程，hub 根据进程流的输入确认和输出序号续接；默认宽限 **10 分钟**。超过宽限、日志不可回放或 node 进程已丢失时仍会失败。Hub 重启先隔离缺少停止证据的执行，再回收已确认静止的 attempt 并恢复符合条件的任务；这不等同于续接原进程流。
+进程流 journal 属于节点协议 **v2** 基线，协议版本不符的执行节点在握手时即被拒绝（见[节点协议版本](docs/operations.md#节点协议版本)）。连接中断后，node 保留进程，hub 根据进程流的输入确认和输出序号续接；默认宽限 **10 分钟**。超过宽限、日志不可回放或 node 进程已丢失时仍会失败。Hub 重启先隔离缺少停止证据的执行，再回收已确认静止的 attempt 并恢复符合条件的任务；这不等同于续接原进程流。
 
 远端回合的平台开销几乎全是往返：每回合的准入、回合前后两次快照各是一次到节点的往返，hub 日志里每回合一行 `turn: timing` 给出各阶段耗时。
 

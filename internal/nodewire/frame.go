@@ -1,6 +1,7 @@
 // Package nodewire carries authenticated node operations over multiplexed
-// streams. Node-owned sessions keep ACP clients and their reverse callbacks on
-// the execution node; older peers can still transport raw ACP process streams.
+// streams. Node-owned sessions keep ACP clients and their reverse callbacks
+// on the execution node; a session without a node-owned execution binding
+// runs its harness process over a raw ACP stream instead.
 package nodewire
 
 import (

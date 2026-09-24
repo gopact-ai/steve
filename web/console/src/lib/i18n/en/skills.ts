@@ -49,7 +49,6 @@ export const skillsEn = {
     "skills.syncNodes": "Skill sync nodes",
     "skills.syncSource": "Source",
     "skills.offline": "Offline",
-    "skills.syncUnsupported": "Sync unsupported",
     "skills.synced": "Synced",
     "skills.notSynced": "Not synced",
     "skills.syncVersion": "Sync version",

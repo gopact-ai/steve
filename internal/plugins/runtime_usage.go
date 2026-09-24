@@ -30,7 +30,6 @@ type RuntimePackage struct {
 
 type RuntimeInfo struct {
 	// Installations comes from this node's retained deployment receipts.
-	// Nil identifies an older peer that did not report this inventory.
 	Installations []string         `json:"installations"`
 	Packages      []RuntimePackage `json:"packages"`
 	Ref           RuntimeRef       `json:"ref"`

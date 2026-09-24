@@ -11,26 +11,37 @@ import (
 	"time"
 )
 
-// ProtocolVersion is bumped when a frame or handshake field changes meaning.
-// ProtocolMin is the oldest version this build still speaks; a peer whose
-// range does not overlap ours is refused with both ranges in the reason.
+// ProtocolVersion is bumped when a frame or handshake field changes meaning,
+// or when a capability every node must have is added. ProtocolMin is the
+// oldest version this build still speaks; a peer whose range does not
+// overlap ours is refused with both ranges in the reason.
+//
+// v2 is the baseline every node has: the process journal, admission and
+// MCP binding, skill bundles, node config with revisions, inspect, MCP
+// probes, own skills, artifact and file operations, plugin packages and
+// runtimes. Advert.Features lists only what a v2 node may lack.
 const (
-	ProtocolVersion = 1
-	ProtocolMin     = 1
+	ProtocolVersion = 2
+	ProtocolMin     = 2
 )
 
 // Negotiate picks the newest version both sides speak, or 0 when the
 // ranges do not overlap. A peer that names no range speaks exactly its
 // Version.
 func Negotiate(peerMin, peerMax int) int {
+	return negotiate(peerMin, peerMax, ProtocolMin, ProtocolVersion)
+}
+
+// negotiate is Negotiate for a side that speaks lo–hi.
+func negotiate(peerMin, peerMax, lo, hi int) int {
 	if peerMax == 0 {
 		return 0
 	}
 	if peerMin == 0 {
 		peerMin = peerMax
 	}
-	chosen := min(peerMax, ProtocolVersion)
-	if chosen < peerMin || chosen < ProtocolMin {
+	chosen := min(peerMax, hi)
+	if chosen < peerMin || chosen < lo {
 		return 0
 	}
 	return chosen
@@ -45,6 +56,25 @@ var (
 	ErrVersionMismatch = errors.New("nodewire: protocol version mismatch")
 )
 
+// VersionMismatch is a handshake the hub could not complete because it and
+// the node share no protocol version. Node is the version the node's reply
+// carried, which a refusal sets to the newest the node speaks; HubMin and
+// HubMax are the range the hub speaks. Reason says it in words, the
+// refusing node's own when it refused.
+type VersionMismatch struct {
+	Node, HubMin, HubMax int
+	Reason               string
+}
+
+func (e *VersionMismatch) Error() string { return ErrVersionMismatch.Error() + ": " + e.Reason }
+
+// Unwrap makes every VersionMismatch an ErrVersionMismatch.
+func (e *VersionMismatch) Unwrap() error { return ErrVersionMismatch }
+
+// HubBehind says the node speaks only versions newer than the hub's, so it
+// is the hub that has to be upgraded; otherwise it is the node.
+func (e *VersionMismatch) HubBehind() bool { return e.Node > e.HubMax }
+
 // Hello is what the hub sends first. The token authenticates the hub to the
 // node independently of whatever the network layer does — the two are
 // deliberately not one chain.
@@ -57,8 +87,6 @@ type Hello struct {
 	// that sends only Version speaks that one version.
 	ProtocolMin int `json:"protocol_min,omitempty"`
 	ProtocolMax int `json:"protocol_max,omitempty"`
-	// Features are the protocol extensions the hub supports.
-	Features []string `json:"features,omitempty"`
 }
 
 // Harness is one agent runtime the node can actually start, with the models
@@ -94,18 +122,21 @@ type Advert struct {
 	IPs          []string  `json:"ips,omitempty"`
 	Harnesses    []Harness `json:"harnesses"`
 	// Snapshot is everything the machine can do, as the ability domain
-	// defines it: evidence, availability, coverage, a digest. An advert
-	// without one is from an older node; Synthesize fills in from the
-	// old fields and says so. Features are the protocol extensions the
-	// sender supports.
+	// defines it: evidence, availability, coverage, a digest. The hub
+	// drops a snapshot that fails validation; Synthesize stands in for a
+	// missing one.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
-	Features []string          `json:"features,omitempty"`
+	// Features lists what a node on the negotiated protocol version may
+	// still lack: native history, which needs a platform that can store
+	// it, and controlled restart, which needs a launcher that can
+	// re-execute the node. What every node of that version has is not
+	// listed; a capability every node must have raises ProtocolVersion.
+	Features []string `json:"features,omitempty"`
 	// SessionGraceMS is the node's process reconnect window, in milliseconds.
 	SessionGraceMS int64 `json:"session_grace_ms,omitempty"`
 	// OwnSkills are the skills the machine's AI tools have of their own,
 	// outside Steve — under ~/.codex/skills and the like — so the owner
-	// can see them from the hub and load one. A machine that predates
-	// the field sends none.
+	// can see them from the hub and load one.
 	OwnSkills []OwnSkill `json:"own_skills,omitempty"`
 	// OwnMCP are the MCP servers the machine's coding agents have of
 	// their own, outside Steve — shape only: values of environment
@@ -178,18 +209,17 @@ func Dial(conn io.ReadWriter, hello Hello) (Advert, error) {
 	if advert.Refused != "" {
 		// The node says why in words; the error says it in kind, so a
 		// hub can tell a wrong token from a node another hub already holds.
-		cause := ErrRefused
 		switch {
 		case advert.Refused == "token rejected":
-			cause = ErrBadToken
+			return Advert{}, fmt.Errorf("%w: %s", ErrBadToken, advert.Refused)
 		case strings.HasPrefix(advert.Refused, "hub speaks v"):
-			cause = ErrVersionMismatch
+			return Advert{}, &VersionMismatch{Node: advert.Version, HubMin: ProtocolMin, HubMax: ProtocolVersion, Reason: advert.Refused}
 		}
-		return Advert{}, fmt.Errorf("%w: %s", cause, advert.Refused)
+		return Advert{}, fmt.Errorf("%w: %s", ErrRefused, advert.Refused)
 	}
 	if advert.Version < ProtocolMin || advert.Version > ProtocolVersion {
-		return Advert{}, fmt.Errorf("%w: node speaks v%d, hub speaks v%d",
-			ErrVersionMismatch, advert.Version, ProtocolVersion)
+		return Advert{}, &VersionMismatch{Node: advert.Version, HubMin: ProtocolMin, HubMax: ProtocolVersion,
+			Reason: fmt.Sprintf("node speaks v%d, hub speaks v%d–v%d", advert.Version, ProtocolMin, ProtocolVersion)}
 	}
 	return advert, nil
 }
@@ -214,6 +244,11 @@ var ErrRefused = errors.New("nodewire: refused")
 // node may decline a hub it will not serve, and the hub learns why instead
 // of receiving an advert and then losing the link.
 func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(Hello) error, advert Advert) (Hello, error) {
+	return acceptClaim(conn, valid, claim, advert, ProtocolMin, ProtocolVersion)
+}
+
+// acceptClaim is AcceptClaim for a node that speaks lo–hi.
+func acceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(Hello) error, advert Advert, lo, hi int) (Hello, error) {
 	var hello Hello
 	if err := readJSON(conn, &hello); err != nil {
 		return Hello{}, fmt.Errorf("read hello: %w", err)
@@ -224,25 +259,24 @@ func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(H
 	}
 	// Each refusal below is a courtesy to the peer; the error returned is
 	// the verdict, and a peer that cannot even read it has left.
-	chosen := Negotiate(peerMin, peerMax)
+	chosen := negotiate(peerMin, peerMax, lo, hi)
 	if chosen == 0 {
-		_ = writeJSON(conn, Advert{Version: ProtocolVersion,
-			Refused: fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", peerMin, peerMax, ProtocolMin, ProtocolVersion)})
-		return Hello{}, ErrVersionMismatch
+		reason := fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", peerMin, peerMax, lo, hi)
+		_ = writeJSON(conn, Advert{Version: hi, Refused: reason})
+		return Hello{}, fmt.Errorf("%w: %s", ErrVersionMismatch, reason)
 	}
 	hello.Version = chosen
 	advert.Version = chosen
 	if !valid(hello.Token) {
-		_ = writeJSON(conn, Advert{Version: ProtocolVersion, Refused: "token rejected"})
+		_ = writeJSON(conn, Advert{Version: hi, Refused: "token rejected"})
 		return Hello{}, ErrBadToken
 	}
 	if claim != nil {
 		if err := claim(hello); err != nil {
-			_ = writeJSON(conn, Advert{Version: ProtocolVersion, Refused: err.Error()})
+			_ = writeJSON(conn, Advert{Version: hi, Refused: err.Error()})
 			return Hello{}, fmt.Errorf("%w: %s", ErrRefused, err)
 		}
 	}
-	advert.Version = ProtocolVersion
 	if err := writeJSON(conn, advert); err != nil {
 		return Hello{}, fmt.Errorf("send advert: %w", err)
 	}

@@ -47,7 +47,6 @@ export const skillsZh = {
     "skills.syncNodes": "技能同步节点",
     "skills.syncSource": "分发源",
     "skills.offline": "离线",
-    "skills.syncUnsupported": "不支持同步",
     "skills.synced": "已同步",
     "skills.notSynced": "未同步",
     "skills.syncVersion": "同步版本",

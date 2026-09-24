@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -55,23 +54,11 @@ func (r *Registry) Refresh(ctx context.Context, name string) (nodewire.Advert, e
 }
 
 // Admit asks a node for its final word on the clauses of a requirement it
-// owns, on an observation it takes now. A node that does not speak the
-// admission protocol answers Unsure with NO_ADMISSION rather than an
-// error: the caller records that nobody re-checked, and decides.
+// owns, on an observation it takes now.
 func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitRequest) (ability.Admission, error) {
 	c, err := r.connect(ctx, name)
 	if err != nil {
 		return ability.Admission{}, err
-	}
-	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureAdmission) {
-		return ability.Admission{Node: name, Source: ability.SourceLegacy, Verdict: ability.Unsure, Code: ability.CodeNoAdmission, At: time.Now().UTC()}, nil
-	}
-	if len(req.Uses) > 0 && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureMCP) {
-		adm := ability.Admission{Node: name, Source: ability.SourceLegacy, Verdict: ability.False, Code: ability.CodeNoBinding, At: time.Now().UTC()}
-		for _, id := range req.Uses {
-			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: "mcp:" + id, Verdict: ability.False, Code: ability.CodeNoBinding})
-		}
-		return adm, nil
 	}
 	var nonce [12]byte
 	// crypto/rand.Read never returns an error: it fills or crashes.
@@ -110,9 +97,6 @@ func (r *Registry) Inspect(ctx context.Context, name, path string) ([]nodewire.R
 	if err != nil {
 		return nil, err
 	}
-	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureInspect) {
-		return nil, fmt.Errorf("node %q runs an older steve-node that cannot inspect directories", name)
-	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamInspect, Command: path})
 	if err != nil {
 		return nil, fmt.Errorf("node %q: inspect: %w", name, err)
@@ -133,9 +117,6 @@ func (r *Registry) MCPProbe(ctx context.Context, name, server string) (nodewire.
 	c, err := r.connect(ctx, name)
 	if err != nil {
 		return nodewire.MCPProbeReply{}, err
-	}
-	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureMCPProbe) {
-		return nodewire.MCPProbeReply{}, fmt.Errorf("node %q runs an older steve-node that cannot probe MCP servers", name)
 	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamMCPProbe, Command: server})
 	if err != nil {
@@ -181,12 +162,6 @@ func (r *Registry) configStream(ctx context.Context, name, verb string, set *nod
 	if err != nil {
 		return nodewire.Settings{}, err
 	}
-	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureConfig) {
-		return nodewire.Settings{}, fmt.Errorf("node %q runs an older steve-node that cannot be configured from here; edit its node.json", name)
-	}
-	if set != nil && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureConfigRevision) {
-		return nodewire.Settings{}, nodewire.ErrSettingsRevisionUnsupported
-	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamConfig, Command: verb})
 	if err != nil {
 		return nodewire.Settings{}, fmt.Errorf("node %q: config: %w", name, err)
@@ -220,7 +195,7 @@ func (r *Registry) Release(ctx context.Context, name, attempt string) error {
 	r.mu.Lock()
 	c := r.live[name]
 	r.mu.Unlock()
-	if c == nil || !c.alive() || !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureMCP) {
+	if c == nil || !c.alive() {
 		return nil
 	}
 	c.bindingsMu.Lock()
@@ -249,17 +224,13 @@ func (r *Registry) Bindings(ctx context.Context, name, attempt string) []ability
 }
 
 // PushSkills sends a skill bundle to a node and has it materialized. A
-// node that already has this bundle is not sent it again; a node that does
-// not take bundles is left alone, and its snapshot says so.
+// node that already has this bundle is not sent it again.
 func (r *Registry) PushSkills(ctx context.Context, name string, b skills.Bundle) error {
 	c, err := r.connect(ctx, name)
 	if err != nil {
 		return err
 	}
 	adv := c.getAdvert()
-	if !nodewire.HasFeature(adv.Features, nodewire.FeatureSkills) {
-		return fmt.Errorf("node %q does not take skill bundles", name)
-	}
 	if adv.Skills == b.Hash {
 		return nil
 	}

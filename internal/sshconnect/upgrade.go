@@ -49,7 +49,7 @@ var upgradePhases = []string{PhasePreflight, PhaseUpload, PhaseInstallation, Pha
 func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, error) {
 	backend, ok := s.backend.(UpgradeBackend)
 	if !ok {
-		return InstallResult{}, fail("preflight", "upgrade_unsupported", "这类接入的机器无法从这里升级", "在机器上重新安装节点程序")
+		return InstallResult{}, fail("preflight", "upgrade_unsupported", "这类接入的机器无法从这里升级", "在该机器上用协调节点这一版本构建的 steve-node 替换原程序并重启；引导脚本不会替换已有程序")
 	}
 	var nonce [24]byte
 	rand.Read(nonce[:])
@@ -103,7 +103,7 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 	s.enter(&result, PhasePreflight, "确认这台机器的 SSH 别名、平台和要发送的程序")
 	target, err := backend.UpgradeTarget(ctx, nodeID)
 	if err != nil {
-		return reject(fail("preflight", "upgrade_target", err.Error(), "只有经由 SSH 接入、且隧道仍记录在本机的机器可以从这里升级"))
+		return reject(fail("preflight", "upgrade_target", err.Error(), "只有经 SSH 加入桌面 App 集群、且隧道仍记录在本机的机器可以从这里升级；其他机器需在该机器上替换 steve 或 steve-node 并重启"))
 	}
 	candidate, _, err := s.selected(ctx, target.Alias)
 	if err != nil {

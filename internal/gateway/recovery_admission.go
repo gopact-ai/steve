@@ -23,7 +23,7 @@ func (g *Gateway) QueueTaskResume(ctx context.Context, book *ledger.Ledger, key 
 		r.ConversationID == "" || r.MessageID == "" || r.Member == "" || r.Requester == "" {
 		return errors.New("gateway resume requires a stable input, task admission and reply address")
 	}
-	if _, ok := g.ch.(textReplier); !ok {
+	if g.ch == nil {
 		return errors.New("gateway resume channel cannot post notices")
 	}
 	input := recoveryInput{Revival: r, Admission: admission,

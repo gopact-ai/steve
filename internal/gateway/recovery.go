@@ -285,8 +285,7 @@ func (g *Gateway) recoverAcceptedInput(ctx context.Context, book *ledger.Ledger,
 }
 
 func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key string, input recoveryInput, driver RecoveryDriver, revive func(string, string) error) error {
-	sender, ok := g.ch.(textReplier)
-	if !ok {
+	if g.ch == nil {
 		return errors.New("gateway recovery reply channel is not available")
 	}
 	anchor := input.MessageID
@@ -321,7 +320,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 		if err := revive(input.ConversationID, input.Member); err != nil {
 			return err
 		}
-		anchor, err = g.recoveryNotice(ctx, book, key, input, sender)
+		anchor, err = g.recoveryNotice(ctx, book, key, input)
 		if err != nil {
 			return err
 		}
@@ -369,7 +368,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 		if text == "" {
 			text = output.Error
 		}
-		id, err := sender.ReplyText(ctx, anchor, g.truncateRunes(text, maxReplyRunes))
+		id, err := g.ch.ReplyText(ctx, anchor, g.truncateRunes(text, maxReplyRunes))
 		if err != nil {
 			return nil, noticeError(err)
 		}
@@ -384,20 +383,18 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 	return book.AcknowledgeCommand(ctx, key, recoveryInputKind, input.Requester, key+"/reply", "gateway-recovery-reply")
 }
 
-func (g *Gateway) recoveryNotice(ctx context.Context, book *ledger.Ledger, key string, input recoveryInput, sender textReplier) (string, error) {
+func (g *Gateway) recoveryNotice(ctx context.Context, book *ledger.Ledger, key string, input recoveryInput) (string, error) {
 	raw, _, err := book.Command(ctx, key+"/notice", "gateway-recovery-notice", input.Requester, func(ctx context.Context) (json.RawMessage, error) {
 		if !input.Manual {
-			if recall, ok := g.ch.(recaller); ok {
-				for _, id := range append([]string{input.OpenCard}, input.Interim...) {
-					if id != "" {
-						if err := recall.DeleteMessage(ctx, id); err != nil {
-							return nil, noticeError(err)
-						}
+			for _, id := range append([]string{input.OpenCard}, input.Interim...) {
+				if id != "" {
+					if err := g.ch.DeleteMessage(ctx, id); err != nil {
+						return nil, noticeError(err)
 					}
 				}
 			}
 		}
-		id, err := sender.ReplyText(ctx, input.MessageID, input.Notice)
+		id, err := g.ch.ReplyText(ctx, input.MessageID, input.Notice)
 		if err != nil {
 			return nil, noticeError(err)
 		}

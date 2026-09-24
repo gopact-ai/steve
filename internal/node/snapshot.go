@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // Snapshot observes the machine into an ability snapshot. Everything that
@@ -28,7 +27,7 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 			ability.Hardware: ability.Partial, ability.Network: ability.Complete, ability.Credential: ability.Complete,
 			ability.Tag: ability.Complete, ability.Model: ability.Partial, ability.Skill: ability.Unsupported, ability.A2A: ability.Unsupported,
 		},
-		Features: nodewire.Features(), Source: "node",
+		Source: "node",
 	}
 
 	ids := make([]string, 0, len(o.Harnesses))
