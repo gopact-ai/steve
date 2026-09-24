@@ -6,21 +6,25 @@ import (
 	"testing"
 )
 
-type snapshotWithFloor interface {
-	SnapshotReplicaCheckpoint(uint64) ([]byte, func() error, error)
-}
-
+// checkpointReplica takes and encodes a checkpoint, and returns its
+// encoding with the callback for when it is durable.
 func checkpointReplica(t *testing.T, book *Ledger, floor uint64) ([]byte, func() error) {
 	t.Helper()
-	owner, ok := any(book).(snapshotWithFloor)
-	if !ok {
-		t.Fatal("replica cannot checkpoint an explicitly retained replay suffix")
-	}
-	data, persisted, err := owner.SnapshotReplicaCheckpoint(floor)
+	data, checkpoint, err := encodeCheckpoint(book, floor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return data, persisted
+	return data, checkpoint.Persisted
+}
+
+func encodeCheckpoint(book *Ledger, floor uint64) ([]byte, *ReplicaCheckpoint, error) {
+	checkpoint, err := book.SnapshotReplicaCheckpoint(floor)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer checkpoint.Release()
+	data, err := checkpoint.Encode()
+	return data, checkpoint, err
 }
 
 func receiptCount(t *testing.T, book *Ledger) int {
@@ -113,18 +117,14 @@ func TestReplicaCheckpointRejectsInvalidFloorAndMissingSuffix(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	owner, ok := any(book).(snapshotWithFloor)
-	if !ok {
-		t.Fatal("replica checkpoint owner is missing")
-	}
-	if _, _, err := owner.SnapshotReplicaCheckpoint(7); err == nil {
+	if _, _, err := encodeCheckpoint(book, 7); err == nil {
 		t.Fatal("future replay floor accepted")
 	}
 	// Corrupt only a disposable database, not the mutation API.
 	if _, err := book.db.Exec(`DELETE FROM replica_commands WHERE version = 5`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := owner.SnapshotReplicaCheckpoint(3); err == nil {
+	if _, _, err := encodeCheckpoint(book, 3); err == nil {
 		t.Fatal("checkpoint hid a gap in the retained suffix")
 	}
 }

@@ -715,24 +715,28 @@ type snapshotData struct {
 const snapshotFormat = 3
 
 func (m *machine) Snapshot() (raft.FSMSnapshot, error) {
-	data, application, persisted, err := m.captureSnapshot()
+	data, snapshot, err := m.captureSnapshot()
 	if err != nil {
 		return nil, err
 	}
 	// Metadata is an owned copy. JSON work no longer blocks Apply, and the
 	// application's binary snapshot never passes through the JSON encoder.
-	metadata, err := json.Marshal(data)
+	snapshot.metadata, err = json.Marshal(data)
 	if err != nil {
+		snapshot.Release()
 		return nil, err
 	}
-	return &encodedSnapshot{metadata: metadata, application: application, persisted: persisted}, nil
+	return snapshot, nil
 }
 
-func (m *machine) captureSnapshot() (snapshotData, []byte, func() error, error) {
+// captureSnapshot fixes the snapshot's boundary with Apply excluded: the
+// machine's state, and the application's bytes or its checkpoint, whose
+// bytes are produced when the snapshot is persisted.
+func (m *machine) captureSnapshot() (snapshotData, *encodedSnapshot, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.failure != nil {
-		return snapshotData{}, nil, nil, fmt.Errorf("%w: replica stopped", ErrApplication)
+		return snapshotData{}, nil, fmt.Errorf("%w: replica stopped", ErrApplication)
 	}
 	data := snapshotData{Format: snapshotFormat, State: cloneState(m.state), Receipts: maps.Clone(m.receipts), HasApplication: m.app != nil}
 	// Result bytes may be owned by an application implementation. Do not
@@ -741,31 +745,34 @@ func (m *machine) captureSnapshot() (snapshotData, []byte, func() error, error) 
 		receipt.Result.Data = bytes.Clone(receipt.Result.Data)
 		data.Receipts[id] = receipt
 	}
-	var application []byte
-	var persisted func() error
-	if m.app != nil {
-		var err error
-		if owner, ok := m.app.(CheckpointApplication); ok {
-			application, persisted, err = owner.SnapshotCheckpoint(data.State.AppReplayFloor)
-		} else {
-			application, err = m.app.Snapshot()
-		}
+	snapshot := &encodedSnapshot{}
+	if m.app == nil {
+		return data, snapshot, nil
+	}
+	owner, ok := m.app.(CheckpointApplication)
+	if !ok {
+		application, err := m.app.Snapshot()
 		if err != nil {
-			return snapshotData{}, nil, nil, fmt.Errorf("snapshot application: %w", err)
+			return snapshotData{}, nil, fmt.Errorf("snapshot application: %w", err)
 		}
+		snapshot.application = application
+		return data, snapshot, nil
 	}
-	if persisted != nil {
-		prune, generation := persisted, m.snapshotGeneration
-		persisted = func() error {
-			m.mu.RLock()
-			defer m.mu.RUnlock()
-			if generation != m.snapshotGeneration {
-				return nil
-			}
-			return prune()
+	checkpoint, err := owner.SnapshotCheckpoint(data.State.AppReplayFloor)
+	if err != nil {
+		return snapshotData{}, nil, fmt.Errorf("snapshot application: %w", err)
+	}
+	generation := m.snapshotGeneration
+	snapshot.checkpoint = checkpoint
+	snapshot.persisted = func() error {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		if generation != m.snapshotGeneration {
+			return nil
 		}
+		return checkpoint.Persisted()
 	}
-	return data, application, persisted, nil
+	return data, snapshot, nil
 }
 
 func (m *machine) Restore(reader io.ReadCloser) error {
