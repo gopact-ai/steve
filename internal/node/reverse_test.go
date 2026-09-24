@@ -436,7 +436,7 @@ func TestHubRefusesAnAdvertOnAnOlderProtocol(t *testing.T) {
 	if c != nil {
 		c.close()
 	}
-	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), "node speaks v1") || !strings.Contains(err.Error(), "upgrade steve on that machine to this build") {
+	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), "node speaks v1") || !strings.Contains(err.Error(), "replace steve or steve-node on that machine with this build") {
 		t.Fatalf("dial = %v, want a version mismatch naming v1 and the machine's upgrade", err)
 	}
 }

@@ -2753,7 +2753,7 @@ checks["fleet-protocol-mismatch"] = async (f) => {
     const nodes = [
         { name: "hub", role: "hub", up: true, version: "abc1234", harnesses: [] },
         { name: "worker-v1", role: "node", addr: "10.0.0.7:7701", up: false, protocol_mismatch: { node: 1, hub_min: 2, hub_max: 2, upgrade: "node" }, harnesses: [],
-            last_error: "nodewire: protocol version mismatch: hub speaks v2–v2, node speaks v1–v1; upgrade steve on that machine to this build (a machine enrolled over SSH can be upgraded from the console)" },
+            last_error: "nodewire: protocol version mismatch: hub speaks v2–v2, node speaks v1–v1; replace steve or steve-node on that machine with this build (only a machine that joined a desktop app cluster over SSH can be upgraded from the console)" },
         { name: "worker-v3", role: "node", addr: "10.0.0.8:7701", up: false, protocol_mismatch: { node: 3, hub_min: 2, hub_max: 2, upgrade: "hub" }, harnesses: [],
             last_error: "nodewire: protocol version mismatch: hub speaks v2–v2, node speaks v3–v3; upgrade this hub to a build that speaks v3" },
         { name: "worker-offline", role: "node", addr: "10.0.0.9:7701", up: false, version: "abc1234", last_error: "dial tcp 10.0.0.9:7701: connection refused", harnesses: [] },
