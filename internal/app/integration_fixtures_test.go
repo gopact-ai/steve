@@ -55,7 +55,7 @@ func agentAdminFixture(t *testing.T) *adminsvc.Service {
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	a := &adminsvc.Service{ConfigStore: adminsvc.NewConfigStore(cfg), Path: path, Catalog: catalog}
+	a := &adminsvc.Service{NodeName: "node-hub", ConfigStore: adminsvc.NewConfigStore(cfg), Path: path, Catalog: catalog}
 	fixtureConfigs.Store(a, cfg)
 	t.Cleanup(func() { fixtureConfigs.Delete(a) })
 	return a

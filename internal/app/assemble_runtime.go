@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
@@ -47,9 +48,6 @@ func assembleRuntime(life lifetime, input inputAssembly) (runtimeAssembly, error
 		if book == nil {
 			return nil, fmt.Errorf("coordinated application needs its generation ledger")
 		}
-		if environment.NodeID != "" {
-			adminsvc.LocalNodeIdentity.Store(environment.NodeID)
-		}
 	} else {
 		book, err = openLedger(cfg)
 		if err != nil {
@@ -66,7 +64,7 @@ func assembleRuntime(life lifetime, input inputAssembly) (runtimeAssembly, error
 	}
 	background := newApplicationBackground(ctx)
 	life.Defer(func() { background.Close() })
-	return &runtimeValues{background: background, book: book, catalog: catalog, cfg: cfg, configStore: adminsvc.NewConfigStore(cfg), settings: config.NewRuntimeSettings(cfg), ctx: ctx, live: live, manager: manager, stop: stop}, nil
+	return &runtimeValues{background: background, book: book, catalog: catalog, cfg: cfg, configStore: adminsvc.NewConfigStore(cfg), nodeName: localNodeName(environment), settings: config.NewRuntimeSettings(cfg), ctx: ctx, live: live, manager: manager, stop: stop}, nil
 }
 
 type runtimeAssembly interface {
@@ -80,6 +78,9 @@ type runtimeAssembly interface {
 	Config() *config.Config
 	// ConfigStore guards Config for everything that reads it after startup.
 	ConfigStore() *adminsvc.ConfigStore
+	// NodeName is this machine's node name, decided once for the whole
+	// application.
+	NodeName() string
 	Settings() *config.RuntimeSettings
 	Context() context.Context
 	Live() *skills.Live
@@ -93,6 +94,7 @@ type runtimeValues struct {
 	catalog     *agent.Catalog
 	cfg         *config.Config
 	configStore *adminsvc.ConfigStore
+	nodeName    string
 	settings    *config.RuntimeSettings
 	ctx         context.Context
 	live        *skills.Live
@@ -110,6 +112,8 @@ func (v *runtimeValues) Config() *config.Config { return v.cfg }
 
 func (v *runtimeValues) ConfigStore() *adminsvc.ConfigStore { return v.configStore }
 
+func (v *runtimeValues) NodeName() string { return v.nodeName }
+
 func (v *runtimeValues) Settings() *config.RuntimeSettings { return v.settings }
 
 func (v *runtimeValues) Context() context.Context { return v.ctx }
@@ -119,3 +123,19 @@ func (v *runtimeValues) Live() *skills.Live { return v.live }
 func (v *runtimeValues) Manager() *harness.Manager { return v.manager }
 
 func (v *runtimeValues) Stop() context.CancelFunc { return v.stop }
+
+// localNodeName is this machine's node name: its cluster identity when it
+// is a member, else STEVE_NODE, else the hostname, else "local".
+func localNodeName(environment *Environment) string {
+	if environment != nil && environment.NodeID != "" {
+		return environment.NodeID
+	}
+	if name := strings.TrimSpace(os.Getenv("STEVE_NODE")); name != "" {
+		return name
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return "local"
+	}
+	return host
+}

@@ -41,7 +41,7 @@ func (b *applicationBackground) Close() {
 }
 
 func newLocalObservation(ctx context.Context, store *adminsvc.ConfigStore) (*adminsvc.LocalObservation, func()) {
-	observation := &adminsvc.LocalObservation{Launch: node.NewLaunchProbe()}
+	observation := adminsvc.NewLocalObservation(node.NewLaunchProbe())
 	background := newApplicationBackground(ctx)
 	background.Go(func(ctx context.Context) {
 		observation.Launch.Run(ctx, func() (out []string) {

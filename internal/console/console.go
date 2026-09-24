@@ -118,7 +118,9 @@ type Service struct {
 	// often an open recovery question looks for the original coming back.
 	recoveryQuiet time.Duration
 	recoveryProbe time.Duration
-	defaultLocale string
+	// recoveryStopEvery is how often an unconfirmed stop is checked again.
+	recoveryStopEvery time.Duration
+	defaultLocale     string
 	// DefaultLocaleSource is configured before admission starts.
 	DefaultLocaleSource func() string
 	closing             bool
@@ -131,7 +133,7 @@ type Service struct {
 }
 
 func New(handler Handler, owner string, model Events) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe}
+	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }
 
 // SetRecoveryQuiet is how long a recovery rejoins the original execution

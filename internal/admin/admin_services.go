@@ -185,7 +185,7 @@ func nodeRestartError(err error) error {
 
 func (s *Services) Services(ctx context.Context) (consoleapi.ServicesView, error) {
 	op, _ := s.RestartStatus(ctx, "hub", "")
-	out := consoleapi.ServicesView{Services: []consoleapi.ManagedService{{Name: "hub", Kind: "hub", Label: NodeName(), Version: nodewire.Version(), Online: true, Supported: processrestart.Supported(), Operation: &op}}}
+	out := consoleapi.ServicesView{Services: []consoleapi.ManagedService{{Name: "hub", Kind: "hub", Label: s.admin.NodeName, Version: nodewire.Version(), Online: true, Supported: processrestart.Supported(), Operation: &op}}}
 	if s.admin.Nodes == nil {
 		return out, nil
 	}

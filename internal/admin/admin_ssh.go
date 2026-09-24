@@ -91,7 +91,7 @@ func (b sshNodeBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 	blocked := func(id, message, suggestion string) {
 		template.Steps = append(template.Steps, sshconnect.Step{ID: id, Status: "blocked", Message: message, Suggestion: suggestion})
 	}
-	if exists || req.Name == NodeName() {
+	if exists || req.Name == a.NodeName {
 		blocked("node_name", "这个节点名称已被使用", "使用其他名称，已有节点通过其管理入口调整")
 	}
 	if binary == "" {

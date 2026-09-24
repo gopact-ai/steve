@@ -113,7 +113,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		Owner: cfg.EffectiveOwnerID(), ChannelOwners: channelOwners, Home: profile.Home, Skills: live,
 		Projects: projects, DefaultProject: cfg.Gateway.DefaultProject, HomeProject: adminsvc.HomeProjectID,
 		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
-		Executions: executions, Tasks: tasks, Node: adminsvc.NodeName(), Schedules: schedules,
+		Executions: executions, Tasks: tasks, Node: boot.NodeName(), Schedules: schedules,
 	})
 	if err != nil {
 		return nil, err

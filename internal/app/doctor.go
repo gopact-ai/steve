@@ -61,7 +61,8 @@ func Doctor(configPath string, timeout time.Duration) error {
 	// Nodes are probed before agents: availability is a real dial, not a
 	// line in the config, and an agent placed on an unreachable node should
 	// fail with that fact rather than with a mystery session error.
-	nodewire.SetSelf(adminsvc.NodeName())
+	nodeName := localNodeName(nil)
+	nodewire.SetSelf(nodeName)
 	nodes := node.NewRegistry(cfg.Gateway.HubID, configbuild.NodeConfigs(cfg))
 	defer nodes.Close()
 	manager.SetTransports(nodes)
@@ -86,7 +87,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 	guarded := adminsvc.NewConfigStore(cfg)
 	observation, closeObservation := newLocalObservation(ctx, guarded)
 	defer closeObservation()
-	self := adminsvc.ObservedHubAdvert(guarded, observation)
+	self := adminsvc.ObservedHubAdvert(nodeName, guarded, observation)
 	slog.Info(fmt.Sprintf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
 		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), adminsvc.HarnessSummary(self), self.Capabilities), "node", self.Node)
 	reportGit("hub "+self.Node, self)
