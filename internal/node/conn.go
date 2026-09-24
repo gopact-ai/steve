@@ -90,7 +90,7 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 			if mismatch.HubBehind() {
 				return nil, fmt.Errorf("%w; upgrade this hub to a build that speaks v%d", err, mismatch.Node)
 			}
-			return nil, fmt.Errorf("%w; upgrade steve on that machine to this build (a machine enrolled over SSH can be upgraded from the console)", err)
+			return nil, fmt.Errorf("%w; replace steve or steve-node on that machine with this build (only a machine that joined a desktop app cluster over SSH can be upgraded from the console)", err)
 		}
 		return nil, err
 	}

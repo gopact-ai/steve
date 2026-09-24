@@ -260,7 +260,8 @@ func v1Node(t *testing.T, socket net.Conn) {
 
 // A node on protocol v1 is refused at the handshake, whatever features it
 // lists, and the hub says once which node it was, which versions met and
-// how to fix it, whichever way the machine was enrolled.
+// how to fix it: on the machine itself, or from the console for a machine
+// that joined a desktop app cluster over SSH.
 func TestHubRefusesAProtocolV1Node(t *testing.T) {
 	r := NewRegistry("hub", map[string]Config{"old": {Addr: "old.example:7701", Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
 		hub, node := net.Pipe()
@@ -275,7 +276,7 @@ func TestHubRefusesAProtocolV1Node(t *testing.T) {
 	if n := strings.Count(err.Error(), `"old"`); n != 1 {
 		t.Fatalf("connect = %v, names the node %d times, want once", err, n)
 	}
-	for _, want := range []string{"node speaks v1–v1", "upgrade steve on that machine to this build", "enrolled over SSH can be upgraded from the console"} {
+	for _, want := range []string{"node speaks v1–v1", "replace steve or steve-node on that machine with this build", "only a machine that joined a desktop app cluster over SSH can be upgraded from the console"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("connect = %v, want it to say %q", err, want)
 		}
