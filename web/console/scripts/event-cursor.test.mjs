@@ -35,3 +35,14 @@ test("an event without an id is delivered and leaves the cursor alone", () => {
     assert.equal(cursor.accept("garbage"), true);
     assert.equal(cursor.last(), "run1.3");
 });
+
+test("after a reset the stream is followed afresh", () => {
+    const cursor = eventCursor();
+    for (const id of ["run1.7", "run1.8"]) cursor.accept(id);
+    cursor.reset();
+    assert.equal(cursor.last(), "");
+    // The events replayed after a reset are delivered, even those the
+    // cursor had counted past.
+    assert.deepEqual(["run1.3", "run1.4"].map((id) => cursor.accept(id)), [true, true]);
+    assert.equal(cursor.last(), "run1.4");
+});

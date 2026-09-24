@@ -51,7 +51,7 @@ try {
     await page.addInitScript(({ conversation }) => {
         if (!sessionStorage.getItem("locale-fixture")) { localStorage.setItem("steve.ui.locale", "en"); sessionStorage.setItem("locale-fixture", "1"); }
         sessionStorage.setItem("steve.conversation", conversation);
-        window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+        window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
     }, { conversation });
     const status = { enabled: true, node_id: "fixture-node", setup_required: true, agent_count: 0, setup: { step: "preferences", done: false } };
     await page.route("**/*", async (route) => {

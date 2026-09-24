@@ -66,6 +66,7 @@ try {
         sessionStorage.setItem("steve.conversation", c);
         window.sources = [];
         window.EventSource = class {
+            addEventListener() {}
             constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); }
             close() { window.sources = window.sources.filter((s) => s !== this); }
         };

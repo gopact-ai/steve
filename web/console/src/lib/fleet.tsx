@@ -158,6 +158,10 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         const cursor = eventCursor();
         const connect = () => {
             source = new EventSource(eventsURL(cursor.last()));
+            // The stream could not continue after the last event: some may
+            // be missing, so the snapshot is re-read and the replay that
+            // follows is taken as new.
+            source.addEventListener("reset", () => { cursor.reset(); void load(); });
             source.onopen = () => {
                 watch.up();
                 floor.live(true);

@@ -80,7 +80,7 @@ await context.route("**/*", async route => {
 });
 await page.addInitScript(() => {
     localStorage.setItem("steve.ui.locale", "en");
-    window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+    window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
 });
 const pane = () => page.locator("[data-channel-conversation]");
 const shot = async name => { if (process.env.CHANNEL_SCREENSHOTS) { await mkdir(process.env.CHANNEL_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.CHANNEL_SCREENSHOTS, name + ".png") }); } };

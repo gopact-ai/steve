@@ -32,7 +32,7 @@ import (
 type Model interface {
 	Snapshot(context.Context) readmodel.Snapshot
 	UsageSummary(context.Context) readmodel.UsageSnapshot
-	SubscribeAfter(context.Context, string) ([]readmodel.Event, <-chan readmodel.Event, func())
+	SubscribeAfter(context.Context, ...string) (readmodel.Resume, <-chan readmodel.Event, func())
 	EventID(readmodel.Event) string
 	History(context.Context, string, int) ([]readmodel.HistoryEntry, string, error)
 	TaskHistory(context.Context, task.Query) (readmodel.TaskPage, error)
@@ -301,14 +301,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	// staring at nothing until the next change. A client reconnecting names
 	// the last event it received, by the Last-Event-ID an EventSource sends
 	// or by the after parameter of one it opened anew, and is replayed only
-	// what followed it.
-	last := r.Header.Get("Last-Event-ID")
-	if after := r.URL.Query().Get("after"); after != "" {
-		last = after
-	}
-	replay, stream, stop := s.model.SubscribeAfter(r.Context(), last)
+	// what followed it. One the stream cannot continue is first sent a
+	// reset event, telling it to re-read /state.
+	resume, stream, stop := s.model.SubscribeAfter(r.Context(), r.Header.Get("Last-Event-ID"), r.URL.Query().Get("after"))
 	defer stop()
-	for _, ev := range replay {
+	if resume.Reset {
+		fmt.Fprint(w, "event: reset\ndata: {}\n\n")
+	}
+	for _, ev := range resume.Replay {
 		s.writeEvent(w, ev)
 	}
 	flusher.Flush()

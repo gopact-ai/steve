@@ -54,7 +54,7 @@ await page.route("**/*", async (route) => {
     if (p === "/console/attempts/attempt1/diff") return route.fulfill({ json: { path: u.searchParams.get("path") || "app.ts", diff: "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n-old\n+first\n+second\n third\n" } });
     f.errors.push(req.method() + " " + p); return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
 });
-await page.addInitScript((conversation) => { sessionStorage.setItem("steve.conversation", conversation); localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((s) => s !== this); } }; }, A);
+await page.addInitScript((conversation) => { sessionStorage.setItem("steve.conversation", conversation); localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { addEventListener() {} constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((s) => s !== this); } }; }, A);
 
 async function select(locator, needle) {
     await locator.evaluate((element, text) => {

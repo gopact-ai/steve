@@ -218,6 +218,7 @@ if (process.env.PURE_ONLY !== "1") {
             sessionStorage.setItem("steve.conversation", conversation);
             window.sources = [];
             window.EventSource = class {
+                addEventListener() {}
                 constructor(url) { this.url = url; window.sources.push(this); setTimeout(() => this.onopen?.(), 0); }
                 close() { window.sources = window.sources.filter((source) => source !== this); }
             };

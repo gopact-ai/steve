@@ -65,7 +65,7 @@ await page.addInitScript((id) => {
     sessionStorage.setItem("steve.conversation", id);
     localStorage.setItem("steve.ui.locale", "en");
     window.sources = [];
-    window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((source) => source !== this); } };
+    window.EventSource = class { addEventListener() {} constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((source) => source !== this); } };
     let sequence = 0;
     window.emit = (event) => {
         // Different owner changes are not SSE replays. The arrival cursor n

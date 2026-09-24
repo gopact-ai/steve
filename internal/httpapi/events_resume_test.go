@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,8 +14,9 @@ import (
 )
 
 type sent struct {
-	id   string
-	kind string
+	event string
+	id    string
+	kind  string
 }
 
 // openEvents connects to the stream, resuming after the given id through
@@ -45,6 +47,8 @@ func nextEvent(t *testing.T, stream *bufio.Scanner) sent {
 	for stream.Scan() {
 		line := stream.Text()
 		switch {
+		case strings.HasPrefix(line, "event: "):
+			got.event = strings.TrimPrefix(line, "event: ")
 		case strings.HasPrefix(line, "id: "):
 			got.id = strings.TrimPrefix(line, "id: ")
 		case strings.HasPrefix(line, "data: "):
@@ -53,7 +57,7 @@ func nextEvent(t *testing.T, stream *bufio.Scanner) sent {
 				t.Fatal(err)
 			}
 			got.kind = ev.Kind
-		case line == "" && got.kind != "":
+		case line == "" && (got.kind != "" || got.event != ""):
 			return got
 		}
 	}
@@ -100,10 +104,79 @@ func TestEventStreamResumesAfterTheLastEventID(t *testing.T) {
 			}
 		})
 	}
-	// An id from another run of the hub says nothing about this one's
-	// events: everything recent is replayed.
-	stream := openEvents(t, server, "elsewhere.2", "")
-	if got := nextEvent(t, stream); got != seen[0] {
-		t.Fatalf("foreign id resumed at %+v, want %+v", got, seen[0])
+}
+
+// A client may name its last event both ways, as an EventSource that was
+// opened with after and then reconnected by itself does; the later of the
+// two is where it resumes.
+func TestEventStreamResumesAfterTheLaterOfHeaderAndParameter(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
+	server := serve(t, model, ServerConfig{Token: testToken})
+	for _, kind := range []string{"one", "two", "three"} {
+		model.Publish(readmodel.Event{Kind: kind})
+	}
+	id := func(n uint64) string { return model.EventID(readmodel.Event{Cursor: n}) }
+	for _, resume := range []struct{ name, header, after string }{
+		{"later header", id(2), id(1)},
+		{"later parameter", id(1), id(2)},
+		{"foreign header", "elsewhere.9", id(2)},
+		{"foreign parameter", id(2), "elsewhere.9"},
+	} {
+		t.Run(resume.name, func(t *testing.T) {
+			if got := nextEvent(t, openEvents(t, server, resume.header, resume.after)); got.event != "" || got.kind != "three" {
+				t.Fatalf("resumed with %+v, want three", got)
+			}
+		})
+	}
+}
+
+// A client whose last event the stream cannot place is told to reset
+// before the recent events are replayed: it may have missed events, so it
+// re-reads the state rather than trusting what it holds. That is an id
+// from another run of the hub, one that is malformed or not yet sent, and
+// one older than the recent events kept.
+func TestEventStreamTellsAClientItCannotResumeToReset(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
+	server := serve(t, model, ServerConfig{Token: testToken})
+	const published = 300
+	for i := range published {
+		model.Publish(readmodel.Event{Kind: fmt.Sprintf("event-%d", i+1)})
+	}
+	oldest := nextEvent(t, openEvents(t, server, "", ""))
+	var kept uint64
+	if _, err := fmt.Sscanf(oldest.kind, "event-%d", &kept); err != nil {
+		t.Fatal(err)
+	}
+	id := func(n uint64) string { return model.EventID(readmodel.Event{Cursor: n}) }
+	epoch, _, _ := strings.Cut(id(1), ".")
+	for _, resume := range []struct{ name, last string }{
+		{"another run", "elsewhere.2"},
+		{"no cursor", "garbage"},
+		{"cursor not a number", epoch + ".x"},
+		{"negative cursor", epoch + ".-1"},
+		{"cursor overflowing", epoch + ".99999999999999999999999"},
+		{"cursor not yet sent", id(published + 1)},
+		{"older than kept", id(kept - 2)},
+	} {
+		t.Run(resume.name, func(t *testing.T) {
+			stream := openEvents(t, server, resume.last, "")
+			if got := nextEvent(t, stream); got.event != "reset" {
+				t.Fatalf("resuming after %q began with %+v, not a reset", resume.last, got)
+			}
+			if got := nextEvent(t, stream); got != oldest {
+				t.Fatalf("after the reset came %+v, want %+v", got, oldest)
+			}
+		})
+	}
+	// The event just before the oldest kept is the last one a client can
+	// have and still miss nothing.
+	if got := nextEvent(t, openEvents(t, server, id(kept-1), "")); got != oldest {
+		t.Fatalf("resuming just before the kept events began with %+v, want %+v", got, oldest)
+	}
+	last := id(published)
+	stream := openEvents(t, server, last, "")
+	model.Publish(readmodel.Event{Kind: "next"})
+	if got := nextEvent(t, stream); got.event != "" || got.kind != "next" {
+		t.Fatalf("resuming after the last event began with %+v, want next", got)
 	}
 }
