@@ -63,15 +63,14 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 // server's extras are left out: they mint a session token, which a
 // read-only question has no business doing.
 func (c *Coordinator) setupExtras(ctx context.Context, conversationID string, mode home.Mode) []capability.Extra {
-	svc := c.memoryService()
-	if svc == nil || mode != home.ModeOwner {
+	if mode != home.ModeOwner {
 		return nil
 	}
 	id := c.memoryProject(ctx, conversationID)
 	if id == "" {
 		return nil
 	}
-	text, err := svc.Snapshot(ctx, memory.ProjectScope(id))
+	text, err := c.memory.Snapshot(ctx, memory.ProjectScope(id))
 	if err != nil || text == "" {
 		return nil
 	}

@@ -191,7 +191,7 @@ type coordinatorState struct {
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
 	modes map[string]home.Mode
-	// memory is what Steve remembers, by scope; nil until wired.
+	// memory is what Steve remembers, by scope.
 	memory     *memory.Service
 	schedules  *schedule.Store
 	supervisor Supervisor
