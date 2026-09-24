@@ -170,6 +170,7 @@ func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
 			conversation, project := "new", "p"
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
+			wantCalls := 0
 			switch reason {
 			case "conversation":
 				conversation = " "
@@ -180,7 +181,8 @@ func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
 			case "owner":
 				s.owner = ""
 			case "coordinator":
-				s.coordinator = &echo{}
+				h.failure = errors.New("project denied")
+				wantCalls = 1
 			case "closing":
 				s.closing = true
 			case "maintenance":
@@ -194,7 +196,10 @@ func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
 			if err := s.InitializeConversation(ctx, conversation, project); err == nil {
 				t.Fatal("invalid initialization accepted")
 			}
-			if len(h.calls) != 0 || len(s.Conversations()) != 0 {
+			if len(h.calls) != wantCalls {
+				t.Fatalf("the coordinator was asked %d times, want %d", len(h.calls), wantCalls)
+			}
+			if len(s.Conversations()) != 0 {
 				t.Fatal("invalid initialization changed state")
 			}
 		})
