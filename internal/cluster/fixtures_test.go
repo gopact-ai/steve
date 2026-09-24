@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,27 +26,4 @@ func SshCheckFixture() sshconnect.CheckResult {
 		check.Tools = append(check.Tools, sshconnect.Tool{Name: name, Available: true})
 	}
 	return check
-}
-
-// HoldEnrollmentPorts binds a machine's peer and Raft ports for an
-// enrollment and keeps them bound until the test ends. A node that serves
-// on them takes the listeners through PeerOptions.Listeners, so the ports
-// are never released and bound again.
-func HoldEnrollmentPorts(t *testing.T) *PeerListeners {
-	t.Helper()
-	held := &PeerListeners{}
-	for _, listener := range []*net.Listener{&held.Peer, &held.Raft} {
-		bound, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { bound.Close() })
-		*listener = bound
-	}
-	return held
-}
-
-// Addresses are the held peer and Raft addresses, in that order.
-func (l *PeerListeners) Addresses() (string, string) {
-	return l.Peer.Addr().String(), l.Raft.Addr().String()
 }
