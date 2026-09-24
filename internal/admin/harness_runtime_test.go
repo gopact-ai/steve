@@ -152,7 +152,7 @@ func TestHubNodeSettingsDerivesEnvOnlyForRunningHarness(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(manager.Stop)
-			a := &Service{Cfg: cfg, Path: path, Catalog: catalog, Manager: manager, Assembler: configbuild.CapabilityAssembler(cfg), Fleet: roster.New(catalog)}
+			a := &Service{ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog, Manager: manager, Assembler: configbuild.CapabilityAssembler(cfg), Fleet: roster.New(catalog)}
 			set, err := a.NodeSettings(t.Context(), NodeName())
 			if err != nil {
 				t.Fatal(err)

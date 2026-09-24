@@ -30,7 +30,7 @@ func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T
 		t.Run("node="+requestedNode, func(t *testing.T) {
 			a, _, book, _ := sharedSettingsFixture(t)
 			a.Projects = project.Open(book)
-			if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+			if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), configOf(a)); err != nil {
 				t.Fatal(err)
 			}
 			req := consoleapi.AddProjectRequest{ID: "new", Node: requestedNode, Path: "new-service", Level: "internal", Repo: "inplace"}
@@ -60,23 +60,23 @@ func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T
 func sharedSettingsFixture(t *testing.T) (*adminsvc.Service, *applicationConfiguration, *ledger.Ledger, config.Config) {
 	t.Helper()
 	a, _ := ChannelsAdminFixture(t)
-	a.Cfg.Gateway.HomePath = t.TempDir()
-	a.Cfg.Gateway.TaskMaxTurns = 3
-	a.Cfg.Gateway.Planner = "primary"
-	a.Cfg.Gateway.DirectTransfer = true
-	a.Cfg.Gateway.OfflineReminderAfter = config.Duration(23 * time.Minute)
-	a.Cfg.MCPServers = map[string]config.MCPServer{"external": {URL: "http://external", Headers: map[string]string{"Authorization": "external-mcp-private"}}}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	configOf(a).Gateway.HomePath = t.TempDir()
+	configOf(a).Gateway.TaskMaxTurns = 3
+	configOf(a).Gateway.Planner = "primary"
+	configOf(a).Gateway.DirectTransfer = true
+	configOf(a).Gateway.OfflineReminderAfter = config.Duration(23 * time.Minute)
+	configOf(a).MCPServers = map[string]config.MCPServer{"external": {URL: "http://external", Headers: map[string]string{"Authorization": "external-mcp-private"}}}
+	if err := config.Save(a.Path, configOf(a)); err != nil {
 		t.Fatal(err)
 	}
-	original := *a.Cfg
+	original := *configOf(a)
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = book.Close() })
 	shared := &applicationConfiguration{ctx: t.Context(), store: platformconfig.New(book), local: platformconfig.LocalNode{ID: "node-a", Config: config.Node{Addr: "worker-a", Token: "node-private", Level: "restricted"}}}
-	if err := shared.Configure(a.Cfg); err != nil {
+	if err := shared.Configure(configOf(a)); err != nil {
 		t.Fatal(err)
 	}
 	a.ClusterMode = true
@@ -88,11 +88,11 @@ func sharedSettingsFixture(t *testing.T) (*adminsvc.Service, *applicationConfigu
 
 func TestSharedApplicationSettingsCASAndReconstruction(t *testing.T) {
 	a, _, book, original := sharedSettingsFixture(t)
-	s := adminsvc.NewSettings(a, a.Cfg)
-	channels := adminsvc.NewChannels(a, a.Cfg)
+	s := adminsvc.NewSettings(a, configOf(a))
+	channels := adminsvc.NewChannels(a, configOf(a))
 	before, _ := s.Settings(t.Context())
 	channelBefore, _ := channels.Channels(t.Context())
-	fileBefore := a.Cfg.FileRevision()
+	fileBefore := configOf(a).FileRevision()
 	diskBefore, err := os.ReadFile(a.Path)
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestSharedApplicationSettingsCASAndReconstruction(t *testing.T) {
 		t.Fatalf("shared settings did not invalidate channel revision: %v", err)
 	}
 	diskAfter, err := os.ReadFile(a.Path)
-	if err != nil || string(diskBefore) != string(diskAfter) || a.Cfg.FileRevision() != fileBefore {
+	if err != nil || string(diskBefore) != string(diskAfter) || configOf(a).FileRevision() != fileBefore {
 		t.Fatal("shared save rewrote local file version")
 	}
 	fresh := original
@@ -160,7 +160,7 @@ func TestSharedApplicationSettingsCASAndReconstruction(t *testing.T) {
 
 func TestSharedApplicationChannelSecretSurvivesReplicaAndStaysPrivate(t *testing.T) {
 	a, _, book, _ := sharedSettingsFixture(t)
-	channels := adminsvc.NewChannels(a, a.Cfg)
+	channels := adminsvc.NewChannels(a, configOf(a))
 	before, _ := channels.Channels(t.Context())
 	request := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{DefaultChannel: ChannelValue("feishu"), Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "replace", Value: ChannelValue("rotated-private-secret")}, Domain: ChannelValue(config.DomainLark), AllowedSenders: ChannelValue([]string{"allowed-owner"}), GroupPolicy: ChannelValue(config.GroupPolicyAllowlist)}}}
 	after, err := channels.UpdateChannels(t.Context(), request)
@@ -197,7 +197,7 @@ func TestSharedApplicationChannelSecretSurvivesReplicaAndStaysPrivate(t *testing
 	if newLocal.Feishu.AppSecret != "rotated-private-secret" || newLocal.Feishu.Domain != config.DomainLark || newLocal.Feishu.OwnerOpenID != "im-owner" || !newLocal.FeishuEnabled() || !reflect.DeepEqual(newLocal.Feishu.AllowedSenders, []string{"allowed-owner"}) || newLocal.Gateway.OwnerID != "console-owner" {
 		t.Fatal("new coordinator lost private channel connection or policy")
 	}
-	newAdmin := &adminsvc.Service{Cfg: newLocal, ConfigRevision: next.Revision}
+	newAdmin := &adminsvc.Service{ConfigStore: adminsvc.NewConfigStore(newLocal), ConfigRevision: next.Revision}
 	newView, err := adminsvc.NewChannels(newAdmin, newLocal).Channels(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -224,14 +224,14 @@ func TestSharedApplicationChannelSecretSurvivesReplicaAndStaysPrivate(t *testing
 func TestSharedApplicationRejectsAuthoritativeRevisionConflict(t *testing.T) {
 	a, _, book, _ := sharedSettingsFixture(t)
 	staleConfiguration := &applicationConfiguration{ctx: t.Context(), store: platformconfig.New(book), local: platformconfig.LocalNode{ID: "node-a", Config: config.Node{Addr: "worker-a", Token: "node-private", Level: "restricted"}}}
-	staleConfig := *a.Cfg
+	staleConfig := *configOf(a)
 	if err := staleConfiguration.Configure(&staleConfig); err != nil {
 		t.Fatal(err)
 	}
-	staleAdmin := &adminsvc.Service{Cfg: &staleConfig, Path: a.Path, ConfigRevision: staleConfiguration.Revision, WriteConfigContext: staleConfiguration.SaveContext}
+	staleAdmin := &adminsvc.Service{ConfigStore: adminsvc.NewConfigStore(&staleConfig), Path: a.Path, ConfigRevision: staleConfiguration.Revision, WriteConfigContext: staleConfiguration.SaveContext}
 	stale := adminsvc.NewSettings(staleAdmin, &staleConfig)
 	old, _ := stale.Settings(t.Context())
-	current := adminsvc.NewSettings(a, a.Cfg)
+	current := adminsvc.NewSettings(a, configOf(a))
 	before, _ := current.Settings(t.Context())
 	if _, err := current.UpdateSettings(t.Context(), consoleapi.SettingsUpdate{BaseRevision: before.Revision, Settings: json.RawMessage(`{"gateway":{"task_max_turns":77}}`)}); err != nil {
 		t.Fatal(err)

@@ -54,22 +54,11 @@ type UpgradeStatus struct {
 // restarts retain the web view's origin, including local drafts and preferences.
 // Call after the initial listener binds, before publishing configuration users.
 func PinAddress(configPath string, cfg *config.Config, address string) error {
-	if !IsManagedConfig(configPath) {
-		return nil
-	}
-	if err := localURL(address, false); err != nil {
+	before := cfg.Gateway.ReadModelAddr
+	pinned, err := SetPinnedAddress(configPath, cfg, address)
+	if err != nil || !pinned {
 		return err
 	}
-	u, _ := url.Parse(address)
-	if cfg.Gateway.ReadModelAddr == u.Host {
-		return nil
-	}
-	configured, err := url.Parse("http://" + cfg.Gateway.ReadModelAddr)
-	if err != nil || configured.Port() != "0" {
-		return errors.New("desktop listener differs from its saved address")
-	}
-	before := cfg.Gateway.ReadModelAddr
-	cfg.Gateway.ReadModelAddr = u.Host
 	if err := config.Save(configPath, cfg); err != nil {
 		if !config.Committed(err) {
 			cfg.Gateway.ReadModelAddr = before
@@ -77,6 +66,30 @@ func PinAddress(configPath string, cfg *config.Config, address string) error {
 		return err
 	}
 	return nil
+}
+
+// SetPinnedAddress is PinAddress without the save: it sets cfg's console
+// address to address and reports whether that changed cfg. It changes
+// nothing when configPath is not the desktop's configuration or the
+// address is already pinned, and refuses an address other than the one
+// pinned before.
+func SetPinnedAddress(configPath string, cfg *config.Config, address string) (bool, error) {
+	if !IsManagedConfig(configPath) {
+		return false, nil
+	}
+	if err := localURL(address, false); err != nil {
+		return false, err
+	}
+	u, _ := url.Parse(address)
+	if cfg.Gateway.ReadModelAddr == u.Host {
+		return false, nil
+	}
+	configured, err := url.Parse("http://" + cfg.Gateway.ReadModelAddr)
+	if err != nil || configured.Port() != "0" {
+		return false, errors.New("desktop listener differs from its saved address")
+	}
+	cfg.Gateway.ReadModelAddr = u.Host
+	return true, nil
 }
 
 // PublishEndpoint is called after the console listener binds. Its descriptor

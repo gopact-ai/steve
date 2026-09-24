@@ -67,10 +67,11 @@ type Services struct {
 
 func NewServices(admin *Service, executions *execution.Registry, seal func() (func(), error), stop context.CancelFunc, doc ledger.Doc) (*Services, error) {
 	s := &Services{admin: admin, executions: executions, sealWrites: seal, stop: stop, doc: doc}
-	if admin.Cfg != nil {
-		boot := *admin.Cfg
-		s.boot = &boot
-	}
+	admin.ConfigStore.Read(func(cfg *config.Config) {
+		if cfg != nil {
+			s.boot = cfg.Clone()
+		}
+	})
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, err
@@ -465,10 +466,10 @@ func (s *Services) preflight() error {
 	if s.admin.Path == "" {
 		return nil
 	}
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
-	if s.admin.Cfg != nil {
-		if err := s.admin.Cfg.CheckFileRevision(s.admin.Path); err != nil {
+	s.admin.ConfigStore.rlock()
+	defer s.admin.ConfigStore.runlock()
+	if s.admin.cfg() != nil {
+		if err := s.admin.cfg().CheckFileRevision(s.admin.Path); err != nil {
 			return serviceFailure("conflict", "The configuration file changed outside the console; validate and deploy it before restarting")
 		}
 	}
@@ -476,7 +477,7 @@ func (s *Services) preflight() error {
 		// A coordinator activation uses the shared declaration over this
 		// machine's local configuration. Its logical cluster identity and
 		// internal listener intentionally differ from the installation file.
-		cfg := s.admin.Cfg
+		cfg := s.admin.cfg()
 		if cfg == nil {
 			return serviceFailure("invalid", "The current shared configuration is unavailable")
 		}

@@ -66,9 +66,9 @@ func (a *Service) workspaceRootOf(ctx context.Context, nodeKey string) (string, 
 	if !local {
 		return "", fmt.Errorf("还不知道 %s 的工作区目录", nodewire.Name(nodeKey))
 	}
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
-	return a.Cfg.LocalWorkspaceRoot(), nil
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
+	return a.cfg().LocalWorkspaceRoot(), nil
 }
 
 // projectPath resolves a project's directory on one machine.
@@ -91,9 +91,9 @@ func (a *Service) projectPath(ctx context.Context, nodeKey, dir string) (string,
 // workspace handed over whole by the desktop guide, falls back to the
 // project's own name.
 func (a *Service) projectDirName(ctx context.Context, projectID string) (string, error) {
-	ConfigMu.RLock()
-	item, exists := a.Cfg.Projects[projectID]
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	item, exists := a.cfg().Projects[projectID]
+	a.ConfigStore.runlock()
 	if !exists {
 		return "", fmt.Errorf("没有叫 %q 的项目", projectID)
 	}

@@ -41,9 +41,12 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 		_, err := nodes.Files(ctx, node, nodewire.FileRequest{Op: nodewire.FileMkdir, Path: dir})
 		return err
 	})
+	// The closures below outlive assembly, while the administration
+	// rewrites cfg; they keep only what they need from it.
+	hubProbeDir := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "probe")
 	probeDir := func(node string) string {
 		if node == "" {
-			return filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "probe")
+			return hubProbeDir
 		}
 		for _, s := range nodes.Statuses() {
 			if s.Name == node && s.Advert.StateDir != "" {
@@ -74,15 +77,15 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 	fleet.SetNodeRegions(cfg.NodeRegions())
 	nodes.SetHubLevel(string(cfg.HubLevel()))
 	// Lease authorities were registered before execution recovery.
-	if cfg.Gateway.IssuerAddr != "" {
-		issuer := &http.Server{Addr: cfg.Gateway.IssuerAddr, Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken)}
+	if addr := cfg.Gateway.IssuerAddr; addr != "" {
+		issuer := &http.Server{Addr: addr, Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken)}
 		go func() {
 			if err := issuer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", cfg.Gateway.IssuerAddr, err))
+				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", addr, err))
 			}
 		}()
 		life.Defer(func() { issuer.Close() })
-		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), cfg.Gateway.IssuerAddr))
+		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), addr))
 	}
 	return &modelsValues{endpoints: endpoints, probeDir: probeDir, prober: prober, seen: seen}, nil
 }

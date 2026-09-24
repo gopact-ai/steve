@@ -26,7 +26,7 @@ import (
 // only its durable runtime reference and node-local loopback capabilities.
 type applicationPlugins struct {
 	gate      *sync.RWMutex
-	cfg       *config.Config
+	config    *adminsvc.ConfigStore
 	library   *pluginledger.Library
 	local     *node.PluginRuntimePool
 	nodes     *node.Registry
@@ -56,9 +56,7 @@ func (p *applicationPlugins) PreparePluginSession(ctx context.Context, req harne
 	}
 	if req.Prior != nil {
 		ref := req.Prior
-		adminsvc.ConfigMu.RLock()
-		items := config.ClonePluginInstallations(p.cfg.Plugins)
-		adminsvc.ConfigMu.RUnlock()
+		items := p.pluginInstallations()
 		if err := p.library.CheckRuntimeScope(ctx, items, *ref); err != nil {
 			return nil, err
 		}
@@ -78,14 +76,17 @@ func (p *applicationPlugins) PreparePluginSession(ctx context.Context, req harne
 		}
 		return nil, nil
 	}
-	adminsvc.ConfigMu.RLock()
-	items := config.ClonePluginInstallations(p.cfg.Plugins)
-	cfg := p.cfg.Harnesses[req.At.Harness]
-	if policy, exists := p.cfg.RuntimePermissions[req.At.Harness]; exists {
-		cfg.Permission = policy
-	}
-	origin := p.cfg.Agents[req.AgentID].PluginOrigin.Clone()
-	adminsvc.ConfigMu.RUnlock()
+	var items map[string]plugins.Installation
+	var cfg config.Harness
+	var origin *plugins.AgentOrigin
+	p.config.Read(func(c *config.Config) {
+		items = config.ClonePluginInstallations(c.Plugins)
+		cfg = c.Harnesses[req.At.Harness]
+		if policy, exists := c.RuntimePermissions[req.At.Harness]; exists {
+			cfg.Permission = policy
+		}
+		origin = c.Agents[req.AgentID].PluginOrigin.Clone()
+	})
 	selection := plugins.Selection{Project: req.Project, Node: req.At.Node, Harness: req.At.Harness}
 	ids := make([]string, 0, len(items))
 	for id := range items {
@@ -177,9 +178,7 @@ func (p *applicationPlugins) PluginRuntime(ctx context.Context, at harness.Place
 	if ref.Validate() != nil || ref.Selection.Node != at.Node || ref.Selection.Harness != at.Harness {
 		return harness.Config{}, nil, plugins.ErrInvalid
 	}
-	adminsvc.ConfigMu.RLock()
-	items := config.ClonePluginInstallations(p.cfg.Plugins)
-	adminsvc.ConfigMu.RUnlock()
+	items := p.pluginInstallations()
 	if err := p.library.CheckRuntimeScope(ctx, items, ref); err != nil {
 		return harness.Config{}, nil, err
 	}
@@ -197,6 +196,12 @@ func (p *applicationPlugins) PluginRuntime(ctx context.Context, at harness.Place
 	return harness.Config{Permission: reply.Permission, PluginInstructions: reply.Instructions}, reply.Servers, nil
 }
 
+// pluginInstallations is a copy of the configured plugin installations.
+func (p *applicationPlugins) pluginInstallations() (items map[string]plugins.Installation) {
+	p.config.Read(func(cfg *config.Config) { items = config.ClonePluginInstallations(cfg.Plugins) })
+	return items
+}
+
 func pluginRuntimeCommand(attemptID string) string {
 	sum := sha256.Sum256([]byte("runtime/" + attemptID))
 	return hex.EncodeToString(sum[:])
@@ -207,7 +212,7 @@ func assemblePlugins(life lifetime, boot runtimeAssembly, machines fleetAssembly
 	library := &pluginledger.Library{Store: store, Ledger: boot.Book()}
 	pool := &node.PluginRuntimePool{Store: store, StateDir: filepath.Dir(boot.Config().Gateway.StatePath)}
 	gate := &sync.RWMutex{}
-	service := &applicationPlugins{gate: gate, cfg: boot.Config(), library: library, local: pool, nodes: machines.Nodes()}
+	service := &applicationPlugins{gate: gate, config: boot.ConfigStore(), library: library, local: pool, nodes: machines.Nodes()}
 	if environment := input.Environment(); environment != nil {
 		library.Replication = environment.Content
 		service.authority = environment.PluginAuthority

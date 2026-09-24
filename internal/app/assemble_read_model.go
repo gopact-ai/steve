@@ -49,7 +49,7 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 			Node: adminsvc.NodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
 			Level: string(cfg.HubLevel()),
 		},
-		HubAdvert: func() nodewire.Advert { return adminsvc.ObservedHubAdvert(cfg, observation) },
+		HubAdvert: func() nodewire.Advert { return adminsvc.ObservedHubAdvert(boot.ConfigStore(), observation) },
 		Repos:     repos.Get, HomeProject: adminsvc.HomeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
 		Models: seen,
 		Roster: fleet, Nodes: nodes, NodeNames: memberNames(environment), Tasks: tasks, Plans: plans,

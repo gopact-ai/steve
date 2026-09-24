@@ -17,13 +17,13 @@ func TestPluginAdoptionMovesOnlyReviewedAgentAttachments(t *testing.T) {
 	manifest.MCP = map[string]plugins.MCPServer{"api": {Transport: "http", URL: plugins.Value{Text: "https://example.invalid"}}}
 	manifest.Version = "1.1.0"
 	importPresetVersion(t, s, source, manifest, "with-mcp")
-	s.Admin.Cfg.MCPServers["old-api"] = config.MCPServer{Type: "http", URL: "https://legacy.invalid"}
-	s.Admin.Cfg.Agents["user"] = config.Agent{Harness: "mock", Model: "user-model", SystemPrompt: "user instructions", Skills: []string{"/legacy/work", "/legacy/keep"}, MCPServers: []string{"old-api"}}
-	s.Admin.Cfg.Agents["other"] = s.Admin.Cfg.Agents["user"]
-	primary := s.Admin.Cfg.Agents["user"]
+	s.Admin.cfg().MCPServers["old-api"] = config.MCPServer{Type: "http", URL: "https://legacy.invalid"}
+	s.Admin.cfg().Agents["user"] = config.Agent{Harness: "mock", Model: "user-model", SystemPrompt: "user instructions", Skills: []string{"/legacy/work", "/legacy/keep"}, MCPServers: []string{"old-api"}}
+	s.Admin.cfg().Agents["other"] = s.Admin.cfg().Agents["user"]
+	primary := s.Admin.cfg().Agents["user"]
 	primary.Default = true
-	s.Admin.Cfg.Agents["user"] = primary
-	req := consoleapi.PluginPresetRequest{CommandID: "adopt", AgentID: "user", Preset: "reviewer", Digest: s.Admin.Cfg.Plugins["tools"].Digest, Adopt: &plugins.Adoption{Skills: map[string]string{"/legacy/work": "work"}, MCP: map[string]string{"old-api": "api"}}}
+	s.Admin.cfg().Agents["user"] = primary
+	req := consoleapi.PluginPresetRequest{CommandID: "adopt", AgentID: "user", Preset: "reviewer", Digest: s.Admin.cfg().Plugins["tools"].Digest, Adopt: &plugins.Adoption{Skills: map[string]string{"/legacy/work": "work"}, MCP: map[string]string{"old-api": "api"}}}
 	preview, err := s.PreviewPluginPreset(t.Context(), "tools", req)
 	if err != nil {
 		t.Fatal(err)
@@ -35,10 +35,10 @@ func TestPluginAdoptionMovesOnlyReviewedAgentAttachments(t *testing.T) {
 	if _, err := s.ApplyPluginPreset(t.Context(), "tools", req); err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Admin.Cfg.Agents["other"].Skills) != 2 || len(s.Admin.Cfg.MCPServers) != 1 {
+	if len(s.Admin.cfg().Agents["other"].Skills) != 2 || len(s.Admin.cfg().MCPServers) != 1 {
 		t.Fatal("adoption changed reusable user-owned sources")
 	}
-	adopted := s.Admin.Cfg.Agents["user"]
+	adopted := s.Admin.cfg().Agents["user"]
 	if len(adopted.Skills) != 1 || len(adopted.MCPServers) != 0 || adopted.PluginOrigin.Adopted.Skills["/legacy/work"] != "work" {
 		t.Fatal("legacy attachments were duplicated or origin lost")
 	}
@@ -51,16 +51,16 @@ func TestPluginAdoptionMovesOnlyReviewedAgentAttachments(t *testing.T) {
 		t.Fatalf("adoption replay lost attachment result: %+v %v", replay, err)
 	}
 	adopted.MCPServers = []string{"old-api"}
-	s.Admin.Cfg.Agents["user"] = adopted
-	if _, err := s.Admin.Cfg.AgentCatalog(); !errors.Is(err, plugins.ErrConflict) {
+	s.Admin.cfg().Agents["user"] = adopted
+	if _, err := s.Admin.cfg().AgentCatalog(); !errors.Is(err, plugins.ErrConflict) {
 		t.Fatalf("old editor restored duplicate attachment: %v", err)
 	}
 }
 
 func TestPluginAdoptionRejectsUnreviewedSourceAndUnrelatedOrigin(t *testing.T) {
 	s, _, _ := presetFixture(t)
-	s.Admin.Cfg.Agents["user"] = config.Agent{Harness: "mock", Skills: []string{"/legacy/work"}}
-	req := consoleapi.PluginPresetRequest{AgentID: "user", Preset: "reviewer", Digest: s.Admin.Cfg.Plugins["tools"].Digest, Adopt: &plugins.Adoption{Skills: map[string]string{"/not/attached": "work"}}}
+	s.Admin.cfg().Agents["user"] = config.Agent{Harness: "mock", Skills: []string{"/legacy/work"}}
+	req := consoleapi.PluginPresetRequest{AgentID: "user", Preset: "reviewer", Digest: s.Admin.cfg().Plugins["tools"].Digest, Adopt: &plugins.Adoption{Skills: map[string]string{"/not/attached": "work"}}}
 	if _, err := s.PreviewPluginPreset(t.Context(), "tools", req); !errors.Is(err, plugins.ErrInvalid) {
 		t.Fatalf("unattached source adopted: %v", err)
 	}

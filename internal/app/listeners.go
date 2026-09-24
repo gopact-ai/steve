@@ -13,7 +13,6 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	configPath := input.ConfigPath()
 	environment := input.Environment()
 	background := boot.Background()
-	cfg := boot.Config()
 	ctx := boot.Context()
 	manager := boot.Manager()
 	attempts := storage.Attempts()
@@ -29,6 +28,11 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	recoverRetainedDelegates := delegates.RecoverRetainedDelegates()
 	reconcileDeliveries := delegates.ReconcileDeliveries()
 	channel := channels.Channel()
+	// The console starts serving below and may rewrite the configuration
+	// from then on; take what the listeners need from it first.
+	cfg := boot.Config()
+	debugAddr := cfg.Gateway.DebugAddr
+	debugDefaults := debugapi.Defaults{ChatID: cfg.Gateway.DebugChatID, SenderOpenID: cfg.Feishu.OwnerOpenID, Sender: channel}
 	// Children that ended before the last process died, whose parents
 	// were never told.
 	if reconcileDeliveries != nil {
@@ -67,13 +71,9 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 
 	background.Go(func(ctx context.Context) { runScheduleDispatcher(ctx, schedules, cons, gw, coordinator) })
 
-	if addr := cfg.Gateway.DebugAddr; addr != "" && channel != nil {
+	if debugAddr != "" && channel != nil {
 		background.Go(func(ctx context.Context) {
-			if err := debugapi.Serve(ctx, addr, gw, debugapi.Defaults{
-				ChatID:       cfg.Gateway.DebugChatID,
-				SenderOpenID: cfg.Feishu.OwnerOpenID,
-				Sender:       channel,
-			}); err != nil {
+			if err := debugapi.Serve(ctx, debugAddr, gw, debugDefaults); err != nil {
 				slog.Error(fmt.Sprintf("steve: %v", err))
 			}
 		})

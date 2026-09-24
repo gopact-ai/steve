@@ -12,12 +12,12 @@ import (
 
 func TestRuntimeSettingsPublishOnlyAfterCommit(t *testing.T) {
 	a := agentAdminFixture(t)
-	a.Cfg.Gateway.OwnerID = "owner"
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Gateway.OwnerID = "owner"
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	a.RuntimeSettings = config.NewRuntimeSettings(a.Cfg)
-	s := NewSettings(a, a.Cfg)
+	a.RuntimeSettings = config.NewRuntimeSettings(a.cfg())
+	s := NewSettings(a, a.cfg())
 	before, err := s.Settings(t.Context())
 	if err != nil {
 		t.Fatal(err)
