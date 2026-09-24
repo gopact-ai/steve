@@ -2,16 +2,16 @@ package turn
 
 import (
 	"context"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 )
@@ -61,7 +61,7 @@ func (r *deadlineResponseRunner) Prompt(ctx context.Context, input string, _ fun
 
 func TestSettledErrorAtDeadlineKeepsAdjacentSessionAvailable(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	stateStore, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	stateStore, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

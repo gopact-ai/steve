@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -142,7 +141,7 @@ func TestCoordinatorPreservesSessionOnTurnErrorWithoutKillingProcess(t *testing.
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", SystemPrompt: "rules", Default: true},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{err: errors.New("prompt failed")}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -161,7 +160,7 @@ func TestCoordinatorPreservesSessionOnTurnErrorWithoutKillingProcess(t *testing.
 
 func TestCoordinatorTimeoutDoesNotAbortSharedProcess(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	// The idle clock starts before the workspace resolves and the session
@@ -193,7 +192,7 @@ func TestCoordinatorKeepsContextWhenResumeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	if err := store.SaveSession(state.Session{
 		ConversationID: "chat", AgentID: "codex", HarnessID: "codex",
 		UpstreamID: "stale-session", Workspace: dir,
@@ -219,7 +218,7 @@ func TestCoordinatorNeverFallsBackToNewSessionAfterLoadFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	if err := store.SaveSession(state.Session{
 		ConversationID: "chat", AgentID: "codex", HarnessID: "codex",
 		UpstreamID: "stale-session", Workspace: dir,
@@ -244,7 +243,7 @@ func TestCoordinatorNeverFallsBackToNewSessionAfterLoadFails(t *testing.T) {
 
 func TestCoordinatorStatusHasFields(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
 	result, err := handle(coordinator, t.Context(), "/status")
 	if err != nil {
@@ -260,7 +259,7 @@ func TestCoordinatorStatusHasFields(t *testing.T) {
 
 func TestCoordinatorCancelDuringOpenCancelsContextImmediately(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &blockingOpenManager{started: make(chan struct{})}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	turnDone := make(chan error, 1)
@@ -312,7 +311,7 @@ func (m *blockingOpenManager) SupportsHTTPMCP(context.Context, harness.Placement
 
 func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -332,7 +331,7 @@ func TestCoordinatorRejectsTaintedSession(t *testing.T) {
 		"codex": {Harness: "codex", Default: true},
 	})
 	dir := t.TempDir()
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	if err := store.SaveSession(state.Session{
 		ConversationID: "chat", AgentID: "codex", HarnessID: "codex", Workspace: dir,
 		CapabilityHash: "ignored", Tainted: true,
@@ -354,7 +353,7 @@ func TestCoordinatorSwitchesAgentsAndRestoresSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +387,7 @@ func TestCoordinatorSwitchesAgentsAndRestoresSessions(t *testing.T) {
 
 func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
@@ -411,7 +410,7 @@ func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
 
 func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -444,7 +443,7 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 
 func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	result, err := handle(coordinator, t.Context(), "/cancel")
@@ -455,7 +454,7 @@ func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
 
 func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{err: fmt.Errorf("%w: %w", harness.ErrTurnCanceled, context.Canceled)}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -485,7 +484,7 @@ func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
 // agent its entire context every time the user redirects it.
 func TestGracefullyCancelledTurnKeepsItsSession(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{id: "sess-1", err: harness.ErrTurnCanceled}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -505,7 +504,7 @@ func TestGracefullyCancelledTurnKeepsItsSession(t *testing.T) {
 // not silently start over on the next message.
 func TestAbandonedTurnPreservesTaintedContext(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{id: "sess-1", err: context.Canceled}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -521,7 +520,7 @@ func TestCoordinatorSwitchOnlyAndNew(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true}, "claude": {Harness: "claude"},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
@@ -544,7 +543,7 @@ func TestCoordinatorEnglishLocale(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true}, "claude": {Harness: "claude"},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	coordinator.SetCatalog(i18n.New(i18n.LocaleEN))
@@ -563,7 +562,7 @@ func handle(c *Coordinator, ctx context.Context, input string) (Result, error) {
 // agent is doing gets killed by accident.
 func TestNewMessageQueuesBehindRunningTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -614,7 +613,7 @@ func TestNewMessageQueuesBehindRunningTurn(t *testing.T) {
 // reaches the agent.
 func TestPlusPrefixStillQueuesAndStrips(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -631,7 +630,7 @@ func TestPlusPrefixStillQueuesAndStrips(t *testing.T) {
 // the halfwidth bang.
 func TestFullwidthBangInterrupts(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -684,7 +683,7 @@ func TestAgentRunsOnItsConfiguredNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
 	labWork := t.TempDir()
 	coordinator := newCoordinatorIn(t, map[string]string{"lab": labWork}, catalog, store, capability.NewAssembler(nil), manager, time.Minute)

@@ -381,7 +381,7 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	}
 	// The page can act: a /fleet sent through the console comes back from
 	// the same coordinator the chat uses, naming the real nodes.
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,6 +587,17 @@ var (
 )
 
 // ledgerOf is the ledger declareProjects opened under dir.
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
+}
+
 func ledgerOf(t *testing.T, dir string) *ledger.Ledger {
 	t.Helper()
 	ledgersMu.Lock()

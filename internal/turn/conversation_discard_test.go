@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ func (m *closeRecorder) CloseSession(_ context.Context, _ harness.Placement, id 
 func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *schedule.Store) {
 	t.Helper()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

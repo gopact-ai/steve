@@ -6,10 +6,10 @@ import (
 	"fmt"
 )
 
-// Doc is one durable document: what the session, task, plan and schedule
-// stores keep their whole state in. The ledger's implementation is what a
-// Hub runs on; filedoc.Document keeps one in a local file, for tests and for
-// state kept outside the ledger.
+// Doc is one durable document: what the session, plan and schedule stores
+// keep their whole state in. The ledger's implementation is what a Hub runs
+// on; filedoc.Document keeps one in a local file, for state kept outside the
+// ledger.
 type Doc interface {
 	// Load returns the document, or ok=false if it has never been saved.
 	Load() ([]byte, bool, error)

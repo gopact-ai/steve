@@ -1,7 +1,6 @@
 package turn
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ func TestPromptPreparationRefusalPrecedence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+			store, err := state.OpenLedger(testLedger(t))
 			if err != nil {
 				t.Fatal(err)
 			}

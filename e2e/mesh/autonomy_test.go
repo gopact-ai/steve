@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +28,7 @@ func TestAutoPlanDecomposesAndPlacesAcrossTheFleet(t *testing.T) {
 	f := newFleet(t)
 	f.registry.EnsureConnected(t.Context())
 
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

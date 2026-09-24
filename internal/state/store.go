@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -99,17 +98,9 @@ type Store struct {
 	data data
 }
 
-// Open keeps the store in one JSON file; the gateway opens the ledger.
-func Open(path string) (*Store, error) {
-	return openWith(&filedoc.Document{Path: path})
-}
-
 // OpenLedger keeps the store in the ledger.
 func OpenLedger(l *ledger.Ledger) (*Store, error) {
-	return openWith(l.Document("state"))
-}
-
-func openWith(doc ledger.Doc) (*Store, error) {
+	doc := l.Document("state")
 	s := &Store{doc: doc, data: data{Conversations: map[string]Conversation{}}}
 	raw, ok, err := doc.Load()
 	if err != nil {
@@ -417,8 +408,8 @@ func (s *Store) Relocate(from, to string) error {
 
 var ErrNoArchive = errors.New("no such archived session")
 
-// maxArchived bounds the per-conversation history so state.json cannot grow
-// without limit. Oldest records are dropped first.
+// maxArchived bounds the per-conversation history so the state document
+// cannot grow without limit. Oldest records are dropped first.
 const maxArchived = 20
 
 // ArchiveSession moves a session out of the active slot and into the

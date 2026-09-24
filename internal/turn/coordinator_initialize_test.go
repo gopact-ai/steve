@@ -1,7 +1,6 @@
 package turn
 
 import (
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ import (
 
 func TestInitializeConversationBindsWithoutTouchingSessionsOrTasks(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}, "other": {Harness: "codex"}})
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +57,7 @@ func TestInitializeConversationBindsWithoutTouchingSessionsOrTasks(t *testing.T)
 
 func TestInitializeConversationRequiresProjectReadAccess(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

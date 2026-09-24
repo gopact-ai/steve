@@ -131,7 +131,7 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 		_, _ = onNode(t, machine, "rm -rf "+dirs+"; mkdir -p "+dirs)
 	}
 
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	gate.SetDelegator(service)
 	f.registry.SetMCPDialer(loopbackDialer(gate.Addr()))
 
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
