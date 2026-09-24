@@ -36,10 +36,12 @@ type coordinatorSurface struct {
 // A local declared from such an x.f, as in `if d := x.f; d == nil`, is
 // checked the same way. An embedded field counts under its type's name.
 //
-// A field is required when Deps.required lists it: each string that opens
-// an entry there is a Deps field name, and the coordinator field it fills is
-// that name lower-cased. A list that is missing, empty or names no field of
-// Coordinator or coordinatorState is an error.
+// A field is required when Deps.required lists it. The method's body must
+// be a single `return []dependency{...}` whose entries are all positional,
+// as in {"Name", absent}: the leading string is a Deps field name, and the
+// coordinator field it fills is that name lower-cased. A list that is
+// missing, written any other way, empty, or names no field of Coordinator or
+// coordinatorState is an error.
 //
 // The analysis is syntactic: a coordinator reached any other way is missed.
 func measureCoordinator(files []string) (coordinatorSurface, error) {
@@ -238,38 +240,45 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 }
 
 // requiredFields reads Deps.required: the coordinator field each entry's
-// leading string names, lower-cased.
+// leading string names, lower-cased. Any other shape of the method is an
+// error, so no entry is skipped unread.
 func requiredFields(parsed []*ast.File) (map[string]bool, error) {
-	fields := map[string]bool{}
-	found := false
+	var fn *ast.FuncDecl
 	for _, syntax := range parsed {
 		for _, decl := range syntax.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != "required" || fn.Recv == nil || len(fn.Recv.List) == 0 || typeName(fn.Recv.List[0].Type) != "Deps" || fn.Body == nil {
-				continue
+			if f, ok := decl.(*ast.FuncDecl); ok && f.Name.Name == "required" && f.Recv != nil && len(f.Recv.List) > 0 && typeName(f.Recv.List[0].Type) == "Deps" && f.Body != nil {
+				fn = f
 			}
-			found = true
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				entry, ok := n.(*ast.CompositeLit)
-				if !ok || len(entry.Elts) == 0 {
-					return true
-				}
-				lit, ok := entry.Elts[0].(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					return true
-				}
-				name, err := strconv.Unquote(lit.Value)
-				if err != nil || name == "" {
-					return true
-				}
-				first, size := utf8.DecodeRuneInString(name)
-				fields[string(unicode.ToLower(first))+name[size:]] = true
-				return true
-			})
 		}
 	}
-	if !found {
+	if fn == nil {
 		return nil, errors.New("no method Deps.required: the ratchet cannot tell required dependencies from optional ones")
+	}
+	var list *ast.CompositeLit
+	if len(fn.Body.List) == 1 {
+		if ret, ok := fn.Body.List[0].(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+			list, _ = ret.Results[0].(*ast.CompositeLit)
+		}
+	}
+	if list == nil {
+		return nil, errors.New("method Deps.required is not a single return of a []dependency literal")
+	}
+	fields := map[string]bool{}
+	for i, elt := range list.Elts {
+		entry, ok := elt.(*ast.CompositeLit)
+		if !ok || len(entry.Elts) == 0 {
+			return nil, fmt.Errorf("method Deps.required: entry %d is not a positional {\"Name\", absent} literal", i+1)
+		}
+		lit, ok := entry.Elts[0].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return nil, fmt.Errorf("method Deps.required: entry %d does not open with the field name as a string", i+1)
+		}
+		name, err := strconv.Unquote(lit.Value)
+		if err != nil || name == "" {
+			return nil, fmt.Errorf("method Deps.required: entry %d names no field", i+1)
+		}
+		first, size := utf8.DecodeRuneInString(name)
+		fields[string(unicode.ToLower(first))+name[size:]] = true
 	}
 	if len(fields) == 0 {
 		return nil, errors.New("method Deps.required lists no dependency")
@@ -336,14 +345,18 @@ func TestCoordinatorSurfaceRefusesMissingTypes(t *testing.T) {
 }
 
 // The required list is read from Deps.required, so it cannot drift from
-// what New refuses; a list that is gone or names no coordinator field
-// must stop the measurement rather than count nothing as required.
+// what New refuses; a list that is gone, written in a shape the reader
+// would skip entries of, or names no coordinator field must stop the
+// measurement rather than count a required field as optional.
 func TestCoordinatorSurfaceRefusesAnUnusableRequiredList(t *testing.T) {
 	const types = "package turn\n\ntype Coordinator struct{ *coordinatorState }\n\ntype coordinatorState struct{ tasks *int }\n\ntype Deps struct{ Tasks, Plans *int }\n\ntype dependency struct {\n\tname   string\n\tabsent bool\n}\n"
 	for name, source := range map[string]string{
 		"no list":       types,
 		"empty list":    types + "\nfunc (d Deps) required() []dependency { return nil }\n",
 		"unknown field": types + "\nfunc (d Deps) required() []dependency { return []dependency{{\"Plans\", d.Plans == nil}} }\n",
+		"keyed entry":   types + "\nfunc (d Deps) required() []dependency { return []dependency{{\"Tasks\", d.Tasks == nil}, {name: \"Plans\", absent: d.Plans == nil}} }\n",
+		"helper entry":  types + "\nfunc need(n string, a bool) dependency { return dependency{n, a} }\n\nfunc (d Deps) required() []dependency { return []dependency{{\"Tasks\", d.Tasks == nil}, need(\"Plans\", d.Plans == nil)} }\n",
+		"built list":    types + "\nfunc (d Deps) required() []dependency {\n\tlist := []dependency{{\"Tasks\", d.Tasks == nil}}\n\treturn append(list, dependency{\"Plans\", d.Plans == nil})\n}\n",
 	} {
 		file := filepath.Join(t.TempDir(), "coordinator.go")
 		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
