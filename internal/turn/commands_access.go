@@ -65,12 +65,12 @@ func (c commands) decideCmd(ctx context.Context, req Request, cmd protocol.Comma
 	if id == "" {
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureUsage, cmd)}, nil
 	}
-	disclosuresMu.Lock()
+	c.disclosuresMu.Lock()
 	h, ok := c.disclosures[id]
 	if ok {
 		delete(c.disclosures, id)
 	}
-	disclosuresMu.Unlock()
+	c.disclosuresMu.Unlock()
 	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureUnknown, id)}, nil
 	}

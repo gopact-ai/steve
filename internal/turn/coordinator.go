@@ -214,7 +214,9 @@ type coordinatorState struct {
 	// without anyone asking.
 	autoResolve bool
 	intents     *intent.Service
-	disclosures map[string]held
+	// disclosuresMu guards disclosures.
+	disclosuresMu sync.Mutex
+	disclosures   map[string]held
 	// defaultProject binds a fresh conversation; homeProject binds the
 	// owner's DM, where Steve's own home directory is the project.
 	defaultProject    string
