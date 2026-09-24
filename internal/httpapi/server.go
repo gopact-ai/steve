@@ -43,10 +43,11 @@ type Model interface {
 
 // ServerConfig is where the read model is served and who may read it.
 type ServerConfig struct {
-	// Addr defaults to a loopback port. Binding anywhere else requires a
-	// token: the snapshot names hosts, goals and agents, and that is not
-	// something to hand to the network by accident.
-	Addr  string
+	// Addr defaults to a loopback port.
+	Addr string
+	// Token is required on every address: the console grants owner
+	// operations, and loopback keeps out other machines, not other local
+	// users or processes.
 	Token string
 }
 
@@ -79,8 +80,8 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	if !sameorigin.LoopbackListener(addr) && strings.TrimSpace(cfg.Token) == "" {
-		return nil, fmt.Errorf("read model on %s needs a token: it reports hosts, goals and agents", addr)
+	if strings.TrimSpace(cfg.Token) == "" {
+		return nil, fmt.Errorf("console on %s needs a token: it grants owner operations", addr)
 	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -244,11 +245,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// guard checks the token. A standalone Hub always has one (configured or
-// generated); an empty token remains only for servers assembled in tests.
+// guard checks the token. A server without one refuses every request.
 func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.token != "" && !s.authorized(r) {
+		if !s.authorized(r) {
 			http.Error(w, "unauthorized: open the address `steve dash -config <config>` prints", http.StatusUnauthorized)
 			return
 		}
@@ -265,6 +265,9 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
+	if s.token == "" {
+		return false
+	}
 	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if presented == "" {
 		presented = r.URL.Query().Get("token")

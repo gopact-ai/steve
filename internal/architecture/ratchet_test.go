@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -43,6 +44,17 @@ func repoRoot(t *testing.T) string {
 // sourceFiles lists every non-test Go file under internal/ and cmd/.
 func sourceFiles(t *testing.T, root string) []string {
 	t.Helper()
+	return goFiles(t, root, false)
+}
+
+// testFiles lists every _test.go file under internal/ and cmd/.
+func testFiles(t *testing.T, root string) []string {
+	t.Helper()
+	return goFiles(t, root, true)
+}
+
+func goFiles(t *testing.T, root string, tests bool) []string {
+	t.Helper()
 	var files []string
 	for _, dir := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry fs.DirEntry, err error) error {
@@ -55,7 +67,7 @@ func sourceFiles(t *testing.T, root string) []string {
 				}
 				return nil
 			}
-			if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			if strings.HasSuffix(path, ".go") && strings.HasSuffix(path, "_test.go") == tests {
 				files = append(files, path)
 			}
 			return nil
@@ -85,6 +97,12 @@ func funcName(rel string, fd *ast.FuncDecl) string {
 // ratchet compares the current offenders against a baseline file: nothing
 // new may appear, and nothing gone may linger.
 func ratchet(t *testing.T, name string, current []string) {
+	t.Helper()
+	ratchetWith(t, name, current, func(string) string { return "fix it rather than adding it to the baseline" })
+}
+
+// ratchetWith is ratchet with fix saying how to resolve a new offender.
+func ratchetWith(t *testing.T, name string, current []string, fix func(item string) string) {
 	t.Helper()
 	sort.Strings(current)
 	path := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", name+".txt")
@@ -126,7 +144,7 @@ func ratchet(t *testing.T, name string, current []string) {
 		limit, listed := baseline[key]
 		switch {
 		case !listed:
-			t.Errorf("%s: new offender %s — fix it rather than adding it to the baseline", name, item)
+			t.Errorf("%s: new offender %s — %s", name, item, fix(item))
 		case size > limit:
 			t.Errorf("%s: %s grew past its baseline (%d > %d)", name, key, size, limit)
 		}
@@ -184,6 +202,68 @@ func TestInlineInterfaceAssertionsOnlyShrink(t *testing.T) {
 		})
 	}
 	ratchet(t, "interface_assertions", offenders)
+}
+
+// consoleapi.Admin is implemented by admin and consumed only by httpapi. A
+// method httpapi neither calls nor takes as a method value is dead, yet
+// still compiles because admin.Service must satisfy the interface.
+//
+// The check matches selector names without type information: a method or
+// field of the same name on any other type in httpapi also counts as a use,
+// so it can miss a dead method with a common name, never flag a live one.
+func TestConsoleAdminMethodsAreAllUsedByHTTPAPI(t *testing.T) {
+	root := repoRoot(t)
+	contract, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "internal", "consoleapi", "types.go"), nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := map[string]bool{}
+	ast.Inspect(contract, func(n ast.Node) bool {
+		spec, ok := n.(*ast.TypeSpec)
+		if !ok || spec.Name.Name != "Admin" {
+			return true
+		}
+		for _, field := range spec.Type.(*ast.InterfaceType).Methods.List {
+			if len(field.Names) == 0 {
+				t.Fatalf("consoleapi.Admin embeds %s; this test only reads methods declared in Admin itself", types.ExprString(field.Type))
+			}
+			for _, name := range field.Names {
+				used[name.Name] = false
+			}
+		}
+		return false
+	})
+	if len(used) == 0 {
+		t.Fatal("consoleapi.Admin declares no methods")
+	}
+	for _, file := range sourceFiles(t, root) {
+		rel, _ := filepath.Rel(root, file)
+		if filepath.ToSlash(filepath.Dir(rel)) != "internal/httpapi" {
+			continue
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			if selector, ok := n.(*ast.SelectorExpr); ok {
+				if _, declared := used[selector.Sel.Name]; declared {
+					used[selector.Sel.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	var unused []string
+	for name, ok := range used {
+		if !ok {
+			unused = append(unused, name)
+		}
+	}
+	sort.Strings(unused)
+	for _, name := range unused {
+		t.Errorf("consoleapi.Admin.%s is neither called nor referenced in internal/httpapi; remove it from Admin, and from admin.Service too if nothing else calls it", name)
+	}
 }
 
 func TestInlineStateLiteralsOnlyShrink(t *testing.T) {

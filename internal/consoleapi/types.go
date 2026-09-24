@@ -331,8 +331,6 @@ type Admin interface {
 	// them. Owner-only, like the rest of the console.
 	AttemptChanges(ctx context.Context, attempt string) (ChangeIndex, error)
 	AttemptDiff(ctx context.Context, attempt, path string) (FileDiff, error)
-	// TaskAttempts are a task's attempts from the ledger, newest first.
-	TaskAttempts(ctx context.Context, task string) ([]AttemptView, error)
 	// Selectors reads what an agent offers using a temporary discovery
 	// session; SetPreferences records choices and applies them to the
 	// session answering right now, or rolls the session over so the next
