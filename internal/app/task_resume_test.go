@@ -49,7 +49,8 @@ func assembledResumeWithGate(t *testing.T, command string, gate *resumeInputGate
 	return assembledResumeAt(t, t.TempDir(), command, gate)
 }
 
-func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate) resumeFixture {
+// adjust changes the routes the channels built before they are wired.
+func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate, adjust ...func(*taskRoutes)) resumeFixture {
 	t.Helper()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -85,7 +86,7 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate)
 			t.Fatal(err)
 		}
 	}
-	coordinator := turntest.New(t, func(o *turntest.Options) {
+	coordinator := turntest.Unwired(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout = book, catalog, sessions, manager, 10*time.Second
 		o.Tasks, o.Node, o.Executions = tasks, "test", execution.New(t.Context(), tasks)
 		o.Projects, o.DefaultProject, o.Attempts = projects, "p", attempt.New(book)
@@ -110,7 +111,7 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate)
 	})
 	workers := &reconciliationWorkers{}
 	t.Cleanup(workers.Close)
-	_, err = assembleChannels(
+	channels, err := assembleChannels(
 		&runtimeValues{book: book, cfg: &config.Config{}, ctx: t.Context()},
 		&ledgerValues{},
 		&executionValues{coordinator: coordinator, gw: gateway.New(coordinator), catalogText: i18n.New(i18n.LocaleEN)},
@@ -120,6 +121,11 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate)
 	if err != nil {
 		t.Fatal(err)
 	}
+	routes := channels.Routes()
+	for _, change := range adjust {
+		change(&routes)
+	}
+	coordinator.Wire(turntest.Callbacks(coordinatorCallbacks(nil, nil, messagingCallbacks{}, routes)))
 	return resumeFixture{book, tasks, sessions, coordinator, cons}
 }
 
@@ -232,11 +238,10 @@ func TestTaskResumeDormantGrantSurvivesActualSQLiteReopen(t *testing.T) {
 	for _, authorize := range []bool{false, true} {
 		t.Run(map[bool]string{false: "CAS-refused", true: "granted-before-wake"}[authorize], func(t *testing.T) {
 			dir, bin := t.TempDir(), resumeAgent(t)
-			f := assembledResumeAt(t, dir, bin, nil)
-			before := f.paused(t, "console")
 			// A crash can happen after CAS and before the best-effort wake.
 			// Removing only that wake leaves real channel acceptance/owner CAS.
-			f.coordinator.SetResumeDispatcher(nil)
+			f := assembledResumeAt(t, dir, bin, nil, func(r *taskRoutes) { r.ResumeDispatcher = func(turn.TaskResume) {} })
+			before := f.paused(t, "console")
 			if !authorize {
 				if _, err := f.book.DB().Exec(`CREATE TRIGGER refuse_task_resume BEFORE UPDATE ON bindings WHEN NEW.kind='task' BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
 					t.Fatal(err)

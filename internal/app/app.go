@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/logs"
+	"github.com/gopact-ai/steve/internal/turn"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 )
@@ -94,9 +95,6 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := assembleFleetWorkers(runtime, ledger, fleet, models, execution, readModel); err != nil {
-		return nil, err
-	}
 	delegation, err := assembleDelegation(input, runtime, ledger, home, fleet, execution, readModel, console)
 	if err != nil {
 		return nil, err
@@ -105,6 +103,13 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
+	wireCoordinator(execution, plans, administration, delegation, channels)
+	// The workers, the messaging server and recovery below can reach the
+	// coordinator, so they start only after it is wired.
+	if err := assembleFleetWorkers(runtime, ledger, fleet, models, execution, readModel); err != nil {
+		return nil, err
+	}
+	startMessaging(runtime, delegation)
 	if err := assembleRecovery(input, runtime, ledger, execution, console); err != nil {
 		return nil, err
 	}
@@ -116,6 +121,26 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 		}
 		return runChannel(runtime, ledger, home, execution, readModel, administration, channels)
 	}}, nil
+}
+
+// wireCoordinator hands the coordinator the callbacks the stages after
+// execution built around it.
+func wireCoordinator(work executionAssembly, planning plansAssembly, management administrationAssembly, delegates delegationAssembly, channels channelsAssembly) {
+	work.Coordinator().Wire(coordinatorCallbacks(planning.Supervisor(), management.WorkspaceAttach(), delegates.Messaging(), channels.Routes()))
+}
+
+// coordinatorCallbacks assembles turn.Callbacks from what each stage built.
+func coordinatorCallbacks(supervisor turn.Supervisor, attach func(ctx context.Context, projectID, node string) error, messaging messagingCallbacks, routes taskRoutes) turn.Callbacks {
+	return turn.Callbacks{
+		Supervisor:       supervisor,
+		WorkspaceAttach:  attach,
+		AgentGate:        messaging.AgentGate,
+		AfterTurn:        messaging.AfterTurn,
+		TurnPreface:      messaging.TurnPreface,
+		Notifier:         routes.Notifier,
+		Resumer:          routes.Resumer,
+		ResumeDispatcher: routes.ResumeDispatcher,
+	}
 }
 
 // Run waits for the application lifetime and joins shutdown before returning.

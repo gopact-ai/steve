@@ -51,7 +51,10 @@ func completionCoordinator(t *testing.T, runner *fakeRunner, opts ...testOption)
 
 func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *testing.T) {
 	runner := &fakeRunner{id: "native-context", reply: "accepted"}
-	coordinator, book := completionCoordinator(t, runner)
+	resumes := 0
+	coordinator, book := completionCoordinator(t, runner, withCallbacks(func(cb *Callbacks) {
+		cb.Resumer = func(TaskResume) error { resumes++; return nil }
+	}))
 	if _, err := handle(coordinator, t.Context(), "first work"); err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +80,6 @@ func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *test
 	if stored, _ := reopened.Get("1"); stored.State != task.StateDone {
 		t.Fatal("completion not durable")
 	}
-	resumes := 0
-	coordinator.SetResumer(func(TaskResume) error { resumes++; return nil })
 	if _, err := handle(coordinator, t.Context(), "/tasks resume 1"); err != nil {
 		t.Fatal(err)
 	}

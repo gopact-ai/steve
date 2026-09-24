@@ -824,10 +824,12 @@ func TestAgentRunsOnItsConfiguredNode(t *testing.T) {
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
 	labWork := t.TempDir()
-	coordinator := newCoordinatorIn(t, map[string]string{"lab": labWork}, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	// Attaching gives the project no directory on host-3.
+	coordinator := newCoordinatorIn(t, map[string]string{"lab": labWork}, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withCallbacks(func(cb *Callbacks) { cb.WorkspaceAttach = func(context.Context, string, string) error { return nil } }))
 
-	// A hub-homed project cannot be worked on from host-3: the refusal
-	// names both places and the way out.
+	// A hub-homed project without a directory on host-3 cannot be worked
+	// on from there: the refusal names both places and the way out.
 	if _, err := handle(coordinator, t.Context(), "@lab do the thing"); err == nil || !strings.Contains(err.Error(), "host-3") || !strings.Contains(err.Error(), "/project") {
 		t.Fatalf("expected a not-home refusal naming host-3 and /project, got %v", err)
 	}

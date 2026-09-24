@@ -68,7 +68,7 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	if agentID == "" {
 		return Result{Title: title, Text: c.text.T(i18n.RepairUsage, protocol.CommandRepair)}
 	}
-	if c.supervisor == nil || c.plans == nil || c.fleet == nil {
+	if c.fleet == nil {
 		return Result{Title: title, Text: c.text.T(i18n.RepairDisabled)}
 	}
 	fix, err := c.fleet.Repair(ctx, agentID)

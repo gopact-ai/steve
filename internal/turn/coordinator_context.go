@@ -359,7 +359,7 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 			} else if current != nil {
 				if ws, err := current.Place(cand.Node); err == nil {
 					choice.Place = &Placement{Workspace: ws.ID, Kind: string(ws.Kind), Node: nodewire.Place(ws.Node)}
-				} else if c.attach != nil && current.Level.OrDefault() != datalevel.Sealed {
+				} else if current.Level.OrDefault() != datalevel.Sealed {
 					// The project will be given a directory on this
 					// machine the first time work runs there, so the
 					// agent is a choice, not a dead end.

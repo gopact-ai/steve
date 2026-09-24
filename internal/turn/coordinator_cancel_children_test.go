@@ -121,9 +121,8 @@ func (p *prefaceSpy) toldTimes() int {
 // not lift the hold the stop just placed.
 func TestCancelStopsDelegatedChildrenAndHoldsTheTaskUntilTheNextTurn(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
-	coordinator, tasks := taskCoordinator(t, runner)
 	spy := &prefaceSpy{}
-	coordinator.SetTurnPreface(spy.preface)
+	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) { cb.TurnPreface = spy.preface }))
 
 	first := make(chan error, 1)
 	go func() {
@@ -196,9 +195,8 @@ func TestCancelStopsDelegatedChildrenAndHoldsTheTaskUntilTheNextTurn(t *testing.
 // account — but the hold it finds is the later stop's, and stays.
 func TestASecondStopDuringTheContinuedTurnKeepsTheTaskHeld(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
-	coordinator, tasks := taskCoordinator(t, runner)
 	spy := &prefaceSpy{}
-	coordinator.SetTurnPreface(spy.preface)
+	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) { cb.TurnPreface = spy.preface }))
 
 	first := make(chan error, 1)
 	go func() {
@@ -246,9 +244,8 @@ func TestASecondStopDuringTheContinuedTurnKeepsTheTaskHeld(t *testing.T) {
 // the account to the next turn, like a delivery without its receipt.
 func TestPrefaceIsToldAgainWhenTheTurnNeverSettled(t *testing.T) {
 	runner := &fakeRunner{err: errors.New("session lost before the prompt")}
-	coordinator, tasks := taskCoordinator(t, runner)
 	spy := &prefaceSpy{}
-	coordinator.SetTurnPreface(spy.preface)
+	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) { cb.TurnPreface = spy.preface }))
 	if _, err := handle(coordinator, t.Context(), "start it"); err == nil {
 		t.Fatal("the failing runner let the turn succeed")
 	}
@@ -339,7 +336,10 @@ func TestCancelStopsAChildDelegatedWhileTheTurnWasStopping(t *testing.T) {
 // held, and the child's result waits for the user's next message.
 func TestAChildEndingOnItsOwnDuringTheStopFindsTheTaskHeld(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
-	coordinator, tasks := taskCoordinator(t, runner)
+	afterTurn := func(string) {}
+	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) {
+		cb.AfterTurn = func(taskID string) { afterTurn(taskID) }
+	}))
 	runner.onCancel = func() {
 		quick, err := tasks.Spawn("1", task.Task{Member: "quick", Node: "dev", Origin: "delegate:1", Goal: "a small part"})
 		if err != nil {
@@ -357,10 +357,10 @@ func TestAChildEndingOnItsOwnDuringTheStopFindsTheTaskHeld(t *testing.T) {
 		}
 	}
 	heldAtEnd := make(chan bool, 1)
-	coordinator.SetAfterTurn(func(taskID string) {
+	afterTurn = func(taskID string) {
 		parent, _ := tasks.Get(taskID)
 		heldAtEnd <- parent.Held()
-	})
+	}
 	first := make(chan error, 1)
 	go func() {
 		_, err := handle(coordinator, t.Context(), "a long job")
@@ -431,7 +431,10 @@ func (m *composingRuntime) OpenSession(ctx context.Context, at harness.Placement
 func TestATurnStoppedWhileComposingDoesNotLiftTheStopsHold(t *testing.T) {
 	runner := &composingRunner{fakeRunner: &fakeRunner{reply: "ok", cancelSettles: true}}
 	rt := &composingRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": runner.fakeRunner}}, runner: runner}
-	coordinator, tasks, _ := taskCoordinatorOn(t, rt)
+	afterTurn := func(string) {}
+	coordinator, tasks, _ := taskCoordinatorOn(t, rt, withCallbacks(func(cb *Callbacks) {
+		cb.AfterTurn = func(taskID string) { afterTurn(taskID) }
+	}))
 	if _, err := handle(coordinator, t.Context(), "start it"); err != nil {
 		t.Fatal(err)
 	}
@@ -442,10 +445,10 @@ func TestATurnStoppedWhileComposingDoesNotLiftTheStopsHold(t *testing.T) {
 		<-gate
 	})
 	heldAtEnd := make(chan bool, 1)
-	coordinator.SetAfterTurn(func(taskID string) {
+	afterTurn = func(taskID string) {
 		parent, _ := tasks.Get(taskID)
 		heldAtEnd <- parent.Held()
-	})
+	}
 	cancelled := make(chan struct{})
 	runner.onCancel = func() { close(cancelled) }
 	first := make(chan error, 1)
@@ -480,12 +483,16 @@ func TestATurnStoppedWhileComposingDoesNotLiftTheStopsHold(t *testing.T) {
 // turn was not the one a stop cancelled: a later stop re-stamps the hold,
 // and neither the earlier turn's settling nor the stopped turn's lifts it.
 func TestAPrefaceLiftsOnlyTheHoldItWasComposedUnder(t *testing.T) {
-	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	// The spy takes over after the first turn, which runs without one.
+	preface := func(context.Context, string) Preface { return Preface{} }
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) {
+		cb.TurnPreface = func(ctx context.Context, taskID string) Preface { return preface(ctx, taskID) }
+	}))
 	if _, err := handle(coordinator, t.Context(), "start it"); err != nil {
 		t.Fatal(err)
 	}
 	spy := &prefaceSpy{}
-	coordinator.SetTurnPreface(spy.preface)
+	preface = spy.preface
 	if _, err := tasks.Hold("1"); err != nil {
 		t.Fatal(err)
 	}

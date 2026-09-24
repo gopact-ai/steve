@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -24,9 +25,6 @@ func assembleAdministration(life lifetime, input inputAssembly, boot runtimeAsse
 	dashboard := page.Dashboard()
 	materials := page.Materials()
 	admin.Materials, admin.Console, admin.Owner = materials, cons, cfg.EffectiveOwnerID()
-	// A turn on a machine the project is not on gives it a directory there
-	// instead of refusing: the project follows the agent that was chosen.
-	work.Coordinator().SetWorkspaceAttach(admin.EnsureProjectWorkspace)
 	admin.MaterialLevel = cfg.HubLevel()
 	cons.SetMaterials(materials, admin.AuthorizeMaterials)
 	cons.SetDefaultLocale(cfg.EffectiveLocale())
@@ -51,17 +49,26 @@ func assembleAdministration(life lifetime, input inputAssembly, boot runtimeAsse
 	}
 	tasks.SetObserver(func(id string) { view.TaskChanged(id) })
 	supervisor.Runs().Observe(view)
-	return &administrationValues{channelSettings: channelSettings, services: services}, nil
+	// A turn on a machine the project is not on gives it a directory there
+	// instead of refusing: the project follows the agent that was chosen.
+	return &administrationValues{channelSettings: channelSettings, services: services, workspaceAttach: admin.EnsureProjectWorkspace}, nil
 }
 
 type administrationAssembly interface {
 	ChannelSettings() channelRuntime
 	Services() *adminsvc.Services
+	// WorkspaceAttach is the coordinator's Callbacks.WorkspaceAttach.
+	WorkspaceAttach() func(ctx context.Context, projectID, node string) error
 }
 
 type administrationValues struct {
 	channelSettings channelRuntime
 	services        *adminsvc.Services
+	workspaceAttach func(ctx context.Context, projectID, node string) error
+}
+
+func (v *administrationValues) WorkspaceAttach() func(ctx context.Context, projectID, node string) error {
+	return v.workspaceAttach
 }
 
 func (v *administrationValues) ChannelSettings() channelRuntime { return v.channelSettings }

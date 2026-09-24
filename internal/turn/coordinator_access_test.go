@@ -64,7 +64,9 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "the secret answer"}}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withHome("ou_owner", home.Dir{Path: t.TempDir()}))
+	var sent []TaskNotice
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withHome("ou_owner", home.Dir{Path: t.TempDir()}),
+		withCallbacks(func(cb *Callbacks) { cb.Notifier = func(n TaskNotice) { sent = append(sent, n) } }))
 	ctx := context.Background()
 	dir := workspaceOf(t, coordinator, "codex")
 	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: datalevel.Sealed, Home: project.Home{Path: dir}, DefaultRole: project.RoleWrite}}); err != nil {
@@ -72,8 +74,6 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 	}
 	// The test hub must be cleared for sealed data for the turn to run.
 	coordinator.fleet = nil
-	var sent []TaskNotice
-	coordinator.SetNotifier(func(n TaskNotice) { sent = append(sent, n) })
 
 	result, err := coordinator.Handle(ctx, Request{ConversationID: "chat", ChatID: "oc_1", Input: "tell me", SenderOpenID: "ou_guest", MessageID: "m1"})
 	if err != nil {

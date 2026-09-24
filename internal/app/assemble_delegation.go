@@ -26,7 +26,6 @@ import (
 
 func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, projection readModelAssembly, page consoleAssembly) (delegationAssembly, error) {
 	environment := input.Environment()
-	background := boot.Background()
 	book := boot.Book()
 	cfg := boot.Config()
 	ctx := boot.Context()
@@ -36,7 +35,6 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 	fleet := machines.Fleet()
 	nodes := machines.Nodes()
 	artifacts := work.Artifacts()
-	coordinator := work.Coordinator()
 	executions := work.Executions()
 	gw := work.Gateway()
 	tasks := work.Tasks()
@@ -55,6 +53,9 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 	// redeliverPending is the delegation service's start-up pass, once it exists.
 	var reconcileDeliveries func(context.Context) error
 	var recoverRetainedDelegates func(context.Context) error
+	// messaging stays zero when the messaging server could not bind: a nil
+	// *agentmcp.Server must not reach the coordinator as a non-nil gate.
+	var messaging messagingCallbacks
 	if err != nil {
 		// The send primitive is an enhancement; a box that cannot bind a
 		// loopback port still serves ordinary turns.
@@ -69,9 +70,6 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		if err := os.WriteFile(portPath, []byte(fmt.Sprintf("%d\n", gate.Port())), 0o600); err != nil {
 			slog.Error(fmt.Sprintf("steve: remember agent messaging port: %v", err))
 		}
-		coordinator.SetAgentGate(gate)
-		coordinator.SetNodeEndpoints(nodes)
-		coordinator.RegisterIdle = nodes.RegisterIdle
 		// Delegation is the one way an agent reaches another: a child task
 		// in the tree, funded from the caller's remainder, with its own
 		// token. It is offered only when the messaging server exists,
@@ -101,11 +99,14 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		delegation.SetObserver(delegateObserver(ctx, boot.NodeName(), admin, view, cons))
 		gate.SetDelegator(delegation)
 		wireDelegateDelivery(delegation, cons, gw)
-		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
-		coordinator.SetTurnPreface(func(ctx context.Context, taskID string) turn.Preface {
-			text, told := delegation.Preface(ctx, taskID)
-			return turn.Preface{Text: text, Told: told}
-		})
+		messaging = messagingCallbacks{
+			AgentGate: gate,
+			AfterTurn: func(taskID string) { delegation.Flush(ctx, taskID) },
+			TurnPreface: func(ctx context.Context, taskID string) turn.Preface {
+				text, told := delegation.Preface(ctx, taskID)
+				return turn.Preface{Text: text, Told: told}
+			},
+		}
 		reconcileDeliveries = delegation.ReconcileDeliveries
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the
@@ -125,29 +126,50 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 				slog.Error(fmt.Sprintf("steve: journal interim message: %v", err), "task", taskID)
 			}
 		})
-		background.Go(func(ctx context.Context) {
-			if err := gate.Start(ctx); err != nil {
-				slog.Error(fmt.Sprintf("steve: %v", err))
-			}
-		})
-		slog.Info(fmt.Sprintf("steve: agent messaging MCP server on %s", gate.URL()))
 	}
-	return &delegationValues{gate: gate, recoverRetainedDelegates: recoverRetainedDelegates, reconcileDeliveries: reconcileDeliveries}, nil
+	return &delegationValues{gate: gate, messaging: messaging, recoverRetainedDelegates: recoverRetainedDelegates, reconcileDeliveries: reconcileDeliveries}, nil
 }
 
 type delegationAssembly interface {
 	Gate() *agentmcp.Server
+	Messaging() messagingCallbacks
 	RecoverRetainedDelegates() func(context.Context) error
 	ReconcileDeliveries() func(context.Context) error
 }
 
+// messagingCallbacks are the coordinator's AgentGate, AfterTurn and
+// TurnPreface, all nil when the messaging server could not bind.
+type messagingCallbacks struct {
+	AgentGate   turn.AgentGate
+	AfterTurn   func(taskID string)
+	TurnPreface func(ctx context.Context, taskID string) turn.Preface
+}
+
 type delegationValues struct {
 	gate                     *agentmcp.Server
+	messaging                messagingCallbacks
 	recoverRetainedDelegates func(context.Context) error
 	reconcileDeliveries      func(context.Context) error
 }
 
 func (v *delegationValues) Gate() *agentmcp.Server { return v.gate }
+
+// startMessaging serves the messaging MCP server, when there is one. Its
+// tools reach the coordinator, so it starts only once assembly is done.
+func startMessaging(boot runtimeAssembly, delegates delegationAssembly) {
+	gate := delegates.Gate()
+	if gate == nil {
+		return
+	}
+	boot.Background().Go(func(ctx context.Context) {
+		if err := gate.Start(ctx); err != nil {
+			slog.Error(fmt.Sprintf("steve: %v", err))
+		}
+	})
+	slog.Info(fmt.Sprintf("steve: agent messaging MCP server on %s", gate.URL()))
+}
+
+func (v *delegationValues) Messaging() messagingCallbacks { return v.messaging }
 
 func (v *delegationValues) RecoverRetainedDelegates() func(context.Context) error {
 	return v.recoverRetainedDelegates
