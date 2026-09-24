@@ -89,9 +89,6 @@ func (c *Coordinator) busyWith(conversationID string) bool {
 // anyway. The alternative is a conversation nobody can ever delete
 // because one of its agents ran somewhere that is now offline.
 func (c *Coordinator) closeConversationSessions(ctx context.Context, conversationID string) error {
-	if c.runtime == nil {
-		return nil
-	}
 	for agentID, session := range c.store.Conversation(conversationID).Sessions {
 		if session.UpstreamID != "" {
 			place := harness.Placement{Node: session.NodeID, Harness: session.HarnessID}
