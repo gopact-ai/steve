@@ -396,10 +396,13 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 		}
 	}
 	if text != "" {
+		if u.g.ch == nil {
+			return "", errors.New("gateway reply channel is not available")
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if sender, ok := u.g.ch.(textReplier); ok && (u.g.recoveryLedger != nil || u.resultOnly) {
-			id, err := sender.ReplyText(ctx, u.msg.MessageID, text)
+		if u.g.recoveryLedger != nil || u.resultOnly {
+			id, err := u.g.ch.ReplyText(ctx, u.msg.MessageID, text)
 			if err != nil {
 				return "", noticeError(err)
 			}
@@ -407,12 +410,6 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 				return id, nil
 			}
 			return "", channel.ErrOutcomeUnknown
-		}
-		if u.g.ch == nil {
-			return "", errors.New("gateway reply channel is not available")
-		}
-		if u.g.recoveryLedger != nil || u.resultOnly {
-			return "", errors.New("gateway durable reply requires a channel message receipt")
 		}
 		if err := u.g.ch.Reply(ctx, u.msg.MessageID, text); err != nil {
 			return "", noticeError(err)
