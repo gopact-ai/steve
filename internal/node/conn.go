@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -83,13 +84,10 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub, Features: nodewire.Features()})
 	if err != nil {
 		socket.Close()
+		if errors.Is(err, nodewire.ErrVersionMismatch) {
+			return nil, fmt.Errorf("node %q: %w; upgrade steve on that machine over SSH to this build", name, err)
+		}
 		return nil, err
-	}
-	// Every agent stream is journaled so it survives a dropped link; a node
-	// that cannot keep one is an older build to upgrade, not one to serve.
-	if !nodewire.HasFeature(advert.Features, nodewire.FeatureJournal) {
-		socket.Close()
-		return nil, fmt.Errorf("%w: node %s lacks %s; upgrade it", nodewire.ErrVersionMismatch, name, nodewire.FeatureJournal)
 	}
 	// Clearing a deadline on a live socket cannot fail in a way the mux's
 	// first read would not report.

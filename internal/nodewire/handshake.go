@@ -11,12 +11,18 @@ import (
 	"time"
 )
 
-// ProtocolVersion is bumped when a frame or handshake field changes meaning.
-// ProtocolMin is the oldest version this build still speaks; a peer whose
-// range does not overlap ours is refused with both ranges in the reason.
+// ProtocolVersion is bumped when a frame or handshake field changes meaning,
+// or when a capability every node must have is added. ProtocolMin is the
+// oldest version this build still speaks; a peer whose range does not
+// overlap ours is refused with both ranges in the reason.
+//
+// v2 is the baseline every node has: the process journal, admission and
+// MCP binding, skill bundles, node config with revisions, inspect, MCP
+// probes, own skills, artifact and file operations, plugin packages and
+// runtimes. Advert.Features lists only what a v2 node may lack.
 const (
-	ProtocolVersion = 1
-	ProtocolMin     = 1
+	ProtocolVersion = 2
+	ProtocolMin     = 2
 )
 
 // Negotiate picks the newest version both sides speak, or 0 when the

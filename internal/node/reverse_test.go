@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -227,21 +228,78 @@ func TestFaultDropsHubOnlyOnceAfterFirstACPStream(t *testing.T) {
 	}
 }
 
-func TestHubRefusesANodeWithoutTheProcessJournal(t *testing.T) {
+// v1Node answers a handshake the way a build that speaks only protocol v1
+// does: it settles on v1 when the hub's range includes it and refuses
+// with both ranges otherwise. Its advert lists every feature a v1 build
+// declared, the process journal included.
+func v1Node(t *testing.T, socket net.Conn) {
+	t.Helper()
+	defer socket.Close()
+	f, err := nodewire.ReadFrame(socket)
+	if err != nil {
+		return
+	}
+	var hello nodewire.Hello
+	if err := json.Unmarshal(f.Payload, &hello); err != nil {
+		t.Error(err)
+		return
+	}
+	lo, hi := hello.ProtocolMin, hello.ProtocolMax
+	if hi == 0 {
+		lo, hi = hello.Version, hello.Version
+	}
+	advert := map[string]any{"version": 1, "node": "old", "harnesses": []any{},
+		"features": []string{"plugin_runtimes.v1", "plugin_packages.v1", "manifest.v1", "execution_admission.v1", "skill_bundle.v1", "node_mcp_binding.v1", "node_config.v1", "node_config_revision.v1", "inspect.v1", "mcp_probe.v1", "own_skills.v1", "process_journal.v1", "artifact_ops.v1", "file_ops.v1"}}
+	if lo > 1 || hi < 1 {
+		advert = map[string]any{"version": 1, "harnesses": nil, "refused": fmt.Sprintf("hub speaks v%d–v%d, node speaks v1–v1", lo, hi)}
+	}
+	payload, _ := json.Marshal(advert)
+	_ = nodewire.WriteFrame(socket, nodewire.Frame{Kind: nodewire.KindOpen, Payload: payload})
+}
+
+// A node on protocol v1 is refused at the handshake, whatever features it
+// lists, and the hub says which versions met and how to fix it.
+func TestHubRefusesAProtocolV1Node(t *testing.T) {
+	cfg := Config{Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
+		hub, node := net.Pipe()
+		go v1Node(t, node)
+		return hub, nil
+	}}
+	c, err := dial(t.Context(), "old", "hub", cfg, nil)
+	if c != nil {
+		c.close()
+	}
+	if !errors.Is(err, nodewire.ErrVersionMismatch) {
+		t.Fatalf("dial = %v, want a version mismatch", err)
+	}
+	for _, want := range []string{`node "old"`, "node speaks v1–v1", "upgrade", "over SSH"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("dial = %v, want it to say %q", err, want)
+		}
+	}
+}
+
+// A node that answers with a version outside the hub's range, instead of
+// refusing, is refused by the hub with the same advice.
+func TestHubRefusesAnAdvertOnAnOlderProtocol(t *testing.T) {
 	cfg := Config{Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
 		hub, node := net.Pipe()
 		go func() {
 			defer node.Close()
-			_, _ = nodewire.Accept(node, "t", nodewire.Advert{})
+			if _, err := nodewire.ReadFrame(node); err != nil {
+				return
+			}
+			payload, _ := json.Marshal(nodewire.Advert{Version: 1, Node: "old"})
+			_ = nodewire.WriteFrame(node, nodewire.Frame{Kind: nodewire.KindOpen, Payload: payload})
 		}()
 		return hub, nil
 	}}
 	c, err := dial(t.Context(), "old", "hub", cfg, nil)
-	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), nodewire.FeatureJournal) {
-		if c != nil {
-			c.close()
-		}
-		t.Fatalf("dial = %v, want a version mismatch naming %s", err, nodewire.FeatureJournal)
+	if c != nil {
+		c.close()
+	}
+	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), "node speaks v1") || !strings.Contains(err.Error(), "over SSH") {
+		t.Fatalf("dial = %v, want a version mismatch naming v1 and the SSH upgrade", err)
 	}
 }
 
