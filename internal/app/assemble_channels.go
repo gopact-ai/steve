@@ -95,7 +95,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		})
 	}
 	gw.SetRecoveryLedger(book)
-	gw.SetIngressLifetime(ctx, page.Reconciliations())
+	gw.SetIngressLifetime(ctx, page.Reconciliations(), coordinator)
 	routes.ResumeDispatcher = func(r turn.TaskResume) {
 		// Acceptance and owner authorization are already durable. Waking a
 		// consumer is best-effort; startup/runtime recovery uses the same input.

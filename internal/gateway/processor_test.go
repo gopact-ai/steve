@@ -98,7 +98,7 @@ func TestGatewayClassifiesALineAsItsProcessorParsesIt(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
-	g.SetIngressLifetime(ctx, &workers)
+	g.SetIngressLifetime(ctx, &workers, nil)
 	msg := inboundFixture()
 	if err := g.HandleMessage(msg); err != nil {
 		t.Fatal(err)

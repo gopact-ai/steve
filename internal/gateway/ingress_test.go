@@ -24,7 +24,7 @@ func TestHandleMessageRejectsFailedDurableAcceptance(t *testing.T) {
 	p := &durableInputProbe{}
 	g := New(p)
 	g.SetRecoveryLedger(book)
-	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{})
+	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{}, p)
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_ingress BEFORE INSERT ON commands
 		WHEN NEW.kind='gateway-input' BEGIN SELECT RAISE(ABORT,'input unavailable'); END`); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestOrdinaryIngressReturnsAfterAcceptanceAndSharesRecoveryControlSlot(t *te
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
-	g.SetIngressLifetime(ctx, &workers)
+	g.SetIngressLifetime(ctx, &workers, nil)
 	msg := inboundFixture()
 	done := make(chan error, 1)
 	go func() { done <- g.HandleMessage(msg) }()
@@ -165,7 +165,7 @@ func TestOrdinaryTopicUsesOneAcceptedInputAndMovesItsControlSlot(t *testing.T) {
 	var workers recoveryTestWorkers
 	ctx, cancel := context.WithCancel(t.Context())
 	defer func() { cancel(); workers.Wait() }()
-	g.SetIngressLifetime(ctx, &workers)
+	g.SetIngressLifetime(ctx, &workers, nil)
 	msg := inboundFixture()
 	msg.ConversationID, msg.Text = msg.ChatID, "/t original work"
 	if err := g.HandleMessage(msg); err != nil {
@@ -248,7 +248,7 @@ func TestDurableCardRetryDoesNotReuseOriginalMessageCommand(t *testing.T) {
 	g.BindChannel(&recoveryChannel{})
 	g.SetRecoveryLedger(book)
 	var workers recoveryTestWorkers
-	g.SetIngressLifetime(t.Context(), &workers)
+	g.SetIngressLifetime(t.Context(), &workers, nil)
 	msg := inboundFixture()
 	if err := g.HandleMessage(msg); err != nil {
 		t.Fatal(err)
@@ -301,5 +301,33 @@ func TestRuntimeReconcilerConsumesAcceptedOrdinaryInput(t *testing.T) {
 	workers.Wait()
 	if p.calls.Load() != 1 || ch.results.Load() != 1 {
 		t.Fatalf("production reconciler ignores ordinary pending input: calls=%d results=%d", p.calls.Load(), ch.results.Load())
+	}
+}
+
+// An accepted input whose turn does not settle the attempt it admitted is
+// recovered through the driver its ingress is given, though the processor
+// itself resumes no retained chat.
+func TestIngressRecoversAnUnsettledTurnThroughItsDriver(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	driver, ch := &recoveryProbe{}, &recoveryChannel{}
+	g := New(mismatchedIngressResult{})
+	g.BindChannel(ch)
+	g.SetRecoveryLedger(book)
+	var workers recoveryTestWorkers
+	g.SetIngressLifetime(t.Context(), &workers, driver)
+	if err := g.HandleMessage(inboundFixture()); err != nil {
+		t.Fatal(err)
+	}
+	workers.Wait()
+	if driver.resumes.Load() != 1 || driver.calls.Load() != 0 || ch.results.Load() != 1 {
+		t.Fatalf("driver resumed %d chats and ran %d turns, %d results delivered; want 1, 0 and 1",
+			driver.resumes.Load(), driver.calls.Load(), ch.results.Load())
+	}
+	if pending, err := book.PendingCommands(t.Context(), gatewayInputKind); err != nil || len(pending) != 0 {
+		t.Fatalf("pending inputs = %d, %v; want none", len(pending), err)
 	}
 }

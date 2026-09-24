@@ -11,10 +11,12 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-// SetIngressLifetime shares the application's close-before-join worker owner.
-// Wire it before accepting channel callbacks.
-func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorkers) {
-	g.ingressContext, g.ingressWorkers = ctx, workers
+// SetIngressLifetime shares the application's close-before-join worker owner
+// and the driver that resumes the retained chat of an accepted input whose
+// dispatch must be recovered from its admitted attempt; a nil driver leaves
+// such an input pending. Wire it before accepting channel callbacks.
+func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorkers, driver RecoveryDriver) {
+	g.ingressContext, g.ingressWorkers, g.ingressDriver = ctx, workers, driver
 }
 
 func (g *Gateway) immediateInput(text string) bool {
@@ -39,8 +41,7 @@ func (g *Gateway) acceptAndWake(key string, input gatewayInput) error {
 	if err != nil || !found {
 		return fmt.Errorf("gateway accepted input cannot be read: %w", err)
 	}
-	driver, _ := g.processor.(RecoveryDriver)
-	run, release, err := g.claimQueued(ctx, g.recoveryLedger, receipt, driver, nil, false)
+	run, release, err := g.claimQueued(ctx, g.recoveryLedger, receipt, g.ingressDriver, nil, false)
 	if errors.Is(err, channel.ErrDeliveryQueued) {
 		return nil // Acceptance is durable; the running reconciler owns retry.
 	}

@@ -30,7 +30,7 @@ func TestOrdinaryAcceptedInputSurvivesClosedLifetimeAndRestarts(t *testing.T) {
 	g := New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{})
+	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{}, p)
 	if err := g.HandleMessage(inboundFixture()); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestDurableActionRejectedAcceptanceDoesNotConsumeRetryOrRecall(t *testing.T
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
 	var workers recoveryTestWorkers
-	g.SetIngressLifetime(t.Context(), &workers)
+	g.SetIngressLifetime(t.Context(), &workers, nil)
 	msg := inboundFixture()
 	id := g.registerTurn(msg)
 	g.setTurnCard(id, "card")
@@ -301,9 +301,10 @@ func TestOrdinaryAcceptanceConflictsOnActorPayloadOrKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	g := New(&durableInputProbe{})
+	p := &durableInputProbe{}
+	g := New(p)
 	g.SetRecoveryLedger(book)
-	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{})
+	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{}, p)
 	msg := inboundFixture()
 	if err := g.HandleMessage(msg); err != nil {
 		t.Fatal(err)
@@ -335,7 +336,7 @@ func TestDurableHistoryCardReplaysItsOriginalAcceptanceOnly(t *testing.T) {
 	g.BindChannel(&recoveryChannel{})
 	g.SetRecoveryLedger(book)
 	var workers recoveryTestWorkers
-	g.SetIngressLifetime(t.Context(), &workers)
+	g.SetIngressLifetime(t.Context(), &workers, nil)
 	action := feishu.CardAction{RequestID: "thread", Action: "history_restore", MessageID: "finished-card", ChatID: "chat", OpenID: "owner"}
 	for range 2 {
 		if toast := g.HandleCardAction(action); toast.Type != "success" {
@@ -403,7 +404,7 @@ func TestDurableNormalInputWaitsWithoutReservingDispatchBehindLiveOwner(t *testi
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
-	g.SetIngressLifetime(ctx, &workers)
+	g.SetIngressLifetime(ctx, &workers, nil)
 	first := inboundFixture()
 	if err := g.HandleMessage(first); err != nil {
 		t.Fatal(err)
@@ -481,7 +482,7 @@ func TestDurableTopicSeedsParallelThreadWhileOriginalChatIsServing(t *testing.T)
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
-	g.SetIngressLifetime(ctx, &workers)
+	g.SetIngressLifetime(ctx, &workers, nil)
 	msg := inboundFixture()
 	msg.ConversationID = msg.ChatID
 	if err := g.HandleMessage(msg); err != nil {

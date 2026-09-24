@@ -89,6 +89,7 @@ func TestConfirmedDeliveryReadsActualIngressAndRecoveryOwners(t *testing.T) {
 				}
 			default:
 				msg := inboundFixture()
+				var driver RecoveryDriver = p
 				if mode == "topic" {
 					msg.ConversationID, msg.Text = msg.ChatID, "/t original"
 					conversation, anchor = "topic-thread", "topic-anchor"
@@ -98,9 +99,10 @@ func TestConfirmedDeliveryReadsActualIngressAndRecoveryOwners(t *testing.T) {
 					g.BindChannel(&recoveryChannel{})
 					g.SetRecoveryLedger(book)
 					msg.ChatType, msg.Mentioned = protocol.ChatGroup, false
+					driver = nil
 				}
 				var workers recoveryTestWorkers
-				g.SetIngressLifetime(t.Context(), &workers)
+				g.SetIngressLifetime(t.Context(), &workers, driver)
 				if err := g.HandleMessage(msg); err != nil {
 					t.Fatal(err)
 				}

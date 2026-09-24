@@ -68,11 +68,12 @@ func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T
 			}
 			p := &ordinaryCompletionProbe{coordinator: f.c, task: r.TaskID, attempt: r.ID}
 			ch := &ordinaryDisclosureChannel{}
-			g := gateway.New(ordinaryDisclosureProcessor{p})
+			processor := ordinaryDisclosureProcessor{p}
+			g := gateway.New(processor)
 			g.BindChannel(ch)
 			g.SetRecoveryLedger(f.book)
 			workers := &reconciliationWorkers{}
-			g.SetIngressLifetime(f.ctx, workers)
+			g.SetIngressLifetime(f.ctx, workers, processor)
 			if err := g.HandleMessage(feishu.InboundMessage{
 				ConversationID: crashConversation, ChatID: "console", MessageID: "web-original",
 				SenderOpenID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,

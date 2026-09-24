@@ -40,7 +40,7 @@ func TestOrdinaryFeishuIngressRecoversOriginalCompletionAndAccountingAfterReopen
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(first.book)
 	workers := &reconciliationWorkers{}
-	g.SetIngressLifetime(first.ctx, workers)
+	g.SetIngressLifetime(first.ctx, workers, nil)
 	err := g.HandleMessage(feishu.InboundMessage{
 		ConversationID: crashConversation, ChatID: "console", MessageID: "web-original",
 		SenderOpenID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,

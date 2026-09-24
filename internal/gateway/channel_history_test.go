@@ -424,7 +424,8 @@ func TestChannelHistoryActualIngressOwnersAndRecovery(t *testing.T) {
 	for _, mode := range []string{"ordinary", "topic", "recovery", "suppressed"} {
 		t.Run(mode, func(t *testing.T) {
 			book := historyBook(t)
-			g := New(&durableInputProbe{})
+			p := &durableInputProbe{}
+			g := New(p)
 			g.BindChannel(&ingressTopicChannel{})
 			g.SetRecoveryLedger(book)
 			conversation := "conversation"
@@ -440,6 +441,7 @@ func TestChannelHistoryActualIngressOwnersAndRecovery(t *testing.T) {
 				}
 			default:
 				msg := inboundFixture()
+				var driver RecoveryDriver = p
 				if mode == "topic" {
 					msg.ConversationID, msg.Text = msg.ChatID, "/t original"
 					conversation = "topic-thread"
@@ -449,9 +451,10 @@ func TestChannelHistoryActualIngressOwnersAndRecovery(t *testing.T) {
 					g.BindChannel(&recoveryChannel{})
 					g.SetRecoveryLedger(book)
 					msg.ChatType, msg.Mentioned = protocol.ChatGroup, false
+					driver = nil
 				}
 				var workers recoveryTestWorkers
-				g.SetIngressLifetime(t.Context(), &workers)
+				g.SetIngressLifetime(t.Context(), &workers, driver)
 				if err := g.HandleMessage(msg); err != nil {
 					t.Fatal(err)
 				}

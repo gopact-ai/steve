@@ -96,6 +96,7 @@ type Gateway struct {
 	recoveryAfter  string
 	ingressContext context.Context
 	ingressWorkers RecoveryWorkers
+	ingressDriver  RecoveryDriver
 	processor      Processor
 	ch             Channel
 	text           i18n.Catalog
