@@ -17,7 +17,7 @@ func (c *Coordinator) SetSchedules(store *schedule.Store) { c.schedules = store 
 // taken over — a different origin — is left alone, and so is one still
 // running: the new prompt simply queues behind it.
 func (c *Coordinator) RotateTask(conversationID, agentID, origin string) {
-	if c.tasks == nil || origin == "" {
+	if origin == "" {
 		return
 	}
 	c.mu.Lock()

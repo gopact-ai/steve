@@ -415,14 +415,6 @@ func (c *Coordinator) promptTimeout() time.Duration {
 	return c.timeout
 }
 
-// SetTasks sets the task store and the node name tasks record.
-//
-// Deprecated: set Deps.Tasks and Deps.Node.
-func (c *Coordinator) SetTasks(store *task.Store, node string) {
-	c.tasks = store
-	c.node = node
-}
-
 // SetCatalog sets the text catalog replies are written in.
 //
 // Deprecated: set Deps.Text.

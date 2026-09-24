@@ -70,7 +70,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 // landing under a lock this turn no longer holds, and the disclosure.
 func (c *Coordinator) afterCompletion(ctx context.Context, record attempt.Record, result Result, pending *project.Project, clock *turnClock) error {
 	clock.mark("finish")
-	if record.Workspace.Kind == project.KindWorktree && record.Execution != nil && c.tasks != nil {
+	if record.Workspace.Kind == project.KindWorktree && record.Execution != nil {
 		if tracked, ok := c.tasks.Get(record.TaskID); ok && tracked.RecoveryWorkspace != nil && tracked.RecoveryWorkspace.ID == record.Workspace.ID {
 			workspace := *tracked.RecoveryWorkspace
 			if record.Result != nil && record.Result.Artifact != "" {

@@ -67,12 +67,10 @@ func (c *Coordinator) workspaceFor(ctx context.Context, req Request, selected ag
 	if err := c.require(ctx, binding.ProjectID, req.SenderOpenID, project.RoleWrite); err != nil {
 		return project.Workspace{}, err
 	}
-	if c.tasks != nil {
-		if tracked, ok := c.tasks.RecoveryOn(req.ConversationID, selected.ID, req.Origin); ok {
-			recovered := tracked.RecoveryWorkspace
-			if recovered.ProjectID == binding.ProjectID && recovered.NodeID == selected.Node && recovered.HarnessID == selected.Harness {
-				return project.Workspace{ID: recovered.ID, Project: recovered.ProjectID, Node: recovered.NodeID, Path: recovered.Path, Kind: project.KindWorktree, Base: recovered.Base}, nil
-			}
+	if tracked, ok := c.tasks.RecoveryOn(req.ConversationID, selected.ID, req.Origin); ok {
+		recovered := tracked.RecoveryWorkspace
+		if recovered.ProjectID == binding.ProjectID && recovered.NodeID == selected.Node && recovered.HarnessID == selected.Harness {
+			return project.Workspace{ID: recovered.ID, Project: recovered.ProjectID, Node: recovered.NodeID, Path: recovered.Path, Kind: project.KindWorktree, Base: recovered.Base}, nil
 		}
 	}
 	workspace, err := c.projects.Materialize(ctx, project.Request{Project: binding.ProjectID, Node: selected.Node})

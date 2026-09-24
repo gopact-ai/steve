@@ -81,14 +81,12 @@ func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string)
 			}
 		}
 	}
-	if c.tasks != nil {
-		if t, running := c.tasks.Running(conversationID, agentID); running {
-			w.Task = t.ID
-			w.Turns, w.MaxTurns = t.Budget.Turns, t.Budget.MaxTurns
-			w.Elapsed = t.Budget.Elapsed.Round(time.Second).String()
-			if t.Budget.MaxElapsed > 0 {
-				w.MaxElapsed = t.Budget.MaxElapsed.Round(time.Second).String()
-			}
+	if t, running := c.tasks.Running(conversationID, agentID); running {
+		w.Task = t.ID
+		w.Turns, w.MaxTurns = t.Budget.Turns, t.Budget.MaxTurns
+		w.Elapsed = t.Budget.Elapsed.Round(time.Second).String()
+		if t.Budget.MaxElapsed > 0 {
+			w.MaxElapsed = t.Budget.MaxElapsed.Round(time.Second).String()
 		}
 	}
 	sort.Strings(w.MCPServers)

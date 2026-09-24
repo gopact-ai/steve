@@ -31,18 +31,14 @@ func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID st
 	if c.busyWith(conversationID) {
 		return fmt.Errorf("%w: %s", ErrConversationBusy, conversationID)
 	}
-	if c.tasks != nil {
-		if err := c.tasks.ChannelIdle(conversationID); err != nil {
-			return err
-		}
+	if err := c.tasks.ChannelIdle(conversationID); err != nil {
+		return err
 	}
 	if err := c.closeConversationSessions(ctx, conversationID); err != nil {
 		return err
 	}
-	if c.tasks != nil {
-		if _, err := c.tasks.DeleteChannel(conversationID); err != nil {
-			return err
-		}
+	if _, err := c.tasks.DeleteChannel(conversationID); err != nil {
+		return err
 	}
 	if c.schedules != nil {
 		for _, job := range c.schedules.List(conversationID) {

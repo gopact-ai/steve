@@ -204,9 +204,6 @@ func (c *Coordinator) suggestAgents(ctx context.Context, conversationID, verb, r
 }
 
 func (c *Coordinator) suggestTasks(conversationID, rest string) []Suggestion {
-	if c.tasks == nil {
-		return nil
-	}
 	op, want := "", rest
 	for _, o := range []string{"pause", "resume", "cancel"} {
 		if strings.HasPrefix(rest, o+" ") {

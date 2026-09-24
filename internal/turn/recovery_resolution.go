@@ -17,9 +17,6 @@ func (c *Coordinator) resolveStoppedExecution(record attempt.Record) error {
 		record.SessionSettled == nil || !*record.SessionSettled {
 		return errors.New("execution resolution requires the original identity and committed stop evidence")
 	}
-	if c.tasks == nil {
-		return errors.New("execution resolution requires task accounting")
-	}
 	tracked, ok := c.tasks.Get(record.TaskID)
 	if !ok {
 		return errors.New("execution resolution source task is missing")

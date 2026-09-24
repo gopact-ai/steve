@@ -30,9 +30,7 @@ const goalLimit = 120
 // replace its original authorization with an empty or newer one.
 func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID string) (project.Binding, *execution.Scope, error) {
 	var previous task.Task
-	if c.tasks != nil {
-		previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
-	}
+	previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
 	req.stage(view.StageWorkspace)
 	binding, err := c.bindingFor(ctx, req)
 	if err != nil || c.executions == nil {
@@ -60,12 +58,6 @@ func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID s
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
 	if req.ResumeAdmission != (task.ResumeAdmission{}) && req.ExpectedTask != req.ResumeAdmission.TaskID {
 		return "", fmt.Errorf("%w: resume input requires its original task", task.ErrExecutionStopped)
-	}
-	if c.tasks == nil {
-		if req.ExpectedTask != "" {
-			return "", fmt.Errorf("task continuation requires a task store")
-		}
-		return "", nil
 	}
 	executionNode := selected.Node
 	if executionNode == "" {
@@ -150,7 +142,7 @@ func onboarding(req Request) bool {
 // attempt continues it instead of opening another, and the idle sweep
 // closes it if onboarding never runs again.
 func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error) {
-	if c.tasks == nil || id == "" || turnErr != nil || !onboarding(req) {
+	if id == "" || turnErr != nil || !onboarding(req) {
 		return
 	}
 	if _, err := c.tasks.Advance(id, task.StateDone); err != nil {
@@ -163,9 +155,6 @@ func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error)
 // resume, not reported as completed. Every lineage leaves the conversation
 // slot, including unattended work, so new inputs cannot charge old work.
 func (c *Coordinator) closeTask(conversationID, agentID string) {
-	if c.tasks == nil {
-		return
-	}
 	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
 		if err := c.releaseConversationTask(tracked); err != nil {
 			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
@@ -231,9 +220,6 @@ func (c *Coordinator) budgetStop(tracked task.Task) (string, bool) {
 // limit is what turns the brake from a surprise into something the user can
 // see coming.
 func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
-	if c.tasks == nil {
-		return nil
-	}
 	tracked, ok := c.tasks.Active(conversationID, agentID, "")
 	if !ok {
 		return nil
@@ -326,7 +312,7 @@ func (c *Coordinator) heardSince(conversationID string, mark time.Time) bool {
 // into a chat nobody is looking at; the plain-text line is the second, louder
 // knock — and it is only sent when the person truly went quiet.
 func (c *Coordinator) offlineReminder(req Request, id string, started time.Time, turnErr error) {
-	if c.notifier == nil || c.tasks == nil || id == "" || c.offlineAfter <= 0 {
+	if c.notifier == nil || id == "" || c.offlineAfter <= 0 {
 		return
 	}
 	if turnErr != nil {

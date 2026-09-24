@@ -39,10 +39,8 @@ type RelocationPlan struct {
 }
 
 func (c *Coordinator) recoveryAgent(conversation string, selected agent.Agent, origin string) agent.Agent {
-	if c.tasks != nil {
-		if tracked, ok := c.tasks.RecoveryOn(conversation, selected.ID, origin); ok && tracked.RecoveryWorkspace.HarnessID == selected.Harness {
-			selected.Node = tracked.RecoveryWorkspace.NodeID
-		}
+	if tracked, ok := c.tasks.RecoveryOn(conversation, selected.ID, origin); ok && tracked.RecoveryWorkspace.HarnessID == selected.Harness {
+		selected.Node = tracked.RecoveryWorkspace.NodeID
 	}
 	return selected
 }
@@ -79,7 +77,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 	if c.maintaining {
 		return RelocationPlan{}, errors.New("coordination is transferring or under maintenance")
 	}
-	if c.artifacts == nil || c.attempts == nil || c.tasks == nil {
+	if c.artifacts == nil || c.attempts == nil {
 		return RelocationPlan{}, errors.New("relocation services are unavailable")
 	}
 	r, err := c.attempts.Get(ctx, id)

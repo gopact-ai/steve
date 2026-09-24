@@ -142,7 +142,7 @@ func (t *chatTurn) leased(ctx context.Context, e *lifecycle.Execution) (context.
 	if t.scope != nil {
 		t.scope.SetAttempt(e.Record.ID)
 	}
-	if c.tasks != nil && e.Record.Execution != nil {
+	if e.Record.Execution != nil {
 		if bindErr := c.tasks.BindAttempt(*e.Record.Execution, e.Record.ID, e.Record.TurnID); bindErr != nil {
 			return ctx, fmt.Errorf("bind task accounting: %w", bindErr)
 		}

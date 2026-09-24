@@ -58,7 +58,7 @@ func retainedChat(r attempt.Record) bool {
 // returned as found, never chosen between. It creates neither tasks nor
 // replacement attempts, and reads only the turn's own attempts.
 func (c *Coordinator) RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]RetainedChat, error) {
-	if c.attempts == nil || c.tasks == nil {
+	if c.attempts == nil {
 		return nil, errors.New("retained chat recovery is not configured")
 	}
 	records, err := c.attempts.ForTurn(ctx, messageID)
@@ -84,7 +84,7 @@ func (c *Coordinator) RetainedChatsFor(ctx context.Context, conversation, messag
 // recovery does not start over records it could not classify. It decodes no
 // settled payloads.
 func (c *Coordinator) CheckRetainedChats(ctx context.Context) error {
-	if c.attempts == nil || c.tasks == nil {
+	if c.attempts == nil {
 		return errors.New("retained chat recovery is not configured")
 	}
 	return c.attempts.CheckReadable(ctx)
@@ -144,7 +144,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	if c.maintaining {
 		return Result{}, c.retainedBlocked("maintenance", "检查当前协调服务", "协调服务暂时不能接续执行。", "服务正在交接或维护。", "建议等待交接完成后重新检查。", nil)
 	}
-	if c.attempts == nil || c.tasks == nil {
+	if c.attempts == nil {
 		return Result{}, errors.New("retained chat recovery is not configured")
 	}
 	record, err := c.retainedChatRecord(parent, id, req)

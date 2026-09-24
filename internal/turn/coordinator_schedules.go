@@ -39,7 +39,7 @@ func (c *Coordinator) scheduleIdentity(ctx context.Context, binding agentmcp.Bin
 	if binding.TaskID != "" || binding.DelegatedBy != "" {
 		return task.Task{}, errors.New("delegated tasks cannot manage schedules")
 	}
-	if c.schedules == nil || c.attempts == nil || c.tasks == nil || c.projects == nil {
+	if c.schedules == nil || c.attempts == nil || c.projects == nil {
 		return task.Task{}, errors.New("scheduling requires schedules, tasks, attempts and projects")
 	}
 	scope, ok := agentmcp.ScopeFromContext(ctx)
