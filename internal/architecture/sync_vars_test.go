@@ -15,15 +15,23 @@ import (
 // packageSyncVars lists, as "dir.name", the package-level variables in
 // files whose type or initial value comes from sync or sync/atomic: a
 // mutex, once, map, pool, wait group, condition or atomic value, a pointer
-// to one, or a struct that embeds or holds one. Function types are not
-// looked into, nor are function literals in an initial value.
+// to one, a struct that embeds or holds one, or a named type of the same
+// package, declared in any of the files given, that holds one. Function
+// types are not looked into, nor are function literals in an initial
+// value.
 //
 // The analysis is syntactic: it does not see such a value behind a named
-// type declared elsewhere, or one returned by a function of another
-// package.
-func packageSyncVars(t *testing.T, root string, files []string) []string {
+// type of another package, or one returned by a function of another
+// package. A file that dot-imports sync or sync/atomic names those types
+// without the package, so it is returned in dotImports, as its path from
+// root, instead of being analysed for them.
+func packageSyncVars(t *testing.T, root string, files []string) (found, dotImports []string) {
 	t.Helper()
-	var found []string
+	type file struct {
+		src     goSource
+		aliases map[string]bool
+	}
+	var parsed []file
 	for _, src := range parseGoSources(t, root, files) {
 		aliases := map[string]bool{}
 		for _, spec := range src.syntax.Imports {
@@ -35,28 +43,72 @@ func packageSyncVars(t *testing.T, root string, files []string) []string {
 			if spec.Name != nil {
 				name = spec.Name.Name
 			}
+			if name == "." {
+				dotImports = append(dotImports, src.rel)
+				continue
+			}
 			aliases[name] = true
 		}
-		if len(aliases) == 0 {
-			continue
+		parsed = append(parsed, file{src: src, aliases: aliases})
+	}
+	// synced holds, per directory, the named types found to hold
+	// synchronization state.
+	synced := map[string]map[string]bool{}
+	fromSync := func(f file, n ast.Node) bool {
+		if n == nil {
+			return false
 		}
-		fromSync := func(n ast.Node) bool {
-			if n == nil {
+		local := synced[f.src.dir]
+		hit := false
+		var visit func(ast.Node) bool
+		visit = func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncType, *ast.FuncLit:
 				return false
-			}
-			hit := false
-			ast.Inspect(n, func(n ast.Node) bool {
-				switch n := n.(type) {
-				case *ast.FuncType, *ast.FuncLit:
-					return false
-				case *ast.SelectorExpr:
-					if x, ok := n.X.(*ast.Ident); ok && aliases[x.Name] {
-						hit = true
-					}
+			case *ast.Field:
+				// A field's name is not a type.
+				ast.Inspect(n.Type, visit)
+				return false
+			case *ast.SelectorExpr:
+				if x, ok := n.X.(*ast.Ident); ok && f.aliases[x.Name] {
+					hit = true
 				}
-				return !hit
-			})
-			return hit
+				return false
+			case *ast.Ident:
+				if local[n.Name] {
+					hit = true
+				}
+			}
+			return !hit
+		}
+		ast.Inspect(n, visit)
+		return hit
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, f := range parsed {
+			for _, decl := range f.src.syntax.Decls {
+				gen, ok := decl.(*ast.GenDecl)
+				if !ok || gen.Tok != token.TYPE {
+					continue
+				}
+				for _, spec := range gen.Specs {
+					typ := spec.(*ast.TypeSpec)
+					if synced[f.src.dir][typ.Name.Name] || !fromSync(f, typ.Type) {
+						continue
+					}
+					if synced[f.src.dir] == nil {
+						synced[f.src.dir] = map[string]bool{}
+					}
+					synced[f.src.dir][typ.Name.Name] = true
+					changed = true
+				}
+			}
+		}
+	}
+	for _, f := range parsed {
+		if len(f.aliases) == 0 && len(synced[f.src.dir]) == 0 {
+			continue
 		}
 		initialValue := func(value ast.Expr) bool {
 			for {
@@ -68,50 +120,60 @@ func packageSyncVars(t *testing.T, root string, files []string) []string {
 					value = v.X
 					continue
 				case *ast.CompositeLit:
-					return fromSync(v.Type)
+					return fromSync(f, v.Type)
 				case *ast.CallExpr:
 					if ident, ok := v.Fun.(*ast.Ident); ok && ident.Name == "new" && len(v.Args) == 1 {
-						return fromSync(v.Args[0])
+						return fromSync(f, v.Args[0])
 					}
 					if selector, ok := v.Fun.(*ast.SelectorExpr); ok {
-						return fromSync(selector)
+						return fromSync(f, selector)
 					}
 				}
 				return false
 			}
 		}
-		for _, decl := range src.syntax.Decls {
+		for _, decl := range f.src.syntax.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok || gen.Tok != token.VAR {
 				continue
 			}
 			for _, spec := range gen.Specs {
 				value := spec.(*ast.ValueSpec)
-				typed := fromSync(value.Type)
+				typed := fromSync(f, value.Type)
 				for i, name := range value.Names {
 					if name.Name == "_" {
 						continue
 					}
 					if typed || i < len(value.Values) && initialValue(value.Values[i]) {
-						found = append(found, src.dir+"."+name.Name)
+						found = append(found, f.src.dir+"."+name.Name)
 					}
 				}
 			}
 		}
 	}
 	sort.Strings(found)
-	return found
+	sort.Strings(dotImports)
+	return found, dotImports
 }
 
 func TestPackageSyncVarsFindsSynchronizationState(t *testing.T) {
 	root := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", "package_sync_vars")
-	got := packageSyncVars(t, root, []string{filepath.Join(root, "internal", "sample", "sample.go")})
+	got, dotted := packageSyncVars(t, root, []string{
+		filepath.Join(root, "internal", "dotted", "dotted.go"),
+		filepath.Join(root, "internal", "sample", "other.go"),
+		filepath.Join(root, "internal", "sample", "sample.go"),
+	})
 	want := []string{
-		"internal/sample.counter", "internal/sample.guarded", "internal/sample.made", "internal/sample.mu",
-		"internal/sample.once", "internal/sample.pointer", "internal/sample.rw", "internal/sample.shared", "internal/sample.value",
+		"internal/sample.allocated", "internal/sample.boxed", "internal/sample.counter", "internal/sample.deep",
+		"internal/sample.elsewhere", "internal/sample.guarded", "internal/sample.held", "internal/sample.literal",
+		"internal/sample.made", "internal/sample.mu", "internal/sample.once", "internal/sample.pointer",
+		"internal/sample.rw", "internal/sample.shared", "internal/sample.value",
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("package sync vars =\n%v\nwant\n%v", got, want)
+	}
+	if want := []string{"internal/dotted/dotted.go"}; fmt.Sprint(dotted) != fmt.Sprint(want) {
+		t.Fatalf("dot imports = %v, want %v", dotted, want)
 	}
 }
 
@@ -139,7 +201,11 @@ func TestPackageSyncVarsAreAllowed(t *testing.T) {
 		allowed[key] = reason
 	}
 	seen := map[string]bool{}
-	for _, name := range packageSyncVars(t, root, sourceFiles(t, root)) {
+	found, dotImports := packageSyncVars(t, root, sourceFiles(t, root))
+	for _, file := range dotImports {
+		t.Errorf("package_sync_vars: %s dot-imports sync or sync/atomic, which hides synchronization types from this check; import the package by name", file)
+	}
+	for _, name := range found {
 		seen[name] = true
 		if _, ok := allowed[name]; !ok {
 			t.Errorf("package_sync_vars: new package-level synchronization variable %s — hold it in the instance that uses it, or, when it guards state the process has only one of, list it in testdata/package_sync_vars.txt with the reason", name)
