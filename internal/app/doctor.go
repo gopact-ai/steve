@@ -78,9 +78,6 @@ func Doctor(configPath string, timeout time.Duration) error {
 	if err := (configbuild.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
 		return fmt.Errorf("reconcile configured projects: %w", err)
 	}
-	for _, note := range cfg.Migrated {
-		slog.Info(fmt.Sprintf("steve: config migrated: %s", note))
-	}
 	for _, g := range configbuild.GrantList(cfg) {
 		if _, err := projects.Grant(context.Background(), g.Project, g.Principal, g.Role, g.By); err != nil {
 			return fmt.Errorf("grant %s in %s: %w", g.Principal, g.Project, err)

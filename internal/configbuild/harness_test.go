@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/project"
 )
 
 func TestRemoteAgentDoesNotRequireCoordinatorCommandOrCredentials(t *testing.T) {
@@ -57,12 +58,13 @@ func TestFirstLaunchBuildsAnEmptyHarnessManager(t *testing.T) {
 	manager.Stop()
 }
 
-func TestProjectListFollowsMigratedAgentWorkspaces(t *testing.T) {
+func TestProjectListFollowsConfiguredProjects(t *testing.T) {
 	cfg, err := config.Load(writeConfig(t, `{
-		"agents": {
-			"codex": {"harness": "codex", "workspace": "/tmp/steve-codex", "default": true},
-			"lab": {"harness": "codex", "node": "host-3", "workspace": "/srv/lab"}
+		"projects": {
+			"lab": {"home": {"node": "host-3", "path": "/srv/lab"}},
+			"codex": {"home": {"path": "/tmp/steve-codex"}}
 		},
+		"agents": {"codex": {"harness": "codex", "default": true}},
 		"nodes": {"host-3": {"addr": "10.0.0.3:7701", "token": "t"}},
 		"harnesses": {"codex": {"command": "true"}},
 		"feishu": {"app_id": "cli", "app_secret": "s"}
@@ -71,7 +73,7 @@ func TestProjectListFollowsMigratedAgentWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := ProjectList(cfg)
-	if len(list) != 2 || list[0].ID != "codex" || list[1].ID != "lab" {
+	if len(list) != 2 || list[0].ID != "codex" || list[1].ID != "lab" || list[1].Home != (project.Home{Node: "host-3", Path: "/srv/lab"}) {
 		t.Fatalf("project list = %+v", list)
 	}
 }

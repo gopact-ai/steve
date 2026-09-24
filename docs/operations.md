@@ -47,7 +47,7 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
 | `agents` | object<string, Agent> | 可为空 | 命名执行配置；非空时恰有一个默认 agent | `{"codex":{"harness":"codex","default":true}}` |
-| `projects` | object<string, Project> | 无，至少一项；旧布局可迁移 | 声明项目；`home` 是保留项目名 | `{"work":{"home":{"path":"/srv/work"}}}` |
+| `projects` | object<string, Project> | 无，至少一项 | 声明项目；`home` 是保留项目名 | `{"work":{"home":{"path":"/srv/work"}}}` |
 | `harnesses` | object<string, Harness> | 无，至少一项 | hub 本机启动命令与权限策略；agent 引用的 harness 必须在此登记 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
 | `nodes` | object<string, Node> | `{}` | hub 如何连接远端机器；能力来自 node 的实际申报 | `{"host-3":{"addr":"10.0.0.3:7701","token":"replace-me"}}` |
 | `mcp_servers` | object<string, MCPServer> | `{}` | hub 本机 MCP 定义 | `{"docs":{"type":"http","url":"https://mcp.example.com/mcp"}}` |
@@ -94,7 +94,6 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | `skills` | string[] | `[]` | 固定到 agent 的技能目录，在 hub 读取 | `["/home/me/steve-skills/review"]` |
 | `mcp_servers` | string[] | `[]` | 引用执行机器本地的 MCP 名字；远端使用 node 上的同名定义 | `["filesystem","docs"]` |
 | `default` | boolean | `false`；整个配置恰有一个 `true` | 未指定 agent 时的默认选择 | `true` |
-| `workspace` | string | `""`，兼容项 | 仅用于迁移旧布局；没有 `projects` 时迁成同名项目，与新 `projects` 并存会报错 | `"/srv/old-work"`（仅旧文件） |
 
 能力选择器支持 `kind:id`、模式匹配、或、否定、版本条件，例如 `tool:go`、`model:claude*`、`tool:docker@>=27`；裸标签如 `build` 对应 `tag:build`。当前 harness、tool、hardware、model、skill、mcp、tag 可参与调度；network、credential、a2a 只展示，作为要求会返回 `NOT_SCHEDULABLE`。参见 [internal/ability](../internal/ability/) 与 [internal/roster](../internal/roster/)。
 
@@ -146,7 +145,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `allow_unmentioned` | boolean | `false` | 接收未 @ bot 的群消息，再由参与策略决定是否响应 | `true` |
 | `dm_policy` | string | `""`，兼容项 | 只校验 `pairing` / `allowlist`，当前不参与访问决策 | `"pairing"`（仅旧文件） |
 
-`feishu.enabled` 可显式启停适配器；省略时由凭据是否齐全决定。停用可以保留凭据，但默认通道必须指向仍启用的通道。控制台操作和旧群聊限制升级说明见 [Channel 设置](#channel-设置)。`feishu.dm_policy`、`agents.<name>.workspace` 两个兼容字段不放进新样例。
+`feishu.enabled` 可显式启停适配器；省略时由凭据是否齐全决定。停用可以保留凭据，但默认通道必须指向仍启用的通道。控制台操作和旧群聊限制升级说明见 [Channel 设置](#channel-设置)。`feishu.dm_policy` 兼容字段不放进新样例。
 
 ### gateway
 
