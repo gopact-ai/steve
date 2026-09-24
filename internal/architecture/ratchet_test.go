@@ -246,30 +246,36 @@ func TestInlineInterfaceAssertionsOnlyShrink(t *testing.T) {
 	ratchet(t, "interface_assertions", offenders)
 }
 
-// consoleapi.Admin is implemented by admin and consumed only by httpapi. A
-// method httpapi neither calls nor takes as a method value is dead, yet
-// still compiles because admin.Service must satisfy the interface.
-func TestConsoleAdminMethodsAreAllUsedByHTTPAPI(t *testing.T) {
-	unused, problems := unusedAdminMethods(t, repoRoot(t))
-	for _, problem := range problems {
-		t.Errorf("consoleapi.%s, so this test cannot list its methods", problem)
-	}
-	for _, method := range unused {
-		t.Errorf("consoleapi.%s is neither called nor referenced in internal/httpapi; remove it from its interface, and from admin.Service too if nothing else calls it", method)
+// consoleapi.Admin, Console and PluginsService are each implemented by one
+// service and consumed only by httpapi. A method httpapi neither calls nor
+// takes as a method value is dead, yet still compiles because the service
+// must satisfy the interface.
+func TestConsoleAPIPortMethodsAreAllUsedByHTTPAPI(t *testing.T) {
+	root := repoRoot(t)
+	for _, port := range []string{"Admin", "Console", "PluginsService"} {
+		t.Run(port, func(t *testing.T) {
+			unused, problems := unusedMethods(t, root, port)
+			for _, problem := range problems {
+				t.Errorf("consoleapi.%s, so this test cannot list its methods", problem)
+			}
+			for _, method := range unused {
+				t.Errorf("consoleapi.%s is neither called nor referenced in internal/httpapi; remove it from its interface, and from its implementation too if nothing else calls it", method)
+			}
+		})
 	}
 }
 
-// unusedAdminMethods lists, as Interface.Method, each method of the Admin
+// unusedMethods lists, as Interface.Method, each method of the port
 // interface in root's internal/consoleapi that no selector in a non-test
-// file of root's internal/httpapi names. Admin's methods include those of
-// every interface it embeds, however deep, from the non-test files of its
-// own package; any other embedded type is a problem, since its methods
+// file of root's internal/httpapi names. The port's methods include those
+// of every interface it embeds, however deep, from the non-test files of
+// its own package; any other embedded type is a problem, since its methods
 // cannot be listed without type information.
 //
 // The check matches selector names without type information: a method or
 // field of the same name on any other type in httpapi also counts as a use,
 // so it can miss a dead method with a common name, never flag a live one.
-func unusedAdminMethods(t *testing.T, root string) (unused, problems []string) {
+func unusedMethods(t *testing.T, root, port string) (unused, problems []string) {
 	t.Helper()
 	interfaces := map[string]*ast.InterfaceType{}
 	for _, src := range parseGoSources(t, root, packageSourceFiles(t, filepath.Join(root, "internal", "consoleapi"))) {
@@ -286,8 +292,8 @@ func unusedAdminMethods(t *testing.T, root string) (unused, problems []string) {
 			}
 		}
 	}
-	if interfaces["Admin"] == nil {
-		t.Fatal("internal/consoleapi declares no Admin interface")
+	if interfaces[port] == nil {
+		t.Fatalf("internal/consoleapi declares no %s interface", port)
 	}
 	declared := map[string]string{}
 	visited := map[string]bool{}
@@ -311,9 +317,9 @@ func unusedAdminMethods(t *testing.T, root string) (unused, problems []string) {
 			problems = append(problems, fmt.Sprintf("%s embeds %s, which is not an interface declared in internal/consoleapi", name, types.ExprString(field.Type)))
 		}
 	}
-	collect("Admin")
+	collect(port)
 	if len(declared) == 0 {
-		t.Fatal("consoleapi.Admin declares no methods")
+		t.Fatalf("consoleapi.%s declares no methods", port)
 	}
 	used := map[string]bool{}
 	for _, src := range parseGoSources(t, root, packageSourceFiles(t, filepath.Join(root, "internal", "httpapi"))) {
@@ -354,12 +360,17 @@ func packageSourceFiles(t *testing.T, dir string) []string {
 // elsewhere cannot be listed without type information and is reported.
 func TestAdminMethodsIncludeThoseOfEmbeddedInterfaces(t *testing.T) {
 	root := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", "admin_methods")
-	unused, problems := unusedAdminMethods(t, root)
+	unused, problems := unusedMethods(t, root, "Admin")
 	if want := []string{"Deeper.Unused"}; fmt.Sprint(unused) != fmt.Sprint(want) {
 		t.Errorf("unused = %v, want %v", unused, want)
 	}
 	if want := []string{"Admin embeds io.Closer, which is not an interface declared in internal/consoleapi"}; fmt.Sprint(problems) != fmt.Sprint(want) {
 		t.Errorf("problems = %v, want %v", problems, want)
+	}
+	// Another port reaches Deeper through Extra, without Admin's io.Closer.
+	unused, problems = unusedMethods(t, root, "Extra")
+	if fmt.Sprint(unused) != "[Deeper.Unused]" || len(problems) != 0 {
+		t.Errorf("Extra: unused = %v, problems = %v", unused, problems)
 	}
 }
 
