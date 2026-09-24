@@ -31,10 +31,9 @@ func (s *Store) DeleteChannel(channel string) ([]string, error) {
 	if len(ids) == 0 {
 		return ids, nil
 	}
-	next := s.clone()
+	next := s.draft()
 	for _, id := range ids {
-		delete(next.Tasks, id)
-		delete(next.Meta, id)
+		next.remove(id)
 	}
 	if err := s.replaceLocked(next); err != nil {
 		return nil, err

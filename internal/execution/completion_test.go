@@ -2,14 +2,14 @@ package execution
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
 func TestCompletionClosesRegistryAdmissionBeforeReleasingIdleGate(t *testing.T) {
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestCompletionClosesRegistryAdmissionBeforeReleasingIdleGate(t *testing.T) 
 		completed <- registry.WhileTaskIdle(root.ID, func() error {
 			close(entered)
 			<-release
-			_, err := tasks.CompleteRoot(t.Context(), root.ID, root.Channel, nil)
+			_, err := tasks.CompleteRoot(t.Context(), root.ID, root.Channel, func(*ledger.Tx, map[string]bool) error { return nil })
 			return err
 		})
 	}()
@@ -47,7 +47,7 @@ func TestCompletionClosesRegistryAdmissionBeforeReleasingIdleGate(t *testing.T) 
 }
 
 func TestCompletionWaitsForDescendantScopeCleanup(t *testing.T) {
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

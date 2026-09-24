@@ -2,7 +2,6 @@ package turn
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +23,7 @@ func TestProjectVerbShowsBindsAndArchives(t *testing.T) {
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
@@ -84,7 +83,7 @@ func TestProjectSwitchRefusedWhileATurnRuns(t *testing.T) {
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	slow := &fakeRunner{reply: "done", started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": slow}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
@@ -113,7 +112,7 @@ func TestChatTurnIsAnAttemptUnderTheCanonicalLock(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	slow := &fakeRunner{reply: "done", started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": slow}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)

@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ import (
 
 func TestLiveTimeoutAppliesToNextTurnWithoutInterruptingCurrent(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Hour)
@@ -50,7 +49,7 @@ func TestLiveTimeoutAppliesToNextTurnWithoutInterruptingCurrent(t *testing.T) {
 
 func TestLiveDefaultLocaleAndExplicitRequestLocale(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	c := New(catalog, store, nil, nil, time.Minute)
 	var english atomic.Bool
 	c.SetCatalog(i18n.Dynamic(func() i18n.Locale {

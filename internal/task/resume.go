@@ -23,8 +23,8 @@ func (s *Store) Resume(id string, epoch uint64, from State, admission ResumeAdmi
 	if admission != (ResumeAdmission{}) && (!admission.Valid() || admission.TaskID != id || epoch == ^uint64(0) || admission.Epoch != epoch+1) {
 		return Task{}, fmt.Errorf("%w: invalid resume grant for task %s", ErrExecutionStopped, id)
 	}
-	next := s.clone()
-	resumed := next.Tasks[id]
+	next := s.draft()
+	resumed := next.edit(id)
 	if admission.Valid() {
 		resumed.ExecutionEpoch = admission.Epoch
 		resumed.ResumeGrant = ResumeGrant{Admission: admission}
@@ -33,7 +33,7 @@ func (s *Store) Resume(id string, epoch uint64, from State, admission ResumeAdmi
 	}
 	resumed.State = StateRunning
 	resumed.UpdatedAt = s.now()
-	if err := checkExecution(next.Tasks, ExecutionToken{TaskID: id, Epoch: resumed.ExecutionEpoch}); err != nil {
+	if err := checkExecutionBy(next.find, ExecutionToken{TaskID: id, Epoch: resumed.ExecutionEpoch}); err != nil {
 		return Task{}, err
 	}
 	if err := s.replaceLocked(next); err != nil {

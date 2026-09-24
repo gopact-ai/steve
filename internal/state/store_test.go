@@ -1,15 +1,13 @@
 package state
 
 import (
-	"path/filepath"
+	"strings"
 	"testing"
-
-	"github.com/gopact-ai/steve/internal/filedoc"
 )
 
 func TestStorePersistsConversationSessions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := Open(path)
+	book := testLedger(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +24,7 @@ func TestStorePersistsConversationSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +39,7 @@ func TestStorePersistsConversationSessions(t *testing.T) {
 }
 
 func TestStoreRejectsHarnessChange(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,8 +54,8 @@ func TestStoreRejectsHarnessChange(t *testing.T) {
 }
 
 func TestStorePairingRequestAndApprove(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := Open(path)
+	book := testLedger(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +71,7 @@ func TestStorePairingRequestAndApprove(t *testing.T) {
 	if err != nil || openID != "ou_user" {
 		t.Fatalf("approve = %q, %v", openID, err)
 	}
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +84,8 @@ func TestStorePairingRequestAndApprove(t *testing.T) {
 }
 
 func TestStorePairingApproveIsVisibleToOtherHandle(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	gateway, err := Open(path)
+	book := testLedger(t)
+	gateway, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +93,7 @@ func TestStorePairingApproveIsVisibleToOtherHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli, err := Open(path)
+	cli, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +106,7 @@ func TestStorePairingApproveIsVisibleToOtherHandle(t *testing.T) {
 }
 
 func TestStoreRejectsWorkspaceChange(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +121,8 @@ func TestStoreRejectsWorkspaceChange(t *testing.T) {
 }
 
 func TestStoreOnboardedPersists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := Open(path)
+	book := testLedger(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +132,7 @@ func TestStoreOnboardedPersists(t *testing.T) {
 	if err := store.MarkOnboarded(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +142,7 @@ func TestStoreOnboardedPersists(t *testing.T) {
 }
 
 func TestStoreRelocateMovesConversation(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +168,7 @@ func TestStoreRelocateMovesConversation(t *testing.T) {
 }
 
 func TestStoreRelocateOverwritesDestination(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +195,8 @@ func TestStoreRelocateOverwritesDestination(t *testing.T) {
 }
 
 func TestPreferencesPersistPerAgent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := Open(path)
+	book := testLedger(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +206,7 @@ func TestPreferencesPersistPerAgent(t *testing.T) {
 	if err := store.SetPreferences("chat", "codex", map[string]string{"reasoning": ""}); err != nil {
 		t.Fatal(err)
 	}
-	again, err := Open(path)
+	again, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,8 +220,8 @@ func TestPreferencesPersistPerAgent(t *testing.T) {
 }
 
 func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := Open(path)
+	book := testLedger(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +242,7 @@ func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
 		t.Fatalf("delete conversation: %v", err)
 	}
 
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +253,7 @@ func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
 	if kept := reopened.Conversation("console:two"); len(kept.Sessions) != 1 {
 		t.Fatalf("another conversation was deleted: %#v", kept)
 	}
-	refs, err := PluginReferences(&filedoc.Document{Path: path})
+	refs, err := PluginReferences(book.Document("state"))
 	if err != nil {
 		t.Fatalf("plugin references: %v", err)
 	}
@@ -263,5 +261,46 @@ func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
 		if ref.Conversation == "console:one" {
 			t.Fatalf("deleted conversation still holds a plugin reference: %#v", ref)
 		}
+	}
+}
+
+// An older state document may carry the renew marker on a conversation.
+// It opens with the marker dropped, and the next write leaves it out.
+func TestOpenDropsDeferredRenewalMarker(t *testing.T) {
+	book := testLedger(t)
+	doc := book.Document("state")
+	if err := doc.Save([]byte(`{"conversations":{"chat":{"active_agent":"grok","sessions":{},"renew":{"grok":true}}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenLedger(book)
+	if err != nil {
+		t.Fatalf("open with renew marker: %v", err)
+	}
+	if got := store.Conversation("chat").ActiveAgent; got != "grok" {
+		t.Fatalf("active agent = %q, want the stored conversation", got)
+	}
+	if err := store.SetActiveAgent("chat", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := doc.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "renew") {
+		t.Fatalf("rewritten state still carries renew:\n%s", raw)
+	}
+	if _, err := OpenLedger(book); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+}
+
+// Fields the state document does not define are still refused.
+func TestOpenRejectsUnknownConversationField(t *testing.T) {
+	book := testLedger(t)
+	if err := book.Document("state").Save([]byte(`{"conversations":{"chat":{"active_agent":"","sessions":{},"renwe":{}}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenLedger(book); err == nil || !strings.Contains(err.Error(), `unknown field "renwe"`) {
+		t.Fatalf("unknown conversation field = %v", err)
 	}
 }

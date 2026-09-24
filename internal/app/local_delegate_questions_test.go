@@ -67,7 +67,7 @@ func TestHubLocalChildWaitsForItsOwnerInTheParentConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

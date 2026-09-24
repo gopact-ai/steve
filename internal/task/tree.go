@@ -21,7 +21,7 @@ func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	return s.spawnLocked(parentID, child, s.replaceLocked)
 }
 
-func (s *Store) spawnLocked(parentID string, child Task, replace func(data) error) (Task, error) {
+func (s *Store) spawnLocked(parentID string, child Task, replace func(*draft) error) (Task, error) {
 	parent, ok := s.data.Tasks[parentID]
 	if !ok {
 		return Task{}, fmt.Errorf("parent task %s not found", parentID)
@@ -108,9 +108,9 @@ func (s *Store) spawnLocked(parentID string, child Task, replace func(data) erro
 		}
 	}
 
-	next := s.clone()
+	next := s.draft()
 	next.NextID = s.data.NextID + 1
-	next.Tasks[child.ID] = &child
+	next.add(child.clone())
 	if err := replace(next); err != nil {
 		return Task{}, err
 	}
@@ -120,6 +120,13 @@ func (s *Store) spawnLocked(parentID string, child Task, replace func(data) erro
 // taskLineage returns the task followed by its ancestors from a candidate
 // store snapshot. Invalid ancestry refuses the whole budget mutation.
 func taskLineage(tasks map[string]*Task, id string) ([]*Task, error) {
+	return lineageOf(func(id string) (*Task, bool) {
+		t, ok := tasks[id]
+		return t, ok
+	}, id)
+}
+
+func lineageOf(find func(string) (*Task, bool), id string) ([]*Task, error) {
 	var out []*Task
 	seen := map[string]bool{}
 	for id != "" {
@@ -127,7 +134,7 @@ func taskLineage(tasks map[string]*Task, id string) ([]*Task, error) {
 			return nil, fmt.Errorf("task %s has cyclic ancestry", id)
 		}
 		seen[id] = true
-		member, ok := tasks[id]
+		member, ok := find(id)
 		if !ok {
 			return nil, fmt.Errorf("task %s not found in ancestry", id)
 		}

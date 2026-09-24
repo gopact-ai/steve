@@ -1,7 +1,6 @@
 package turn
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -103,8 +102,8 @@ func TestIdentityRefreshAfterReopeningSessionState(t *testing.T) {
 				t.Fatal(err)
 			}
 			c, _, manager := homeCoordinatorWithManager(t, dir, "owner")
-			path := filepath.Join(t.TempDir(), "state.json")
-			persisted, err := state.Open(path)
+			book := testLedger(t)
+			persisted, err := state.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +120,7 @@ func TestIdentityRefreshAfterReopeningSessionState(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			reopened, err := state.Open(path)
+			reopened, err := state.OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}

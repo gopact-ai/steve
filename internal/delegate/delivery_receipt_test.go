@@ -2,12 +2,12 @@ package delegate
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -43,13 +43,9 @@ func TestReceiptSettlesUncertainOrDelayedDeliveryWithoutDispatch(t *testing.T) {
 
 func TestReceiptSaveFailureRetainsBatchAcrossRestartWithoutDispatch(t *testing.T) {
 	w := newWorld(t)
-	dir := filepath.Join(t.TempDir(), "store")
-	if err := os.Mkdir(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "tasks.json")
+	book := testLedger(t)
 	var err error
-	w.tasks, err = task.Open(path)
+	w.tasks, err = task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,12 +57,8 @@ func TestReceiptSaveFailureRetainsBatchAcrossRestartWithoutDispatch(t *testing.T
 	lookups := 0
 	w.service.SetDeliveryReceipt(func(task.Task, string) (bool, error) { lookups++; return true, nil })
 	w.service.SetDeliverer(func(context.Context, Delivery) error { t.Fatal("observed receipt was dispatched again"); return nil })
-	// Replace the private fixture's directory with a file to fail the next
-	// atomic task write while preserving the previous durable document.
-	if err := os.Rename(dir, dir+"-saved"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir, []byte("unavailable storage"), 0600); err != nil {
+	gate := &refusingReplicator{book: book, refuse: true}
+	if err := book.AttachReplication(gate); err != nil {
 		t.Fatal(err)
 	}
 	w.service.Flush(t.Context(), parent.ID)
@@ -74,13 +66,8 @@ func TestReceiptSaveFailureRetainsBatchAcrossRestartWithoutDispatch(t *testing.T
 	if got.Delivery.State != task.DeliveryQueued || lookups != 1 {
 		t.Fatalf("failed save changed the receipt: %+v; lookups=%d", got.Delivery, lookups)
 	}
-	if err := os.Remove(dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(dir+"-saved", dir); err != nil {
-		t.Fatal(err)
-	}
-	w.tasks, err = task.Open(path)
+	gate.refuse = false
+	w.tasks, err = task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,4 +77,23 @@ func TestReceiptSaveFailureRetainsBatchAcrossRestartWithoutDispatch(t *testing.T
 	if got.Delivery.State != task.DeliveryDelivered || got.Delivery.Attempts != 1 || lookups != 2 {
 		t.Fatalf("restart lost the repeatable receipt: %+v; lookups=%d", got.Delivery, lookups)
 	}
+}
+
+// refusingReplicator stands in for ledger replication so a test can refuse
+// durable writes while the previous committed state stays readable.
+type refusingReplicator struct {
+	book   *ledger.Ledger
+	refuse bool
+}
+
+func (r *refusingReplicator) Prepare(context.Context) (ledger.ReplicaPosition, error) {
+	version, err := r.book.ReplicaVersion()
+	return ledger.ReplicaPosition{Version: version, CoordinatorEpoch: 1}, err
+}
+
+func (r *refusingReplicator) Propose(_ context.Context, write ledger.ReplicatedWrite) ([]byte, error) {
+	if r.refuse {
+		return nil, errors.New("storage unavailable")
+	}
+	return r.book.ApplyReplicated(write.ID, write.ExpectedVersion+1, write.Payload)
 }

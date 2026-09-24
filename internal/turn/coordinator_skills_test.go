@@ -178,7 +178,7 @@ func skillsCoordinator(t *testing.T) (*Coordinator, *state.Store, *liveCounter, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.Open(filepath.Join(root, "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

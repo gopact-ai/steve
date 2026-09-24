@@ -167,22 +167,20 @@ func TestDisabledChannelLoadAndOptionValidation(t *testing.T) {
 	}
 }
 
-func TestChannelPatchPreservesLegacyGroupRestrictionUnlessExplicit(t *testing.T) {
+func TestChannelPatchKeepsGroupPolicyUnlessExplicit(t *testing.T) {
 	c, _ := channelConfigFixture(t)
+	c.Feishu.Enabled = nil
+	c.Feishu.GroupPolicy = GroupPolicyOpen
 	c.Feishu.AllowedSenders = []string{"allowed"}
 	for _, patch := range []channelsettings.Patch{{}, {Feishu: &channelsettings.FeishuPatch{Domain: channelPtr("lark")}}} {
 		next, err := c.PatchChannels(patch)
-		if err != nil || next.Feishu.GroupPolicy != GroupPolicyAllowlist {
-			t.Fatalf("unrelated save widened old open+allowlist: %v", err)
+		if err != nil || next.Feishu.GroupPolicy != GroupPolicyOpen {
+			t.Fatalf("unrelated save changed the group policy: %q, %v", next.Feishu.GroupPolicy, err)
 		}
 	}
-	next, err := c.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: channelPtr(GroupPolicyOpen)}})
-	if err != nil || next.Feishu.GroupPolicy != GroupPolicyOpen {
+	next, err := c.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: channelPtr(GroupPolicyAllowlist)}})
+	if err != nil || next.Feishu.GroupPolicy != GroupPolicyAllowlist {
 		t.Fatalf("explicit group policy was not honored: %v", err)
-	}
-	unchanged, err := next.PatchChannels(channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{Domain: channelPtr("lark")}})
-	if err != nil || unchanged.Feishu.GroupPolicy != GroupPolicyOpen {
-		t.Fatalf("unrelated edit undid explicit group policy: %v", err)
 	}
 }
 

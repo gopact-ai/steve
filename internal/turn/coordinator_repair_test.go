@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -100,8 +99,8 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, _ := state.OpenLedger(testLedger(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +116,7 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	}}}
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
-	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	plans, err := plan.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

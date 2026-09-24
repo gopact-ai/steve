@@ -15,12 +15,6 @@ const (
 	UserLabelTimezoneEN = "Timezone"
 )
 
-// Legacy names used by setup when rewriting a Chinese USER.md.
-const (
-	UserLabelName     = UserLabelNameZH
-	UserLabelTimezone = UserLabelTimezoneZH
-)
-
 type templatePack struct {
 	soul, user, memory string
 }

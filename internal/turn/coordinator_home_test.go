@@ -359,7 +359,7 @@ func homeCoordinatorWithManager(t *testing.T, homeDir, owner string, books ...*l
 	if len(books) > 0 {
 		store, err = state.OpenLedger(books[0])
 	} else {
-		store, err = state.Open(filepath.Join(t.TempDir(), "state.json"))
+		store, err = state.OpenLedger(testLedger(t))
 	}
 	if err != nil {
 		t.Fatal(err)
