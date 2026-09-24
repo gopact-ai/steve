@@ -3,6 +3,7 @@ package localtoken
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -97,5 +98,27 @@ func TestReadRefusesLinksAndOversizedFiles(t *testing.T) {
 	}
 	if _, err := Read(big); err == nil {
 		t.Fatal("an oversized token file was read")
+	}
+}
+
+// A token file that cannot be used says how to get a working one back.
+func TestReadErrorsSayHowToRegenerate(t *testing.T) {
+	for name, prepare := range map[string]func(path string) error{
+		"exposed":   func(path string) error { return os.WriteFile(path, []byte(strings.Repeat("a", MinLength)), 0o644) },
+		"malformed": func(path string) error { return os.WriteFile(path, []byte("short"), 0o600) },
+		"link":      func(path string) error { return os.Symlink(filepath.Join(filepath.Dir(path), "elsewhere"), path) },
+		"directory": func(path string) error { return os.Mkdir(path, 0o700) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, FileName)
+			if err := prepare(path); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Read(dir)
+			if err == nil || !strings.Contains(err.Error(), "delete "+path+" and restart") {
+				t.Fatalf("Read = %v, want a hint to delete %s and restart", err, path)
+			}
+		})
 	}
 }
