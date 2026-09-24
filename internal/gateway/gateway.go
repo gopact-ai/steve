@@ -51,8 +51,29 @@ const maxLiveTurns = 64
 // approvalTimeout caps how long a turn waits for a human to tap the card.
 const approvalTimeout = 3 * time.Minute
 
-type replier interface {
-	Reply(context.Context, string, string) error
+// Channel is the Feishu transport the gateway replies through. Without
+// Feishu the gateway has no channel at all, never a partial one, and still
+// owns durable input, recovery and notices.
+type Channel interface {
+	// Reply posts text without reporting the new message's id.
+	Reply(ctx context.Context, messageID, text string) error
+	// ReplyText posts text and returns the new message's id.
+	ReplyText(ctx context.Context, messageID, text string) (string, error)
+	// ReplyCard posts a card and returns its message id.
+	ReplyCard(ctx context.Context, messageID string, payload []byte) (string, error)
+	// PatchCard replaces a posted card in place.
+	PatchCard(ctx context.Context, messageID string, payload []byte) error
+	// ReplyThread starts a topic thread on a message and returns the anchor
+	// message's id and the thread's id.
+	ReplyThread(ctx context.Context, messageID, text string) (string, string, error)
+	// EnrichInput reads an accepted message's optional remote context.
+	EnrichInput(ctx context.Context, msg feishu.InboundMessage) feishu.InboundMessage
+	// AddReaction reacts to a message and returns the reaction's id.
+	AddReaction(ctx context.Context, messageID, emoji string) (string, error)
+	// RemoveReaction removes a reaction AddReaction returned.
+	RemoveReaction(ctx context.Context, messageID, reactionID string) error
+	// DeleteMessage recalls a message the gateway posted.
+	DeleteMessage(ctx context.Context, messageID string) error
 }
 
 type reactor interface {
@@ -87,7 +108,7 @@ type Gateway struct {
 	ingressContext context.Context
 	ingressWorkers RecoveryWorkers
 	processor      processor
-	ch             replier
+	ch             Channel
 	text           i18n.Catalog
 	gate           agentAnchor
 
@@ -129,7 +150,8 @@ func New(processor processor) *Gateway {
 	}
 }
 
-func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
+// BindChannel wires Feishu; a gateway that is never bound has no channel.
+func (g *Gateway) BindChannel(ch Channel) { g.ch = ch }
 
 // SetAgentGate wires the messaging MCP server; call before Start.
 func (g *Gateway) SetAgentGate(gate agentAnchor) { g.gate = gate }

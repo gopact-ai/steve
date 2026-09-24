@@ -5,6 +5,9 @@ import (
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
+// The only production channel.
+var _ Channel = (*feishu.Channel)(nil)
+
 // The only production implementation of capabilities gateway probes its
 // channel for.
 var (

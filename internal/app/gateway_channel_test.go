@@ -5,12 +5,15 @@ import (
 	"errors"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/gateway"
 )
 
 // textOnlyGatewayChannel implements the gateway channel with successful
 // no-ops and refuses every card, so final answers take the receipted text
 // fallback. Fakes embed it and override the calls they observe.
 type textOnlyGatewayChannel struct{}
+
+var _ gateway.Channel = textOnlyGatewayChannel{}
 
 func (textOnlyGatewayChannel) Reply(context.Context, string, string) error { return nil }
 func (textOnlyGatewayChannel) ReplyText(context.Context, string, string) (string, error) {

@@ -11,6 +11,8 @@ import (
 // receipts. Fakes embed it and override only the calls they observe.
 type nopChannel struct{}
 
+var _ Channel = nopChannel{}
+
 func (nopChannel) Reply(context.Context, string, string) error               { return nil }
 func (nopChannel) ReplyText(context.Context, string, string) (string, error) { return "", nil }
 func (nopChannel) ReplyCard(context.Context, string, []byte) (string, error) { return "", nil }
