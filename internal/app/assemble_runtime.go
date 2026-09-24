@@ -73,6 +73,10 @@ type runtimeAssembly interface {
 	Background() *applicationBackground
 	Book() *ledger.Ledger
 	Catalog() *agent.Catalog
+	// Config is the loaded configuration. Assembly reads it directly only
+	// until the console starts serving, which is when the administration
+	// may begin to change it; anything that reads it later, including
+	// closures assembly builds, goes through ConfigStore.
 	Config() *config.Config
 	// ConfigStore guards Config for everything that reads it after startup.
 	ConfigStore() *adminsvc.ConfigStore
