@@ -277,6 +277,10 @@ type Deps struct {
 	// OfflineAfter is how long a turn runs before its completion also
 	// earns a plain-text ping; zero keeps Steve quiet.
 	OfflineAfter time.Duration
+	// ConsoleCompletionGuard checks the console's facts inside the
+	// transaction closing a task tree; nil refuses to close one while any
+	// console fact exists.
+	ConsoleCompletionGuard ConsoleCompletionGuard
 }
 
 // dependency is one Deps field New refuses to build without.
@@ -328,7 +332,8 @@ func New(deps Deps) (*Coordinator, error) {
 			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
-			offlineAfter: deps.OfflineAfter, active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
+			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
+			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},
 	}, nil

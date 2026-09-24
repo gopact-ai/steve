@@ -7,14 +7,10 @@ import (
 )
 
 // ConsoleCompletionGuard checks console-owned attention and delivery facts
-// within the transaction closing a task tree.
+// within the transaction closing a task tree. Console depends on turn, so
+// turn cannot import the console's storage interpreter; the application
+// passes it in Deps.
 type ConsoleCompletionGuard func(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error
-
-// SetConsoleCompletionGuard is wired during application assembly: console
-// depends on turn, so turn cannot import the console's storage interpreter.
-func (c *Coordinator) SetConsoleCompletionGuard(guard ConsoleCompletionGuard) {
-	c.consoleCompletionGuard = guard
-}
 
 func (c *Coordinator) checkConsoleCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
 	if c.consoleCompletionGuard != nil {

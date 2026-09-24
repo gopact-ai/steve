@@ -40,6 +40,13 @@ type completionFixture struct {
 // recovery worker or config loader. Every durable resource is temporary.
 func assembledCompletion(t *testing.T) completionFixture {
 	t.Helper()
+	return assembledCompletionGuardedBy(t, console.CheckTaskCompletionTx)
+}
+
+// assembledCompletionGuardedBy is assembledCompletion with the console's
+// completion guard replaced.
+func assembledCompletionGuardedBy(t *testing.T, guard turn.ConsoleCompletionGuard) completionFixture {
+	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +76,7 @@ func assembledCompletion(t *testing.T) completionFixture {
 	coordinator := turntest.New(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = book, catalog, sessions, assembler, manager, time.Minute
 		o.Tasks, o.Node, o.Attempts, o.Executions = tasks, "test", attempts, registry
+		o.ConsoleCompletionGuard = guard
 	})
 	dir := t.TempDir()
 	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(dir, "state.json"), OwnerID: "test-owner"}}
@@ -236,23 +244,10 @@ func TestCompletionDoesNotBlockOnItsOwnDurableCommand(t *testing.T) {
 func TestCompletionOwnerGuardSharesTaskWriteTransaction(t *testing.T) {
 	for _, stage := range []string{"guard-refusal", "task-write-failure"} {
 		t.Run(stage, func(t *testing.T) {
-			f := assembledCompletion(t)
-			child, err := f.tasks.Spawn(f.root.ID, task.Task{Member: "child"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := f.tasks.SetAside(child.ID, task.StateCancelled); err != nil {
-				t.Fatal(err)
-			}
-			if stage == "task-write-failure" {
-				if _, err := f.book.DB().Exec(`CREATE TRIGGER reject_completion BEFORE UPDATE ON bindings
-					WHEN NEW.kind = 'task-store' AND NEW.id = 'state'
-					BEGIN SELECT RAISE(ABORT, 'completion write unavailable'); END`); err != nil {
-					t.Fatal(err)
-				}
-			}
+			var f completionFixture
+			var child task.Task
 			called := false
-			f.coordinator.SetConsoleCompletionGuard(func(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
+			f = assembledCompletionGuardedBy(t, func(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
 				called = true
 				if !ids[f.root.ID] || !ids[child.ID] || conversation != "chat" || currentExchange != "current" {
 					t.Errorf("guard lost completion identity: ids=%v conversation=%q exchange=%q", ids, conversation, currentExchange)
@@ -267,6 +262,20 @@ func TestCompletionOwnerGuardSharesTaskWriteTransaction(t *testing.T) {
 				// This is the real owner, reading a fact visible only in tx.
 				return console.CheckTaskCompletionTx(tx, ids, conversation, currentExchange)
 			})
+			child, err := f.tasks.Spawn(f.root.ID, task.Task{Member: "child"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.tasks.SetAside(child.ID, task.StateCancelled); err != nil {
+				t.Fatal(err)
+			}
+			if stage == "task-write-failure" {
+				if _, err := f.book.DB().Exec(`CREATE TRIGGER reject_completion BEFORE UPDATE ON bindings
+					WHEN NEW.kind = 'task-store' AND NEW.id = 'state'
+					BEGIN SELECT RAISE(ABORT, 'completion write unavailable'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
 			f.complete(t, "current", false)
 			if !called {
 				t.Fatal("task completion did not call the injected owner")

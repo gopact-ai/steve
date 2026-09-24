@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -114,7 +115,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		Projects: projects, DefaultProject: cfg.Gateway.DefaultProject, HomeProject: adminsvc.HomeProjectID,
 		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
 		Executions: executions, Tasks: tasks, Node: boot.NodeName(), Schedules: schedules,
-		OfflineAfter: time.Duration(cfg.Gateway.OfflineReminderAfter),
+		OfflineAfter: time.Duration(cfg.Gateway.OfflineReminderAfter), ConsoleCompletionGuard: console.CheckTaskCompletionTx,
 	})
 	if err != nil {
 		return nil, err

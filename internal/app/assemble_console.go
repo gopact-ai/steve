@@ -70,7 +70,6 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
 	cons := console.New(coordinator, cfg.EffectiveOwnerID(), view)
-	coordinator.SetConsoleCompletionGuard(console.CheckTaskCompletionTx)
 	cons.SetRecoveryQuiet(time.Duration(cfg.Gateway.RecoveryQuiet))
 	if environment != nil {
 		cons.EnableRetainedRecovery(ctx)
