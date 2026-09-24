@@ -52,10 +52,7 @@ func TestTaskControlRequiresMatchingTransport(t *testing.T) {
 func TestTaskControlFindsOnlyItsTransportInSharedConversation(t *testing.T) {
 	for _, transport := range []string{"console", "feishu"} {
 		t.Run(transport, func(t *testing.T) {
-			c, _ := completionCoordinator(t, &fakeRunner{reply: "must not run"})
-			if err := c.SetChannelOwner("feishu", "owner"); err != nil {
-				t.Fatal(err)
-			}
+			c, _ := completionCoordinator(t, &fakeRunner{reply: "must not run"}, withChannelOwner("feishu", "owner"))
 			other := map[string]string{"console": "feishu", "feishu": "console"}[transport]
 			own, err := c.tasks.Create(task.Task{Transport: transport, Channel: "same", Member: "codex"})
 			if err != nil {

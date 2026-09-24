@@ -23,8 +23,7 @@ func TestMaintenanceRejectsAllChannelsAndCommandsUntilReleased(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"mock": {reply: "ok"}}}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withOwner("console-owner"))
-	configureChannelOwner(t, c, "feishu", "ou_owner")
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withOwner("console-owner"), withChannelOwner("feishu", "ou_owner"))
 	release, err := sealCoordinator(t, c)
 	if err != nil {
 		t.Fatal(err)

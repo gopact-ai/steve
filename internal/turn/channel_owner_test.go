@@ -26,18 +26,10 @@ import (
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-func configureChannelOwner(t *testing.T, c *Coordinator, channel, owner string) {
-	t.Helper()
-	if err := c.SetChannelOwner(channel, owner); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"))
-	configureChannelOwner(t, c, "feishu", "ou_im_owner")
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"), withChannelOwner("feishu", "ou_im_owner"))
 	for _, test := range []struct {
 		channel, sender string
 		allowed         bool
@@ -69,8 +61,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	c, _, runner := homeCoordinator(t, dir, "console-owner", onLedger(book))
-	configureChannelOwner(t, c, "feishu", "ou_im_owner")
+	c, _, runner := homeCoordinator(t, dir, "console-owner", onLedger(book), withChannelOwner("feishu", "ou_im_owner"))
 	tasks := c.tasks
 	c.artifacts.SetExecution(c.executions)
 	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "hello", MessageID: "om-native", ChatID: "oc-native"})
@@ -98,26 +89,19 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	}
 }
 
-func TestChannelOwnerRegistrationIsExplicitAndFacadeSnapshotIsStable(t *testing.T) {
-	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout = time.Minute }), withOwner("console-owner"))
-	if _, err := c.forChannel("feishu"); err == nil {
+func TestChannelOwnerRegistrationIsExplicitAndKeepsTheConsoleBaseline(t *testing.T) {
+	owners := map[string]string{"feishu": "ou_first"}
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout, d.ChannelOwners = time.Minute, owners }), withOwner("console-owner"))
+	if _, err := c.forChannel("slack"); err == nil {
 		t.Fatal("unregistered channel borrowed console identity")
 	}
-	if err := c.SetChannelOwner("console", "override"); err == nil {
-		t.Fatal("channel registration overwrote Console owner")
-	}
-	configureChannelOwner(t, c, "feishu", "ou_first")
-	first, err := c.forChannel("feishu")
+	owners["feishu"] = "ou_next" // the caller's map is not the coordinator's
+	native, err := c.forChannel("feishu")
 	if err != nil {
 		t.Fatal(err)
 	}
-	configureChannelOwner(t, c, "feishu", "ou_next")
-	second, err := c.forChannel("feishu")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.localized(i18n.LocaleEN).ownerOpenID != "ou_first" || second.ownerOpenID != "ou_next" || c.ownerOpenID != "console-owner" {
-		t.Fatal("registration changed an in-flight view or Console baseline")
+	if native.localized(i18n.LocaleEN).ownerOpenID != "ou_first" || c.ownerOpenID != "console-owner" {
+		t.Fatal("registration changed after New or replaced the Console baseline")
 	}
 }
 
@@ -135,8 +119,7 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer manager.Stop()
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 10*time.Second, withOwner("console-owner"))
-	configureChannelOwner(t, c, "feishu", "ou_im_owner")
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 10*time.Second, withOwner("console-owner"), withChannelOwner("feishu", "ou_im_owner"))
 	asks := 0
 	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "perm askme", MessageID: "om-native", ChatID: "oc-native",
 		OnAsk: func(_ context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
@@ -156,8 +139,7 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"))
-	configureChannelOwner(t, c, "feishu", "ou_im_owner")
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"), withChannelOwner("feishu", "ou_im_owner"))
 	var wg sync.WaitGroup
 	for n := range 24 {
 		wg.Add(1)

@@ -75,10 +75,7 @@ type scheduleMCPFixture struct {
 
 func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record)) scheduleMCPFixture {
 	t.Helper()
-	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "ok"}, withOwner("console-owner"))
-	if err := c.SetChannelOwner("feishu", "feishu-owner"); err != nil {
-		t.Fatal(err)
-	}
+	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "ok"}, withOwner("console-owner"), withChannelOwner("feishu", "feishu-owner"))
 	work := task.Task{Channel: "chat", Transport: "feishu", Member: "codex", Requester: "feishu-owner", ProjectID: "codex", ChatType: string(protocol.ChatP2P), ChatID: "chat-native", AnchorMessage: "message-1"}
 	r := attempt.Record{Spec: attempt.Spec{ID: "schedule-attempt", Kind: attempt.KindChat, Project: "codex", Node: "laptop", Agent: "codex", TurnID: "message-1", By: "feishu-owner"}, State: attempt.Running, Session: "ns_schedule"}
 	settled := false

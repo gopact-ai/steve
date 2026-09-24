@@ -21,7 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *ledger.Ledger) {
+func completionCoordinator(t *testing.T, runner *fakeRunner, opts ...testOption) (*Coordinator, *ledger.Ledger) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -41,13 +41,11 @@ func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *led
 		t.Fatal(err)
 	}
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	coordinator := buildCoordinator(t, withDeps(func(d *Deps) {
+	coordinator := buildCoordinator(t, append([]testOption{withDeps(func(d *Deps) {
 		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute
 		d.Projects, d.DefaultProject = projects, "p"
-		d.Tasks, d.Node = tasks, "hub"
-	}), onLedger(book))
-	coordinator.text = i18n.New(i18n.LocaleEN)
-	coordinator.artifacts.SetExecution(coordinator.executions)
+		d.Tasks, d.Node, d.Text = tasks, "hub", i18n.New(i18n.LocaleEN)
+	}), onLedger(book)}, opts...)...)
 	return coordinator, book
 }
 

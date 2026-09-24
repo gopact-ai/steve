@@ -130,6 +130,16 @@ func withHome(owner string, loader home.Loader) testOption {
 	return withDeps(func(d *Deps) { d.Owner, d.Home = owner, loader })
 }
 
+// withChannelOwner registers owner as the native owner of channel.
+func withChannelOwner(channel, owner string) testOption {
+	return withDeps(func(d *Deps) {
+		if d.ChannelOwners == nil {
+			d.ChannelOwners = map[string]string{}
+		}
+		d.ChannelOwners[channel] = owner
+	})
+}
+
 // withTasks sets the task store and the node it records.
 func withTasks(tasks *task.Store, node string) testOption {
 	return withDeps(func(d *Deps) { d.Tasks, d.Node = tasks, node })

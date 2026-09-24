@@ -12,10 +12,7 @@ import (
 
 func scheduleCoordinator(t *testing.T) (*Coordinator, *schedule.Store) {
 	t.Helper()
-	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
-	if err := coordinator.SetChannelOwner("feishu", ""); err != nil {
-		t.Fatal(err)
-	}
+	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"}, withChannelOwner("feishu", ""))
 	return coordinator, coordinator.schedules
 }
 

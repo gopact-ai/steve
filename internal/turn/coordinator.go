@@ -297,11 +297,11 @@ func New(deps Deps) (*Coordinator, error) {
 	if dir, ok := deps.Home.(home.Dir); ok {
 		c.homePath = dir.Path
 	}
-	for channel, owner := range deps.ChannelOwners {
-		if err := c.SetChannelOwner(channel, owner); err != nil {
-			return nil, fmt.Errorf("turn: owner of channel %q: %w", channel, err)
-		}
+	owners, err := channelOwners(deps.ChannelOwners)
+	if err != nil {
+		return nil, fmt.Errorf("turn: %w", err)
 	}
+	c.channelOwners = owners
 	c.skills = deps.Skills
 	c.projects, c.defaultProject, c.homeProject = deps.Projects, deps.DefaultProject, deps.HomeProject
 	c.memory = deps.Memory
