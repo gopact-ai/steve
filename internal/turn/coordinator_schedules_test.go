@@ -307,3 +307,20 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 		t.Fatalf("guidance was not stable: %+v %v", third, err)
 	}
 }
+
+func TestNewSchedulesRefusesMissingDependenciesAndInvalidOwners(t *testing.T) {
+	_, err := NewSchedules(ScheduleDeps{})
+	if want := "turn: missing schedule dependencies: Attempts, Tasks, Projects, Schedules, Text"; err == nil || err.Error() != want {
+		t.Fatalf("NewSchedules with nothing: %v, want %q", err, want)
+	}
+	var deps Deps
+	fillDeps(t, testLedger(t), &deps)
+	full := ScheduleDeps{Attempts: deps.Attempts, Tasks: deps.Tasks, Projects: deps.Projects, Schedules: deps.Schedules, Text: deps.Text, Owner: "owner", ChannelOwners: map[string]string{"feishu": "ou_owner"}}
+	if _, err := NewSchedules(full); err != nil {
+		t.Fatal(err)
+	}
+	full.ChannelOwners = map[string]string{"console": "owner"}
+	if _, err := NewSchedules(full); err == nil {
+		t.Fatal("NewSchedules accepted an owner for the console channel")
+	}
+}

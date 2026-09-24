@@ -324,15 +324,20 @@ func (d Deps) required() []dependency {
 	}
 }
 
-// New builds a Coordinator from deps, or reports every dependency missing.
-func New(deps Deps) (*Coordinator, error) {
+// absent names every dependency in list that is missing.
+func absent(list []dependency) []string {
 	var missing []string
-	for _, dep := range deps.required() {
+	for _, dep := range list {
 		if dep.absent {
 			missing = append(missing, dep.name)
 		}
 	}
-	if len(missing) > 0 {
+	return missing
+}
+
+// New builds a Coordinator from deps, or reports every dependency missing.
+func New(deps Deps) (*Coordinator, error) {
+	if missing := absent(deps.required()); len(missing) > 0 {
 		return nil, fmt.Errorf("turn: missing dependencies: %s", strings.Join(missing, ", "))
 	}
 	owners, err := newChannelOwners(deps.Owner, deps.ChannelOwners)
