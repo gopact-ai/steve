@@ -2,7 +2,6 @@ package turn
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/capability"
@@ -35,9 +34,6 @@ type Setup struct {
 // the agent's prompt and skills, project memory — but starts nothing
 // and changes nothing, so the page can ask for it at any moment.
 func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID string) (Setup, error) {
-	if c.catalog == nil {
-		return Setup{}, errors.New("no agent catalog")
-	}
 	if agentID == "" {
 		agentID = c.store.Conversation(conversationID).ActiveAgent
 		if agentID == "" {

@@ -345,7 +345,7 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 		}
 	}
 	active := c.store.Conversation(conversationID).ActiveAgent
-	if active == "" && c.catalog != nil {
+	if active == "" {
 		active = c.catalog.Default().ID
 	}
 	if c.fleet != nil {
@@ -376,7 +376,7 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 			}
 			out.Agents = append(out.Agents, choice)
 		}
-	} else if c.catalog != nil {
+	} else {
 		for _, a := range c.catalog.List() {
 			out.Agents = append(out.Agents, AgentChoice{ID: a.ID, Node: nodewire.Place(a.Node), Harness: a.Harness, Model: a.Model, Ready: true, Usable: true, Current: a.ID == active})
 		}

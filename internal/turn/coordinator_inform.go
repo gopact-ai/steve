@@ -53,9 +53,6 @@ func (c *Coordinator) modeOf(conversationID string) home.Mode {
 
 // Where answers steve_context.
 func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string) (Whereabouts, error) {
-	if c.catalog == nil {
-		return Whereabouts{}, errors.New("no agent catalog")
-	}
 	selected, ok := c.catalog.Resolve(agentID)
 	if !ok {
 		return Whereabouts{}, fmt.Errorf("no agent %q", agentID)
