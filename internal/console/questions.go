@@ -333,14 +333,11 @@ func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, 
 }
 
 func (s *Service) VerbsFor(ctx context.Context) []consoleapi.Verb {
-	if aware, ok := s.handler.(localizedVerbLister); ok {
-		out := []consoleapi.Verb{}
-		for _, v := range aware.VerbsFor(ctx) {
-			out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
-		}
-		return out
+	out := []consoleapi.Verb{}
+	for _, v := range s.handler.VerbsFor(ctx) {
+		out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
 	}
-	return s.Verbs()
+	return out
 }
 
 // turnQuestion asks on behalf of a turn: the question expires with it.

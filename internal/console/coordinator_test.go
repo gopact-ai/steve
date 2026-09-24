@@ -13,13 +13,9 @@ import (
 // handler for, so a fake that embeds it answers through the same calls
 // the coordinator does.
 var (
-	_ contextProvider         = turntest.IdleCoordinator{}
 	_ conversationInitializer = turntest.IdleCoordinator{}
 	_ inputParser             = turntest.IdleCoordinator{}
-	_ localizedVerbLister     = turntest.IdleCoordinator{}
 	_ sessionResetter         = turntest.IdleCoordinator{}
-	_ setupProvider           = turntest.IdleCoordinator{}
-	_ suggester               = turntest.IdleCoordinator{}
 )
 
 // A coordinator that knows nothing leaves the console with nothing to say

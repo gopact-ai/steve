@@ -516,11 +516,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(contextProvider)
-	if !ok {
-		return consoleapi.Context{Conversation: conversation, Agents: []consoleapi.AgentChoice{}}, nil
-	}
-	got, err := aware.Context(ctx, conversation)
+	got, err := s.handler.Context(ctx, conversation)
 	if err != nil {
 		return consoleapi.Context{}, err
 	}
@@ -547,11 +543,7 @@ func (s *Service) Setup(ctx context.Context, conversation, agent string) (consol
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(setupProvider)
-	if !ok {
-		return consoleapi.Setup{}, errors.New("this gateway cannot report an agent's setup")
-	}
-	got, err := aware.SessionSetup(ctx, conversation, agent)
+	got, err := s.handler.SessionSetup(ctx, conversation, agent)
 	if err != nil {
 		return consoleapi.Setup{}, err
 	}
@@ -570,12 +562,8 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(suggester)
-	if !ok {
-		return nil
-	}
 	var out []consoleapi.Suggestion
-	for _, x := range aware.Suggest(ctx, conversation, line) {
+	for _, x := range s.handler.Suggest(ctx, conversation, line) {
 		out = append(out, consoleapi.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
 	}
 	return out
