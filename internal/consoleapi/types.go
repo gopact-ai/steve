@@ -46,7 +46,10 @@ type Console interface {
 	ConversationInitializer
 	ExchangeIdentity
 	LocalizedVerbs
-	SubmissionCapabilities
+	// SubmissionCapabilities says which optional submission fields the
+	// console honours, material references and interactive requests, so the
+	// page can tell a hub that preserves them from one that only accepts them.
+	SubmissionCapabilities() (materialRefs, interactiveRequests bool)
 	Queue(conversation string) []Exchange
 	DeleteQueued(id string) error
 	EditQueued(id, input string) (Exchange, error)
