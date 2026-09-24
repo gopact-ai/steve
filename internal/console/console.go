@@ -43,11 +43,6 @@ type outcome struct {
 	err   error
 }
 
-// Handler is the coordinator's door.
-type Handler interface {
-	Handle(ctx context.Context, req turn.Request) (turn.Result, error)
-}
-
 // Meta is what is known about a conversation beyond its lines: a name —
 // the agent's summary of the first exchange, or the owner's own — and
 // whether it has been put away.
@@ -83,7 +78,7 @@ type Events interface {
 
 type Service struct {
 	maintenance bool
-	handler     Handler
+	handler     Coordinator
 	owner       string
 	model       Events
 	titler      Titler
@@ -134,7 +129,7 @@ type Service struct {
 
 var _ consoleapi.Console = (*Service)(nil)
 
-func New(handler Handler, owner string, model Events) *Service {
+func New(handler Coordinator, owner string, model Events) *Service {
 	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }
 
