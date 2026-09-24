@@ -13,10 +13,18 @@ import (
 	"github.com/gopact-ai/steve/internal/plugins"
 )
 
-// PluginRuntimeProvider returns a frozen node-local launch and secret-free
-// MCP descriptors. Remote processes are launched by their node transport.
+// PluginRuntimeProvider owns the plugin runtimes Manager's sessions run
+// with. PluginRuntime returns a frozen node-local launch and secret-free MCP
+// descriptors; remote processes are launched by their node transport. The
+// provider also prepares and relocates runtimes, counts their use and closes
+// them. Without one, Manager prepares no runtime, refuses sessions and
+// relocations that need one, and skips use and close.
 type PluginRuntimeProvider interface {
 	PluginRuntime(context.Context, Placement, plugins.RuntimeRef) (Config, []acp.MCPServer, error)
+	PluginSessionPreparer
+	PluginRelocationPreparer
+	PluginRuntimeCloser
+	PluginRuntimeUsage
 }
 
 type PluginTransports interface {
@@ -174,8 +182,8 @@ func (m *Manager) closePluginSession(ctx context.Context, at Placement, id strin
 	delete(m.pluginRefs, host)
 	provider := m.pluginRuntimes
 	m.mu.Unlock()
-	if closer, ok := provider.(PluginRuntimeCloser); ok {
-		return true, closer.ClosePluginRuntime(ctx, at, head)
+	if provider != nil {
+		return true, provider.ClosePluginRuntime(ctx, at, head)
 	}
 	return true, nil
 }
@@ -200,9 +208,9 @@ type PluginRelocationPreparer interface {
 
 func (m *Manager) PlanPluginRelocation(ctx context.Context, req PluginPreparation) (*plugins.Relocation, error) {
 	m.mu.Lock()
-	provider, ok := m.pluginRuntimes.(PluginRelocationPreparer)
+	provider := m.pluginRuntimes
 	m.mu.Unlock()
-	if !ok {
+	if provider == nil {
 		return nil, plugins.ErrUnavailable
 	}
 	return provider.PlanPluginRelocation(ctx, req)
@@ -210,9 +218,9 @@ func (m *Manager) PlanPluginRelocation(ctx context.Context, req PluginPreparatio
 
 func (m *Manager) PreparePluginRelocation(ctx context.Context, plan, id string, frozen plugins.Relocation) (*plugins.RuntimeRef, error) {
 	m.mu.Lock()
-	provider, ok := m.pluginRuntimes.(PluginRelocationPreparer)
+	provider := m.pluginRuntimes
 	m.mu.Unlock()
-	if !ok {
+	if provider == nil {
 		return nil, plugins.ErrUnavailable
 	}
 	return provider.PreparePluginRelocation(ctx, plan, id, frozen)
@@ -228,11 +236,7 @@ func (m *Manager) PreparePluginSession(ctx context.Context, request PluginPrepar
 		}
 		return nil, nil
 	}
-	preparer, ok := provider.(PluginSessionPreparer)
-	if !ok {
-		return nil, errors.New("plugin runtime provider cannot prepare sessions")
-	}
-	return preparer.PreparePluginSession(ctx, request)
+	return provider.PreparePluginSession(ctx, request)
 }
 
 func (s *Session) PluginRuntime() *plugins.RuntimeRef { return s.plugin.Clone() }
@@ -284,8 +288,8 @@ func (m *Manager) ClosePluginRuntime(ctx context.Context, ref plugins.RuntimeRef
 	delete(m.hosts, key)
 	delete(m.pluginRefs, host)
 	m.mu.Unlock()
-	if closer, ok := provider.(PluginRuntimeCloser); ok {
-		return closer.ClosePluginRuntime(ctx, at, ref.ID)
+	if provider != nil {
+		return provider.ClosePluginRuntime(ctx, at, ref.ID)
 	}
 	return nil
 }

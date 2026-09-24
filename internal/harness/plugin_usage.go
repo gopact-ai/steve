@@ -15,11 +15,12 @@ func (m *Manager) pluginUsage(ctx context.Context, at Placement, ref plugins.Run
 	m.mu.Lock()
 	provider := m.pluginRuntimes
 	m.mu.Unlock()
-	if usage, ok := provider.(PluginRuntimeUsage); ok {
-		if begin {
-			return usage.BeginPluginRuntimeUse(ctx, at, ref)
-		}
-		return usage.EndPluginRuntimeUse(ctx, at, ref)
+	switch {
+	case provider == nil:
+		return nil
+	case begin:
+		return provider.BeginPluginRuntimeUse(ctx, at, ref)
+	default:
+		return provider.EndPluginRuntimeUse(ctx, at, ref)
 	}
-	return nil
 }
