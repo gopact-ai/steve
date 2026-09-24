@@ -11,6 +11,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -58,6 +59,10 @@ type Status struct {
 	Since     time.Time
 	Advert    nodewire.Advert
 	LastError string
+	// Mismatch is set when the last dial failed because the node and this
+	// hub share no protocol version: which version the node speaks, and
+	// which this hub does.
+	Mismatch *nodewire.VersionMismatch
 }
 
 // Registry keeps one connection per node, dialing lazily and redialing after
@@ -477,7 +482,12 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 		}
 		c, err := dial(ctx, name, r.hub, cfg, mcpDial)
 		if err != nil {
-			r.remember(&Status{Name: name, Addr: cfg.Addr, LastError: err.Error()})
+			failed := &Status{Name: name, Addr: cfg.Addr, LastError: err.Error()}
+			var mismatch *nodewire.VersionMismatch
+			if errors.As(err, &mismatch) {
+				failed.Mismatch = mismatch
+			}
+			r.remember(failed)
 		} else {
 			adv := c.getAdvert()
 			r.accept(name, &adv)

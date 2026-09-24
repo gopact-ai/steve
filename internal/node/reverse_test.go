@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -278,6 +279,66 @@ func TestHubRefusesAProtocolV1Node(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("connect = %v, want it to say %q", err, want)
 		}
+	}
+}
+
+// A node refused for its protocol version is listed with the versions that
+// met, so a reader can tell it from a node that is merely down; a failure
+// for any other reason, and the next successful connection, clear them.
+func TestStatusesKeepWhyANodeWasRefusedForItsVersion(t *testing.T) {
+	server := startNode(t, ServerConfig{Name: "old", Token: "t", StateDir: t.TempDir()})
+	var mode atomic.Value
+	r := NewRegistry("hub", map[string]Config{"old": {Addr: server.Addr(), Token: "t", DialContext: func(ctx context.Context, _ string) (net.Conn, error) {
+		switch mode.Load() {
+		case "v1":
+			hub, node := net.Pipe()
+			go v1Node(t, node)
+			return hub, nil
+		case "down":
+			return nil, errors.New("connection refused")
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", server.Addr())
+	}}})
+	t.Cleanup(r.Close)
+	status := func() Status {
+		t.Helper()
+		all := r.Statuses()
+		if len(all) != 1 {
+			t.Fatalf("statuses = %+v", all)
+		}
+		return all[0]
+	}
+	want := nodewire.VersionMismatch{Node: 1, HubMin: nodewire.ProtocolMin, HubMax: nodewire.ProtocolVersion}
+
+	mode.Store("v1")
+	if _, err := r.connect(t.Context(), "old"); err == nil {
+		t.Fatal("a v1 node connected")
+	}
+	got := status()
+	if got.Up || got.Mismatch == nil || got.Mismatch.Node != want.Node || got.Mismatch.HubMin != want.HubMin || got.Mismatch.HubMax != want.HubMax {
+		t.Fatalf("refused node = %+v (mismatch %+v), want down with v1 against v%d–v%d", got, got.Mismatch, want.HubMin, want.HubMax)
+	}
+	if !strings.Contains(got.LastError, "node speaks v1–v1") {
+		t.Fatalf("last error = %q, want the versions named", got.LastError)
+	}
+
+	mode.Store("down")
+	if _, err := r.connect(t.Context(), "old"); err == nil {
+		t.Fatal("an unreachable node connected")
+	}
+	if got := status(); got.Up || got.Mismatch != nil {
+		t.Fatalf("unreachable node = %+v (mismatch %+v), want down with no version mismatch", got, got.Mismatch)
+	}
+
+	mode.Store("v1")
+	_, _ = r.connect(t.Context(), "old")
+	mode.Store("v2")
+	if _, err := r.connect(t.Context(), "old"); err != nil {
+		t.Fatalf("connect v2 node: %v", err)
+	}
+	if got := status(); !got.Up || got.Mismatch != nil {
+		t.Fatalf("upgraded node = %+v (mismatch %+v), want up with no version mismatch", got, got.Mismatch)
 	}
 }
 
