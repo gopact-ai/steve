@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -190,7 +191,28 @@ func TestNodeOwnedPluginSessionPersistsRuntimeBinding(t *testing.T) {
 	}
 }
 
+// nodePluginProvider serves an already prepared runtime from the node. It
+// prepares and relocates nothing, and counts no use.
 type nodePluginProvider struct{ registry *Registry }
+
+func (nodePluginProvider) PreparePluginSession(context.Context, harness.PluginPreparation) (*plugins.RuntimeRef, error) {
+	return nil, errors.New("plugin runtime provider cannot prepare sessions")
+}
+func (nodePluginProvider) PlanPluginRelocation(context.Context, harness.PluginPreparation) (*plugins.Relocation, error) {
+	return nil, plugins.ErrUnavailable
+}
+func (nodePluginProvider) PreparePluginRelocation(context.Context, string, string, plugins.Relocation) (*plugins.RuntimeRef, error) {
+	return nil, plugins.ErrUnavailable
+}
+func (nodePluginProvider) ClosePluginRuntime(context.Context, harness.Placement, string) error {
+	return nil
+}
+func (nodePluginProvider) BeginPluginRuntimeUse(context.Context, harness.Placement, plugins.RuntimeRef) error {
+	return nil
+}
+func (nodePluginProvider) EndPluginRuntimeUse(context.Context, harness.Placement, plugins.RuntimeRef) error {
+	return nil
+}
 
 func (p nodePluginProvider) PluginRuntime(ctx context.Context, at harness.Placement, ref plugins.RuntimeRef) (harness.Config, []acp.MCPServer, error) {
 	reply, err := p.registry.Plugins(ctx, at.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeInspect, Selection: &ref.Selection, Runtime: &ref})

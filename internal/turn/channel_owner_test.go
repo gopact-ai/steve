@@ -169,3 +169,23 @@ func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 		t.Fatalf("baseline owner changed %s %v", role, err)
 	}
 }
+
+func TestChannelOwnersResolveBaselineAndRegisteredChannels(t *testing.T) {
+	owners, err := newChannelOwners("console-owner", map[string]string{"feishu": "ou_im_owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for channel, want := range map[string]string{"": "console-owner", "console": "console-owner", "feishu": "ou_im_owner"} {
+		if got, err := owners.of(channel); err != nil || got != want {
+			t.Errorf("owner of %q = %q, %v; want %q", channel, got, err, want)
+		}
+	}
+	if _, err := owners.of("slack"); err == nil {
+		t.Error("an unregistered channel resolved to an owner")
+	}
+	for _, channel := range []string{"", "console", " feishu"} {
+		if _, err := newChannelOwners("console-owner", map[string]string{channel: "someone"}); err == nil {
+			t.Errorf("registered an owner for channel %q", channel)
+		}
+	}
+}

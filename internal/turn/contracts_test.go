@@ -10,6 +10,7 @@ import (
 var (
 	_ executionGate        = (*agentmcp.Server)(nil)
 	_ originalOpenRecovery = (*harness.Manager)(nil)
+	_ pluginRuntimeCloser  = (*harness.Manager)(nil)
 	_ retainedRuntime      = (*harness.Manager)(nil)
 	_ retainedPlanner      = (*exec.Supervisor)(nil)
 	_ retainedRunReader    = (*exec.Supervisor)(nil)

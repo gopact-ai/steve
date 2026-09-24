@@ -308,7 +308,10 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("button", { name: "立即重启", exact: true }).click();
         await hubRow.getByText("重启结果尚未确认", { exact: true }).waitFor();
         const id = restartPosts[2].id;
+        // Sections switch in a transition; two quick clicks can commit only
+        // the last one. Wait for General so the services list really unmounts.
         await nav.getByRole("link", { name: "通用", exact: true }).click();
+        await page.getByRole("heading", { name: "通用", exact: true }).waitFor();
         await nav.getByRole("link", { name: "节点与服务", exact: true }).click();
         await hubRow.getByText("重启结果尚未确认", { exact: true }).waitFor();
         await page.waitForTimeout(2000); assert.equal(restartPosts.length, 3, "Polling must never resend a restart");
@@ -354,6 +357,7 @@ if (process.env.PURE_ONLY !== "1") {
         await englishNav.getByRole("link", { name: "Channels", exact: true }).click();
         await page.getByRole("textbox", { name: "App ID", exact: true }).fill("edited-id");
         await englishNav.getByRole("link", { name: "General", exact: true }).click();
+        await page.getByRole("heading", { name: "General", exact: true }).waitFor();
         await englishNav.getByRole("link", { name: "Channels", exact: true }).click();
         assert.equal(await page.getByRole("textbox", { name: "App ID", exact: true }).inputValue(), "edited-id");
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "channels-mobile.png"), fullPage: true });
@@ -441,6 +445,9 @@ if (process.env.PURE_ONLY !== "1") {
         await row("gateway.default_approval").waitFor();
         assert.equal(await row("gateway.default_approval").locator(".settings-restart-link").count(), 0);
         await page.locator(".settings-nav").getByRole("link", { name: "Execution & resources", exact: true }).click();
+        // Approval stays on screen until the switch commits; the checks below
+        // count links in rows that exist only in Execution.
+        await row("gateway.task_max_turns").waitFor();
         state.pending_restart = false;
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         await page.waitForFunction(() => !document.querySelector(".settings-pending-link"));
