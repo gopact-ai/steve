@@ -8,7 +8,7 @@ import { useFleet } from "@/lib/fleet";
 import type { Task, TaskMetaPatch } from "@/lib/types";
 
 export function useTaskMeta(t: Task) {
-    const { refresh } = useFleet();
+    const refresh = useFleet((fleet) => fleet.refresh);
     const [renaming, setRenaming] = useState(false);
     const [pending, setPending] = useState(false);
     const [error, setError] = useState("");

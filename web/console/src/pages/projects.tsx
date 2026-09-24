@@ -36,7 +36,8 @@ import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
 // owner's private conversation lives, not a codebase.
 export function ProjectsPage() {
     const { t: tr, locale } = useI18n();
-    const { snap, refresh } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const refresh = useFleet((fleet) => fleet.refresh);
     const nodeLabelOf = useNodeLabel();
     const navigate = useNavigate();
     const [opened, setOpened] = useState<string | null>(null);
@@ -247,7 +248,8 @@ function RepoChips({ repos }: { repos?: Repo[] }) {
 
 function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onClose: () => void; onNewSession: () => void; onRemove: () => void }) {
     const { t: tr, locale } = useI18n();
-    const { snap, refresh } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const refresh = useFleet((fleet) => fleet.refresh);
     const nodeLabelOf = useNodeLabel();
     const [addingWorkspace, setAddingWorkspace] = useState(false);
     const tasks = snap.tasks.filter((t) => t.project_id === p.id && t.lane !== "ended");
@@ -302,7 +304,7 @@ function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onC
 // that is already there, or one cloned from the project's remote.
 function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void; onDone: () => void }) {
     const { t: tr } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const home = p.workspaces.find((w) => w.kind === "canonical");
     const taken = new Set(p.workspaces.map((w) => w.node));
     const machines = [{ id: snap.hub.node, label: `${nodeLabelIn(snap.nodes, snap.hub.node)}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.display_name ? `${n.display_name} · ${n.name}` : n.name }))].filter((m) => !taken.has(m.id));
@@ -351,7 +353,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
 
 function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const [id, setID] = useState("");
     const node = snap.hub.node;
     const [path, setPath] = useState("");

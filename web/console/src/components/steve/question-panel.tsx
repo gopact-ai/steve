@@ -18,7 +18,7 @@ import "@/styles/questions.css";
 
 export function QuestionPanel({ conversation, turnStartedAt }: { conversation: string; turnStartedAt?: string }) {
     const { t } = useI18n();
-    const { live } = useFleet();
+    const live = useFleet((fleet) => fleet.live);
     const [items, setItems] = useState<PendingQuestion[]>([]);
     const [error, setError] = useState("");
     const load = useResourceRead(`questions:${conversation}`, (signal) => questions(conversation, signal), (value) => {

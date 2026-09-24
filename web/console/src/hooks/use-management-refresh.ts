@@ -3,7 +3,8 @@ import { useFleet, useFleetEvents } from "@/lib/fleet";
 import { managementDependencyKey, managementEventAffects, type ManagementDomain } from "@/lib/management-refresh";
 
 export function useManagementRefresh(domain: ManagementDomain, load: () => Promise<void>) {
-    const { snap, live } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const live = useFleet((fleet) => fleet.live);
     const events = useFleetEvents();
     const dependency = managementDependencyKey(domain, snap);
     const head = useRef(events[0]);

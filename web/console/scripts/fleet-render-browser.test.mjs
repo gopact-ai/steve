@@ -26,9 +26,9 @@ try {
         import { LocaleProvider } from "@/providers/locale-provider";
         import { BoardPage } from "@/pages/board";
         const hit = key => window.renders[key] = (window.renders[key] || 0) + 1;
-        const Snapshot = memo(function Snapshot() { const { snap } = useFleet(); hit("snapshot"); return <output id="ready">{snap.hub.node}</output>; });
-        const Connection = memo(function Connection() { const { live } = useFleet(); hit("connection"); return <output id="connection">{live}</output>; });
-        const Actions = memo(function Actions() { const { refresh } = useFleet(); hit("actions"); window.refreshFleet = refresh; return null; });
+        const Snapshot = memo(function Snapshot() { const snap = useFleet((fleet) => fleet.snap); hit("snapshot"); return <output id="ready">{snap.hub.node}</output>; });
+        const Connection = memo(function Connection() { const live = useFleet((fleet) => fleet.live); hit("connection"); return <output id="connection">{live}</output>; });
+        const Actions = memo(function Actions() { const refresh = useFleet((fleet) => fleet.refresh); hit("actions"); window.refreshFleet = refresh; return null; });
         const Material = memo(function Material() { const value = useMaterial(); hit("material"); window.material = value; return <output id="pins">{value.pins("p").map(pin => pin.title).join(",")}</output>; });
         const Coordination = memo(function Coordination() { const value = useCoordination(); hit("coordination"); window.coordination = value; return <output id="revision">{value.view?.revision}</output>; });
         window.emit = event => flushSync(() => window.source.onmessage({ data: JSON.stringify(event) }));
@@ -131,6 +131,10 @@ try {
 
     await settle();
     assert.equal(reads.state, before.state + 1, "The existing 250ms snapshot refresh still runs");
+    const refreshed = await counts();
+    assert.ok(refreshed.snapshot > 0, "A new snapshot reaches its readers");
+    assert.equal(refreshed.connection || 0, 0, "Connection readers do not render for a new snapshot");
+    assert.equal(refreshed.actions || 0, 0, "Readers of refresh alone do not render for a new snapshot");
     assert.equal(reads.usage, before.usage, "Unrelated events do not invalidate usage");
     assert.equal((await counts()).material || 0, 0, "An unchanged hub node does not republish the material context");
     assert.equal((await counts()).coordination || 0, 0, "An unchanged coordination view does not republish");
@@ -159,8 +163,10 @@ try {
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem(`steve.material.pins:${location.origin}:first:p`)).length), 1, "Stable actions use the latest hub, not the initial closure");
 
     const reconnect = { ...reads };
+    await reset();
     await page.evaluate(() => window.source.onerror());
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "reconnecting");
+    assert.equal((await counts()).snapshot || 0, 0, "Snapshot readers do not render for a connection change");
     await page.clock.runFor(3100);
     await settle();
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "live");

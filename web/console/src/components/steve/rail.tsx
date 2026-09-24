@@ -35,7 +35,7 @@ export type RailTab = "context" | "trace" | "graph" | "artifacts" | "materials";
 // working for this session.
 export const Rail = memo(function Rail({ conversation, context, live, plans, reply, tab, setTab, roots, onClose }: { conversation: string; context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[]; onClose: () => void }) {
     const [picked, setPicked] = useState<Task | null>(null);
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const { t, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);

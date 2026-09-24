@@ -42,7 +42,7 @@ const roles: Record<string, { title: string; what: string; scope: string }> = {
 
 export function HomePage() {
     const { t: tr } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const navigate = useNavigate();
     const [view, setView] = useState<HomeView | null>(null);
     const [error, setError] = useState("");
@@ -238,7 +238,7 @@ function ProfileWorkspace({ view, onSaved }: { view: HomeView; onSaved: (doc: Pr
 // prompt like any other message.
 function Regenerate({ doc }: { doc: ProfileDocument }) {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const navigate = useNavigate();
     const home = snap.projects.find((p) => p.home);
     if (!home) return null;

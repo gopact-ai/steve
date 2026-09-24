@@ -39,7 +39,8 @@ const editable = (c: Conversation) => conversationTransport(c) === "console" && 
 
 export function Scheduled() {
     const { t: tr, locale } = useI18n();
-    const { snap, refresh } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const refresh = useFleet((fleet) => fleet.refresh);
     const [initial] = useState(readInitial);
     const [pending, setPending] = useState(initial.pending);
     const [open, setOpen] = useState(!!initial.pending);

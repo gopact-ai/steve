@@ -26,7 +26,7 @@ export function useTaskClose(t: Task) {
 // the badge afterwards.
 export function TaskCloseDialog({ t, onClose }: { t: Task; onClose: () => void }) {
     const { t: tr } = useI18n();
-    const { refresh } = useFleet();
+    const refresh = useFleet((fleet) => fleet.refresh);
     const accepted = t.can_complete === true;
     async function confirm() {
         const conversation = consoleTaskConversation(t);

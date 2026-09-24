@@ -32,7 +32,7 @@ const tabs: DashboardTab[] = ["overview", "timeline", "audit"];
 // paged together by an opaque cursor, and the audit tab holds raw records.
 export function DashboardPage() {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const events = useFleetEvents();
     const nodeLabelOf = useNodeLabel();
     const stateWord = useStateWord();

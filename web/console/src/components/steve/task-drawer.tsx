@@ -36,7 +36,8 @@ export function TaskDrawer(props: TaskDrawerProps) {
 
 function TaskDrawerReader(props: TaskDrawerProps) {
     const { t: tr } = useI18n();
-    const { snap, refresh } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const refresh = useFleet((fleet) => fleet.refresh);
     const [id, setID] = useState(props.t.id);
     const [revision, setRevision] = useState(0);
     const [state, setState] = useState<{ key: string; value?: TaskDetail; error?: string }>({ key: "" });
@@ -102,7 +103,7 @@ function TaskDrawerContent({ detail, detailError, ownerRows, readChildren, chang
     changed: () => Promise<void>; reread: () => Promise<void>; reload: () => void; onPick: (task: Task) => void;
 }) {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const navigate = useNavigate();
     const [pending, setPending] = useState(false);
     const [error, setError] = useState("");

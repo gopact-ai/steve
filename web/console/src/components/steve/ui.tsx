@@ -24,7 +24,7 @@ export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" 
 
 // The model's empty node is the hub's own machine; name it, never the role.
 export const Where = ({ node }: { node?: string }) => {
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const id = node || snap.hub.node;
     return <span className="font-mono text-xs text-tertiary" title={id || undefined}>{id ? nodeLabelIn(snap.nodes, id) : "—"}</span>;
 };

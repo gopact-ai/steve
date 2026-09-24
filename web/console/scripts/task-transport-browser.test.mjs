@@ -15,7 +15,7 @@ const server = await createServer({
             import { TaskCloseDialog, useTaskClose } from "@/components/steve/task-close";\n` +
             source.replace("<Shell />", "<Shell /><TaskTransportProbe />") + `
             function TaskTransportProbe() {
-                const { snap } = useFleet();
+                const snap = useFleet((fleet) => fleet.snap);
                 return snap.tasks[0] ? <TaskTransportControls task={snap.tasks[0]} /> : null;
             }
             function TaskTransportControls({task}) {

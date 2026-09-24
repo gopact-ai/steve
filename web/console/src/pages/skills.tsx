@@ -29,7 +29,7 @@ const fail = (e: unknown) => String(e).replace(/^Error: /, "");
 // pick it up. Agents and projects can also pin a skill by path.
 export function SkillsPage() {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const [view, setView] = useState<SkillsView | null>(null);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState("");
