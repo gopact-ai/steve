@@ -5,9 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"maps"
 	"slices"
 
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -229,37 +229,29 @@ func (s *PluginService) RemovePlugin(ctx context.Context, id string, req console
 			return consoleapi.PluginsView{}, err
 		}
 	}
-	s.Admin.configStore().Lock()
-	if pluginRevision(s.Admin.Cfg.Plugins) != revision {
-		s.Admin.configStore().Unlock()
-		return consoleapi.PluginsView{}, consoleapi.ErrSettingsConflict
-	}
-	candidate := *s.Admin.Cfg
-	candidate.Plugins = config.ClonePluginInstallations(candidate.Plugins)
-	delete(candidate.Plugins, id)
-	candidate.Agents = maps.Clone(candidate.Agents)
-	for name, item := range candidate.Agents {
-		if item.PluginOrigin != nil && item.PluginOrigin.Installation == id {
-			item.PluginOrigin = nil
-			candidate.Agents[name] = item
+	var catalog *agent.Catalog
+	saveErr := s.Admin.updateConfigThen(ctx, func(c *config.Config) error {
+		if pluginRevision(c.Plugins) != revision {
+			return consoleapi.ErrSettingsConflict
 		}
-	}
-	catalog, err := candidate.AgentCatalog()
-	if err != nil {
-		s.Admin.configStore().Unlock()
-		return consoleapi.PluginsView{}, err
-	}
-	saveErr := s.Admin.persistConfigContext(ctx, &candidate)
+		delete(c.Plugins, id)
+		for name, item := range c.Agents {
+			if item.PluginOrigin != nil && item.PluginOrigin.Installation == id {
+				item.PluginOrigin = nil
+				c.Agents[name] = item
+			}
+		}
+		var err error
+		catalog, err = c.AgentCatalog()
+		return err
+	}, func(*config.Config) {
+		if s.Admin.Catalog != nil {
+			s.Admin.Catalog.Publish(catalog)
+		}
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		s.Admin.configStore().Unlock()
 		return consoleapi.PluginsView{}, saveErr
 	}
-	s.Admin.Cfg.Plugins = candidate.Plugins
-	s.Admin.Cfg.Agents = candidate.Agents
-	if s.Admin.Catalog != nil {
-		s.Admin.Catalog.Publish(catalog)
-	}
-	s.Admin.configStore().Unlock()
 	view, err := s.Plugins(ctx)
 	if saveErr != nil {
 		view.Warning = saveErr.Error()
