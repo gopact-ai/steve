@@ -29,6 +29,7 @@ const crashConversation = "console:crash"
 const crashAnswer = "complete durable answer, not another native prompt"
 
 type crashProbe struct {
+	turntest.IdleCoordinator
 	book     *ledger.Ledger
 	tasks    *task.Store
 	attempts *attempt.Service

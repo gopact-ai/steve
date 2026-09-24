@@ -25,12 +25,16 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type receiptChatHandler func(context.Context, turn.Request) (turn.Result, error)
+type receiptChatHandler struct {
+	turntest.IdleCoordinator
+	answer func(context.Context, turn.Request) (turn.Result, error)
+}
 
 func (h receiptChatHandler) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
-	return h(ctx, req)
+	return h.answer(ctx, req)
 }
 
 type receiptAckFunc func(context.Context, string, nodewire.SessionReceiptRequest) error
@@ -114,7 +118,7 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 	var record attempt.Record
 	var bound harness.NodeSessionContext
 	workdir := t.TempDir()
-	cons := console.New(receiptChatHandler(func(ctx context.Context, req turn.Request) (turn.Result, error) {
+	cons := console.New(receiptChatHandler{answer: func(ctx context.Context, req turn.Request) (turn.Result, error) {
 		tracked, err := tasks.Create(task.Task{Channel: req.ConversationID, Transport: req.Channel, Requester: req.SenderOpenID,
 			Member: "mock", ProjectID: "p", Goal: "receipt closure"})
 		if err != nil {
@@ -177,7 +181,7 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 			return result, errors.New("missing durable delivery nevertheless sent ack RPC")
 		}
 		return result, nil
-	}), "owner", nil)
+	}}, "owner", nil)
 	if err := cons.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}

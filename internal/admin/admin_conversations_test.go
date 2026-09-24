@@ -7,11 +7,15 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // boundHandler answers a console line and says which project each
 // conversation works in, the way the coordinator does.
-type boundHandler struct{ projects map[string]string }
+type boundHandler struct {
+	turntest.IdleCoordinator
+	projects map[string]string
+}
 
 func (h boundHandler) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	return turn.Result{Text: "ok"}, nil

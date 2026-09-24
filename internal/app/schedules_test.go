@@ -14,9 +14,13 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type firingHandler struct{ calls atomic.Int32 }
+type firingHandler struct {
+	turntest.IdleCoordinator
+	calls atomic.Int32
+}
 
 func (h *firingHandler) Handle(context.Context, turn.Request) (turn.Result, error) {
 	h.calls.Add(1)

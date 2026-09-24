@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func materialsAdmin(t *testing.T, level datalevel.Level) (*Service, *ledger.Ledger) {
@@ -61,7 +62,7 @@ func TestReplyCaptureUsesOriginalProjectAndRevision(t *testing.T) {
 	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, replies) }); err != nil {
 		t.Fatal(err)
 	}
-	a.Console = console.New(nil, "owner", nil)
+	a.Console = console.New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := a.Console.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
