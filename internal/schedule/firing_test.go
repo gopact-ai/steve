@@ -2,17 +2,18 @@ package schedule
 
 import (
 	"errors"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-func firingStore(t *testing.T, channel string) (*Store, Job, time.Time, string) {
+func firingStore(t *testing.T, channel string) (*Store, Job, time.Time, *ledger.Ledger) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "schedules.json")
-	s, err := Open(path)
+	book := testLedger(t)
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,11 +23,11 @@ func firingStore(t *testing.T, channel string) (*Store, Job, time.Time, string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s, j, now.Add(time.Minute), path
+	return s, j, now.Add(time.Minute), book
 }
 
 func TestDuePersistsFiringWithoutConsumingTheJob(t *testing.T) {
-	s, job, now, path := firingStore(t, "console")
+	s, job, now, book := firingStore(t, "console")
 	due, err := s.Due(now)
 	if err != nil || len(due) != 1 || due[0].Key == "" || !due[0].ScheduledAt.Equal(job.NextAt) {
 		t.Fatalf("due=%+v err=%v", due, err)
@@ -35,7 +36,7 @@ func TestDuePersistsFiringWithoutConsumingTheJob(t *testing.T) {
 	if !ok || stored.Runs != 0 || !stored.NextAt.Equal(job.NextAt) {
 		t.Fatalf("claim consumed job: %+v", stored)
 	}
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +85,12 @@ func TestFiringDispatchIsExclusive(t *testing.T) {
 func TestRestartRetriesConsoleButRequiresDecisionForFeishu(t *testing.T) {
 	for _, channel := range []string{"console", "feishu"} {
 		t.Run(channel, func(t *testing.T) {
-			s, job, now, path := firingStore(t, channel)
+			s, job, now, book := firingStore(t, channel)
 			due, _ := s.Due(now)
 			if err := s.BeginFiring(due[0].Key); err != nil {
 				t.Fatal(err)
 			}
-			reopened, err := Open(path)
+			reopened, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +157,7 @@ func TestUnknownFiringCanBeConfirmedAndFailuresRemainRetryable(t *testing.T) {
 
 func TestDelayedAcceptanceDoesNotShiftTheClaimedSchedule(t *testing.T) {
 	for _, manual := range []bool{false, true} {
-		s, _, now, path := firingStore(t, "feishu")
+		s, _, now, book := firingStore(t, "feishu")
 		for _, job := range s.List("") {
 			if _, _, err := s.Delete(job.ID); err != nil {
 				t.Fatal(err)
@@ -179,7 +180,7 @@ func TestDelayedAcceptanceDoesNotShiftTheClaimedSchedule(t *testing.T) {
 			t.Fatal(err)
 		}
 		if manual {
-			restarted, err := Open(path)
+			restarted, err := OpenLedger(book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,4 +199,15 @@ func TestDelayedAcceptanceDoesNotShiftTheClaimedSchedule(t *testing.T) {
 			t.Fatalf("late acceptance shifted schedule: %+v", stored)
 		}
 	}
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

@@ -75,8 +75,8 @@ func TestTurnAdmissionPersistsAnchorWithItsCharge(t *testing.T) {
 	}
 	input.Address.Channel = "console"
 	input.Address.Message = "new"
-	doc := &metaDocument{Doc: store.doc, fail: true}
-	store.doc = doc
+	gate := gateWrites(t, store)
+	gate.fail = true
 	if _, err := store.BeginTurn(root.ID, "worker", "node", input); err == nil {
 		t.Fatal("failed persistence admitted a turn")
 	}
@@ -84,11 +84,11 @@ func TestTurnAdmissionPersistsAnchorWithItsCharge(t *testing.T) {
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("failed save partially charged or reanchored")
 	}
-	doc.fail = false
+	gate.fail = false
 	if _, err := store.BeginTurn(root.ID, "worker", "node", input); err != nil {
 		t.Fatal(err)
 	}
-	reloaded, err := openWith(store.doc)
+	reloaded, err := OpenLedger(store.book)
 	if err != nil {
 		t.Fatal(err)
 	}

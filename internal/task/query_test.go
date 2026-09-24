@@ -28,7 +28,7 @@ func readFixture(t *testing.T, history int) (*Store, func(int)) {
 			next.Tasks[id] = &Task{ID: id, State: StateDone, UpdatedAt: at.Add(time.Second), Channel: "past", ProjectID: "p", Attempts: []Attempt{row}}
 			next.Tasks["live"].Attempts = append(next.Tasks["live"].Attempts, row)
 		}
-		if err := s.replaceLocked(next); err != nil {
+		if err := s.replaceData(next); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -136,7 +136,7 @@ func TestTaskHeaderSummaryCompletionUsesFullTreeAndRollsBack(t *testing.T) {
 	next := s.clone()
 	next.Tasks["root"] = &Task{ID: "root", State: StateRunning, UpdatedAt: at}
 	next.Tasks["old-child"] = &Task{ID: "old-child", Parent: "root", State: StateDone, Result: &Result{Answer: "done"}, Delivery: &Delivery{State: DeliverySuppressed}, UpdatedAt: at.Add(-time.Hour)}
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := s.Header("root")
@@ -213,7 +213,7 @@ func TestTaskPlanPresenceIncludesHiddenDescendantsAndTracksDeletion(t *testing.T
 	next := s.clone()
 	next.Tasks["history-00000"].Parent = "root"
 	next.Tasks["history-00000"].Channel = "delete-me"
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		t.Fatal(err)
 	}
 	s.SetPlanBindings([]string{"history-00000"})
@@ -291,7 +291,7 @@ func TestReadIndexIncrementalSummaryMembershipAndMutationRollback(t *testing.T) 
 			target.Attempts[len(target.Attempts)-1].Independent = true
 		}
 		target.UpdatedAt = target.UpdatedAt.Add(time.Second)
-		if err := s.replaceLocked(next); err != nil {
+		if err := s.replaceData(next); err != nil {
 			t.Fatal(err)
 		}
 		assertReadIndexMatchesStartup(t, s)
@@ -316,7 +316,7 @@ func TestOpenPrimaryAccountingUsesLastPrimaryRowAcrossAllStates(t *testing.T) {
 	}
 	next.Tasks["closed-latest"] = &Task{ID: "closed-latest", State: StatePaused, Attempts: []Attempt{{StartedAt: now}, {StartedAt: now, EndedAt: now}}}
 	next.Tasks["independent-only"] = &Task{ID: "independent-only", State: StateRunning, Attempts: []Attempt{{StartedAt: now, Independent: true}}}
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		t.Fatal(err)
 	}
 	got := s.OpenPrimaryAccounting()
@@ -345,7 +345,7 @@ func TestOpenPrimaryAccountingUsesLastPrimaryRowAcrossAllStates(t *testing.T) {
 		tracked.Attempts = append(tracked.Attempts, Attempt{StartedAt: now, EndedAt: now, ExecutionID: fmt.Sprint(i)})
 	}
 	tracked.Attempts = append(tracked.Attempts, Attempt{StartedAt: now})
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		t.Fatal(err)
 	}
 	after := testing.AllocsPerRun(20, func() { _ = s.OpenPrimaryAccounting() })

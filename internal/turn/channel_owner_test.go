@@ -37,7 +37,7 @@ func configureChannelOwner(t *testing.T, c *Coordinator, channel, owner string) 
 
 func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute)
 	c.SetIdentity("console-owner", nil)
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
@@ -139,7 +139,7 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 		t.Fatalf("mockagent build: %v %s", err, output)
 	}
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager, err := harness.NewManager(map[string]harness.Config{"mock": {Command: bin, Permission: "read"}})
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 
 func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute)
 	c.SetIdentity("console-owner", nil)
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")

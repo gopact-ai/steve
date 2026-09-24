@@ -48,11 +48,18 @@ func (s *Store) CheckExecution(token ExecutionToken) error {
 }
 
 func checkExecution(tasks map[string]*Task, token ExecutionToken) error {
-	t, ok := tasks[token.TaskID]
+	return checkExecutionBy(func(id string) (*Task, bool) {
+		t, ok := tasks[id]
+		return t, ok
+	}, token)
+}
+
+func checkExecutionBy(find func(string) (*Task, bool), token ExecutionToken) error {
+	t, ok := find(token.TaskID)
 	if !ok || t.ExecutionEpoch != token.Epoch || t.State == StatePaused || t.State == StateCancelled || t.CompletedByUser || t.Settled() {
 		return fmt.Errorf("%w: task %s epoch %d", ErrExecutionStopped, token.TaskID, token.Epoch)
 	}
-	lineage, err := taskLineage(tasks, token.TaskID)
+	lineage, err := lineageOf(find, token.TaskID)
 	if err != nil {
 		return err
 	}
@@ -101,11 +108,11 @@ func (s *Store) SetAside(id string, to State) ([]string, error) {
 	if _, ok := s.data.Tasks[id]; !ok {
 		return nil, fmt.Errorf("task %s not found", id)
 	}
-	next := s.clone()
+	next := s.draft()
 	selected := map[string]bool{id: true}
 	for changed := true; changed; {
 		changed = false
-		for childID, child := range next.Tasks {
+		for childID, child := range s.data.Tasks {
 			if !selected[childID] && selected[child.Parent] {
 				selected[childID] = true
 				changed = true
@@ -114,7 +121,7 @@ func (s *Store) SetAside(id string, to State) ([]string, error) {
 	}
 	ids := make([]string, 0, len(selected))
 	for taskID := range selected {
-		t := next.Tasks[taskID]
+		t := next.edit(taskID)
 		t.ExecutionEpoch++
 		if !t.State.Terminal() && (t.State.CanMoveTo(to) || t.State == to) {
 			t.State = to
@@ -147,8 +154,8 @@ func (s *Store) Settle(id string, as Settlement) (Task, error) {
 	if stored.State != StateFailed {
 		return Task{}, fmt.Errorf("%w: task %s is %s", ErrSettleState, id, stored.State)
 	}
-	next := s.clone()
-	t := next.Tasks[id]
+	next := s.draft()
+	t := next.edit(id)
 	t.Settlement = as
 	t.SettledAt = time.Time{}
 	if as != "" {
@@ -170,8 +177,8 @@ func (s *Store) AdvanceExecution(token ExecutionToken, to State) (Task, error) {
 	if err := checkExecution(s.data.Tasks, token); err != nil {
 		return Task{}, err
 	}
-	next := s.clone()
-	stored := next.Tasks[token.TaskID]
+	next := s.draft()
+	stored := next.edit(token.TaskID)
 	if !stored.State.CanMoveTo(to) {
 		return Task{}, fmt.Errorf("task %s cannot move %s -> %s", token.TaskID, stored.State, to)
 	}

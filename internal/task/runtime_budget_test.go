@@ -1,14 +1,13 @@
 package task
 
 import (
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestBudgetSourceAppliesOnlyToNewTasksAndCanRestoreUnlimited(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

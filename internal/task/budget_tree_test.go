@@ -47,7 +47,7 @@ func TestTreeSpendIsAtomicAndIndependentOfFinishOrder(t *testing.T) {
 					t.Fatalf("wrong subtree spend for %s: %+v", id, x.Budget)
 				}
 			}
-			reopened, err := openWith(s.doc)
+			reopened, err := OpenLedger(s.book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,8 +110,8 @@ func TestTreeBudgetWriteFailureDoesNotPartiallyCharge(t *testing.T) {
 	s, clock := newStore(t)
 	r, _ := s.Create(Task{Member: "root"})
 	c, _ := s.Spawn(r.ID, Task{Member: "child"})
-	doc := &metaDocument{Doc: s.doc, fail: true}
-	s.doc = doc
+	gate := gateWrites(t, s)
+	gate.fail = true
 	if _, err := s.Begin(c.ID, "child", "", ""); err == nil {
 		t.Fatal("failed begin write was acknowledged")
 	}
@@ -120,14 +120,14 @@ func TestTreeBudgetWriteFailureDoesNotPartiallyCharge(t *testing.T) {
 	if root.Budget.Turns != 0 || child.Budget.Turns != 0 || len(child.Attempts) != 0 {
 		t.Fatal("failed begin partially charged tree")
 	}
-	doc.fail = false
+	gate.fail = false
 	if _, err := s.Begin(c.ID, "child", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	root, _ = s.Get(r.ID)
 	child, _ = s.Get(c.ID)
 	*clock = clock.Add(time.Second)
-	doc.fail = true
+	gate.fail = true
 	if _, err := s.Finish(c.ID, OutcomeOK, Tokens{Total: 9}, 1); err == nil {
 		t.Fatal("failed finish write was acknowledged")
 	}
@@ -136,7 +136,7 @@ func TestTreeBudgetWriteFailureDoesNotPartiallyCharge(t *testing.T) {
 	if !reflect.DeepEqual(root, stillRoot) || !reflect.DeepEqual(child, stillChild) {
 		t.Fatal("failed finish partially charged tree")
 	}
-	doc.fail = false
+	gate.fail = false
 	if _, err := s.Finish(c.ID, OutcomeOK, Tokens{Total: 9}, 1); err != nil {
 		t.Fatal(err)
 	}

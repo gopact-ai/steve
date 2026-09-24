@@ -62,8 +62,8 @@ func (s *Store) SetMeta(id string, patch MetaPatch) (Meta, error) {
 	if meta.equal(s.data.Meta[id]) {
 		return meta, nil
 	}
-	next := s.clone()
-	next.Meta[id] = meta
+	next := s.draft()
+	next.setMeta(id, meta)
 	if err := s.replaceLocked(next); err != nil {
 		return Meta{}, err
 	}

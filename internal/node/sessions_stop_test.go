@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -29,7 +29,7 @@ func TestNodeSessionExplicitTaskStopEndsNativePromptWhileLifetimeOnlyDetaches(t 
 			defer manager.Stop()
 			lifetime, cancelLifetime := context.WithCancel(t.Context())
 			defer cancelLifetime()
-			tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+			tasks, err := task.OpenLedger(testLedger(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +114,7 @@ func TestNodeSessionRetainedAttachmentCanStopTheOriginalNativeCommand(t *testing
 	server := startNode(t, ServerConfig{Name: "worker", Token: "attached-stop", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "attached-stop"}})
 	defer registry.Close()
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestNodeSessionStopFencesAnAlreadyAuthorizedButUnacceptedPrompt(t *testing.
 	manager.SetTransports(registry)
 	manager.SetStopRegistrar(execution.RegisterStopHandler)
 	defer manager.Stop()
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,4 +280,15 @@ func TestNodeSessionStopFencesAnAlreadyAuthorizedButUnacceptedPrompt(t *testing.
 	if state.InputAccepted != 0 || state.Command != nil {
 		t.Fatalf("stop dispatched the original input: %+v", state)
 	}
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

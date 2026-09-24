@@ -19,7 +19,7 @@ func (s *Store) PrepareDeliveries(parent string, candidates []string) ([][]Task,
 	if p.State != StateRunning {
 		return nil, nil
 	}
-	next := s.clone()
+	next := s.draft()
 	var fresh []Task
 	groups := map[string][]Task{}
 	seen := map[string]bool{}
@@ -28,7 +28,7 @@ func (s *Store) PrepareDeliveries(parent string, candidates []string) ([][]Task,
 			continue
 		}
 		seen[id] = true
-		t, ok := next.Tasks[id]
+		t, ok := next.find(id)
 		if !ok || t.Parent != parent || !t.Delegated() || !t.Finished() || t.Result == nil {
 			continue
 		}
@@ -47,7 +47,7 @@ func (s *Store) PrepareDeliveries(parent string, candidates []string) ([][]Task,
 		slices.SortFunc(fresh, deliveryOrder)
 		key := DeliveryKey(fresh[0].ID)
 		for _, child := range fresh {
-			t := next.Tasks[child.ID]
+			t := next.edit(child.ID)
 			t.Delivery = &Delivery{State: DeliveryPending, Key: key, At: s.now()}
 			groups[key] = append(groups[key], *t.clone())
 		}
@@ -69,10 +69,10 @@ func (s *Store) PrepareDeliveries(parent string, candidates []string) ([][]Task,
 func (s *Store) StartDelivery(ids []string, replaySafe bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
+	next := s.draft()
 	for _, id := range ids {
-		t, ok := next.Tasks[id]
-		if !ok || t.Delivery == nil || t.Delivery.State != DeliveryPending && t.Delivery.State != DeliveryQueued {
+		t := next.edit(id)
+		if t == nil || t.Delivery == nil || t.Delivery.State != DeliveryPending && t.Delivery.State != DeliveryQueued {
 			return fmt.Errorf("task %s has no pending delivery", id)
 		}
 		d := t.Delivery
@@ -97,10 +97,10 @@ func (s *Store) StartDelivery(ids []string, replaySafe bool) error {
 func (s *Store) RecordDelivery(ids []string, state, detail string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
+	next := s.draft()
 	for _, id := range ids {
-		t, ok := next.Tasks[id]
-		if !ok || t.Delivery == nil {
+		t := next.edit(id)
+		if t == nil || t.Delivery == nil {
 			return fmt.Errorf("task %s has no prepared delivery", id)
 		}
 		if t.Delivery.State == DeliveryDelivered || t.Delivery.State == DeliverySuppressed {

@@ -32,8 +32,8 @@ func (s *Store) BindRecoveryWorkspace(token ExecutionToken, workspace RecoveryWo
 	if workspace.ID == "" || workspace.NodeID == "" || workspace.Path == "" || workspace.Base == "" || workspace.AttemptID == "" || workspace.PlanID == "" {
 		return errors.New("recovery workspace identity is incomplete")
 	}
-	next := s.clone()
-	tracked := next.Tasks[token.TaskID]
+	next := s.draft()
+	tracked := next.edit(token.TaskID)
 	if tracked.ProjectID != workspace.ProjectID || tracked.Member != workspace.AgentID {
 		return errors.New("recovery workspace belongs to another task/project")
 	}
@@ -44,7 +44,7 @@ func (s *Store) BindRecoveryWorkspace(token ExecutionToken, workspace RecoveryWo
 			if len(usage) > 0 {
 				sourceUsage = usage[0]
 			}
-			if err := settleAccounting(next.Tasks, tracked, previous, now, OutcomeError, sourceUsage); err != nil {
+			if err := settleAccounting(next, tracked, previous, now, OutcomeError, sourceUsage); err != nil {
 				return err
 			}
 		}

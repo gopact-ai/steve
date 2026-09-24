@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -44,7 +43,7 @@ func TestChannelHistoryHTTPRetainedMessagesAndExecutionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

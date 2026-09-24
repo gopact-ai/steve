@@ -53,7 +53,7 @@ func Read(dir string) (string, error) {
 		return "", err
 	}
 	if !private(info) {
-		return "", fmt.Errorf("%s must be a private regular file", path)
+		return "", unusable(path, "must be a private regular file")
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -73,9 +73,15 @@ func Read(dir string) (string, error) {
 	}
 	token := string(raw)
 	if len(token) < MinLength || len(token) > maxLength || strings.ContainsAny(token, "\r\n\t ") {
-		return "", fmt.Errorf("%s does not hold a valid token", path)
+		return "", unusable(path, "does not hold a valid token")
 	}
 	return token, nil
+}
+
+// unusable reports a token file that will not become usable by itself. The
+// Hub creates a fresh one when none exists, which also signs out open pages.
+func unusable(path, problem string) error {
+	return fmt.Errorf("%s %s; delete %s and restart the Hub to generate a new one", path, problem, path)
 }
 
 func private(info os.FileInfo) bool {

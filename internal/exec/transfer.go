@@ -3,7 +3,6 @@ package exec
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -26,24 +25,7 @@ func ExportProject(ctx context.Context, book *ledger.Ledger, project string) (le
 			ids = append(ids, op.ID)
 		}
 	}
-	facts, err := book.ExportOperations(ctx, ids)
-	if err != nil {
-		return facts, err
-	}
-	if raw, err := book.Bindings(ctx, runKind); err != nil {
-		return facts, err
-	} else {
-		for _, data := range raw {
-			var run RunRecord
-			if json.Unmarshal(data, &run) != nil {
-				return facts, fmt.Errorf("invalid legacy run")
-			}
-			if run.ProjectID == project {
-				return facts, fmt.Errorf("project %s has unmigrated legacy plan-run state", project)
-			}
-		}
-	}
-	return facts, nil
+	return book.ExportOperations(ctx, ids)
 }
 
 func RemapTransfer(f *ledger.TransferFacts, m ledger.TransferIDs, target project.Home) error {

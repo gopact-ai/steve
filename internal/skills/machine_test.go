@@ -1,6 +1,12 @@
 package skills
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,5 +94,100 @@ func TestUnpackImportClearsAnEarlierAttemptFirst(t *testing.T) {
 	}
 	if _, err := os.Stat(dest); err == nil {
 		t.Fatal("a skill was installed on top of leftovers")
+	}
+}
+
+// An import is bounded by what it unpacks to: gzip lets a small stream
+// carry far more than the import cap, and each entry is a file on disk.
+func TestUnpackImportBoundsWhatTheStreamExpandsTo(t *testing.T) {
+	pack := func(files map[string]int) string {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		for name, size := range files {
+			if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(size), Typeflag: tar.TypeReg}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tw.Write(make([]byte, size)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := gz.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return base64.StdEncoding.EncodeToString(buf.Bytes())
+	}
+	large := pack(map[string]int{"SKILL.md": 8, "a": 10 << 20, "b": 10 << 20})
+	dest := filepath.Join(t.TempDir(), "large")
+	if err := UnpackImport(large, dest); err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("an import expanding past the import cap: %v", err)
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		t.Error("a refused import left its directory")
+	}
+
+	files := map[string]int{"SKILL.md": 8}
+	for i := range maxUnpackEntries {
+		files[fmt.Sprintf("f%d", i)] = 0
+	}
+	if err := UnpackImport(pack(files), filepath.Join(t.TempDir(), "many")); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Errorf("an import of %d entries: %v", len(files), err)
+	}
+}
+
+// Entries that write nothing still cost a reader: an import stream of
+// ignored entries is bounded by count and by the bytes it expands to.
+func TestUnpackImportBoundsEntriesItIgnores(t *testing.T) {
+	pack := func(write func(*tar.Writer)) string {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		if err := tw.WriteHeader(&tar.Header{Name: "SKILL.md", Mode: 0o644, Size: 0, Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		write(tw)
+		if err := tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := gz.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return base64.StdEncoding.EncodeToString(buf.Bytes())
+	}
+	links := pack(func(tw *tar.Writer) {
+		for i := range maxUnpackEntries {
+			if err := tw.WriteHeader(&tar.Header{Name: fmt.Sprintf("l%d", i), Linkname: "SKILL.md", Typeflag: tar.TypeSymlink}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if err := UnpackImport(links, filepath.Join(t.TempDir(), "links")); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Errorf("an import of %d ignored links: %v", maxUnpackEntries, err)
+	}
+	padded := pack(func(tw *tar.Writer) {
+		const size = 64 << 20
+		if err := tw.WriteHeader(&tar.Header{Name: "padding", Size: size, Typeflag: 'Z'}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(make([]byte, size)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := UnpackImport(padded, filepath.Join(t.TempDir(), "padded")); err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("an import expanding to 64 MB of ignored data: %v", err)
+	}
+}
+
+func TestCappedReaderEndsCleanlyAtItsCap(t *testing.T) {
+	r := &cappedReader{r: strings.NewReader("abcd"), left: 4}
+	if got, err := io.ReadAll(r); err != nil || string(got) != "abcd" {
+		t.Fatalf("stream of exactly the cap = %q, %v", got, err)
+	}
+	r = &cappedReader{r: strings.NewReader("abcde"), left: 4}
+	if _, err := io.ReadAll(r); err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Fatalf("stream past the cap: %v", err)
 	}
 }

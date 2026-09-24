@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
-	"sort"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -201,52 +199,6 @@ type recordChange struct {
 	removeAttempts bool
 }
 
-func recordChanges(before, next data) ([]recordChange, error) {
-	var changes []recordChange
-	for id, t := range next.Tasks {
-		if t == nil || t.ID != id {
-			return nil, fmt.Errorf("task: invalid task %s", id)
-		}
-		old := before.Tasks[id]
-		if old == nil || !reflect.DeepEqual(headOf(old), headOf(t)) {
-			changes = append(changes, recordChange{kind: taskKind, id: id, value: headOf(t)})
-		}
-		for i, row := range t.Attempts {
-			if old == nil || i >= len(old.Attempts) || !reflect.DeepEqual(old.Attempts[i], row) {
-				changes = append(changes, recordChange{kind: taskAttemptKind, id: attemptKey(id, i), value: attemptRecord{TaskID: id, Index: i, Attempt: row}})
-			}
-		}
-		if old != nil && len(old.Attempts) > len(t.Attempts) {
-			return nil, errors.New("task: attempt history cannot be truncated")
-		}
-	}
-	for id := range before.Tasks {
-		if next.Tasks[id] == nil {
-			changes = append(changes, recordChange{kind: taskKind, id: id}, recordChange{kind: taskAttemptKind, id: attemptPrefix(id), removeAttempts: true})
-		}
-	}
-	for id, meta := range next.Meta {
-		if next.Tasks[id] == nil {
-			return nil, fmt.Errorf("task: orphan metadata %s", id)
-		}
-		old, found := before.Meta[id]
-		if !found || !meta.equal(old) {
-			changes = append(changes, recordChange{kind: taskMetaKind, id: id, value: meta})
-		}
-	}
-	for id := range before.Meta {
-		if _, ok := next.Meta[id]; !ok {
-			changes = append(changes, recordChange{kind: taskMetaKind, id: id})
-		}
-	}
-	sort.Slice(changes, func(i, j int) bool {
-		if changes[i].kind != changes[j].kind {
-			return changes[i].kind < changes[j].kind
-		}
-		return changes[i].id < changes[j].id
-	})
-	return changes, nil
-}
 func writeRecordChangesTx(tx *ledger.Tx, changes []recordChange, nextID int, revision uint64) error {
 	for _, change := range changes {
 		var err error
@@ -267,8 +219,8 @@ func writeRecordChangesTx(tx *ledger.Tx, changes []recordChange, nextID int, rev
 	}
 	return tx.PutBinding(taskStoreKind, taskStoreID, recordControl{NextID: nextID, Revision: revision + 1})
 }
-func (s *Store) replaceRecordsLocked(ctx context.Context, next data, guard func(*ledger.Tx) error) error {
-	changes, err := recordChanges(s.data, next)
+func (s *Store) replaceRecordsLocked(ctx context.Context, next *draft, guard func(*ledger.Tx) error) error {
+	changes, err := next.changes()
 	if err != nil {
 		return err
 	}

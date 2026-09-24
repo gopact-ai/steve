@@ -81,8 +81,8 @@ func (s *Store) SetResult(id string, r Result) error {
 	if _, ok := s.data.Tasks[id]; !ok {
 		return fmt.Errorf("task %s not found", id)
 	}
-	next := s.clone()
-	t := next.Tasks[id]
+	next := s.draft()
+	t := next.edit(id)
 	r.Refs = slices.Clone(r.Refs)
 	t.Result = &r
 	t.UpdatedAt = s.now()
@@ -96,8 +96,8 @@ func (s *Store) SetDelivery(id, state string) error {
 	if _, ok := s.data.Tasks[id]; !ok {
 		return fmt.Errorf("task %s not found", id)
 	}
-	next := s.clone()
-	t := next.Tasks[id]
+	next := s.draft()
+	t := next.edit(id)
 	if t.Delivery == nil {
 		t.Delivery = &Delivery{Key: DeliveryKey(id)}
 	}

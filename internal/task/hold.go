@@ -47,8 +47,8 @@ func (s *Store) ReleaseHold(id string, seen time.Time) (Task, error) {
 }
 
 func (s *Store) setHoldLocked(id string, at time.Time) (Task, error) {
-	next := s.clone()
-	held := next.Tasks[id]
+	next := s.draft()
+	held := next.edit(id)
 	held.HeldAt = at
 	held.UpdatedAt = s.now()
 	if err := s.replaceLocked(next); err != nil {

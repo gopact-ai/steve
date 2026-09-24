@@ -62,7 +62,7 @@ func TestTaskRecordSmallWritesIgnoreTenThousandHistoricalAttempts(t *testing.T) 
 				}
 			}
 			next.NextID = 10002
-			if err := s.replaceLocked(next); err != nil {
+			if err := s.replaceData(next); err != nil {
 				t.Fatal(err)
 			}
 			replicated := &taskReplicator{book: book}

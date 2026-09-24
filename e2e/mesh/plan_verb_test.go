@@ -2,7 +2,6 @@ package mesh
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +23,7 @@ func TestChatPlanVerbAcrossTheFleet(t *testing.T) {
 	f := newFleet(t)
 	f.registry.EnsureConnected(t.Context())
 
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

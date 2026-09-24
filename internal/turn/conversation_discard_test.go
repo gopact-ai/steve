@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,18 +30,18 @@ func (m *closeRecorder) CloseSession(_ context.Context, _ harness.Placement, id 
 func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *schedule.Store) {
 	t.Helper()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager := &closeRecorder{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"mock": {reply: "ok"}}}}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.SetTasks(tasks, "")
-	schedules, err := schedule.Open(filepath.Join(t.TempDir(), "schedules.json"))
+	schedules, err := schedule.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

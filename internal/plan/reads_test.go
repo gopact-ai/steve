@@ -95,7 +95,7 @@ func TestPlanHotReadsIgnoreClosedPlansAndRevisions(t *testing.T) {
 }
 
 func TestPlanProgressUpdatesOnlyItsReadIndexAndNoTaskBindingRescan(t *testing.T) {
-	s, err := Open(t.TempDir() + "/plans.json")
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestPlanProgressUpdatesOnlyItsReadIndexAndNoTaskBindingRescan(t *testing.T)
 }
 
 func TestPlanEqualTimestampPagesMatchIncrementalIndex(t *testing.T) {
-	s, err := Open(t.TempDir() + "/plans.json")
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestPlanEqualTimestampPagesMatchIncrementalIndex(t *testing.T) {
 }
 
 func TestPlanReadRowsOwnNestedResultFields(t *testing.T) {
-	s, err := Open(t.TempDir() + "/plans.json")
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,4 +374,15 @@ func TestPlanMutationResultsAndInputsCannotChangeCommittedReadState(t *testing.T
 			check()
 		})
 	}
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

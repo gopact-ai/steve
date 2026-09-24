@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
@@ -33,7 +34,7 @@ func TestFirstContactOffersConversationWithoutMandatoryProfile(t *testing.T) {
 func TestStartUsesSharedProfileAndDoesNotPromiseLocalHistoryScanning(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		t.Run(map[bool]string{false: "template", true: "configured"}[configured], func(t *testing.T) {
-			store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+			store, err := state.OpenLedger(testLedger(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,7 +57,7 @@ func TestStartUsesSharedProfileAndDoesNotPromiseLocalHistoryScanning(t *testing.
 			}
 		})
 	}
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	failure := errors.New("shared profile read unavailable")
 	err := Start(t.Context(), Request{Owner: "owner", Store: store, Reader: home.Reader{ReadFiles: func() (map[string]string, error) { return nil, failure }}})
 	if !errors.Is(err, failure) {
@@ -69,7 +70,7 @@ func TestStartSendsAndRelocates(t *testing.T) {
 	if err := home.Bootstrap(dir, "ou_owner"); err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestStartSkipsWhenHomeIsCustomized(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, home.FileUser), []byte("# User\nLee\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +165,7 @@ func TestStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	if err := home.Bootstrap(dir, "ou_owner"); err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,4 +204,15 @@ func TestPromptEnglish(t *testing.T) {
 	if !strings.Contains(got, "Feishu") || !strings.Contains(got, "/tmp/home") {
 		t.Fatalf("prompt = %s", got)
 	}
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

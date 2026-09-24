@@ -570,6 +570,20 @@ func TestConsoleConnectionReadsTheGeneratedToken(t *testing.T) {
 		t.Fatalf("explicit token with an unusable token file = %+v, %v", connection, err)
 	}
 
+	// Only a loopback console is the Hub that generated the token; any
+	// other address gets none from the state directory.
+	if err := os.Chmod(filepath.Join(state, localtoken.FileName), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for addr, want := range map[string]string{"localhost:8800": token, "[::1]:8800": token, "192.0.2.10:8800": "", "hub.localhost:8800": "", "hub.example:8800": ""} {
+		remote := filepath.Join(t.TempDir(), "config.json")
+		data, _ := json.Marshal(map[string]any{"gateway": map[string]string{"read_model_addr": addr, "state_path": filepath.Join(state, "state.json")}})
+		writeClientFixture(t, remote, string(data))
+		if connection, err := resolveTestConnection("-config", remote); err != nil || connection.Token != want {
+			t.Errorf("%s: token %q, %v; want %q", addr, connection.Token, err, want)
+		}
+	}
+
 	unstarted := filepath.Join(t.TempDir(), "config.json")
 	data, _ = json.Marshal(map[string]any{"gateway": map[string]string{"state_path": filepath.Join(t.TempDir(), "state.json")}})
 	writeClientFixture(t, unstarted, string(data))

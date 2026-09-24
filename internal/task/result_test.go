@@ -1,13 +1,12 @@
 package task
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 func TestAChildsResultAndDeliveryOutliveTheProcess(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tasks.json")
-	s, err := Open(path)
+	book := testLedger(t)
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +39,7 @@ func TestAChildsResultAndDeliveryOutliveTheProcess(t *testing.T) {
 		t.Fatalf("still owed: %+v", s.Undelivered())
 	}
 	// A new process reads the same facts back.
-	again, err := Open(path)
+	again, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

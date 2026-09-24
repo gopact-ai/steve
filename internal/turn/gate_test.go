@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -62,7 +61,7 @@ func gateCoordinator(t *testing.T, mcpHTTP bool) (*Coordinator, *fakeManager, *f
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +167,7 @@ func TestRemoteAgentGetsItsOwnNodeLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}, mcpHTTP: true}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	gate := &fakeGate{}
@@ -204,7 +203,7 @@ func TestUnreachableNodeMessagingBlocksWithoutDroppingTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "still answered"}}, mcpHTTP: true}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	gate := &fakeGate{}

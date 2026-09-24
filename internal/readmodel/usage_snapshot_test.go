@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,7 +19,7 @@ type usageLedgerFixture struct {
 }
 
 func TestUsageSummaryReadsOnlyUsageAndPreservesTaskMetadata(t *testing.T) {
-	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

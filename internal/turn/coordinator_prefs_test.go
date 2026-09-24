@@ -202,7 +202,7 @@ func TestPreferencesPreserveContextAcrossIdleAndBusyUpdates(t *testing.T) {
 					t.Fatal(err)
 				}
 				after := c.store.Conversation("chat")
-				if !reflect.DeepEqual(before.Sessions, after.Sessions) || !reflect.DeepEqual(before.Archived, after.Archived) || len(rt.closed) != 0 || after.Renew["grok"] {
+				if !reflect.DeepEqual(before.Sessions, after.Sessions) || !reflect.DeepEqual(before.Archived, after.Archived) || len(rt.closed) != 0 {
 					t.Fatal("saving preferences replaced or scheduled replacement of native context")
 				}
 				if after.Preferences["grok"]["model"] != value {
@@ -210,21 +210,6 @@ func TestPreferencesPreserveContextAcrossIdleAndBusyUpdates(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestOldPendingPreferenceRenewalDoesNotDiscardContext(t *testing.T) {
-	c, rt, _ := selectorCoordinator(t, true)
-	before := c.store.Conversation("chat")
-	if err := c.store.SetRenew("chat", "grok", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.renewIfAsked(t.Context(), "chat", "grok"); err != nil {
-		t.Fatal(err)
-	}
-	after := c.store.Conversation("chat")
-	if !reflect.DeepEqual(before.Sessions, after.Sessions) || len(rt.closed) > 0 || len(after.Archived) > 0 || after.Renew["grok"] {
-		t.Fatal("upgrade consumed a pending selector change by losing context")
 	}
 }
 
@@ -254,7 +239,7 @@ func TestLivePreferencesNeverScheduleContextReplacement(t *testing.T) {
 				t.Fatalf("live=%v err=%v", live, err)
 			}
 			after := c.store.Conversation("chat")
-			if !reflect.DeepEqual(before.Sessions, after.Sessions) || len(rt.closed) > 0 || after.Renew["grok"] {
+			if !reflect.DeepEqual(before.Sessions, after.Sessions) || len(rt.closed) > 0 {
 				t.Fatal("live preference changed context")
 			}
 		})

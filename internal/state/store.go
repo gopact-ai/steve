@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -66,9 +65,6 @@ type Conversation struct {
 	// harness exposes — by option id, "model" for the model. They outlive
 	// sessions and are reapplied when a native context is resumed.
 	Preferences map[string]map[string]string `json:"preferences,omitempty"`
-	// Renew retains the older deferred-preference marker for upgrades.
-	// The next turn clears it and applies Preferences without replacing context.
-	Renew map[string]bool `json:"renew,omitempty"`
 }
 
 type Archived struct {
@@ -99,17 +95,9 @@ type Store struct {
 	data data
 }
 
-// Open keeps the store in one JSON file; the gateway opens the ledger.
-func Open(path string) (*Store, error) {
-	return openWith(&filedoc.Document{Path: path})
-}
-
 // OpenLedger keeps the store in the ledger.
 func OpenLedger(l *ledger.Ledger) (*Store, error) {
-	return openWith(l.Document("state"))
-}
-
-func openWith(doc ledger.Doc) (*Store, error) {
+	doc := l.Document("state")
 	s := &Store{doc: doc, data: data{Conversations: map[string]Conversation{}}}
 	raw, ok, err := doc.Load()
 	if err != nil {
@@ -118,18 +106,33 @@ func openWith(doc ledger.Doc) (*Store, error) {
 	if !ok {
 		return s, nil
 	}
+	var stored storedData
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&s.data); err != nil {
+	if err := decoder.Decode(&stored); err != nil {
 		return nil, fmt.Errorf("parse state: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse state: expected one JSON object")
 	}
-	if s.data.Conversations == nil {
-		s.data.Conversations = map[string]Conversation{}
+	s.data = stored.data
+	s.data.Conversations = make(map[string]Conversation, len(stored.Conversations))
+	for id, conversation := range stored.Conversations {
+		s.data.Conversations[id] = conversation.Conversation
 	}
 	return s, nil
+}
+
+// storedData is data as a state document holds it. Older state documents
+// may carry renew on a conversation; it is dropped.
+type storedData struct {
+	data
+	Conversations map[string]storedConversation `json:"conversations"`
+}
+
+type storedConversation struct {
+	Conversation
+	Renew json.RawMessage `json:"renew,omitempty"`
 }
 
 func (s *Store) Conversation(id string) Conversation {
@@ -200,33 +203,6 @@ func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]
 		delete(conversation.Preferences, agentID)
 	} else {
 		conversation.Preferences[agentID] = prefs
-	}
-	next.Conversations[conversationID] = conversation
-	return s.replaceLocked(next)
-}
-
-// SetRenew updates the legacy deferred-preference marker.
-func (s *Store) SetRenew(conversationID, agentID string, renew bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	next := cloneData(s.data)
-	conversation := next.Conversations[conversationID]
-	if conversation.Sessions == nil {
-		conversation.Sessions = map[string]Session{}
-	}
-	if !renew {
-		if _, ok := conversation.Renew[agentID]; !ok {
-			return nil
-		}
-		delete(conversation.Renew, agentID)
-	} else {
-		if conversation.Renew == nil {
-			conversation.Renew = map[string]bool{}
-		}
-		conversation.Renew[agentID] = true
-	}
-	if len(conversation.Renew) == 0 {
-		conversation.Renew = nil
 	}
 	next.Conversations[conversationID] = conversation
 	return s.replaceLocked(next)
@@ -417,8 +393,8 @@ func (s *Store) Relocate(from, to string) error {
 
 var ErrNoArchive = errors.New("no such archived session")
 
-// maxArchived bounds the per-conversation history so state.json cannot grow
-// without limit. Oldest records are dropped first.
+// maxArchived bounds the per-conversation history so the state document
+// cannot grow without limit. Oldest records are dropped first.
 const maxArchived = 20
 
 // ArchiveSession moves a session out of the active slot and into the
@@ -589,12 +565,6 @@ func cloneConversation(conversation Conversation) Conversation {
 				copied[k] = v
 			}
 			clone.Preferences[agent] = copied
-		}
-	}
-	if conversation.Renew != nil {
-		clone.Renew = make(map[string]bool, len(conversation.Renew))
-		for agent, renew := range conversation.Renew {
-			clone.Renew[agent] = renew
 		}
 	}
 	clone.Sessions = make(map[string]Session, len(conversation.Sessions))
