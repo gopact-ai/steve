@@ -40,6 +40,7 @@ func PackImport(ctx context.Context, dir string) (string, error) {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	var size int64
+	entries := 0
 	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -68,6 +69,9 @@ func PackImport(ctx context.Context, dir string) (string, error) {
 		}
 		if size > importCap || buf.Len() > importCap {
 			return fmt.Errorf("skill exceeds the %d MB import cap", importCap>>20)
+		}
+		if entries++; entries > maxUnpackEntries {
+			return fmt.Errorf("skill holds more than %d entries", maxUnpackEntries)
 		}
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
@@ -147,6 +151,7 @@ func UnpackImport(encoded, dest string) error {
 // tmp, refusing an entry that would land outside it, and requires a
 // SKILL.md at the top once the stream ends.
 func unpackEntries(tr *tar.Reader, tmp string) error {
+	budget := newUnpackBudget(importCap)
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -161,12 +166,18 @@ func unpackEntries(tr *tar.Reader, tmp string) error {
 			return fmt.Errorf("entry %q escapes the skill", h.Name)
 		}
 		switch h.Typeflag {
+		case tar.TypeDir, tar.TypeReg:
+			if err := budget.entry(); err != nil {
+				return fmt.Errorf("skill: %w", err)
+			}
+		}
+		switch h.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o700); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := writeEntry(target, h.Mode, tr); err != nil {
+			if err := writeEntry(target, h.Mode, tr, budget); err != nil {
 				return err
 			}
 		default:
@@ -180,8 +191,8 @@ func unpackEntries(tr *tar.Reader, tmp string) error {
 }
 
 // writeEntry writes one regular file from the stream, executable when the
-// header says so.
-func writeEntry(target string, headerMode int64, content io.Reader) error {
+// header says so, within what is left of the budget.
+func writeEntry(target string, headerMode int64, content io.Reader, budget *unpackBudget) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return err
 	}
@@ -193,7 +204,7 @@ func writeEntry(target string, headerMode int64, content io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, io.LimitReader(content, importCap)); err != nil {
+	if err := budget.copy(f, content); err != nil {
 		// The copy failed and is reported; the close cannot add to it.
 		_ = f.Close()
 		return err

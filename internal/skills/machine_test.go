@@ -1,6 +1,11 @@
 package skills
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,5 +93,46 @@ func TestUnpackImportClearsAnEarlierAttemptFirst(t *testing.T) {
 	}
 	if _, err := os.Stat(dest); err == nil {
 		t.Fatal("a skill was installed on top of leftovers")
+	}
+}
+
+// An import is bounded by what it unpacks to: gzip lets a small stream
+// carry far more than the import cap, and each entry is a file on disk.
+func TestUnpackImportBoundsWhatTheStreamExpandsTo(t *testing.T) {
+	pack := func(files map[string]int) string {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		for name, size := range files {
+			if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(size), Typeflag: tar.TypeReg}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tw.Write(make([]byte, size)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := gz.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return base64.StdEncoding.EncodeToString(buf.Bytes())
+	}
+	large := pack(map[string]int{"SKILL.md": 8, "a": 10 << 20, "b": 10 << 20})
+	dest := filepath.Join(t.TempDir(), "large")
+	if err := UnpackImport(large, dest); err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("an import expanding past the import cap: %v", err)
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		t.Error("a refused import left its directory")
+	}
+
+	files := map[string]int{"SKILL.md": 8}
+	for i := range maxUnpackEntries {
+		files[fmt.Sprintf("f%d", i)] = 0
+	}
+	if err := UnpackImport(pack(files), filepath.Join(t.TempDir(), "many")); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Errorf("an import of %d entries: %v", len(files), err)
 	}
 }
