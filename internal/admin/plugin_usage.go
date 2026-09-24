@@ -117,12 +117,12 @@ func (s *PluginService) PluginUsage(ctx context.Context, id string) (consoleapi.
 			out.Errors[node] = err.Error()
 			continue
 		}
+		// Which installation a runtime belongs to is what the machine's
+		// inventory reports from its own deployment receipts, so a worker's
+		// runtimes stay visible and stop-checkable even when those receipts
+		// are older than a restored coordinator ledger.
 		for _, info := range infos {
-			belongs, err := s.runtimeInventoryBelongs(ctx, id, info)
-			if err != nil {
-				return out, err
-			}
-			if belongs {
+			if slices.Contains(info.Installations, id) {
 				out.Runtimes = append(out.Runtimes, info)
 				for _, record := range active {
 					sum := sha256.Sum256([]byte("runtime/" + record.ID))
@@ -342,15 +342,4 @@ func (s *PluginService) ClosePluginRuntime(ctx context.Context, id, runtimeID st
 		return usage, err
 	}
 	return s.PluginUsage(ctx, id)
-}
-
-// A retained worker can have receipts older than a restored coordinator ledger.
-// Its authenticated inventory carries installation ownership from the worker's
-// own durable deployments, so those runtimes remain visible and stop-checkable.
-func (s *PluginService) runtimeInventoryBelongs(ctx context.Context, id string, info plugins.RuntimeInfo) (bool, error) {
-	if info.Installations != nil {
-		return slices.Contains(info.Installations, id), nil
-	}
-	// Legacy workers still need a complete coordinator-side deployment history.
-	return s.runtimeBelongs(ctx, id, info.Ref)
 }
