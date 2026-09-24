@@ -104,8 +104,9 @@ func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 type testOption func(*testBuild)
 
 type testBuild struct {
-	book *ledger.Ledger
-	set  []func(*Deps)
+	book     *ledger.Ledger
+	lifetime context.Context
+	set      []func(*Deps)
 }
 
 // onLedger opens every default store on book instead of a fresh ledger.
@@ -124,6 +125,13 @@ func withTasks(tasks *task.Store, node string) testOption {
 	return withDeps(func(d *Deps) { d.Tasks, d.Node = tasks, node })
 }
 
+// withExecutionLifetime gives the coordinator an execution registry whose
+// generation ends with lifetime instead of with the test, on whichever task
+// store it is built with.
+func withExecutionLifetime(lifetime context.Context) testOption {
+	return func(b *testBuild) { b.lifetime = lifetime }
+}
+
 // buildCoordinator builds a coordinator through New from the options.
 func buildCoordinator(t *testing.T, opts ...testOption) *Coordinator {
 	t.Helper()
@@ -137,6 +145,16 @@ func buildCoordinator(t *testing.T, opts ...testOption) *Coordinator {
 	var deps Deps
 	for _, set := range b.set {
 		set(&deps)
+	}
+	if b.lifetime != nil && deps.Executions == nil {
+		if deps.Tasks == nil {
+			tasks, err := task.OpenLedger(b.book)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deps.Tasks = tasks
+		}
+		deps.Executions = execution.New(b.lifetime, deps.Tasks)
 	}
 	fillDeps(t, b.book, &deps)
 	c, err := New(deps)
