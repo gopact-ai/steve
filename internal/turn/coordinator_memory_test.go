@@ -226,7 +226,9 @@ func TestMemoryProjectScopeInsideAnExecutionIsTheAttemptsProject(t *testing.T) {
 	}
 }
 
-func TestProjectMemoryOfAnUnboundConversationIsTheDefaultProjects(t *testing.T) {
+// memoryCoordinator declares no home project. With one, as the gateway
+// declares at boot, an unbound owner DM falls to home and gets none.
+func TestProjectMemoryOfAnUnboundConversationWithoutAHomeProjectIsTheDefaultProjects(t *testing.T) {
 	c := memoryCoordinator(t)
 	seedFact(t, c, memory.ProjectScope("alpha"), "tests run with -race")
 	owner := Request{ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}
