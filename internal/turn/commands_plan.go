@@ -48,14 +48,12 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 	if err != nil {
 		return Result{Title: title, Text: err.Error()}, nil
 	}
-	if c.executions != nil {
-		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "plan/" + tracked.ID})
-		if err != nil {
-			return Result{Title: title, Text: err.Error()}, nil
-		}
-		defer scope.Finish(nil)
-		ctx = scope.Context()
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "plan/" + tracked.ID})
+	if err != nil {
+		return Result{Title: title, Text: err.Error()}, nil
 	}
+	defer scope.Finish(nil)
+	ctx = scope.Context()
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 	var candidates []roster.Candidate

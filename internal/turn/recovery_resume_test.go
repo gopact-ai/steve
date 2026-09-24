@@ -65,7 +65,9 @@ func (m retainedTestManager) AttachRetainedSession(ctx context.Context, place ha
 	return m.runner, nil
 }
 
-func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledger.Ledger, attempt.Record, Request) {
+// retainedChatFixture leaves a chat attempt running with a retained
+// session; opts adjust the coordinator's dependencies after its own.
+func retainedChatFixture(t *testing.T, opts ...testOption) (*Coordinator, *retainedTestRunner, *ledger.Ledger, attempt.Record, Request) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -86,16 +88,16 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 	}
 	runner := &retainedTestRunner{fakeRunner: &fakeRunner{id: "ns_original", reply: strings.Repeat("complete result ", 30)}}
 	manager := retainedTestManager{fakeManager: &fakeManager{}, runner: runner}
-	c := New(cat, sessions, capability.NewAssembler(nil), manager, time.Minute)
-	c.SetTasks(tasks, "coordinator-b")
-	c.SetExecution(execution.New(t.Context(), tasks))
-	c.SetAttempts(attempt.New(book))
 	projects := project.Open(book)
 	workspace := project.Workspace{ID: "workspace", Project: "p", Node: "node-a", Path: t.TempDir(), Kind: project.KindCanonical}
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: "node-a", Path: workspace.Path}, Level: datalevel.Internal}}); err != nil {
 		t.Fatal(err)
 	}
-	c.SetProjects(projects, "p", "")
+	c := buildCoordinator(t, append([]testOption{withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = cat, sessions, capability.NewAssembler(nil), manager, time.Minute
+		d.Tasks, d.Node = tasks, "coordinator-b"
+		d.Projects, d.DefaultProject = projects, "p"
+	}), onLedger(book)}, opts...)...)
 	tracked, err := tasks.Create(task.Task{Transport: "console", Goal: "original task", Channel: "console:main", Member: "worker", Requester: "owner", ProjectID: "p", Workspace: workspace.Path})
 	if err != nil {
 		t.Fatal(err)
@@ -222,10 +224,9 @@ func (m unavailableRetainedManager) AttachRetainedSession(context.Context, harne
 }
 
 func TestUnavailableRetainedNodeDoesNotBlockObserverGenerationShutdown(t *testing.T) {
-	c, _, _, old, req := retainedChatFixture(t)
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	c.SetExecution(execution.New(lifetime, c.tasks))
+	c, _, _, old, req := retainedChatFixture(t, withExecutionLifetime(lifetime))
 	c.runtime = unavailableRetainedManager{&fakeManager{}}
 	if _, err := c.ResumeRetainedChat(lifetime, old.ID, req); err == nil {
 		t.Fatal("unavailable node was reported resumed")

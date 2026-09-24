@@ -21,7 +21,6 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 			if err := home.Bootstrap(workspace, "owner"); err != nil {
 				t.Fatal(err)
 			}
-			coordinator, _, runner := homeCoordinator(t, workspace, "owner")
 			book, err := ledger.Open(t.TempDir(), ledger.Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -38,7 +37,7 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 				}
 				return shared.WriteIdentity(ctx, soul, user, memory.Actor{By: "onboard"})
 			}}
-			coordinator.SetIdentity("owner", loader)
+			coordinator, _, runner := homeCoordinator(t, workspace, "owner", withHome("owner", loader))
 			coordinator.assembler.SetHome(loader)
 			userHome := t.TempDir()
 			t.Setenv("HOME", userHome)

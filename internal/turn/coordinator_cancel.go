@@ -81,9 +81,6 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 // the agent holds there, whatever started it — the same scope as the turn
 // it cancels, which runs for any of them.
 func (c *Coordinator) coveredTasks(conversationID, agentID string) []task.Task {
-	if c.tasks == nil {
-		return nil
-	}
 	return c.tasks.Holding(conversationID, agentID)
 }
 
@@ -195,7 +192,7 @@ func (c *Coordinator) stopDelegations(ctx context.Context, covered []task.Task) 
 			slog.Info(fmt.Sprintf("turn: stopped delegated task #%s with task #%s", child.ID, tracked.ID), "task", child.ID, "parent", tracked.ID, "conversation", tracked.Channel, "agent", child.Member, "node", child.Node)
 		}
 	}
-	if len(ids) > 0 && c.executions != nil {
+	if len(ids) > 0 {
 		stopErr = errors.Join(stopErr, c.stopExecutions(ctx, ids, false))
 	}
 	return stopped, stopErr
@@ -208,7 +205,7 @@ func (c *Coordinator) stopDelegations(ctx context.Context, covered []task.Task) 
 // stamped since is a later stop's, and stays. The turn a stop cancelled
 // gives its account without lifting: its end is the stop's doing.
 func (c *Coordinator) preface(ctx context.Context, taskID string) (text string, told func(lift bool)) {
-	if taskID == "" || c.tasks == nil {
+	if taskID == "" {
 		return "", nil
 	}
 	// The stamp is read before the account is composed: a stop between

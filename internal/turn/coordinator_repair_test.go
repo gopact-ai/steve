@@ -117,8 +117,7 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 		t.Fatal(err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	c.SetTasks(tasks, "laptop")
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"))
 	nodes := &flipNodes{statuses: []node.Status{{
 		Name: "node-a", Up: true,
 		Advert: nodewire.Advert{Node: "node-a", Harnesses: []nodewire.Harness{

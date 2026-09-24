@@ -27,6 +27,7 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // realFleet is the three-machine world with real models in it: the hub's
@@ -135,11 +136,11 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turn.New(f.catalog, store, f.assembler, f.manager, 15*time.Minute)
-	coordinator.SetTasks(f.tasks, "hub-e2e")
-	coordinator.SetProjects(f.projects, "local", "")
-	coordinator.SetAttempts(f.attempts)
-	coordinator.SetArtifacts(f.artifacts)
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, f.assembler, f.manager, 15*time.Minute
+		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
+		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
+	})
 
 	brain, _ := f.catalog.Resolve("claude")
 	supervisor := exec.NewSupervisor(
@@ -159,7 +160,6 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	supervisor.SetLedger(f.book, "mesh")
 	supervisor.SetTasks(f.tasks)
 	supervisor.SetExecution(f.executions)
-	coordinator.SetExecution(f.executions)
 	supervisor.Runs().Observe(f.view)
 	coordinator.SetSupervisor(supervisor, f.plans, f.roster)
 
@@ -278,11 +278,11 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turn.New(f.catalog, store, f.assembler, f.manager, 15*time.Minute)
-	coordinator.SetTasks(f.tasks, "hub-e2e")
-	coordinator.SetProjects(f.projects, "local", "")
-	coordinator.SetAttempts(f.attempts)
-	coordinator.SetArtifacts(f.artifacts)
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, f.assembler, f.manager, 15*time.Minute
+		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
+		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
+	})
 	coordinator.SetAgentGate(gate)
 	coordinator.SetNodeEndpoints(f.registry)
 

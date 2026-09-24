@@ -50,9 +50,6 @@ func (c *Coordinator) Preferences(conversationID, agentID string) map[string]str
 // A reset selects the current declared default explicitly. Without a declared
 // default the owner must choose a value; guessing must not reset native history.
 func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentID string, patch map[string]string) (bool, error) {
-	if c.catalog == nil {
-		return false, errors.New("no agent catalog")
-	}
 	selected, ok := c.catalog.Resolve(agentID)
 	if !ok {
 		return false, errors.New("no agent " + agentID)
@@ -147,9 +144,6 @@ type Selectors struct {
 }
 
 func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID string) (Selectors, error) {
-	if c.catalog == nil {
-		return Selectors{}, errors.New("no agent catalog")
-	}
 	selected, ok := c.catalog.Resolve(agentID)
 	if !ok {
 		return Selectors{}, errors.New("no agent " + agentID)
@@ -205,9 +199,6 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 
 // ProjectOf is the project a conversation works in, "" when none.
 func (c *Coordinator) ProjectOf(ctx context.Context, conversationID string) string {
-	if c.projects == nil {
-		return ""
-	}
 	id, _, _, err := c.projectFor(ctx, conversationID)
 	if err != nil {
 		return ""

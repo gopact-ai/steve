@@ -346,6 +346,7 @@ func TestCoordinatorRejectsTaintedSession(t *testing.T) {
 }
 
 func TestCoordinatorSwitchesAgentsAndRestoresSessions(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex":  {Harness: "codex", Default: true},
 		"claude": {Harness: "claude", SystemPrompt: "Act as Claude."},
@@ -545,8 +546,8 @@ func TestCoordinatorEnglishLocale(t *testing.T) {
 	})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	coordinator.SetCatalog(i18n.New(i18n.LocaleEN))
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withDeps(func(d *Deps) { d.Text = i18n.New(i18n.LocaleEN) }))
 	result, err := handle(coordinator, t.Context(), "/use claude")
 	if err != nil || result.Text != i18n.New(i18n.LocaleEN).T(i18n.Switched, "claude") {
 		t.Fatalf("en switch = %#v, %v", result, err)
@@ -676,6 +677,7 @@ func TestFullwidthBangInterrupts(t *testing.T) {
 // to the same machine. The directory over there is the project's, so the
 // conversation is bound to a project homed on that node first.
 func TestAgentRunsOnItsConfiguredNode(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 		"lab":   {Harness: "codex", Node: "host-3", Aliases: []string{"lab"}},

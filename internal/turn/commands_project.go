@@ -6,13 +6,14 @@ package turn
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
-	"log/slog"
-	"strings"
-	"time"
 )
 
 // projectCmd shows the conversation's project or switches it. Switching
@@ -20,9 +21,6 @@ import (
 // project's directory, and a session is bound to exactly one binding.
 func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	title := c.text.T(i18n.CardProject)
-	if c.projects == nil {
-		return Result{Title: title, Text: c.text.T(i18n.ProjectsDisabled)}, nil
-	}
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
 		return c.projectStatus(ctx, req, title)

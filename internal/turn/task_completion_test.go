@@ -3,7 +3,6 @@ package turn
 import (
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,7 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *ledger.Ledger) {
+func completionCoordinator(t *testing.T, runner *fakeRunner, opts ...testOption) (*Coordinator, *ledger.Ledger) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -42,16 +41,11 @@ func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *led
 		t.Fatal(err)
 	}
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	coordinator := New(catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
-	coordinator.text = i18n.New(i18n.LocaleEN)
-	coordinator.SetProjects(projects, "p", "")
-	coordinator.SetTasks(tasks, "hub")
-	coordinator.SetAttempts(attempt.New(book))
-	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
-	coordinator.SetArtifacts(artifacts)
-	registry := execution.New(t.Context(), tasks)
-	coordinator.SetExecution(registry)
-	artifacts.SetExecution(registry)
+	coordinator := buildCoordinator(t, append([]testOption{withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute
+		d.Projects, d.DefaultProject = projects, "p"
+		d.Tasks, d.Node, d.Text = tasks, "hub", i18n.New(i18n.LocaleEN)
+	}), onLedger(book)}, opts...)...)
 	return coordinator, book
 }
 
@@ -127,6 +121,7 @@ func TestCompleteTaskChecksConversationEvenOnRetry(t *testing.T) {
 }
 
 func TestBareCompletionSkipsNewerTerminalRoots(t *testing.T) {
+	t.Parallel()
 	for _, state := range []task.State{task.StateDone, task.StateFailed, task.StateCancelled, task.StatePaused} {
 		t.Run(string(state), func(t *testing.T) {
 			c, _ := completionCoordinator(t, &fakeRunner{reply: "accepted"})
@@ -233,6 +228,7 @@ func TestCancelledChildWithoutResultSettlesOnlyAfterItsExecutionStops(t *testing
 }
 
 func TestTaskCompletionDurableGuardRefusesPendingFacts(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"reserved", "unknown", "unsettled", "landing", "effect", "disclosure", "plan"} {
 		t.Run(scenario, func(t *testing.T) {
 			coordinator, book := completionCoordinator(t, &fakeRunner{reply: "ok"})

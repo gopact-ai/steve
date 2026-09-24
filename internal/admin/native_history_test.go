@@ -20,7 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/state"
-	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store, consoleapi.NativeImportRequest, string, *ledger.Ledger) {
@@ -40,9 +40,10 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.Coordinator = turn.New(a.Catalog, store, nil, nil, time.Second)
-	a.Coordinator.SetProjects(a.Projects, "p", "")
-	a.Coordinator.SetIdentity("owner", nil)
+	a.Coordinator = turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Timeout, o.Owner = book, a.Catalog, store, time.Second, "owner"
+		o.Projects, o.DefaultProject = a.Projects, "p"
+	})
 	a.Console = console.New(nil, "owner", nil)
 	if err := a.Console.PersistLedger(book); err != nil {
 		t.Fatal(err)

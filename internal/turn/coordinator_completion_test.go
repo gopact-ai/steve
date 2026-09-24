@@ -8,6 +8,7 @@ import (
 )
 
 func TestTaskCompletionWithoutConsoleGuardRejectsExistingRecords(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{"", "{}", "null", "invalid"} {
 		t.Run(raw, func(t *testing.T) {
 			c, book := completionCoordinator(t, &fakeRunner{reply: "accepted"})

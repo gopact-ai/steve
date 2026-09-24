@@ -21,8 +21,7 @@ func TestAccessIsGrantedNotAssumed(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	coordinator.SetIdentity("ou_owner", home.Dir{Path: t.TempDir()})
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withHome("ou_owner", home.Dir{Path: t.TempDir()}))
 	ctx := context.Background()
 	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: datalevel.Restricted, Home: project.Home{Path: workspaceOf(t, coordinator, "codex")}}}); err != nil {
 		t.Fatal(err)
@@ -65,8 +64,7 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "the secret answer"}}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	coordinator.SetIdentity("ou_owner", home.Dir{Path: t.TempDir()})
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withHome("ou_owner", home.Dir{Path: t.TempDir()}))
 	ctx := context.Background()
 	dir := workspaceOf(t, coordinator, "codex")
 	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: datalevel.Sealed, Home: project.Home{Path: dir}, DefaultRole: project.RoleWrite}}); err != nil {

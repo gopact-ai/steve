@@ -13,11 +13,11 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 const unstartedFailure = "before-snapshot: content has insufficient durable replicas"
@@ -106,12 +106,11 @@ func unstartedFixture(t *testing.T, attemptState, data string) (*ledger.Ledger, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turn.New(catalog, sessions, capability.NewAssembler(nil), nil, time.Minute)
-	coordinator.SetTasks(tasks, "node")
-	coordinator.SetAttempts(attempt.New(book))
-	if err := coordinator.SetChannelOwner("feishu", msg.SenderOpenID); err != nil {
-		t.Fatal(err)
-	}
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Timeout = book, catalog, sessions, time.Minute
+		o.Tasks, o.Node, o.Attempts = tasks, "node", attempt.New(book)
+		o.ChannelOwners = map[string]string{"feishu": msg.SenderOpenID}
+	})
 	return book, tasks, &unstartedProbe{taskID: tracked.ID, coordinator: coordinator}
 }
 

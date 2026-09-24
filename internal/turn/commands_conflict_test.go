@@ -13,7 +13,7 @@ import (
 // the owner instead of failing on it every pass; asking explicitly still
 // reports why it cannot be handed over.
 func TestAutomaticResolutionSkipsConflictsWithoutATree(t *testing.T) {
-	c := New(nil, nil, nil, nil, 0)
+	c := buildCoordinator(t)
 	p := project.Project{ID: "p"}
 	stuck := []artifact.Stuck{{Artifact: "0992b2aa9a54aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Landing: "land-1"}}
 	if got := c.resolveAll(context.Background(), p, stuck, Request{}, true); len(got) != 0 {

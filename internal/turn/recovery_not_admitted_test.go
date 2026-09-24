@@ -14,8 +14,7 @@ import (
 
 func neverAdmittedFixture(t *testing.T, ended bool) (*Coordinator, *ledger.Ledger, task.Task, Request) {
 	t.Helper()
-	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "must not execute"})
-	c.SetIdentity("owner", nil)
+	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "must not execute"}, withOwner("owner"))
 	req := Request{Channel: "console", ConversationID: "console:proof", MessageID: "web-e1", ExchangeID: "e1", SenderOpenID: "owner", ExpectedProject: "codex"}
 	tracked, err := tasks.Create(task.Task{Transport: req.Channel, Channel: req.ConversationID, Requester: "owner", Member: "codex", ProjectID: "codex"})
 	if err != nil {
@@ -43,8 +42,7 @@ func (m failingPreparationManager) SupportsHTTPMCP(context.Context, harness.Plac
 
 func TestConfirmNeverAdmittedAfterRealPrepareSessionErrorAndRestart(t *testing.T) {
 	runner := &fakeRunner{reply: "must not run"}
-	c, _, book := taskCoordinatorBook(t, runner)
-	c.SetIdentity("owner", nil)
+	c, _, book := taskCoordinatorBook(t, runner, withOwner("owner"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	c.runtime = failingPreparationManager{manager}
 	c.SetAgentGate(&fakeGate{})

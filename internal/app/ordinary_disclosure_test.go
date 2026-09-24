@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 type ordinaryDisclosureProcessor struct{ *ordinaryCompletionProbe }
@@ -44,7 +45,12 @@ func (c *ordinaryDisclosureChannel) ReplyText(_ context.Context, _ string, text 
 func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T) {
 	for _, mode := range []string{"public", "sealed-owner", "sealed-guest"} {
 		t.Run(mode, func(t *testing.T) {
-			f := openCrashProbe(t, t.TempDir())
+			f := openCrashProbe(t, t.TempDir(), func(o *turntest.Options) {
+				o.DefaultProject = "p"
+				if mode == "sealed-guest" {
+					o.ChannelOwners = map[string]string{"feishu": "different-security-owner"}
+				}
+			})
 			defer f.close(t)
 			r := f.seed(t, true, "", "feishu")
 			projects := project.Open(f.book)
@@ -58,12 +64,6 @@ func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T
 			}
 			if _, err := projects.Bind(f.ctx, crashConversation, "p", "owner"); err != nil {
 				t.Fatal(err)
-			}
-			f.c.SetProjects(projects, "p", "")
-			if mode == "sealed-guest" {
-				if err := f.c.SetChannelOwner("feishu", "different-security-owner"); err != nil {
-					t.Fatal(err)
-				}
 			}
 			p := &ordinaryCompletionProbe{coordinator: f.c, task: r.TaskID, attempt: r.ID}
 			ch := &ordinaryDisclosureChannel{}

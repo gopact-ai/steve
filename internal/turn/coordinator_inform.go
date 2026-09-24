@@ -53,42 +53,35 @@ func (c *Coordinator) modeOf(conversationID string) home.Mode {
 
 // Where answers steve_context.
 func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string) (Whereabouts, error) {
-	if c.catalog == nil {
-		return Whereabouts{}, errors.New("no agent catalog")
-	}
 	selected, ok := c.catalog.Resolve(agentID)
 	if !ok {
 		return Whereabouts{}, fmt.Errorf("no agent %q", agentID)
 	}
 	w := Whereabouts{Agent: selected.ID, Node: placeLabel(selected.Node), Harness: selected.Harness, Model: selected.Model, Mode: string(c.modeOf(conversationID)), MCPServers: append([]string{"steve"}, selected.MCPServers...), Skills: []string{}}
-	if c.skills != nil && c.skills.Map != nil {
+	if c.skills.Map != nil {
 		w.Skills = c.skills.Map.EnabledNames()
 	}
-	if c.projects != nil {
-		if id, _, _, err := c.projectFor(ctx, conversationID); err == nil && id != "" {
-			if p, found, err := c.projects.Get(ctx, id); err == nil && found {
-				w.Project, w.ProjectNode, w.Level, w.Repo = p.ID, placeLabel(p.Home.Node), string(p.Level.OrDefault()), string(p.Repo)
-				if ws, err := p.Place(selected.Node); err == nil {
-					w.Workspace, w.WorkspaceKind = ws.Path, string(ws.Kind)
-				} else {
-					var notHome project.NotHomeError
-					places := placeLabel(p.Home.Node)
-					if errors.As(err, &notHome) {
-						places = notHome.PlaceList()
-					}
-					w.Why = fmt.Sprintf("项目 %s 的工作区在 %s，你在 %s：换一个那里的 Agent（/use），请用户在 %s 上给项目添加副本，或 %s use 换项目", p.ID, places, w.Node, w.Node, protocol.CommandProject)
+	if id, _, _, err := c.projectFor(ctx, conversationID); err == nil && id != "" {
+		if p, found, err := c.projects.Get(ctx, id); err == nil && found {
+			w.Project, w.ProjectNode, w.Level, w.Repo = p.ID, placeLabel(p.Home.Node), string(p.Level.OrDefault()), string(p.Repo)
+			if ws, err := p.Place(selected.Node); err == nil {
+				w.Workspace, w.WorkspaceKind = ws.Path, string(ws.Kind)
+			} else {
+				var notHome project.NotHomeError
+				places := placeLabel(p.Home.Node)
+				if errors.As(err, &notHome) {
+					places = notHome.PlaceList()
 				}
+				w.Why = fmt.Sprintf("项目 %s 的工作区在 %s，你在 %s：换一个那里的 Agent（/use），请用户在 %s 上给项目添加副本，或 %s use 换项目", p.ID, places, w.Node, w.Node, protocol.CommandProject)
 			}
 		}
 	}
-	if c.tasks != nil {
-		if t, running := c.tasks.Running(conversationID, agentID); running {
-			w.Task = t.ID
-			w.Turns, w.MaxTurns = t.Budget.Turns, t.Budget.MaxTurns
-			w.Elapsed = t.Budget.Elapsed.Round(time.Second).String()
-			if t.Budget.MaxElapsed > 0 {
-				w.MaxElapsed = t.Budget.MaxElapsed.Round(time.Second).String()
-			}
+	if t, running := c.tasks.Running(conversationID, agentID); running {
+		w.Task = t.ID
+		w.Turns, w.MaxTurns = t.Budget.Turns, t.Budget.MaxTurns
+		w.Elapsed = t.Budget.Elapsed.Round(time.Second).String()
+		if t.Budget.MaxElapsed > 0 {
+			w.MaxElapsed = t.Budget.MaxElapsed.Round(time.Second).String()
 		}
 	}
 	sort.Strings(w.MCPServers)
@@ -98,9 +91,6 @@ func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string)
 // WhereProjects answers steve_projects: every project, where it is, and
 // whether this agent can work in it from its machine.
 func (c *Coordinator) WhereProjects(ctx context.Context, conversationID, agentID string) (string, error) {
-	if c.projects == nil {
-		return "", errors.New("projects are not enabled")
-	}
 	selected, ok := c.catalog.Resolve(agentID)
 	if !ok {
 		return "", fmt.Errorf("no agent %q", agentID)
