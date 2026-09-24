@@ -140,9 +140,6 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 	if (request.NativeImport != nil || request.Binding.NativeImportID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNativeHistory) {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve native history import; update steve-node")}
 	}
-	if (request.Plugin != nil || request.Binding.PluginRuntimeID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
-		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve plugin runtime binding")}
-	}
 	stream, err := conn.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamNodeSessions})
 	if err != nil {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: err}

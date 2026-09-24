@@ -45,16 +45,9 @@ const (
 	SourceNode   = "node"
 	SourceHub    = "hub"
 	SourceCached = "cached"
-	SourceLegacy = "legacy"
 
 	// CodeAdmitted is the code of a verdict that found nothing wanting.
 	CodeAdmitted Code = "ADMITTED"
-	// CodeNoBinding says the work needs an MCP server bound on the machine
-	// and the machine does not bind them: an older node.
-	CodeNoBinding Code = "NO_MCP_BINDING"
-	// CodeNoAdmission says the machine could not be asked: an older node,
-	// or a source that cannot re-observe. The verdict is Unsure.
-	CodeNoAdmission Code = "NO_ADMISSION"
 )
 
 // OK says the admission found every requirement met.

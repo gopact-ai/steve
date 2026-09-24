@@ -14,29 +14,26 @@ import (
 
 const operationTimeout = 10 * time.Minute
 
-// Artifact executes a platform operation where its files live. Old nodes
-// report an unsupported feature; there is deliberately no shell fallback.
+// Artifact executes a platform operation where its files live; there is
+// deliberately no shell fallback.
 func (r *Registry) Artifact(ctx context.Context, name string, req nodewire.ArtifactRequest) (nodewire.ArtifactResult, error) {
 	if name == "" {
 		return gitrepo.RunOperation(ctx, req)
 	}
 	var reply nodewire.ArtifactReply
-	if err := r.operation(ctx, name, nodewire.StreamArtifact, nodewire.FeatureArtifact, req, &reply); err != nil {
+	if err := r.operation(ctx, name, nodewire.StreamArtifact, req, &reply); err != nil {
 		return reply.Result, err
 	}
 	return reply.Result, gitrepo.DecodeFailure(reply.Error)
 }
 
-func (r *Registry) operation(ctx context.Context, name, kind, feature string, req, reply any) error {
+func (r *Registry) operation(ctx context.Context, name, kind string, req, reply any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	c, err := r.connect(ctx, name)
 	if err != nil {
 		return err
-	}
-	if !nodewire.HasFeature(c.getAdvert().Features, feature) {
-		return &nodewire.OperationFailure{Code: "unsupported", Message: fmt.Sprintf("node %q needs an upgrade for %s", name, feature)}
 	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: kind})
 	if err != nil {

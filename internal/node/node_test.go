@@ -958,28 +958,6 @@ func TestHubConfiguresANode(t *testing.T) {
 	if *again.Harnesses["codex"].Slots != 0 || len(again.Harnesses["codex"].Env) != 0 || len(again.MCPServers["private"].Env) != 0 || len(again.MCPServers["private"].Headers) != 0 {
 		t.Fatal("explicit clear was lost in actual wire encoding")
 	}
-	connection, err := registry.connect(t.Context(), "host-13")
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldAdvert := connection.getAdvert()
-	oldAdvert.Features = append([]string(nil), oldAdvert.Features...)
-	for i, feature := range oldAdvert.Features {
-		if feature == nodewire.FeatureConfigRevision {
-			oldAdvert.Features = append(oldAdvert.Features[:i:i], oldAdvert.Features[i+1:]...)
-			break
-		}
-	}
-	connection.setAdvert(oldAdvert)
-	unprotected := again
-	unprotected.Tools = append(append([]string(nil), again.Tools...), "must-not-apply")
-	if _, err := registry.Configure(t.Context(), "host-13", unprotected); !errors.Is(err, nodewire.ErrSettingsRevisionUnsupported) {
-		t.Fatalf("old node accepted unprotected set: %v", err)
-	}
-	unchanged, err := registry.Settings(t.Context(), "host-13")
-	if err != nil || unchanged.Revision != again.Revision {
-		t.Fatalf("unsupported revision set reached node: %+v %v", unchanged, err)
-	}
 }
 
 // The hub dials its machines before its messaging server exists; the
