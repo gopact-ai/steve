@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gopact-ai/acp"
@@ -142,7 +143,23 @@ func buildCoordinator(t *testing.T, opts ...testOption) *Coordinator {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testLedgers.Store(c.coordinatorState, b.book)
+	t.Cleanup(func() { testLedgers.Delete(c.coordinatorState) })
 	return c
+}
+
+// testLedgers is the ledger each coordinator buildCoordinator built opened
+// its default stores on, so a restarted coordinator opens its own there.
+var testLedgers sync.Map // *coordinatorState -> *ledger.Ledger
+
+// ledgerOf is the ledger c was built on.
+func ledgerOf(t *testing.T, c *Coordinator) *ledger.Ledger {
+	t.Helper()
+	book, ok := testLedgers.Load(c.coordinatorState)
+	if !ok {
+		t.Fatal("coordinator was not built by buildCoordinator")
+	}
+	return book.(*ledger.Ledger)
 }
 
 var errNoRuntime = errors.New("no agent runtime in this test")

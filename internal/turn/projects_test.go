@@ -76,7 +76,7 @@ func useHome(t *testing.T, c *Coordinator, dir string) {
 // execution registry.
 func restartCoordinator(t *testing.T, prev *Coordinator, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, opts ...testOption) *Coordinator {
 	t.Helper()
-	return buildCoordinator(t, append([]testOption{withDeps(func(d *Deps) {
+	return buildCoordinator(t, append([]testOption{onLedger(ledgerOf(t, prev)), withDeps(func(d *Deps) {
 		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, store, assembler, rt, timeout
 		d.Projects, d.DefaultProject, d.HomeProject = prev.projects, prev.defaultProject, prev.homeProject
 		d.Attempts, d.Artifacts, d.Tasks, d.Node = prev.attempts, prev.artifacts, prev.tasks, prev.node
