@@ -22,20 +22,29 @@ import (
 )
 
 // LocalObservation is what this process observes of its own machine, and
-// numbers the hub snapshots built from it: generation is when the
-// observation began, sequence counts the snapshots since.
+// numbers the hub snapshots built from it: generation is the Unix second
+// the observation began, sequence counts the snapshots since. The zero
+// value begins at its first snapshot.
 type LocalObservation struct {
 	Launch *node.LaunchProbe
 	Skills atomic.Pointer[SkillShipper]
 
-	generation int64
+	generation atomic.Int64
 	sequence   atomic.Int64
 }
 
 // NewLocalObservation starts an observation of this machine that looks up
 // launch results in launch.
 func NewLocalObservation(launch *node.LaunchProbe) *LocalObservation {
-	return &LocalObservation{Launch: launch, generation: time.Now().Unix()}
+	o := &LocalObservation{Launch: launch}
+	o.generation.Store(time.Now().Unix())
+	return o
+}
+
+// number is the generation and next sequence of a snapshot.
+func (o *LocalObservation) number() (generation, sequence int64) {
+	o.generation.CompareAndSwap(0, time.Now().Unix())
+	return o.generation.Load(), o.sequence.Add(1)
 }
 
 // HomeProjectID names Steve's home directory as a project.
@@ -86,7 +95,7 @@ func observedHubAdvert(nodeName string, cfg *config.Config, observation *LocalOb
 	var launch func(string) (node.LaunchResult, bool)
 	var generation, sequence int64
 	if observation != nil {
-		generation, sequence = observation.generation, observation.sequence.Add(1)
+		generation, sequence = observation.number()
 		shipper = observation.Skills.Load()
 		if observation.Launch != nil {
 			launch = observation.Launch.Lookup

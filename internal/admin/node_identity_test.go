@@ -63,3 +63,18 @@ func TestServiceRecognizesItsOwnNameOutsideACluster(t *testing.T) {
 		t.Fatalf("nodeKey(node-b) = %q", got)
 	}
 }
+
+// An observation made without NewLocalObservation still numbers its
+// snapshots: the first one fixes a nonzero generation the rest share.
+func TestZeroObservationNumbersSnapshots(t *testing.T) {
+	store := NewConfigStore(&config.Config{})
+	observation := &LocalObservation{}
+	one := ObservedHubAdvert("node-a", store, observation)
+	two := ObservedHubAdvert("node-a", store, observation)
+	if one.Snapshot.Generation == 0 || two.Snapshot.Generation != one.Snapshot.Generation {
+		t.Fatalf("generations %d, %d", one.Snapshot.Generation, two.Snapshot.Generation)
+	}
+	if one.Snapshot.Sequence != 1 || two.Snapshot.Sequence != 2 {
+		t.Fatalf("sequences %d, %d", one.Snapshot.Sequence, two.Snapshot.Sequence)
+	}
+}
