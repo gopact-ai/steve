@@ -97,7 +97,7 @@ type Gateway struct {
 	ingressContext context.Context
 	ingressWorkers RecoveryWorkers
 	ingressDriver  RecoveryDriver
-	processor      Processor
+	coordinator    Coordinator
 	ch             Channel
 	text           i18n.Catalog
 	gate           agentAnchor
@@ -128,20 +128,20 @@ type Gateway struct {
 // PoolSize is the ceiling on concurrently served conversations.
 func PoolSize() int { return max(2, runtime.NumCPU()*3/2) }
 
-// New makes a gateway whose turns run through processor. It panics when
-// processor is nil.
-func New(processor Processor) *Gateway {
-	if processor == nil {
-		panic("gateway: New needs a processor")
+// New makes a gateway whose turns run through coordinator. It panics when
+// coordinator is nil.
+func New(coordinator Coordinator) *Gateway {
+	if coordinator == nil {
+		panic("gateway: New needs a coordinator")
 	}
 	return &Gateway{
-		processor: processor,
-		text:      i18n.New(i18n.LocaleZH),
-		seen:      map[string]struct{}{},
-		asks:      map[string]*pendingAsk{},
-		turns:     map[string]*liveTurn{},
-		serving:   map[string]int{},
-		slots:     make(chan struct{}, PoolSize()),
+		coordinator: coordinator,
+		text:        i18n.New(i18n.LocaleZH),
+		seen:        map[string]struct{}{},
+		asks:        map[string]*pendingAsk{},
+		turns:       map[string]*liveTurn{},
+		serving:     map[string]int{},
+		slots:       make(chan struct{}, PoolSize()),
 	}
 }
 
@@ -277,7 +277,7 @@ func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) er
 		g.gate.Anchor(conversationID, channel.Address{Channel: "feishu", Conversation: conversationID, Message: msg.MessageID})
 	}
 	ui := g.newTurnUI(msg, listen)
-	result, err := g.processor.Handle(context.Background(), g.taskRequest(msg, expectedTask, ui))
+	result, err := g.coordinator.Handle(context.Background(), g.taskRequest(msg, expectedTask, ui))
 	if err != nil {
 		slog.Error(fmt.Sprintf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err), "conversation", conversationID, "chat", msg.ChatID, "message", msg.MessageID)
 	}

@@ -305,7 +305,7 @@ func TestRuntimeReconcilerConsumesAcceptedOrdinaryInput(t *testing.T) {
 }
 
 // An accepted input whose turn does not settle the attempt it admitted is
-// recovered through the driver its ingress is given, though the processor
+// recovered through the driver its ingress is given, though the coordinator
 // itself resumes no retained chat.
 func TestIngressRecoversAnUnsettledTurnThroughItsDriver(t *testing.T) {
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})

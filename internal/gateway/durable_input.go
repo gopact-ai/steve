@@ -116,7 +116,7 @@ func (g *Gateway) dispatchInput(ctx context.Context, book *ledger.Ledger, key st
 				cancel()
 			}
 		}
-		result, runErr := g.processor.Handle(ctx, request)
+		result, runErr := g.coordinator.Handle(ctx, request)
 		runErr = errors.Join(runErr, receiptErr)
 		output := recoveredResult(result, runErr)
 		// An execution layer block arrives here only through turn's

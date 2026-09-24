@@ -340,7 +340,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 					cancel()
 				}
 			}
-			result, runErr := g.processor.Handle(ctx, request)
+			result, runErr := g.coordinator.Handle(ctx, request)
 			runErr = errors.Join(runErr, acceptanceErr)
 			output := recoveredResult(result, runErr)
 			// An execution layer block arrives here only through turn's

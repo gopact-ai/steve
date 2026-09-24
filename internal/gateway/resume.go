@@ -144,7 +144,7 @@ type FireReceipt struct{ MessageID string }
 // stored instruction as a message from the person who scheduled it. The notice
 // is the new anchor: a replayed message needs an id of its own, and the
 // announcement is also what makes an unattended run visible rather than
-// something that just appears. A run the processor refuses is neither
+// something that just appears. A run the coordinator refuses is neither
 // announced nor replayed.
 func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error) {
 	if g.ch == nil {
@@ -156,7 +156,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" || f.Member == "" || f.Requester == "" || f.ProjectID == "" {
 		return FireReceipt{}, fmt.Errorf("schedule %s has incomplete execution context", f.ScheduleID)
 	}
-	if err := g.processor.ValidateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
+	if err := g.coordinator.ValidateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
 		return FireReceipt{}, err
 	}
 	noticeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -213,7 +213,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 		g.gate.Anchor(f.ConversationID, channel.Address{Channel: "feishu", Conversation: f.ConversationID, Message: noticeID})
 	}
 	ui := g.newTurnUI(msg, false)
-	result, runErr := g.processor.Handle(ctx, turn.Request{
+	result, runErr := g.coordinator.Handle(ctx, turn.Request{
 		Channel: "feishu", ConversationID: f.ConversationID, Input: text, Origin: msg.Origin,
 		MessageID: noticeID, ChatID: f.ChatID, CardID: ui.cardID, SenderOpenID: f.Requester,
 		ChatType: protocol.ParseChatType(f.ChatType), Mentioned: true, ExpectedProject: f.ProjectID,

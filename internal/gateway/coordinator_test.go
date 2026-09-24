@@ -14,21 +14,21 @@ import (
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-// The idle coordinator is a Processor, so a fake that embeds it and
+// IdleCoordinator is a gateway Coordinator, so a fake that embeds it and
 // overrides Handle is one too.
-var _ Processor = turntest.IdleCoordinator{}
+var _ Coordinator = turntest.IdleCoordinator{}
 
-// idleProcessor is the idle coordinator with turns that answer nothing.
-type idleProcessor struct{ turntest.IdleCoordinator }
+// idleCoordinator is turntest.IdleCoordinator with turns that answer nothing.
+type idleCoordinator struct{ turntest.IdleCoordinator }
 
-func (idleProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
+func (idleCoordinator) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, nil
 }
 
 // A gateway over a coordinator that knows nothing classifies a line by its
 // syntax alone and fires a schedule without refusing it.
 func TestGatewayOverACoordinatorThatKnowsNothing(t *testing.T) {
-	g := New(idleProcessor{})
+	g := New(idleCoordinator{})
 	for _, line := range []string{"hello", "!now", "/cancel", "@builder /cancel", "/use builder /cancel", "@builder/cancel", "@builder /every 30m inspect", "/schedules"} {
 		_, parsed := turn.ParseAddressedInput(line)
 		if got, want := g.immediateInput(line), parsed.Interrupt || parsed.Control(); got != want {
@@ -44,37 +44,37 @@ func TestGatewayOverACoordinatorThatKnowsNothing(t *testing.T) {
 	}
 }
 
-// A gateway without a processor has nothing to run its turns, so it is
+// A gateway without a coordinator has nothing to run its turns, so it is
 // refused when it is made rather than on its first line.
-func TestNewRefusesANilProcessor(t *testing.T) {
+func TestNewRefusesANilCoordinator(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Fatal("New accepted a nil processor")
+			t.Fatal("New accepted a nil coordinator")
 		}
 	}()
 	New(nil)
 }
 
-// catalogProcessor parses a line as a coordinator whose catalog knows
+// catalogCoordinator parses a line as a coordinator whose catalog knows
 // codex does: "@codex/" followed by a command is that command addressed
 // to codex, so "@codex/cancel" and "@codex/schedules" are controls,
 // though the syntax alone, which wants a space after the address, reads
 // them as prompts. A control is answered at once; any other line is a
 // turn that holds until release.
-type catalogProcessor struct {
+type catalogCoordinator struct {
 	turntest.IdleCoordinator
 	entered chan turn.Request
 	release chan struct{}
 }
 
-func (p *catalogProcessor) ParseInput(line string) (string, turn.ParsedInput) {
+func (p *catalogCoordinator) ParseInput(line string) (string, turn.ParsedInput) {
 	if control, ok := strings.CutPrefix(line, "@codex/"); ok {
 		return "@codex", turn.ParseInput("/" + control)
 	}
 	return turn.ParseAddressedInput(line)
 }
 
-func (p *catalogProcessor) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
+func (p *catalogCoordinator) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
 	p.entered <- req
 	if _, parsed := p.ParseInput(req.Input); parsed.Control() {
 		return turn.Result{Text: "ok"}, nil
@@ -90,9 +90,9 @@ func (p *catalogProcessor) Handle(ctx context.Context, req turn.Request) (turn.R
 	return turn.Result{Text: "complete original result", Attempt: "attempt-" + req.MessageID}, nil
 }
 
-// A stop that only the processor's catalog recognizes joins the turn its
+// A stop that only the coordinator's catalog recognizes joins the turn its
 // conversation is running instead of queueing behind it.
-func TestGatewayClassifiesALineAsItsProcessorParsesIt(t *testing.T) {
+func TestGatewayClassifiesALineAsItsCoordinatorParsesIt(t *testing.T) {
 	const stop = "@codex/cancel"
 	if _, parsed := turn.ParseAddressedInput(stop); parsed.Interrupt || parsed.Control() {
 		t.Fatalf("the syntax alone already reads %q as a stop", stop)
@@ -102,7 +102,7 @@ func TestGatewayClassifiesALineAsItsProcessorParsesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	p := &catalogProcessor{entered: make(chan turn.Request, 2), release: make(chan struct{})}
+	p := &catalogCoordinator{entered: make(chan turn.Request, 2), release: make(chan struct{})}
 	g := New(p)
 	g.BindChannel(&recoveryChannel{})
 	g.SetRecoveryLedger(book)
@@ -134,17 +134,17 @@ func TestGatewayClassifiesALineAsItsProcessorParsesIt(t *testing.T) {
 	close(p.release)
 }
 
-// A schedule control that only the processor's catalog recognizes leaves
+// A schedule control that only the coordinator's catalog recognizes leaves
 // the agent gate's anchor where it was, in the durable and the in-memory
 // path alike.
-func TestScheduleControlsTheProcessorParsesPreserveChannelAnchor(t *testing.T) {
+func TestScheduleControlsTheCoordinatorParsesPreserveChannelAnchor(t *testing.T) {
 	const control = "@codex/schedules"
 	if _, parsed := turn.ParseAddressedInput(control); parsed.ScheduleControl() {
 		t.Fatalf("the syntax alone already reads %q as a schedule control", control)
 	}
 	for _, path := range []string{"in-memory", "durable"} {
 		t.Run(path, func(t *testing.T) {
-			p := &catalogProcessor{entered: make(chan turn.Request, 1)}
+			p := &catalogCoordinator{entered: make(chan turn.Request, 1)}
 			g := New(p)
 			g.BindChannel(&reply{text: make(chan string, 4)})
 			gate := &recordingGate{calls: make(chan string, 4)}
@@ -169,7 +169,7 @@ func TestScheduleControlsTheProcessorParsesPreserveChannelAnchor(t *testing.T) {
 			select {
 			case <-p.entered:
 			default:
-				t.Fatalf("%s never reached the processor", control)
+				t.Fatalf("%s never reached the coordinator", control)
 			}
 			select {
 			case changed := <-gate.calls:
@@ -180,32 +180,32 @@ func TestScheduleControlsTheProcessorParsesPreserveChannelAnchor(t *testing.T) {
 	}
 }
 
-// errStaleSchedule is what staleScheduleProcessor refuses a scheduled run
+// errStaleSchedule is what staleScheduleCoordinator refuses a scheduled run
 // with.
 var errStaleSchedule = errors.New("scheduled conversation no longer has a project binding")
 
-// staleScheduleProcessor refuses every scheduled run, as a coordinator
+// staleScheduleCoordinator refuses every scheduled run, as a coordinator
 // does once a schedule's conversation, project or requester no longer
 // holds, and records what it was asked to check.
-type staleScheduleProcessor struct {
+type staleScheduleCoordinator struct {
 	countingProcessor
 	checked []string
 }
 
-func (p *staleScheduleProcessor) ValidateScheduled(_ context.Context, conversation, project, requester string) error {
+func (p *staleScheduleCoordinator) ValidateScheduled(_ context.Context, conversation, project, requester string) error {
 	p.checked = append(p.checked, conversation, project, requester)
 	return errStaleSchedule
 }
 
-// A scheduled run its processor refuses is neither announced nor run.
-func TestFireScheduleRefusesARunItsProcessorRefuses(t *testing.T) {
-	p := &staleScheduleProcessor{}
+// A scheduled run its coordinator refuses is neither announced nor run.
+func TestFireScheduleRefusesARunItsCoordinatorRefuses(t *testing.T) {
+	p := &staleScheduleCoordinator{}
 	g := New(p)
 	notice := &scheduledNotice{id: "notice"}
 	g.BindChannel(notice)
 	f := testFire()
 	if receipt, err := g.FireSchedule(t.Context(), f); !errors.Is(err, errStaleSchedule) {
-		t.Fatalf("fire = %+v, %v; want the processor's refusal", receipt, err)
+		t.Fatalf("fire = %+v, %v; want the coordinator's refusal", receipt, err)
 	}
 	if want := []string{f.ConversationID, f.ProjectID, f.Requester}; !slices.Equal(p.checked, want) {
 		t.Fatalf("checked %q, want %q", p.checked, want)

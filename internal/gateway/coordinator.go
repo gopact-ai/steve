@@ -6,10 +6,10 @@ import (
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
-// Processor is the turn coordinator as the gateway uses it: it runs a
+// Coordinator is the turn coordinator as the gateway uses it: it runs a
 // conversation's turns, parses a line the way a turn would, and checks a
 // scheduled run before the gateway announces it.
-type Processor interface {
+type Coordinator interface {
 	// Handle answers a message sent to a conversation.
 	Handle(ctx context.Context, req turn.Request) (turn.Result, error)
 	// ParseInput splits a line into its addressed target and parsed
