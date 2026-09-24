@@ -1162,15 +1162,22 @@ checks["home-save-feedback"] = async (f) => {
     await f.page.getByText(/已保存.*刷新失败/).waitFor();
     assert.equal(state.writes.length, 2);
     state.failRead = false;
+    // A document switch can render in a transition (the narrow-screen picker
+    // always does); until it commits, the previous document and its own Edit
+    // and Save buttons stay on screen. Each step acts inside the document it
+    // means.
+    const documentView = (title) => f.page.getByRole("region", { name: `${title}内容`, exact: true });
     await f.page.getByRole("link", { name: "全局记忆", exact: true }).click();
-    await f.page.getByRole("button", { name: "编辑", exact: true }).click();
-    await f.page.getByRole("textbox", { name: "MEMORY.md", exact: true }).fill("New memory");
-    await f.page.getByRole("button", { name: "保存", exact: true }).click();
-    await f.page.getByText("已保存", { exact: true }).waitFor();
+    const memory = documentView("全局记忆");
+    await memory.getByRole("button", { name: "编辑", exact: true }).click();
+    await memory.getByRole("textbox", { name: "MEMORY.md", exact: true }).fill("New memory");
+    await memory.getByRole("button", { name: "保存", exact: true }).click();
+    await memory.getByText("已保存", { exact: true }).waitFor();
     await f.page.getByRole("link", { name: "scratch", exact: true }).click();
-    await f.page.getByRole("button", { name: "编辑", exact: true }).click();
-    await f.page.getByRole("textbox", { name: "memory scratch", exact: true }).fill("Project draft");
-    await f.page.getByRole("button", { name: "保存", exact: true }).click();
+    const scratch = documentView("scratch");
+    await scratch.getByRole("button", { name: "编辑", exact: true }).click();
+    await scratch.getByRole("textbox", { name: "memory scratch", exact: true }).fill("Project draft");
+    await scratch.getByRole("button", { name: "保存", exact: true }).click();
     await eventually(() => state.writes.some((w) => w.path === "/console/memory/scratch"), "Project memory must save to the selected project's endpoint");
 };
 
