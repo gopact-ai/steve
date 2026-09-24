@@ -132,6 +132,8 @@ type Service struct {
 	authorizeMaterials  func(context.Context, string, string, string) error
 }
 
+var _ consoleapi.Console = (*Service)(nil)
+
 func New(handler Handler, owner string, model Events) *Service {
 	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }
@@ -228,13 +230,6 @@ func orUnknown(in *consoleapi.Injected) string {
 		return ""
 	}
 	return "由 " + in.Agent
-}
-
-// SendCommandWith is SendCommand with quotes carried along: the block
-// goes ahead of the line in the prompt the agent sees, while the
-// transcript keeps the line as typed.
-func (s *Service) SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (consoleapi.Reply, error) {
-	return s.sendCommand(ctx, conversation, input, commandID, quotes)
 }
 
 // SetInspector wires where a reply's changes come from.
@@ -620,14 +615,10 @@ func (s *Service) Send(ctx context.Context, conversation, input string) (console
 
 // SendCommand is Send with an idempotency key: a page that retries, a
 // double click, a second tab — the same command id gets the first
-// answer back and nothing runs twice.
+// answer back and nothing runs twice. It keeps the synchronous API while
+// the service owns execution.
 func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (consoleapi.Reply, error) {
-	return s.sendCommand(ctx, conversation, input, commandID, nil)
-}
-
-// sendCommand keeps the synchronous API while the service owns execution.
-func (s *Service) sendCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (consoleapi.Reply, error) {
-	exchange, _, err := s.enqueue(ctx, conversation, input, quotes, enqueueOptions{Key: clientKey(commandID)})
+	exchange, _, err := s.enqueue(ctx, conversation, input, nil, enqueueOptions{Key: clientKey(commandID)})
 	if err != nil {
 		return consoleapi.Reply{}, err
 	}

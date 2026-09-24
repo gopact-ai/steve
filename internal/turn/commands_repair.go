@@ -25,12 +25,9 @@ import (
 // changed or a harness was just installed.
 func (c commands) probeCmd(ctx context.Context) Result {
 	title := c.text.T(i18n.CardFleet)
-	if c.probeAll == nil {
-		return Result{Title: title, Text: c.text.T(i18n.FleetLocal)}
-	}
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
-	results := c.probeAll(ctx)
+	results := c.prober.ProbeAll(ctx)
 	if len(results) == 0 {
 		return Result{Title: title, Text: c.text.T(i18n.FleetProbeNothing)}
 	}
@@ -68,7 +65,7 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	if agentID == "" {
 		return Result{Title: title, Text: c.text.T(i18n.RepairUsage, protocol.CommandRepair)}
 	}
-	if c.supervisor == nil || c.plans == nil || c.fleet == nil {
+	if c.fleet == nil {
 		return Result{Title: title, Text: c.text.T(i18n.RepairDisabled)}
 	}
 	fix, err := c.fleet.Repair(ctx, agentID)
@@ -130,17 +127,15 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	c.finishPlanTask(ctx, tracked.ID)
 	// The verify command passed on that machine; now let the machine say
 	// so itself, which is what every placement decision reads.
-	if fix.Broken.Node != "" && c.refresher != nil {
-		if _, err := c.refresher.Refresh(ctx, fix.Broken.Node); err != nil {
+	if fix.Broken.Node != "" && c.nodes != nil {
+		if _, err := c.nodes.Refresh(ctx, fix.Broken.Node); err != nil {
 			slog.Error(fmt.Sprintf("turn: refresh %s after repair: %v", fix.Broken.Node, err), "node", fix.Broken.Node)
 		}
 	}
 	// A harness that just started existing has never reported a model;
 	// ask it, so the fleet's column fills without waiting for real work.
-	if c.probeOne != nil {
-		if err := c.probeOne(ctx, fix.Broken.Node, fix.Broken.Harness); err != nil {
-			slog.Error(fmt.Sprintf("turn: probe %s after repair: %v", agentID, err), "agent", agentID, "node", fix.Broken.Node)
-		}
+	if err := c.prober.Probe(ctx, fix.Broken.Node, fix.Broken.Harness); err != nil {
+		slog.Error(fmt.Sprintf("turn: probe %s after repair: %v", agentID, err), "agent", agentID, "node", fix.Broken.Node)
 	}
 	for _, item := range c.fleet.All(ctx) {
 		if item.Agent.ID != agentID {
@@ -181,10 +176,10 @@ func (c commands) repairProject(ctx context.Context, fix roster.Fix) (string, er
 // pathOn reads the PATH the steve process on a machine actually has, so
 // the helper installs somewhere that process will look.
 func (c commands) pathOn(ctx context.Context, node string) string {
-	if c.files == nil {
+	if c.nodes == nil {
 		return "(unknown)"
 	}
-	out, err := c.files.Files(ctx, node, nodewire.FileRequest{Op: nodewire.FileSearchPath})
+	out, err := c.nodes.Files(ctx, node, nodewire.FileRequest{Op: nodewire.FileSearchPath})
 	if err != nil || strings.TrimSpace(out) == "" {
 		return "(unknown)"
 	}

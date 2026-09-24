@@ -13,8 +13,7 @@ func (s *Server) consoleInitializeConversation(w http.ResponseWriter, r *http.Re
 	if !s.consoleIdentity(w, r, r.PathValue("id")) {
 		return
 	}
-	initializer, ok := s.console.(consoleapi.ConversationInitializer)
-	if !ok {
+	if s.console == nil {
 		http.Error(w, "conversation initialization is not supported", http.StatusNotImplemented)
 		return
 	}
@@ -25,7 +24,7 @@ func (s *Server) consoleInitializeConversation(w http.ResponseWriter, r *http.Re
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := initializer.InitializeConversation(r.Context(), r.PathValue("id"), req.Project); err != nil {
+	if err := s.console.InitializeConversation(r.Context(), r.PathValue("id"), req.Project); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, consoleapi.ErrConsoleClosing) {
 			status = http.StatusServiceUnavailable

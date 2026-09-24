@@ -75,7 +75,10 @@ func TestPauseStopsTheRunningTurnAndFreesTheConversation(t *testing.T) {
 // Resume hands the channel everything it needs to replay the task: without a
 // fresh anchor message the resumed turn would have nothing to render against.
 func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
-	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	resumed := make(chan TaskResume, 1)
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) {
+		cb.Resumer = func(r TaskResume) error { resumed <- r; return nil }
+	}))
 	if _, err := coordinator.Handle(t.Context(), Request{
 		ConversationID: "chat", Input: "index the archive",
 		MessageID: "om_anchor", ChatID: "oc_chat", SenderOpenID: "ou_asker",
@@ -85,9 +88,6 @@ func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
 	if _, err := tasks.Advance("1", task.StatePaused); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-
-	resumed := make(chan TaskResume, 1)
-	coordinator.SetResumer(func(r TaskResume) error { resumed <- r; return nil })
 
 	if _, err := coordinator.Handle(t.Context(), Request{ConversationID: "chat", MessageID: "resume-control", Input: "/tasks resume"}); err != nil {
 		t.Fatal(err)

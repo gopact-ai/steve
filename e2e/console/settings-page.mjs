@@ -460,10 +460,13 @@ if (process.env.PURE_ONLY !== "1") {
         await englishNav.getByRole("link", { name: "Channels", exact: true }).click();
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         const channelHint = (path) => page.locator(`[data-channel-apply="${path}"]`);
-        await channelHint("feishu.group_policy").waitFor({ state: "attached" });
+        // "no restart" in the live hint also contains "restart"; only the restart hint opens with it.
+        const restartHint = /^Restart the coordinator service/;
+        // The hints keep showing the previous view until Reload is answered.
+        await channelHint("feishu.group_policy").filter({ hasText: /subsequent incoming messages.*no restart/i }).waitFor({ state: "attached" });
         await page.getByText("Access rules", { exact: true }).click();
         for (const path of channels.live_fields) assert.match(await channelHint(path).innerText(), /subsequent incoming messages.*no restart/i);
-        for (const path of ["feishu.enabled", "feishu.app_id", "feishu.app_secret", "feishu.domain", "feishu.owner_open_id", "default_channel"]) assert.match(await channelHint(path).innerText(), /restart/i);
+        for (const path of ["feishu.enabled", "feishu.app_id", "feishu.app_secret", "feishu.domain", "feishu.owner_open_id", "default_channel"]) assert.match(await channelHint(path).innerText(), restartHint);
         await page.getByRole("switch", { name: "Receive messages without a mention", exact: true }).press("Space");
         await page.getByRole("textbox", { name: "Allowed senders", exact: true }).fill("allowed-fixture");
         await page.getByRole("textbox", { name: "Blocked senders", exact: true }).fill("blocked-fixture");
@@ -485,13 +488,13 @@ if (process.env.PURE_ONLY !== "1") {
         assert.equal(await page.locator('.settings-content [role="status"] .settings-restart-link').count(), 1);
         channels.live_fields = ["feishu.group_policy"];
         await page.getByRole("button", { name: "Reload", exact: true }).click();
-        await channelHint("feishu.allow_unmentioned").filter({ hasText: "Restart" }).waitFor();
+        await channelHint("feishu.allow_unmentioned").filter({ hasText: restartHint }).waitFor();
         assert.match(await channelHint("feishu.group_policy").innerText(), /no restart/i);
         // Startup failure / older servers do not advertise live fields.
         channels.apply_mode = "restart"; delete channels.live_fields;
         channels.runtime_error = "Application credentials rejected";
         await page.getByRole("button", { name: "Reload", exact: true }).click();
-        await channelHint("feishu.group_policy").filter({ hasText: "Restart" }).waitFor();
+        await channelHint("feishu.group_policy").filter({ hasText: restartHint }).waitFor();
         await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).waitFor();
         assert.equal(await page.locator('[data-channel-apply]').filter({ hasText: "no restart" }).count(), 0);
         assert.deepEqual(errors, []); assert.deepEqual(external, []);

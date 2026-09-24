@@ -10,11 +10,15 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/exec"
+	"github.com/gopact-ai/steve/internal/idle"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/state"
@@ -96,12 +100,40 @@ func (f *flipNodes) Refresh(_ context.Context, name string) (nodewire.Advert, er
 
 type recordCommands struct{ lines []string }
 
+// repairMachines is the node registry a repair reads: adverts that change
+// when refreshed, and file facts from each machine. No agent in these tests
+// needs messaging or a held silence clock.
+type repairMachines struct {
+	*flipNodes
+	*recordCommands
+}
+
+func (repairMachines) MCPEndpoint(_ context.Context, node string) (string, error) {
+	return "", errors.New("no messaging endpoint on " + node)
+}
+
+func (repairMachines) RegisterIdle(string, idle.Clock) func() { return func() {} }
+
 func (r *recordCommands) Files(_ context.Context, node string, req nodewire.FileRequest) (string, error) {
 	r.lines = append(r.lines, node+": "+string(req.Op))
 	return "/home/u/.local/bin:/usr/bin:/bin", nil
 }
 
-func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes, *recordCommands, *task.Store) {
+// recordProbes records the harnesses probed one at a time and answers a
+// probe of every harness with results.
+type recordProbes struct {
+	probed  []string
+	results []models.Result
+}
+
+func (r *recordProbes) Probe(_ context.Context, node, harness string) error {
+	r.probed = append(r.probed, node+"/"+harness)
+	return nil
+}
+
+func (r *recordProbes) ProbeAll(context.Context) []models.Result { return r.results }
+
+func repairCoordinator(t *testing.T, opts ...testOption) (*Coordinator, *fakeSupervisor, *flipNodes, *recordCommands, *task.Store) {
 	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex":   {Harness: "codex", Default: true},
@@ -117,7 +149,6 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 		t.Fatal(err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"))
 	nodes := &flipNodes{statuses: []node.Status{{
 		Name: "node-a", Up: true,
 		Advert: nodewire.Advert{Node: "node-a", Harnesses: []nodewire.Harness{
@@ -127,14 +158,14 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	}}}
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
-	plans, err := plan.OpenLedger(testLedger(t))
-	if err != nil {
-		t.Fatal(err)
-	}
 	sup := &fakeSupervisor{}
-	c.SetSupervisor(sup, plans, fleet)
 	cmds := &recordCommands{}
-	c.SetRepair(nodes, cmds)
+	opts = append([]testOption{
+		withTasks(tasks, "laptop"),
+		withDeps(func(d *Deps) { d.Fleet, d.Nodes = fleet, repairMachines{nodes, cmds} }),
+		withCallbacks(func(cb *Callbacks) { cb.Supervisor = sup }),
+	}, opts...)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, opts...)
 	return c, sup, nodes, cmds, tasks
 }
 
@@ -154,12 +185,8 @@ func say(t *testing.T, c *Coordinator, input string) Result {
 // the same machine, verified by a command there, and re-checks the machine
 // afterwards so the roster — not the helper — says whether it worked.
 func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
-	c, sup, nodes, cmds, tasks := repairCoordinator(t)
-	var probed []string
-	c.SetProber(func(_ context.Context, node, harness string) error {
-		probed = append(probed, node+"/"+harness)
-		return nil
-	}, nil)
+	probes := &recordProbes{}
+	c, sup, nodes, cmds, tasks := repairCoordinator(t, withDeps(func(d *Deps) { d.Prober = probes }))
 
 	// A healthy agent has nothing to repair.
 	if res := say(t, c, "/repair builder"); !strings.Contains(res.Text, "没有坏") {
@@ -204,8 +231,8 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 	if len(nodes.refreshd) != 1 || nodes.refreshd[0] != "node-a" {
 		t.Fatalf("refreshed = %v", nodes.refreshd)
 	}
-	if len(probed) != 1 || probed[0] != "node-a/kimi" {
-		t.Fatalf("probed = %v", probed)
+	if len(probes.probed) != 1 || probes.probed[0] != "node-a/kimi" {
+		t.Fatalf("probed = %v", probes.probed)
 	}
 	if !strings.Contains(res.Text, "修好了") || !strings.Contains(res.Text, "builder") {
 		t.Fatalf("reply = %q", res.Text)
@@ -225,6 +252,46 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no repair task on record")
+	}
+}
+
+// Without the node registry a repair still runs, but it cannot ask the
+// machine for its PATH or to check itself again: the helper is told the
+// PATH is unknown, and the reply goes by the advert the machine last sent.
+func TestRepairWithoutNodesKeepsTheLastAdvert(t *testing.T) {
+	probes := &recordProbes{}
+	c, sup, nodes, cmds, _ := repairCoordinator(t, withDeps(func(d *Deps) { d.Nodes, d.Prober = nil, probes }))
+	res := say(t, c, "/repair kimi")
+	if len(sup.executed) != 1 {
+		t.Fatalf("plans executed = %d", len(sup.executed))
+	}
+	if goal := sup.executed[0].Steps[0].Goal; !strings.Contains(goal, "(unknown)") {
+		t.Fatalf("goal does not say the PATH is unknown: %s", goal)
+	}
+	if len(cmds.lines) != 0 || len(nodes.refreshd) != 0 {
+		t.Fatalf("commands = %v, refreshed = %v; want none without a registry", cmds.lines, nodes.refreshd)
+	}
+	if len(probes.probed) != 1 || probes.probed[0] != "node-a/kimi" {
+		t.Fatalf("probed = %v", probes.probed)
+	}
+	if !strings.Contains(res.Text, "仍不可用") {
+		t.Fatalf("reply = %q, want the harness still missing from the last advert", res.Text)
+	}
+}
+
+// `/fleet probe` reports what probing every harness found, a failure as
+// its error.
+func TestFleetProbeReportsEveryHarness(t *testing.T) {
+	probes := &recordProbes{results: []models.Result{
+		{Endpoint: models.Endpoint{Node: "node-a", Harness: "kimi"}, Observation: models.Observation{Current: "k2"}},
+		{Endpoint: models.Endpoint{Node: "node-a", Harness: "codex"}, Err: errors.New("handshake timed out")},
+	}}
+	c, _, _, _, _ := repairCoordinator(t, withDeps(func(d *Deps) { d.Prober = probes }))
+	res := say(t, c, "/fleet probe")
+	for _, want := range []string{"kimi** · k2", "✗ **node-a · codex", "handshake timed out"} {
+		if !strings.Contains(res.Text, want) {
+			t.Fatalf("probe report lacks %q: %q", want, res.Text)
+		}
 	}
 }
 
@@ -251,8 +318,9 @@ func TestRepairReportsFailureHonestly(t *testing.T) {
 }
 
 // The context bar is computed by the rules a turn is judged by: an agent
-// on another machine is "not usable here" with the project's reason, a
-// blocked agent carries the roster's, and the current agent is marked.
+// on another machine is usable, since the project is given a directory
+// there, unless the project is sealed; a blocked agent carries the
+// roster's reason, and the current agent is marked.
 func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	c, _, _, _, _ := repairCoordinator(t)
 	got, err := c.Context(t.Context(), "chat")
@@ -270,8 +338,8 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	if a := byID["codex"]; !a.Usable || !a.Ready || !a.Current {
 		t.Fatalf("codex = %+v, want usable and current", a)
 	}
-	if a := byID["builder"]; a.Usable || !a.Ready || !strings.Contains(a.Because, "codex") {
-		t.Fatalf("builder = %+v, want ready but not usable here, naming the project", a)
+	if a := byID["builder"]; !a.Usable || !a.Ready || !strings.Contains(a.Because, "codex") {
+		t.Fatalf("builder = %+v, want usable, naming the project it attaches", a)
 	}
 	if a := byID["kimi"]; a.Usable || a.Ready || !strings.Contains(a.Because, "PATH") {
 		t.Fatalf("kimi = %+v, want blocked with the roster's reason", a)
@@ -279,6 +347,22 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	// Usable agents come first, and the verbs come with help.
 	if !got.Agents[0].Usable {
 		t.Fatalf("first agent %+v is not usable", got.Agents[0])
+	}
+	sealed, _, err := c.projects.Get(t.Context(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed.Level = datalevel.Sealed
+	if err := c.projects.Declare(t.Context(), []project.Project{sealed}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = c.Context(t.Context(), "chat"); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range got.Agents {
+		if a.ID == "builder" && (a.Usable || !a.Ready || !strings.Contains(a.Because, "codex")) {
+			t.Fatalf("builder = %+v, want ready but not usable for a sealed project, naming it", a)
+		}
 	}
 	verbs := c.Verbs()
 	if len(verbs) < 15 || verbs[0].Command != "/plan" || verbs[0].Summary == "" {
@@ -329,5 +413,15 @@ func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
 	}
 	if n := nodes.dialed() - before; n != 0 {
 		t.Fatalf("completion dialed %d times", n)
+	}
+}
+
+// Without a fleet there is nothing to find a helper in, and the refusal
+// names the fleet, not the supervisor, as what is missing.
+func TestRepairWithoutAFleetSaysTheFleetIsMissing(t *testing.T) {
+	c, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	res := say(t, c, "/repair kimi")
+	if strings.Contains(res.Text, "supervisor") || !strings.Contains(res.Text, "机群") {
+		t.Fatalf("repair without a fleet: %q", res.Text)
 	}
 }

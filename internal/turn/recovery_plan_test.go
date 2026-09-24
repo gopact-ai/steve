@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -56,7 +57,8 @@ func (s *retainedPlanSupervisor) OpenRuns(context.Context) ([]exec.RunRecord, er
 
 func retainedPlanFixture(t *testing.T) (*Coordinator, *retainedPlanSupervisor, RetainedPlan, Request) {
 	t.Helper()
-	c, _, book, _, _ := retainedChatFixture(t)
+	sup := &retainedPlanSupervisor{}
+	c, _, _, _, _ := retainedChatFixture(t, withCallbacks(func(cb *Callbacks) { cb.Supervisor = sup }))
 	tracked, err := c.tasks.Create(task.Task{Transport: "console", Origin: "plan", Goal: "original plan goal", ProjectID: "p", Channel: "console:plan", Requester: "owner"})
 	if err != nil {
 		t.Fatal(err)
@@ -77,12 +79,7 @@ func retainedPlanFixture(t *testing.T) (*Coordinator, *retainedPlanSupervisor, R
 			t.Fatal(err)
 		}
 	}
-	plans, err := plan.OpenLedger(book)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sup := &retainedPlanSupervisor{proposed: plan.Plan{TaskID: tracked.ID, Goal: tracked.Goal, By: "llm:worker", Steps: []plan.Step{{ID: "work", Goal: "original step", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "no side effects"}}}}}
-	c.SetSupervisor(sup, plans, nil)
+	sup.proposed = plan.Plan{TaskID: tracked.ID, Goal: tracked.Goal, By: "llm:worker", Steps: []plan.Step{{ID: "work", Goal: "original step", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "no side effects"}}}}
 	identity := RetainedPlan{TaskID: tracked.ID, Conversation: tracked.Channel, MessageID: "web-original-plan", AttemptID: record.ID, ProjectID: "p"}
 	return c, sup, identity, Request{Channel: "console", ConversationID: tracked.Channel, MessageID: identity.MessageID, SenderOpenID: "owner", ExpectedProject: "p"}
 }
@@ -148,13 +145,9 @@ func TestRetainedPlanRejectsDifferentExchangeBeforeExecution(t *testing.T) {
 func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 	for _, resumed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "recover", true: "revoked"}[resumed], func(t *testing.T) {
-			c, _, book, _, _ := retainedChatFixture(t)
-			plans, err := plan.OpenLedger(book)
-			if err != nil {
-				t.Fatal(err)
-			}
 			rule := planner.Rule{Workflows: map[string][]plan.Step{"release": {{ID: "original-rule-step", Goal: "original declared workflow", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "no side effects"}}}}}
-			c.SetSupervisor(exec.NewSupervisor(rule, exec.Deps{}, nil), plans, nil)
+			c, _, book, _, _ := retainedChatFixture(t, withCallbacks(func(cb *Callbacks) { cb.Supervisor = exec.NewSupervisor(rule, exec.Deps{}, nil) }))
+			plans := c.plans
 			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
 				_, err := tx.Exec(`CREATE TRIGGER reject_plan BEFORE INSERT ON bindings WHEN NEW.kind='document' AND NEW.id='plans' BEGIN SELECT RAISE(FAIL,'plan store unavailable'); END`)
 				return err
@@ -162,15 +155,16 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 				t.Fatal(err)
 			}
 			req := Request{Channel: "console", ConversationID: "console:rule", MessageID: "web-rule-original", ChatID: "console", SenderOpenID: "owner", ExpectedProject: "p"}
-			_, err = c.commands().planCmd(t.Context(), req, "release original goal")
+			_, err := c.commands().planCmd(t.Context(), req, "release original goal")
 			var blocked *agentexec.RecoveryBlocked
 			if !errors.As(err, &blocked) {
 				t.Fatalf("plan store failure did not preserve recovery: %v", err)
 			}
-			// Replace the planner configuration before recovery: the frozen
-			// pure result must not invoke this new planning configuration.
+			// The next process runs another planner configuration: the
+			// frozen pure result must not invoke it.
 			changed := &retainedPlanSupervisor{proposed: plan.Plan{Goal: "changed config"}}
-			c.SetSupervisor(changed, plans, nil)
+			c = restartCoordinator(t, c, c.catalog, c.store, c.assembler, c.runtime, time.Minute,
+				withDeps(func(d *Deps) { d.Plans = plans }), withCallbacks(func(cb *Callbacks) { cb.Supervisor = changed }))
 			items, err := c.RetainedPlans(t.Context())
 			if err != nil || len(items) != 1 || items[0].AttemptID != "" || items[0].PlanID != "" || items[0].MessageID != req.MessageID {
 				t.Fatalf("pure planned task disappeared: %+v %v", items, err)

@@ -113,6 +113,8 @@ type Service struct {
 	hubURL string
 }
 
+var _ consoleapi.Admin = (*Service)(nil)
+
 var NameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // nodeKey is the registry's name for a machine the page named: the hub

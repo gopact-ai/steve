@@ -15,9 +15,8 @@ type MaterialCapture struct {
 	Source  material.Source `json:"source"`
 }
 
-// MaterialAdmin is optional. Its implementation authorizes the caller and
-// resolves capture provenance before calling material.Store. It is deliberately
-// separate from Admin so adapters without materials remain read-only for them.
+// MaterialAdmin is the materials part of Admin. Its implementation authorizes
+// the caller and resolves capture provenance before calling material.Store.
 type MaterialAdmin interface {
 	CaptureMaterial(context.Context, MaterialCapture) (material.Material, error)
 	UploadMaterial(context.Context, string, string, string, io.Reader) (material.Material, error)

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -10,13 +9,10 @@ import (
 	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/exec"
-	"github.com/gopact-ai/steve/internal/models"
-	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/workflowstore"
 )
 
-func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, modelInfo modelsAssembly, work executionAssembly) (plansAssembly, error) {
+func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly) (plansAssembly, error) {
 	environment := input.Environment()
 	book := boot.Book()
 	catalog := boot.Catalog()
@@ -26,11 +22,7 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	assembler := identity.Assembler()
 	fleet := machines.Fleet()
 	nodes := machines.Nodes()
-	endpoints := modelInfo.Endpoints()
-	probeDir := modelInfo.ProbeDir()
-	prober := modelInfo.Prober()
 	artifacts := work.Artifacts()
-	coordinator := work.Coordinator()
 	executions := work.Executions()
 	plans := work.Plans()
 	tasks := work.Tasks()
@@ -86,17 +78,6 @@ func assemblePlans(life lifetime, input inputAssembly, boot runtimeAssembly, sto
 	supervisor.SetPlans(plans)
 	supervisor.SetLedger(book, boot.NodeName())
 	supervisor.SetTasks(tasks)
-	coordinator.SetSupervisor(supervisor, plans, fleet)
-	coordinator.SetPlanRecoveryOwner(func(tracked task.Task) bool { return environment != nil && tracked.Transport == "console" })
-	coordinator.SetRepair(nodes, nodes)
-	coordinator.SetProber(func(ctx context.Context, node, harnessID string) error {
-		dir := probeDir(node)
-		if dir == "" {
-			return fmt.Errorf("no state dir known for %s", nodewire.Place(node))
-		}
-		_, err := prober.Probe(ctx, models.Endpoint{Node: node, Harness: harnessID, Workdir: dir})
-		return err
-	}, func(ctx context.Context) []models.Result { return prober.ProbeAll(ctx, endpoints(ctx), true) })
 	return &plansValues{auxiliary: auxiliary, stepRunner: stepRunner, supervisor: supervisor}, nil
 }
 

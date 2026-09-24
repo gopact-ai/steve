@@ -15,8 +15,6 @@ type conversationInitializer interface {
 	InitializeConversation(ctx context.Context, conversation, project, requester string) error
 }
 
-var _ consoleapi.ConversationInitializer = (*Service)(nil)
-
 // InitializeConversation binds the project and persists an empty conversation
 // without sending a command or admitting any work.
 func (s *Service) InitializeConversation(ctx context.Context, conversation, project string) error {
