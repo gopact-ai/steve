@@ -16,8 +16,10 @@ var ErrReplayExpired = errors.New("ledger: replay receipt expired")
 
 func (l *Ledger) confirmReplicaWrite(id string, version uint64, payload []byte) error {
 	// The receipt and physical floor must belong to one read snapshot: a
-	// concurrent checkpoint can delete only the latter's proven prefix.
-	err := l.Read(context.Background(), func(tx *ReadTx) error {
+	// concurrent checkpoint can delete only the latter's proven prefix. The
+	// caller holds writerMu, so the snapshot is taken on the writer
+	// connection rather than waiting for a pooled read connection.
+	err := l.writerRead(func(tx *ReadTx) error {
 		var fingerprint string
 		err := tx.QueryRow(`SELECT fingerprint FROM replica_commands WHERE id=? AND version=?`, id, version).Scan(&fingerprint)
 		if errors.Is(err, sql.ErrNoRows) {

@@ -31,6 +31,18 @@ func (l *Ledger) Read(ctx context.Context, fn func(*ReadTx) error) error {
 	return fn(&ReadTx{ctx: ctx, tx: tx})
 }
 
+// writerRead is Read on the writer connection, for commit and apply paths
+// that hold writerMu or applyMu and must not wait for the read pool.
+func (l *Ledger) writerRead(fn func(*ReadTx) error) error {
+	ctx := context.Background()
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	return fn(&ReadTx{ctx: ctx, tx: tx})
+}
+
 func (t *ReadTx) QueryRow(query string, args ...any) *Row {
 	if !readOnlyQuery(query) {
 		return &Row{err: ErrReplicaWriteBypass}

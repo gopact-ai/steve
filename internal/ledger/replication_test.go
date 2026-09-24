@@ -547,7 +547,7 @@ func TestReplicatedCrashReplayDoesNotApplyEventOrEffectTwice(t *testing.T) {
 	if events, _ := l.Events(t.Context(), "attempt-1"); len(events) != 1 {
 		t.Fatalf("event replayed: %+v", events)
 	}
-	if entries, _ := l.effectEntries(0); len(entries) != 1 {
+	if entries, _ := effectEntries(l.reads, 0); len(entries) != 1 {
 		t.Fatalf("effect replayed: %+v", entries)
 	}
 	first := r.writes[0]

@@ -168,7 +168,7 @@ func (j *Journal) Reconcile() ([]Outcome, error) {
 
 func (j *Journal) readAll() ([]Entry, error) {
 	if j.ledger != nil {
-		return j.ledger.effectEntries(0)
+		return effectEntries(j.ledger.reads, 0)
 	}
 	return j.readFileAll()
 }

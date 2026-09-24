@@ -113,7 +113,9 @@ func (l *Ledger) failReplica(err error) error {
 }
 
 // ReplicaVersion reads the version committed with the application facts.
-func (l *Ledger) ReplicaVersion() (uint64, error) { return replicaVersion(l.reads) }
+// Replicators call it while preparing and confirming a write under
+// writerMu, so it reads on the writer connection, not the read pool.
+func (l *Ledger) ReplicaVersion() (uint64, error) { return replicaVersion(l.db) }
 
 func replicaVersion(q interface{ QueryRow(string, ...any) *sql.Row }) (uint64, error) {
 	var version uint64
