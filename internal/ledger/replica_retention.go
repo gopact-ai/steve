@@ -50,6 +50,13 @@ func (l *Ledger) confirmReplicaWrite(id string, version uint64, payload []byte) 
 // boundary when it is taken and encoded later: batches applied in between
 // neither wait for the encoding nor appear in it. Encode, Persisted and
 // Release are called from one goroutine.
+//
+// The boundary is a read transaction held open from SnapshotReplicaCheckpoint
+// until Encode has copied it or Release is called. While it is open, SQLite
+// checkpoints cannot move the WAL frames of later batches into the database
+// or restart the WAL, so the WAL file grows with every batch applied in that
+// time. The ledger sets no journal_size_limit: after the transaction ends the
+// WAL is reused from its start, but the file keeps its largest size.
 type ReplicaCheckpoint struct {
 	boundary *replicaBoundary
 	floor    uint64
