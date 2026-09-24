@@ -41,6 +41,8 @@ type clusterNode struct {
 	dropApp   atomic.Bool
 	holdApp   atomic.Bool
 	heldApp   chan coordination.AppCommand
+	gateApp   atomic.Pointer[appGate]
+	raft      *gatedListener
 	server    *httptest.Server
 	listener  net.Listener
 	options   coordination.TLSOptions
@@ -50,6 +52,53 @@ type clusterNode struct {
 	business  *businessStores
 	stopped   int
 	activated []*businessStores
+}
+
+// appGate stops application commands at the consensus leader's RPC
+// handler until release is closed, then serves them unchanged.
+type appGate struct {
+	once    sync.Once
+	arrived chan struct{}
+	release chan struct{}
+}
+
+// gatedListener accepts the node's inbound Raft connections. While paused,
+// bytes read from them are held back from Raft until resume.
+type gatedListener struct {
+	net.Listener
+	gate atomic.Pointer[chan struct{}]
+}
+
+func (l *gatedListener) pause() {
+	gate := make(chan struct{})
+	l.gate.CompareAndSwap(nil, &gate)
+}
+
+func (l *gatedListener) resume() {
+	if gate := l.gate.Swap(nil); gate != nil {
+		close(*gate)
+	}
+}
+
+func (l *gatedListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return gatedConn{Conn: conn, listener: l}, nil
+}
+
+type gatedConn struct {
+	net.Conn
+	listener *gatedListener
+}
+
+func (c gatedConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if gate := c.listener.gate.Load(); gate != nil {
+		<-*gate
+	}
+	return n, err
 }
 
 func (n *clusterNode) current() *businessStores {
@@ -90,13 +139,19 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 			t.Fatal(err)
 		}
 		n := &clusterNode{heldApp: make(chan coordination.AppCommand, 32), options: coordination.TLSOptions{ClusterID: "test-cluster", NodeID: id, RootCAs: pool, Certificate: tls.Certificate{Certificate: [][]byte{der, caDER}, PrivateKey: private}}}
-		n.listener, err = net.Listen("tcp", "127.0.0.1:0")
+		raw, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
+		n.raft = &gatedListener{Listener: raw}
+		n.listener = n.raft
 		n.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if current := n.runtime.Load(); current != nil {
 				handler := current.RPCHandler(coordination.RPCOptions{AuthorizeControl: func(*http.Request, coordination.Identity, string) (string, error) { return "test-owner", nil }})
+				if gate := n.gateApp.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"app" {
+					gate.once.Do(func() { close(gate.arrived) })
+					<-gate.release
+				}
 				if n.holdApp.Load() && r.URL.Path == coordination.RPCPath+"app" {
 					var command coordination.AppCommand
 					if err := json.NewDecoder(r.Body).Decode(&command); err != nil {
@@ -288,6 +343,128 @@ func TestUnknownProposalOutcomeRevokesCachedStoresBeforeAnotherWrite(t *testing.
 	}
 	if got := nodes[1].current().state.Conversation("committed-without-response").ActiveAgent; got != "worker" {
 		t.Fatal("reconstructed store lost the write whose response disappeared")
+	}
+}
+
+func TestCallerCancellationDuringProposalKeepsBusinessGeneration(t *testing.T) {
+	nodes := testNodes(t, 2)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	second := openNode(t, nodes[1])
+	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	active := ready(t, second)
+	if !first.Status().IsLeader {
+		t.Fatal("fixture no longer routes business writes through the remote consensus leader")
+	}
+	gate := &appGate{arrived: make(chan struct{}), release: make(chan struct{})}
+	nodes[0].gateApp.Store(gate)
+	caller, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- active.Ledger.PutBinding(caller, "test", "caller-canceled", "committed") }()
+	select {
+	case <-gate.arrived:
+	case <-time.After(8 * time.Second):
+		t.Fatal("proposal did not reach the consensus leader")
+	}
+	// The caller gives up while its proposal is in flight, as a turn does
+	// when its prompt timeout expires during a ledger write.
+	cancel()
+	close(gate.release)
+	err := <-done
+	nodes[0].gateApp.Store(nil)
+	if active.Context.Err() != nil {
+		t.Fatalf("caller cancellation revoked business generation %d: %v", active.Generation, second.Status().LastError)
+	}
+	if err != nil {
+		t.Fatalf("committed write was reported as failed: %v", err)
+	}
+	var got string
+	if ok, err := active.Ledger.GetBinding(t.Context(), "test", "caller-canceled", &got); err != nil || !ok || got != "committed" {
+		t.Fatalf("write not applied locally: ok=%v value=%q err=%v", ok, got, err)
+	}
+	if err := active.Ledger.PutBinding(t.Context(), "test", "next", "written"); err != nil {
+		t.Fatalf("generation cannot write after a caller cancellation: %v", err)
+	}
+}
+
+func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing.T) {
+	nodes := testNodes(t, 3)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		r := openNode(t, nodes[i])
+		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	active := ready(t, second)
+	if !first.Status().IsLeader {
+		t.Fatal("fixture no longer routes business writes through the remote consensus leader")
+	}
+	// node-2 stops receiving Raft traffic. node-1 and node-3 still form a
+	// quorum, so the write commits but never reaches node-2's ledger.
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	// The caller has no deadline and never cancels: only ApplyTimeout
+	// bounds the wait for the committed write to reach the local ledger.
+	done := make(chan error, 1)
+	go func() { done <- active.Ledger.PutBinding(context.Background(), "test", "applied-late", "committed") }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(4 * nodes[1].config.Coordination.ApplyTimeout):
+		t.Fatal("the write kept waiting for a local apply that cannot happen")
+	}
+	if err == nil {
+		t.Fatal("a write not applied locally was reported as applied")
+	}
+	if active.Context.Err() == nil {
+		t.Fatal("an unconfirmed local apply left the business generation authorized")
+	}
+	leader, err := first.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local, err := second.Ledger().ReplicaVersion(); err != nil || local >= leader.AppVersion {
+		t.Fatalf("the write reached node-2 before its Raft traffic resumed: local=%d committed=%d err=%v", local, leader.AppVersion, err)
+	}
+	nodes[1].raft.resume()
+	fresh := ready(t, second)
+	if fresh.Generation == active.Generation {
+		t.Fatal("the stalled apply did not lead to a fresh business generation")
+	}
+	var got string
+	if ok, err := fresh.Ledger.GetBinding(t.Context(), "test", "applied-late", &got); err != nil || !ok || got != "committed" {
+		t.Fatalf("reconstructed generation lost the committed write: ok=%v value=%q err=%v", ok, got, err)
+	}
+}
+
+func TestCallerCancellationBeforeProposalSubmitsNothing(t *testing.T) {
+	nodes := testNodes(t, 1)
+	r := openNode(t, nodes[0])
+	active := ready(t, r)
+	caller, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := active.Ledger.PutBinding(caller, "test", "never", "written"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("write under a canceled caller: %v", err)
+	}
+	if active.Context.Err() != nil {
+		t.Fatal("a write that was never proposed revoked the business generation")
+	}
+	var got string
+	if ok, err := active.Ledger.GetBinding(t.Context(), "test", "never", &got); err != nil || ok {
+		t.Fatalf("canceled write was applied: ok=%v err=%v", ok, err)
 	}
 }
 

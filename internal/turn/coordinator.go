@@ -173,10 +173,9 @@ type coordinatorState struct {
 	store       *state.Store
 	assembler   *capability.Assembler
 	runtime     Runtime
-	timeout     time.Duration
-	// Runtime policy sources are read only at operation boundaries; a
-	// saved setting never interrupts a live turn.
-	timeoutSource     func() time.Duration
+	promptClock promptClock
+	// autoResolveSource is read only at operation boundaries; a saved
+	// setting never interrupts a live turn.
 	autoResolveSource func() bool
 	channelOwners     map[string]string
 	home              home.Loader
@@ -321,9 +320,10 @@ func New(deps Deps) (*Coordinator, error) {
 		text:        deps.Text,
 		ownerOpenID: deps.Owner,
 		coordinatorState: &coordinatorState{
-			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime, timeout: deps.Timeout,
-			timeoutSource: deps.TimeoutSource, autoResolveSource: deps.AutoResolveSource,
-			channelOwners: owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
+			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
+			promptClock:       promptClock{timeout: deps.Timeout, source: deps.TimeoutSource, start: idle.WithTimeout},
+			autoResolveSource: deps.AutoResolveSource,
+			channelOwners:     owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
 			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
@@ -368,12 +368,29 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 // is handed to an agent without anyone asking.
 func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
 
-func (c *Coordinator) promptTimeout() time.Duration {
-	if c.timeoutSource != nil {
-		return c.timeoutSource()
-	}
-	return c.timeout
+// promptClock bounds how long a prompt may go without progress.
+type promptClock struct {
+	timeout time.Duration
+	// source, when set, is read in place of timeout at each prompt; a
+	// saved setting never interrupts a live turn.
+	source func() time.Duration
+	// start begins a prompt's idle clock. New sets it to idle.WithTimeout;
+	// only tests in this package replace it.
+	start func(context.Context, time.Duration) (idle.Context, func(), func())
 }
+
+func (p promptClock) limit() time.Duration {
+	if p.source != nil {
+		return p.source()
+	}
+	return p.timeout
+}
+
+func (c *Coordinator) newIdleClock(parent context.Context, d time.Duration) (idle.Context, func(), func()) {
+	return c.promptClock.start(parent, d)
+}
+
+func (c *Coordinator) promptTimeout() time.Duration { return c.promptClock.limit() }
 
 // autoResolves is whether a merge conflict goes to an agent unasked.
 func (c *Coordinator) autoResolves() bool {
