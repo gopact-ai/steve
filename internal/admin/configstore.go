@@ -46,7 +46,9 @@ func (a *Service) configStore() *ConfigStore {
 func (a *Service) cfg() *config.Config { return a.configStore().cfg }
 
 // Read runs read with the configuration held still. read must not keep
-// the pointer or anything it shares after it returns.
+// the *config.Config after it returns; a map or slice it reaches may be
+// kept and read later, since a published configuration's collections are
+// never changed.
 func (s *ConfigStore) Read(read func(*config.Config)) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

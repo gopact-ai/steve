@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
@@ -54,12 +55,20 @@ func agentAdminFixture(t *testing.T) *adminsvc.Service {
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	return &adminsvc.Service{ConfigStore: adminsvc.NewConfigStore(cfg), Path: path, Catalog: catalog}
+	a := &adminsvc.Service{ConfigStore: adminsvc.NewConfigStore(cfg), Path: path, Catalog: catalog}
+	fixtureConfigs.Store(a, cfg)
+	t.Cleanup(func() { fixtureConfigs.Delete(a) })
+	return a
 }
 
-// configOf is the configuration a administers. Tests use it only while
-// nothing else changes that configuration.
-func configOf(a *adminsvc.Service) (cfg *config.Config) {
-	a.ConfigStore.Read(func(c *config.Config) { cfg = c })
-	return cfg
+// fixtureConfigs holds the configuration agentAdminFixture built for each
+// service it returned.
+var fixtureConfigs sync.Map
+
+// configOf is the configuration agentAdminFixture built for a. Tests
+// change it only before a is in use and read it only while nothing else
+// changes it.
+func configOf(a *adminsvc.Service) *config.Config {
+	cfg, _ := fixtureConfigs.Load(a)
+	return cfg.(*config.Config)
 }

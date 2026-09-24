@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -276,5 +277,44 @@ func TestConfigStoreKeepsBothOfTwoConcurrentUpdates(t *testing.T) {
 		if _, ok := savedSecond[name]; !ok {
 			t.Errorf("the second save lacks the %s change: %v", name, savedSecond)
 		}
+	}
+}
+
+// A map or slice kept from Read stays as it was read while later changes,
+// including changes to its own entries, are published.
+func TestConfigStoreKeepsCollectionsReadEarlier(t *testing.T) {
+	store := NewConfigStore(&config.Config{
+		Nodes:   map[string]config.Node{"a": {Addr: "127.0.0.1:1"}},
+		Gateway: config.Gateway{Tools: []string{"git"}},
+	})
+	var nodes map[string]config.Node
+	var tools []string
+	store.Read(func(c *config.Config) { nodes, tools = c.Nodes, c.Gateway.Tools })
+	changed := make(chan error, 1)
+	go func() {
+		for i := range 20 {
+			err := store.Update(func(c *config.Config) error {
+				delete(c.Nodes, "a")
+				c.Nodes[fmt.Sprint("node-", i)] = config.Node{Addr: "127.0.0.1:2"}
+				c.Gateway.Tools[0] = fmt.Sprint("tool-", i)
+				return nil
+			}, func(*config.Config) error { return nil })
+			if err != nil {
+				changed <- err
+				return
+			}
+		}
+		changed <- nil
+	}()
+	for range 20 {
+		if nodes["a"].Addr != "127.0.0.1:1" || len(nodes) != 1 || tools[0] != "git" {
+			t.Fatalf("kept collections changed: %v %v", nodes, tools)
+		}
+	}
+	if err := <-changed; err != nil {
+		t.Fatal(err)
+	}
+	if nodes["a"].Addr != "127.0.0.1:1" || len(nodes) != 1 || tools[0] != "git" {
+		t.Fatalf("kept collections changed: %v %v", nodes, tools)
 	}
 }
