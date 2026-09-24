@@ -32,8 +32,8 @@ import (
 type Model interface {
 	Snapshot(context.Context) readmodel.Snapshot
 	UsageSummary(context.Context) readmodel.UsageSnapshot
-	Subscribe(context.Context) (<-chan readmodel.Event, func())
-	Recent() []readmodel.Event
+	SubscribeAfter(context.Context, ...string) (readmodel.Resume, <-chan readmodel.Event, func())
+	EventID(readmodel.Event) string
 	History(context.Context, string, int) ([]readmodel.HistoryEntry, string, error)
 	TaskHistory(context.Context, task.Query) (readmodel.TaskPage, error)
 	TaskDetail(context.Context, string) (readmodel.TaskDetail, error)
@@ -297,13 +297,19 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	stream, stop := s.model.Subscribe(r.Context())
-	defer stop()
-
 	// Replay what just happened so a renderer attaching mid-flight is not
-	// staring at nothing until the next change.
-	for _, ev := range s.model.Recent() {
-		writeEvent(w, ev)
+	// staring at nothing until the next change. A client reconnecting names
+	// the last event it received, by the Last-Event-ID an EventSource sends
+	// or by the after parameter of one it opened anew, and is replayed only
+	// what followed it. One the stream cannot continue is first sent a
+	// reset event, telling it to re-read /state.
+	resume, stream, stop := s.model.SubscribeAfter(r.Context(), r.Header.Get("Last-Event-ID"), r.URL.Query().Get("after"))
+	defer stop()
+	if resume.Reset {
+		fmt.Fprint(w, "event: reset\ndata: {}\n\n")
+	}
+	for _, ev := range resume.Replay {
+		s.writeEvent(w, ev)
 	}
 	flusher.Flush()
 
@@ -317,7 +323,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
-			writeEvent(w, ev)
+			s.writeEvent(w, ev)
 			flusher.Flush()
 		case <-keepalive.C:
 			fmt.Fprint(w, ": keepalive\n\n")
@@ -326,12 +332,17 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeEvent(w http.ResponseWriter, ev readmodel.Event) {
+func (s *Server) writeEvent(w io.Writer, ev readmodel.Event) {
+	writeEvent(w, s.model.EventID(ev), ev)
+}
+
+// writeEvent frames ev for the stream under its id.
+func writeEvent(w io.Writer, id string, ev readmodel.Event) {
 	payload, err := json.Marshal(ev)
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(w, "data: %s\n\n", payload)
+	fmt.Fprintf(w, "id: %s\ndata: %s\n\n", id, payload)
 }
 
 // SetConsole wires the acting half of the page.

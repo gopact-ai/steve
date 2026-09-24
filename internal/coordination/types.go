@@ -46,13 +46,28 @@ type Application interface {
 	Restore([]byte) error
 }
 
-// CheckpointApplication can compact physical replay evidence in a private
-// snapshot. The returned callback runs only after the consensus snapshot is
-// durably persisted, and never after another Restore. It must not call Service.
-// Failing that optional cleanup must leave live application facts unchanged.
+// CheckpointApplication takes a snapshot in two steps, so that producing its
+// bytes does not hold Apply back. SnapshotCheckpoint runs with Apply excluded
+// and only fixes the state the snapshot holds; the Checkpoint it returns is
+// encoded while commands apply again. The encoding may compact physical
+// replay evidence at or below replayFloor. No Checkpoint method may call
+// Service.
 type CheckpointApplication interface {
 	Application
-	SnapshotCheckpoint(replayFloor uint64) ([]byte, func() error, error)
+	SnapshotCheckpoint(replayFloor uint64) (Checkpoint, error)
+}
+
+// Checkpoint is an application's state fixed at a snapshot's boundary.
+type Checkpoint interface {
+	// Encode returns the state as of the boundary. It is called at most
+	// once, concurrently with Apply.
+	Encode() ([]byte, error)
+	// Persisted runs only after the consensus snapshot holding the encoding
+	// is durable, and never after another Restore. Failing that optional
+	// cleanup must leave live application facts unchanged.
+	Persisted() error
+	// Release lets the boundary go, encoded or not.
+	Release()
 }
 
 type AppliedCommand struct {

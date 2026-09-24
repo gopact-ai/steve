@@ -328,7 +328,7 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 	command.ProcessStopped = host.ProcessStopped(generation)
 	next.State.ProcessStopped = command.ProcessStopped
 	if runErr != nil {
-		command.Error = runErr.Error()
+		command.Error, command.ErrorCode = runErr.Error(), nodewire.SessionErrorCode(runErr)
 	}
 	switch {
 	case errors.Is(runErr, acphost.ErrTurnCanceled):

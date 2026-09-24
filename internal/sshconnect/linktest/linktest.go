@@ -6,9 +6,13 @@ package linktest
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
+	"syscall"
+	"testing"
 
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
@@ -25,6 +29,7 @@ type Launcher struct {
 	onEnd    func()
 	launches [][]string
 	sessions []*farEnd
+	reserved map[string]*heldPort
 }
 
 type farEnd struct {
@@ -57,7 +62,7 @@ func (l *Launcher) Start(_ context.Context, args []string) (*sshconnect.Session,
 		if junk != "" {
 			_, _ = io.WriteString(farOut, junk)
 		}
-		err := sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, listens, allowed)
+		err := sshconnect.ServeLink(ctx, farIn, farOut, sshconnect.ServeLinkOptions{Logs: io.Discard, Listens: listens, Allowed: allowed, Listen: l.bind})
 		far.end(err)
 	}()
 	l.mu.Lock()
@@ -159,3 +164,111 @@ func parseCommand(command string) ([]sshconnect.PortForward, []string, error) {
 	}
 	return listens, allowed, nil
 }
+
+// Reserve binds a free loopback port for a far end's --listen and returns
+// its address. The port stays bound until the test ends: each session
+// that listens there is handed the same socket rather than binding the
+// address again, so no other process can take the port in between.
+func (l *Launcher) Reserve(t testing.TB) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := &heldPort{listener: listener}
+	go port.dispatch()
+	t.Cleanup(func() { listener.Close() })
+	address := listener.Addr().String()
+	l.mu.Lock()
+	if l.reserved == nil {
+		l.reserved = map[string]*heldPort{}
+	}
+	l.reserved[address] = port
+	l.mu.Unlock()
+	return address
+}
+
+// bind opens a far end's listen address: a reserved one through its held
+// socket, any other on the network.
+func (l *Launcher) bind(network, address string) (net.Listener, error) {
+	l.mu.Lock()
+	port := l.reserved[address]
+	l.mu.Unlock()
+	if port == nil {
+		return net.Listen(network, address)
+	}
+	return port.take()
+}
+
+// heldPort is a reserved socket shared by the far ends that listen on it
+// in turn. Its connections go to the far end holding it at the moment;
+// with none, they are closed at once, as a dial with nothing listening
+// would be refused.
+type heldPort struct {
+	listener net.Listener
+	mu       sync.Mutex
+	current  *portView
+}
+
+func (p *heldPort) take() (net.Listener, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.current != nil {
+		return nil, &net.OpError{Op: "listen", Net: "tcp", Addr: p.listener.Addr(), Err: fmt.Errorf("bind: %w", syscall.EADDRINUSE)}
+	}
+	p.current = &portView{port: p, connections: make(chan net.Conn), done: make(chan struct{})}
+	return p.current, nil
+}
+
+func (p *heldPort) dispatch() {
+	for {
+		connection, err := p.listener.Accept()
+		if err != nil {
+			return
+		}
+		p.mu.Lock()
+		view := p.current
+		p.mu.Unlock()
+		if view == nil {
+			connection.Close()
+			continue
+		}
+		select {
+		case view.connections <- connection:
+		case <-view.done:
+			connection.Close()
+		}
+	}
+}
+
+// portView is one far end's hold on a reserved port. Closing it ends that
+// far end's accepts and leaves the socket bound for the next.
+type portView struct {
+	port        *heldPort
+	connections chan net.Conn
+	done        chan struct{}
+	once        sync.Once
+}
+
+func (v *portView) Accept() (net.Conn, error) {
+	select {
+	case connection := <-v.connections:
+		return connection, nil
+	case <-v.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (v *portView) Close() error {
+	v.once.Do(func() {
+		close(v.done)
+		v.port.mu.Lock()
+		if v.port.current == v {
+			v.port.current = nil
+		}
+		v.port.mu.Unlock()
+	})
+	return nil
+}
+
+func (v *portView) Addr() net.Addr { return v.port.listener.Addr() }

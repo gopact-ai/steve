@@ -34,7 +34,7 @@ try {
     await page.addInitScript(() => {
         localStorage.setItem("steve.ui.locale", "zh");
         sessionStorage.setItem("steve.conversation", "console:other");
-        window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+        window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
     });
     page.on("pageerror", error => errors.push(String(error)));
     await page.route("**/*", async route => {

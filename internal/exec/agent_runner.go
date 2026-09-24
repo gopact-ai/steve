@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/budget"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -149,7 +150,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 		if !acphost.PromptSettled(err) || (ctx.Err() != nil && !errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped)) {
 			key, _ := execution.KeyOf(ctx)
 			record := attempt.Record{Spec: attempt.Spec{ID: key.AttemptID, TaskID: req.TaskID, Node: req.Node}, Session: session.ID()}
-			err = agentexec.Blocked(record, "observer", "观察原步骤的节点命令", "原步骤的观察连接中断。", "建议恢复节点后接续同一次执行。", retainedStepDetached(record, errors.Join(err, ctx.Err())))
+			err = agentexec.Blocked(record, "observer", agentexec.Diagnosis{Attempted: i18n.ExecTriedObserveStep, Problem: i18n.ExecProblemObserverLost, Recommendation: i18n.ExecAdviceRestoreNodeResume}, retainedStepDetached(record, errors.Join(err, ctx.Err())))
 		}
 	} else {
 		answer = strings.TrimSpace(answer)

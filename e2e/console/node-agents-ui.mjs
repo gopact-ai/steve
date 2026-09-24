@@ -21,7 +21,7 @@ const candidates = () => [
 ];
 const f = { revision: "node-r1", agents: candidates(), reads: 0, posts: [], errors: [], hold: false, release: null, reset: false, partial: false, discoveryError: false };
 page.on("pageerror", (error) => f.errors.push(String(error)));
-await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} }; });
+await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} }; });
 await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }

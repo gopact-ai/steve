@@ -102,8 +102,9 @@ func (c *Coordinator) planRecoveryError(err error) error {
 			return blocked
 		}
 		// The execution layer raised it for an attempt it could not settle:
-		// the attempt's stop is unconfirmed, whatever the question says.
-		return &agentexec.RecoveryBlocked{Question: blocked.Question, Cause: errors.Join(err, harness.ErrStopUnconfirmed)}
+		// the attempt's stop is unconfirmed, whatever the question says. It
+		// is asked in the exchange's language.
+		return &agentexec.RecoveryBlocked{Question: blocked.In(c.text).Question, Cause: errors.Join(err, harness.ErrStopUnconfirmed)}
 	}
 	var nowhere exec.ErrNowhereToRun
 	var noBudget exec.ErrNoBudget

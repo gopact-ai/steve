@@ -39,6 +39,7 @@ export const commonZh = {
     "connection.coordinatorRole": "分配任务、保存协作进度",
     "common.cancel": "取消",
     "common.languageUnavailable": "无法加载所选语言，界面保持当前语言；重新加载页面后可再试。",
+    "common.languageElsewhereUnavailable": "在其他窗口或浏览器设置中更改的语言无法加载，此页面保持当前语言；重新加载页面后可再试。",
     "common.close": "关闭",
     "common.details": "详细信息",
     "common.save": "保存",

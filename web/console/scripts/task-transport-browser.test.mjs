@@ -67,7 +67,7 @@ await context.route("**/*", async (route) => {
 page.on("pageerror", (error) => errors.push(String(error)));
 await page.addInitScript(() => {
     localStorage.setItem("steve.ui.locale", "en");
-    window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+    window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
 });
 try {
     for (const address of [

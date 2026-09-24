@@ -83,6 +83,7 @@ try {
         window.renders = {};
         localStorage.setItem("steve.ui.locale", "en");
         window.EventSource = class {
+            addEventListener() {}
             constructor() { window.source = this; setTimeout(() => this.onopen?.(), 0); }
             close() {}
         };
@@ -189,7 +190,7 @@ try {
     await page.evaluate(() => window.source.onerror());
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "reconnecting");
     // Hold the stream down: the retry fails again as soon as it opens.
-    await page.evaluate(() => { window.EventSource = class { constructor() { window.source = this; setTimeout(() => this.onerror?.(), 0); } close() {} }; });
+    await page.evaluate(() => { window.EventSource = class { addEventListener() {} constructor() { window.source = this; setTimeout(() => this.onerror?.(), 0); } close() {} }; });
     const down = reads.state;
     await page.clock.runFor(20_500);
     assert.equal(await stateReads(down + 2), down + 2, "A dropped stream falls back to the 10s floor");
@@ -206,6 +207,32 @@ try {
     await page.waitForFunction(() => document.querySelector("#ready")?.textContent);
     await page.clock.runFor(100);
     assert.equal(await stateReads(hidden + 1), hidden + 1, "Showing the page refreshes /state at once");
+
+    // A stream that cannot continue from the console's last event says
+    // reset: the console re-reads /state at once and stops resuming after
+    // an event the stream no longer places.
+    await page.evaluate(() => {
+        window.EventSource = class {
+            constructor(url) { this.url = url; this.listeners = {}; window.source = this; setTimeout(() => this.onopen?.(), 0); }
+            addEventListener(type, listener) { this.listeners[type] = listener; }
+            close() {}
+        };
+    });
+    await page.clock.runFor(3100);
+    await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "live");
+    await page.evaluate(() => window.source.onmessage({ data: JSON.stringify({ kind: "step.progress", at: "2026-09-20T00:00:00Z" }), lastEventId: "run1.7" }));
+    await page.evaluate(() => window.source.onerror());
+    await page.clock.runFor(3100);
+    await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "live");
+    assert.match(await page.evaluate(() => window.source.url), /after=run1\.7/, "A reconnect resumes after the last event");
+    await page.clock.runFor(1000);
+    const beforeReset = reads.state;
+    await page.evaluate(() => window.source.listeners.reset?.({ data: "{}" }));
+    assert.equal(await stateReads(beforeReset + 1), beforeReset + 1, "A reset re-reads /state at once");
+    await page.evaluate(() => window.source.onerror());
+    await page.clock.runFor(3100);
+    await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "live");
+    assert.doesNotMatch(await page.evaluate(() => window.source.url), /after=/, "After a reset the stream is opened afresh");
     assert.deepEqual(errors, []);
     console.log("Fleet read surfaces: event-only renders 0; state, usage, node.updated, hub pins and reconnect recovery passed");
     await context.close();

@@ -33,7 +33,14 @@ export async function request<T>(path: string, { body, ...init }: Omit<RequestIn
 // without the Error prefix a thrown value carries.
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error: /, "");
 // EventSource cannot set Authorization; normal requests never put tokens in URLs.
-export const eventsURL = () => `./events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+// after names the last event received, so a new EventSource resumes after it.
+export const eventsURL = (after = "") => {
+    const query = new URLSearchParams();
+    if (token) query.set("token", token);
+    if (after) query.set("after", after);
+    const search = query.toString();
+    return `./events${search ? `?${search}` : ""}`;
+};
 
 // Timeout, transport, server and malformed-response failures can follow an
 // accepted write. Only an explicit client rejection permits a new submission.

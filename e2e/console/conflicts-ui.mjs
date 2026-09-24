@@ -27,7 +27,7 @@ const f = { agent: [], all: 0, reads: [], manual: [], retry: [], errors: [] };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => {
     localStorage.setItem("steve.ui.locale", "en");
-    window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+    window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
 });
 await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;

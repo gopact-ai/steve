@@ -98,7 +98,7 @@ await context.route("**/*", async (route) => {
  return route.fulfill({ json: { enabled: true, items: [], total: 0, queue: [], replies: [], verbs: [], suggestions: [], questions: [], nodes: [], events: [], conversations: [], entries: [] } });
 });
 page.on("pageerror", (e) => errors.push(String(e)));
-await page.addInitScript(() => { sessionStorage.setItem("steve.conversation", "opaque-conversation"); localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { constructor() { window.fixtureEventSource=this; setTimeout(()=>this.onopen?.(),0); } close() {} }; });
+await page.addInitScript(() => { sessionStorage.setItem("steve.conversation", "opaque-conversation"); localStorage.setItem("steve.ui.locale", "en"); window.EventSource = class { addEventListener() {} constructor() { window.fixtureEventSource=this; setTimeout(()=>this.onopen?.(),0); } close() {} }; });
 try {
  await page.goto(`${origin}/#/console?view=board`);
  await page.getByRole("button", {name: /Open task #live /}).click();

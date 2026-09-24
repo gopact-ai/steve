@@ -81,6 +81,9 @@ type PeerOptions struct {
 	// Only local process tests supply virtual independent failure domains.
 	TestFailureDomain     func() (string, error)
 	ContentRepairInterval time.Duration
+	// Listen binds the Raft, peer and UI addresses; net.Listen when nil.
+	// A listener it returns belongs to the peer, which closes it.
+	Listen func(network, address string) (net.Listener, error)
 }
 
 type Peer struct {
@@ -131,6 +134,9 @@ type Peer struct {
 }
 
 func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr error) {
+	if options.Listen == nil {
+		options.Listen = net.Listen
+	}
 	if options.ClusterPath == "" {
 		options.ClusterPath = DefaultClusterConfigPath(options.ConfigPath)
 	}
@@ -175,25 +181,17 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err := p.startWorker(application.LocalWorkspaceRoot()); err != nil {
 		return nil, err
 	}
-	raftListener, err := net.Listen("tcp", settings.RaftBindAddress)
+	raftListener, peerListener, err := bindPeerListeners(settings, options.Listen)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if runErr != nil {
 			raftListener.Close()
-		}
-	}()
-	peerListener, err := net.Listen("tcp", settings.PeerBindAddress)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if runErr != nil {
 			peerListener.Close()
 		}
 	}()
-	uiListener, err := net.Listen("tcp", settings.UIAddress)
+	uiListener, err := options.Listen("tcp", settings.UIAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -264,6 +262,20 @@ func confirmPeerIdentity(options PeerOptions, settings *PeerConfig) error {
 	}
 	settings.FailureDomain = failureDomain
 	return nil
+}
+
+// bindPeerListeners opens the node's Raft and peer listeners.
+func bindPeerListeners(settings PeerConfig, listen func(network, address string) (net.Listener, error)) (raft, peer net.Listener, err error) {
+	raft, err = listen("tcp", settings.RaftBindAddress)
+	if err != nil {
+		return nil, nil, err
+	}
+	peer, err = listen("tcp", settings.PeerBindAddress)
+	if err != nil {
+		raft.Close()
+		return nil, nil, err
+	}
+	return raft, peer, nil
 }
 
 func (p *Peer) recordBoundAddresses(raftListener, peerListener, uiListener net.Listener) {

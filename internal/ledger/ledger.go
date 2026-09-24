@@ -97,11 +97,14 @@ type Ledger struct {
 	journal     *Journal
 	now         func() time.Time
 
-	mu                  sync.Mutex
-	recovery            bool
-	writerMu            sync.Mutex
-	applyMu             sync.Mutex
-	snapshotGeneration  uint64
+	mu                 sync.Mutex
+	recovery           bool
+	writerMu           sync.Mutex
+	applyMu            sync.Mutex
+	snapshotGeneration uint64
+	// backupStarted, when set, runs as a replica snapshot's backup begins
+	// copying pages.
+	backupStarted       func()
 	restoreGeneration   atomic.Uint64
 	replication         Replicator
 	replicaFailure      error

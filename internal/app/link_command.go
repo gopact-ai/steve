@@ -44,7 +44,7 @@ func LinkCommand(args []string) error {
 	log.SetFlags(0)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	return sshconnect.ServeLink(ctx, os.Stdin, os.Stdout, os.Stderr, forwards, allowed)
+	return sshconnect.ServeLink(ctx, os.Stdin, os.Stdout, sshconnect.ServeLinkOptions{Logs: os.Stderr, Listens: forwards, Allowed: allowed})
 }
 
 type repeatedFlag []string

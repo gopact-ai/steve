@@ -36,7 +36,7 @@ async function fixture(replies, options = {}) {
     await page.addInitScript((conversation) => {
         sessionStorage.setItem("steve.conversation", conversation);
         localStorage.setItem("steve.ui.locale", "en");
-        window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+        window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
     }, conversation);
     await page.route("**/*", async (route) => {
         const request = route.request(), url = new URL(request.url()), name = url.pathname;

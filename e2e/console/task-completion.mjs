@@ -34,7 +34,7 @@ try {
         page.on("pageerror", (error) => fixture.errors.push(String(error)));
         await page.addInitScript((language) => {
             localStorage.setItem("steve.ui.locale", language);
-            window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+            window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
         }, locale);
         await page.route("**/*", async (route) => {
             const request = route.request();

@@ -22,7 +22,7 @@ const f = { browses: [], picks: [], projects: [], copies: [], errors: [] };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => {
     localStorage.setItem("steve.ui.locale", "en");
-    window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+    window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
     window.pickedWith = [];
     window.steveDesktop = { pickDirectory: (directory) => { window.pickedWith.push(directory ?? null); return Promise.resolve("/Users/me/work/mac-service"); } };
 });

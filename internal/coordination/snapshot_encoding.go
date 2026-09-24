@@ -15,12 +15,33 @@ import (
 const snapshotMagic = "STVFSM02"
 const snapshotHeaderSize = 24 + sha256.Size
 
+// encodedSnapshot is a machine snapshot. Its metadata is encoded when the
+// snapshot is taken; a checkpoint's application bytes are encoded on the
+// first Persist, which runs concurrently with Apply.
 type encodedSnapshot struct {
 	metadata, application []byte
+	checkpoint            Checkpoint
+	encoded               bool
+	encodeErr             error
 	persisted             func() error
 }
 
+func (s *encodedSnapshot) encode() error {
+	if s.checkpoint != nil && !s.encoded {
+		s.encoded = true
+		s.application, s.encodeErr = s.checkpoint.Encode()
+		if s.encodeErr != nil {
+			s.encodeErr = fmt.Errorf("snapshot application: %w", s.encodeErr)
+		}
+	}
+	return s.encodeErr
+}
+
 func (s *encodedSnapshot) Persist(sink raft.SnapshotSink) error {
+	if err := s.encode(); err != nil {
+		_ = sink.Cancel()
+		return err
+	}
 	header := make([]byte, snapshotHeaderSize)
 	copy(header, snapshotMagic)
 	binary.BigEndian.PutUint64(header[8:16], uint64(len(s.metadata)))
@@ -51,6 +72,10 @@ func (s *encodedSnapshot) Persist(sink raft.SnapshotSink) error {
 }
 
 func (s *encodedSnapshot) Release() {
+	if s.checkpoint != nil {
+		s.checkpoint.Release()
+		s.checkpoint = nil
+	}
 	s.metadata = nil
 	s.application = nil
 	s.persisted = nil

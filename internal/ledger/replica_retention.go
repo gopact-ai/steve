@@ -46,53 +46,84 @@ func (l *Ledger) confirmReplicaWrite(id string, version uint64, payload []byte) 
 	return l.failReplica(err)
 }
 
-// SnapshotReplicaCheckpoint captures a compacted replay suffix without changing
-// the live database. persisted may be called only after the enclosing consensus
-// snapshot sink has durably closed. Failure to prune is retryable maintenance,
-// not failure of that snapshot. Business commands and effects are never removed.
-func (l *Ledger) SnapshotReplicaCheckpoint(floor uint64) ([]byte, func() error, error) {
+// ReplicaCheckpoint is a compacted replica snapshot fixed at one committed
+// boundary when it is taken and encoded later: batches applied in between
+// neither wait for the encoding nor appear in it. Encode, Persisted and
+// Release are called from one goroutine.
+//
+// The boundary is a read transaction held open from SnapshotReplicaCheckpoint
+// until Encode has copied it or Release is called. While it is open, SQLite
+// checkpoints cannot move the WAL frames of later batches into the database
+// or restart the WAL, so the WAL file grows with every batch applied in that
+// time. The ledger sets no journal_size_limit: after the transaction ends the
+// WAL is reused from its start, but the file keeps its largest size.
+type ReplicaCheckpoint struct {
+	boundary *replicaBoundary
+	floor    uint64
+}
+
+// SnapshotReplicaCheckpoint fixes a checkpoint's boundary. Its encoding
+// keeps only the replay receipts above floor.
+func (l *Ledger) SnapshotReplicaCheckpoint(floor uint64) (*ReplicaCheckpoint, error) {
 	if l.replicaWriter {
-		return nil, nil, ErrReplicaWriteBypass
+		return nil, ErrReplicaWriteBypass
 	}
-	path, incarnation, generation, cleanup, err := l.captureReplicaDatabase()
+	boundary, err := l.replicaBoundary()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	return &ReplicaCheckpoint{boundary: boundary, floor: floor}, nil
+}
+
+// Encode copies the boundary into a private database, ends the boundary's
+// read transaction, and compacts and frames the copy. It does not change the
+// live database.
+func (c *ReplicaCheckpoint) Encode() ([]byte, error) {
+	path, cleanup, err := c.boundary.copy()
+	c.boundary.release()
+	if err != nil {
+		return nil, err
 	}
 	defer cleanup()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	err = validateReplicaReceipts(db)
 	if err == nil {
-		err = pruneReplicaReceipts(db, floor)
+		err = pruneReplicaReceipts(db, c.floor)
 	}
-	if err == nil && floor > 0 {
+	if err == nil && c.floor > 0 {
 		// DELETE alone leaves old pages in every subsequent database image.
 		// Compact the private image, never VACUUM the hot application database.
 		_, err = db.Exec(`VACUUM`)
 	}
-	err = errors.Join(err, db.Close())
-	if err != nil {
-		return nil, nil, err
+	if err := errors.Join(err, db.Close()); err != nil {
+		return nil, err
 	}
-	raw, err := encodeReplicaSnapshot(path, incarnation)
-	if err != nil {
-		return nil, nil, err
-	}
-	persisted := func() error {
-		l.applyMu.Lock()
-		defer l.applyMu.Unlock()
-		if generation != l.snapshotGeneration {
-			return nil
-		}
-		if _, err := l.replicationState(); err != nil {
-			return err
-		}
-		return pruneReplicaReceipts(l.db, floor)
-	}
-	return raw, persisted, nil
+	return encodeReplicaSnapshot(path, c.boundary.incarnation)
 }
+
+// Persisted prunes the live replay receipts at or below the floor. It may be
+// called only after the enclosing consensus snapshot sink has durably
+// closed; after a restore that followed the boundary it does nothing.
+// Failure to prune is retryable maintenance, not failure of that snapshot.
+// Business commands and effects are never removed.
+func (c *ReplicaCheckpoint) Persisted() error {
+	l := c.boundary.l
+	l.applyMu.Lock()
+	defer l.applyMu.Unlock()
+	if c.boundary.generation != l.snapshotGeneration {
+		return nil
+	}
+	if _, err := l.replicationState(); err != nil {
+		return err
+	}
+	return pruneReplicaReceipts(l.db, c.floor)
+}
+
+// Release ends the boundary's read transaction if Encode did not.
+func (c *ReplicaCheckpoint) Release() { c.boundary.release() }
 
 func pruneReplicaReceipts(db *sql.DB, floor uint64) error {
 	tx, err := db.BeginTx(context.Background(), nil)

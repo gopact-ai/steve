@@ -30,7 +30,7 @@ async function fixture(enabled = true, step = "identity", done = false) {
     await page.addInitScript((id) => {
         localStorage.setItem("steve.ui.locale", "en"); sessionStorage.setItem("steve.conversation", id);
         window.sources = [];
-        window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((item) => item !== this); } };
+        window.EventSource = class { addEventListener() {} constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() { window.sources = window.sources.filter((item) => item !== this); } };
     }, conversation);
     await page.route("**/*", async (route) => {
         const req = route.request(), u = new URL(req.url()), p = u.pathname;

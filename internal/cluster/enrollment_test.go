@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/cluster/clustertest"
 	"github.com/gopact-ai/steve/internal/coordination"
 )
 
@@ -19,7 +20,8 @@ func TestPeerEnrollmentReviewChangesFailBeforeIssuingIdentity(t *testing.T) {
 	options.Activate = testPeerApplication(t, &starts)
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := ports.Peer, ports.Raft
 	request := PeerEnrollmentRequest{Name: "reviewed-peer", PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {
@@ -53,7 +55,8 @@ func TestPeerEnrollmentTakesADisplayNameAndAWorkspaceForTheMachine(t *testing.T)
 	options.Activate = testPeerApplication(t, &starts)
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := ports.Peer, ports.Raft
 	// The remote account's home is where "~/" lands at import time.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -120,7 +123,8 @@ func TestAbandonPeerEnrollmentArchivesTheRecordAndRefusesAJoinedNode(t *testing.
 	options.Activate = testPeerApplication(t, &starts)
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := ports.Peer, ports.Raft
 	request := PeerEnrollmentRequest{Name: "abandoned", PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {
@@ -171,7 +175,8 @@ func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T
 	if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-orphan", Actor: "owner", Member: coordination.Member{NodeID: orphan.Config.NodeID, Address: orphan.Config.RaftAddress, APIAddress: orphan.Config.PeerURL, Voting: true}}); err != nil {
 		t.Fatal(err)
 	}
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := ports.Peer, ports.Raft
 	request := PeerEnrollmentRequest{Name: "orphaned", PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 	plan, err := source.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {

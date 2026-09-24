@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/cluster/clustertest"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/sshconnect/linktest"
 	"github.com/hashicorp/raft"
@@ -38,8 +39,9 @@ func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.
 	hub := StartTestPeer(t, hubOptions)
 	WaitPeerReady(t, hub)
 
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	hubRaftOnMachine, hubAPIOnMachine := FreeEnrollmentPorts(t)
+	machinePorts := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := machinePorts.Peer, machinePorts.Raft
+	hubRaftOnMachine, hubAPIOnMachine := tunnels.Reserve(t), tunnels.Reserve(t)
 	hubRoute := coordination.Route{Raft: hubRaftOnMachine, API: hubAPIOnMachine}
 	request := PeerEnrollmentRequest{Alias: "box", Name: "box", PeerAddress: peerAddress, RaftAddress: raftAddress, HubRoute: hubRoute, Level: "restricted"}
 	plan, err := hub.PreviewEnrollment(t.Context(), request, true)
@@ -68,7 +70,7 @@ func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.
 		t.Fatalf("the machine was not told to reach the hub through the tunnel: %+v", nodeConfig.Routes)
 	}
 
-	nodeOptions := PeerOptions{ConfigPath: imported.ConfigPath, ClusterPath: imported.ClusterPath, RaftConfig: raft.DefaultConfig(), PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-domain-box", nil }, Activate: testPeerApplication(t, &activations)}
+	nodeOptions := PeerOptions{ConfigPath: imported.ConfigPath, ClusterPath: imported.ClusterPath, RaftConfig: raft.DefaultConfig(), PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-domain-box", nil }, Activate: testPeerApplication(t, &activations), Listen: machinePorts.Listen}
 	node := StartTestPeer(t, nodeOptions)
 	linkCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -150,8 +152,9 @@ func TestAbandoningAnEnrollmentDropsItsLink(t *testing.T) {
 	hubOptions.SSHLaunch = tunnels
 	hub := StartTestPeer(t, hubOptions)
 	WaitPeerReady(t, hub)
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	hubRaftOnMachine, hubAPIOnMachine := FreeEnrollmentPorts(t)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := ports.Peer, ports.Raft
+	hubRaftOnMachine, hubAPIOnMachine := tunnels.Reserve(t), tunnels.Reserve(t)
 	request := PeerEnrollmentRequest{Alias: "box", Name: "box", PeerAddress: peerAddress, RaftAddress: raftAddress, HubRoute: coordination.Route{Raft: hubRaftOnMachine, API: hubAPIOnMachine}, Level: "restricted"}
 	plan, err := hub.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {
@@ -205,8 +208,9 @@ func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) 
 		t.Fatal(err)
 	}
 	WaitPeerReady(t, hub)
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	hubRaftOnMachine, hubAPIOnMachine := FreeEnrollmentPorts(t)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := ports.Peer, ports.Raft
+	hubRaftOnMachine, hubAPIOnMachine := tunnels.Reserve(t), tunnels.Reserve(t)
 	request := PeerEnrollmentRequest{Alias: "box", Name: "box", PeerAddress: peerAddress, RaftAddress: raftAddress, HubRoute: coordination.Route{Raft: hubRaftOnMachine, API: hubAPIOnMachine}, Level: "restricted"}
 	plan, err := hub.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {
@@ -280,8 +284,9 @@ func TestRemovingAMemberEndsItsLinkAndRoute(t *testing.T) {
 	if err := hub.RemoveMember(t.Context(), hub.Config.NodeID); err == nil {
 		t.Fatal("this node removed itself")
 	}
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	hubRaftOnMachine, hubAPIOnMachine := FreeEnrollmentPorts(t)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	peerAddress, raftAddress := ports.Peer, ports.Raft
+	hubRaftOnMachine, hubAPIOnMachine := tunnels.Reserve(t), tunnels.Reserve(t)
 	request := PeerEnrollmentRequest{Alias: "box", Name: "box", PeerAddress: peerAddress, RaftAddress: raftAddress, HubRoute: coordination.Route{Raft: hubRaftOnMachine, API: hubAPIOnMachine}, Level: "restricted"}
 	plan, err := hub.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {

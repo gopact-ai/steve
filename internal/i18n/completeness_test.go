@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -82,4 +83,18 @@ func contains(keys []Key, want Key) bool {
 		}
 	}
 	return false
+}
+
+// An initialism in a key's constant name is one word of the key: the key
+// for SessionID ends in session_id, not session_i_d.
+func TestKeysSpellInitialismsAsOneWord(t *testing.T) {
+	for _, key := range declaredKeys(t) {
+		words := strings.Split(string(key), "_")
+		for i := 1; i < len(words); i++ {
+			if len(words[i-1]) == 1 && len(words[i]) == 1 {
+				t.Errorf("%q splits an initialism into letters", key)
+				break
+			}
+		}
+	}
 }

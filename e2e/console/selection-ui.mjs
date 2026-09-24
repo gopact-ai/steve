@@ -71,7 +71,7 @@ await page.route("**/*",async route=>{
  if(p==="/console/attempts/attempt1/diff")return route.fulfill({json:{path:'app.ts',diff:'--- a/app.ts\n+++ b/app.ts\n@@ -1,2 +1,3 @@\n-old\n+first\n+second\n third\n'}});
  f.errors.push(req.method()+" "+p);return route.fulfill({status:500,json:{error:'Unmocked API'}});
 });
-await page.addInitScript((conversation)=>{sessionStorage.setItem('steve.conversation',conversation);localStorage.setItem('steve.ui.locale','en');window.sources=[];window.EventSource=class{constructor(){window.sources.push(this);setTimeout(()=>this.onopen?.(),0)}close(){window.sources=window.sources.filter(s=>s!==this)}};window.emit=(e)=>window.sources.forEach(s=>s.onmessage?.({data:JSON.stringify(e)}));},A);
+await page.addInitScript((conversation)=>{sessionStorage.setItem('steve.conversation',conversation);localStorage.setItem('steve.ui.locale','en');window.sources=[];window.EventSource=class{addEventListener(){}constructor(){window.sources.push(this);setTimeout(()=>this.onopen?.(),0)}close(){window.sources=window.sources.filter(s=>s!==this)}};window.emit=(e)=>window.sources.forEach(s=>s.onmessage?.({data:JSON.stringify(e)}));},A);
 async function waitFor(test,label){for(let i=0;i<100;i++){if(await test())return;await new Promise(r=>setTimeout(r,30));}assert.fail(label);}
 
 async function select(locator, needle) {

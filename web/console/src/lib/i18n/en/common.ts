@@ -41,6 +41,7 @@ export const commonEn = {
     "connection.coordinatorRole": "Assigns tasks and saves collaboration progress",
     "common.cancel": "Cancel",
     "common.languageUnavailable": "The selected language could not be loaded; the page stays in its current language. Reload the page to try again.",
+    "common.languageElsewhereUnavailable": "The language changed in another window or in the browser settings could not be loaded; this page stays in its current language. Reload the page to try again.",
     "common.close": "Close",
     "common.details": "Details",
     "common.save": "Save",

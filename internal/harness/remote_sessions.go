@@ -269,10 +269,31 @@ func (s *managedSession) Prompt(ctx context.Context, text string, progress func(
 	return s.PromptTurn(ctx, text, nil, nil, nil, progress)
 }
 
-type managedPromptError struct{ message string }
+// remoteError is a node-owned command's error: the node's message, and the
+// code it classified it with.
+type remoteError struct{ message, code string }
 
-func (e managedPromptError) Error() string       { return e.message }
+func commandError(command *nodewire.SessionCommand) remoteError {
+	return remoteError{message: command.Error, code: command.ErrorKind()}
+}
+
+func (e remoteError) Error() string           { return e.message }
+func (e remoteError) RemoteErrorCode() string { return e.code }
+
+// managedPromptError is a remote error that ended its prompt.
+type managedPromptError struct{ remoteError }
+
 func (e managedPromptError) PromptSettled() bool { return true }
+
+// RemoteErrorCode is the nodewire.SessionError code a node gave err, or
+// empty when err did not come from a node-owned command.
+func RemoteErrorCode(err error) string {
+	var remote interface{ RemoteErrorCode() string }
+	if errors.As(err, &remote) {
+		return remote.RemoteErrorCode()
+	}
+	return ""
+}
 
 func (s *managedSession) PromptTurn(ctx context.Context, text string, media []Media, ask permission.AskFunc, askUser acphost.AskUserFunc, progress func(view.Progress)) (output string, activity []string, runErr error) {
 	request := s.request(ctx, nodewire.SessionActionPrompt)
@@ -357,13 +378,13 @@ observe:
 			switch command.State {
 			case nodewire.SessionCommandCompleted:
 				if command.Error != "" {
-					return command.Output, command.Activity, managedPromptError{command.Error}
+					return command.Output, command.Activity, managedPromptError{commandError(command)}
 				}
 				return command.Output, command.Activity, nil
 			case nodewire.SessionCommandCancelled:
 				return command.Output, command.Activity, ErrTurnCanceled
 			case nodewire.SessionCommandUncertain:
-				return command.Output, command.Activity, fmt.Errorf("%w: %s", ErrStopUnconfirmed, command.Error)
+				return command.Output, command.Activity, fmt.Errorf("%w: %w", ErrStopUnconfirmed, commandError(command))
 			}
 		}
 		for _, q := range state.Questions {
