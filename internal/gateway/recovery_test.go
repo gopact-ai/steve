@@ -10,9 +10,11 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 type recoveryProbe struct {
+	turntest.IdleCoordinator
 	calls, resumes atomic.Int32
 	retained       []turn.RetainedChat
 	fail           error

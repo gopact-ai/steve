@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -29,7 +30,7 @@ func TestOrdinaryAcceptedInputSurvivesClosedLifetimeAndRestarts(t *testing.T) {
 	g := New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{})
+	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{}, p)
 	if err := g.HandleMessage(inboundFixture()); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestOrdinaryAcknowledgementRefusalRestartsWithoutRepeatingReply(t *testing.
 		WHEN NEW.kind='gateway-input' BEGIN SELECT RAISE(ABORT,'ack unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("ack refusal was hidden")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_ack`); err != nil {
@@ -111,7 +112,7 @@ func TestDurableActionRejectedAcceptanceDoesNotConsumeRetryOrRecall(t *testing.T
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
 	var workers recoveryTestWorkers
-	g.SetIngressLifetime(t.Context(), &workers)
+	g.SetIngressLifetime(t.Context(), &workers, nil)
 	msg := inboundFixture()
 	id := g.registerTurn(msg)
 	g.setTurnCard(id, "card")
@@ -180,7 +181,7 @@ func TestDurableResultRequiresRealProviderReceipt(t *testing.T) {
 	g := New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil {
 		t.Fatal("fabricated successful provider receipt")
 	}
 	if ch.texts.Load() != 1 || ch.replies.Load() != 0 {
@@ -216,7 +217,7 @@ func TestDurableUnknownFinalPatchNeverFallsBackToAnotherReply(t *testing.T) {
 	g := New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); !errors.Is(err, channel.ErrOutcomeUnknown) {
+	if err := g.processAcceptedFixture(inboundFixture(), p); !errors.Is(err, channel.ErrOutcomeUnknown) {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -229,7 +230,7 @@ func TestDurableUnknownFinalPatchNeverFallsBackToAnotherReply(t *testing.T) {
 	}
 }
 
-type emptyListenProbe struct{}
+type emptyListenProbe struct{ turntest.IdleCoordinator }
 
 func (emptyListenProbe) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, nil
@@ -248,7 +249,7 @@ func TestDurableSilentListeningRecordsPolicyNotExternalDelivery(t *testing.T) {
 	msg := inboundFixture()
 	msg.ChatType, msg.Mentioned = protocol.ChatGroup, false
 	for range 2 {
-		if err := g.processAcceptedFixture(msg); err != nil {
+		if err := g.processAcceptedFixture(msg, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -275,12 +276,13 @@ func TestTopicOwnershipRejectsUnprovenOrUnrelatedRoute(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer book.Close()
-			g := New(&durableInputProbe{})
+			p := &durableInputProbe{}
+			g := New(p)
 			g.BindChannel(&ingressTopicChannel{})
 			g.SetRecoveryLedger(book)
 			msg := inboundFixture()
 			msg.ConversationID, msg.Text = msg.ChatID, "/t original"
-			if err := g.processAcceptedFixture(msg); err != nil {
+			if err := g.processAcceptedFixture(msg, p); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := book.DB().Exec(mutation); err != nil {
@@ -300,9 +302,10 @@ func TestOrdinaryAcceptanceConflictsOnActorPayloadOrKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	g := New(&durableInputProbe{})
+	p := &durableInputProbe{}
+	g := New(p)
 	g.SetRecoveryLedger(book)
-	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{})
+	g.SetIngressLifetime(t.Context(), closedRecoveryWorkers{}, p)
 	msg := inboundFixture()
 	if err := g.HandleMessage(msg); err != nil {
 		t.Fatal(err)
@@ -334,7 +337,7 @@ func TestDurableHistoryCardReplaysItsOriginalAcceptanceOnly(t *testing.T) {
 	g.BindChannel(&recoveryChannel{})
 	g.SetRecoveryLedger(book)
 	var workers recoveryTestWorkers
-	g.SetIngressLifetime(t.Context(), &workers)
+	g.SetIngressLifetime(t.Context(), &workers, nil)
 	action := feishu.CardAction{RequestID: "thread", Action: "history_restore", MessageID: "finished-card", ChatID: "chat", OpenID: "owner"}
 	for range 2 {
 		if toast := g.HandleCardAction(action); toast.Type != "success" {
@@ -354,7 +357,10 @@ func TestDurableHistoryCardReplaysItsOriginalAcceptanceOnly(t *testing.T) {
 	}
 }
 
-type mismatchedIngressResult struct{ attempt string }
+type mismatchedIngressResult struct {
+	turntest.IdleCoordinator
+	attempt string
+}
 
 func (p mismatchedIngressResult) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	req.OnTurnReady("task", "admitted-attempt")
@@ -373,7 +379,7 @@ func TestDurableIngressCannotDeliverUnsettledOrDifferentAttemptResult(t *testing
 			g := New(mismatchedIngressResult{attempt: returned})
 			g.BindChannel(ch)
 			g.SetRecoveryLedger(book)
-			if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+			if err := g.processAcceptedFixture(inboundFixture(), nil); err == nil {
 				t.Fatal("unproven native result became delivery authority")
 			}
 			if _, exists, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/reply"); err != nil || exists {
@@ -399,7 +405,7 @@ func TestDurableNormalInputWaitsWithoutReservingDispatchBehindLiveOwner(t *testi
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
-	g.SetIngressLifetime(ctx, &workers)
+	g.SetIngressLifetime(ctx, &workers, nil)
 	first := inboundFixture()
 	if err := g.HandleMessage(first); err != nil {
 		t.Fatal(err)
@@ -435,7 +441,7 @@ func TestDurableNormalInputWaitsWithoutReservingDispatchBehindLiveOwner(t *testi
 	}
 }
 
-type rejectedIngressProbe struct{}
+type rejectedIngressProbe struct{ turntest.IdleCoordinator }
 
 func (rejectedIngressProbe) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Message: "previous execution requires reconciliation"}}
@@ -451,7 +457,7 @@ func TestDurableObservedPreAdmissionRejectionIsNotUnknownNativeDispatch(t *testi
 	g := New(rejectedIngressProbe{})
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); err != nil {
+	if err := g.processAcceptedFixture(inboundFixture(), nil); err != nil {
 		t.Fatalf("observed rejection without any OnTurnReady stranded as unknown native execution: %v", err)
 	}
 	if _, exists, _ := book.CommandReceipt(t.Context(), "gateway-input/input-message/attempt"); exists {
@@ -477,7 +483,7 @@ func TestDurableTopicSeedsParallelThreadWhileOriginalChatIsServing(t *testing.T)
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
-	g.SetIngressLifetime(ctx, &workers)
+	g.SetIngressLifetime(ctx, &workers, nil)
 	msg := inboundFixture()
 	msg.ConversationID = msg.ChatID
 	if err := g.HandleMessage(msg); err != nil {
@@ -540,7 +546,7 @@ func TestDurableResultRetainsUserErrorAndCancellationRendering(t *testing.T) {
 				WHEN NEW.kind='gateway-input-reply' BEGIN SELECT RAISE(ABORT,'defer reply'); END`); err != nil {
 				t.Fatal(err)
 			}
-			if err := g.processAcceptedFixture(inboundFixture()); err == nil {
+			if err := g.processAcceptedFixture(inboundFixture(), nil); err == nil {
 				t.Fatal("failed to defer rendering")
 			}
 			if _, err := book.DB().Exec(`DROP TRIGGER defer_rendering`); err != nil {

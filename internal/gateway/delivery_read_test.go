@@ -8,6 +8,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func TestConfirmedAttemptDeliveryTxRequiresFullOriginalProof(t *testing.T) {
@@ -54,7 +55,7 @@ func TestConfirmedAttemptDeliveryTxRequiresFullOriginalProof(t *testing.T) {
 	}
 }
 
-type suppressedReceiptProbe struct{}
+type suppressedReceiptProbe struct{ turntest.IdleCoordinator }
 
 func (suppressedReceiptProbe) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	req.OnTurnReady("original-task", "original-attempt")
@@ -88,6 +89,7 @@ func TestConfirmedDeliveryReadsActualIngressAndRecoveryOwners(t *testing.T) {
 				}
 			default:
 				msg := inboundFixture()
+				var driver RecoveryDriver = p
 				if mode == "topic" {
 					msg.ConversationID, msg.Text = msg.ChatID, "/t original"
 					conversation, anchor = "topic-thread", "topic-anchor"
@@ -97,9 +99,10 @@ func TestConfirmedDeliveryReadsActualIngressAndRecoveryOwners(t *testing.T) {
 					g.BindChannel(&recoveryChannel{})
 					g.SetRecoveryLedger(book)
 					msg.ChatType, msg.Mentioned = protocol.ChatGroup, false
+					driver = nil
 				}
 				var workers recoveryTestWorkers
-				g.SetIngressLifetime(t.Context(), &workers)
+				g.SetIngressLifetime(t.Context(), &workers, driver)
 				if err := g.HandleMessage(msg); err != nil {
 					t.Fatal(err)
 				}

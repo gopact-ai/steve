@@ -9,33 +9,24 @@ import (
 
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/turn"
 )
 
-// SetIngressLifetime shares the application's close-before-join worker owner.
-// Wire it before accepting channel callbacks.
-func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorkers) {
-	g.ingressContext, g.ingressWorkers = ctx, workers
-}
-
-type inputParser interface {
-	ParseInput(string) (string, turn.ParsedInput)
+// SetIngressLifetime shares the application's close-before-join worker owner
+// and the driver that resumes the retained chat of an accepted input whose
+// dispatch must be recovered from its admitted attempt; a nil driver leaves
+// such an input pending for the running reconciler. Wire it before accepting
+// channel callbacks.
+func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorkers, driver RecoveryDriver) {
+	g.ingressContext, g.ingressWorkers, g.ingressDriver = ctx, workers, driver
 }
 
 func (g *Gateway) immediateInput(text string) bool {
-	if parser, ok := g.processor.(inputParser); ok {
-		_, parsed := parser.ParseInput(text)
-		return parsed.Interrupt || parsed.Control()
-	}
-	return turn.ImmediateInput(text)
+	_, parsed := g.coordinator.ParseInput(text)
+	return parsed.Interrupt || parsed.Control()
 }
 
 func (g *Gateway) scheduleControl(text string) bool {
-	if parser, ok := g.processor.(inputParser); ok {
-		_, parsed := parser.ParseInput(text)
-		return parsed.ScheduleControl()
-	}
-	_, parsed := turn.ParseAddressedInput(text)
+	_, parsed := g.coordinator.ParseInput(text)
 	return parsed.ScheduleControl()
 }
 
@@ -51,8 +42,9 @@ func (g *Gateway) acceptAndWake(key string, input gatewayInput) error {
 	if err != nil || !found {
 		return fmt.Errorf("gateway accepted input cannot be read: %w", err)
 	}
-	driver, _ := g.processor.(RecoveryDriver)
-	run, release, err := g.claimQueued(ctx, g.recoveryLedger, receipt, driver, nil, false)
+	// Ingress claims only the gatewayInputKind receipt acceptInput recorded,
+	// so the claimQueued branch that calls revive is unreachable here.
+	run, release, err := g.claimQueued(ctx, g.recoveryLedger, receipt, g.ingressDriver, nil, false)
 	if errors.Is(err, channel.ErrDeliveryQueued) {
 		return nil // Acceptance is durable; the running reconciler owns retry.
 	}

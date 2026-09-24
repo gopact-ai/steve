@@ -29,6 +29,9 @@ type recoveryInput struct {
 	Admission task.ResumeAdmission `json:"admission,omitzero"`
 }
 
+// RecoveryDriver resumes, by attempt id, the retained chat of an attempt
+// that was already admitted, without running its input again through
+// Handle. The gateway delivers only a result whose Attempt is that id.
 type RecoveryDriver interface {
 	ResumeRetainedChat(context.Context, string, turn.Request) (turn.Result, error)
 }
@@ -337,7 +340,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 					cancel()
 				}
 			}
-			result, runErr := g.processor.Handle(ctx, request)
+			result, runErr := g.coordinator.Handle(ctx, request)
 			runErr = errors.Join(runErr, acceptanceErr)
 			output := recoveredResult(result, runErr)
 			// An execution layer block arrives here only through turn's

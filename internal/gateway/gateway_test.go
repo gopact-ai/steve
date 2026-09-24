@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // waitDeadline bounds how long a test waits for a goroutine to reach a known
@@ -85,26 +86,29 @@ func (r *reply) Reply(_ context.Context, _, text string) error {
 	return nil
 }
 
-type fakeProcessor struct{}
+type fakeProcessor struct{ turntest.IdleCoordinator }
 
 func (fakeProcessor) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	return turn.Result{Text: "reply: " + req.Input}, nil
 }
 
-type cancelingProcessor struct{}
+type cancelingProcessor struct{ turntest.IdleCoordinator }
 
 func (cancelingProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, context.Canceled
 }
 
-type countingProcessor struct{ calls atomic.Int32 }
+type countingProcessor struct {
+	turntest.IdleCoordinator
+	calls atomic.Int32
+}
 
 func (p *countingProcessor) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	p.calls.Add(1)
 	return turn.Result{Text: "reply: " + req.Input}, nil
 }
 
-type userErrorProcessor struct{}
+type userErrorProcessor struct{ turntest.IdleCoordinator }
 
 func (userErrorProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, turn.UserError{Text: i18n.New(i18n.LocaleZH).T(i18n.CapabilityDrift, protocol.CommandNew)}
@@ -178,6 +182,7 @@ func TestGatewayDeduplicatesMessageID(t *testing.T) {
 }
 
 type blockingProcessor struct {
+	turntest.IdleCoordinator
 	mu      sync.Mutex
 	seen    []string
 	release chan struct{}
@@ -322,7 +327,7 @@ func TestGatewayReplyWithoutReactionWhenAckFails(t *testing.T) {
 	}
 }
 
-type emptyProcessor struct{}
+type emptyProcessor struct{ turntest.IdleCoordinator }
 
 func (emptyProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, nil
@@ -472,7 +477,10 @@ func TestGatewayClearsReactionAfterFailedTurn(t *testing.T) {
 	}
 }
 
-type captureProcessor struct{ req chan turn.Request }
+type captureProcessor struct {
+	turntest.IdleCoordinator
+	req chan turn.Request
+}
 
 func (p *captureProcessor) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	p.req <- req
@@ -722,6 +730,7 @@ func TestKnownSettingsAreNotRepeatedNews(t *testing.T) {
 // holdingProcessor parks every call, not just the first, so a test can hold
 // the pool full while it checks what still gets through.
 type holdingProcessor struct {
+	turntest.IdleCoordinator
 	mu      sync.Mutex
 	seen    []string
 	release chan struct{}
@@ -896,6 +905,7 @@ func (r *threadingReply) ReplyThread(_ context.Context, messageID, text string) 
 }
 
 type reqRecorder struct {
+	turntest.IdleCoordinator
 	mu   sync.Mutex
 	reqs []turn.Request
 }

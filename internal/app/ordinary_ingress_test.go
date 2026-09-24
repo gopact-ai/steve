@@ -10,12 +10,14 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // Native completion already exists. The only substituted dependency is native
 // admission; attempt evidence, task accounting, gateway input and recovery all
 // use their production owners and the same real SQLite ledger.
 type ordinaryCompletionProbe struct {
+	turntest.IdleCoordinator
 	coordinator   *turn.Coordinator
 	task, attempt string
 	calls         atomic.Int32
@@ -38,7 +40,7 @@ func TestOrdinaryFeishuIngressRecoversOriginalCompletionAndAccountingAfterReopen
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(first.book)
 	workers := &reconciliationWorkers{}
-	g.SetIngressLifetime(first.ctx, workers)
+	g.SetIngressLifetime(first.ctx, workers, nil)
 	err := g.HandleMessage(feishu.InboundMessage{
 		ConversationID: crashConversation, ChatID: "console", MessageID: "web-original",
 		SenderOpenID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 type scheduledNotice struct {
@@ -25,6 +26,7 @@ func (c *scheduledNotice) ReplyText(context.Context, string, string) (string, er
 }
 
 type scheduledProcessor struct {
+	turntest.IdleCoordinator
 	started chan turn.Request
 	finish  chan struct{}
 }

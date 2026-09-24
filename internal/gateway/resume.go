@@ -41,14 +41,6 @@ type Revival struct {
 	Manual bool
 }
 
-// scheduledValidator is a processor that checks a scheduled fire's
-// conversation, project and requester before the notice is posted, so a
-// stale schedule is refused rather than announced. A processor without
-// the check runs the fire on the request's own validation.
-type scheduledValidator interface {
-	ValidateScheduled(ctx context.Context, conversation, expectedProject, requester string) error
-}
-
 // Notice is one line Steve posts on its own initiative, outside any turn's
 // card: a task ended, and saying so is the platform's job rather than the
 // agent's. The mention is what makes it a delivery instead of a log entry.
@@ -152,7 +144,8 @@ type FireReceipt struct{ MessageID string }
 // stored instruction as a message from the person who scheduled it. The notice
 // is the new anchor: a replayed message needs an id of its own, and the
 // announcement is also what makes an unattended run visible rather than
-// something that just appears.
+// something that just appears. A run the coordinator refuses is neither
+// announced nor replayed.
 func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error) {
 	if g.ch == nil {
 		return FireReceipt{}, fmt.Errorf("channel cannot post schedule notice for #%s", f.ScheduleID)
@@ -163,10 +156,8 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" || f.Member == "" || f.Requester == "" || f.ProjectID == "" {
 		return FireReceipt{}, fmt.Errorf("schedule %s has incomplete execution context", f.ScheduleID)
 	}
-	if validator, ok := g.processor.(scheduledValidator); ok {
-		if err := validator.ValidateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
-			return FireReceipt{}, err
-		}
+	if err := g.coordinator.ValidateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
+		return FireReceipt{}, err
 	}
 	noticeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	noticeID, err := g.ch.ReplyText(noticeCtx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
@@ -222,7 +213,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 		g.gate.Anchor(f.ConversationID, channel.Address{Channel: "feishu", Conversation: f.ConversationID, Message: noticeID})
 	}
 	ui := g.newTurnUI(msg, false)
-	result, runErr := g.processor.Handle(ctx, turn.Request{
+	result, runErr := g.coordinator.Handle(ctx, turn.Request{
 		Channel: "feishu", ConversationID: f.ConversationID, Input: text, Origin: msg.Origin,
 		MessageID: noticeID, ChatID: f.ChatID, CardID: ui.cardID, SenderOpenID: f.Requester,
 		ChatType: protocol.ParseChatType(f.ChatType), Mentioned: true, ExpectedProject: f.ProjectID,

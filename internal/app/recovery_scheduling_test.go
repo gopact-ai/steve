@@ -6,6 +6,7 @@ import (
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,7 @@ func TestStartupSteerCannotConsumeDeferredAccountingContinuation(t *testing.T) {
 }
 
 type slowGatewayRecovery struct {
+	turntest.IdleCoordinator
 	entered chan struct{}
 	release chan struct{}
 }
