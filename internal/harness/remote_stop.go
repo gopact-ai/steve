@@ -124,7 +124,7 @@ func (s *managedSession) reconcileStop(request nodewire.SessionRequest, output *
 			case nodewire.SessionCommandCompleted:
 				*output, *activity, *runErr = command.Output, command.Activity, nil
 				if command.Error != "" {
-					*runErr = managedPromptError{command.Error}
+					*runErr = managedPromptError{commandError(command)}
 				} else if done != nil && stopReceiptMatches(stopped, request) {
 					*runErr = ErrTurnCanceled
 				}
@@ -134,7 +134,7 @@ func (s *managedSession) reconcileStop(request nodewire.SessionRequest, output *
 			return
 		}
 		if state.ProcessStopped || command.ProcessStopped {
-			*output, *activity, *runErr = command.Output, command.Activity, managedPromptError{"original native process terminated before completing its prompt"}
+			*output, *activity, *runErr = command.Output, command.Activity, managedPromptError{remoteError{message: "original native process terminated before completing its prompt", code: nodewire.SessionErrorFailed}}
 		}
 		return
 	}
