@@ -191,7 +191,7 @@ func Unpack(data []byte, dir string) ([]Entry, error) {
 			return nil, fmt.Errorf("bundle: %w", err)
 		}
 		clean := path.Clean(hdr.Name)
-		if path.IsAbs(clean) || clean == "." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		if strings.Contains(hdr.Name, `\`) || path.IsAbs(clean) || clean == "." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
 			return nil, fmt.Errorf("bundle entry %q escapes the bundle", hdr.Name)
 		}
 		skill, _, ok := strings.Cut(clean, "/")

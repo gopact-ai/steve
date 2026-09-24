@@ -59,7 +59,8 @@ type remoteProcess struct {
 	closeOnce sync.Once
 	ctx       context.Context
 	cancel    context.CancelFunc
-	// afterGrace starts an outage's grace timer and returns its Stop.
+	// afterGrace starts an outage's grace timer and returns its Stop. It is
+	// always startGraceTimer outside tests.
 	afterGrace func(time.Duration, func()) func() bool
 }
 

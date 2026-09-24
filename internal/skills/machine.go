@@ -138,13 +138,42 @@ func UnpackImport(encoded, dest string) error {
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return err
 	}
-	if err := unpackEntries(tar.NewReader(gz), tmp); err != nil {
+	if err := unpackEntries(tar.NewReader(&cappedReader{r: gz, left: importStreamCap}), tmp); err != nil {
 		// The unpack error is the answer; what a failed remove leaves
 		// behind is refused by the RemoveAll above at the next import.
 		_ = os.RemoveAll(tmp)
 		return err
 	}
 	return os.Rename(tmp, dest)
+}
+
+// importStreamCap bounds the decompressed import stream: the file bytes
+// the import cap allows, plus headers and padding for every entry. Entries
+// that write nothing are still read through, so they count here.
+const importStreamCap = importCap + maxUnpackEntries*2048
+
+// cappedReader fails once more than left bytes have been read, where
+// io.LimitReader would end the stream quietly.
+type cappedReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		// A stream that ends exactly at the cap is within it.
+		var probe [1]byte
+		if n, err := c.r.Read(probe[:]); n == 0 && err != nil {
+			return 0, err
+		}
+		return 0, fmt.Errorf("import stream expands to more than %d bytes", int64(importStreamCap))
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	return n, err
 }
 
 // unpackEntries writes the stream's directories and regular files under
@@ -165,11 +194,8 @@ func unpackEntries(tr *tar.Reader, tmp string) error {
 		if !strings.HasPrefix(target, tmp+string(filepath.Separator)) && target != tmp {
 			return fmt.Errorf("entry %q escapes the skill", h.Name)
 		}
-		switch h.Typeflag {
-		case tar.TypeDir, tar.TypeReg:
-			if err := budget.entry(); err != nil {
-				return fmt.Errorf("skill: %w", err)
-			}
+		if err := budget.entry(); err != nil {
+			return fmt.Errorf("skill: %w", err)
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:

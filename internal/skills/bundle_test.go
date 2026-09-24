@@ -248,3 +248,22 @@ func TestPackAndPackImportRefuseMoreEntriesThanUnpackAccepts(t *testing.T) {
 		t.Errorf("PackImport: %v", err)
 	}
 }
+
+// A backslash is a path separator on Windows, so an entry name holding one
+// could climb out of the skill there; bundles never carry one.
+func TestUnpackRefusesBackslashesInEntryNames(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Name: `skill/..\..\x`, Mode: 0o644, Size: 1, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Unpack(buf.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("Unpack of a backslashed entry: %v", err)
+	}
+}
