@@ -134,24 +134,11 @@ func orHubName(node string) string {
 	return node
 }
 
-// persistConfig preserves the commit boundary for callers with derived live state.
-func (a *Service) PersistConfig(candidate *config.Config) error {
-	return a.persistConfigContext(a.lifetime(), candidate)
-}
-
 func (a *Service) lifetime() context.Context {
 	if a.Lifetime == nil {
 		return context.Background()
 	}
 	return a.Lifetime
-}
-
-func (a *Service) persistConfigContext(ctx context.Context, candidate *config.Config) error {
-	err := a.saveConfig(ctx, candidate)
-	if err == nil || config.Committed(err) {
-		a.Cfg.AdoptFileRevision(candidate)
-	}
-	return err
 }
 
 // updateConfig rewrites a.Cfg through its store, saving the candidate to
