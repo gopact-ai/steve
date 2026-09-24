@@ -30,6 +30,9 @@ import (
 // for other packages: an empty agent catalog, a runtime that starts no
 // agent, an empty home and skill set, the Chinese catalog, and every store
 // on book. Stores built from another default follow what d sets.
+//
+// It repeats turntest.Deps, which imports this package and so cannot be
+// used from its own tests; change both together.
 func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	t.Helper()
 	must := func(err error) {
@@ -73,9 +76,6 @@ func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	if d.Attempts == nil {
 		d.Attempts = attempt.New(book)
 	}
-	if d.Artifacts == nil {
-		d.Artifacts = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, d.Projects, artifact.LocalNodes{Dir: t.TempDir()})
-	}
 	if d.Intents == nil {
 		d.Intents = intent.New(book)
 	}
@@ -85,6 +85,13 @@ func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	}
 	if d.Executions == nil {
 		d.Executions = execution.New(t.Context(), d.Tasks)
+	}
+	if d.Artifacts == nil {
+		// Bound to the registry the way the application binds its store,
+		// so a landing runs in the source task's execution scope.
+		artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, d.Projects, artifact.LocalNodes{Dir: t.TempDir()})
+		artifacts.SetExecution(d.Executions)
+		d.Artifacts = artifacts
 	}
 	if d.Schedules == nil {
 		d.Schedules, err = schedule.OpenLedger(book)
