@@ -61,7 +61,12 @@ func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	if d.Text.IsZero() {
 		d.Text = i18n.New(i18n.LocaleZH)
 	}
+	// The default memory keeps global memory in the home directory the
+	// coordinator reads, when that home is a directory.
 	homeDir := t.TempDir()
+	if dir, ok := d.Home.(home.Dir); ok {
+		homeDir = dir.Path
+	}
 	if d.Home == nil {
 		d.Home = home.Dir{Path: homeDir}
 	}
@@ -285,5 +290,19 @@ func TestNewReadsRuntimePolicyFromItsSources(t *testing.T) {
 	live.SetAutoResolve(true)
 	if live.promptTimeout() != 19*time.Minute || live.autoResolves() {
 		t.Fatalf("with sources: timeout %v, auto-resolve %v", live.promptTimeout(), live.autoResolves())
+	}
+}
+
+func TestFillDepsKeepsDefaultMemoryInTheCoordinatorsHome(t *testing.T) {
+	chosen := t.TempDir()
+	withChosen := Deps{Home: home.Dir{Path: chosen}}
+	fillDeps(t, testLedger(t), &withChosen)
+	var withDefault Deps
+	fillDeps(t, testLedger(t), &withDefault)
+	for name, deps := range map[string]Deps{"chosen": withChosen, "default": withDefault} {
+		want := filepath.Join(deps.Home.(home.Dir).Path, home.FileMemory)
+		if got := deps.Memory.Where(memory.Global); got != want {
+			t.Errorf("%s home: global memory at %q, want %q", name, got, want)
+		}
 	}
 }

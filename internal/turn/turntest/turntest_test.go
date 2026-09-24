@@ -1,9 +1,12 @@
 package turntest_test
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
@@ -43,3 +46,18 @@ func TestDepsKeepWhatATestSetsAndOpenTheRestOnItsLedger(t *testing.T) {
 
 // A package outside turn can name the runtime a coordinator is built with.
 var _ turn.Runtime = turntest.NoRuntime{}
+
+// The default memory keeps global memory in the home the coordinator reads,
+// whether the test chose that home or left it to the default.
+func TestDefaultMemoryLivesInTheCoordinatorsHome(t *testing.T) {
+	chosen := t.TempDir()
+	for name, deps := range map[string]turn.Deps{
+		"chosen":  turntest.Deps(t, func(o *turntest.Options) { o.Home = home.Dir{Path: chosen} }),
+		"default": turntest.Deps(t),
+	} {
+		want := filepath.Join(deps.Home.(home.Dir).Path, home.FileMemory)
+		if got := deps.Memory.Where(memory.Global); got != want {
+			t.Errorf("%s home: global memory at %q, want %q", name, got, want)
+		}
+	}
+}

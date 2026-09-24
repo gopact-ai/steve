@@ -86,7 +86,12 @@ func Deps(t testing.TB, opts ...Option) turn.Deps {
 	if d.Text.IsZero() {
 		d.Text = i18n.New(i18n.LocaleZH)
 	}
+	// The default memory keeps global memory in the home directory the
+	// coordinator reads, when that home is a directory.
 	homeDir := t.TempDir()
+	if dir, ok := d.Home.(home.Dir); ok {
+		homeDir = dir.Path
+	}
 	if d.Home == nil {
 		d.Home = home.Dir{Path: homeDir}
 	}
