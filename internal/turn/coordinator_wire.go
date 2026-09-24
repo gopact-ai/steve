@@ -22,8 +22,8 @@ type Callbacks struct {
 	// landings are done, delivering the results of delegated children that
 	// ended while the turn ran. TurnPreface is the account of children that
 	// ended, or were stopped, since the task last heard; an empty Text adds
-	// nothing to the prompt. Both belong to delegation, which exists only
-	// with AgentGate, and are nil without it.
+	// nothing to the prompt. Both come from the messaging stage and are nil
+	// without messaging; each is skipped when nil.
 	AfterTurn   func(taskID string)
 	TurnPreface func(ctx context.Context, taskID string) Preface
 	// Notifier pushes a task notice to the channel the task came from.

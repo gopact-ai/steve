@@ -223,8 +223,8 @@ type coordinatorState struct {
 	homeProject    string
 	node           string
 	// supervisor, attach, gate and the callbacks below are set once by
-	// Wire. afterTurn and turnPreface are nil without messaging, as gate
-	// is; the rest are never nil once wired.
+	// Wire. gate, afterTurn and turnPreface may be nil and are checked
+	// where they are used; the rest are never nil once wired.
 	resumer           func(TaskResume) error
 	resumeDispatcher  func(TaskResume)
 	notifier          func(TaskNotice)
