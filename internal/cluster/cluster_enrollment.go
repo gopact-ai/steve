@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -888,38 +887,7 @@ func (p *Peer) RegisterEnrolledWorker(ctx context.Context, nodeID, level string)
 	if admin == nil {
 		return coordination.ErrNotReady
 	}
-	admin.Mu.Lock()
-	defer admin.Mu.Unlock()
-	adminsvc.ConfigMu.Lock()
-	old := admin.Cfg.Nodes
-	updated := maps.Clone(old)
-	if updated == nil {
-		updated = map[string]config.Node{}
-	}
-	next := config.Node{Addr: worker.Address, Token: worker.Token, Level: string(datalevel.Level(level).OrDefault())}
-	if existing, ok := updated[nodeID]; ok {
-		if existing.Addr != next.Addr || existing.Token != next.Token {
-			adminsvc.ConfigMu.Unlock()
-			return coordination.ErrConflict
-		}
-		next = existing
-	}
-	if _, ok := updated[nodeID]; !ok {
-		updated[nodeID] = next
-		admin.Cfg.Nodes = updated
-		if err := admin.PersistConfig(admin.Cfg); err != nil {
-			admin.Cfg.Nodes = old
-			adminsvc.ConfigMu.Unlock()
-			return err
-		}
-	}
-	levels, regions := admin.Cfg.NodeLevels(), admin.Cfg.NodeRegions()
-	adminsvc.ConfigMu.Unlock()
-	admin.Nodes.Add(nodeID, node.Config{Addr: worker.Address, Token: worker.Token, Level: next.Level, DialContext: p.DialWorker})
-	admin.Fleet.SetNodeLevels(levels)
-	admin.Fleet.SetNodeRegions(regions)
-	_, err = admin.Nodes.Refresh(ctx, nodeID)
-	return err
+	return admin.AdmitWorker(ctx, nodeID, node.Config{Addr: worker.Address, Token: worker.Token, Level: level, DialContext: p.DialWorker})
 }
 
 type PeerImportResult struct {

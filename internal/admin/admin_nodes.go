@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
@@ -268,6 +270,47 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 		out.Note = "协调节点尚未配置手动安装包。请先将 steve-node 放到目标机器的 ~/steve-bin/steve-node。如需改用 SSH 自动安装，请先移除此未接入的机器登记，再从“通过 SSH 接入”重新添加。"
 	}
 	return out, saveErr
+}
+
+// AdmitWorker records a cluster worker that has joined and dials it with
+// worker's transport. A worker already recorded with the same address and
+// token keeps its recorded level; one recorded with a different address or
+// token is refused with coordination.ErrConflict. When the configuration
+// cannot be saved, nothing is recorded and the worker is not dialed.
+func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Config) error {
+	next := config.Node{Addr: worker.Addr, Token: worker.Token, Level: string(datalevel.Level(worker.Level).OrDefault())}
+	a.Mu.Lock()
+	defer a.Mu.Unlock()
+	ConfigMu.Lock()
+	old := a.Cfg.Nodes
+	existing, known := old[nodeID]
+	if known {
+		if existing.Addr != next.Addr || existing.Token != next.Token {
+			ConfigMu.Unlock()
+			return coordination.ErrConflict
+		}
+		next = existing
+	} else {
+		updated := maps.Clone(old)
+		if updated == nil {
+			updated = map[string]config.Node{}
+		}
+		updated[nodeID] = next
+		a.Cfg.Nodes = updated
+		if err := a.PersistConfig(a.Cfg); err != nil {
+			a.Cfg.Nodes = old
+			ConfigMu.Unlock()
+			return err
+		}
+	}
+	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
+	ConfigMu.Unlock()
+	worker.Level = next.Level
+	a.Nodes.Add(nodeID, worker)
+	a.Fleet.SetNodeLevels(levels)
+	a.Fleet.SetNodeRegions(regions)
+	_, err := a.Nodes.Refresh(ctx, nodeID)
+	return err
 }
 
 // RemoveNode forgets a machine. Nothing may still live on it: an agent
