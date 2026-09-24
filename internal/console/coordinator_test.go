@@ -3,6 +3,7 @@ package console
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -49,4 +50,57 @@ func TestNewRefusesANilCoordinator(t *testing.T) {
 		}
 	}()
 	New(nil, "owner", nil)
+}
+
+// catalogCoordinator parses a line as a coordinator whose catalog knows
+// codex does: "@codex/cancel" is a stop addressed to codex, though the
+// syntax alone, which wants a space after the address, reads a prompt.
+type catalogCoordinator struct{ queueHandler }
+
+func (c *catalogCoordinator) ParseInput(line string) (string, turn.ParsedInput) {
+	if line == "@codex/cancel" {
+		return "@codex", turn.ParseInput("/cancel")
+	}
+	return c.queueHandler.ParseInput(line)
+}
+
+// The console sorts a line by how its coordinator parses it. A stop that
+// only the coordinator's catalog recognizes runs beside the turn in
+// progress instead of queueing behind it, and like any stop it is
+// recorded but not drawn.
+func TestConsoleClassifiesALineAsItsCoordinatorParsesIt(t *testing.T) {
+	const stop = "@codex/cancel"
+	if _, parsed := turn.ParseAddressedInput(stop); parsed.Interrupt || parsed.Control() {
+		t.Fatalf("the syntax alone already reads %q as a stop", stop)
+	}
+	c := &catalogCoordinator{queueHandler{started: make(chan *queueCall, 2)}}
+	s := New(c, "owner", nil)
+	work := enqueueForTest(t, s, "main", "block")
+	running := nextCall(t, &c.queueHandler)
+	control := enqueueForTest(t, s, "main", stop)
+	select {
+	case call := <-c.started:
+		if call.req.Input != stop {
+			t.Fatalf("started %q, want %q", call.req.Input, stop)
+		}
+		call.finish <- nil
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%q waited behind the running turn", stop)
+	}
+	awaitExchange(t, s, control.ID)
+	running.finish <- nil
+	awaitExchange(t, s, work.ID)
+	hidden := 0
+	for _, r := range s.Replies("main") {
+		if r.ExchangeID != control.ID {
+			continue
+		}
+		if !r.Silent {
+			t.Fatalf("drew a line of the stop: %+v", r)
+		}
+		hidden++
+	}
+	if hidden != 2 {
+		t.Fatalf("recorded %d lines of the stop, want it and its receipt", hidden)
+	}
 }
