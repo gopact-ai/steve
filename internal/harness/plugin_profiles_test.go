@@ -13,7 +13,11 @@ import (
 )
 
 // recordingPlugins is a plugin runtime provider that records each call.
-type recordingPlugins struct{ calls []string }
+// ClosePluginRuntime returns closeErr.
+type recordingPlugins struct {
+	calls    []string
+	closeErr error
+}
 
 func (p *recordingPlugins) PluginRuntime(context.Context, Placement, plugins.RuntimeRef) (Config, []acp.MCPServer, error) {
 	p.calls = append(p.calls, "runtime")
@@ -33,7 +37,7 @@ func (p *recordingPlugins) PreparePluginRelocation(context.Context, string, stri
 }
 func (p *recordingPlugins) ClosePluginRuntime(_ context.Context, _ Placement, id string) error {
 	p.calls = append(p.calls, "close "+id)
-	return nil
+	return p.closeErr
 }
 func (p *recordingPlugins) BeginPluginRuntimeUse(_ context.Context, _ Placement, ref plugins.RuntimeRef) error {
 	p.calls = append(p.calls, "begin "+ref.ID)
@@ -137,5 +141,25 @@ func TestManagerHandsPluginWorkToItsProvider(t *testing.T) {
 	}
 	if !slices.Equal(provider.calls, want) {
 		t.Fatalf("provider calls = %v, want %v", provider.calls, want)
+	}
+}
+
+func TestManagerReturnsItsProviderCloseError(t *testing.T) {
+	m, err := NewManager(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errClose := errors.New("provider close failed")
+	m.SetPluginRuntimes(&recordingPlugins{closeErr: errClose})
+	ctx := t.Context()
+	ref := plugins.RuntimeRef{ID: "runtime", Selection: plugins.Selection{Harness: "mock"}}
+	idlePluginHost(m, ref)
+	if err := m.ClosePluginRuntime(ctx, ref); !errors.Is(err, errClose) {
+		t.Fatalf("close runtime = %v, want the provider's error", err)
+	}
+	session := sessionRuntime()
+	idlePluginHost(m, session)
+	if err := m.CloseSession(WithPluginProfile(ctx, &session), Placement{Harness: "mock"}, profileSessionID(session, "native")); !errors.Is(err, errClose) {
+		t.Fatalf("close session = %v, want the provider's error", err)
 	}
 }
