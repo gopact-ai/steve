@@ -12,6 +12,7 @@ import (
 )
 
 type scheduledNotice struct {
+	nopChannel
 	id    string
 	err   error
 	calls int

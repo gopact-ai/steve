@@ -26,6 +26,7 @@ import (
 const waitDeadline = 10 * time.Second
 
 type recordingChannel struct {
+	nopChannel
 	events chan string
 	addErr error
 }
@@ -74,7 +75,10 @@ func collectEvents(t *testing.T, events <-chan string, n int) []string {
 	return got
 }
 
-type reply struct{ text chan string }
+type reply struct {
+	nopChannel
+	text chan string
+}
 
 func (r *reply) Reply(_ context.Context, _, text string) error {
 	r.text <- text
@@ -339,6 +343,7 @@ func TestGatewaySilentListenSkipsEmptyUnmentionedGroup(t *testing.T) {
 }
 
 type recordingCards struct {
+	nopChannel
 	events   chan string
 	startErr error
 	sent     int

@@ -34,6 +34,7 @@ func (p *recoveryProbe) ResumeRetainedChat(_ context.Context, id string, r turn.
 }
 
 type recoveryChannel struct {
+	textOnlyChannel
 	notices, results atomic.Int32
 	noticeErr        error
 }
