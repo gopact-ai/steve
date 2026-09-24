@@ -9,6 +9,8 @@ import (
 // SetChannelOwner registers the trusted adapter's native owner at startup.
 // Console/internal calls keep SetIdentity's baseline; sender IDs are never
 // rewritten because tasks, notices and callbacks use their native identity.
+//
+// Deprecated: set Deps.ChannelOwners.
 func (c *Coordinator) SetChannelOwner(channel, owner string) error {
 	if channel == "" || channel == "console" || strings.TrimSpace(channel) != channel {
 		return errors.New("a non-console channel is required")

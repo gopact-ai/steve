@@ -192,7 +192,7 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 					}
 					runner := &fakeRunner{reply: "done"}
 					manager := &fakeManager{runners: map[string]*fakeRunner{"test": runner}}
-					c := New(catalog, sessions, capability.NewAssembler(nil), manager, time.Minute)
+					c := newCore(catalog, sessions, capability.NewAssembler(nil), manager, time.Minute)
 					c.SetTasks(tasks, "hub")
 					c.SetProjects(projects, "first", "")
 					c.SetAttempts(attempt.New(book))

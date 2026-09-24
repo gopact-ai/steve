@@ -90,4 +90,6 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 }
 
 // SetIntents wires the side-effect ledger the /effects verb reads.
+//
+// Deprecated: set Deps.Intents.
 func (c *Coordinator) SetIntents(s *intent.Service) { c.intents = s }

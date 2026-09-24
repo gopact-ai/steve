@@ -239,7 +239,81 @@ type coordinatorState struct {
 	skillsLock      int
 }
 
-func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {
+// Deps is everything a Coordinator is built with. New refuses a Deps with
+// any store, service or loader missing; the strings may be empty.
+type Deps struct {
+	Catalog   *agent.Catalog
+	Store     *state.Store
+	Assembler *capability.Assembler
+	Runtime   runtime
+	// Timeout bounds a prompt until a TimeoutSource is installed.
+	Timeout time.Duration
+	Text    i18n.Catalog
+	// Owner is the baseline owner identity; ChannelOwners registers each
+	// trusted non-console adapter's native owner.
+	Owner         string
+	ChannelOwners map[string]string
+	Home          home.Loader
+	Skills        *skills.Live
+	Projects      *project.Store
+	// DefaultProject binds a conversation that has never chosen;
+	// HomeProject, when set, binds the owner's DM instead.
+	DefaultProject string
+	HomeProject    string
+	Memory         *memory.Service
+	Attempts       *attempt.Service
+	Artifacts      *artifact.Store
+	Intents        *intent.Service
+	Executions     *execution.Registry
+	Tasks          *task.Store
+	// Node is the name tasks record as the machine that tracks them.
+	Node      string
+	Schedules *schedule.Store
+}
+
+// New builds a Coordinator from deps, or reports every dependency missing.
+func New(deps Deps) (*Coordinator, error) {
+	var missing []string
+	for _, dep := range []struct {
+		name   string
+		absent bool
+	}{
+		{"Catalog", deps.Catalog == nil}, {"Store", deps.Store == nil}, {"Assembler", deps.Assembler == nil},
+		{"Runtime", deps.Runtime == nil}, {"Text", deps.Text.IsZero()}, {"Home", deps.Home == nil},
+		{"Skills", deps.Skills == nil}, {"Projects", deps.Projects == nil}, {"Memory", deps.Memory == nil},
+		{"Attempts", deps.Attempts == nil}, {"Artifacts", deps.Artifacts == nil}, {"Intents", deps.Intents == nil},
+		{"Executions", deps.Executions == nil}, {"Tasks", deps.Tasks == nil}, {"Schedules", deps.Schedules == nil},
+	} {
+		if dep.absent {
+			missing = append(missing, dep.name)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("turn: missing dependencies: %s", strings.Join(missing, ", "))
+	}
+	c := newCore(deps.Catalog, deps.Store, deps.Assembler, deps.Runtime, deps.Timeout)
+	c.text = deps.Text
+	c.SetIdentity(deps.Owner, deps.Home)
+	for channel, owner := range deps.ChannelOwners {
+		if err := c.SetChannelOwner(channel, owner); err != nil {
+			return nil, fmt.Errorf("turn: owner of channel %q: %w", channel, err)
+		}
+	}
+	c.skills = deps.Skills
+	c.projects, c.defaultProject, c.homeProject = deps.Projects, deps.DefaultProject, deps.HomeProject
+	c.memory = deps.Memory
+	c.attempts = deps.Attempts
+	c.artifacts = deps.Artifacts
+	c.intents = deps.Intents
+	c.executions = deps.Executions
+	c.tasks, c.node = deps.Tasks, deps.Node
+	c.schedules = deps.Schedules
+	return c, nil
+}
+
+// newCore builds a Coordinator with only its core dependencies. Everything
+// else stays nil until set.
+func newCore(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {
 	return &Coordinator{
 		text: i18n.New(i18n.LocaleZH),
 		coordinatorState: &coordinatorState{
@@ -250,6 +324,9 @@ func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assem
 	}
 }
 
+// SetIdentity sets the baseline owner and the home loader.
+//
+// Deprecated: set Deps.Owner and Deps.Home.
 func (c *Coordinator) SetIdentity(ownerOpenID string, loader home.Loader) {
 	c.ownerOpenID = ownerOpenID
 	c.home = loader
@@ -268,18 +345,24 @@ func placement(selected agent.Agent) harness.Placement {
 
 // SetArtifacts wires the artifact store: chat turns get before- and
 // after-snapshots, plans get a base and a landing.
+//
+// Deprecated: set Deps.Artifacts.
 func (c *Coordinator) SetArtifacts(store *artifact.Store) {
 	c.artifacts = store
 }
 
 // SetAttempts wires the attempt service: every chat turn becomes an
 // attempt, leased and fenced, from here on.
+//
+// Deprecated: set Deps.Attempts.
 func (c *Coordinator) SetAttempts(service *attempt.Service) {
 	c.attempts = service
 }
 
 // SetProjects wires the project store. defaultID binds a conversation that
 // has never chosen; homeID, when set, binds the owner's DM instead.
+//
+// Deprecated: set Deps.Projects, Deps.DefaultProject and Deps.HomeProject.
 func (c *Coordinator) SetProjects(store *project.Store, defaultID, homeID string) {
 	c.projects = store
 	c.defaultProject = defaultID
@@ -293,6 +376,9 @@ func (c *Coordinator) SetWorkspaceAttach(attach func(ctx context.Context, projec
 	c.attach = attach
 }
 
+// SetSkills sets the live skill set.
+//
+// Deprecated: set Deps.Skills.
 func (c *Coordinator) SetSkills(live *skills.Live) {
 	c.skills = live
 }
@@ -313,9 +399,9 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 	return c.store.ClearTaint(conversationID, agentID)
 }
 
-// SetTasks enables task tracking. It is optional: with no store the
-// coordinator behaves exactly as before, which keeps the turn path testable
-// without a filesystem.
+// SetExecution sets the execution registry.
+//
+// Deprecated: set Deps.Executions.
 func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
 
 // SetAutoResolve decides whether a landing that stops at a merge conflict
@@ -329,11 +415,17 @@ func (c *Coordinator) promptTimeout() time.Duration {
 	return c.timeout
 }
 
+// SetTasks sets the task store and the node name tasks record.
+//
+// Deprecated: set Deps.Tasks and Deps.Node.
 func (c *Coordinator) SetTasks(store *task.Store, node string) {
 	c.tasks = store
 	c.node = node
 }
 
+// SetCatalog sets the text catalog replies are written in.
+//
+// Deprecated: set Deps.Text.
 func (c *Coordinator) SetCatalog(cat i18n.Catalog) {
 	c.text = cat
 }

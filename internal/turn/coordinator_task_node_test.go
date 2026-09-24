@@ -26,7 +26,7 @@ func TestTaskExecutionNodeSurvivesCoordinatorChangeAndReload(t *testing.T) {
 			var taskID string
 			var nodes []string
 			for _, coordinatorNode := range []string{"coordinator-a", "coordinator-b"} {
-				c := New(nil, nil, nil, nil, 0)
+				c := newCore(nil, nil, nil, nil, 0)
 				c.SetTasks(store, coordinatorNode)
 				id, err := c.beginTask(req, selected, "continue work", project.Binding{}, "/workspace")
 				if err != nil || id == "" {

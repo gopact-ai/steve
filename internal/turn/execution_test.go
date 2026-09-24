@@ -39,7 +39,7 @@ func TestTaskScopeStopsChatAndWaitsForDurableCleanup(t *testing.T) {
 	}
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
-	c := New(catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
+	c := newCore(catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
 	c.SetProjects(projects, "p", "")
 	c.SetTasks(tasks, "hub")
 	c.SetAttempts(attempt.New(book))

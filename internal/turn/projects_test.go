@@ -52,7 +52,7 @@ func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catal
 	if err := projects.Declare(context.Background(), declared); err != nil {
 		t.Fatal(err)
 	}
-	c := New(catalog, store, assembler, rt, timeout)
+	c := newCore(catalog, store, assembler, rt, timeout)
 	c.SetProjects(projects, catalog.Default().ID, "")
 	c.SetAttempts(attempt.New(book))
 	c.SetArtifacts(artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}))
@@ -83,7 +83,7 @@ func useHome(t *testing.T, c *Coordinator, dir string) {
 // the same ledger, projects and bindings the previous one used.
 func restartCoordinator(t *testing.T, prev *Coordinator, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration) *Coordinator {
 	t.Helper()
-	c := New(catalog, store, assembler, rt, timeout)
+	c := newCore(catalog, store, assembler, rt, timeout)
 	c.SetProjects(prev.projects, prev.defaultProject, prev.homeProject)
 	c.SetAttempts(prev.attempts)
 	c.SetArtifacts(prev.artifacts)

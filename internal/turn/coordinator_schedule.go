@@ -7,6 +7,8 @@ import (
 
 // SetSchedules enables the scheduling verbs. Without a store they answer that
 // scheduling is off rather than pretending to have remembered something.
+//
+// Deprecated: set Deps.Schedules.
 func (c *Coordinator) SetSchedules(store *schedule.Store) { c.schedules = store }
 
 // RotateTask closes the task an unattended run opened last time, so a

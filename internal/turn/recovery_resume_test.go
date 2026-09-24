@@ -86,7 +86,7 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 	}
 	runner := &retainedTestRunner{fakeRunner: &fakeRunner{id: "ns_original", reply: strings.Repeat("complete result ", 30)}}
 	manager := retainedTestManager{fakeManager: &fakeManager{}, runner: runner}
-	c := New(cat, sessions, capability.NewAssembler(nil), manager, time.Minute)
+	c := newCore(cat, sessions, capability.NewAssembler(nil), manager, time.Minute)
 	c.SetTasks(tasks, "coordinator-b")
 	c.SetExecution(execution.New(t.Context(), tasks))
 	c.SetAttempts(attempt.New(book))

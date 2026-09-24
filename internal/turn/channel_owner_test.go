@@ -108,7 +108,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 }
 
 func TestChannelOwnerRegistrationIsExplicitAndFacadeSnapshotIsStable(t *testing.T) {
-	c := New(nil, nil, nil, nil, time.Minute)
+	c := newCore(nil, nil, nil, nil, time.Minute)
 	c.SetIdentity("console-owner", nil)
 	if _, err := c.forChannel("feishu"); err == nil {
 		t.Fatal("unregistered channel borrowed console identity")

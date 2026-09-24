@@ -13,7 +13,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/execution"
@@ -25,6 +24,7 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 type resumeFixture struct {
@@ -77,9 +77,6 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate)
 		t.Fatal(err)
 	}
 	t.Cleanup(manager.Stop)
-	coordinator := turn.New(catalog, sessions, capability.NewAssembler(nil), manager, 10*time.Second)
-	coordinator.SetTasks(tasks, "test")
-	coordinator.SetExecution(execution.New(t.Context(), tasks))
 	projects := project.Open(book)
 	if _, exists, err := projects.Get(t.Context(), "p"); err != nil {
 		t.Fatal(err)
@@ -88,14 +85,13 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate)
 			t.Fatal(err)
 		}
 	}
-	coordinator.SetProjects(projects, "p", "")
-	coordinator.SetAttempts(attempt.New(book))
-	coordinator.SetArtifacts(artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()}))
-	for _, transport := range []string{"feishu", "unknown"} {
-		if err := coordinator.SetChannelOwner(transport, "owner"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout = book, catalog, sessions, manager, 10*time.Second
+		o.Tasks, o.Node, o.Executions = tasks, "test", execution.New(t.Context(), tasks)
+		o.Projects, o.DefaultProject, o.Attempts = projects, "p", attempt.New(book)
+		o.Artifacts = artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
+		o.ChannelOwners = map[string]string{"feishu": "owner", "unknown": "owner"}
+	})
 	var handler console.Handler = coordinator
 	if gate != nil {
 		gate.Coordinator = coordinator

@@ -11,7 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/readmodel"
-	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 type initializingHandler struct {
@@ -120,9 +120,10 @@ func TestInitializeConversationRetriesCommittedBindingAfterTranscriptSaveFailure
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}}, {ID: "other", Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turn.New(nil, nil, nil, nil, time.Minute)
-	coordinator.SetIdentity("owner", nil)
-	coordinator.SetProjects(projects, "p", "")
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Timeout, o.Owner = book, time.Minute, "owner"
+		o.Projects, o.DefaultProject = projects, "p"
+	})
 	s := New(coordinator, "owner", nil)
 	doc := &brokenQueueDoc{}
 	if err := s.Persist(doc); err != nil {

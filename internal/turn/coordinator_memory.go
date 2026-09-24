@@ -14,6 +14,8 @@ import (
 )
 
 // SetMemory wires what Steve remembers.
+//
+// Deprecated: set Deps.Memory.
 func (c *Coordinator) SetMemory(svc *memory.Service) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -42,7 +42,7 @@ func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *led
 		t.Fatal(err)
 	}
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	coordinator := New(catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
+	coordinator := newCore(catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
 	coordinator.text = i18n.New(i18n.LocaleEN)
 	coordinator.SetProjects(projects, "p", "")
 	coordinator.SetTasks(tasks, "hub")

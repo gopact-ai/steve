@@ -20,7 +20,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/datalevel"
@@ -33,7 +32,7 @@ import (
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
-	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // The HTTP server, console, coordinator, persistence and ACP stdio are real.
@@ -79,20 +78,18 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "scratch", Home: project.Home{Path: t.TempDir()}, Level: datalevel.Public}}); err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turn.New(catalog, store, capability.NewAssembler(nil), manager, 10*time.Second)
-	coordinator.SetIdentity("owner", nil)
-	coordinator.SetProjects(projects, "scratch", "")
-	coordinator.SetAttempts(attempt.New(book))
 	artifacts := artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
-	coordinator.SetArtifacts(artifacts)
 	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator.SetTasks(tasks, "")
 	registry := execution.New(t.Context(), tasks)
-	coordinator.SetExecution(registry)
 	artifacts.SetExecution(registry)
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout, o.Owner = book, catalog, store, manager, 10*time.Second, "owner"
+		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = projects, "scratch", attempt.New(book), artifacts
+		o.Tasks, o.Executions = tasks, registry
+	})
 	service := console.New(coordinator, "owner", nil)
 	service.SetMaterials(materials, func(ctx context.Context, conversation, principal, projectID string) error {
 		if principal != "owner" || projectID != "scratch" {

@@ -39,31 +39,16 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	nodes := machines.Nodes()
 	projects := machines.Projects()
 
-	coordinator := turn.New(
-		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),
-	)
 	catalogText := i18n.New(i18n.FromLang(cfg.EffectiveLocale()))
 	if settings := boot.Settings(); settings != nil {
-		coordinator.TimeoutSource = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
-		coordinator.AutoResolveSource = func() bool { return settings.Load().Policies.Landing.Conflicts != config.ConflictsManual }
 		catalogText = i18n.Dynamic(func() i18n.Locale { return i18n.FromLang(settings.Load().Gateway.Locale) })
 	}
-	coordinator.SetIdentity(cfg.EffectiveOwnerID(), profile.Home)
-	if cfg.FeishuEnabled() {
-		if err := coordinator.SetChannelOwner("feishu", cfg.Feishu.OwnerOpenID); err != nil {
-			return nil, err
-		}
-	}
-	coordinator.SetSkills(live)
-	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, adminsvc.HomeProjectID)
 	// Memory: the home's MEMORY.md for the owner, one file per project,
 	// every write locked and audited under the state directory.
 	memories := profile.Service
-	coordinator.SetMemory(memories)
 	// Recovery classification already ran before project reconciliation;
 	// uncertain writers retain their physical directory ownership.
 	background.Go(func(ctx context.Context) { sweepAttempts(ctx, attempts) })
-	coordinator.SetAttempts(attempts)
 	// Artifacts: every result is a commit in the project's shadow
 	// repository on the hub, materialised wherever a step runs.
 	artifacts := artifact.New(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "artifacts"), book, projects, nodes)
@@ -80,11 +65,9 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 				gitrepo.ReviewLimits{MaxChanges: p.Review.MaxChanges, MaxDiffBytes: p.Review.MaxDiffBytes, MaxFileBytes: p.Review.MaxFileBytes, MaxEntries: p.Review.MaxEntries, Timeout: time.Duration(p.Review.Timeout)}
 		}
 	}
-	coordinator.SetArtifacts(artifacts)
 	// Side effects agents ask for are intents: claimed, journaled, and
 	// blocked across attempts until a person resolves an unknown outcome.
 	intents := intent.New(book)
-	coordinator.SetIntents(intents)
 	// A landing the previous process was cut off in is finished — or
 	// stopped at a conflict — before any turn can touch the canonical. One
 	// that cannot be finished yet stays recovery-pending, which keeps new
@@ -102,7 +85,6 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		return nil, fmt.Errorf("open tasks: %w", err)
 	}
 	executions := execution.New(ctx, tasks)
-	coordinator.SetExecution(executions)
 	artifacts.SetExecution(executions)
 	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
 	if settings := boot.Settings(); settings != nil {
@@ -111,7 +93,6 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 			return p.TaskMaxTurns, time.Duration(p.TaskMaxElapsed)
 		}
 	}
-	coordinator.SetTasks(tasks, adminsvc.NodeName())
 	schedules, err := schedule.OpenLedger(book)
 	if err != nil {
 		return nil, fmt.Errorf("open schedules: %w", err)
@@ -120,8 +101,25 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	if err != nil {
 		return nil, fmt.Errorf("open plans: %w", err)
 	}
-	coordinator.SetSchedules(schedules)
-	coordinator.SetCatalog(catalogText)
+	var channelOwners map[string]string
+	if cfg.FeishuEnabled() {
+		channelOwners = map[string]string{"feishu": cfg.Feishu.OwnerOpenID}
+	}
+	coordinator, err := turn.New(turn.Deps{
+		Catalog: catalog, Store: store, Assembler: assembler, Runtime: manager,
+		Timeout: time.Duration(cfg.Gateway.PromptTimeout), Text: catalogText,
+		Owner: cfg.EffectiveOwnerID(), ChannelOwners: channelOwners, Home: profile.Home, Skills: live,
+		Projects: projects, DefaultProject: cfg.Gateway.DefaultProject, HomeProject: adminsvc.HomeProjectID,
+		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
+		Executions: executions, Tasks: tasks, Node: adminsvc.NodeName(), Schedules: schedules,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if settings := boot.Settings(); settings != nil {
+		coordinator.TimeoutSource = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
+		coordinator.AutoResolveSource = func() bool { return settings.Load().Policies.Landing.Conflicts != config.ConflictsManual }
+	}
 	if names := live.Map.EnabledNames(); len(names) > 0 {
 		slog.Info(fmt.Sprintf("steve: isolated runtimes; skills=%s", strings.Join(names, ",")))
 	} else {

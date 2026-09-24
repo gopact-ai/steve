@@ -23,7 +23,7 @@ func TestContinuationCannotCreateAnotherTaskOrResumeAPausedOne(t *testing.T) {
 			if _, err := store.Advance(parent.ID, state); err != nil {
 				t.Fatal(err)
 			}
-			c := New(nil, nil, nil, nil, 0)
+			c := newCore(nil, nil, nil, nil, 0)
 			c.SetTasks(store, "hub")
 			req := Request{ConversationID: parent.Channel, ExpectedTask: parent.ID}
 			_, err = c.beginTask(req, agent.Agent{ID: "worker"}, "child done", project.Binding{}, "/work")
@@ -53,7 +53,7 @@ func TestContinuationPreservesScheduledParentLineage(t *testing.T) {
 	if _, err := store.Advance(parent.ID, task.StateRunning); err != nil {
 		t.Fatal(err)
 	}
-	c := New(nil, nil, nil, nil, 0)
+	c := newCore(nil, nil, nil, nil, 0)
 	c.SetTasks(store, "hub")
 	id, err := c.beginTask(Request{ConversationID: parent.Channel, ExpectedTask: parent.ID}, agent.Agent{ID: "worker"}, "child done", project.Binding{}, "/work")
 	if err != nil || id != parent.ID {

@@ -20,7 +20,7 @@ func TestRequestLocalesShareExecutionStateWithoutChangingDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := New(catalog, store, nil, nil, time.Minute)
+	c := newCore(catalog, store, nil, nil, time.Minute)
 	c.SetCatalog(i18n.New(i18n.LocaleZH))
 	var wg sync.WaitGroup
 	for n := 0; n < 24; n++ {
