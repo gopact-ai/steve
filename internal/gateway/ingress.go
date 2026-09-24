@@ -41,6 +41,8 @@ func (g *Gateway) acceptAndWake(key string, input gatewayInput) error {
 	if err != nil || !found {
 		return fmt.Errorf("gateway accepted input cannot be read: %w", err)
 	}
+	// Ingress claims only the gatewayInputKind receipt acceptInput recorded,
+	// so the claimQueued branch that calls revive is unreachable here.
 	run, release, err := g.claimQueued(ctx, g.recoveryLedger, receipt, g.ingressDriver, nil, false)
 	if errors.Is(err, channel.ErrDeliveryQueued) {
 		return nil // Acceptance is durable; the running reconciler owns retry.
