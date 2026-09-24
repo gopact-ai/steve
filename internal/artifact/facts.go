@@ -262,8 +262,9 @@ func (s *Store) Derive(ctx context.Context, source, derived string, label datale
 	return d, nil
 }
 
-// directNodes is what a registry offers for node-to-node transfer.
-type directNodes interface {
+// DirectNodes is what a registry offers for node-to-node transfer. A registry
+// without it leaves the hub relaying artifacts itself.
+type DirectNodes interface {
 	Grant(ctx context.Context, node, token, name string, ttl time.Duration) error
 	Fetch(ctx context.Context, node, peerAddr, token, name string) error
 	PeerAddr(node string) (string, error)
@@ -288,7 +289,7 @@ func (s *Store) directSource(ctx context.Context, sha, target string) (string, b
 // the data path: source bundles it, the hub grants target one fetch, target
 // pulls and unbundles. Any failure falls back to the hub relay.
 func (s *Store) fetchDirect(ctx context.Context, p project.Project, source, target, targetBare, sha string) error {
-	direct, ok := s.nodes.(directNodes)
+	direct, ok := s.nodes.(DirectNodes)
 	if !ok {
 		return fmt.Errorf("direct transfer is not available")
 	}
