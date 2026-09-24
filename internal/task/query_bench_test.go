@@ -31,7 +31,7 @@ func BenchmarkTaskSmallWriteHistory(b *testing.B) {
 				next.Tasks[id] = &Task{ID: id, State: StateDone, Channel: "past", ProjectID: "p", UpdatedAt: at,
 					Attempts: []Attempt{{ExecutionID: id, StartedAt: at, EndedAt: at.Add(time.Second), Tokens: Tokens{Total: 10}}}}
 			}
-			if err := s.replaceLocked(next); err != nil {
+			if err := s.replaceData(next); err != nil {
 				b.Fatal(err)
 			}
 			for _, mode := range []string{"records-baseline", "indexed"} {
@@ -40,9 +40,10 @@ func BenchmarkTaskSmallWriteHistory(b *testing.B) {
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						next := s.clone()
-						next.Tasks["target"].UpdatedAt = s.data.Tasks["target"].UpdatedAt.Add(time.Second)
-						next.Tasks["target"].Result = &Result{Answer: fmt.Sprint(i)}
+						next := s.draft()
+						target := next.edit("target")
+						target.UpdatedAt = target.UpdatedAt.Add(time.Second)
+						target.Result = &Result{Answer: fmt.Sprint(i)}
 						var err error
 						if mode == "indexed" {
 							err = s.replaceLocked(next)
@@ -58,8 +59,8 @@ func BenchmarkTaskSmallWriteHistory(b *testing.B) {
 		})
 	}
 }
-func benchmarkRecordWriteWithoutReadIndex(s *Store, next data) error {
-	changes, err := recordChanges(s.data, next)
+func benchmarkRecordWriteWithoutReadIndex(s *Store, next *draft) error {
+	changes, err := next.changes()
 	if err != nil {
 		return err
 	}
@@ -83,6 +84,6 @@ func benchmarkRecordWriteWithoutReadIndex(s *Store, next data) error {
 	if changed {
 		s.revision++
 	}
-	s.data = next
+	next.applyTo(&s.data)
 	return nil
 }

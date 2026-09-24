@@ -73,9 +73,9 @@ func (s *Store) Create(t Task) (Task, error) {
 	if t.Budget.MaxElapsed == 0 {
 		t.Budget.MaxElapsed = maxElapsed
 	}
-	next := s.clone()
+	next := s.draft()
 	next.NextID = s.data.NextID + 1
-	next.Tasks[t.ID] = &t
+	next.add(&t)
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err
 	}
@@ -229,8 +229,8 @@ func (s *Store) closeQuiet(id string, cutoff time.Time) (Task, bool, error) {
 	if stored, ok := s.data.Tasks[id]; !ok || !quietChat(stored, cutoff) {
 		return Task{}, false, nil
 	}
-	next := s.clone()
-	stored := next.Tasks[id]
+	next := s.draft()
+	stored := next.edit(id)
 	stored.State = StateDone
 	stored.UpdatedAt = s.now()
 	if err := s.replaceLocked(next); err != nil {
@@ -257,9 +257,9 @@ func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {
 func (s *Store) SetAnchor(id string, address channel.Address, chatID, chatType, cardID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
-	stored, ok := next.Tasks[id]
-	if !ok {
+	next := s.draft()
+	stored := next.edit(id)
+	if stored == nil {
 		return fmt.Errorf("task %s not found", id)
 	}
 	if address.Channel != stored.Transport || address.Conversation != stored.Channel {
@@ -318,8 +318,8 @@ func (s *Store) addInterimLocked(taskID, messageID string) error {
 	if _, ok := s.data.Tasks[taskID]; !ok {
 		return fmt.Errorf("task %s not found", taskID)
 	}
-	next := s.clone()
-	stored := next.Tasks[taskID]
+	next := s.draft()
+	stored := next.edit(taskID)
 	stored.Interim = append(stored.Interim, messageID)
 	if len(stored.Interim) > maxInterim {
 		stored.Interim = stored.Interim[len(stored.Interim)-maxInterim:]
@@ -365,16 +365,16 @@ func (s *Store) BeginContinuation(id, channel, member, node string) (Task, error
 func (s *Store) begin(id, member, node, session, conversation string, input *TurnInput) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
-	stored, ok := next.Tasks[id]
-	if !ok {
+	next := s.draft()
+	stored := next.edit(id)
+	if stored == nil {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
 	if input != nil && input.ResumeAdmission != (ResumeAdmission{}) {
 		if err := checkResumeAdmission(*stored, input.ResumeAdmission); err != nil {
 			return Task{}, err
 		}
-		if err := checkExecution(next.Tasks, ExecutionToken{TaskID: id, Epoch: input.ResumeAdmission.Epoch}); err != nil {
+		if err := checkExecutionBy(next.find, ExecutionToken{TaskID: id, Epoch: input.ResumeAdmission.Epoch}); err != nil {
 			return Task{}, err
 		}
 		if !input.Continuation || input.TurnID == "" || stored.Member != member {
@@ -409,7 +409,7 @@ func (s *Store) begin(id, member, node, session, conversation string, input *Tur
 		return Task{}, fmt.Errorf("task %s cannot run from %s", id, stored.State)
 	}
 	now := s.now()
-	if err := reserveTurn(next.Tasks, id, now); err != nil {
+	if err := reserveTurn(next, id, now); err != nil {
 		return Task{}, err
 	}
 	stored.State = StateRunning
@@ -433,15 +433,15 @@ func (s *Store) begin(id, member, node, session, conversation string, input *Tur
 func (s *Store) ReserveTurn(id string) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
-	stored, ok := next.Tasks[id]
-	if !ok {
+	next := s.draft()
+	stored := next.edit(id)
+	if stored == nil {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
 	if !stored.State.Holds() || !stored.State.CanMoveTo(StateRunning) {
 		return Task{}, fmt.Errorf("task %s cannot run from %s", id, stored.State)
 	}
-	if err := reserveTurn(next.Tasks, id, s.now()); err != nil {
+	if err := reserveTurn(next, id, s.now()); err != nil {
 		return Task{}, err
 	}
 	stored.State = StateRunning
@@ -451,8 +451,8 @@ func (s *Store) ReserveTurn(id string) (Task, error) {
 	return *stored.clone(), nil
 }
 
-func reserveTurn(tasks map[string]*Task, id string, now time.Time) error {
-	lineage, err := taskLineage(tasks, id)
+func reserveTurn(next *draft, id string, now time.Time) error {
+	lineage, err := next.lineage(id)
 	if err != nil {
 		return err
 	}
@@ -482,9 +482,9 @@ func (s *Store) Finish(id string, outcome Outcome, tokens Tokens, toolCalls int)
 func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls int, model string) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
-	stored, ok := next.Tasks[id]
-	if !ok {
+	next := s.draft()
+	stored := next.edit(id)
+	if stored == nil {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
 	attempt := stored.primaryAttempt()
@@ -494,7 +494,7 @@ func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls in
 	if !attempt.Open() {
 		return Task{}, fmt.Errorf("task %s attempt already finished", id)
 	}
-	lineage, err := taskLineage(next.Tasks, id)
+	lineage, err := next.lineage(id)
 	if err != nil {
 		return Task{}, err
 	}
@@ -522,9 +522,9 @@ func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls in
 func (s *Store) FinishUnstarted(id string, outcome Outcome) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
-	stored, ok := next.Tasks[id]
-	if !ok {
+	next := s.draft()
+	stored := next.edit(id)
+	if stored == nil {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
 	attempt := stored.primaryAttempt()
@@ -534,7 +534,7 @@ func (s *Store) FinishUnstarted(id string, outcome Outcome) (Task, error) {
 	if attempt.ExecutionID != "" {
 		return Task{}, fmt.Errorf("task %s attempt is bound to execution %s", id, attempt.ExecutionID)
 	}
-	lineage, err := taskLineage(next.Tasks, id)
+	lineage, err := next.lineage(id)
 	if err != nil {
 		return Task{}, err
 	}
@@ -552,9 +552,9 @@ func (s *Store) FinishUnstarted(id string, outcome Outcome) (Task, error) {
 func (s *Store) Advance(id string, to State) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.clone()
-	stored, ok := next.Tasks[id]
-	if !ok {
+	next := s.draft()
+	stored := next.edit(id)
+	if stored == nil {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
 	if !stored.State.CanMoveTo(to) {
@@ -614,22 +614,11 @@ func (t *Task) clone() *Task {
 	return &copied
 }
 
-func (s *Store) clone() data {
-	next := data{NextID: s.data.NextID, Tasks: make(map[string]*Task, len(s.data.Tasks)), Meta: make(map[string]Meta, len(s.data.Meta))}
-	for id, stored := range s.data.Tasks {
-		next.Tasks[id] = stored.clone()
-	}
-	for id, meta := range s.data.Meta {
-		next.Meta[id] = meta.clone()
-	}
-	return next
-}
-
-func (s *Store) replaceLocked(next data) error {
+func (s *Store) replaceLocked(next *draft) error {
 	return s.replaceRecordsLocked(context.Background(), next, nil)
 }
 
-func (s *Store) installLocked(next data, changes []recordChange) {
+func (s *Store) installLocked(next *draft, changes []recordChange) {
 	if s.observe != nil {
 		var changed []string
 		seen := map[string]bool{}
@@ -639,8 +628,9 @@ func (s *Store) installLocked(next data, changes []recordChange) {
 			}
 			id := change.id
 			seen[id] = true
-			t, prev := next.Tasks[id], s.data.Tasks[id]
-			if t == nil || prev == nil || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) || !sameDelivery(prev.Delivery, t.Delivery) {
+			t, _ := next.find(id)
+			prev := s.data.Tasks[id]
+			if t == nil || prev == nil || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.metaOf(id)) || !sameDelivery(prev.Delivery, t.Delivery) {
 				changed = append(changed, id)
 			}
 		}
@@ -653,6 +643,5 @@ func (s *Store) installLocked(next data, changes []recordChange) {
 			}()
 		}
 	}
-	s.updateReadIndexLocked(next, changes)
-	s.data = next
+	s.updateReadIndexLocked(changes, func() { next.applyTo(&s.data) })
 }

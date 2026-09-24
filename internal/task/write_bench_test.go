@@ -74,7 +74,7 @@ func historyStore(b *testing.B, count int) (*Store, string) {
 			Attempts: []Attempt{{ExecutionID: id, StartedAt: at, EndedAt: at.Add(time.Second), Tokens: Tokens{Total: 10}}}}
 	}
 	next.NextID = count + 1
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		b.Fatal(err)
 	}
 	target, err := s.Create(Task{Goal: "live", Channel: "live", ProjectID: "p"})
