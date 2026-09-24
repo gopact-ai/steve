@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -158,4 +159,50 @@ func TestConfigStoreUpdateWithNothingToChangeSavesNothing(t *testing.T) {
 	if err != nil || saved {
 		t.Fatalf("Update = %v, saved=%v", err, saved)
 	}
+}
+
+// readsDuringSave runs write with its configuration save held open and
+// reports whether read finished while the save was held.
+func readsDuringSave(t *testing.T, a *Service, write func() error, read func() error) bool {
+	t.Helper()
+	save := a.WriteConfig
+	if save == nil {
+		save = config.Save
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	a.WriteConfig = func(path string, cfg *config.Config) error {
+		once.Do(func() { close(entered) })
+		<-release
+		return save(path, cfg)
+	}
+	written := make(chan error, 1)
+	go func() { written <- write() }()
+	select {
+	case <-entered:
+	case err := <-written:
+		t.Fatalf("the change finished without saving: %v", err)
+	}
+	reading := make(chan error, 1)
+	go func() { reading <- read() }()
+	var finished bool
+	select {
+	case err := <-reading:
+		if err != nil {
+			t.Fatal(err)
+		}
+		finished = true
+	case <-time.After(time.Second):
+	}
+	close(release)
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+	if !finished {
+		if err := <-reading; err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.WriteConfig = save
+	return finished
 }

@@ -78,53 +78,68 @@ func (s *hubSettingsService) viewLocked() (consoleapi.SettingsView, error) {
 func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.SettingsUpdate) (consoleapi.SettingsView, error) {
 	s.admin.Mu.Lock()
 	defer s.admin.Mu.Unlock()
-	s.admin.configStore().Lock()
-	defer s.admin.configStore().Unlock()
-	if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
-		return consoleapi.SettingsView{}, consoleapi.ErrSettingsConflict
+	var previous, oldSecret, newSecret string
+	var view consoleapi.SettingsView
+	var viewErr error
+	saving := false
+	saveErr := s.admin.updateConfigThen(ctx, func(c *config.Config) error {
+		if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
+			return consoleapi.ErrSettingsConflict
+		}
+		if err := c.CheckFileRevision(s.admin.Path); err != nil {
+			return errors.Join(consoleapi.ErrSettingsConflict, err)
+		}
+		candidate, err := c.PatchSettings(req.Settings)
+		if err != nil {
+			return err
+		}
+		if candidate.Gateway.OwnerID != c.Gateway.OwnerID {
+			return errors.New("Owner identity must be changed through deployment configuration")
+		}
+		if err := candidate.ValidateChannels(); err != nil {
+			return err
+		}
+		if reflect.DeepEqual(candidate.SettingsValues(), c.SettingsValues()) {
+			return errUnchanged
+		}
+		previous, oldSecret, newSecret = c.Gateway.DefaultApproval, c.Feishu.AppSecret, candidate.Feishu.AppSecret
+		*c = *candidate
+		saving = true
+		return nil
+	}, func(saved *config.Config) {
+		// Approval is read at session open through the agent catalog.
+		// Publish it separately from policies sampled at operation
+		// boundaries.
+		s.applyApproval(previous)
+		if s.admin.RuntimeSettings != nil {
+			s.admin.RuntimeSettings.Publish(saved)
+			// Approval has a separate catalog publication boundary. Keep a
+			// failed publication pending rather than claiming the new
+			// catalog is in use.
+			approvalApplied := s.applied.Gateway.DefaultApproval
+			approvalEffective := s.effective.Gateway.DefaultApproval
+			s.applied = saved.SettingsValues()
+			s.effective = s.admin.RuntimeSettings.Load()
+			s.applied.Gateway.DefaultApproval = approvalApplied
+			s.effective.Gateway.DefaultApproval = approvalEffective
+		}
+		view, viewErr = s.viewLocked()
+	})
+	if !saving {
+		if saveErr != nil {
+			return consoleapi.SettingsView{}, saveErr
+		}
+		return s.Settings(ctx)
 	}
-	if err := s.admin.Cfg.CheckFileRevision(s.admin.Path); err != nil {
-		return consoleapi.SettingsView{}, errors.Join(consoleapi.ErrSettingsConflict, err)
-	}
-	previous := s.admin.Cfg.Gateway.DefaultApproval
-	candidate, err := s.admin.Cfg.PatchSettings(req.Settings)
-	if err != nil {
-		return consoleapi.SettingsView{}, err
-	}
-	if candidate.Gateway.OwnerID != s.admin.Cfg.Gateway.OwnerID {
-		return consoleapi.SettingsView{}, errors.New("Owner identity must be changed through deployment configuration")
-	}
-	if err := candidate.ValidateChannels(); err != nil {
-		return consoleapi.SettingsView{}, err
-	}
-	if reflect.DeepEqual(candidate.SettingsValues(), s.admin.Cfg.SettingsValues()) {
-		return s.viewLocked()
-	}
-	saveErr := RedactChannelError(s.admin.persistConfigContext(ctx, candidate), s.admin.Cfg.Feishu.AppSecret, candidate.Feishu.AppSecret)
+	saveErr = RedactChannelError(saveErr, oldSecret, newSecret)
 	if saveErr != nil && !config.Committed(saveErr) {
 		if errors.Is(saveErr, config.ErrFileChanged) || errors.Is(saveErr, platformconfig.ErrConflict) {
 			return consoleapi.SettingsView{}, errors.Join(consoleapi.ErrSettingsConflict, saveErr)
 		}
 		return consoleapi.SettingsView{}, saveErr
 	}
-	*s.admin.Cfg = *candidate
-	// Approval is read at session open through the agent catalog. Publish it
-	// separately from policies sampled at operation boundaries.
-	s.applyApproval(previous)
-	if s.admin.RuntimeSettings != nil {
-		s.admin.RuntimeSettings.Publish(candidate)
-		// Approval has a separate catalog publication boundary. Keep a failed
-		// publication pending rather than claiming the new catalog is in use.
-		approvalApplied := s.applied.Gateway.DefaultApproval
-		approvalEffective := s.effective.Gateway.DefaultApproval
-		s.applied = candidate.SettingsValues()
-		s.effective = s.admin.RuntimeSettings.Load()
-		s.applied.Gateway.DefaultApproval = approvalApplied
-		s.effective.Gateway.DefaultApproval = approvalEffective
-	}
-	view, err := s.viewLocked()
-	if err != nil {
-		return consoleapi.SettingsView{}, err
+	if viewErr != nil {
+		return consoleapi.SettingsView{}, viewErr
 	}
 	if saveErr != nil {
 		view.Warning = saveErr.Error()

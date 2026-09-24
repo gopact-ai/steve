@@ -157,7 +157,13 @@ func (a *Service) persistConfigContext(ctx context.Context, candidate *config.Co
 // updateConfig rewrites a.Cfg through its store, saving the candidate to
 // the configuration file or the cluster under ctx.
 func (a *Service) updateConfig(ctx context.Context, change func(*config.Config) error) error {
-	return a.configStore().Update(change, func(candidate *config.Config) error { return a.saveConfig(ctx, candidate) })
+	return a.updateConfigThen(ctx, change, nil)
+}
+
+// updateConfigThen is updateConfig that runs published once the saved
+// configuration is in place, before any reader sees it.
+func (a *Service) updateConfigThen(ctx context.Context, change func(*config.Config) error, published func(*config.Config)) error {
+	return a.configStore().update(change, func(candidate *config.Config) error { return a.saveConfig(ctx, candidate) }, published)
 }
 
 // saveConfig persists candidate without touching a.Cfg.

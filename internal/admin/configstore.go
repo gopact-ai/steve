@@ -59,6 +59,13 @@ var errUnchanged = errors.New("configuration unchanged")
 // change and save must not use the store. change should only edit the
 // copy it is given; anything slow belongs in save or outside Update.
 func (s *ConfigStore) Update(change func(*config.Config) error, save func(*config.Config) error) error {
+	return s.update(change, save, nil)
+}
+
+// update is Update that also runs published, when not nil, right after
+// the saved configuration is in place and before any reader sees it.
+// published must be quick and must not use the store.
+func (s *ConfigStore) update(change, save func(*config.Config) error, published func(*config.Config)) error {
 	s.write.Lock()
 	defer s.write.Unlock()
 	// Every writer holds write, so the configuration stands still here.
@@ -75,6 +82,9 @@ func (s *ConfigStore) Update(change func(*config.Config) error, save func(*confi
 	}
 	s.mu.Lock()
 	*s.cfg = *candidate
+	if published != nil {
+		published(s.cfg)
+	}
 	s.mu.Unlock()
 	return err
 }

@@ -144,3 +144,34 @@ func TestDefaultApprovalAppliesWithoutARestart(t *testing.T) {
 		t.Fatalf("saving a global default changed unrelated options: %q", got)
 	}
 }
+
+// Reading the settings does not wait for a settings change to be saved.
+func TestSettingsReadDuringASettingsSave(t *testing.T) {
+	a := agentAdminFixture(t)
+	a.Cfg.Gateway.OwnerID = "owner"
+	if err := config.Save(a.Path, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSettings(a, a.Cfg)
+	before, err := s.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during consoleapi.SettingsView
+	finished := readsDuringSave(t, a, func() error {
+		_, err := s.UpdateSettings(t.Context(), consoleapi.SettingsUpdate{BaseRevision: before.Revision, Settings: json.RawMessage(`{"gateway":{"task_max_turns":9}}`)})
+		return err
+	}, func() error {
+		during, err = s.Settings(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the settings waited for a settings save")
+	}
+	if !reflect.DeepEqual(during.Desired, before.Desired) {
+		t.Fatal("a reader saw settings that were not saved yet")
+	}
+	if a.Cfg.Gateway.TaskMaxTurns != 9 {
+		t.Fatal("the saved settings were not published")
+	}
+}
