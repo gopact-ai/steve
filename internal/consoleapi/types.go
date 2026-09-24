@@ -15,10 +15,6 @@ import (
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-// Console is what the page needs to act, not only to watch: send a line as
-// the owner into a conversation and read what came back. The token that
-// guards the read model is the owner's credential here; without a
-// console wired, the endpoints answer that acting is off.
 // QuoteRef points at one stored line of a thread to carry with a message.
 type QuoteRef struct {
 	Conversation string `json:"conversation"`
@@ -40,6 +36,10 @@ type ConversationInitializer interface {
 	InitializeConversation(ctx context.Context, conversation, project string) error
 }
 
+// Console is what the page needs to act, not only to watch: send a line as
+// the owner into a conversation and read what came back. The token that
+// guards the read model is the owner's credential here; without a
+// console wired, the endpoints answer that acting is off.
 type Console interface {
 	Submissions
 	Interactions
