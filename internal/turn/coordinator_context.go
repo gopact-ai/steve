@@ -169,9 +169,15 @@ func (c *Coordinator) suggestProjects(ctx context.Context, rest string) []Sugges
 }
 
 // suggestAgents completes the agent argument of /use and /repair; /repair
-// offers only agents that are broken and have a helper.
+// offers only agents that are broken and have a helper. It reads the fleet
+// as the node registry knows it, once, and dials no machine: completion
+// runs on every keystroke and must not wait on an offline node.
 func (c *Coordinator) suggestAgents(ctx context.Context, conversationID, verb, rest string) []Suggestion {
-	context, err := c.Context(ctx, conversationID)
+	var fleet []roster.Candidate
+	context, err := c.contextFrom(ctx, conversationID, func(r *roster.Roster) []roster.Candidate {
+		fleet = r.Known()
+		return fleet
+	})
 	if err != nil {
 		return nil
 	}
@@ -184,7 +190,7 @@ func (c *Coordinator) suggestAgents(ctx context.Context, conversationID, verb, r
 			if a.Ready {
 				continue
 			}
-			if _, err := c.fleet.Repair(ctx, a.ID); err != nil {
+			if _, err := roster.RepairFrom(fleet, a.ID); err != nil {
 				continue
 			}
 		}
@@ -328,8 +334,13 @@ func (c *Coordinator) blocked(cand roster.Candidate) string {
 	return cand.Why
 }
 
-// Context answers for one conversation.
+// Context answers for one conversation, from the live fleet.
 func (c *Coordinator) Context(ctx context.Context, conversationID string) (Context, error) {
+	return c.contextFrom(ctx, conversationID, func(r *roster.Roster) []roster.Candidate { return r.All(ctx) })
+}
+
+// contextFrom is Context with the fleet described by describe.
+func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, describe func(*roster.Roster) []roster.Candidate) (Context, error) {
 	c = c.localized(i18n.ContextLocale(ctx))
 	out := Context{Conversation: conversationID}
 	var current *project.Project
@@ -355,7 +366,7 @@ func (c *Coordinator) Context(ctx context.Context, conversationID string) (Conte
 		active = c.catalog.Default().ID
 	}
 	if c.fleet != nil {
-		for _, cand := range c.fleet.All(ctx) {
+		for _, cand := range describe(c.fleet) {
 			choice := AgentChoice{
 				ID: cand.Agent.ID, Node: nodewire.Place(cand.Node), Harness: cand.Harness, Model: cand.Model,
 				Ready: cand.Eligible, Why: c.blocked(cand), Usable: cand.Eligible, Current: cand.Agent.ID == active,
