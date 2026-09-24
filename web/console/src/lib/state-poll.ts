@@ -1,8 +1,12 @@
-// statePoll is the floor under the snapshot's event-driven reads. While the
-// stream is up it announces every change, so /state is only re-read on a
-// long floor that bounds a stream which went quiet without an error. While
-// it is down the short floor stands in for it. A hidden page reads nothing
-// and catches up once when it is shown again.
+// statePoll is the floor under the snapshot's event-driven reads. An open
+// stream has missed nothing: the hub ends the stream of a reader that falls
+// behind rather than skip events, and the reconnect re-reads /state. So
+// while the stream is up the long floor only covers what no event announces
+// — fields derived from time, such as an activity's freshness window, which
+// is longer than the floor — and a connection that died without an error.
+// While the stream is down the short floor stands in for it. A hidden page
+// stops the floor and reads once when it is shown again; events that arrive
+// while it is hidden still re-read /state.
 export const STATE_POLL_DOWN = 10_000;
 export const STATE_POLL_LIVE = 60_000;
 
