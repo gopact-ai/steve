@@ -25,7 +25,10 @@ func openNilChannelBook(t *testing.T) *ledger.Ledger {
 
 // An accepted input, flat or /t, is neither run nor answered without a
 // channel. It stays pending with no step recorded, so a gateway that has a
-// channel later seeds, runs and answers it once.
+// channel later seeds, runs and answers it once. An input dispatched before
+// with no recorded outcome is not observed without a channel either; the
+// gateway that has one observes the original attempt and answers it without
+// running the input again.
 func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 	for name, tc := range map[string]struct {
 		text  string
@@ -66,6 +69,48 @@ func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 			}
 		})
 	}
+	t.Run("dispatched without a reply", func(t *testing.T) {
+		book := openNilChannelBook(t)
+		p, ch := &durableInputProbe{}, &recoveryChannel{}
+		g := New(p)
+		g.BindChannel(ch)
+		g.SetRecoveryLedger(book)
+		// The dispatch receipt cannot be finished, as when the process stops
+		// after the attempt was admitted.
+		if _, err := book.DB().Exec(`CREATE TRIGGER reject_input_dispatch BEFORE UPDATE ON commands
+			WHEN NEW.kind='gateway-input-dispatch' BEGIN SELECT RAISE(ABORT,'dispatch unavailable'); END`); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.processAcceptedFixture(inboundFixture()); err == nil || !strings.Contains(err.Error(), "dispatch unavailable") {
+			t.Fatalf("unfinished dispatch = %v", err)
+		}
+		if _, err := book.DB().Exec(`DROP TRIGGER reject_input_dispatch`); err != nil {
+			t.Fatal(err)
+		}
+		without := New(p)
+		without.SetRecoveryLedger(book)
+		if err := without.RecoverQueued(t.Context(), book, p, nil); err == nil ||
+			!strings.Contains(err.Error(), "gateway reply channel is not available") {
+			t.Fatalf("dispatched input without a channel = %v; want the missing channel", err)
+		}
+		if p.calls.Load() != 1 || p.resumes.Load() != 0 || pendingInputs(t, book) != 1 {
+			t.Fatalf("without a channel: calls=%d resumes=%d pending=%d; want 1, 0 and 1",
+				p.calls.Load(), p.resumes.Load(), pendingInputs(t, book))
+		}
+		if _, found, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/reply"); err != nil || found {
+			t.Fatalf("reply recorded without a channel: %v, %v", found, err)
+		}
+		later := New(p)
+		later.BindChannel(ch)
+		later.SetRecoveryLedger(book)
+		if err := later.RecoverQueued(t.Context(), book, p, nil); err != nil {
+			t.Fatalf("recovery with a channel: %v", err)
+		}
+		if pendingInputs(t, book) != 0 || p.calls.Load() != 1 || p.resumes.Load() != 1 || ch.results.Load() != 1 {
+			t.Fatalf("with a channel: pending=%d calls=%d resumes=%d results=%d; want 0, 1, 1, 1",
+				pendingInputs(t, book), p.calls.Load(), p.resumes.Load(), ch.results.Load())
+		}
+	})
 }
 
 func TestNilChannelRecoveryIsRefusedBeforeRevivalOrDispatch(t *testing.T) {
