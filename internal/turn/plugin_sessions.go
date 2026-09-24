@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/plugins"
 )
 
@@ -35,5 +34,3 @@ func (c *Coordinator) ForgetPluginRuntime(ctx context.Context, ref plugins.Runti
 	}
 	return c.store.ForgetPluginRuntime(ref.ID)
 }
-
-var _ pluginRuntimeCloser = (*harness.Manager)(nil)

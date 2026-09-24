@@ -8,3 +8,27 @@ var (
 	_ RetainedSessionInspector = (*managedSession)(nil)
 	_ RetainedStopper          = (*managedSession)(nil)
 )
+
+// The runners Manager opens: local and plugin sessions are *Session, node-owned
+// ones *managedSession. Both implement every capability below.
+var (
+	_ Configurable = (*Session)(nil)
+	_ Configurable = (*managedSession)(nil)
+	_ Reobserver   = (*Session)(nil)
+	_ Reobserver   = (*managedSession)(nil)
+	// exec's stepSession, which lifecycle also drives, does not implement
+	// TurnRunner on purpose: its Prompt calls AgentRunner.RunStep, which
+	// opens one of these runners and chooses between Prompt and PromptTurn.
+	_ TurnRunner = (*Session)(nil)
+	_ TurnRunner = (*managedSession)(nil)
+)
+
+// Manager is turn's Runtime, which turn probes for plugin relocation. It is
+// also the Sessions that turn, delegate and agentexec hand to lifecycle and
+// the sessions exec's AgentRunner holds; lifecycle and AgentRunner probe it
+// for plugin session preparation. A plan step hands lifecycle exec's
+// *stepRun instead, which is pinned in exec.
+var (
+	_ PluginRelocationPreparer = (*Manager)(nil)
+	_ PluginSessionPreparer    = (*Manager)(nil)
+)
