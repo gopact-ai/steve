@@ -2,8 +2,12 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
@@ -49,6 +53,131 @@ func TestGatewayOverACoordinatorThatKnowsNothing(t *testing.T) {
 			g.BindChannel(&scheduledNotice{id: "notice"})
 			if receipt, err := g.FireSchedule(t.Context(), testFire()); err != nil || receipt.MessageID != "notice" {
 				t.Fatalf("fire = %+v, %v; want it announced and run", receipt, err)
+			}
+		})
+	}
+}
+
+// catalogProcessor parses a line as a coordinator whose catalog knows
+// codex does: "@codex/" followed by a command is that command addressed
+// to codex, so "@codex/cancel" and "@codex/schedules" are controls,
+// though the syntax alone, which wants a space after the address, reads
+// them as prompts. A control is answered at once; any other line is a
+// turn that holds until release.
+type catalogProcessor struct {
+	turntest.IdleCoordinator
+	entered chan turn.Request
+	release chan struct{}
+}
+
+func (p *catalogProcessor) ParseInput(line string) (string, turn.ParsedInput) {
+	if control, ok := strings.CutPrefix(line, "@codex/"); ok {
+		return "@codex", turn.ParseInput("/" + control)
+	}
+	return turn.ParseAddressedInput(line)
+}
+
+func (p *catalogProcessor) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
+	p.entered <- req
+	if _, parsed := p.ParseInput(req.Input); parsed.Control() {
+		return turn.Result{Text: "ok"}, nil
+	}
+	if req.OnTurnReady != nil {
+		req.OnTurnReady("task-"+req.MessageID, "attempt-"+req.MessageID)
+	}
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return turn.Result{}, ctx.Err()
+	}
+	return turn.Result{Text: "complete original result", Attempt: "attempt-" + req.MessageID}, nil
+}
+
+// A stop that only the processor's catalog recognizes joins the turn its
+// conversation is running instead of queueing behind it.
+func TestGatewayClassifiesALineAsItsProcessorParsesIt(t *testing.T) {
+	const stop = "@codex/cancel"
+	if _, parsed := turn.ParseAddressedInput(stop); parsed.Interrupt || parsed.Control() {
+		t.Fatalf("the syntax alone already reads %q as a stop", stop)
+	}
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	p := &catalogProcessor{entered: make(chan turn.Request, 2), release: make(chan struct{})}
+	g := New(p)
+	g.BindChannel(&recoveryChannel{})
+	g.SetRecoveryLedger(book)
+	ctx, cancel := context.WithCancel(t.Context())
+	var workers recoveryTestWorkers
+	defer func() { cancel(); workers.Wait() }()
+	g.SetIngressLifetime(ctx, &workers)
+	msg := inboundFixture()
+	if err := g.HandleMessage(msg); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.entered:
+	case <-time.After(waitDeadline):
+		t.Fatal("the first turn never started")
+	}
+	msg.MessageID, msg.Text = "stop", stop
+	if err := g.HandleMessage(msg); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case req := <-p.entered:
+		if req.Input != stop {
+			t.Fatalf("started %q, want %q", req.Input, stop)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatalf("%q waited behind the running turn", stop)
+	}
+	close(p.release)
+}
+
+// A schedule control that only the processor's catalog recognizes leaves
+// the agent gate's anchor where it was, in the durable and the in-memory
+// path alike.
+func TestScheduleControlsTheProcessorParsesPreserveChannelAnchor(t *testing.T) {
+	const control = "@codex/schedules"
+	if _, parsed := turn.ParseAddressedInput(control); parsed.ScheduleControl() {
+		t.Fatalf("the syntax alone already reads %q as a schedule control", control)
+	}
+	for _, path := range []string{"in-memory", "durable"} {
+		t.Run(path, func(t *testing.T) {
+			p := &catalogProcessor{entered: make(chan turn.Request, 1)}
+			g := New(p)
+			g.BindChannel(&reply{text: make(chan string, 4)})
+			gate := &recordingGate{calls: make(chan string, 4)}
+			g.SetAgentGate(gate)
+			msg := feishu.InboundMessage{ConversationID: "chat", ChatID: "chat", MessageID: "control", Text: control, SenderOpenID: "owner"}
+			if path == "durable" {
+				book, err := ledger.Open(t.TempDir(), ledger.Options{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, ui, err := g.dispatchInput(t.Context(), book, "schedule-control", gatewayInput{Message: msg}, msg, "", nil)
+				if ui != nil {
+					ui.closeProgress()
+				}
+				book.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err := g.process(msg); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-p.entered:
+			default:
+				t.Fatalf("%s never reached the processor", control)
+			}
+			select {
+			case changed := <-gate.calls:
+				t.Fatalf("%s replaced active anchor: %s", control, changed)
+			default:
 			}
 		})
 	}
