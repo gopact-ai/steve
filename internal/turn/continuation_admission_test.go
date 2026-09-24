@@ -160,7 +160,12 @@ func TestOrdinaryPromptWaitsOutACanonicalSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	timer := time.AfterFunc(300*time.Millisecond, release)
+	// The snapshot gives the lock back once the prompt says it is waiting,
+	// so the prompt meets the lock however long it takes to reach it. The
+	// timer only lets a prompt that never says so go on.
+	var once sync.Once
+	giveBack := func() { once.Do(release) }
+	timer := time.AfterFunc(5*time.Second, giveBack)
 	defer timer.Stop()
 	var mu sync.Mutex
 	var stages []view.Stage
@@ -168,6 +173,9 @@ func TestOrdinaryPromptWaitsOutACanonicalSnapshot(t *testing.T) {
 		mu.Lock()
 		stages = append(stages, s)
 		mu.Unlock()
+		if s == view.StageAwaitSnapshot {
+			go giveBack()
+		}
 	}})
 	if err != nil {
 		t.Fatalf("a prompt behind a snapshot was refused: %v", err)
