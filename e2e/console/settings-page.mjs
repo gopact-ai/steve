@@ -458,6 +458,9 @@ if (process.env.PURE_ONLY !== "1") {
         channels.apply_mode = "mixed";
         channels.live_fields = ["feishu.group_policy", "feishu.allow_unmentioned", "feishu.allowed_senders", "feishu.blocked_senders"];
         await englishNav.getByRole("link", { name: "Channels", exact: true }).click();
+        // The router switches sections in a transition, and Reload reads the
+        // group of the save bar it sits in: wait for the Channels save bar.
+        await page.getByRole("button", { name: "Save channel settings", exact: true }).waitFor();
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         const channelHint = (path) => page.locator(`[data-channel-apply="${path}"]`);
         // "no restart" in the live hint also contains "restart"; only the restart hint opens with it.
