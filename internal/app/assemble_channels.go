@@ -64,7 +64,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	}
 	if gate != nil {
 		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
-		gate.SetScheduler(coordinator)
+		gate.SetScheduler(work.Scheduler())
 		if channel != nil {
 			gate.BindChannel("feishu", feishu.Messenger{API: channel})
 		}

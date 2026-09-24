@@ -15,12 +15,13 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-// Only the MCP grant adapter is replaced. Coordinator, task/attempt/project
+// Only the MCP grant adapter is replaced. Scheduler, task/attempt/project
 // state, schedule persistence and HTTP tool dispatch are the real implementations.
 type scheduleGrantStore struct {
 	mu   sync.Mutex
@@ -114,7 +115,7 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 	if err := gate.SetStore(&scheduleGrantStore{data: map[string]json.RawMessage{}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	gate.SetScheduler(c)
+	gate.SetScheduler(schedulerFor(t, c))
 	gate.Extras("chat", "codex", "schedule-token", "")
 	scope := agentmcp.GrantScope{TaskID: tracked.ID, TaskEpoch: tracked.ExecutionEpoch, AttemptID: r.ID, ExecutionGeneration: attempt.SessionExecutionEpoch(r), NodeID: r.Node, SessionID: r.Session}
 	if err := gate.BindExecution(t.Context(), agentmcp.Binding{ConversationID: "chat", AgentID: "codex"}, scope); err != nil {
@@ -130,6 +131,19 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 		}
 	})
 	return scheduleMCPFixture{c: c, jobs: jobs, gate: gate, book: book, tracked: tracked, scope: scope}
+}
+
+// schedulerFor builds a Scheduler over c's stores and owners.
+func schedulerFor(t *testing.T, c *Coordinator) *Scheduler {
+	t.Helper()
+	s, err := NewScheduler(SchedulerDeps{
+		Attempts: c.attempts, Tasks: c.tasks, Projects: c.projects, Schedules: c.schedules, Text: c.text,
+		Owner: c.owners.baseline, ChannelOwners: c.owners.byChannel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func scheduleToolCall(t *testing.T, gate *agentmcp.Server, tool string, args any) (string, bool) {
@@ -170,7 +184,7 @@ func createScheduleArgs() agentmcp.ScheduleRequest {
 	return agentmcp.ScheduleRequest{Mode: "every", When: "1h", Prompt: "check build\n\n- preserve indentation\n  - details", IdempotencyKey: "user-request"}
 }
 
-func TestScheduleMCPUsesTrustedExecutionIdentityWithoutModeCache(t *testing.T) {
+func TestScheduleMCPCreatesDurableJobFromExecutionIdentity(t *testing.T) {
 	f := newScheduleMCPFixture(t, nil)
 	text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs())
 	if bad {
@@ -208,8 +222,6 @@ func TestScheduleMCPRefusesGuestGroupChildAndMismatchedExecution(t *testing.T) {
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newScheduleMCPFixture(t, change)
-			// A stale "owner" cache must not override persisted identity.
-			f.c.rememberMode(Request{ConversationID: "chat", SenderOpenID: "console-owner", ChatType: protocol.ChatP2P})
 			if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); !bad {
 				t.Fatalf("accepted %s: %s", name, text)
 			}
@@ -220,9 +232,47 @@ func TestScheduleMCPRefusesGuestGroupChildAndMismatchedExecution(t *testing.T) {
 	}
 }
 
+// rebindScheduleConversation moves the fixture's conversation to another
+// project after the execution was bound.
+func rebindScheduleConversation(t *testing.T, f scheduleMCPFixture) {
+	t.Helper()
+	if err := f.c.projects.Declare(t.Context(), []project.Project{{ID: "elsewhere", Home: project.Home{Node: "laptop", Path: t.TempDir()}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.c.projects.Bind(t.Context(), f.tracked.Channel, "elsewhere", f.tracked.Requester); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A stored receipt is replayed only after the current caller is authorized
+// again, so a retry after the conversation moved to another project is refused.
+func TestScheduleMCPCreateReplayRefusedAfterProjectRebinding(t *testing.T) {
+	f := newScheduleMCPFixture(t, nil)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); bad {
+		t.Fatalf("owner's native session was refused: %s", text)
+	}
+	rebindScheduleConversation(t, f)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); !bad || !strings.Contains(text, "project binding changed") {
+		t.Fatalf("create replay after rebinding: %s", text)
+	}
+	if len(f.jobs.List("")) != 1 {
+		t.Fatal("refused replay mutated schedules")
+	}
+}
+
+// Once the conversation moves to another project, the execution bound in the
+// old project is refused outright: listing fails instead of returning any
+// schedules, empty or not.
+func TestScheduleMCPListRefusedAfterProjectRebinding(t *testing.T) {
+	f := newScheduleMCPFixture(t, nil)
+	rebindScheduleConversation(t, f)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedules", map[string]any{}); !bad || !strings.Contains(text, "project binding changed") {
+		t.Fatalf("list after rebinding: %s", text)
+	}
+}
+
 func TestScheduleMCPScopesListCancelAndPreservesUnknownFiring(t *testing.T) {
 	f := newScheduleMCPFixture(t, nil)
-	f.c.rememberMode(Request{ConversationID: "chat", SenderOpenID: "console-owner", ChatType: protocol.ChatP2P})
 	var owned schedule.Job
 	for _, route := range []struct{ conversation, project, transport string }{
 		{"chat", "codex", "feishu"}, {"other-chat", "codex", "feishu"}, {"chat", "other-project", "feishu"}, {"chat", "codex", "console"},
@@ -293,7 +343,7 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	}
 	before := c.store.Conversation("chat").Sessions["codex"]
 	// Adding platform tools changes guidance, not the MCP connection or token.
-	gate.SetScheduler(c)
+	gate.SetScheduler(schedulerFor(t, c))
 	second, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "continue"})
 	if err != nil {
 		t.Fatalf("schedule upgrade broke the existing conversation: %v", err)
@@ -305,5 +355,22 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	third, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "continue again"})
 	if err != nil || third.Injected.InstructionsSent {
 		t.Fatalf("guidance was not stable: %+v %v", third, err)
+	}
+}
+
+func TestNewSchedulerRefusesMissingDependenciesAndInvalidOwners(t *testing.T) {
+	_, err := NewScheduler(SchedulerDeps{})
+	if want := "turn: missing scheduler dependencies: Attempts, Tasks, Projects, Schedules, Text"; err == nil || err.Error() != want {
+		t.Fatalf("NewScheduler with nothing: %v, want %q", err, want)
+	}
+	var deps Deps
+	fillDeps(t, testLedger(t), &deps)
+	full := SchedulerDeps{Attempts: deps.Attempts, Tasks: deps.Tasks, Projects: deps.Projects, Schedules: deps.Schedules, Text: deps.Text, Owner: "owner", ChannelOwners: map[string]string{"feishu": "ou_owner"}}
+	if _, err := NewScheduler(full); err != nil {
+		t.Fatal(err)
+	}
+	full.ChannelOwners = map[string]string{"console": "owner"}
+	if _, err := NewScheduler(full); err == nil {
+		t.Fatal("NewScheduler accepted an owner for the console channel")
 	}
 }

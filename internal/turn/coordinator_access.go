@@ -15,12 +15,18 @@ import (
 
 // require refuses a principal whose role in the project is below want.
 func (c *Coordinator) require(ctx context.Context, projectID, principal string, want project.Role) error {
-	role, err := c.projects.Access(ctx, projectID, principal, c.ownerOpenID)
+	return requireRole(ctx, c.projects, c.text, c.ownerOpenID, projectID, principal, want)
+}
+
+// requireRole refuses a principal whose role in the project, with owner as
+// the owner identity, is below want; text words the refusal.
+func requireRole(ctx context.Context, projects *project.Store, text i18n.Catalog, owner, projectID, principal string, want project.Role) error {
+	role, err := projects.Access(ctx, projectID, principal, owner)
 	if err != nil {
 		return err
 	}
 	if !role.AtLeast(want) {
-		return UserError{Text: c.text.T(i18n.ProjectAccess, projectID, role, want)}
+		return UserError{Text: text.T(i18n.ProjectAccess, projectID, role, want)}
 	}
 	return nil
 }
