@@ -99,8 +99,8 @@ type Advert struct {
 	Harnesses    []Harness `json:"harnesses"`
 	// Snapshot is everything the machine can do, as the ability domain
 	// defines it: evidence, availability, coverage, a digest. An advert
-	// without one is from an older node; Synthesize fills in from the
-	// old fields and says so. Features are what this node has beyond
+	// without one (the hub's own, or one whose snapshot the hub rejected)
+	// gets one from Synthesize, built from the other fields. Features are what this node has beyond
 	// the negotiated protocol version.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
 	Features []string          `json:"features,omitempty"`

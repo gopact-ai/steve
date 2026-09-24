@@ -140,8 +140,8 @@ func HasFeature(list []string, feature string) bool {
 	return false
 }
 
-// Synthesize builds a snapshot for an advert that carries none — an
-// older node. It knows only what the old fields say: harnesses and tag
+// Synthesize builds a snapshot for an advert that carries none — the
+// hub's own, or a node's whose snapshot failed validation. It knows only what the old fields say: harnesses and tag
 // words. Coverage is partial for everything else, so a requirement on a
 // tool is unknown there, not absent; the source says legacy.
 func Synthesize(adv Advert, now time.Time) *ability.Snapshot {
