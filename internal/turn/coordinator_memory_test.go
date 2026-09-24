@@ -179,6 +179,31 @@ func TestMemoryProjectScopeIsRefusedForSteveHome(t *testing.T) {
 	}
 }
 
+func TestMemoryToolsRefuseAScopeThatIsNotGlobalOrProject(t *testing.T) {
+	c := memoryCoordinator(t)
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	seedFact(t, c, memory.Global, "prefers tabs")
+	if _, scope, err := c.Remember(t.Context(), "chat", "codex", "", "team", "", "likes go", ""); err == nil {
+		t.Fatalf("remembered into %v", scope)
+	}
+	if hits, _, err := c.Recall(t.Context(), "chat", "codex", "team", "tabs", 10); err == nil {
+		t.Fatalf("recalled %+v", hits)
+	}
+	if got := factsIn(t, c, memory.Global); len(got) != 1 {
+		t.Fatalf("global holds %q", got)
+	}
+}
+
+func TestRecallInProjectScopeIsRefusedWithoutAProject(t *testing.T) {
+	c := memoryCoordinator(t)
+	useHome(t, c, t.TempDir())
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	seedFact(t, c, memory.ProjectScope("home"), "tabs at home")
+	if hits, _, err := c.Recall(t.Context(), "chat", "codex", "project", "tabs", 10); err == nil {
+		t.Fatalf("recalled %+v", hits)
+	}
+}
+
 // inAttempt is ctx inside an execution of an attempt on projectID.
 func inAttempt(t *testing.T, c *Coordinator, id, projectID string) context.Context {
 	t.Helper()
@@ -198,6 +223,15 @@ func TestMemoryProjectScopeInsideAnExecutionIsTheAttemptsProject(t *testing.T) {
 	}
 	if scope, err := rememberInProject(t, inAttempt(t, c, "on-home", "home"), c); err == nil {
 		t.Fatalf("attempt on home remembered into %v", scope)
+	}
+}
+
+func TestProjectMemoryOfAnUnboundConversationIsTheDefaultProjects(t *testing.T) {
+	c := memoryCoordinator(t)
+	seedFact(t, c, memory.ProjectScope("alpha"), "tests run with -race")
+	owner := Request{ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}
+	if got := c.projectMemory(t.Context(), "chat", owner); len(got) != 1 || got[0].Name != "memory:project:alpha" {
+		t.Fatalf("unbound conversation got %+v", got)
 	}
 }
 
