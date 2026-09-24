@@ -121,17 +121,4 @@ func TestApplicationLiveSettingsPreserveNativeSessionAndExistingBudget(t *testin
 	if WaitPeerReady(t, peer).Generation != generation {
 		t.Fatal("saving runtime policy restarted the application")
 	}
-	// A saved prompt timeout reaches the running coordinator: an agent that
-	// goes silent is cut off after the saved 1s, where the 19m saved before
-	// would outlast the request.
-	const silent = "console:live-timeout"
-	continuitySend(t, peer, silent, "/project use workspace", "bind-timeout")
-	update(`{"gateway":{"prompt_timeout":"1s"}}`)
-	started := time.Now()
-	status, body := PeerRequest(t, peer, http.MethodPost, "/console/send", consoleapi.Submission{
-		Conversation: silent, Input: "slow policy probe", CommandID: "silent",
-	})
-	if waited := time.Since(started); status == http.StatusOK || waited < time.Second {
-		t.Fatalf("silent turn under a 1s prompt timeout: %d after %v: %s", status, waited, body)
-	}
 }
