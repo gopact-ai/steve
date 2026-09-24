@@ -13,7 +13,10 @@ import (
 	"github.com/gopact-ai/steve/internal/plugins/pluginledger"
 )
 
-type pluginAPIStub struct{ updated int }
+type pluginAPIStub struct {
+	consoleapi.PluginsService
+	updated int
+}
 
 func (*pluginAPIStub) Plugins(context.Context) (consoleapi.PluginsView, error) {
 	return consoleapi.PluginsView{Revision: "revision", Packages: []pluginledger.PackageRecord{}, Installations: []consoleapi.PluginInstallationView{}}, nil

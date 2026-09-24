@@ -154,6 +154,29 @@ func (portConsole) SubmissionCapabilities() (materialRefs, interactiveRequests b
 	return true, true
 }
 
+// pluginsPort forwards the methods of consoleapi.PluginsService and nothing
+// else.
+type pluginsPort struct{ consoleapi.PluginsService }
+
+// portPlugins answers what the routes below ask of the plugin service.
+type portPlugins struct{ consoleapi.PluginsService }
+
+func (portPlugins) PreviewPluginPreset(_ context.Context, id string, _ consoleapi.PluginPresetRequest) (consoleapi.PluginPresetPreview, error) {
+	return consoleapi.PluginPresetPreview{Revision: "previewed " + id}, nil
+}
+func (portPlugins) ApplyPluginPreset(_ context.Context, id string, _ consoleapi.PluginPresetRequest) (consoleapi.PluginPresetPreview, error) {
+	return consoleapi.PluginPresetPreview{Revision: "applied " + id}, nil
+}
+func (portPlugins) PluginUsage(_ context.Context, id string) (consoleapi.PluginUsageView, error) {
+	return consoleapi.PluginUsageView{Errors: map[string]string{id: "in use"}}, nil
+}
+func (portPlugins) RemovePlugin(_ context.Context, id string, _ consoleapi.PluginRemoveRequest) (consoleapi.PluginsView, error) {
+	return consoleapi.PluginsView{Revision: "removed " + id}, nil
+}
+func (portPlugins) ClosePluginRuntime(_ context.Context, id, runtime string) (consoleapi.PluginUsageView, error) {
+	return consoleapi.PluginUsageView{Errors: map[string]string{id: "closed " + runtime}}, nil
+}
+
 // A route calls what it needs through the service port it holds, so it
 // serves a service reached through a port that forwards nothing else. The
 // server reads channel history too, as the assembled application's does.
@@ -177,11 +200,17 @@ func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 		{"DELETE", "/console/queue/e", "", 200, `{"ok":true}`},
 		{"GET", "/console/verbs", "", 200, `{"verbs":[{"command":"/en",`},
 		{"GET", "/console/queue?capabilities=1", "", 200, `{"interactive_requests":true,"material_refs":true,"queue":[],"submission_keys":true}`},
+		{"POST", "/console/plugins/installations/tools/presets/preview", `{}`, 200, `{"revision":"previewed tools",`},
+		{"POST", "/console/plugins/installations/tools/presets/apply", `{}`, 200, `{"revision":"applied tools",`},
+		{"GET", "/console/plugins/installations/tools/usage", "", 200, `"errors":{"tools":"in use"}`},
+		{"DELETE", "/console/plugins/installations/tools", `{}`, 200, `"revision":"removed tools"`},
+		{"POST", "/console/plugins/installations/tools/runtimes/r/close", "", 200, `"errors":{"tools":"closed r"}`},
 	} {
 		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 		server.SetAdmin(adminPort{portAdmin{}})
 		server.SetConsole(consolePort{portConsole{}})
 		server.SetChannelHistory(channelHistoryStub{})
+		server.SetPlugins(pluginsPort{portPlugins{}})
 		if res, body := ownerRequest(t, server, route.method, route.path, route.body); res.StatusCode != route.status || !strings.Contains(body, route.want) {
 			t.Errorf("%s %s = %d %s, want %d with %s", route.method, route.path, res.StatusCode, body, route.status, route.want)
 		}
