@@ -1,17 +1,18 @@
 package turn
 
 import (
+	"testing"
+
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
-	"path/filepath"
-	"testing"
 )
 
 func TestContinuationCannotCreateAnotherTaskOrResumeAPausedOne(t *testing.T) {
 	for _, state := range []task.State{task.StatePaused, task.StateCancelled, task.StateDone, task.StateFailed} {
 		t.Run(string(state), func(t *testing.T) {
-			store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+			store, err := task.OpenLedger(taskBook(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +42,7 @@ func TestContinuationCannotCreateAnotherTaskOrResumeAPausedOne(t *testing.T) {
 }
 
 func TestContinuationPreservesScheduledParentLineage(t *testing.T) {
-	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := task.OpenLedger(taskBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,4 +59,15 @@ func TestContinuationPreservesScheduledParentLineage(t *testing.T) {
 	if err != nil || id != parent.ID {
 		t.Fatalf("lost scheduled lineage: id=%s err=%v", id, err)
 	}
+}
+
+// taskBook opens a ledger for a task store that lives as long as the test.
+func taskBook(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

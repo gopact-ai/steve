@@ -2,7 +2,6 @@ package task
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -11,16 +10,13 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-// Store serves tasks from memory. Production writes changed ledger records;
-// the file backend preserves whole-document replacement for isolated tests.
+// Store serves tasks from memory and writes changed ledger records.
 type Store struct {
 	book      *ledger.Ledger
 	revision  uint64
-	doc       ledger.Doc
 	mu        sync.Mutex
 	data      data
 	readIndex readIndex
@@ -45,46 +41,9 @@ func (s *Store) SetObserver(observe func(id string)) {
 }
 
 type data struct {
-	NextID int              `json:"next_id"`
-	Tasks  map[string]*Task `json:"tasks"`
-	Meta   map[string]Meta  `json:"meta,omitempty"`
-}
-
-// Open keeps the store in one JSON file, for tests; the gateway opens the
-// ledger.
-func Open(path string) (*Store, error) {
-	return openWith(&filedoc.Document{Path: path})
-}
-
-func openWith(doc ledger.Doc) (*Store, error) {
-	s := &Store{
-		doc: doc, data: data{NextID: 1, Tasks: map[string]*Task{}, Meta: map[string]Meta{}}, now: time.Now,
-		maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed,
-	}
-	s.rebuildReadIndexLocked()
-	raw, ok, err := doc.Load()
-	if err != nil {
-		return nil, fmt.Errorf("read tasks: %w", err)
-	}
-	if !ok || len(raw) == 0 {
-		return s, nil
-	}
-	var loaded data
-	if err := json.Unmarshal(raw, &loaded); err != nil {
-		return nil, fmt.Errorf("decode tasks: %w", err)
-	}
-	if loaded.Tasks == nil {
-		loaded.Tasks = map[string]*Task{}
-	}
-	if loaded.Meta == nil {
-		loaded.Meta = map[string]Meta{}
-	}
-	if loaded.NextID < 1 {
-		loaded.NextID = 1
-	}
-	s.data = loaded
-	s.rebuildReadIndexLocked()
-	return s, nil
+	NextID int
+	Tasks  map[string]*Task
+	Meta   map[string]Meta
 }
 
 // Create assigns the id and returns the stored copy. Goal is trimmed to keep
@@ -667,22 +626,7 @@ func (s *Store) clone() data {
 }
 
 func (s *Store) replaceLocked(next data) error {
-	if s.book != nil {
-		return s.replaceRecordsLocked(context.Background(), next, nil)
-	}
-	changes, err := recordChanges(s.data, next)
-	if err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(next, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode tasks: %w", err)
-	}
-	if err := s.doc.Save(raw); err != nil {
-		return fmt.Errorf("save tasks: %w", err)
-	}
-	s.installLocked(next, changes)
-	return nil
+	return s.replaceRecordsLocked(context.Background(), next, nil)
 }
 
 func (s *Store) installLocked(next data, changes []recordChange) {

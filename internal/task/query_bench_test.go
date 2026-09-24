@@ -3,9 +3,10 @@ package task
 import (
 	"context"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ledger"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // Baseline reproduces the pre-read-index commit path against the same SQLite

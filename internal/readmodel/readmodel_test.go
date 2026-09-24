@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -48,7 +49,7 @@ func fixture(t *testing.T) *Model {
 	}}
 	r.SetNodes(nodes)
 
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(taskBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,4 +235,15 @@ func TestSnapshotCarriesMemberDisplayNames(t *testing.T) {
 	if snap.Nodes[0].Name != "hub-1" {
 		t.Fatalf("names stay the identity; hub row = %+v", snap.Nodes[0])
 	}
+}
+
+// taskBook opens a ledger for a task store that lives as long as the test.
+func taskBook(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

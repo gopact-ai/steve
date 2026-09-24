@@ -24,9 +24,6 @@ func (s *Store) SpawnAuthorized(ctx context.Context, token ExecutionToken, child
 func (s *Store) CheckAuthorized(ctx context.Context, token ExecutionToken, guard func(*ledger.Tx) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.book == nil {
-		return errors.New("authorized task operation requires the ledger")
-	}
 	return s.book.Update(ctx, func(tx *ledger.Tx) error {
 		if guard != nil {
 			if err := guard(tx); err != nil {
@@ -38,9 +35,6 @@ func (s *Store) CheckAuthorized(ctx context.Context, token ExecutionToken, guard
 }
 
 func (s *Store) replaceAuthorizedLocked(ctx context.Context, token ExecutionToken, next data, guard func(*ledger.Tx) error) error {
-	if s.book == nil {
-		return errors.New("authorized task operation requires the ledger")
-	}
 	return s.replaceRecordsLocked(ctx, next, func(tx *ledger.Tx) error {
 		if guard != nil {
 			if err := guard(tx); err != nil {

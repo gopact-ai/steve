@@ -2,16 +2,28 @@ package task
 
 import (
 	"fmt"
-	"github.com/gopact-ai/steve/internal/channel"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
+
+// testBook opens a ledger that lives as long as the test.
+func testBook(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
+}
 
 func newStore(t *testing.T) (*Store, *time.Time) {
 	t.Helper()
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := OpenLedger(testBook(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -175,9 +187,8 @@ func TestListIsNewestFirstAndScopedToChannel(t *testing.T) {
 }
 
 func TestReopenRestoresTasksAndIDCounter(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "tasks.json")
-	store, err := Open(path)
+	book := testBook(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -186,7 +197,7 @@ func TestReopenRestoresTasksAndIDCounter(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -264,8 +275,8 @@ func TestActivePrefersNewest(t *testing.T) {
 }
 
 func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tasks.json")
-	store, err := Open(path)
+	book := testBook(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +304,7 @@ func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
 		t.Fatalf("closed attempt still interrupted: %+v", got)
 	}
 	// The record survives a reopen — that is the whole point.
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +315,7 @@ func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
 }
 
 func TestSetBudgetRaisesDefaults(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := OpenLedger(testBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +335,7 @@ func TestSetBudgetRaisesDefaults(t *testing.T) {
 }
 
 func TestInterimJournalFollowsTheTurn(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := OpenLedger(testBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +401,7 @@ func TestInterimReceiptStaysWithItsOriginalTask(t *testing.T) {
 	if len(replacement.Interim) != 0 {
 		t.Fatalf("late receipts moved to the replacement task: %v", replacement.Interim)
 	}
-	reloaded, err := openWith(store.doc)
+	reloaded, err := OpenLedger(store.book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +430,7 @@ func TestInterimForTaskRejectsMissingIDs(t *testing.T) {
 // a nightly schedule would charge its runs to whatever the user happened to be
 // doing in the same chat — and a rotation would then close their task.
 func TestOriginPartitionsTheActiveTask(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := OpenLedger(testBook(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -466,7 +477,7 @@ func TestOriginPartitionsTheActiveTask(t *testing.T) {
 // The listing shows ids to the user, and they are decimal counters: compared
 // as text, #10 sorts before #2 as soon as a chat gets past its ninth task.
 func TestListingOrdersIdsNumerically(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := OpenLedger(testBook(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

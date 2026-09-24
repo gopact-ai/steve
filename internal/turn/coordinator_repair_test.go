@@ -101,7 +101,7 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 		t.Fatal(err)
 	}
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(taskBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}

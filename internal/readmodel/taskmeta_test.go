@@ -3,7 +3,6 @@ package readmodel
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -12,7 +11,7 @@ import (
 )
 
 func TestTaskMetaSnapshotAndChangeNotification(t *testing.T) {
-	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := task.OpenLedger(taskBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}

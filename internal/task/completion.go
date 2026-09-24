@@ -134,19 +134,12 @@ func (s *Store) CompleteRoot(ctx context.Context, id, channel string, guard func
 	}
 	next.Tasks[id].State = StateDone
 	next.Tasks[id].CompletedByUser = true
-	var err error
-	if s.book != nil {
-		err = s.replaceAuthorizedLocked(ctx, ExecutionToken{TaskID: id, Epoch: root.ExecutionEpoch}, next, func(tx *ledger.Tx) error {
-			if guard == nil {
-				return errors.New("task completion requires a durable admission guard")
-			}
-			return guard(tx, ids)
-		})
-	} else if guard != nil {
-		err = errors.New("durable task completion requires the ledger")
-	} else {
-		err = s.replaceLocked(next)
-	}
+	err := s.replaceAuthorizedLocked(ctx, ExecutionToken{TaskID: id, Epoch: root.ExecutionEpoch}, next, func(tx *ledger.Tx) error {
+		if guard == nil {
+			return errors.New("task completion requires a durable admission guard")
+		}
+		return guard(tx, ids)
+	})
 	if err != nil {
 		return Task{}, err
 	}

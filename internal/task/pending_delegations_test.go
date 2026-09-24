@@ -1,13 +1,12 @@
 package task
 
 import (
-	"path/filepath"
 	"slices"
 	"testing"
 )
 
 func TestPendingDelegationsListOnlyChildrenStillOwingTheirParent(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	s, err := OpenLedger(testBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}

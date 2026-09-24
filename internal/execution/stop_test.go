@@ -3,7 +3,6 @@ package execution
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,7 +12,7 @@ import (
 
 func stopTestScope(t *testing.T, lifetime context.Context) (*Registry, *Scope, *task.Store) {
 	t.Helper()
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(taskBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}

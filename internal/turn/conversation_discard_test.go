@@ -37,7 +37,7 @@ func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *s
 	}
 	manager := &closeRecorder{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"mock": {reply: "ok"}}}}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(taskBook(t))
 	if err != nil {
 		t.Fatal(err)
 	}

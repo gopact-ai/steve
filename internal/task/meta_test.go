@@ -1,9 +1,8 @@
 package task
 
 import (
+	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -12,8 +11,8 @@ import (
 )
 
 func TestMetaPersistsWithTasks(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tasks.json")
-	store, err := Open(path)
+	book := testBook(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +42,7 @@ func TestMetaPersistsWithTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustCreate(t, store, "another task", "console:main")
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,54 +54,67 @@ func TestMetaPersistsWithTasks(t *testing.T) {
 	}
 }
 
-func TestMetaReadsLegacyFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tasks.json")
-	if err := os.WriteFile(path, []byte(`{"next_id":2,"tasks":{"1":{"id":"1","goal":"legacy","state":"running"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(path)
+func TestMetaDefaultsUntilSet(t *testing.T) {
+	book := testBook(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"1", "missing"} {
+	created := mustCreate(t, store, "goal", "console:main")
+	for _, id := range []string{created.ID, "missing"} {
 		if got := store.MetaOf(id); !reflect.DeepEqual(got, Meta{Priority: "normal"}) {
 			t.Fatalf("default metadata for %s = %+v", id, got)
 		}
 	}
-	title := "Legacy title"
-	if _, err := store.SetMeta("1", MetaPatch{Title: &title}); err != nil {
+	title := "Titled"
+	if _, err := store.SetMeta(created.ID, MetaPatch{Title: &title}); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reopened.MetaOf("1"); got.Title != title || got.Priority != "normal" {
-		t.Fatalf("legacy metadata after reopen = %+v", got)
+	if got := reopened.MetaOf(created.ID); got.Title != title || got.Priority != "normal" {
+		t.Fatalf("metadata after reopen = %+v", got)
 	}
 }
 
-type metaDocument struct {
-	ledger.Doc
+// writeGate stands in for ledger replication, so a test can refuse the
+// store's durable writes and count the ones it accepts.
+type writeGate struct {
+	book   *ledger.Ledger
 	writes int
 	fail   bool
 }
 
-func (d *metaDocument) Save(raw []byte) error {
-	if d.fail {
-		return errors.New("disk unavailable")
+func gateWrites(t *testing.T, s *Store) *writeGate {
+	t.Helper()
+	gate := &writeGate{book: s.book}
+	if err := s.book.AttachReplication(gate); err != nil {
+		t.Fatal(err)
 	}
-	d.writes++
-	return d.Doc.Save(raw)
+	return gate
+}
+
+func (g *writeGate) Prepare(context.Context) (ledger.ReplicaPosition, error) {
+	version, err := g.book.ReplicaVersion()
+	return ledger.ReplicaPosition{Version: version, CoordinatorEpoch: 1}, err
+}
+
+func (g *writeGate) Propose(_ context.Context, write ledger.ReplicatedWrite) ([]byte, error) {
+	if g.fail {
+		return nil, errors.New("disk unavailable")
+	}
+	g.writes++
+	return g.book.ApplyReplicated(write.ID, write.ExpectedVersion+1, write.Payload)
 }
 
 func TestMetaPatchIsOptionalAndIdempotent(t *testing.T) {
 	store, clock := newStore(t)
 	created := mustCreate(t, store, "goal", "console:main")
-	doc := &metaDocument{Doc: store.doc}
-	store.doc = doc
-	if _, err := store.SetMeta(created.ID, MetaPatch{}); err != nil || doc.writes != 0 {
-		t.Fatalf("empty patch: writes=%d, err=%v", doc.writes, err)
+	gate := gateWrites(t, store)
+	if _, err := store.SetMeta(created.ID, MetaPatch{}); err != nil || gate.writes != 0 {
+		t.Fatalf("empty patch: writes=%d, err=%v", gate.writes, err)
 	}
 	title, priority, labels, archived, rank := "Title", "low", []string{"todo"}, true, 4
 	patch := MetaPatch{Title: &title, Priority: &priority, Labels: &labels, Archived: &archived, Rank: &rank}
@@ -115,8 +127,8 @@ func TestMetaPatchIsOptionalAndIdempotent(t *testing.T) {
 	}
 	*clock = clock.Add(time.Hour)
 	again, err := store.SetMeta(created.ID, patch)
-	if err != nil || !reflect.DeepEqual(again, first) || doc.writes != 1 {
-		t.Fatalf("retry changed metadata: %+v, writes=%d, err=%v", again, doc.writes, err)
+	if err != nil || !reflect.DeepEqual(again, first) || gate.writes != 1 {
+		t.Fatalf("retry changed metadata: %+v, writes=%d, err=%v", again, gate.writes, err)
 	}
 	title = "Renamed"
 	renamed, err := store.SetMeta(created.ID, MetaPatch{Title: &title})
@@ -129,10 +141,10 @@ func TestMetaPatchIsOptionalAndIdempotent(t *testing.T) {
 	if err != nil || cleared.Title != "" || cleared.Priority != "normal" || len(cleared.Labels) != 0 || cleared.ArchivedAt != nil || cleared.Rank != 0 {
 		t.Fatalf("clear metadata = %+v, err=%v", cleared, err)
 	}
-	writes := doc.writes
+	writes := gate.writes
 	priority = "normal"
-	if _, err := store.SetMeta(created.ID, patch); err != nil || doc.writes != writes {
-		t.Fatalf("normal priority retry: writes=%d, want %d, err=%v", doc.writes, writes, err)
+	if _, err := store.SetMeta(created.ID, patch); err != nil || gate.writes != writes {
+		t.Fatalf("normal priority retry: writes=%d, want %d, err=%v", gate.writes, writes, err)
 	}
 	archived = true
 	rearchived, err := store.SetMeta(created.ID, MetaPatch{Archived: &archived})
@@ -152,8 +164,7 @@ func TestMetaRejectsMissingInvalidAndFailedWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := &metaDocument{Doc: store.doc}
-	store.doc = doc
+	gate := gateWrites(t, store)
 	if _, err := store.SetMeta("missing", MetaPatch{Title: &title}); err == nil {
 		t.Fatal("missing task accepted metadata")
 	}
@@ -161,10 +172,10 @@ func TestMetaRejectsMissingInvalidAndFailedWrites(t *testing.T) {
 	if _, err := store.SetMeta(created.ID, MetaPatch{Title: &title, Priority: &invalid}); err == nil {
 		t.Fatal("invalid priority accepted")
 	}
-	if doc.writes != 0 {
-		t.Fatalf("invalid patches wrote %d times", doc.writes)
+	if gate.writes != 0 {
+		t.Fatalf("invalid patches wrote %d times", gate.writes)
 	}
-	doc.fail = true
+	gate.fail = true
 	if _, err := store.SetMeta(created.ID, MetaPatch{Title: &title}); err == nil {
 		t.Fatal("failed persistence reported success")
 	}
@@ -193,7 +204,7 @@ func TestMetaNotifiesObserverAfterPersistence(t *testing.T) {
 			if id != created.ID {
 				t.Fatalf("observer id = %q, want %q", id, created.ID)
 			}
-			reopened, err := openWith(store.doc)
+			reopened, err := OpenLedger(store.book)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -207,7 +218,7 @@ func TestMetaNotifiesObserverAfterPersistence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store.doc = &metaDocument{Doc: store.doc, fail: true}
+	gateWrites(t, store).fail = true
 	title = "Unsaved"
 	if _, err := store.SetMeta(created.ID, MetaPatch{Title: &title}); err == nil {
 		t.Fatal("failed persistence reported success")
