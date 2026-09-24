@@ -9,10 +9,9 @@ import (
 
 func noticeCoordinator(t *testing.T, runner *fakeRunner, after time.Duration) (*Coordinator, chan TaskNotice) {
 	t.Helper()
-	coordinator, _ := taskCoordinator(t, runner)
+	coordinator, _ := taskCoordinator(t, runner, withDeps(func(d *Deps) { d.OfflineAfter = after }))
 	notices := make(chan TaskNotice, 4)
 	coordinator.SetNotifier(func(n TaskNotice) { notices <- n })
-	coordinator.SetOfflineReminder(after)
 	return coordinator, notices
 }
 

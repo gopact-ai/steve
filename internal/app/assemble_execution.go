@@ -114,6 +114,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		Projects: projects, DefaultProject: cfg.Gateway.DefaultProject, HomeProject: adminsvc.HomeProjectID,
 		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
 		Executions: executions, Tasks: tasks, Node: boot.NodeName(), Schedules: schedules,
+		OfflineAfter: time.Duration(cfg.Gateway.OfflineReminderAfter),
 	})
 	if err != nil {
 		return nil, err

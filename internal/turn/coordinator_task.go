@@ -281,10 +281,6 @@ func (c *Coordinator) SetAfterTurn(fn func(taskID string)) { c.afterTurn = fn }
 // its news to the cards.
 func (c *Coordinator) SetNotifier(fn func(TaskNotice)) { c.notifier = fn }
 
-// SetOfflineReminder sets how long a turn must run before its completion also
-// earns a plain-text ping. A non-positive value turns the ping off.
-func (c *Coordinator) SetOfflineReminder(after time.Duration) { c.offlineAfter = after }
-
 // noteActivity records that this conversation just heard from a person. The
 // question the reminder has to answer is "did they walk away?", and the only
 // evidence Steve has is whether anything arrived while the turn was running.

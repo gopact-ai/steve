@@ -77,7 +77,6 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	// /tasks resume re-enters through the same path a crash recovery does:
 	// a notice at the anchor becomes the new anchor, and the continuation
 	// arrives as an ordinary message.
-	coordinator.SetOfflineReminder(time.Duration(cfg.Gateway.OfflineReminderAfter))
 	coordinator.SetNotifier(func(n turn.TaskNotice) {
 		err := routeTask(n.Transport, func() error { cons.Notice(n); return nil }, func() error {
 			gw.Notify(gateway.Notice{TaskID: n.TaskID, MessageID: n.MessageID, Requester: n.Requester, Text: n.Text})

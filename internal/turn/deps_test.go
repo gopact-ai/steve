@@ -273,6 +273,7 @@ func TestNewWiresEveryDependency(t *testing.T) {
 	deps.Owner, deps.Node, deps.DefaultProject, deps.HomeProject = "owner", "hub", "p", "home"
 	deps.ChannelOwners = map[string]string{"feishu": "native-owner"}
 	deps.Text = i18n.New(i18n.LocaleEN)
+	deps.OfflineAfter = time.Minute
 	c, err := New(deps)
 	if err != nil {
 		t.Fatal(err)
@@ -284,8 +285,8 @@ func TestNewWiresEveryDependency(t *testing.T) {
 		t.Fatal("New dropped a store or service")
 	}
 	if _, dir := c.home.(home.Dir); !dir || c.homePath != deps.Home.(home.Dir).Path || c.ownerOpenID != "owner" || c.node != "hub" ||
-		c.defaultProject != "p" || c.homeProject != "home" || c.text.Locale() != i18n.LocaleEN {
-		t.Fatal("New dropped an identity, placement or locale setting")
+		c.defaultProject != "p" || c.homeProject != "home" || c.text.Locale() != i18n.LocaleEN || c.offlineAfter != time.Minute {
+		t.Fatal("New dropped an identity, placement, locale or reminder setting")
 	}
 	native, err := c.forChannel("feishu")
 	if err != nil || native.ownerOpenID != "native-owner" {
