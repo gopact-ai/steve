@@ -69,22 +69,20 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 			}
 			item.RunID, item.Completed = run.RunID, run.Phase == exec.RunCompleted
 		}
-		if c.attempts != nil {
-			records, err := c.attempts.ForTask(ctx, tracked.ID)
-			if err != nil {
-				return nil, err
-			}
-			var latest attempt.Record
-			for _, record := range records {
-				if record.Kind != attempt.KindPlan || record.State == attempt.Superseded || !nodewire.IsManagedSession(record.Session) && !agentexec.PendingOpen(record) {
-					continue
-				}
-				if latest.ID == "" || record.StartedAt.After(latest.StartedAt) || record.StartedAt.Equal(latest.StartedAt) && record.ID > latest.ID {
-					latest = record
-				}
-			}
-			item.AttemptID, item.AgentID, item.NodeID = latest.ID, latest.Agent, latest.Node
+		records, err := c.attempts.ForTask(ctx, tracked.ID)
+		if err != nil {
+			return nil, err
 		}
+		var latest attempt.Record
+		for _, record := range records {
+			if record.Kind != attempt.KindPlan || record.State == attempt.Superseded || !nodewire.IsManagedSession(record.Session) && !agentexec.PendingOpen(record) {
+				continue
+			}
+			if latest.ID == "" || record.StartedAt.After(latest.StartedAt) || record.StartedAt.Equal(latest.StartedAt) && record.ID > latest.ID {
+				latest = record
+			}
+		}
+		item.AttemptID, item.AgentID, item.NodeID = latest.ID, latest.Agent, latest.Node
 		if item.PlanID != "" || item.AttemptID != "" || tracked.PreparedPlan != nil {
 			result = append(result, item)
 		}
@@ -180,7 +178,7 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 	if !exists && tracked.PreparedPlan != nil {
 		token = &tracked.PreparedPlan.Execution
 	}
-	if token == nil && identity.AttemptID != "" && c.attempts != nil {
+	if token == nil && identity.AttemptID != "" {
 		record, err := c.attempts.Get(ctx, identity.AttemptID)
 		if err != nil || record.TaskID != tracked.ID || record.Project != tracked.ProjectID || record.Kind != attempt.KindPlan {
 			return Result{}, errors.Join(err, errors.New("retained planning identity differs"))

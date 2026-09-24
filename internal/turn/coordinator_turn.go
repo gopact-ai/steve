@@ -64,9 +64,6 @@ type chatTurn struct {
 // workspace. The machine must qualify for the project's level; the roster
 // knows both the machine's level and the endpoint's session cap.
 func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace) (attempt.Spec, roster.Candidate, error) {
-	if c.attempts == nil {
-		return attempt.Spec{}, roster.Candidate{}, errors.New("turn: attempts are not wired")
-	}
 	spec := attempt.Spec{Execution: execution.Token(ctx),
 		TaskID: taskID, TurnID: req.MessageID, Kind: attempt.KindChat, Project: binding.ProjectID,
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,

@@ -380,33 +380,29 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 // stop; with confirmSettlement, an attempt still open counts as that.
 func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmSettlement bool) error {
 	var stopErr error
-	if c.attempts != nil {
-		for _, id := range ids {
-			if records, err := c.attempts.ForTask(ctx, id); err == nil {
-				for _, record := range records {
-					if !record.Unsettled && record.StopEvidence != "" {
-						stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
-					}
+	for _, id := range ids {
+		if records, err := c.attempts.ForTask(ctx, id); err == nil {
+			for _, record := range records {
+				if !record.Unsettled && record.StopEvidence != "" {
+					stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
 				}
-			} else {
-				stopErr = errors.Join(stopErr, err)
 			}
+		} else {
+			stopErr = errors.Join(stopErr, err)
 		}
 	}
 	waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
 	stopErr = errors.Join(stopErr, c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx))
 	finishWait()
-	if c.attempts != nil {
-		for _, id := range ids {
-			records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
-			if err != nil {
-				stopErr = errors.Join(stopErr, err)
-				continue
-			}
-			for _, record := range records {
-				if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
-					stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
-				}
+	for _, id := range ids {
+		records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
+		if err != nil {
+			stopErr = errors.Join(stopErr, err)
+			continue
+		}
+		for _, record := range records {
+			if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
+				stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
 			}
 		}
 	}

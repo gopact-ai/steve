@@ -39,9 +39,6 @@ func (c *Coordinator) memoryProject(ctx context.Context, conversationID string) 
 		attemptID = key.AttemptID
 	}
 	if attemptID != "" {
-		if c.attempts == nil {
-			return ""
-		}
 		r, err := c.attempts.Get(ctx, attemptID)
 		if err != nil || r.Project == c.homeProject {
 			return ""

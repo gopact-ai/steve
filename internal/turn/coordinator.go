@@ -351,14 +351,6 @@ func (c *Coordinator) SetArtifacts(store *artifact.Store) {
 	c.artifacts = store
 }
 
-// SetAttempts wires the attempt service: every chat turn becomes an
-// attempt, leased and fenced, from here on.
-//
-// Deprecated: set Deps.Attempts.
-func (c *Coordinator) SetAttempts(service *attempt.Service) {
-	c.attempts = service
-}
-
 // SetWorkspaceAttach wires what gives a project a directory on a machine
 // that has none. Without it a turn on such a machine is refused, which is
 // how a hub with no management service still behaves.

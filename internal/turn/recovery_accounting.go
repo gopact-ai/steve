@@ -25,9 +25,6 @@ func (c *Coordinator) ChatObserverActive(conversation, member string) bool {
 // SettleChatAccounting consumes the original execution's durable terminal
 // evidence. It neither delivers a reply nor grants a new execution.
 func (c *Coordinator) SettleChatAccounting(ctx context.Context, id string) error {
-	if c.attempts == nil {
-		return errors.New("chat accounting recovery is not configured")
-	}
 	record, err := c.attempts.Get(ctx, id)
 	if err != nil {
 		return err
@@ -82,7 +79,7 @@ func (c *Coordinator) finishChatAccounting(ctx context.Context, id string, recor
 	if id == "" {
 		return nil
 	}
-	if record.ID != "" && c.attempts != nil {
+	if record.ID != "" {
 		current, err := c.attempts.Get(ctx, record.ID)
 		if err != nil {
 			return err

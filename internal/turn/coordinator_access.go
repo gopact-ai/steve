@@ -62,10 +62,8 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 		return result, nil // the owner is who approves; asking them to approve their own answer is theatre
 	}
 	attemptID, taskID := "", ""
-	if c.attempts != nil {
-		if r, found, _ := c.attempts.LatestForTurn(ctx, req.MessageID); found {
-			attemptID, taskID = r.ID, r.TaskID
-		}
+	if r, found, _ := c.attempts.LatestForTurn(ctx, req.MessageID); found {
+		attemptID, taskID = r.ID, r.TaskID
 	}
 	id := fmt.Sprintf("disc-%d", time.Now().UnixNano()%1_000_000_007)
 	h := held{id: id, req: req, task: taskID, text: result.Text, result: result, at: time.Now()}

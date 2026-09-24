@@ -323,7 +323,7 @@ func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Age
 // nothing can still be writing to it, and reopening it is the same accepted
 // risk the recovery path takes: the agent replays its own history on load.
 func (c *Coordinator) clearSettledTaint(ctx context.Context, conversationID, agentID string, saved state.Session) (bool, error) {
-	if c.attempts == nil || saved.UpstreamID == "" {
+	if saved.UpstreamID == "" {
 		return false, nil
 	}
 	live, err := c.attempts.Live(ctx)

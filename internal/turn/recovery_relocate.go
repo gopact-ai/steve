@@ -77,7 +77,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 	if c.maintaining {
 		return RelocationPlan{}, errors.New("coordination is transferring or under maintenance")
 	}
-	if c.artifacts == nil || c.attempts == nil {
+	if c.artifacts == nil {
 		return RelocationPlan{}, errors.New("relocation services are unavailable")
 	}
 	r, err := c.attempts.Get(ctx, id)
