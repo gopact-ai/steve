@@ -139,9 +139,15 @@ func retainedAuxFixture(t *testing.T) (*testWorld, *retainedAuxSessions, Spec) {
 	spec := w.spec(attempt.KindVerify)
 	done := make(chan error, 1)
 	go func() { _, err := w.runner.Prompt(lifetime, spec, "verify original work", nil); done <- err }()
+	// Each wait ends with the event it waits for, or at the test binary's
+	// deadline.
+	bound, unbound := untilTestDeadline(t)
+	defer unbound()
 	select {
 	case <-sessions.entered:
-	case <-time.After(3 * time.Second):
+	case err := <-done:
+		t.Fatalf("auxiliary returned before its prompt started: %v", err)
+	case <-bound.Done():
 		t.Fatal("auxiliary did not start")
 	}
 	records, err := w.attempts.Live(t.Context())
@@ -156,12 +162,10 @@ func retainedAuxFixture(t *testing.T) (*testWorld, *retainedAuxSessions, Spec) {
 		if !errors.Is(err, harness.ErrStopUnconfirmed) {
 			t.Fatalf("observer stop was not retained: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-bound.Done():
 		t.Fatal("observer did not leave")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	if err := w.runner.executions.Shutdown(ctx); err != nil {
+	if err := w.runner.executions.Shutdown(bound); err != nil {
 		t.Fatalf("detached observer did not join: %v", err)
 	}
 	return w, sessions, spec
@@ -266,4 +270,13 @@ func TestAuxiliaryRetainedChangedInputIsBlockedWithoutReplay(t *testing.T) {
 	if sessions.prompted != 1 || sessions.resumed != 0 {
 		t.Fatal("changed input reached original execution")
 	}
+}
+
+// untilTestDeadline is the test's context, ending also at the deadline the
+// test binary was given, when it has one.
+func untilTestDeadline(t *testing.T) (context.Context, context.CancelFunc) {
+	if deadline, ok := t.Deadline(); ok {
+		return context.WithDeadline(t.Context(), deadline)
+	}
+	return context.WithCancel(t.Context())
 }
