@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/material"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -108,6 +110,12 @@ type portAdmin struct{ consoleapi.Admin }
 func (portAdmin) ListMaterials(_ context.Context, project string) ([]material.Material, error) {
 	return []material.Material{{ID: "m", Project: project}}, nil
 }
+func (portAdmin) NativeHistory(_ context.Context, node string, source nativehistory.Source) ([]nativehistory.Entry, error) {
+	return []nativehistory.Entry{{NativeID: node, Harness: source.Harness}}, nil
+}
+func (portAdmin) NodeAgents(_ context.Context, node string) (agenttools.Discovery, error) {
+	return agenttools.Discovery{Revision: node}, nil
+}
 
 // A route calls what it needs through the service port it holds, so it
 // serves a service reached through a port that forwards nothing else.
@@ -118,6 +126,8 @@ func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 		want               string
 	}{
 		{"GET", "/console/materials?project=p", "", 200, `{"materials":[{"id":"m","project":"p",`},
+		{"GET", "/console/nodes/worker/native-history?harness=dsh", "", 200, `{"entries":[{"native_id":"worker","harness":"dsh",`},
+		{"GET", "/console/nodes/worker/agents", "", 200, `{"revision":"worker","agents":null}`},
 	} {
 		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 		server.SetAdmin(adminPort{portAdmin{}})
