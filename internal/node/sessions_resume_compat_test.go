@@ -84,49 +84,13 @@ func TestNativeResumeRetriesFromOldestSourceAcrossHandoffs(t *testing.T) {
 	}
 }
 
-// A resume is not sent to a node whose advert does not offer it, and the
-// refusal names what the advert lacks rather than the node's build.
-func TestNativeResumeIsNotSentToANodeWithoutIt(t *testing.T) {
-	server := startNode(t, ServerConfig{Name: "worker", Token: "resume-feature", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
-	r := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "resume-feature"}})
-	defer r.Close()
-	c, err := r.connect(t.Context(), "worker")
-	if err != nil {
-		t.Fatal(err)
-	}
-	adv := c.getAdvert()
-	if !nodewire.HasFeature(adv.Features, nodewire.FeatureNativeResume) {
-		t.Fatal("new node omitted resume feature")
-	}
-	adv.Features = slices.DeleteFunc(adv.Features, func(s string) bool { return s == nodewire.FeatureNativeResume })
-	c.setAdvert(adv)
-	req := nodeSessionRequest(nodewire.SessionActionOpen)
-	req.ID = "ns_" + strings.Repeat("0", 64)
-	_, err = r.NodeSession(t.Context(), "worker", req)
-	var unsent *nodewire.SessionNotDispatched
-	if !errors.As(err, &unsent) || !strings.Contains(err.Error(), "node does not offer native resume") {
-		t.Fatalf("resume = %v, want it unsent for the missing feature", err)
-	}
-}
-
 // Native history is not asked of a node whose advert lacks it, and the
-// refusal says why: the node runs without node sessions, or it has them on
-// a platform that cannot store native history.
+// refusal says why: the node's platform cannot store native history.
 func TestNativeHistoryRefusalSaysWhyTheNodeLacksIt(t *testing.T) {
-	sessions := []string{nodewire.FeatureNodeSessions, nodewire.FeatureNativeResume}
-	for _, tc := range []struct {
-		features []string
-		want     string
-	}{
-		{nil, "it runs without node sessions"},
-		{sessions, "its platform cannot store native history"},
-	} {
-		r := advertisingRegistry(t, nodewire.Advert{Node: "worker", Features: tc.features})
-		if _, err := r.NativeHistory(t.Context(), "worker", nativehistory.Source{}); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("features %v: native history = %v, want %q", tc.features, err, tc.want)
-		}
+	r := advertisingRegistry(t, nodewire.Advert{Node: "worker"})
+	if _, err := r.NativeHistory(t.Context(), "worker", nativehistory.Source{}); err == nil || !strings.Contains(err.Error(), "its platform cannot store native history") {
+		t.Errorf("native history = %v, want the platform named", err)
 	}
-	r := advertisingRegistry(t, nodewire.Advert{Node: "worker", Features: sessions})
 	req := nodeSessionRequest(nodewire.SessionActionOpen)
 	req.Binding.NativeImportID = "import-1"
 	_, err := r.NodeSession(t.Context(), "worker", req)

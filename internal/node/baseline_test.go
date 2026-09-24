@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/processrestart"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -43,6 +45,17 @@ func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
 	})
 	registry := NewRegistry("hub-1", map[string]Config{"host-base": {Addr: server.Addr(), Token: "tok"}})
 	t.Cleanup(registry.Close)
+	// The node asks the hub to authorize a session action or a receipt
+	// before acting on it, so a question here is the request reaching it.
+	var asked []string
+	registry.SetSessionAuthorizer(func(_ context.Context, _ string, _ nodewire.SessionAuthority, _ nodewire.SessionBinding, action nodewire.SessionAction) error {
+		asked = append(asked, "session "+string(action))
+		return errors.New("refused by the test hub")
+	})
+	registry.SetNodeReceiptAuthorizer(func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error {
+		asked = append(asked, "receipt")
+		return errors.New("refused by the test hub")
+	})
 	c, err := registry.connect(t.Context(), "host-base")
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +73,13 @@ func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
 	}
 	present, _ := ability.Compile([]string{"tool:sh"})
 	made := filepath.Join(dir, "made-by-the-node")
+	resume := nodeSessionRequest(nodewire.SessionActionOpen)
+	resume.ID = "ns_" + strings.Repeat("0", 64)
+	resume.Authority.ClusterID, resume.Binding.NodeID = "hub-1", "host-base"
+	receipt := nodewire.SessionReceiptRequest{Authority: resume.Authority, Receipt: nodewire.SessionReceipt{
+		Version: 1, SessionID: resume.ID, ContextID: "context-1", Binding: resume.Binding,
+		CommandID: "command-1", InputSequence: 1, Digest: strings.Repeat("0", 64),
+	}}
 
 	for _, op := range []struct {
 		name string
@@ -122,6 +142,19 @@ func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
 			}
 			return err
 		}},
+		{"native resume", func() error {
+			var unsent *nodewire.SessionNotDispatched
+			if _, err := registry.NodeSession(t.Context(), "host-base", resume); err == nil || errors.As(err, &unsent) || !slices.Contains(asked, "session open") {
+				return fmt.Errorf("%v (node asked %v), want the node to ask for the authority the hub refuses", err, asked)
+			}
+			return nil
+		}},
+		{"receipt", func() error {
+			if err := registry.AcknowledgeNodeReceipt(t.Context(), "host-base", receipt); err == nil || !slices.Contains(asked, "receipt") {
+				return fmt.Errorf("%v (node asked %v), want the node to ask for the proof the hub refuses", err, asked)
+			}
+			return nil
+		}},
 	} {
 		// A refresh after an earlier operation brings the node's features
 		// back; each operation starts from an advert that lists none.
@@ -134,21 +167,27 @@ func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
 	}
 }
 
-// An advert lists only what a v2 node may lack; the baseline is the
-// protocol version, not a list, and the snapshot repeats no features.
+// An advert lists only what a v2 node may lack and this one has: native
+// history where the platform can store it, and restart where the node can
+// re-execute itself. The baseline is the protocol version, not a list, and
+// the snapshot repeats no features.
 func TestAdvertListsOnlyConditionalFeatures(t *testing.T) {
-	server := startNode(t, ServerConfig{Name: "host-list", Token: "tok", StateDir: t.TempDir()})
+	server := productionNode(t, ServerConfig{Name: "host-list", Token: "tok", StateDir: t.TempDir()})
 	registry := NewRegistry("hub-1", map[string]Config{"host-list": {Addr: server.Addr(), Token: "tok"}})
 	t.Cleanup(registry.Close)
 	advert, err := registry.Advert(t.Context(), "host-list")
 	if err != nil {
 		t.Fatal(err)
 	}
-	conditional := []string{nodewire.FeatureNodeSessions, nodewire.FeatureNativeResume, nodewire.FeatureNodeReceipts, nodewire.FeatureNativeHistory, nodewire.FeatureRestart}
-	for _, feature := range advert.Features {
-		if !slices.Contains(conditional, feature) {
-			t.Errorf("advert lists %q, which every v2 node has", feature)
-		}
+	var want []string
+	if nativehistory.StorageSupported {
+		want = append(want, nodewire.FeatureNativeHistory)
+	}
+	if processrestart.Supported() {
+		want = append(want, nodewire.FeatureRestart)
+	}
+	if got := slices.Sorted(slices.Values(advert.Features)); !slices.Equal(got, slices.Sorted(slices.Values(want))) {
+		t.Errorf("advert lists %v, want %v", got, want)
 	}
 	raw, _ := json.Marshal(advert.Snapshot)
 	if strings.Contains(string(raw), `"features"`) {

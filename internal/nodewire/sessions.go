@@ -30,8 +30,6 @@ func IsManagedSession(id string) bool { return strings.HasPrefix(id, managedSess
 
 const FeatureNativeHistory = "native_history.v1"
 
-const FeatureNodeSessions = "node_sessions.v1"
-const FeatureNativeResume = "native_resume.v1"
 const StreamNodeSessions = "node_sessions"
 const NodeSessionMaxBytes = 16 << 20
 

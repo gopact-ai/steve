@@ -123,10 +123,10 @@ type Advert struct {
 	// missing one.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
 	// Features lists what a node on the negotiated protocol version may
-	// still lack: node-owned sessions and native resume, node receipts,
-	// native history and controlled restart. What every node of that
-	// version has is not listed; a capability every node must have raises
-	// ProtocolVersion.
+	// still lack: native history, which needs a platform that can store
+	// it, and controlled restart, which needs a launcher that can
+	// re-execute the node. What every node of that version has is not
+	// listed; a capability every node must have raises ProtocolVersion.
 	Features []string `json:"features,omitempty"`
 	// SessionGraceMS is the node's process reconnect window, in milliseconds.
 	SessionGraceMS int64 `json:"session_grace_ms,omitempty"`
