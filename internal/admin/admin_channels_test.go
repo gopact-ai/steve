@@ -21,14 +21,14 @@ func ChannelValue[T any](v T) *T { return &v }
 func ChannelsAdminFixture(t *testing.T) (*Service, *hubChannelsService) {
 	t.Helper()
 	a := agentAdminFixture(t)
-	a.Cfg.Gateway.OwnerID, a.Cfg.Gateway.DefaultChannel = "console-owner", "feishu"
-	a.Cfg.Gateway.StatePath = filepath.Join(t.TempDir(), "state.json")
-	a.Cfg.Projects = map[string]config.Project{"work": {Home: config.ProjectHome{Path: t.TempDir()}}}
-	a.Cfg.Feishu = config.Feishu{AppID: "app", AppSecret: "original-private-secret", OwnerOpenID: "im-owner"}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Gateway.OwnerID, a.cfg().Gateway.DefaultChannel = "console-owner", "feishu"
+	a.cfg().Gateway.StatePath = filepath.Join(t.TempDir(), "state.json")
+	a.cfg().Projects = map[string]config.Project{"work": {Home: config.ProjectHome{Path: t.TempDir()}}}
+	a.cfg().Feishu = config.Feishu{AppID: "app", AppSecret: "original-private-secret", OwnerOpenID: "im-owner"}
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	return a, NewChannels(a, a.Cfg)
+	return a, NewChannels(a, a.cfg())
 }
 
 func AssertNoChannelSecrets(t *testing.T, view consoleapi.ChannelsView) {
@@ -82,7 +82,7 @@ func TestChannelsRotationCASAndEffectiveSettings(t *testing.T) {
 	if _, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{Channels: channelsettings.Patch{}}); !errors.Is(err, consoleapi.ErrSettingsConflict) {
 		t.Fatal("missing revision accepted", err)
 	}
-	policies := NewSettings(a, a.Cfg)
+	policies := NewSettings(a, a.cfg())
 	settings, _ := policies.Settings(t.Context())
 	if _, err := policies.UpdateSettings(t.Context(), consoleapi.SettingsUpdate{BaseRevision: settings.Revision, Settings: json.RawMessage(`{"gateway":{"task_max_turns":3}}`)}); err != nil {
 		t.Fatal(err)
@@ -94,11 +94,11 @@ func TestChannelsRotationCASAndEffectiveSettings(t *testing.T) {
 
 func TestChannelsDisablePreservesConsoleIdentityAndSecrets(t *testing.T) {
 	a, _ := ChannelsAdminFixture(t)
-	a.Cfg.Gateway.OwnerID = ""
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Gateway.OwnerID = ""
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	s := NewChannels(a, a.Cfg)
+	s := NewChannels(a, a.cfg())
 	before, _ := s.Channels(t.Context())
 	update := consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{DefaultChannel: ChannelValue("console"), Feishu: &channelsettings.FeishuPatch{Enabled: ChannelValue(false), OwnerOpenID: ChannelValue("different-im-owner")}}}
 	after, err := s.UpdateChannels(t.Context(), update)
@@ -109,14 +109,14 @@ func TestChannelsDisablePreservesConsoleIdentityAndSecrets(t *testing.T) {
 		t.Fatal("disable changed identity or falsely updated effective channel")
 	}
 	AssertNoChannelSecrets(t, after)
-	if a.Cfg.Feishu.AppSecret != "original-private-secret" {
+	if a.cfg().Feishu.AppSecret != "original-private-secret" {
 		t.Fatal("disabled channel lost omitted secret")
 	}
 	if _, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: after.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{AppSecret: &channelsettings.Secret{Action: "clear"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	after, _ = s.Channels(t.Context())
-	if after.Desired.Feishu.AppSecretConfigured || a.Cfg.Feishu.AppSecret != "" || !after.Effective.Feishu.AppSecretConfigured {
+	if after.Desired.Feishu.AppSecretConfigured || a.cfg().Feishu.AppSecret != "" || !after.Effective.Feishu.AppSecretConfigured {
 		t.Fatal("explicit clear did not preserve effective snapshot")
 	}
 }
@@ -137,7 +137,7 @@ func TestChannelsSaveFailuresAndExternalEditRespectCommitBoundary(t *testing.T) 
 	}
 	after, _ := s.Channels(t.Context())
 	stored, _ := os.ReadFile(a.Path)
-	if !reflect.DeepEqual(before, after) || string(stored) != string(raw) || a.Cfg.Feishu.AppSecret != "original-private-secret" {
+	if !reflect.DeepEqual(before, after) || string(stored) != string(raw) || a.cfg().Feishu.AppSecret != "original-private-secret" {
 		t.Fatal("failed save published candidate")
 	}
 	a.WriteConfig = func(path string, c *config.Config) error {
@@ -147,7 +147,7 @@ func TestChannelsSaveFailuresAndExternalEditRespectCommitBoundary(t *testing.T) 
 		return &config.CommittedError{Err: fmt.Errorf("directory sync failed for %s", c.Feishu.AppSecret)}
 	}
 	applied, err := s.UpdateChannels(t.Context(), update)
-	if err != nil || applied.Warning == "" || !applied.PendingRestart || a.Cfg.Feishu.AppSecret != "rotated-private-secret" {
+	if err != nil || applied.Warning == "" || !applied.PendingRestart || a.cfg().Feishu.AppSecret != "rotated-private-secret" {
 		t.Fatal("committed warning rolled back candidate", err)
 	}
 	AssertNoChannelSecrets(t, applied)
@@ -165,13 +165,63 @@ func TestChannelsSaveFailuresAndExternalEditRespectCommitBoundary(t *testing.T) 
 
 func TestChannelsViewsDoNotAliasAppliedConfiguration(t *testing.T) {
 	a, _ := ChannelsAdminFixture(t)
-	a.Cfg.Feishu.AllowedSenders = []string{"allowed"}
-	s := NewChannels(a, a.Cfg)
+	a.cfg().Feishu.AllowedSenders = []string{"allowed"}
+	s := NewChannels(a, a.cfg())
 	view, _ := s.Channels(t.Context())
 	view.Desired.Feishu.AllowedSenders[0] = "changed"
 	view.Effective.Feishu.AllowedSenders[0] = "changed"
 	next, _ := s.Channels(t.Context())
 	if next.Desired.Feishu.AllowedSenders[0] != "allowed" || next.Effective.Feishu.AllowedSenders[0] != "allowed" || next.PendingRestart {
 		t.Fatal("public response mutated runtime snapshot or declaration")
+	}
+}
+
+// Reading the channels does not wait for a channel change to be saved.
+func TestChannelsReadDuringAChannelSave(t *testing.T) {
+	a, s := ChannelsAdminFixture(t)
+	before, err := s.Channels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during consoleapi.ChannelsView
+	finished := readsDuringSave(t, a, func() error {
+		_, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: ChannelValue("open")}}})
+		return err
+	}, func() error {
+		during, err = s.Channels(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the channels waited for a channel save")
+	}
+	if !reflect.DeepEqual(during.Desired, before.Desired) {
+		t.Fatal("a reader saw channels that were not saved yet")
+	}
+	if a.cfg().Feishu.GroupPolicy != "open" {
+		t.Fatal("the saved channels were not published")
+	}
+}
+
+// The running channel reports its state and binds its access policy while
+// a configuration save is in flight, without waiting for it.
+func TestChannelRuntimeStateDoesNotWaitForASave(t *testing.T) {
+	a, s := ChannelsAdminFixture(t)
+	var bound []config.Feishu
+	finished := readsDuringSave(t, a, func() error {
+		return a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "new", Harness: "mock"})
+	}, func() error {
+		s.SetRuntimeError("connection failed")
+		s.BindAccessUpdater(func(f config.Feishu) { bound = append(bound, f) })
+		return nil
+	})
+	if !finished {
+		t.Fatal("the channel's runtime state waited for a configuration save")
+	}
+	view, err := s.Channels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.RuntimeError != "connection failed" || view.ApplyMode != "mixed" || len(bound) != 1 {
+		t.Fatalf("runtime error %q, apply mode %q, %d bindings", view.RuntimeError, view.ApplyMode, len(bound))
 	}
 }

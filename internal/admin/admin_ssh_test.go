@@ -34,9 +34,9 @@ func InstallBinaryFixture(t *testing.T) string {
 
 func TestSSHPreviewMatchesCommittedBootstrapWithoutCopyingLocalAgents(t *testing.T) {
 	admin := nodeAdminFixture(t)
-	admin.Cfg.Gateway.NodeBinary = InstallBinaryFixture(t)
-	admin.Cfg.Harnesses = map[string]config.Harness{"codex": {Adapter: "codex-acp", Command: "/coordinator-only/adapter"}}
-	if err := config.Save(admin.Path, admin.Cfg); err != nil {
+	admin.cfg().Gateway.NodeBinary = InstallBinaryFixture(t)
+	admin.cfg().Harnesses = map[string]config.Harness{"codex": {Adapter: "codex-acp", Command: "/coordinator-only/adapter"}}
+	if err := config.Save(admin.Path, admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(admin.Path)
@@ -77,7 +77,7 @@ func TestSSHPreviewExplainsPackageAndReachabilityRequirements(t *testing.T) {
 	if err != nil || !hasSSHBlocker(plan, "binary") {
 		t.Fatalf("missing package blocker: %#v, %v", plan, err)
 	}
-	admin.Cfg.Gateway.NodeBinary = InstallBinaryFixture(t)
+	admin.cfg().Gateway.NodeBinary = InstallBinaryFixture(t)
 	check := SshCheckFixture()
 	check.Arch = "arm64"
 	plan, err = backend.Preview(t.Context(), req, check)
@@ -88,8 +88,8 @@ func TestSSHPreviewExplainsPackageAndReachabilityRequirements(t *testing.T) {
 
 func TestSSHEmptyNodeNeedsNoAgentOrNPMLocallyOrRemotely(t *testing.T) {
 	admin := nodeAdminFixture(t)
-	admin.Cfg.Harnesses = map[string]config.Harness{}
-	admin.Cfg.Gateway.NodeBinary = InstallBinaryFixture(t)
+	admin.cfg().Harnesses = map[string]config.Harness{}
+	admin.cfg().Gateway.NodeBinary = InstallBinaryFixture(t)
 	check := SshCheckFixture()
 	for index := range check.Tools {
 		if check.Tools[index].Name == "node" || check.Tools[index].Name == "npm" {
@@ -125,7 +125,7 @@ func TestBootstrapDoesNotReturnScriptWithInvalidBinaryOrToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin.Cfg.Gateway.NodeBinary = filepath.Join(t.TempDir(), "does-not-exist")
+	admin.cfg().Gateway.NodeBinary = filepath.Join(t.TempDir(), "does-not-exist")
 	if _, ok := admin.Bootstrap("remote", registration.Token); ok {
 		t.Fatal("returned download script with unverified package")
 	}
@@ -136,7 +136,7 @@ func TestBootstrapDoesNotReturnScriptWithInvalidBinaryOrToken(t *testing.T) {
 
 func TestManualBootstrapKeepsExplicitAdapterPortable(t *testing.T) {
 	admin := nodeAdminFixture(t)
-	admin.Cfg.Harnesses = map[string]config.Harness{"codex": {Adapter: "codex-acp", Command: "/coordinator-only/adapter"}}
+	admin.cfg().Harnesses = map[string]config.Harness{"codex": {Adapter: "codex-acp", Command: "/coordinator-only/adapter"}}
 	registration, err := admin.AddNode(t.Context(), consoleapi.AddNodeRequest{Name: "remote", Addr: "127.0.0.1:1"})
 	if err != nil {
 		t.Fatal(err)

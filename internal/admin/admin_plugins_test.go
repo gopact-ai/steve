@@ -36,7 +36,7 @@ func pluginAdminFixture(t *testing.T) (*PluginService, string) {
 	t.Cleanup(func() { pool.Close() })
 	// A node accepts plugin operations only from a committed coordinator, so
 	// the service under test carries the authority a real one presents.
-	service := &PluginService{Admin: &Service{Cfg: cfg, Path: path}, Library: &pluginledger.Library{Store: store, Ledger: book}, Local: pool,
+	service := &PluginService{Admin: &Service{ConfigStore: NewConfigStore(cfg), Path: path}, Library: &pluginledger.Library{Store: store, Ledger: book}, Local: pool,
 		Authority: nodewire.SessionAuthority{ClusterID: "cluster-under-test", CoordinatorNodeID: "hub", CoordinatorEpoch: 1, WriterGeneration: 1}}
 	source := t.TempDir()
 	os.Mkdir(filepath.Join(source, "skill"), 0700)
@@ -123,7 +123,7 @@ func TestPluginManagementRefusesUnknownScopeAndUnimportedContent(t *testing.T) {
 	if err == nil {
 		t.Fatal("unimported package enabled")
 	}
-	if len(service.Admin.Cfg.Plugins) != 0 {
+	if len(service.Admin.cfg().Plugins) != 0 {
 		t.Fatal("failed update changed live configuration")
 	}
 }
@@ -152,7 +152,7 @@ func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := view.Revision
-	service.Admin.Cfg.Nodes = map[string]config.Node{"worker": {Addr: "127.0.0.1:1", Token: "t"}}
+	service.Admin.cfg().Nodes = map[string]config.Node{"worker": {Addr: "127.0.0.1:1", Token: "t"}}
 	if _, err := service.UpdatePlugin(ctx, "one", consoleapi.PluginUpdateRequest{
 		BaseRevision: revision,
 		Installation: plugins.Installation{PackageID: record.Manifest.ID, Digest: record.Digest,
@@ -243,5 +243,40 @@ func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
 	}
 	if _, err := service.RemovePlugin(ctx, "one", consoleapi.PluginRemoveRequest{BaseRevision: current.Revision}); !errors.Is(err, ErrNoCoordinator) {
 		t.Fatalf("removal returned %v", err)
+	}
+}
+
+// The plugins page can be read while a plugin installation is being saved.
+func TestPluginsReadDuringAnInstallationSave(t *testing.T) {
+	service, source := pluginAdminFixture(t)
+	preview, err := service.PreviewPlugin(t.Context(), plugins.Source{Kind: "directory", Location: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ImportPlugin(t.Context(), consoleapi.PluginImportRequest{CommandID: "import-one", Project: "p", Digest: preview.Digest, Source: preview.Source}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := service.Plugins(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := consoleapi.PluginUpdateRequest{BaseRevision: before.Revision, Installation: plugins.Installation{PackageID: preview.Manifest.ID, Digest: preview.Digest, Projects: []string{"p"}, Targets: map[string]plugins.Configuration{"": {}}}}
+	var during consoleapi.PluginsView
+	finished := readsDuringSave(t, service.Admin, func() error {
+		_, err := service.UpdatePlugin(t.Context(), "work", update)
+		return err
+	}, func() error {
+		var err error
+		during, err = service.Plugins(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the plugins waited for an installation save")
+	}
+	if during.Revision != before.Revision || len(during.Installations) != 0 {
+		t.Fatal("a reader saw an installation that was not saved yet")
+	}
+	if _, ok := service.Admin.cfg().Plugins["work"]; !ok {
+		t.Fatal("the saved installation was not published")
 	}
 }

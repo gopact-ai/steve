@@ -25,9 +25,9 @@ import (
 func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config) error) error {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.RLock()
-	candidate := config.CloneProjects(a.Cfg)
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	candidate := config.CloneProjects(a.cfg())
+	a.ConfigStore.runlock()
 	if err := candidate.CheckFileRevision(a.Path); err != nil {
 		return err
 	}
@@ -48,13 +48,10 @@ func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config
 	}
 	defer release()
 	err = controller.Commit(ctx, candidate, func() error {
-		ConfigMu.Lock()
-		defer ConfigMu.Unlock()
-		saveErr := a.PersistConfig(candidate)
-		if saveErr == nil || config.Committed(saveErr) {
-			a.Cfg.Projects = candidate.Projects
-		}
-		return saveErr
+		return a.updateConfig(a.lifetime(), func(c *config.Config) error {
+			c.Projects = config.CloneProjects(candidate).Projects
+			return nil
+		})
 	})
 	var pending *configbuild.ProjectionPendingError
 	if !errors.As(err, &pending) && (err == nil || config.Committed(err)) {
@@ -281,9 +278,9 @@ func (a *Service) RemoveProject(ctx context.Context, id string) error {
 	if id == HomeProjectID {
 		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
 	}
-	ConfigMu.RLock()
-	isDefault := id == a.Cfg.Gateway.DefaultProject
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	isDefault := id == a.cfg().Gateway.DefaultProject
+	a.ConfigStore.runlock()
 	if isDefault {
 		return fmt.Errorf("%s 是默认项目，不能移除", id)
 	}
@@ -336,7 +333,10 @@ func (a *Service) ResumeProjectCopies(ctx context.Context) error {
 			}
 		}
 	}
-	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(ctx, a.Cfg); err != nil {
+	a.ConfigStore.rlock()
+	declared := config.CloneProjects(a.cfg())
+	a.ConfigStore.runlock()
+	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(ctx, declared); err != nil {
 		return err
 	}
 	a.startProjectClonesLocked(ctx)

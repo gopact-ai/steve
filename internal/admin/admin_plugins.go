@@ -52,9 +52,9 @@ func (s *PluginService) coordinator(node string) error {
 }
 
 func (s *PluginService) snapshot() (string, map[string]plugins.Installation) {
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
-	items := config.ClonePluginInstallations(s.Admin.Cfg.Plugins)
+	s.Admin.ConfigStore.rlock()
+	defer s.Admin.ConfigStore.runlock()
+	items := config.ClonePluginInstallations(s.Admin.cfg().Plugins)
 	return pluginRevision(items), items
 }
 
@@ -76,11 +76,11 @@ func (s *PluginService) Plugins(ctx context.Context) (consoleapi.PluginsView, er
 	}
 	view := consoleapi.PluginsView{Operations: operations, Revision: revision, Packages: packages, Installations: []consoleapi.PluginInstallationView{}}
 	view.Agents = []consoleapi.PluginAgentView{}
-	ConfigMu.RLock()
-	for id, item := range s.Admin.Cfg.Agents {
+	s.Admin.ConfigStore.rlock()
+	for id, item := range s.Admin.cfg().Agents {
 		view.Agents = append(view.Agents, pluginAgentView(id, item))
 	}
-	ConfigMu.RUnlock()
+	s.Admin.ConfigStore.runlock()
 	slices.SortFunc(view.Agents, func(a, b consoleapi.PluginAgentView) int { return strings.Compare(a.ID, b.ID) })
 	ids := make([]string, 0, len(items))
 	for id := range items {
@@ -160,10 +160,10 @@ func (s *PluginService) ImportPlugin(ctx context.Context, req consoleapi.PluginI
 	if req.CommandID == "" || req.Project == "" || req.Digest == "" {
 		return record, plugins.ErrInvalid
 	}
-	ConfigMu.RLock()
-	declared, exists := s.Admin.Cfg.Projects[req.Project]
-	level := s.Admin.Cfg.HubLevel()
-	ConfigMu.RUnlock()
+	s.Admin.ConfigStore.rlock()
+	declared, exists := s.Admin.cfg().Projects[req.Project]
+	level := s.Admin.cfg().HubLevel()
+	s.Admin.ConfigStore.runlock()
 	if !exists {
 		return record, errors.New("plugin import project is unknown")
 	}
@@ -201,11 +201,11 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req console
 		s.RuntimeGate.Lock()
 		defer s.RuntimeGate.Unlock()
 	}
-	ConfigMu.RLock()
-	candidate := *s.Admin.Cfg
-	candidate.Plugins = config.ClonePluginInstallations(s.Admin.Cfg.Plugins)
+	s.Admin.ConfigStore.rlock()
+	candidate := *s.Admin.cfg()
+	candidate.Plugins = config.ClonePluginInstallations(s.Admin.cfg().Plugins)
 	revision := pluginRevision(candidate.Plugins)
-	ConfigMu.RUnlock()
+	s.Admin.ConfigStore.runlock()
 	if req.BaseRevision == "" || req.BaseRevision != revision {
 		return consoleapi.PluginsView{}, consoleapi.ErrSettingsConflict
 	}
@@ -241,25 +241,17 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req console
 	if err := s.Library.RememberTargets(ctx, id, candidate.Plugins[id]); err != nil {
 		return consoleapi.PluginsView{}, err
 	}
-	ConfigMu.Lock()
-	if pluginRevision(s.Admin.Cfg.Plugins) != revision {
-		ConfigMu.Unlock()
-		return consoleapi.PluginsView{}, consoleapi.ErrSettingsConflict
-	}
 	pluginsCandidate := candidate.Plugins
-	candidate = *s.Admin.Cfg
-	candidate.Plugins = pluginsCandidate
-	if err := candidate.ValidatePlugins(); err != nil {
-		ConfigMu.Unlock()
-		return consoleapi.PluginsView{}, err
-	}
-	saveErr := s.Admin.persistConfigContext(ctx, &candidate)
+	saveErr := s.Admin.updateConfig(ctx, func(c *config.Config) error {
+		if pluginRevision(c.Plugins) != revision {
+			return consoleapi.ErrSettingsConflict
+		}
+		c.Plugins = pluginsCandidate
+		return c.ValidatePlugins()
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		ConfigMu.Unlock()
 		return consoleapi.PluginsView{}, saveErr
 	}
-	s.Admin.Cfg.Plugins = candidate.Plugins
-	ConfigMu.Unlock()
 	view, err := s.Plugins(ctx)
 	if err != nil {
 		return view, err

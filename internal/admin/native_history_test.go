@@ -27,13 +27,13 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 	t.Helper()
 	a, book := projectAdminFixture(t)
 	server := startNativeImportNode(t, bin)
-	a.Cfg.Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token"}
-	a.Cfg.Agents["importer"] = config.Agent{Node: "node-test", Harness: "codex"}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token"}
+	a.cfg().Agents["importer"] = config.Agent{Node: "node-test", Harness: "codex"}
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	a.Catalog, _ = agent.NewCatalog(map[string]agent.Config{"importer": {Node: "node-test", Harness: "codex", Default: true}})
-	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.cfg()))
 	t.Cleanup(a.Nodes.Close)
 	a.ClusterMode = true
 	store, err := state.OpenLedger(book)
@@ -118,7 +118,7 @@ func TestNativeImportAutoAssociationRecoversAfterSourceDisappears(t *testing.T) 
 			if err != nil || after.Version != 1 || exists && after != before {
 				t.Fatalf("retry changed initial binding: %+v -> %+v %v", before, after, err)
 			}
-			if len(a.Cfg.Projects) != 3 || len(a.Console.Conversations()) != 1 {
+			if len(a.cfg().Projects) != 3 || len(a.Console.Conversations()) != 1 {
 				t.Fatal("retry duplicated project or conversation")
 			}
 			// A completed receipt is self-contained even after disconnecting the source.

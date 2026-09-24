@@ -1,6 +1,9 @@
 package plugins
 
-import "maps"
+import (
+	"maps"
+	"slices"
+)
 
 // AgentOrigin records the exact template applied to a user-owned Agent.
 // Upgrades can preserve fields changed since this baseline.
@@ -22,15 +25,15 @@ func (origin *AgentOrigin) Clone() *AgentOrigin {
 	copy.Adopted = origin.Adopted.Clone()
 	if origin.Applied != nil {
 		applied := *origin.Applied
-		applied.Skills = append([]string(nil), applied.Skills...)
-		applied.MCPServers = append([]string(nil), applied.MCPServers...)
+		applied.Skills = slices.Clone(applied.Skills)
+		applied.MCPServers = slices.Clone(applied.MCPServers)
 		applied.Options = maps.Clone(applied.Options)
-		applied.Preserved = append([]string(nil), applied.Preserved...)
+		applied.Preserved = slices.Clone(applied.Preserved)
 		copy.Applied = &applied
 	}
 	copy.Template.Options = maps.Clone(origin.Template.Options)
-	copy.Template.Skills = append([]string(nil), origin.Template.Skills...)
-	copy.Template.MCPServers = append([]string(nil), origin.Template.MCPServers...)
+	copy.Template.Skills = slices.Clone(origin.Template.Skills)
+	copy.Template.MCPServers = slices.Clone(origin.Template.MCPServers)
 	return &copy
 }
 

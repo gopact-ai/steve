@@ -18,7 +18,7 @@ func (r *fixtureReleases) Latest(_ context.Context, component, os, arch string) 
 }
 
 func TestVersionsReportsIdentityWithoutCredentialsOrInstalling(t *testing.T) {
-	a := &Service{Cfg: &config.Config{Gateway: config.Gateway{HubID: "stable-hub", Peers: map[string]config.HubPeer{"other": {URL: "https://hub.example", Token: "private-test-value"}}}}}
+	a := &Service{ConfigStore: NewConfigStore(&config.Config{Gateway: config.Gateway{HubID: "stable-hub", Peers: map[string]config.HubPeer{"other": {URL: "https://hub.example", Token: "private-test-value"}}}})}
 	v, err := a.Versions(t.Context())
 	if err != nil || v.HubID != "stable-hub" || v.Automatic || v.DiscoveryConfigured {
 		t.Fatalf("versions = %+v, %v", v, err)
@@ -33,7 +33,7 @@ func TestVersionsReportsIdentityWithoutCredentialsOrInstalling(t *testing.T) {
 	if err != nil || r.calls != 1 || !v.DiscoveryConfigured || v.Automatic || len(v.Latest) != 1 {
 		t.Fatalf("release provider not reported independently of installation: %+v, %v", v, err)
 	}
-	a.Cfg = nil
+	a.ConfigStore = nil
 	v, err = a.Versions(t.Context())
 	if err != nil || v.HubID != "" {
 		t.Fatalf("unavailable identity replaced with a machine name: %+v, %v", v, err)

@@ -48,16 +48,18 @@ type Service struct {
 	ClusterMode   bool
 	// Members, when set, takes a removed machine out of the cluster along
 	// with whatever this node keeps for it.
-	Members            MemberRemover
-	ssh                *sshconnect.Service
-	releases           consoleapi.ReleaseProvider
-	Owner              string
-	MaterialLevel      datalevel.Level
-	Materials          *material.Store
-	Console            *console.Service
-	Lifetime           context.Context
-	Mu                 sync.Mutex
-	Cfg                *config.Config
+	Members       MemberRemover
+	ssh           *sshconnect.Service
+	releases      consoleapi.ReleaseProvider
+	Owner         string
+	MaterialLevel datalevel.Level
+	Materials     *material.Store
+	Console       *console.Service
+	Lifetime      context.Context
+	Mu            sync.Mutex
+	// ConfigStore holds the configuration the service administers and
+	// guards it. A service without one has no configuration.
+	ConfigStore        *ConfigStore
 	RuntimeSettings    *config.RuntimeSettings
 	Path               string
 	WriteConfig        func(string, *config.Config) error
@@ -108,10 +110,6 @@ type Service struct {
 	hubURL string
 }
 
-// ConfigMu guards the loaded configuration: the admin rewrites parts of
-// it from the page while hubAdvert and the launch probe read it.
-var ConfigMu sync.RWMutex
-
 var NameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // nodeKey is the registry's name for a machine the page named: the hub
@@ -136,16 +134,28 @@ func orHubName(node string) string {
 	return node
 }
 
-// persistConfig preserves the commit boundary for callers with derived live state.
-func (a *Service) PersistConfig(candidate *config.Config) error {
-	ctx := a.Lifetime
-	if ctx == nil {
-		ctx = context.Background()
+func (a *Service) lifetime() context.Context {
+	if a.Lifetime == nil {
+		return context.Background()
 	}
-	return a.persistConfigContext(ctx, candidate)
+	return a.Lifetime
 }
 
-func (a *Service) persistConfigContext(ctx context.Context, candidate *config.Config) error {
+// updateConfig rewrites the configuration through its store, saving the candidate to
+// the configuration file or the cluster under ctx.
+func (a *Service) updateConfig(ctx context.Context, change func(*config.Config) error) error {
+	return a.updateConfigThen(ctx, change, nil)
+}
+
+// updateConfigThen is updateConfig that runs published once the saved
+// configuration is in place, before any reader sees it.
+func (a *Service) updateConfigThen(ctx context.Context, change func(*config.Config) error, published func(*config.Config)) error {
+	return a.ConfigStore.update(change, func(candidate *config.Config) error { return a.saveConfig(ctx, candidate) }, published)
+}
+
+// saveConfig persists candidate without touching the configuration in
+// force.
+func (a *Service) saveConfig(ctx context.Context, candidate *config.Config) error {
 	write := a.WriteConfig
 	if write == nil {
 		write = config.Save
@@ -158,11 +168,9 @@ func (a *Service) persistConfigContext(ctx context.Context, candidate *config.Co
 	}
 	if err != nil {
 		if config.Committed(err) {
-			a.Cfg.AdoptFileRevision(candidate)
 			return fmt.Errorf("配置已应用，目录同步失败，持久性尚未确认：%w", err)
 		}
 		return fmt.Errorf("写 %s 失败：%w", a.Path, err)
 	}
-	a.Cfg.AdoptFileRevision(candidate)
 	return nil
 }

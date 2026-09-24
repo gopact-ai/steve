@@ -62,9 +62,9 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
-	observation, closeObservation := newLocalObservation(ctx, cfg)
+	observation, closeObservation := newLocalObservation(ctx, boot.ConfigStore())
 	life.Defer(func() { closeObservation() })
-	fleet.SetHubAdvert(func() nodewire.Advert { return adminsvc.ObservedHubAdvert(cfg, observation) })
+	fleet.SetHubAdvert(func() nodewire.Advert { return adminsvc.ObservedHubAdvert(boot.ConfigStore(), observation) })
 	fleet.SetHubLevel(cfg.HubLevel())
 	return &fleetValues{fleet: fleet, nodes: nodes, observation: observation, projects: projects}, nil
 }

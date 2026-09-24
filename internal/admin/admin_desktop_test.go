@@ -52,7 +52,7 @@ func desktopAdminFixture(t *testing.T) (*Service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Service{Cfg: cfg, Path: install.Paths.Config, Catalog: catalog, Manager: manager,
+	return &Service{ConfigStore: NewConfigStore(cfg), Path: install.Paths.Config, Catalog: catalog, Manager: manager,
 		LiveSkills: &skills.Live{Map: skillMap, After: func() error { t.Fatal("enrollment restarted existing agents"); return nil }}}, bin
 }
 
@@ -83,7 +83,7 @@ func TestDesktopDiscoveryDoesNotEnrollOrPrepareTools(t *testing.T) {
 	if err != nil || string(before) != string(after) || len(admin.Catalog.List()) != 0 {
 		t.Fatal("discovery changed registration")
 	}
-	if _, err := os.Lstat(filepath.Join(filepath.Dir(admin.Cfg.Gateway.StatePath), "runtimes")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(admin.cfg().Gateway.StatePath), "runtimes")); !os.IsNotExist(err) {
 		t.Fatalf("discovery prepared tools: %v", err)
 	}
 }
@@ -97,21 +97,21 @@ func TestDesktopEnrollmentTakesTheNamesAndDefaultTheOwnerChose(t *testing.T) {
 	if err != nil || status.AgentCount != 2 || status.DefaultAgent != "coder" {
 		t.Fatalf("enrollment result: %+v, %v", status, err)
 	}
-	reviewer, ok := admin.Cfg.Agents["reviewer"]
+	reviewer, ok := admin.cfg().Agents["reviewer"]
 	if !ok || reviewer.Harness != "grok" || reviewer.About != "代码评审" || reviewer.Default {
 		t.Fatalf("named agent: %+v (present %v)", reviewer, ok)
 	}
 	if len(reviewer.Aliases) != 0 {
 		t.Fatalf("a renamed agent kept the tool's own name as an alias: %v", reviewer.Aliases)
 	}
-	coder := admin.Cfg.Agents["coder"]
+	coder := admin.cfg().Agents["coder"]
 	if coder.Harness != "kimi" || !coder.Default {
 		t.Fatalf("chosen default: %+v", coder)
 	}
-	if _, taken := admin.Cfg.Agents["grok"]; taken {
+	if _, taken := admin.cfg().Agents["grok"]; taken {
 		t.Fatal("the tool id was registered alongside the name the owner chose")
 	}
-	catalog, err := admin.Cfg.AgentCatalog()
+	catalog, err := admin.cfg().AgentCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,8 +127,8 @@ func TestDesktopEnrollmentRefusesNamesItCannotAnswerTo(t *testing.T) {
 			t.Fatalf("name %q was accepted", name)
 		}
 	}
-	if len(admin.Cfg.Agents) != 0 {
-		t.Fatalf("a refused name still registered something: %v", admin.Cfg.Agents)
+	if len(admin.cfg().Agents) != 0 {
+		t.Fatalf("a refused name still registered something: %v", admin.cfg().Agents)
 	}
 	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{
 		{CandidateID: "grok", AgentID: "same"},
@@ -144,10 +144,10 @@ func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) 
 	if err != nil || !status.SetupRequired || status.AgentCount != 1 || status.DefaultAgent != "grok" {
 		t.Fatalf("enrollment result: %+v, %v", status, err)
 	}
-	if admin.Cfg.Harnesses["grok"].Command != filepath.Join(bin, "grok") || admin.Cfg.Harnesses["grok"].Permission != config.PermissionRead {
+	if admin.cfg().Harnesses["grok"].Command != filepath.Join(bin, "grok") || admin.cfg().Harnesses["grok"].Permission != config.PermissionRead {
 		t.Fatal("enrollment did not preserve the selected executable and permission")
 	}
-	stateDir := filepath.Dir(admin.Cfg.Gateway.StatePath)
+	stateDir := filepath.Dir(admin.cfg().Gateway.StatePath)
 	for _, unselected := range []string{runtime.CodexHome(stateDir), runtime.ClaudeHome(stateDir), runtime.KimiHome(stateDir)} {
 		if _, err := os.Lstat(unselected); !os.IsNotExist(err) {
 			t.Fatalf("unselected runtime prepared: %s, %v", unselected, err)
@@ -160,7 +160,7 @@ func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) 
 		t.Fatalf("platform MCP must not be installed as a skill: %v", err)
 	}
 	saved, err := config.Load(admin.Path)
-	if err != nil || !reflect.DeepEqual(saved.Agents, admin.Cfg.Agents) || len(saved.Harnesses) != 1 {
+	if err != nil || !reflect.DeepEqual(saved.Agents, admin.cfg().Agents) || len(saved.Harnesses) != 1 {
 		t.Fatalf("restart config differs from enrolled state: %v", err)
 	}
 	admin.WriteConfig = func(string, *config.Config) error { t.Fatal("replayed enrollment rewrote config"); return nil }
@@ -188,7 +188,7 @@ func TestDesktopEnrollmentRespectsConfigCommitBoundary(t *testing.T) {
 		t.Run(map[bool]string{false: "before replacement", true: "after replacement"}[committed], func(t *testing.T) {
 			admin, _ := desktopAdminFixture(t)
 			admin.WriteConfig = func(path string, candidate *config.Config) error {
-				if len(admin.Cfg.Agents) != 0 || len(admin.Catalog.List()) != 0 {
+				if len(admin.cfg().Agents) != 0 || len(admin.Catalog.List()) != 0 {
 					t.Fatal("enrollment was published before persistence")
 				}
 				if !committed {
@@ -204,7 +204,7 @@ func TestDesktopEnrollmentRespectsConfigCommitBoundary(t *testing.T) {
 				t.Fatalf("enrollment lost commit status: %v", err)
 			}
 			_, published := admin.Catalog.Resolve("grok")
-			if published != committed || (len(admin.Cfg.Harnesses) > 0) != committed {
+			if published != committed || (len(admin.cfg().Harnesses) > 0) != committed {
 				t.Fatal("published config disagrees with persistence")
 			}
 			if !committed {
@@ -225,7 +225,7 @@ func TestDesktopEnrollmentRejectsUnrecognizedSelectionBeforeSideEffects(t *testi
 	if len(admin.Catalog.List()) != 0 {
 		t.Fatal("invalid batch partially enrolled a tool")
 	}
-	if _, err := os.Lstat(filepath.Join(filepath.Dir(admin.Cfg.Gateway.StatePath), "runtimes")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(admin.cfg().Gateway.StatePath), "runtimes")); !os.IsNotExist(err) {
 		t.Fatal("invalid batch prepared a runtime")
 	}
 }
@@ -235,14 +235,14 @@ func TestDesktopEnrollmentRejectsConflictingNamesBeforeRuntimePreparation(t *tes
 		t.Run(conflict, func(t *testing.T) {
 			admin, _ := desktopAdminFixture(t)
 			if conflict == "alias" {
-				admin.Cfg.Agents["other"] = config.Agent{Harness: "custom", Aliases: []string{"grok"}, Default: true}
+				admin.cfg().Agents["other"] = config.Agent{Harness: "custom", Aliases: []string{"grok"}, Default: true}
 			} else {
-				admin.Cfg.Harnesses["grok"] = config.Harness{Command: "/custom-tool", Permission: config.PermissionRead}
+				admin.cfg().Harnesses["grok"] = config.Harness{Command: "/custom-tool", Permission: config.PermissionRead}
 			}
 			if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}}); err == nil {
 				t.Fatal("conflicting configuration was accepted")
 			}
-			if _, err := os.Lstat(filepath.Join(filepath.Dir(admin.Cfg.Gateway.StatePath), "runtimes")); !os.IsNotExist(err) {
+			if _, err := os.Lstat(filepath.Join(filepath.Dir(admin.cfg().Gateway.StatePath), "runtimes")); !os.IsNotExist(err) {
 				t.Fatal("conflicting registration prepared a runtime before validation")
 			}
 		})
@@ -316,5 +316,51 @@ func TestDesktopConcurrentRegistrationAndReadsRetainBothAgents(t *testing.T) {
 	saved, err := config.Load(admin.Path)
 	if err != nil || len(saved.Agents) != 2 {
 		t.Fatalf("concurrent registrations lost persisted Agent: %v", err)
+	}
+}
+
+// The desktop status can be read while newly chosen agents are being saved.
+func TestDesktopStatusReadDuringAnEnrollmentSave(t *testing.T) {
+	admin, _ := desktopAdminFixture(t)
+	var during consoleapi.DesktopStatus
+	finished := readsDuringSave(t, admin, func() error {
+		_, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})
+		return err
+	}, func() error {
+		var err error
+		during, err = admin.DesktopStatus(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the desktop status waited for an enrollment save")
+	}
+	if during.AgentCount != 0 {
+		t.Fatal("a reader saw agents that were not saved yet")
+	}
+	if _, ok := admin.Catalog.Resolve("grok"); !ok {
+		t.Fatal("the saved agent was not published")
+	}
+}
+
+// The running application learns the local workspace root without the
+// configuration file being rewritten.
+func TestSetLocalWorkspaceRootIsNotSaved(t *testing.T) {
+	a := agentAdminFixture(t)
+	before, err := os.ReadFile(a.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetLocalWorkspaceRoot("/work/here")
+	a.ConfigStore.Read(func(c *config.Config) {
+		if c.Gateway.WorkspaceRoot != "/work/here" {
+			t.Errorf("workspace root = %q", c.Gateway.WorkspaceRoot)
+		}
+	})
+	after, err := os.ReadFile(a.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("recording the workspace root rewrote the configuration file")
 	}
 }

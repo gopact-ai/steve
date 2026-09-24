@@ -66,14 +66,20 @@ func assembleRuntime(life lifetime, input inputAssembly) (runtimeAssembly, error
 	}
 	background := newApplicationBackground(ctx)
 	life.Defer(func() { background.Close() })
-	return &runtimeValues{background: background, book: book, catalog: catalog, cfg: cfg, settings: config.NewRuntimeSettings(cfg), ctx: ctx, live: live, manager: manager, stop: stop}, nil
+	return &runtimeValues{background: background, book: book, catalog: catalog, cfg: cfg, configStore: adminsvc.NewConfigStore(cfg), settings: config.NewRuntimeSettings(cfg), ctx: ctx, live: live, manager: manager, stop: stop}, nil
 }
 
 type runtimeAssembly interface {
 	Background() *applicationBackground
 	Book() *ledger.Ledger
 	Catalog() *agent.Catalog
+	// Config is the loaded configuration. Assembly reads it directly only
+	// until the console starts serving, which is when the administration
+	// may begin to change it; anything that reads it later, including
+	// closures assembly builds, goes through ConfigStore.
 	Config() *config.Config
+	// ConfigStore guards Config for everything that reads it after startup.
+	ConfigStore() *adminsvc.ConfigStore
 	Settings() *config.RuntimeSettings
 	Context() context.Context
 	Live() *skills.Live
@@ -82,15 +88,16 @@ type runtimeAssembly interface {
 }
 
 type runtimeValues struct {
-	background *applicationBackground
-	book       *ledger.Ledger
-	catalog    *agent.Catalog
-	cfg        *config.Config
-	settings   *config.RuntimeSettings
-	ctx        context.Context
-	live       *skills.Live
-	manager    *harness.Manager
-	stop       context.CancelFunc
+	background  *applicationBackground
+	book        *ledger.Ledger
+	catalog     *agent.Catalog
+	cfg         *config.Config
+	configStore *adminsvc.ConfigStore
+	settings    *config.RuntimeSettings
+	ctx         context.Context
+	live        *skills.Live
+	manager     *harness.Manager
+	stop        context.CancelFunc
 }
 
 func (v *runtimeValues) Background() *applicationBackground { return v.background }
@@ -100,6 +107,8 @@ func (v *runtimeValues) Book() *ledger.Ledger { return v.book }
 func (v *runtimeValues) Catalog() *agent.Catalog { return v.catalog }
 
 func (v *runtimeValues) Config() *config.Config { return v.cfg }
+
+func (v *runtimeValues) ConfigStore() *adminsvc.ConfigStore { return v.configStore }
 
 func (v *runtimeValues) Settings() *config.RuntimeSettings { return v.settings }
 

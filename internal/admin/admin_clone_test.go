@@ -22,13 +22,13 @@ func configuredCloneFixture(t *testing.T, options ...ledger.Options) *Service {
 	a, book := projectAdminFixture(t, options...)
 	a.Attempts = attempt.New(book)
 	a.Fleet = roster.New(a.Catalog)
-	p := a.Cfg.Projects["remove"]
+	p := a.cfg().Projects["remove"]
 	p.Workspaces = []config.ProjectWorkspace{{Node: "remote", Path: "/held-clone", Origin: "cloned", Source: "source"}}
-	a.Cfg.Projects["remove"] = p
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Projects["remove"] = p
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	return a
@@ -80,7 +80,7 @@ func TestRunningCloneBlocksRemovalRetirementAndReassignment(t *testing.T) {
 			t.Fatalf("running clone lost ownership: %v", err)
 		}
 	}
-	candidate := config.CloneProjects(a.Cfg)
+	candidate := config.CloneProjects(a.cfg())
 	delete(candidate.Projects, "remove")
 	candidate.Projects["replacement"] = config.Project{Home: config.ProjectHome{Node: "remote", Path: "/held-clone"}}
 	if err := (configbuild.ProjectController{Store: a.Projects}).Commit(t.Context(), candidate, func() error { t.Fatal("isolated path reached file commit"); return nil }); !errors.Is(err, project.ErrCloneIsolated) {

@@ -31,7 +31,7 @@ func materialsAdmin(t *testing.T, level datalevel.Level) (*Service, *ledger.Ledg
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}, Level: level}}); err != nil {
 		t.Fatal(err)
 	}
-	return &Service{Cfg: &config.Config{Gateway: config.Gateway{OwnerID: "owner"}}, Owner: "owner", MaterialLevel: datalevel.Restricted, Materials: materials, Projects: projects}, book
+	return &Service{ConfigStore: NewConfigStore(&config.Config{Gateway: config.Gateway{OwnerID: "owner"}}), Owner: "owner", MaterialLevel: datalevel.Restricted, Materials: materials, Projects: projects}, book
 }
 
 func TestMaterialsDoNotCrossHubDataLevelOrPendingOwnerChange(t *testing.T) {
@@ -45,7 +45,7 @@ func TestMaterialsDoNotCrossHubDataLevelOrPendingOwnerChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.Cfg.Gateway.OwnerID = "pending-new-owner"
+	a.cfg().Gateway.OwnerID = "pending-new-owner"
 	annotation, err := a.SaveMaterialAnnotation(t.Context(), material.AnnotationInput{ID: "mark", Project: "p", Ref: material.Ref{ID: item.ID}, Body: "review"})
 	if err != nil {
 		t.Fatal(err)

@@ -15,8 +15,8 @@ import (
 
 func TestFirstAgentRegistrationBecomesTheDefault(t *testing.T) {
 	admin := agentAdminFixture(t)
-	admin.Cfg.Agents = nil
-	catalog, err := admin.Cfg.AgentCatalog()
+	admin.cfg().Agents = nil
+	catalog, err := admin.cfg().AgentCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,13 +24,13 @@ func TestFirstAgentRegistrationBecomesTheDefault(t *testing.T) {
 	if err := admin.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "first", Harness: "mock"}); err != nil {
 		t.Fatal(err)
 	}
-	if !admin.Cfg.Agents["first"].Default || admin.Catalog.Default().ID != "first" {
+	if !admin.cfg().Agents["first"].Default || admin.Catalog.Default().ID != "first" {
 		t.Fatal("first registered Agent is not the default")
 	}
 	if err := admin.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "second", Harness: "mock"}); err != nil {
 		t.Fatal(err)
 	}
-	if admin.Cfg.Agents["second"].Default || admin.Catalog.Default().ID != "first" {
+	if admin.cfg().Agents["second"].Default || admin.Catalog.Default().ID != "first" {
 		t.Fatal("later registration changed the default")
 	}
 }
@@ -52,7 +52,7 @@ func agentAdminFixture(t *testing.T) *Service {
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	return &Service{Cfg: cfg, Path: path, Catalog: catalog}
+	return &Service{ConfigStore: NewConfigStore(cfg), Path: path, Catalog: catalog}
 }
 
 func TestAgentChangesPublishAnAlreadyCommittedConfiguration(t *testing.T) {
@@ -71,9 +71,9 @@ func TestAgentChangesPublishAnAlreadyCommittedConfiguration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			admin := agentAdminFixture(t)
 			before := admin.Catalog.List()
-			beforeConfig, _ := json.Marshal(admin.Cfg)
+			beforeConfig, _ := json.Marshal(admin.cfg())
 			admin.WriteConfig = func(path string, candidate *config.Config) error {
-				currentConfig, _ := json.Marshal(admin.Cfg)
+				currentConfig, _ := json.Marshal(admin.cfg())
 				if !reflect.DeepEqual(before, admin.Catalog.List()) || string(currentConfig) != string(beforeConfig) {
 					t.Fatal("candidate was published before persistence completed")
 				}
@@ -98,7 +98,7 @@ func TestAgentChangesPublishAnAlreadyCommittedConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if reflect.DeepEqual(before, admin.Catalog.List()) || !reflect.DeepEqual(restored.List(), admin.Catalog.List()) || !reflect.DeepEqual(stored.Agents, admin.Cfg.Agents) {
+			if reflect.DeepEqual(before, admin.Catalog.List()) || !reflect.DeepEqual(restored.List(), admin.Catalog.List()) || !reflect.DeepEqual(stored.Agents, admin.cfg().Agents) {
 				t.Fatal("post-rename failure incorrectly rolled back the committed candidate")
 			}
 		})
@@ -120,7 +120,7 @@ func TestAgentChangesLeaveAllStateUntouchedWhenPersistenceFails(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			admin := agentAdminFixture(t)
-			before, _ := json.Marshal(admin.Cfg)
+			before, _ := json.Marshal(admin.cfg())
 			catalog := admin.Catalog.List()
 			originalPath := admin.Path
 			disk, err := os.ReadFile(originalPath)
@@ -132,7 +132,7 @@ func TestAgentChangesLeaveAllStateUntouchedWhenPersistenceFails(t *testing.T) {
 			if err := tc.change(admin); err == nil {
 				t.Fatal("persistence failure was reported as success")
 			}
-			after, _ := json.Marshal(admin.Cfg)
+			after, _ := json.Marshal(admin.cfg())
 			if string(before) != string(after) {
 				t.Fatal("rejected change mutated the live configuration")
 			}
@@ -170,7 +170,7 @@ func TestAgentChangesPersistTheSameCandidateTheyPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(stored.Agents, admin.Cfg.Agents) || !reflect.DeepEqual(restored.List(), admin.Catalog.List()) {
+	if !reflect.DeepEqual(stored.Agents, admin.cfg().Agents) || !reflect.DeepEqual(restored.List(), admin.Catalog.List()) {
 		t.Fatal("live config, published catalog and restart config disagree")
 	}
 	worker, _ := admin.Catalog.Resolve("worker")
@@ -199,5 +199,26 @@ func TestInvalidAgentCandidateDoesNotReachPersistence(t *testing.T) {
 	after, err := os.ReadFile(admin.Path)
 	if err != nil || string(before) != string(after) {
 		t.Fatalf("invalid candidate reached persistence: %v", err)
+	}
+}
+
+// The configuration can be read while an agent change is being saved.
+func TestConfigurationReadDuringAnAgentSave(t *testing.T) {
+	admin := agentAdminFixture(t)
+	settings := NewSettings(admin, admin.cfg())
+	finished := readsDuringSave(t, admin, func() error {
+		return admin.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "new", Harness: "mock"})
+	}, func() error {
+		_, err := settings.Settings(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the configuration waited for an agent save")
+	}
+	if _, ok := admin.cfg().Agents["new"]; !ok {
+		t.Fatal("the saved agent was not published")
+	}
+	if _, ok := admin.Catalog.Resolve("new"); !ok {
+		t.Fatal("the saved agent was not published to the catalog")
 	}
 }

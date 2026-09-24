@@ -9,10 +9,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -20,8 +22,8 @@ func (a *Service) DesktopStatus(ctx context.Context) (consoleapi.DesktopStatus, 
 	if err := ctx.Err(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
 	return a.desktopStatusLocked(), nil
 }
 
@@ -30,15 +32,15 @@ func (a *Service) desktopStatusLocked() consoleapi.DesktopStatus {
 		return consoleapi.DesktopStatus{}
 	}
 	stateDir := filepath.Dir(a.Path)
-	status := consoleapi.DesktopStatus{Enabled: true, NodeID: a.Cfg.Gateway.HubID, AgentCount: len(a.Cfg.Agents),
-		WorkspacePath: a.Cfg.Projects[config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)].Home.Path}
-	for _, item := range a.Cfg.Agents {
+	status := consoleapi.DesktopStatus{Enabled: true, NodeID: a.cfg().Gateway.HubID, AgentCount: len(a.cfg().Agents),
+		WorkspacePath: a.cfg().Projects[config.DefaultProjectID(a.cfg().Gateway.DefaultProject, a.cfg().Projects)].Home.Path}
+	for _, item := range a.cfg().Agents {
 		if item.Node == "" {
 			status.LocalAgentCount++
 		}
 	}
 	status.WorkspaceManaged = desktop.ManagedWorkspace(stateDir, status.WorkspacePath)
-	for id, item := range a.Cfg.Agents {
+	for id, item := range a.cfg().Agents {
 		if item.Default {
 			status.DefaultAgent = id
 			break
@@ -77,11 +79,11 @@ func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWo
 	if !desktop.IsManagedConfig(a.Path) {
 		return consoleapi.DesktopStatus{}, fmt.Errorf("工作目录设置仅在桌面 App 中提供")
 	}
-	ConfigMu.RLock()
-	id := config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)
-	home := a.Cfg.Projects[id].Home
-	local := a.Cfg.LocalHomeNode(home.Node)
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	id := config.DefaultProjectID(a.cfg().Gateway.DefaultProject, a.cfg().Projects)
+	home := a.cfg().Projects[id].Home
+	local := a.cfg().LocalHomeNode(home.Node)
+	a.ConfigStore.runlock()
 	if err := desktop.CheckWorkspaceProject(id, local, home.Node); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
@@ -104,13 +106,13 @@ func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscov
 	}
 	candidates := desktop.DiscoverAgents(desktop.DiscoveryOptions{})
 	offers := a.harnessOffers(ctx, "")
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
 	result := consoleapi.DesktopDiscovery{Agents: make([]consoleapi.DesktopAgentCandidate, 0, len(candidates))}
 	for _, item := range candidates {
 		candidate := consoleapi.DesktopAgentCandidate{
 			ID: item.ID, Name: item.Name, Harness: item.Harness, Executable: item.Executable,
-			Installed: item.Installed, Requires: item.Requires, Registered: localHarnessRegistered(a.Cfg.Agents, item.Harness),
+			Installed: item.Installed, Requires: item.Requires, Registered: localHarnessRegistered(a.cfg().Agents, item.Harness),
 		}
 		if offered, ok := offers[item.Harness]; ok {
 			candidate.Model, candidate.Models = offered.Model, offered.Models
@@ -181,12 +183,12 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	for _, item := range desktop.DiscoverAgents(desktop.DiscoveryOptions{}) {
 		candidates[item.ID] = item
 	}
-	ConfigMu.RLock()
-	agents := make(map[string]config.Agent, len(a.Cfg.Agents))
-	maps.Copy(agents, a.Cfg.Agents)
-	harnesses := maps.Clone(a.Cfg.Harnesses)
-	statePath := a.Cfg.Gateway.StatePath
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	agents := make(map[string]config.Agent, len(a.cfg().Agents))
+	maps.Copy(agents, a.cfg().Agents)
+	harnesses := maps.Clone(a.cfg().Harnesses)
+	statePath := a.cfg().Gateway.StatePath
+	a.ConfigStore.runlock()
 	plan, err := planDesktopAgents(requested, candidates, agents, harnesses)
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
@@ -280,43 +282,46 @@ func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map
 	return plan, nil
 }
 
-// saveDesktopAgents commits the prepared agents under the configuration lock,
-// rebuilding from whatever else was saved while adapters were installing.
+// saveDesktopAgents saves the prepared agents, rebuilding from whatever
+// else was saved while adapters were installing.
 func (a *Service) saveDesktopAgents(ctx context.Context, addedAgents map[string]config.Agent, addedHarnesses map[string]config.Harness, agentIDs []string, preferred string) (consoleapi.DesktopStatus, error) {
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	// Rebuild from the current configuration after preparation, preserving
-	// unrelated settings saved while adapters were being installed.
-	candidate := *a.Cfg
-	candidate.Agents = make(map[string]config.Agent, len(a.Cfg.Agents)+len(addedAgents))
-	maps.Copy(candidate.Agents, a.Cfg.Agents)
-	candidate.Harnesses = make(map[string]config.Harness, len(a.Cfg.Harnesses)+len(addedHarnesses))
-	maps.Copy(candidate.Harnesses, a.Cfg.Harnesses)
-	for _, id := range agentIDs {
-		candidate.Agents[id] = addedAgents[id]
-	}
-	applyDefault(candidate.Agents, preferred, agentIDs)
-	maps.Copy(candidate.Harnesses, addedHarnesses)
-	preparedCatalog, err := candidate.AgentCatalog()
-	if err != nil {
-		return consoleapi.DesktopStatus{}, err
-	}
-	preparedManager, err := configbuild.HarnessManager(HarnessRuntimeConfig(&candidate))
-	if err != nil {
-		return consoleapi.DesktopStatus{}, err
-	}
-	saveErr := a.PersistConfig(&candidate)
+	var preparedCatalog *agent.Catalog
+	var preparedManager *harness.Manager
+	var status consoleapi.DesktopStatus
+	saveErr := a.updateConfigThen(a.lifetime(), func(c *config.Config) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if c.Agents == nil {
+			c.Agents = make(map[string]config.Agent, len(addedAgents))
+		}
+		if c.Harnesses == nil {
+			c.Harnesses = make(map[string]config.Harness, len(addedHarnesses))
+		}
+		for _, id := range agentIDs {
+			c.Agents[id] = addedAgents[id]
+		}
+		applyDefault(c.Agents, preferred, agentIDs)
+		maps.Copy(c.Harnesses, addedHarnesses)
+		var err error
+		if preparedCatalog, err = c.AgentCatalog(); err != nil {
+			return err
+		}
+		preparedManager, err = configbuild.HarnessManager(HarnessRuntimeConfig(c))
+		return err
+	}, func(*config.Config) {
+		a.Manager.Publish(preparedManager)
+		a.Catalog.Publish(preparedCatalog)
+		status = a.desktopStatusLocked()
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
 		return consoleapi.DesktopStatus{}, saveErr
 	}
-	a.Manager.Publish(preparedManager)
-	a.Cfg.Agents, a.Cfg.Harnesses = candidate.Agents, candidate.Harnesses
-	a.Catalog.Publish(preparedCatalog)
 	slog.Info(fmt.Sprintf("steve: local agents registered agents=%s", strings.Join(agentIDs, ",")))
-	return a.desktopStatusLocked(), saveErr
+	return status, saveErr
 }
 
 func (a *Service) prepareDesktopAgents(ctx context.Context, statePath string, selected []string, harnesses map[string]config.Harness) error {
@@ -346,7 +351,9 @@ func (a *Service) SetLocalWorkspaceRoot(root string) {
 	if strings.TrimSpace(root) == "" {
 		return
 	}
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
-	a.Cfg.Gateway.WorkspaceRoot = root
+	// Nothing is saved; a service without a configuration records nothing.
+	_ = a.ConfigStore.update(func(c *config.Config) error {
+		c.Gateway.WorkspaceRoot = root
+		return nil
+	}, func(*config.Config) error { return nil }, nil)
 }

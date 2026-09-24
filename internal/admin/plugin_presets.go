@@ -26,11 +26,11 @@ func pluginAgentView(id string, item config.Agent) consoleapi.PluginAgentView {
 }
 
 func (s *PluginService) PreviewPluginPreset(ctx context.Context, id string, req consoleapi.PluginPresetRequest) (consoleapi.PluginPresetPreview, error) {
-	ConfigMu.RLock()
-	cfg := *s.Admin.Cfg
+	s.Admin.ConfigStore.rlock()
+	cfg := *s.Admin.cfg()
 	cfg.Plugins = config.ClonePluginInstallations(cfg.Plugins)
 	cfg.Agents = maps.Clone(cfg.Agents)
-	ConfigMu.RUnlock()
+	s.Admin.ConfigStore.runlock()
 	return s.presetPreview(ctx, id, req, &cfg)
 }
 
@@ -123,9 +123,9 @@ func (s *PluginService) ApplyPluginPreset(ctx context.Context, id string, req co
 	} else if found {
 		return saved, s.Library.FinishOperation(ctx, operation, nil)
 	}
-	ConfigMu.RLock()
-	existing := s.Admin.Cfg.Agents[req.AgentID].PluginOrigin.Clone()
-	ConfigMu.RUnlock()
+	s.Admin.ConfigStore.rlock()
+	existing := s.Admin.cfg().Agents[req.AgentID].PluginOrigin.Clone()
+	s.Admin.ConfigStore.runlock()
 	if existing != nil && existing.CommandID == req.CommandID && existing.Applied != nil {
 		restored := presetResult(existing)
 		if err := s.Library.Ledger.PutBinding(ctx, "plugin-preset-result", req.CommandID, restored); err != nil {
@@ -141,21 +141,22 @@ func (s *PluginService) ApplyPluginPreset(ctx context.Context, id string, req co
 	if err != nil {
 		return preview, err
 	}
-	err = s.Admin.changeAgents(func(agents map[string]config.Agent) error {
+	err = s.Admin.changeAgents(func(c *config.Config) error {
+		agents := c.Agents
 		if agentRevision(agents) != req.BaseRevision {
 			return consoleapi.ErrSettingsConflict
 		}
-		current, err := s.presetPreview(ctx, id, req, s.Admin.Cfg)
+		current, err := s.presetPreview(ctx, id, req, c)
 		if err != nil {
 			return err
 		}
 		preview = current
 		if current.Proposed.Node == "" {
-			if _, ok := s.Admin.Cfg.Harnesses[current.Proposed.Harness]; !ok {
+			if _, ok := c.Harnesses[current.Proposed.Harness]; !ok {
 				return errors.New("preset harness is not registered")
 			}
 		} else {
-			if err := s.Admin.checkAgentNodeTarget(current.Proposed.Node, target); err != nil {
+			if err := checkAgentNodeTarget(c, current.Proposed.Node, target); err != nil {
 				return err
 			}
 		}
