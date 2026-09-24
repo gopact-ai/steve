@@ -26,7 +26,6 @@ import (
 
 func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, projection readModelAssembly, page consoleAssembly) (delegationAssembly, error) {
 	environment := input.Environment()
-	background := boot.Background()
 	book := boot.Book()
 	cfg := boot.Config()
 	ctx := boot.Context()
@@ -123,12 +122,6 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 				slog.Error(fmt.Sprintf("steve: journal interim message: %v", err), "task", taskID)
 			}
 		})
-		background.Go(func(ctx context.Context) {
-			if err := gate.Start(ctx); err != nil {
-				slog.Error(fmt.Sprintf("steve: %v", err))
-			}
-		})
-		slog.Info(fmt.Sprintf("steve: agent messaging MCP server on %s", gate.URL()))
 	}
 	return &delegationValues{gate: gate, recoverRetainedDelegates: recoverRetainedDelegates, reconcileDeliveries: reconcileDeliveries}, nil
 }
@@ -146,6 +139,21 @@ type delegationValues struct {
 }
 
 func (v *delegationValues) Gate() *agentmcp.Server { return v.gate }
+
+// startMessaging serves the messaging MCP server, when there is one. Its
+// tools reach the coordinator, so it starts only once assembly is done.
+func startMessaging(boot runtimeAssembly, delegates delegationAssembly) {
+	gate := delegates.Gate()
+	if gate == nil {
+		return
+	}
+	boot.Background().Go(func(ctx context.Context) {
+		if err := gate.Start(ctx); err != nil {
+			slog.Error(fmt.Sprintf("steve: %v", err))
+		}
+	})
+	slog.Info(fmt.Sprintf("steve: agent messaging MCP server on %s", gate.URL()))
+}
 
 func (v *delegationValues) RecoverRetainedDelegates() func(context.Context) error {
 	return v.recoverRetainedDelegates

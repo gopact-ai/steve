@@ -94,9 +94,6 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := assembleFleetWorkers(runtime, ledger, fleet, models, execution, readModel); err != nil {
-		return nil, err
-	}
 	delegation, err := assembleDelegation(input, runtime, ledger, home, fleet, execution, readModel, console)
 	if err != nil {
 		return nil, err
@@ -105,6 +102,12 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
+	// The workers, the messaging server and recovery below can reach the
+	// coordinator, so they start only after everything it reaches is built.
+	if err := assembleFleetWorkers(runtime, ledger, fleet, models, execution, readModel); err != nil {
+		return nil, err
+	}
+	startMessaging(runtime, delegation)
 	if err := assembleRecovery(input, runtime, ledger, execution, console); err != nil {
 		return nil, err
 	}
