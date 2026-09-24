@@ -369,13 +369,6 @@ func (c *Coordinator) promptTimeout() time.Duration {
 	return c.timeout
 }
 
-// SetCatalog sets the text catalog replies are written in.
-//
-// Deprecated: set Deps.Text.
-func (c *Coordinator) SetCatalog(cat i18n.Catalog) {
-	c.text = cat
-}
-
 func injectionMode(chatType protocol.ChatType, sender, owner string) home.Mode {
 	if owner != "" && sender == owner && chatType == protocol.ChatP2P {
 		return home.ModeOwner

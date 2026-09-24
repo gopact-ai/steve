@@ -50,14 +50,14 @@ func TestLiveTimeoutAppliesToNextTurnWithoutInterruptingCurrent(t *testing.T) {
 func TestLiveDefaultLocaleAndExplicitRequestLocale(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
-	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Catalog, d.Store, d.Timeout = catalog, store, time.Minute }))
 	var english atomic.Bool
-	c.SetCatalog(i18n.Dynamic(func() i18n.Locale {
+	text := i18n.Dynamic(func() i18n.Locale {
 		if english.Load() {
 			return i18n.LocaleEN
 		}
 		return i18n.LocaleZH
-	}))
+	})
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Catalog, d.Store, d.Timeout, d.Text = catalog, store, time.Minute, text }))
 	for _, want := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
 		english.Store(want == i18n.LocaleEN)
 		got, err := c.Handle(t.Context(), Request{ConversationID: string(want), Input: "/use worker"})
