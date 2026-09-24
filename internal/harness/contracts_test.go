@@ -23,8 +23,11 @@ var (
 	_ TurnRunner = (*managedSession)(nil)
 )
 
-// Manager is the Runtime turn probes for plugin relocation and the Sessions
-// lifecycle and exec probe for plugin session preparation.
+// Manager is turn's Runtime, which turn probes for plugin relocation. It is
+// also the Sessions that turn, delegate and agentexec hand to lifecycle and
+// the sessions exec's AgentRunner holds; lifecycle and AgentRunner probe it
+// for plugin session preparation. A plan step hands lifecycle exec's
+// *stepRun instead, which is pinned in exec.
 var (
 	_ PluginRelocationPreparer = (*Manager)(nil)
 	_ PluginSessionPreparer    = (*Manager)(nil)
