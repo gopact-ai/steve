@@ -41,8 +41,9 @@ func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 			g.SetRecoveryLedger(book)
 			msg := inboundFixture()
 			msg.ConversationID, msg.Text = msg.ChatID, tc.text
-			if err := g.processAcceptedFixture(msg); err == nil {
-				t.Fatal("input without a channel reported success")
+			if err := g.processAcceptedFixture(msg); err == nil ||
+				!strings.Contains(err.Error(), "gateway reply channel is not available") {
+				t.Fatalf("input without a channel = %v; want the missing channel", err)
 			}
 			if p.calls.Load() != 0 || pendingInputs(t, book) != 1 {
 				t.Fatalf("without a channel: calls=%d pending=%d; want 0 and 1", p.calls.Load(), pendingInputs(t, book))
