@@ -9,6 +9,10 @@ export function eventCursor() {
         last: () => lastID,
         reset() { epoch = ""; count = 0; lastID = ""; },
         // A message without an id (a stream that sends none) is delivered.
+        // EventSource gives a message that has no id field the last id the
+        // stream set, so this holds only while the stream sets an id on
+        // every message, as /events does; a message without one after one
+        // with an id would be taken for that earlier event and dropped.
         accept(id: string | undefined): boolean {
             if (!id) return true;
             const dot = id.lastIndexOf(".");
