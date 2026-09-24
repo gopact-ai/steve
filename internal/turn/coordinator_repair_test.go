@@ -393,7 +393,7 @@ func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
 }
 
 // Without a fleet there is nothing to find a helper in, and the refusal
-// says so rather than blaming a supervisor every coordinator has.
+// names the fleet, not the supervisor, as what is missing.
 func TestRepairWithoutAFleetSaysTheFleetIsMissing(t *testing.T) {
 	c, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	res := say(t, c, "/repair kimi")
