@@ -56,6 +56,21 @@ var (
 	ErrVersionMismatch = errors.New("nodewire: protocol version mismatch")
 )
 
+// VersionMismatch is a handshake the hub could not complete because it and
+// the node share no protocol version. Node is the version the node's reply
+// carried, which a refusal sets to the newest the node speaks; HubMin and
+// HubMax are the range the hub speaks. Reason says it in words, the
+// refusing node's own when it refused.
+type VersionMismatch struct {
+	Node, HubMin, HubMax int
+	Reason               string
+}
+
+func (e *VersionMismatch) Error() string { return ErrVersionMismatch.Error() + ": " + e.Reason }
+
+// Unwrap makes every VersionMismatch an ErrVersionMismatch.
+func (e *VersionMismatch) Unwrap() error { return ErrVersionMismatch }
+
 // Hello is what the hub sends first. The token authenticates the hub to the
 // node independently of whatever the network layer does — the two are
 // deliberately not one chain.
@@ -187,18 +202,17 @@ func Dial(conn io.ReadWriter, hello Hello) (Advert, error) {
 	if advert.Refused != "" {
 		// The node says why in words; the error says it in kind, so a
 		// hub can tell a wrong token from a node another hub already holds.
-		cause := ErrRefused
 		switch {
 		case advert.Refused == "token rejected":
-			cause = ErrBadToken
+			return Advert{}, fmt.Errorf("%w: %s", ErrBadToken, advert.Refused)
 		case strings.HasPrefix(advert.Refused, "hub speaks v"):
-			cause = ErrVersionMismatch
+			return Advert{}, &VersionMismatch{Node: advert.Version, HubMin: ProtocolMin, HubMax: ProtocolVersion, Reason: advert.Refused}
 		}
-		return Advert{}, fmt.Errorf("%w: %s", cause, advert.Refused)
+		return Advert{}, fmt.Errorf("%w: %s", ErrRefused, advert.Refused)
 	}
 	if advert.Version < ProtocolMin || advert.Version > ProtocolVersion {
-		return Advert{}, fmt.Errorf("%w: node speaks v%d, hub speaks v%d",
-			ErrVersionMismatch, advert.Version, ProtocolVersion)
+		return Advert{}, &VersionMismatch{Node: advert.Version, HubMin: ProtocolMin, HubMax: ProtocolVersion,
+			Reason: fmt.Sprintf("node speaks v%d, hub speaks v%d–v%d", advert.Version, ProtocolMin, ProtocolVersion)}
 	}
 	return advert, nil
 }

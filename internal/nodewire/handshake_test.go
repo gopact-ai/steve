@@ -115,15 +115,48 @@ func TestNodeRefusesAProtocolV1Hub(t *testing.T) {
 
 // Dial refuses an advert on a version outside its range, naming both.
 func TestDialRefusesAnAdvertOutsideItsRange(t *testing.T) {
-	var reply bytes.Buffer
-	if err := writeJSON(&reply, Advert{Version: 1}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Dial(struct {
-		io.Reader
-		io.Writer
-	}{&reply, io.Discard}, Hello{})
+	_, err := dialReply(t, Advert{Version: 1})
 	if !errors.Is(err, ErrVersionMismatch) || !strings.Contains(err.Error(), "node speaks v1, hub speaks v2") {
 		t.Fatalf("dial = %v", err)
 	}
+	var mismatch *VersionMismatch
+	if !errors.As(err, &mismatch) || *mismatch != (VersionMismatch{Node: 1, HubMin: ProtocolMin, HubMax: ProtocolVersion, Reason: mismatch.Reason}) {
+		t.Fatalf("dial = %#v, want the versions that met", err)
+	}
+}
+
+// A node's refusal for its version is reported with the version its reply
+// carried, older or newer than the hub's range, in the node's own words.
+// Any other refusal is not a version mismatch.
+func TestDialReportsTheVersionsOfARefusal(t *testing.T) {
+	for _, node := range []int{ProtocolMin - 1, ProtocolVersion + 1} {
+		reason := fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", ProtocolMin, ProtocolVersion, node, node)
+		_, err := dialReply(t, Advert{Version: node, Refused: reason})
+		var mismatch *VersionMismatch
+		if !errors.As(err, &mismatch) || *mismatch != (VersionMismatch{Node: node, HubMin: ProtocolMin, HubMax: ProtocolVersion, Reason: reason}) {
+			t.Fatalf("dial = %#v, want the versions that met", err)
+		}
+		if !errors.Is(err, ErrVersionMismatch) || !strings.HasSuffix(err.Error(), ": "+reason) {
+			t.Fatalf("dial = %v, want a version mismatch in the node's words", err)
+		}
+	}
+	_, err := dialReply(t, Advert{Version: ProtocolVersion, Refused: "token rejected"})
+	var mismatch *VersionMismatch
+	if !errors.Is(err, ErrBadToken) || errors.As(err, &mismatch) {
+		t.Fatalf("dial = %v, want a rejected token", err)
+	}
+}
+
+// dialReply runs the hub side of a handshake against a node that answers
+// with reply.
+func dialReply(t *testing.T, reply Advert) (Advert, error) {
+	t.Helper()
+	var answer bytes.Buffer
+	if err := writeJSON(&answer, reply); err != nil {
+		t.Fatal(err)
+	}
+	return Dial(struct {
+		io.Reader
+		io.Writer
+	}{&answer, io.Discard}, Hello{})
 }
