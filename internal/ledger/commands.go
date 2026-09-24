@@ -60,7 +60,7 @@ func (l *Ledger) Commands(ctx context.Context, kind string) ([]CommandRecord, er
 	if kind == "" {
 		return nil, errors.New("ledger: a command kind is required")
 	}
-	rows, err := l.db.QueryContext(ctx, `SELECT id, kind, actor, received_at, finished_at, result, error FROM commands WHERE kind = ? ORDER BY received_at, id`, kind)
+	rows, err := l.reads.QueryContext(ctx, `SELECT id, kind, actor, received_at, finished_at, result, error FROM commands WHERE kind = ? ORDER BY received_at, id`, kind)
 	if err != nil {
 		return nil, err
 	}

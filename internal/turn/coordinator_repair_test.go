@@ -48,6 +48,8 @@ type flipNodes struct {
 	statuses []node.Status
 	fixed    bool
 	refreshd []string
+	// dials counts connection rounds a caller asked for.
+	dials int
 }
 
 func (f *flipNodes) Statuses() []node.Status {
@@ -68,7 +70,17 @@ func (f *flipNodes) Statuses() []node.Status {
 	}
 	return out
 }
-func (f *flipNodes) EnsureConnected(context.Context, ...string) {}
+func (f *flipNodes) EnsureConnected(context.Context, ...string) {
+	f.mu.Lock()
+	f.dials++
+	f.mu.Unlock()
+}
+
+func (f *flipNodes) dialed() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dials
+}
 func (f *flipNodes) Refresh(_ context.Context, name string) (nodewire.Advert, error) {
 	f.mu.Lock()
 	f.refreshd = append(f.refreshd, name)
@@ -272,5 +284,51 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	verbs := c.Verbs()
 	if len(verbs) < 15 || verbs[0].Command != "/plan" || verbs[0].Summary == "" {
 		t.Fatalf("verbs = %+v", verbs[:2])
+	}
+}
+
+// /fleet describes the fleet once, dialing what is down once, and judges
+// every blocked agent's repair on that description. Completing /repair or
+// /use while typing dials nothing: an offline node must not hold up a
+// keystroke, once or once per blocked agent.
+func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
+	c, _, nodes, _, _ := repairCoordinator(t)
+	nodes.mu.Lock()
+	nodes.statuses = append(nodes.statuses, node.Status{Name: "node-b", LastError: "connection refused"})
+	nodes.mu.Unlock()
+	for id, cfg := range map[string]agent.Config{
+		"kimi-2": {Harness: "kimi", Node: "node-a"},
+		"gemini": {Harness: "gemini", Node: "node-b"},
+		"qwen":   {Harness: "qwen", Node: "node-b"},
+	} {
+		if err := c.catalog.Add(id, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := say(t, c, "/fleet")
+	if n := nodes.dialed(); n != 1 {
+		t.Fatalf("/fleet dialed %d times, want once", n)
+	}
+	for _, id := range []string{"kimi", "kimi-2"} {
+		if !strings.Contains(res.Text, "/repair "+id) {
+			t.Fatalf("/fleet lost the repair hint for %s:\n%s", id, res.Text)
+		}
+	}
+	if strings.Contains(res.Text, "/repair gemini") {
+		t.Fatalf("/fleet offered to repair an agent on a down node:\n%s", res.Text)
+	}
+	before := nodes.dialed()
+	var labels []string
+	for _, s := range c.Suggest(t.Context(), "chat", "/repair ") {
+		labels = append(labels, s.Label)
+	}
+	if strings.Join(labels, ",") != "kimi,kimi-2" && strings.Join(labels, ",") != "kimi-2,kimi" {
+		t.Fatalf("/repair completes %v, want the two agents builder can mend", labels)
+	}
+	if len(c.Suggest(t.Context(), "chat", "/use ")) != 6 {
+		t.Fatal("/use should complete every agent")
+	}
+	if n := nodes.dialed() - before; n != 0 {
+		t.Fatalf("completion dialed %d times", n)
 	}
 }

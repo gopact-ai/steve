@@ -35,7 +35,7 @@ func (d *Database) QueryRowContext(ctx context.Context, query string, args ...an
 	if !readOnlyQuery(query) {
 		return &Row{err: ErrReplicaWriteBypass}
 	}
-	return &Row{row: d.l.db.QueryRowContext(ctx, query, args...)}
+	return &Row{row: d.l.reads.QueryRowContext(ctx, query, args...)}
 }
 
 func (d *Database) Query(query string, args ...any) (*sql.Rows, error) {
@@ -46,5 +46,5 @@ func (d *Database) QueryContext(ctx context.Context, query string, args ...any) 
 	if !readOnlyQuery(query) {
 		return nil, ErrReplicaWriteBypass
 	}
-	return d.l.db.QueryContext(ctx, query, args...)
+	return d.l.reads.QueryContext(ctx, query, args...)
 }

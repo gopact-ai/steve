@@ -22,8 +22,22 @@ type ReadTx struct {
 // Read does not acquire coordinator authority or propose replicated writes.
 // A caller needing a linearizable follower read must first wait for the
 // required replica version; every query in fn then shares one local snapshot.
+// That snapshot is of committed state only; a mutation in progress reads
+// through its Tx instead.
 func (l *Ledger) Read(ctx context.Context, fn func(*ReadTx) error) error {
-	tx, err := l.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := l.reads.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	return fn(&ReadTx{ctx: ctx, tx: tx})
+}
+
+// writerRead is Read on the writer connection, for commit and apply paths
+// that hold writerMu or applyMu and must not wait for the read pool.
+func (l *Ledger) writerRead(fn func(*ReadTx) error) error {
+	ctx := context.Background()
+	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
