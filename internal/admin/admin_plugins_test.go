@@ -245,3 +245,38 @@ func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
 		t.Fatalf("removal returned %v", err)
 	}
 }
+
+// The plugins page can be read while a plugin installation is being saved.
+func TestPluginsReadDuringAnInstallationSave(t *testing.T) {
+	service, source := pluginAdminFixture(t)
+	preview, err := service.PreviewPlugin(t.Context(), plugins.Source{Kind: "directory", Location: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ImportPlugin(t.Context(), consoleapi.PluginImportRequest{CommandID: "import-one", Project: "p", Digest: preview.Digest, Source: preview.Source}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := service.Plugins(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := consoleapi.PluginUpdateRequest{BaseRevision: before.Revision, Installation: plugins.Installation{PackageID: preview.Manifest.ID, Digest: preview.Digest, Projects: []string{"p"}, Targets: map[string]plugins.Configuration{"": {}}}}
+	var during consoleapi.PluginsView
+	finished := readsDuringSave(t, service.Admin, func() error {
+		_, err := service.UpdatePlugin(t.Context(), "work", update)
+		return err
+	}, func() error {
+		var err error
+		during, err = service.Plugins(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the plugins waited for an installation save")
+	}
+	if during.Revision != before.Revision || len(during.Installations) != 0 {
+		t.Fatal("a reader saw an installation that was not saved yet")
+	}
+	if _, ok := service.Admin.Cfg.Plugins["work"]; !ok {
+		t.Fatal("the saved installation was not published")
+	}
+}

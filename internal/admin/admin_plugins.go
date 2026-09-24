@@ -241,25 +241,17 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req console
 	if err := s.Library.RememberTargets(ctx, id, candidate.Plugins[id]); err != nil {
 		return consoleapi.PluginsView{}, err
 	}
-	s.Admin.configStore().Lock()
-	if pluginRevision(s.Admin.Cfg.Plugins) != revision {
-		s.Admin.configStore().Unlock()
-		return consoleapi.PluginsView{}, consoleapi.ErrSettingsConflict
-	}
 	pluginsCandidate := candidate.Plugins
-	candidate = *s.Admin.Cfg
-	candidate.Plugins = pluginsCandidate
-	if err := candidate.ValidatePlugins(); err != nil {
-		s.Admin.configStore().Unlock()
-		return consoleapi.PluginsView{}, err
-	}
-	saveErr := s.Admin.persistConfigContext(ctx, &candidate)
+	saveErr := s.Admin.updateConfig(ctx, func(c *config.Config) error {
+		if pluginRevision(c.Plugins) != revision {
+			return consoleapi.ErrSettingsConflict
+		}
+		c.Plugins = pluginsCandidate
+		return c.ValidatePlugins()
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		s.Admin.configStore().Unlock()
 		return consoleapi.PluginsView{}, saveErr
 	}
-	s.Admin.Cfg.Plugins = candidate.Plugins
-	s.Admin.configStore().Unlock()
 	view, err := s.Plugins(ctx)
 	if err != nil {
 		return view, err
