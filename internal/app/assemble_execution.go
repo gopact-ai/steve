@@ -116,6 +116,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
 		Executions: executions, Tasks: tasks, Node: boot.NodeName(), Schedules: schedules,
 		OfflineAfter: time.Duration(cfg.Gateway.OfflineReminderAfter), ConsoleCompletionGuard: console.CheckTaskCompletionTx,
+		Nodes: nodes,
 	})
 	if err != nil {
 		return nil, err

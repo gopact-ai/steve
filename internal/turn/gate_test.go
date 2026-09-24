@@ -11,6 +11,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
@@ -156,6 +157,53 @@ func (f fakeEndpoints) MCPEndpoint(_ context.Context, node string) (string, erro
 	return fmt.Sprintf("http://127.0.0.1:%d/mcp", port), nil
 }
 
+// RegisterIdle holds no clock: these tests never disconnect a node.
+func (fakeEndpoints) RegisterIdle(string, idle.Clock) func() { return func() {} }
+
+// idleNodes records the idle clocks a coordinator registers per node.
+type idleNodes struct {
+	fakeEndpoints
+	mu                       sync.Mutex
+	registered, unregistered []string
+}
+
+func (n *idleNodes) RegisterIdle(node string, _ idle.Clock) func() {
+	n.mu.Lock()
+	n.registered = append(n.registered, node)
+	n.mu.Unlock()
+	return func() {
+		n.mu.Lock()
+		n.unregistered = append(n.unregistered, node)
+		n.mu.Unlock()
+	}
+}
+
+// A node that drops its connection pauses the silence clock of the prompt
+// running there whether or not the messaging server is up: the clock
+// measures the agent's silence, not the transport's.
+func TestPromptRegistersItsIdleClockWithTheNodeWithoutMessaging(t *testing.T) {
+	catalog, err := agent.NewCatalog(map[string]agent.Config{
+		"lab": {Harness: "codex", Node: "host-3", Default: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := state.OpenLedger(testLedger(t))
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
+	nodes := &idleNodes{}
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withDeps(func(d *Deps) { d.Nodes = nodes }))
+
+	if _, err := handle(coordinator, t.Context(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	nodes.mu.Lock()
+	defer nodes.mu.Unlock()
+	if len(nodes.registered) != 1 || nodes.registered[0] != "host-3" || len(nodes.unregistered) != 1 {
+		t.Fatalf("registered %v, unregistered %v; want host-3's clock held for the prompt", nodes.registered, nodes.unregistered)
+	}
+}
+
 // TestRemoteAgentGetsItsOwnNodeLoopback: the messaging URL handed to an agent
 // must be reachable from the machine that agent runs on. The hub's own
 // loopback address means nothing over there.
@@ -169,10 +217,10 @@ func TestRemoteAgentGetsItsOwnNodeLoopback(t *testing.T) {
 	}
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}, mcpHTTP: true}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withDeps(func(d *Deps) { d.Nodes = fakeEndpoints{port: map[string]int{"host-3": 45999}} }))
 	gate := &fakeGate{}
 	coordinator.SetAgentGate(gate)
-	coordinator.SetNodeEndpoints(fakeEndpoints{port: map[string]int{"host-3": 45999}})
 
 	if _, err := handle(coordinator, t.Context(), "/project use lab"); err != nil {
 		t.Fatal(err)
@@ -205,10 +253,10 @@ func TestUnreachableNodeMessagingBlocksWithoutDroppingTools(t *testing.T) {
 	}
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "still answered"}}, mcpHTTP: true}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withDeps(func(d *Deps) { d.Nodes = fakeEndpoints{fail: errors.New("node down")} }))
 	gate := &fakeGate{}
 	coordinator.SetAgentGate(gate)
-	coordinator.SetNodeEndpoints(fakeEndpoints{fail: errors.New("node down")})
 
 	result, err := handle(coordinator, t.Context(), "go")
 	if err == nil {

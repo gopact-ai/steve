@@ -57,8 +57,8 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	idleCtx, expire, touch := c.newIdleClock(turnCtx, c.promptTimeout())
 	var ctx context.Context = idleCtx
 	defer expire()
-	if c.RegisterIdle != nil {
-		defer c.RegisterIdle(selected.Node, idleCtx)()
+	if c.nodes != nil {
+		defer c.nodes.RegisterIdle(selected.Node, idleCtx)()
 	}
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
@@ -300,10 +300,10 @@ func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Age
 	}
 	endpoint := ""
 	if selected.Node != "" {
-		if c.endpoints == nil {
+		if c.nodes == nil {
 			return nil, saved.AgentToken, "", fmt.Errorf("turn: no MCP endpoint resolver for node %q", selected.Node)
 		}
-		endpoint, err = c.endpoints.MCPEndpoint(ctx, selected.Node)
+		endpoint, err = c.nodes.MCPEndpoint(ctx, selected.Node)
 		if err != nil {
 			return nil, saved.AgentToken, "", fmt.Errorf("turn: resolve node %q MCP endpoint: %w", selected.Node, err)
 		}

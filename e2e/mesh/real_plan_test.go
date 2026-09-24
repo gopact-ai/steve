@@ -282,9 +282,9 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, f.assembler, f.manager, 15*time.Minute
 		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
+		o.Nodes = f.registry
 	})
 	coordinator.SetAgentGate(gate)
-	coordinator.SetNodeEndpoints(f.registry)
 
 	started := time.Now()
 	result, err := coordinator.Handle(ctx, turn.Request{

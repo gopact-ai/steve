@@ -112,10 +112,14 @@ type AgentGate interface {
 	DescribeExtras(token, endpoint string) []capability.Extra
 }
 
-// NodeEndpoints resolves the messaging URL an agent on a given node must
-// call. Only remote placements consult it.
-type NodeEndpoints interface {
+// Nodes is what a coordinator asks of the machines agents run on.
+type Nodes interface {
+	// MCPEndpoint resolves the messaging URL an agent on node must call.
+	// Only remote placements consult it.
 	MCPEndpoint(ctx context.Context, node string) (string, error)
+	// RegisterIdle holds a prompt's silence clock while node is
+	// disconnected, until unregister is called.
+	RegisterIdle(node string, clock idle.Clock) (unregister func())
 }
 
 // Injected is what a turn actually gave the agent, kept so "what did it
@@ -183,8 +187,7 @@ type coordinatorState struct {
 	homePath          string
 	skills            *skills.Live
 	gate              AgentGate
-	endpoints         NodeEndpoints
-	RegisterIdle      idle.Registrar
+	nodes             Nodes
 	tasks             *task.Store
 
 	consoleCompletionGuard ConsoleCompletionGuard
@@ -281,6 +284,11 @@ type Deps struct {
 	// transaction closing a task tree; nil refuses to close one while any
 	// console fact exists.
 	ConsoleCompletionGuard ConsoleCompletionGuard
+	// Nodes resolves remote messaging endpoints and holds a prompt's
+	// silence clock while its node is disconnected. Without it a remote
+	// agent's turn is refused while messaging is on, and a disconnection
+	// counts as silence.
+	Nodes Nodes
 }
 
 // dependency is one Deps field New refuses to build without.
@@ -333,6 +341,7 @@ func New(deps Deps) (*Coordinator, error) {
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
 			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
+			nodes:  deps.Nodes,
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},
@@ -356,9 +365,6 @@ func (c *Coordinator) SetWorkspaceAttach(attach func(ctx context.Context, projec
 
 // SetAgentGate enables the send primitive: each session gets the messaging
 // MCP server injected with its own conversation-bound token.
-// SetNodeEndpoints wires the resolver remote placements need for messaging.
-func (c *Coordinator) SetNodeEndpoints(e NodeEndpoints) { c.endpoints = e }
-
 func (c *Coordinator) SetAgentGate(gate AgentGate) {
 	c.gate = gate
 }

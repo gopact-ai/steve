@@ -70,8 +70,6 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 			slog.Error(fmt.Sprintf("steve: remember agent messaging port: %v", err))
 		}
 		coordinator.SetAgentGate(gate)
-		coordinator.SetNodeEndpoints(nodes)
-		coordinator.RegisterIdle = nodes.RegisterIdle
 		// Delegation is the one way an agent reaches another: a child task
 		// in the tree, funded from the caller's remainder, with its own
 		// token. It is offered only when the messaging server exists,
