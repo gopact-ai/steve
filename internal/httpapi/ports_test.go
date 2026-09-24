@@ -116,6 +116,12 @@ func (portAdmin) NativeHistory(_ context.Context, node string, source nativehist
 func (portAdmin) NodeAgents(_ context.Context, node string) (agenttools.Discovery, error) {
 	return agenttools.Discovery{Revision: node}, nil
 }
+func (portAdmin) Versions(context.Context) (consoleapi.Versions, error) {
+	return consoleapi.Versions{Hub: "v"}, nil
+}
+func (portAdmin) QueryAttempts(_ context.Context, query consoleapi.AttemptHistoryQuery) (consoleapi.AttemptHistoryPage, error) {
+	return consoleapi.AttemptHistoryPage{NextCursor: query.TaskID}, nil
+}
 
 // A route calls what it needs through the service port it holds, so it
 // serves a service reached through a port that forwards nothing else.
@@ -128,6 +134,9 @@ func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 		{"GET", "/console/materials?project=p", "", 200, `{"materials":[{"id":"m","project":"p",`},
 		{"GET", "/console/nodes/worker/native-history?harness=dsh", "", 200, `{"entries":[{"native_id":"worker","harness":"dsh",`},
 		{"GET", "/console/nodes/worker/agents", "", 200, `{"revision":"worker","agents":null}`},
+		{"GET", "/console/versions", "", 200, `"hub":"v"`},
+		{"GET", "/console/attempts?task_id=t", "", 200, `{"items":null,"next_cursor":"t"}`},
+		{"GET", "/console/tasks/t/attempts", "", 200, `{"items":null,"next_cursor":"t"}`},
 	} {
 		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 		server.SetAdmin(adminPort{portAdmin{}})

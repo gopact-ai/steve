@@ -247,6 +247,8 @@ type Admin interface {
 	MaterialAdmin
 	NativeHistoryService
 	NodeAgentService
+	VersionService
+	AttemptQueries
 	AddNode(ctx context.Context, req AddNodeRequest) (AddNodeResult, error)
 	// RemoveNode forgets a machine: nothing may still live on it.
 	RemoveNode(ctx context.Context, name string) error
