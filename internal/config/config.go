@@ -9,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -24,10 +23,6 @@ import (
 const (
 	DomainFeishu = "feishu"
 	DomainLark   = "lark"
-
-	// Legacy dm_policy values still accepted in JSON and ignored.
-	DMPolicyPairing   = "pairing"
-	DMPolicyAllowlist = "allowlist"
 
 	GroupPolicyAllowlist = "allowlist"
 	GroupPolicyOpen      = "open"
@@ -47,7 +42,6 @@ type Feishu struct {
 	AppID            string   `json:"app_id"`
 	AppSecret        string   `json:"app_secret"`
 	Domain           string   `json:"domain,omitempty"`
-	DMPolicy         string   `json:"dm_policy,omitempty"`
 	AllowedSenders   []string `json:"allowed_senders,omitempty"`
 	BlockedSenders   []string `json:"blocked_senders,omitempty"`
 	GroupPolicy      string   `json:"group_policy,omitempty"`
@@ -77,9 +71,6 @@ func (c Feishu) validateOptions() error {
 	case DomainFeishu, DomainLark:
 	default:
 		return fmt.Errorf("feishu.domain must be %q or %q", DomainFeishu, DomainLark)
-	}
-	if c.DMPolicy != "" && c.DMPolicy != DMPolicyPairing && c.DMPolicy != DMPolicyAllowlist {
-		return fmt.Errorf("feishu.dm_policy must be %q or %q", DMPolicyPairing, DMPolicyAllowlist)
 	}
 	switch c.GroupPolicy {
 	case GroupPolicyAllowlist, GroupPolicyOpen, GroupPolicyDisabled:
@@ -242,19 +233,15 @@ type Config struct {
 	RuntimePermissions map[string]string `json:"-"`
 	// RuntimeHome keeps the shared home workspace anchored to its physical
 	// node while this process uses its own local identity files.
-	RuntimeHome *ProjectHome         `json:"-"`
-	Policies    Policies             `json:"policies,omitempty"`
-	Agents      map[string]Agent     `json:"agents"`
-	Projects    map[string]Project   `json:"projects,omitempty"`
-	Harnesses   map[string]Harness   `json:"harnesses"`
-	Nodes       map[string]Node      `json:"nodes,omitempty"`
-	MCPServers  map[string]MCPServer `json:"mcp_servers"`
-	Feishu      Feishu               `json:"feishu"`
-	Gateway     Gateway              `json:"gateway"`
-	// Migrated lists what Load rewrote from an older layout, for the
-	// operator to move into the file: the runtime never reads the old
-	// fields again.
-	Migrated          []string `json:"-"`
+	RuntimeHome       *ProjectHome         `json:"-"`
+	Policies          Policies             `json:"policies,omitempty"`
+	Agents            map[string]Agent     `json:"agents"`
+	Projects          map[string]Project   `json:"projects,omitempty"`
+	Harnesses         map[string]Harness   `json:"harnesses"`
+	Nodes             map[string]Node      `json:"nodes,omitempty"`
+	MCPServers        map[string]MCPServer `json:"mcp_servers"`
+	Feishu            Feishu               `json:"feishu"`
+	Gateway           Gateway              `json:"gateway"`
 	sourcePath        string
 	sourceFingerprint string
 }
@@ -297,15 +284,11 @@ type Agent struct {
 	Options map[string]string `json:"options,omitempty"`
 	About   string            `json:"about,omitempty"`
 	// Requires are capabilities the node must advertise.
-	Requires []string `json:"requires,omitempty"`
-	// LegacyWorkspace is the pre-project per-agent directory. It is read
-	// only to migrate into projects{}; an agent has no directory of its
-	// own — a conversation's project decides where work happens.
-	LegacyWorkspace string   `json:"workspace,omitempty"`
-	SystemPrompt    string   `json:"system_prompt"`
-	Skills          []string `json:"skills"`
-	MCPServers      []string `json:"mcp_servers"`
-	Default         bool     `json:"default"`
+	Requires     []string `json:"requires,omitempty"`
+	SystemPrompt string   `json:"system_prompt"`
+	Skills       []string `json:"skills"`
+	MCPServers   []string `json:"mcp_servers"`
+	Default      bool     `json:"default"`
 }
 
 type Harness struct {
@@ -497,10 +480,8 @@ func Load(path string) (*Config, error) {
 	if err := cfg.validateSettings(); err != nil {
 		return nil, err
 	}
-	// Projects come from the file or from the older per-agent layout; only
-	// once they are known can the default project be filled in and checked.
-	if err := cfg.migrateProjects(); err != nil {
-		return nil, err
+	if len(cfg.Projects) == 0 {
+		return nil, fmt.Errorf("projects{} is required: declare at least one project with its home directory in projects.<name>.home.path")
 	}
 	cfg.inferDefaultProject()
 	if err := cfg.validateTopology(); err != nil {
@@ -830,49 +811,6 @@ func (c *Config) validateHarnesses() error {
 // they are part of this deployment's state, not of anyone's home.
 func (c *Config) AdapterDir() string {
 	return filepath.Join(filepath.Dir(absolute(c.Gateway.StatePath)), "adapters")
-}
-
-// migrateProjects turns the pre-project layout — a workspace on every
-// agent — into projects{}: one project per agent, homed where the agent
-// ran, the default agent's as the default project. It runs only when the
-// file has no projects{} of its own; a file with both is refused so the two
-// cannot disagree.
-func (c *Config) migrateProjects() error {
-	legacy := map[string]Agent{}
-	for id, item := range c.Agents {
-		if item.LegacyWorkspace != "" {
-			legacy[id] = item
-		}
-	}
-	if len(legacy) == 0 {
-		if len(c.Projects) == 0 {
-			return fmt.Errorf("projects{} is required: at least one project with a home path (agents[].workspace moved there)")
-		}
-		return nil
-	}
-	if len(c.Projects) > 0 {
-		return fmt.Errorf("agents[].workspace is no longer read; remove it, the project's home path in projects{} is what counts")
-	}
-	c.Projects = map[string]Project{}
-	ids := make([]string, 0, len(legacy))
-	for id := range legacy {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		item := legacy[id]
-		c.Projects[id] = Project{Home: ProjectHome{Node: item.Node, Path: item.LegacyWorkspace}}
-		if item.Default && c.Gateway.DefaultProject == "" {
-			c.Gateway.DefaultProject = id
-		}
-		item.LegacyWorkspace = ""
-		c.Agents[id] = item
-	}
-	// Projects hold only strings, slices and maps of them, which always
-	// encode; the note is advice for the operator, not something to fail on.
-	rendered, _ := json.MarshalIndent(c.Projects, "", "  ")
-	c.Migrated = append(c.Migrated, fmt.Sprintf("agents[].workspace is now projects{}; move this into the config and set gateway.default_project = %q:\n%s", c.Gateway.DefaultProject, rendered))
-	return nil
 }
 
 // DefaultStatePath is where a Hub keeps its state unless configured otherwise.

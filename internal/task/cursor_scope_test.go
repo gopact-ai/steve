@@ -58,7 +58,7 @@ func TestScopedTaskAndAccountingPagesSurviveUnrelatedWrites(t *testing.T) {
 	}
 	next := s.clone()
 	next.Tasks["live"].Attempts[0].Tokens.Total++
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.QueryAttempts("live", page.NextCursor, 1); !errors.Is(err, ErrStaleCursor) {
@@ -98,7 +98,7 @@ func TestScopedTaskCursorTracksAncestorsFiltersAndFailedWrites(t *testing.T) {
 	}
 	next := s.clone()
 	next.Tasks["live"].Attempts[0].Tokens.Total++
-	if err := s.replaceLocked(next); err == nil {
+	if err := s.replaceData(next); err == nil {
 		t.Fatal("accounting mutation bypassed the injected failure")
 	}
 	if _, err := s.QueryAttempts("live", page.NextCursor, 1); err != nil {
@@ -141,7 +141,7 @@ func TestTaskCursorVersionsForgetEmptyScopesWithoutReusingIdentity(t *testing.T)
 			t.Fatalf("empty scope retained a cursor tombstone: %+v", key)
 		}
 	}
-	if err := s.replaceLocked(original); err != nil {
+	if err := s.replaceData(original); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Query(query); !errors.Is(err, ErrStaleCursor) {

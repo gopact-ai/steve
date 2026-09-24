@@ -16,7 +16,7 @@ func (s *Store) SpawnAuthorized(ctx context.Context, token ExecutionToken, child
 	if err := checkExecution(s.data.Tasks, token); err != nil {
 		return Task{}, err
 	}
-	return s.spawnLocked(token.TaskID, child, func(next data) error { return s.replaceAuthorizedLocked(ctx, token, next, guard) })
+	return s.spawnLocked(token.TaskID, child, func(next *draft) error { return s.replaceAuthorizedLocked(ctx, token, next, guard) })
 }
 
 // CheckAuthorized checks a previously admitted execution and consumer grant
@@ -24,9 +24,6 @@ func (s *Store) SpawnAuthorized(ctx context.Context, token ExecutionToken, child
 func (s *Store) CheckAuthorized(ctx context.Context, token ExecutionToken, guard func(*ledger.Tx) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.book == nil {
-		return errors.New("authorized task operation requires the ledger")
-	}
 	return s.book.Update(ctx, func(tx *ledger.Tx) error {
 		if guard != nil {
 			if err := guard(tx); err != nil {
@@ -37,10 +34,7 @@ func (s *Store) CheckAuthorized(ctx context.Context, token ExecutionToken, guard
 	})
 }
 
-func (s *Store) replaceAuthorizedLocked(ctx context.Context, token ExecutionToken, next data, guard func(*ledger.Tx) error) error {
-	if s.book == nil {
-		return errors.New("authorized task operation requires the ledger")
-	}
+func (s *Store) replaceAuthorizedLocked(ctx context.Context, token ExecutionToken, next *draft, guard func(*ledger.Tx) error) error {
 	return s.replaceRecordsLocked(ctx, next, func(tx *ledger.Tx) error {
 		if guard != nil {
 			if err := guard(tx); err != nil {
@@ -76,8 +70,8 @@ func (s *Store) SetDeliveryAuthorized(ctx context.Context, token ExecutionToken,
 	if !belongs || childID == token.TaskID {
 		return errors.New("child belongs to another parent execution")
 	}
-	next := s.clone()
-	t := next.Tasks[childID]
+	next := s.draft()
+	t := next.edit(childID)
 	if t.Delivery == nil {
 		t.Delivery = &Delivery{Key: DeliveryKey(childID)}
 	}

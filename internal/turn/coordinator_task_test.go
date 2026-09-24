@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -235,7 +234,7 @@ func TestTaskTrackingIsOptional(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
@@ -303,7 +302,7 @@ func TestStatusWithoutTaskTrackingHasNoTaskFields(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
 	result, err := handle(coordinator, t.Context(), "/status")
 	if err != nil {

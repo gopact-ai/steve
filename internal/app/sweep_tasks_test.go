@@ -1,7 +1,6 @@
 package app
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +14,7 @@ import (
 // flight must leave the task alone: a failed read is not evidence of idleness.
 func TestIdleSweepKeepsTasksWhoseLivenessCannotBeRead(t *testing.T) {
 	output := captureLog(t)
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,5 +54,16 @@ func openAttempts(t *testing.T) *ledger.Ledger {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
+	return book
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
 	return book
 }

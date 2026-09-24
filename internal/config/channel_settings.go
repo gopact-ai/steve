@@ -93,11 +93,6 @@ func (c *Config) PatchChannels(patch channelsettings.Patch) (*Config, error) {
 			f.BlockedSenders = slices.Clone(*change.BlockedSenders)
 		}
 	}
-	// Preserve the former adapter's restriction when an unrelated edit
-	// leaves an existing open+allowlist policy unspecified.
-	if c.Feishu.Enabled == nil && (patch.Feishu == nil || patch.Feishu.GroupPolicy == nil) && (c.Feishu.GroupPolicy == "" || c.Feishu.GroupPolicy == GroupPolicyOpen) && len(c.Feishu.AllowedSenders) > 0 {
-		f.GroupPolicy = GroupPolicyAllowlist
-	}
 	f.Enabled = &enabled
 	for _, ids := range [][]string{f.AllowedSenders, f.BlockedSenders} {
 		for i := range ids {

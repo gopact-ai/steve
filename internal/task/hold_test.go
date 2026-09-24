@@ -1,7 +1,6 @@
 package task
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -9,8 +8,8 @@ import (
 // the process, so the start-up delivery pass cannot wake the task either,
 // and it does not change what the children still owe.
 func TestAHoldOutlivesTheProcessAndLeavesTheChildrensDebtAlone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tasks.json")
-	s, err := Open(path)
+	book := testLedger(t)
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +34,7 @@ func TestAHoldOutlivesTheProcessAndLeavesTheChildrensDebtAlone(t *testing.T) {
 	if len(s.Undelivered()[root.ID]) != 1 {
 		t.Fatal("a hold changed what the child owes its parent")
 	}
-	again, err := Open(path)
+	again, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +61,7 @@ func TestAHoldOutlivesTheProcessAndLeavesTheChildrensDebtAlone(t *testing.T) {
 // the hold again, and a turn composed under the earlier stamp — the one
 // that stop cancelled — cannot lift it.
 func TestALaterStopRestampsTheHoldSoTheEarlierTurnCannotLiftIt(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

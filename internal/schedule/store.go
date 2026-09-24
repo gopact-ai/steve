@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -42,8 +41,7 @@ type Job struct {
 // into a chat that talks to itself forever.
 const MaxPerConversation = 8
 
-// Store persists jobs with the same durable-replace discipline as the task
-// store: one writer, a temp file, a rename, a directory sync.
+// Store persists jobs and their firings in one ledger document.
 type Store struct {
 	doc    ledger.Doc
 	mu     sync.Mutex
@@ -58,17 +56,9 @@ type data struct {
 	Firings map[string]*Firing `json:"firings,omitempty"`
 }
 
-// Open keeps the store in one JSON file; the gateway opens the ledger.
-func Open(path string) (*Store, error) {
-	return openWith(&filedoc.Document{Path: path})
-}
-
 // OpenLedger keeps the store in the ledger.
 func OpenLedger(l *ledger.Ledger) (*Store, error) {
-	return openWith(l.Document("schedules"))
-}
-
-func openWith(doc ledger.Doc) (*Store, error) {
+	doc := l.Document("schedules")
 	s := &Store{doc: doc, data: data{NextID: 1, Jobs: map[string]*Job{}, Firings: map[string]*Firing{}}, now: time.Now, active: map[string]bool{}}
 	raw, ok, err := doc.Load()
 	if err != nil {

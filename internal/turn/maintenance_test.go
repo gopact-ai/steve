@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -22,7 +21,7 @@ func sealCoordinator(t *testing.T, c *Coordinator) (func(), error) {
 
 func TestMaintenanceRejectsAllChannelsAndCommandsUntilReleased(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"mock": {reply: "ok"}}}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	c.SetIdentity("console-owner", nil)
@@ -89,7 +88,7 @@ func (m *resetBarrier) CloseSession(ctx context.Context, _ harness.Placement, _ 
 
 func TestSealIdleRejectsCommandBeforeExecutionRegistryAdmission(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	manager := &resetBarrier{fakeManager: &fakeManager{}, started: make(chan struct{}), proceed: make(chan struct{})}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	done := make(chan error, 1)

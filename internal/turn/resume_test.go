@@ -58,7 +58,7 @@ func TestReviveSessionClearsTaintSoTheTurnRuns(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
-	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	store, _ := state.OpenLedger(testLedger(t))
 	// The saved hash must match what the next assembly produces, exactly as
 	// it would for a session the same gateway wrote before crashing.
 	caps, err := capability.NewAssembler(nil).Assemble(catalog.Default())

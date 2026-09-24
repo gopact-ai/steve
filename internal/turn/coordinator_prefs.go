@@ -137,16 +137,6 @@ func (c *Coordinator) applyLive(ctx context.Context, conversationID, agentID str
 	return true
 }
 
-// renewIfAsked consumes the older preference-renewal marker without discarding
-// context. Preferences are reapplied in open; an upgrade must not turn a pending
-// selector update into an implicit conversation reset.
-func (c *Coordinator) renewIfAsked(ctx context.Context, conversationID, agentID string) error {
-	if !c.store.Conversation(conversationID).Renew[agentID] {
-		return nil
-	}
-	return c.store.SetRenew(conversationID, agentID, false)
-}
-
 // Selectors are what the agent's harness offers to choose from, read
 // from a throwaway session with the conversation's preferences applied.
 // Model choices come first; discovery never resumes a task's session.
@@ -230,9 +220,6 @@ func (c *Coordinator) ProjectOf(ctx context.Context, conversationID string) stri
 // tainted, because a command that only reads or sets a selector is not a
 // turn.
 func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected agent.Agent) (harness.Runner, error) {
-	if err := c.renewIfAsked(ctx, req.ConversationID, selected.ID); err != nil {
-		return nil, err
-	}
 	capabilities, err := c.assemble(selected, req, nil)
 	if err != nil {
 		return nil, err

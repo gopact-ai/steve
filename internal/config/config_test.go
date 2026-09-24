@@ -25,7 +25,8 @@ func TestLoadAllowsFirstLaunchWithoutRegisteredAgents(t *testing.T) {
 
 func TestLoadJSON(t *testing.T) {
 	path := writeConfig(t, `{
-		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
+		"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
 		"harnesses": {"codex": {"command": "mockagent"}},
 		"feishu": {"app_id": "app", "app_secret": "secret", "allowed_senders": ["ou_user"]},
 		"gateway": {"prompt_timeout": "30s"}
@@ -40,7 +41,7 @@ func TestLoadJSON(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownField(t *testing.T) {
-	path := writeConfig(t, `{"agents":{"codex":{"harness":"codex","workspace":"/tmp/steve-test","default":true,"harnses":"typo"}}}`)
+	path := writeConfig(t, `{"projects":{"p":{"home":{"path":"/tmp/steve-test"}}},"agents":{"codex":{"harness":"codex","default":true,"harnses":"typo"}}}`)
 	_, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("expected unknown field error, got %v", err)
@@ -49,7 +50,8 @@ func TestLoadRejectsUnknownField(t *testing.T) {
 
 func TestLoadRejectsUnknownHarness(t *testing.T) {
 	path := writeConfig(t, `{
-		"agents":{"codex":{"harness":"missing","workspace":"/tmp/steve-test","default":true}},
+		"projects":{"p":{"home":{"path":"/tmp/steve-test"}}},
+		"agents":{"codex":{"harness":"missing","default":true}},
 		"harnesses":{"codex":{"command":"mockagent"}}
 	}`)
 	_, err := Load(path)
@@ -58,13 +60,25 @@ func TestLoadRejectsUnknownHarness(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsMissingWorkspace(t *testing.T) {
+func TestLoadRejectsFeishuDMPolicy(t *testing.T) {
+	path := writeConfig(t, `{
+		"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
+		"harnesses": {"codex": {"command": "mockagent"}},
+		"feishu": {"app_id": "app", "app_secret": "secret", "dm_policy": "pairing"}
+	}`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), `unknown field "dm_policy"`) {
+		t.Fatalf("feishu.dm_policy = %v", err)
+	}
+}
+
+func TestLoadRequiresAProject(t *testing.T) {
 	path := writeConfig(t, `{
 		"agents":{"codex":{"harness":"codex","default":true}},
 		"harnesses":{"codex":{"command":"mockagent"}}
 	}`)
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "workspace") {
-		t.Fatalf("expected workspace error, got %v", err)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "projects{} is required") || !strings.Contains(err.Error(), "projects.<name>.home.path") {
+		t.Fatalf("expected missing project error naming where the home path goes, got %v", err)
 	}
 }
 
@@ -120,7 +134,8 @@ func TestValidateFeishuCredentials(t *testing.T) {
 
 func TestLoadDerivesHomePathAndTrimsOwner(t *testing.T) {
 	path := writeConfig(t, `{
-		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
+		"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
 		"harnesses": {"codex": {"command": "mockagent"}},
 		"feishu": {"app_id": "app", "app_secret": "secret", "owner_open_id": "  ou_owner  "},
 		"gateway": {"state_path": "/tmp/steve-state.json"}
@@ -157,7 +172,8 @@ func TestStarterSaveOmitsHomePath(t *testing.T) {
 
 func TestLoadAppliesFeishuDefaults(t *testing.T) {
 	path := writeConfig(t, `{
-		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
+		"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
 		"harnesses": {"codex": {"command": "mockagent"}},
 		"feishu": {"app_id": "app", "app_secret": "secret"}
 	}`)
@@ -165,14 +181,15 @@ func TestLoadAppliesFeishuDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Feishu.Domain != DomainFeishu || cfg.Feishu.GroupPolicy != GroupPolicyOpen || cfg.Feishu.DMPolicy != "" {
+	if cfg.Feishu.Domain != DomainFeishu || cfg.Feishu.GroupPolicy != GroupPolicyOpen {
 		t.Fatalf("unexpected defaults: %#v", cfg.Feishu)
 	}
 }
 
 func TestLoadKeepsSenderLists(t *testing.T) {
 	path := writeConfig(t, `{
-		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
+		"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
 		"harnesses": {"codex": {"command": "mockagent"}},
 		"feishu": {"app_id": "app", "app_secret": "secret", "allowed_senders": ["ou_user"], "blocked_senders": ["ou_spam"]}
 	}`)
@@ -227,52 +244,25 @@ func writeConfig(t *testing.T, data string) string {
 	return path
 }
 
-func TestLoadMigratesAgentWorkspacesIntoProjects(t *testing.T) {
-	path := writeConfig(t, `{
-		"agents": {
-			"codex": {"harness": "codex", "workspace": "/tmp/steve-codex", "default": true},
-			"lab": {"harness": "codex", "node": "host-3", "workspace": "/srv/lab"}
-		},
-		"nodes": {"host-3": {"addr": "10.0.0.3:7701", "token": "t"}},
-		"harnesses": {"codex": {"command": "true"}},
-		"feishu": {"app_id": "cli", "app_secret": "s"}
-	}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := cfg.Projects["codex"].Home; got.Node != "" || got.Path != "/tmp/steve-codex" {
-		t.Fatalf("hub project home = %+v", got)
-	}
-	if got := cfg.Projects["lab"].Home; got.Node != "host-3" || got.Path != "/srv/lab" {
-		t.Fatalf("remote project home = %+v (must stay the node's own path)", got)
-	}
-	if cfg.Gateway.DefaultProject != "codex" {
-		t.Fatalf("default project = %q, want the default agent's", cfg.Gateway.DefaultProject)
-	}
-	if len(cfg.Migrated) != 1 || !strings.Contains(cfg.Migrated[0], "projects") {
-		t.Fatalf("migration note = %v", cfg.Migrated)
-	}
-	for id, a := range cfg.Agents {
-		if a.LegacyWorkspace != "" {
-			t.Fatalf("agent %s still carries a workspace after migration", id)
+func TestLoadRejectsAgentWorkspace(t *testing.T) {
+	for name, body := range map[string]string{
+		"alone": `{
+			"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-codex", "default": true}},
+			"harnesses": {"codex": {"command": "true"}}
+		}`,
+		"with projects": `{
+			"projects": {"p": {"home": {"path": "/tmp/p"}}},
+			"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-codex", "default": true}},
+			"harnesses": {"codex": {"command": "true"}}
+		}`,
+	} {
+		if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), `unknown field "workspace"`) {
+			t.Fatalf("%s: agents[].workspace = %v", name, err)
 		}
-	}
-	if len(cfg.Projects) != 2 {
-		t.Fatalf("projects = %+v", cfg.Projects)
 	}
 }
 
-func TestLoadRefusesBothLayoutsAndReservedName(t *testing.T) {
-	both := writeConfig(t, `{
-		"projects": {"p": {"home": {"path": "/tmp/p"}}},
-		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-codex", "default": true}},
-		"harnesses": {"codex": {"command": "true"}},
-		"feishu": {"app_id": "cli", "app_secret": "s"}
-	}`)
-	if _, err := Load(both); err == nil || !strings.Contains(err.Error(), "no longer read") {
-		t.Fatalf("both layouts = %v", err)
-	}
+func TestLoadRefusesReservedAndOrphanProjects(t *testing.T) {
 	reserved := writeConfig(t, `{
 		"projects": {"home": {"home": {"path": "/tmp/p"}}},
 		"agents": {"codex": {"harness": "codex", "default": true}},
@@ -367,7 +357,7 @@ func writeAndLoad(t *testing.T, body string) (*Config, error) {
 
 func TestDefaultMessageChannel(t *testing.T) {
 	for _, name := range []string{"", "console"} {
-		raw := `{"agents":{"codex":{"harness":"codex","workspace":"/tmp/steve-test","default":true}},"harnesses":{"codex":{"command":"mockagent"}},"feishu":{"app_id":"app","app_secret":"secret"},"gateway":{"default_channel":"` + name + `"}}`
+		raw := `{"projects":{"p":{"home":{"path":"/tmp/steve-test"}}},"agents":{"codex":{"harness":"codex","default":true}},"harnesses":{"codex":{"command":"mockagent"}},"feishu":{"app_id":"app","app_secret":"secret"},"gateway":{"default_channel":"` + name + `"}}`
 		cfg, err := Load(writeConfig(t, raw))
 		if err != nil {
 			t.Fatal(err)

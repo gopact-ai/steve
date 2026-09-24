@@ -73,13 +73,7 @@ func projectImportChangesTx(tx *ledger.Tx, in ProjectTransfer) ([]recordChange, 
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	next := data{NextID: before.NextID, Tasks: make(map[string]*Task, len(before.Tasks)), Meta: make(map[string]Meta, len(before.Meta))}
-	for id, t := range before.Tasks {
-		next.Tasks[id] = t
-	}
-	for id, m := range before.Meta {
-		next.Meta[id] = m
-	}
+	next := newDraft(&before)
 	for id, t := range in.Tasks {
 		if t == nil || id == "" || t.ID != id || t.ProjectID != in.Project {
 			return nil, 0, 0, fmt.Errorf("invalid project task %s", id)
@@ -90,7 +84,7 @@ func projectImportChangesTx(tx *ledger.Tx, in ProjectTransfer) ([]recordChange, 
 		if old, ok := before.Tasks[id]; ok && !reflect.DeepEqual(old, t) {
 			return nil, 0, 0, fmt.Errorf("task ID collision %s", id)
 		}
-		next.Tasks[id] = t
+		next.add(t)
 		if n, err := strconv.Atoi(id); err == nil && n >= next.NextID {
 			next.NextID = n + 1
 		}
@@ -102,9 +96,9 @@ func projectImportChangesTx(tx *ledger.Tx, in ProjectTransfer) ([]recordChange, 
 		if old, ok := before.Meta[id]; ok && !old.equal(m) {
 			return nil, 0, 0, fmt.Errorf("task metadata collision %s", id)
 		}
-		next.Meta[id] = m
+		next.setMeta(id, m)
 	}
-	changes, err := recordChanges(before, next)
+	changes, err := next.changes()
 	return changes, next.NextID, revision, err
 }
 

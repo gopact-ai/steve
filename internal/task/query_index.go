@@ -225,8 +225,11 @@ func (r *readIndex) insert(t *Task, meta Meta, summary ReadSummary, tasks map[st
 
 // Own accounting is adjusted only for changed rows. Subtree blockers and
 // plan presence are propagated only through affected ancestor paths.
-func (s *Store) updateReadIndexLocked(next data, changes []recordChange) {
+// apply installs the write between the two passes: removals read the
+// committed data, insertions read what the write made of it.
+func (s *Store) updateReadIndexLocked(changes []recordChange, apply func()) {
 	if len(changes) == 0 {
+		apply()
 		return
 	}
 	r := &s.readIndex
@@ -247,8 +250,10 @@ func (s *Store) updateReadIndexLocked(next data, changes []recordChange) {
 	// Every changed key is removed using the old order before any replacement
 	// key is inserted. Unchanged members preserve their backing index arrays.
 	affected := map[string]bool{}
+	previous := make(map[string]*Task, len(changed))
 	for id := range changed {
 		if old := s.data.Tasks[id]; old != nil {
+			previous[id] = old
 			summary := r.summaries[id]
 			r.remove(old, s.data.Meta[id], summary, s.data.Tasks)
 			plans := 0
@@ -261,6 +266,8 @@ func (s *Store) updateReadIndexLocked(next data, changes []recordChange) {
 			}
 		}
 	}
+	apply()
+	next := s.data
 	ids := make([]string, 0, len(changed))
 	for id := range changed {
 		ids = append(ids, id)
@@ -290,7 +297,7 @@ func (s *Store) updateReadIndexLocked(next data, changes []recordChange) {
 		sum := r.summaries[id]
 		sum.Attempts = len(t.Attempts)
 		for _, i := range rows {
-			if old := s.data.Tasks[id]; old != nil && i < len(old.Attempts) {
+			if old := previous[id]; old != nil && i < len(old.Attempts) {
 				rowSummary(&sum, old.Attempts[i], -1)
 			}
 			row := t.Attempts[i]

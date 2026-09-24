@@ -47,7 +47,7 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
 | `agents` | object<string, Agent> | 可为空 | 命名执行配置；非空时恰有一个默认 agent | `{"codex":{"harness":"codex","default":true}}` |
-| `projects` | object<string, Project> | 无，至少一项；旧布局可迁移 | 声明项目；`home` 是保留项目名 | `{"work":{"home":{"path":"/srv/work"}}}` |
+| `projects` | object<string, Project> | 无，至少一项 | 声明项目；`home` 是保留项目名 | `{"work":{"home":{"path":"/srv/work"}}}` |
 | `harnesses` | object<string, Harness> | 无，至少一项 | hub 本机启动命令与权限策略；agent 引用的 harness 必须在此登记 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
 | `nodes` | object<string, Node> | `{}` | hub 如何连接远端机器；能力来自 node 的实际申报 | `{"host-3":{"addr":"10.0.0.3:7701","token":"replace-me"}}` |
 | `mcp_servers` | object<string, MCPServer> | `{}` | hub 本机 MCP 定义 | `{"docs":{"type":"http","url":"https://mcp.example.com/mcp"}}` |
@@ -55,9 +55,9 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | `gateway` | Gateway object | 各字段按下表 | 状态目录、控制台、预算与协调设置 | `{"owner_id":"local-owner","read_model_addr":"127.0.0.1:7710"}` |
 | `policies` | Policies object | 各组采用下文默认值 | 执行、规划、快照与审阅限制 | `{"execution":{"step_timeout":"15m"}}` |
 
-`Config.Migrated` 是加载时生成的迁移提示（`json:"-"`），不是可配置键。
-
 ### `projects.<name>`
+
+项目的主目录写在 `projects.<name>.home.path`；agent 没有自己的工作目录字段。配置中没有任何项目时加载会报错。
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
@@ -94,7 +94,6 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | `skills` | string[] | `[]` | 固定到 agent 的技能目录，在 hub 读取 | `["/home/me/steve-skills/review"]` |
 | `mcp_servers` | string[] | `[]` | 引用执行机器本地的 MCP 名字；远端使用 node 上的同名定义 | `["filesystem","docs"]` |
 | `default` | boolean | `false`；整个配置恰有一个 `true` | 未指定 agent 时的默认选择 | `true` |
-| `workspace` | string | `""`，兼容项 | 仅用于迁移旧布局；没有 `projects` 时迁成同名项目，与新 `projects` 并存会报错 | `"/srv/old-work"`（仅旧文件） |
 
 能力选择器支持 `kind:id`、模式匹配、或、否定、版本条件，例如 `tool:go`、`model:claude*`、`tool:docker@>=27`；裸标签如 `build` 对应 `tag:build`。当前 harness、tool、hardware、model、skill、mcp、tag 可参与调度；network、credential、a2a 只展示，作为要求会返回 `NOT_SCHEDULABLE`。参见 [internal/ability](../internal/ability/) 与 [internal/roster](../internal/roster/)。
 
@@ -144,9 +143,8 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `blocked_senders` | string[] | `[]` | 群聊和私聊均拒绝这些发送者，优先于其他规则 | `["ou_..."]` |
 | `group_policy` | string | `"open"` | `open` 允许群聊，`allowlist` 仅允许名单命中者（空名单拒绝全部），`disabled` 禁止群消息；阻止名单始终优先 | `"disabled"` |
 | `allow_unmentioned` | boolean | `false` | 接收未 @ bot 的群消息，再由参与策略决定是否响应 | `true` |
-| `dm_policy` | string | `""`，兼容项 | 只校验 `pairing` / `allowlist`，当前不参与访问决策 | `"pairing"`（仅旧文件） |
 
-`feishu.enabled` 可显式启停适配器；省略时由凭据是否齐全决定。停用可以保留凭据，但默认通道必须指向仍启用的通道。控制台操作和旧群聊限制升级说明见 [Channel 设置](#channel-设置)。`feishu.dm_policy`、`agents.<name>.workspace` 两个兼容字段不放进新样例。
+`feishu.enabled` 可显式启停适配器；省略时由凭据是否齐全决定。停用可以保留凭据，但默认通道必须指向仍启用的通道。控制台操作见 [Channel 设置](#channel-设置)。
 
 ### gateway
 
@@ -386,7 +384,7 @@ steve run -config /home/me/steve-bin/config.json
 
 `PUT /console/channels` 接收 `base_revision` 和 `channels` 对象，其中可修改 `default_channel` 及 `feishu` 的 `enabled`、`app_id`、`domain`、`owner_open_id`、`group_policy`、`allow_unmentioned`、`allowed_senders`、`blocked_senders`。凭据仅写入：省略 `app_secret` 保留现值；`{"action":"replace","value":"..."}` 替换；`{"action":"clear"}` 明确清除，不能清除仍启用适配器的凭据。读取仅返回 `app_secret_configured`，不回显密钥或摘要。
 
-Console 始终启用，owner 在该接口只读。首次保存将原有效 Console owner 和默认语言固定为独立配置，之后修改 IM owner 或域不再改变它们。不可停用当前默认通道；先选择 Console。群聊 `open` 放行未被阻止的发送者，`allowlist` 仅放行名单命中者（空名单拒绝全部群聊），`disabled` 拒绝群聊，阻止名单优先，私聊不受群聊名单控制。旧配置若以 `open` 加非空名单表达限制，升级时应显式改为 `allowlist`，保持原限制。
+Console 始终启用，owner 在该接口只读。首次保存将原有效 Console owner 和默认语言固定为独立配置，之后修改 IM owner 或域不再改变它们。不可停用当前默认通道；先选择 Console。群聊 `open` 放行未被阻止的发送者，`allowlist` 仅放行名单命中者（空名单拒绝全部群聊），`disabled` 拒绝群聊，阻止名单优先，私聊不受群聊名单控制。
 
 ### 飞书 / Lark 会话卡片
 

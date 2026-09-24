@@ -31,13 +31,13 @@ func (s *Store) ReserveAttempt(token ExecutionToken, attemptID, turnID, member, 
 	if !tracked.State.Holds() || !tracked.State.CanMoveTo(StateRunning) {
 		return Task{}, fmt.Errorf("task %s cannot admit execution from %s", token.TaskID, tracked.State)
 	}
-	next := s.clone()
-	tracked = next.Tasks[token.TaskID]
+	next := s.draft()
+	tracked = next.edit(token.TaskID)
 	now := s.now()
 	if startedAt.IsZero() {
 		startedAt = now
 	}
-	if err := reserveTurn(next.Tasks, token.TaskID, now); err != nil {
+	if err := reserveTurn(next, token.TaskID, now); err != nil {
 		return Task{}, err
 	}
 	tracked.Attempts = append(tracked.Attempts, Attempt{Independent: true, ExecutionID: attemptID, TurnID: turnID, ExecutionEpoch: token.Epoch, Member: member, Node: node, StartedAt: startedAt})

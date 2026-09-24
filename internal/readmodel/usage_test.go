@@ -2,7 +2,6 @@ package readmodel
 
 import (
 	"math"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -339,7 +338,7 @@ func TestUsageSnapshotCountsClosedLedgerAttemptsOnce(t *testing.T) {
 	if _, err := attempts.FailWith(t.Context(), "closed", "test", "failed after spending", &attempt.Usage{Reported: true, Input: 3, Output: 4}); err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,14 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-// Store persists plans and their revisions with the same durable-replace
-// discipline as the task store: write a temp file, fsync, rename, fsync the
-// directory. A plan that survives a crash is what lets a task resume where
-// it got to instead of starting over.
+// Store persists plans and their revisions in one ledger document. A plan
+// that survives a crash is what lets a task resume where it got to instead
+// of starting over.
 type Store struct {
 	doc          ledger.Doc
 	mu           sync.Mutex
@@ -37,17 +35,9 @@ type data struct {
 	ByTask map[string]string `json:"by_task"`
 }
 
-// Open keeps the store in one JSON file; the gateway opens the ledger.
-func Open(path string) (*Store, error) {
-	return openWith(&filedoc.Document{Path: path})
-}
-
 // OpenLedger keeps the store in the ledger.
 func OpenLedger(l *ledger.Ledger) (*Store, error) {
-	return openWith(l.Document("plans"))
-}
-
-func openWith(doc ledger.Doc) (*Store, error) {
+	doc := l.Document("plans")
 	s := &Store{
 		doc: doc, now: time.Now,
 		data: data{NextID: 1, Plans: map[string][]Plan{}, ByTask: map[string]string{}},

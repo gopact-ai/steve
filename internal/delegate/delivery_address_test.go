@@ -2,7 +2,6 @@ package delegate
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/channel"
@@ -10,7 +9,7 @@ import (
 )
 
 func TestDeliveryUsesParentsLatestExplicitAddress(t *testing.T) {
-	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

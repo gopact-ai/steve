@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -56,9 +55,6 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	projects.SetHubID(cfg.Gateway.HubID)
 	if err := (configbuild.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("reconcile configured projects: %w", err)
-	}
-	for _, note := range cfg.Migrated {
-		slog.Info(fmt.Sprintf("steve: config migrated: %s", note))
 	}
 
 	// The roster is what turns "which agents exist" into "which agents can

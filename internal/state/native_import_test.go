@@ -1,17 +1,17 @@
 package state
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 )
 
 func TestNativeImportRetryPreservesUsedConversationAndProvenance(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
+	book := testLedger(t)
+	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestNativeImportRetryPreservesUsedConversationAndProvenance(t *testing.T) {
 		t.Fatal("caller mutated stored provenance")
 	}
 	initial.NativeImport = ref.Clone()
-	restored, err := Open(path)
+	restored, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,4 +44,15 @@ func TestNativeImportRetryPreservesUsedConversationAndProvenance(t *testing.T) {
 	if err := restored.InstallNativeSession(initial); err == nil {
 		t.Fatal("changed destination accepted")
 	}
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

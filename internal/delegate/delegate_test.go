@@ -131,7 +131,7 @@ func newWorld(t *testing.T) *world {
 			Harnesses: []nodewire.Harness{{ID: "mock"}}}},
 	}})
 
-	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,4 +490,15 @@ func TestAChildsAnswerSurvivesLanding(t *testing.T) {
 	if !strings.Contains(strings.Join(res.Refs, "\n"), "git abc123") {
 		t.Fatalf("refs lost: %+v", res.Refs)
 	}
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

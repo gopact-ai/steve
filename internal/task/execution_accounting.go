@@ -18,8 +18,8 @@ func (s *Store) BindAttempt(token ExecutionToken, attemptID, turnID string) erro
 	if attemptID == "" {
 		return errors.New("execution attempt identity is required")
 	}
-	next := s.clone()
-	tracked := next.Tasks[token.TaskID]
+	next := s.draft()
+	tracked := next.edit(token.TaskID)
 	row := tracked.primaryAttempt()
 	if row == nil {
 		return errors.New("task has no execution accounting row")
@@ -39,9 +39,9 @@ func usageKnown(usage RecoveryUsage) bool {
 
 // settleAccounting projects an observed execution total, charging only the
 // delta beyond an already recorded total. It never changes task state.
-func settleAccounting(tasks map[string]*Task, tracked *Task, row *Attempt, endedAt time.Time, outcome Outcome, usage RecoveryUsage) error {
+func settleAccounting(next *draft, tracked *Task, row *Attempt, endedAt time.Time, outcome Outcome, usage RecoveryUsage) error {
 	usage.Tokens.Total = usage.Tokens.Input + usage.Tokens.Output
-	lineage, err := taskLineage(tasks, tracked.ID)
+	lineage, err := next.lineage(tracked.ID)
 	if err != nil {
 		return err
 	}
@@ -81,9 +81,9 @@ func (s *Store) SettleAttempt(taskID, attemptID, turnID string, endedAt time.Tim
 	if attemptID == "" {
 		return errors.New("execution attempt identity is required")
 	}
-	next := s.clone()
-	tracked, ok := next.Tasks[taskID]
-	if !ok {
+	next := s.draft()
+	tracked := next.edit(taskID)
+	if tracked == nil {
 		return fmt.Errorf("task %s not found", taskID)
 	}
 	for i := range tracked.Attempts {
@@ -97,7 +97,7 @@ func (s *Store) SettleAttempt(taskID, attemptID, turnID string, endedAt time.Tim
 		if endedAt.IsZero() {
 			endedAt = s.now()
 		}
-		if err := settleAccounting(next.Tasks, tracked, row, endedAt, outcome, usage); err != nil {
+		if err := settleAccounting(next, tracked, row, endedAt, outcome, usage); err != nil {
 			return err
 		}
 		return s.replaceLocked(next)
