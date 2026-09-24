@@ -17,9 +17,11 @@ func (stubGate) PrepareExtras(string, string, string, string) ([]capability.Extr
 }
 func (stubGate) DescribeExtras(string, string) []capability.Extra { return nil }
 
-// Every turn.Callbacks field comes from exactly one stage's value, so a
-// field added to Callbacks without a source fails here instead of being
-// wired as nil.
+// coordinatorCallbacks takes every turn.Callbacks field from one of its
+// inputs, so a field added to Callbacks without a source fails here instead
+// of being wired as nil. Only the mapping is checked: every input here is
+// set, so this says nothing about whether each stage builds a value. Wire
+// panics when a callback it requires is missing.
 func TestCoordinatorCallbacksFillEveryField(t *testing.T) {
 	got := coordinatorCallbacks(turntest.IdleSupervisor{},
 		func(context.Context, string, string) error { return nil },
