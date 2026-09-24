@@ -256,7 +256,6 @@ func acceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(H
 			return Hello{}, fmt.Errorf("%w: %s", ErrRefused, err)
 		}
 	}
-	advert.Version = hi
 	if err := writeJSON(conn, advert); err != nil {
 		return Hello{}, fmt.Errorf("send advert: %w", err)
 	}

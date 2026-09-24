@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -33,6 +34,55 @@ func TestHandshakeNegotiatesAVersion(t *testing.T) {
 	}
 	if got := Negotiate(0, 2); got != 2 {
 		t.Fatalf("a bare v2 → %d", got)
+	}
+}
+
+// Overlapping ranges settle on the newest version both sides speak, from
+// whichever side reaches further; ranges that only touch still meet.
+func TestNegotiateSettlesOnTheNewestSharedVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		peerMin, peerMax, lo, hi int
+		want                     int
+	}{
+		{"the peer reaches past us", 2, 3, 2, 2, 2},
+		{"we reach past the peer", 1, 2, 2, 3, 2},
+		{"both reach past each other", 2, 4, 3, 5, 4},
+		{"the peer inside our range", 3, 3, 2, 4, 3},
+		{"ranges that touch", 1, 2, 2, 5, 2},
+		{"a bare version inside our range", 0, 3, 2, 3, 3},
+		{"the peer below us", 1, 1, 2, 3, 0},
+		{"the peer above us", 4, 5, 2, 3, 0},
+	} {
+		if got := negotiate(tc.peerMin, tc.peerMax, tc.lo, tc.hi); got != tc.want {
+			t.Errorf("%s: v%d–v%d against v%d–v%d → %d, want %d", tc.name, tc.peerMin, tc.peerMax, tc.lo, tc.hi, got, tc.want)
+		}
+	}
+}
+
+// A node whose range reaches past the hub's answers with the version they
+// share, so the hub accepts it instead of seeing a version it cannot speak.
+func TestNodeAnswersWithTheSharedVersion(t *testing.T) {
+	hub, node := net.Pipe()
+	defer hub.Close()
+	done := make(chan error, 1)
+	go func() {
+		defer node.Close()
+		hello, err := acceptClaim(node, func(string) bool { return true }, nil, Advert{Node: "n"}, ProtocolVersion, ProtocolVersion+1)
+		if err == nil && hello.Version != ProtocolVersion {
+			err = fmt.Errorf("hello settled on v%d, want v%d", hello.Version, ProtocolVersion)
+		}
+		done <- err
+	}()
+	advert, err := Dial(hub, Hello{Token: "t"})
+	if err != nil {
+		t.Fatalf("dial = %v, want the shared version accepted", err)
+	}
+	if advert.Version != ProtocolVersion {
+		t.Fatalf("advert version = %d, want %d", advert.Version, ProtocolVersion)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("accept = %v", err)
 	}
 }
 
