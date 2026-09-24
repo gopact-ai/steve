@@ -141,21 +141,22 @@ func (s *PluginService) ApplyPluginPreset(ctx context.Context, id string, req co
 	if err != nil {
 		return preview, err
 	}
-	err = s.Admin.changeAgents(func(agents map[string]config.Agent) error {
+	err = s.Admin.changeAgents(func(c *config.Config) error {
+		agents := c.Agents
 		if agentRevision(agents) != req.BaseRevision {
 			return consoleapi.ErrSettingsConflict
 		}
-		current, err := s.presetPreview(ctx, id, req, s.Admin.cfg())
+		current, err := s.presetPreview(ctx, id, req, c)
 		if err != nil {
 			return err
 		}
 		preview = current
 		if current.Proposed.Node == "" {
-			if _, ok := s.Admin.cfg().Harnesses[current.Proposed.Harness]; !ok {
+			if _, ok := c.Harnesses[current.Proposed.Harness]; !ok {
 				return errors.New("preset harness is not registered")
 			}
 		} else {
-			if err := s.Admin.checkAgentNodeTarget(current.Proposed.Node, target); err != nil {
+			if err := checkAgentNodeTarget(c, current.Proposed.Node, target); err != nil {
 				return err
 			}
 		}

@@ -32,12 +32,12 @@ func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
 	return target, nil
 }
 
-// The caller holds the configuration still while comparing the
-// authenticated target with the declaration it is about to commit.
-// Reusing a display name cannot reuse an earlier machine's discovery or
-// installation result.
-func (a *Service) checkAgentNodeTarget(name string, expected config.Node) error {
-	current, ok := a.cfg().Nodes[name]
+// checkAgentNodeTarget compares the authenticated target with the machine
+// cfg declares under name: the configuration about to be committed, or the
+// one in force held still. Reusing a display name cannot reuse an earlier
+// machine's discovery or installation result.
+func checkAgentNodeTarget(cfg *config.Config, name string, expected config.Node) error {
+	current, ok := cfg.Nodes[name]
 	if !ok || current.Addr != expected.Addr || current.Token != expected.Token {
 		return fmt.Errorf("%w: 机器身份或连接已变化，请重新选择", nodewire.ErrSettingsRevisionConflict)
 	}
@@ -57,7 +57,7 @@ func (a *Service) NodeAgents(ctx context.Context, name string) (agenttools.Disco
 	}
 	a.configStore().RLock()
 	defer a.configStore().RUnlock()
-	if err := a.checkAgentNodeTarget(name, target); err != nil {
+	if err := checkAgentNodeTarget(a.cfg(), name, target); err != nil {
 		return agenttools.Discovery{}, err
 	}
 	for i := range discovered.Agents {
@@ -160,7 +160,7 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	var prepared *agent.Catalog
 	added := false
 	saveErr := a.updateConfigThen(a.lifetime(), func(c *config.Config) error {
-		if err := a.checkAgentNodeTarget(name, target); err != nil {
+		if err := checkAgentNodeTarget(c, name, target); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {

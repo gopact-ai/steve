@@ -79,7 +79,7 @@ func (s *hubChannelsService) viewLocked() consoleapi.ChannelsView {
 		mode = "mixed"
 		liveFields = []string{"feishu.group_policy", "feishu.allow_unmentioned", "feishu.allowed_senders", "feishu.blocked_senders"}
 	}
-	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError}
+	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(s.admin.cfg()), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError}
 }
 
 func cloneChannelSettings(in channelsettings.Settings) channelsettings.Settings {
@@ -95,7 +95,7 @@ func (s *hubChannelsService) UpdateChannels(ctx context.Context, req consoleapi.
 	var view consoleapi.ChannelsView
 	saving := false
 	saveErr := s.admin.updateConfigThen(ctx, func(c *config.Config) error {
-		if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
+		if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision(c) {
 			return consoleapi.ErrSettingsConflict
 		}
 		if err := c.CheckFileRevision(s.admin.Path); err != nil {

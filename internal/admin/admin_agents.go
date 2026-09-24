@@ -13,9 +13,9 @@ import (
 )
 
 // changeAgents validates a complete candidate before touching durable or live
-// state. The persisted candidate is published as one catalog snapshot; there
+// state. change edits the candidate, whose Agents map is never nil. The persisted candidate is published as one catalog snapshot; there
 // is no fallible catalog mutation left after the file has been replaced.
-func (a *Service) changeAgents(change func(map[string]config.Agent) error) error {
+func (a *Service) changeAgents(change func(*config.Config) error) error {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
 	var prepared *agent.Catalog
@@ -23,7 +23,7 @@ func (a *Service) changeAgents(change func(map[string]config.Agent) error) error
 		if c.Agents == nil {
 			c.Agents = map[string]config.Agent{}
 		}
-		if err := change(c.Agents); err != nil {
+		if err := change(c); err != nil {
 			return err
 		}
 		var err error
@@ -44,16 +44,17 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 	if err != nil {
 		return err
 	}
-	err = a.changeAgents(func(agents map[string]config.Agent) error {
+	err = a.changeAgents(func(c *config.Config) error {
+		agents := c.Agents
 		item, ok := agents[id]
 		if !ok {
 			return fmt.Errorf("没有叫 %q 的 Agent", id)
 		}
-		if _, ok := a.cfg().Harnesses[spec.Harness]; !ok && spec.Node == "" {
+		if _, ok := c.Harnesses[spec.Harness]; !ok && spec.Node == "" {
 			return fmt.Errorf("本机没有配置 AI 工具 %q", spec.Harness)
 		}
 		if spec.Node != "" {
-			if err := a.checkAgentNodeTarget(spec.Node, target); err != nil {
+			if err := checkAgentNodeTarget(c, spec.Node, target); err != nil {
 				return err
 			}
 		}
@@ -62,7 +63,7 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 		}
 		if spec.Node == "" {
 			for _, server := range spec.MCPServers {
-				if _, ok := a.cfg().MCPServers[server]; !ok {
+				if _, ok := c.MCPServers[server]; !ok {
 					return fmt.Errorf("hub 上没有 MCP 服务器 %q；在 hub 机器的配置里加，或把 Agent 放到有它的机器上", server)
 				}
 			}
@@ -101,12 +102,13 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 	if err != nil {
 		return err
 	}
-	err = a.changeAgents(func(agents map[string]config.Agent) error {
-		if _, ok := a.cfg().Harnesses[req.Harness]; !ok && req.Node == "" {
+	err = a.changeAgents(func(c *config.Config) error {
+		agents := c.Agents
+		if _, ok := c.Harnesses[req.Harness]; !ok && req.Node == "" {
 			return fmt.Errorf("本机没有配置 AI 工具 %q，请先选择并登记已安装的工具", req.Harness)
 		}
 		if req.Node != "" {
-			if err := a.checkAgentNodeTarget(req.Node, target); err != nil {
+			if err := checkAgentNodeTarget(c, req.Node, target); err != nil {
 				return err
 			}
 		}
@@ -134,7 +136,8 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 
 func (a *Service) RemoveAgent(_ context.Context, id string) error {
 	id = strings.ToLower(strings.TrimSpace(id))
-	err := a.changeAgents(func(agents map[string]config.Agent) error {
+	err := a.changeAgents(func(c *config.Config) error {
+		agents := c.Agents
 		item, ok := agents[id]
 		if !ok {
 			return fmt.Errorf("没有叫 %q 的 Agent", id)

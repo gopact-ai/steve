@@ -72,7 +72,7 @@ func (s *hubSettingsService) viewLocked() (consoleapi.SettingsView, error) {
 			}
 		}
 	}
-	return consoleapi.SettingsView{Revision: s.admin.settingsRevision(), Desired: d, Effective: e, PendingRestart: pending, ApplyMode: mode, Fields: fields}, nil
+	return consoleapi.SettingsView{Revision: s.admin.settingsRevision(s.admin.cfg()), Desired: d, Effective: e, PendingRestart: pending, ApplyMode: mode, Fields: fields}, nil
 }
 
 func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.SettingsUpdate) (consoleapi.SettingsView, error) {
@@ -83,7 +83,7 @@ func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.
 	var viewErr error
 	saving := false
 	saveErr := s.admin.updateConfigThen(ctx, func(c *config.Config) error {
-		if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
+		if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision(c) {
 			return consoleapi.ErrSettingsConflict
 		}
 		if err := c.CheckFileRevision(s.admin.Path); err != nil {
@@ -166,11 +166,13 @@ func (s *hubSettingsService) applyApproval(previous string) {
 	slog.Info(fmt.Sprintf("steve: default approval is now %q", s.admin.cfg().Gateway.DefaultApproval), "approval", s.admin.cfg().Gateway.DefaultApproval)
 }
 
-func (a *Service) settingsRevision() string {
+// settingsRevision is the revision a settings or channels change is based
+// on: the shared configuration's in a cluster, otherwise cfg's file's.
+func (a *Service) settingsRevision(cfg *config.Config) string {
 	if a.ConfigRevision != nil {
 		return a.ConfigRevision()
 	}
-	return a.cfg().FileRevision()
+	return cfg.FileRevision()
 }
 
 func settingsFields() ([]consoleapi.SettingsField, error) {

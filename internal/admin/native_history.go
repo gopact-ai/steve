@@ -20,7 +20,7 @@ func (a *Service) NativeHistory(ctx context.Context, name string, source nativeh
 	}
 	a.configStore().RLock()
 	defer a.configStore().RUnlock()
-	if err := a.checkAgentNodeTarget(name, target); err != nil {
+	if err := checkAgentNodeTarget(a.cfg(), name, target); err != nil {
 		return nil, err
 	}
 	return entries, nil
@@ -77,7 +77,7 @@ func (a *Service) ImportNativeHistory(ctx context.Context, name string, req cons
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
 	a.configStore().RLock()
-	err = a.checkNativeImportTarget(name, target, selected)
+	err = checkNativeImportTarget(a.cfg(), name, target, selected)
 	a.configStore().RUnlock()
 	if err != nil {
 		return consoleapi.ImportedSession{}, err
