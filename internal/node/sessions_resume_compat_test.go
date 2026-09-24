@@ -3,12 +3,14 @@ package node
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -82,7 +84,9 @@ func TestNativeResumeRetriesFromOldestSourceAcrossHandoffs(t *testing.T) {
 	}
 }
 
-func TestNativeResumeIsNotSentToOlderNode(t *testing.T) {
+// A resume is not sent to a node whose advert does not offer it, and the
+// refusal names what the advert lacks rather than the node's build.
+func TestNativeResumeIsNotSentToANodeWithoutIt(t *testing.T) {
 	server := startNode(t, ServerConfig{Name: "worker", Token: "resume-feature", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
 	r := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "resume-feature"}})
 	defer r.Close()
@@ -100,9 +104,49 @@ func TestNativeResumeIsNotSentToOlderNode(t *testing.T) {
 	req.ID = "ns_" + strings.Repeat("0", 64)
 	_, err = r.NodeSession(t.Context(), "worker", req)
 	var unsent *nodewire.SessionNotDispatched
-	if !errors.As(err, &unsent) || !strings.Contains(err.Error(), "update steve-node") {
-		t.Fatalf("old node received resume: %v", err)
+	if !errors.As(err, &unsent) || !strings.Contains(err.Error(), "node does not offer native resume") {
+		t.Fatalf("resume = %v, want it unsent for the missing feature", err)
 	}
+}
+
+// Native history is not asked of a node whose advert lacks it, and the
+// refusal says why: the node runs without node sessions, or it has them on
+// a platform that cannot store native history.
+func TestNativeHistoryRefusalSaysWhyTheNodeLacksIt(t *testing.T) {
+	sessions := []string{nodewire.FeatureNodeSessions, nodewire.FeatureNativeResume}
+	for _, tc := range []struct {
+		features []string
+		want     string
+	}{
+		{nil, "it runs without node sessions"},
+		{sessions, "its platform cannot store native history"},
+	} {
+		r := advertisingRegistry(t, nodewire.Advert{Node: "worker", Features: tc.features})
+		if _, err := r.NativeHistory(t.Context(), "worker", nativehistory.Source{}); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("features %v: native history = %v, want %q", tc.features, err, tc.want)
+		}
+	}
+	r := advertisingRegistry(t, nodewire.Advert{Node: "worker", Features: sessions})
+	req := nodeSessionRequest(nodewire.SessionActionOpen)
+	req.Binding.NativeImportID = "import-1"
+	_, err := r.NodeSession(t.Context(), "worker", req)
+	var unsent *nodewire.SessionNotDispatched
+	if !errors.As(err, &unsent) || !strings.Contains(err.Error(), "its platform cannot store native history") {
+		t.Fatalf("native import = %v, want it unsent for the platform", err)
+	}
+}
+
+// advertisingRegistry is a registry connected to one node that carries
+// advert and answers no stream.
+func advertisingRegistry(t *testing.T, advert nodewire.Advert) *Registry {
+	t.Helper()
+	client, server := net.Pipe()
+	remote := nodewire.NewMux(server, false)
+	t.Cleanup(func() { _ = remote.Close() })
+	r := NewRegistry("hub", map[string]Config{advert.Node: {Addr: "test", Token: "test"}})
+	r.live[advert.Node] = &conn{name: advert.Node, mux: nodewire.NewMux(client, true), advert: advert}
+	t.Cleanup(r.Close)
+	return r
 }
 
 func TestImportedNativeSessionRetainsPostImportHistoryAcrossRestart(t *testing.T) {

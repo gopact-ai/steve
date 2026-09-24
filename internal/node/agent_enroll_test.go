@@ -67,6 +67,30 @@ func TestConfigurePreservesCommittedSettingsErrorAndRefreshes(t *testing.T) {
 	}
 }
 
+// A reply without a discovery revision is a node that returned no
+// discovery, and the error says so.
+func TestAgentToolsReportsAReplyWithoutDiscovery(t *testing.T) {
+	client, server := net.Pipe()
+	mux := nodewire.NewMux(client, true)
+	remote := nodewire.NewMux(server, false)
+	t.Cleanup(func() { _ = remote.Close() })
+	r := NewRegistry("hub", map[string]Config{"node": {Addr: "test", Token: "test"}})
+	r.live["node"] = &conn{name: "node", mux: mux, advert: nodewire.Advert{Node: "node"}}
+	t.Cleanup(r.Close)
+	go func() {
+		stream, err := remote.Accept(t.Context())
+		if err != nil {
+			return
+		}
+		_ = json.NewEncoder(stream).Encode(agentToolsReply{})
+		_ = stream.Close()
+	}()
+	_, err := r.AgentTools(t.Context(), "node")
+	if err == nil || err.Error() != `node "node" returned no agent discovery` {
+		t.Fatalf("agent tools = %v", err)
+	}
+}
+
 func TestNodeAgentEnrollmentOverAuthenticatedTransportKeepsToolsNodeLocal(t *testing.T) {
 	bin := buildMockAgent(t)
 	root := t.TempDir()

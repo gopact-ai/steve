@@ -17,7 +17,7 @@ func (r *Registry) AgentTools(ctx context.Context, name string) (agenttools.Disc
 		return agenttools.Discovery{}, err
 	}
 	if reply.Discovery == nil || reply.Discovery.Revision == "" {
-		return agenttools.Discovery{}, fmt.Errorf("node %q does not support agent discovery; update steve-node", name)
+		return agenttools.Discovery{}, fmt.Errorf("node %q returned no agent discovery", name)
 	}
 	return *reply.Discovery, nil
 }
