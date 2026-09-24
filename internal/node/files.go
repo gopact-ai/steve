@@ -22,7 +22,7 @@ func (r *Registry) Files(ctx context.Context, name string, req nodewire.FileRequ
 		return runFileOperation(ctx, req)
 	}
 	var reply nodewire.FileReply
-	if err := r.operation(ctx, name, nodewire.StreamFiles, nodewire.FeatureFiles, req, &reply); err != nil {
+	if err := r.operation(ctx, name, nodewire.StreamFiles, req, &reply); err != nil {
 		return "", err
 	}
 	return reply.Data, gitrepo.DecodeFailure(reply.Error)

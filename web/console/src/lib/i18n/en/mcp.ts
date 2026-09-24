@@ -43,7 +43,6 @@ export const mcpEn = {
     "mcp.importMachine": "Import from a machine",
     "mcp.importHint": "Inspect MCP services configured by local AI tools. Secrets stay on the source machine.",
     "mcp.noMachines": "No machines.",
-    "mcp.nodeUpgrade": "Update node required",
     "mcp.none": "None",
     "mcp.imported": "Imported",
     "mcp.projectReadOnly": "Project-level configurations are read-only",

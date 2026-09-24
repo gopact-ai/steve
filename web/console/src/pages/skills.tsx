@@ -216,7 +216,7 @@ export function SkillsPage() {
                                 <li key={n.name} className="skill-settings-row">
                                     <Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" />
                                     <span className="min-w-0 flex-1 break-words text-sm text-primary" title={n.name}>{nodeLabelIn(snap.nodes, n.name)}</span>
-                                    {!n.up ? <Badge type="pill-color" size="sm" color="gray">{tr("skills.offline")}</Badge> : !n.takes ? <Badge type="pill-color" size="sm" color="warning">{tr("skills.syncUnsupported")}</Badge> : n.synced ? <Badge type="pill-color" size="sm" color="success">{tr("skills.synced")}</Badge> : <Badge type="pill-color" size="sm" color="warning">{tr("skills.notSynced")}</Badge>}
+                                    {!n.up ? <Badge type="pill-color" size="sm" color="gray">{tr("skills.offline")}</Badge> : n.synced ? <Badge type="pill-color" size="sm" color="success">{tr("skills.synced")}</Badge> : <Badge type="pill-color" size="sm" color="warning">{tr("skills.notSynced")}</Badge>}
                                 </li>
                             ))}
                         </ul>

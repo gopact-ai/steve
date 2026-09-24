@@ -6,10 +6,8 @@ import (
 )
 
 const (
-	FeaturePlugins        = "plugin_packages.v1"
-	FeaturePluginRuntimes = "plugin_runtimes.v1"
-	StreamPlugins         = "plugins"
-	PluginMaxBytes        = 48 << 20
+	StreamPlugins  = "plugins"
+	PluginMaxBytes = 48 << 20
 )
 
 type PluginAction string

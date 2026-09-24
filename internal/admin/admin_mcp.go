@@ -155,8 +155,6 @@ func (a *Service) MCP(ctx context.Context) (consoleapi.MCPView, error) {
 		own := adv.OwnMCP
 		if nodeKey == "" {
 			own = node.OwnMCP(5 * time.Minute)
-		} else if advErr == nil && !nodewire.HasFeature(adv.Features, nodewire.FeatureMCPProbe) {
-			m.Unsupported = true
 		}
 		for _, o := range own {
 			_, adopted := settings[o.Name]

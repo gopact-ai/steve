@@ -25,7 +25,6 @@ type SessionReceipt struct {
 }
 
 const StreamNodeReceipts = "node_receipts"
-const FeatureNodeReceipts = "node_receipts.v1"
 
 // A receipt acknowledgement is deliberately separate from session actions:
 // execution authority alone cannot delete original result evidence.
