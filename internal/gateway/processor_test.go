@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -180,5 +182,40 @@ func TestScheduleControlsTheProcessorParsesPreserveChannelAnchor(t *testing.T) {
 			default:
 			}
 		})
+	}
+}
+
+// errStaleSchedule is what staleScheduleProcessor refuses a scheduled run
+// with.
+var errStaleSchedule = errors.New("scheduled conversation no longer has a project binding")
+
+// staleScheduleProcessor refuses every scheduled run, as a coordinator
+// does once a schedule's conversation, project or requester no longer
+// holds, and records what it was asked to check.
+type staleScheduleProcessor struct {
+	countingProcessor
+	checked []string
+}
+
+func (p *staleScheduleProcessor) ValidateScheduled(_ context.Context, conversation, project, requester string) error {
+	p.checked = append(p.checked, conversation, project, requester)
+	return errStaleSchedule
+}
+
+// A scheduled run its processor refuses is neither announced nor run.
+func TestFireScheduleRefusesARunItsProcessorRefuses(t *testing.T) {
+	p := &staleScheduleProcessor{}
+	g := New(p)
+	notice := &scheduledNotice{id: "notice"}
+	g.BindChannel(notice)
+	f := testFire()
+	if receipt, err := g.FireSchedule(t.Context(), f); !errors.Is(err, errStaleSchedule) {
+		t.Fatalf("fire = %+v, %v; want the processor's refusal", receipt, err)
+	}
+	if want := []string{f.ConversationID, f.ProjectID, f.Requester}; !slices.Equal(p.checked, want) {
+		t.Fatalf("checked %q, want %q", p.checked, want)
+	}
+	if notice.calls != 0 || p.calls.Load() != 0 {
+		t.Fatalf("refused run posted %d notices and ran %d turns", notice.calls, p.calls.Load())
 	}
 }
