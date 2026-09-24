@@ -125,11 +125,6 @@ type AdmitReply struct {
 	Error     string            `json:"error,omitempty"`
 }
 
-// Advert.Features lists what a node on the negotiated protocol version may
-// still lack: node-owned sessions and native resume, node receipts, native
-// history and controlled restart. What every node of that version has is
-// not listed; a capability every node must have raises ProtocolVersion.
-
 // HasFeature says whether a list names a feature.
 func HasFeature(list []string, feature string) bool {
 	for _, f := range list {
@@ -140,9 +135,9 @@ func HasFeature(list []string, feature string) bool {
 	return false
 }
 
-// Synthesize builds a snapshot for an advert that carries none — the
-// hub's own, or a node's whose snapshot failed validation. It knows only what the old fields say: harnesses and tag
-// words. Coverage is partial for everything else, so a requirement on a
+// Synthesize builds a snapshot for an advert that carries none: a node's
+// whose snapshot failed the hub's validation, or the empty advert of a
+// machine that has sent none. It knows only the harnesses and tag words. Coverage is partial for everything else, so a requirement on a
 // tool is unknown there, not absent; the source says legacy.
 func Synthesize(adv Advert, now time.Time) *ability.Snapshot {
 	if adv.Snapshot != nil {

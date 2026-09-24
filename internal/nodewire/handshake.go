@@ -118,12 +118,16 @@ type Advert struct {
 	IPs          []string  `json:"ips,omitempty"`
 	Harnesses    []Harness `json:"harnesses"`
 	// Snapshot is everything the machine can do, as the ability domain
-	// defines it: evidence, availability, coverage, a digest. An advert
-	// without one (the hub's own, or one whose snapshot the hub rejected)
-	// gets one from Synthesize, built from the other fields. Features are what this node has beyond
-	// the negotiated protocol version.
+	// defines it: evidence, availability, coverage, a digest. The hub
+	// drops a snapshot that fails validation; Synthesize stands in for a
+	// missing one.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
-	Features []string          `json:"features,omitempty"`
+	// Features lists what a node on the negotiated protocol version may
+	// still lack: node-owned sessions and native resume, node receipts,
+	// native history and controlled restart. What every node of that
+	// version has is not listed; a capability every node must have raises
+	// ProtocolVersion.
+	Features []string `json:"features,omitempty"`
 	// SessionGraceMS is the node's process reconnect window, in milliseconds.
 	SessionGraceMS int64 `json:"session_grace_ms,omitempty"`
 	// OwnSkills are the skills the machine's AI tools have of their own,
