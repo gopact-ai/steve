@@ -207,6 +207,10 @@ func TestInlineInterfaceAssertionsOnlyShrink(t *testing.T) {
 // consoleapi.Admin is implemented by admin and consumed only by httpapi. A
 // method httpapi neither calls nor takes as a method value is dead, yet
 // still compiles because admin.Service must satisfy the interface.
+//
+// The check matches selector names without type information: a method or
+// field of the same name on any other type in httpapi also counts as a use,
+// so it can miss a dead method with a common name, never flag a live one.
 func TestConsoleAdminMethodsAreAllUsedByHTTPAPI(t *testing.T) {
 	root := repoRoot(t)
 	contract, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "internal", "consoleapi", "types.go"), nil, parser.SkipObjectResolution)
@@ -258,7 +262,7 @@ func TestConsoleAdminMethodsAreAllUsedByHTTPAPI(t *testing.T) {
 	}
 	sort.Strings(unused)
 	for _, name := range unused {
-		t.Errorf("consoleapi.Admin.%s is neither called nor referenced in internal/httpapi; remove it from Admin and admin.Service", name)
+		t.Errorf("consoleapi.Admin.%s is neither called nor referenced in internal/httpapi; remove it from Admin, and from admin.Service too if nothing else calls it", name)
 	}
 }
 
