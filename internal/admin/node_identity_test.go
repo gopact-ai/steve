@@ -33,3 +33,21 @@ func TestObservedHubAdvertNamesTheGivenNode(t *testing.T) {
 		t.Fatalf("advert names %q, snapshot %+v", adv.Node, adv.Snapshot)
 	}
 }
+
+// Each observation numbers the hub snapshots it describes: a second
+// application in the same process starts its own generation and sequence.
+func TestHubSnapshotsAreNumberedPerObservation(t *testing.T) {
+	store := NewConfigStore(&config.Config{})
+	first := NewLocalObservation(nil)
+	one := ObservedHubAdvert("node-a", store, first)
+	two := ObservedHubAdvert("node-a", store, first)
+	if one.Snapshot.Generation == 0 || two.Snapshot.Generation != one.Snapshot.Generation {
+		t.Fatalf("generations %d, %d", one.Snapshot.Generation, two.Snapshot.Generation)
+	}
+	if one.Snapshot.Sequence != 1 || two.Snapshot.Sequence != 2 {
+		t.Fatalf("sequences %d, %d", one.Snapshot.Sequence, two.Snapshot.Sequence)
+	}
+	if other := ObservedHubAdvert("node-b", store, NewLocalObservation(nil)); other.Snapshot.Sequence != 1 {
+		t.Fatalf("second observation continued at %d", other.Snapshot.Sequence)
+	}
+}

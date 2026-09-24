@@ -21,9 +21,21 @@ import (
 	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
+// LocalObservation is what this process observes of its own machine, and
+// numbers the hub snapshots built from it: generation is when the
+// observation began, sequence counts the snapshots since.
 type LocalObservation struct {
 	Launch *node.LaunchProbe
 	Skills atomic.Pointer[SkillShipper]
+
+	generation int64
+	sequence   atomic.Int64
+}
+
+// NewLocalObservation starts an observation of this machine that looks up
+// launch results in launch.
+func NewLocalObservation(launch *node.LaunchProbe) *LocalObservation {
+	return &LocalObservation{Launch: launch, generation: time.Now().Unix()}
 }
 
 // HomeProjectID names Steve's home directory as a project.
@@ -53,13 +65,6 @@ func withSlots(h nodewire.Harness) string {
 	return h.ID
 }
 
-// hubGeneration identifies this hub process for its own snapshots;
-// hubSequence counts them.
-var (
-	hubGeneration = time.Now().Unix()
-	hubSequence   atomic.Int64
-)
-
 // ObservedHubAdvert describes the hub machine, named nodeName, from the
 // configuration in store and what observation has seen of it.
 func ObservedHubAdvert(nodeName string, store *ConfigStore, observation *LocalObservation) (adv nodewire.Advert) {
@@ -79,14 +84,16 @@ func observedHubAdvert(nodeName string, cfg *config.Config, observation *LocalOb
 	}
 	var shipper *SkillShipper
 	var launch func(string) (node.LaunchResult, bool)
+	var generation, sequence int64
 	if observation != nil {
+		generation, sequence = observation.generation, observation.sequence.Add(1)
 		shipper = observation.Skills.Load()
 		if observation.Launch != nil {
 			launch = observation.Launch.Lookup
 		}
 	}
 	entries, known := shipper.entries()
-	adv.Snapshot = node.Snapshot(nodeName, hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
+	adv.Snapshot = node.Snapshot(nodeName, generation, sequence, node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
 	adv.Features = nodewire.Features()
 	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
