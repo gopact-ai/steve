@@ -87,7 +87,8 @@ func (s *Server) handshake(socket net.Conn, claim *hubClaim) (nodewire.Hello, bo
 	// fingerprint, so it has to be known before any session opens.
 	mcp, err := s.listenMCP()
 	if errors.Is(err, errMCPClosed) {
-		// The node is shutting down and takes no hub.
+		// The node is shutting down and serves no connection, hub or peer.
+		slog.Info(fmt.Sprintf("steve-node: handshake from %s not served: node is shutting down", socket.RemoteAddr()))
 		return nodewire.Hello{}, false
 	}
 	if err != nil {
