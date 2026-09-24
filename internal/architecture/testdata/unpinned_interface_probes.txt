@@ -1,7 +1,6 @@
 internal/artifact.generationNodes
 internal/artifact.objectLimiter
 internal/memory.pathReporter
-internal/models.settingsReporter
 internal/node.NodeReceiptAuthorizer
 internal/onboard.initReporter
 internal/turn.pluginRuntimeCloser
