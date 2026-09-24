@@ -98,7 +98,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		}
 		delegation.RecoveryQuiet = time.Duration(cfg.Gateway.RecoveryQuiet)
 		delegation.RegisterIdle = nodes.RegisterIdle
-		delegation.SetObserver(delegateObserver(ctx, admin, view, cons))
+		delegation.SetObserver(delegateObserver(ctx, boot.NodeName(), admin, view, cons))
 		gate.SetDelegator(delegation)
 		wireDelegateDelivery(delegation, cons, gw)
 		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
@@ -170,11 +170,11 @@ func readPort(path string) int {
 	return port
 }
 
-func delegateObserver(ctx context.Context, admin *adminsvc.Service, view *readmodel.Model, cons *console.Service) func(delegate.Child, steveview.Progress) {
+func delegateObserver(ctx context.Context, hub string, admin *adminsvc.Service, view *readmodel.Model, cons *console.Service) func(delegate.Child, steveview.Progress) {
 	return func(c delegate.Child, p steveview.Progress) {
 		where := c.Node
 		if where == "" {
-			where = admin.NodeName // the hub itself, named like any machine
+			where = hub // the hub itself, named like any machine
 		}
 		info := consoleapi.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
 			Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
