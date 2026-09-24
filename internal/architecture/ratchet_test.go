@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -184,6 +185,143 @@ func TestInlineInterfaceAssertionsOnlyShrink(t *testing.T) {
 		})
 	}
 	ratchet(t, "interface_assertions", offenders)
+}
+
+// openCapabilities are interfaces that several production types satisfy or
+// lack on purpose, so probing for them is the design rather than a hidden
+// dependency.
+var openCapabilities = map[string]bool{
+	// Only some processes can be stopped gracefully.
+	"internal/lifecycle.Stopper": true,
+	// Memory sources differ in whether they have a name or readable text.
+	"internal/memory.namedSource": true,
+	"internal/memory.textReader":  true,
+	// Connection types differ in deadlines and half-close support.
+	"internal/nodewire.writeDeadliner": true,
+	"internal/node.halfCloser":         true,
+	// SQLite driver connections expose backup and restore.
+	"internal/ledger.backupSource":  true,
+	"internal/ledger.restoreTarget": true,
+}
+
+// namedInterfaceAssertions counts, per file, the type assertions and type
+// switch cases whose target is a non-empty interface declared in this
+// repository, except openCapabilities. Entries read "file pkg.Interface count".
+func namedInterfaceAssertions(t *testing.T, root string, files []string) []string {
+	t.Helper()
+	type source struct {
+		dir  string
+		file *ast.File
+	}
+	parsed := make(map[string]source, len(files))
+	packages := map[string]string{}
+	interfaces := map[string]map[string]bool{}
+	for _, file := range files {
+		syntax, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, _ := filepath.Rel(root, file)
+		rel = filepath.ToSlash(rel)
+		dir := path.Dir(rel)
+		parsed[rel] = source{dir: dir, file: syntax}
+		packages[dir] = syntax.Name.Name
+		for _, decl := range syntax.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				typeSpec := spec.(*ast.TypeSpec)
+				if iface, ok := typeSpec.Type.(*ast.InterfaceType); ok && typeSpec.Assign == 0 && len(iface.Methods.List) > 0 {
+					if interfaces[dir] == nil {
+						interfaces[dir] = map[string]bool{}
+					}
+					interfaces[dir][typeSpec.Name.Name] = true
+				}
+			}
+		}
+	}
+	counts := map[string]int{}
+	for rel, src := range parsed {
+		imports := map[string]string{}
+		for _, spec := range src.file.Imports {
+			importPath, _ := strconv.Unquote(spec.Path.Value)
+			dir, ok := strings.CutPrefix(importPath, module)
+			if !ok {
+				continue
+			}
+			name := packages[dir]
+			if spec.Name != nil {
+				name = spec.Name.Name
+			}
+			imports[name] = dir
+		}
+		count := func(target ast.Expr) {
+			for {
+				paren, ok := target.(*ast.ParenExpr)
+				if !ok {
+					break
+				}
+				target = paren.X
+			}
+			dir, name := "", ""
+			switch target := target.(type) {
+			case *ast.Ident:
+				dir, name = src.dir, target.Name
+			case *ast.SelectorExpr:
+				if pkg, ok := target.X.(*ast.Ident); ok {
+					dir, name = imports[pkg.Name], target.Sel.Name
+				}
+			}
+			iface := dir + "." + name
+			if interfaces[dir][name] && !openCapabilities[iface] {
+				counts[rel+" "+iface]++
+			}
+		}
+		ast.Inspect(src.file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.TypeAssertExpr:
+				if n.Type != nil {
+					count(n.Type)
+				}
+			case *ast.TypeSwitchStmt:
+				for _, clause := range n.Body.List {
+					for _, target := range clause.(*ast.CaseClause).List {
+						count(target)
+					}
+				}
+			}
+			return true
+		})
+	}
+	entries := make([]string, 0, len(counts))
+	for key, n := range counts {
+		entries = append(entries, key+" "+strconv.Itoa(n))
+	}
+	sort.Strings(entries)
+	return entries
+}
+
+func TestNamedInterfaceAssertionsAreCountedPerFileAndInterface(t *testing.T) {
+	root := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", "named_assertions")
+	files := []string{filepath.Join(root, "internal", "port", "port.go"), filepath.Join(root, "internal", "user", "user.go")}
+	got := namedInterfaceAssertions(t, root, files)
+	want := []string{
+		"internal/port/port.go internal/port.local 1",
+		"internal/user/user.go internal/port.Closer 2",
+		"internal/user/user.go internal/user.reader 1",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("named assertions = %q, want %q", got, want)
+	}
+}
+
+// A probe for an interface with one production implementation compiles on
+// and silently takes its fallback once that implementation stops matching.
+func TestNamedInterfaceAssertionsOnlyShrink(t *testing.T) {
+	root := repoRoot(t)
+	ratchet(t, "named_interface_assertions", namedInterfaceAssertions(t, root, sourceFiles(t, root)))
 }
 
 func TestInlineStateLiteralsOnlyShrink(t *testing.T) {
