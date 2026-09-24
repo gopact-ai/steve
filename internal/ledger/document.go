@@ -36,7 +36,7 @@ func (l *Ledger) Document(kind string) *Document {
 
 func (d *Document) Load() ([]byte, bool, error) {
 	var data string
-	err := d.l.db.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, documentKind, d.kind).Scan(&data)
+	err := d.l.reads.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, documentKind, d.kind).Scan(&data)
 	if errors.Is(err, errNoRows()) {
 		return nil, false, nil
 	}

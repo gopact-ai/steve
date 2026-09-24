@@ -23,7 +23,7 @@ type ReadTx struct {
 // A caller needing a linearizable follower read must first wait for the
 // required replica version; every query in fn then shares one local snapshot.
 func (l *Ledger) Read(ctx context.Context, fn func(*ReadTx) error) error {
-	tx, err := l.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := l.reads.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return err
 	}

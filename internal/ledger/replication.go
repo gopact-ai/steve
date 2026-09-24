@@ -113,7 +113,7 @@ func (l *Ledger) failReplica(err error) error {
 }
 
 // ReplicaVersion reads the version committed with the application facts.
-func (l *Ledger) ReplicaVersion() (uint64, error) { return replicaVersion(l.db) }
+func (l *Ledger) ReplicaVersion() (uint64, error) { return replicaVersion(l.reads) }
 
 func replicaVersion(q interface{ QueryRow(string, ...any) *sql.Row }) (uint64, error) {
 	var version uint64

@@ -15,7 +15,7 @@ func (l *Ledger) CommandReceipt(ctx context.Context, id string) (CommandRecord, 
 	if id == "" {
 		return CommandRecord{}, false, errors.New("ledger: command id is required")
 	}
-	return decodeCommandReceipt(l.db.QueryRowContext(ctx, commandReceiptSQL, id), id)
+	return decodeCommandReceipt(l.reads.QueryRowContext(ctx, commandReceiptSQL, id), id)
 }
 
 const commandReceiptSQL = `SELECT id, kind, actor, received_at, finished_at, result, error FROM commands WHERE id = ?`

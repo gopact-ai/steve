@@ -79,12 +79,20 @@ const (
 	databaseFile    = "ledger.db"
 	journalFile     = "effects.log"
 	schemaVersion   = 2
+	// readConnections bounds concurrent read transactions. Each holds a
+	// WAL snapshot and its own page cache.
+	readConnections = 4
 )
 
 // Ledger is one open authority.
 type Ledger struct {
-	dir         string
+	dir string
+	// db is the only connection that writes. reads is a pool of read-only
+	// connections: in WAL mode each read transaction keeps its own
+	// committed snapshot, so a long scan neither waits for a write nor
+	// holds one up, and a read begun after a commit returns sees it.
 	db          *sql.DB
+	reads       *sql.DB
 	incarnation uint64
 	journal     *Journal
 	now         func() time.Time
@@ -211,6 +219,16 @@ func Open(dir string, opts Options) (*Ledger, error) {
 			return nil, err
 		}
 	}
+	// sql.Open connects lazily; the pool's connections open on first
+	// read, after the writer above has settled the schema and WAL mode.
+	l.reads, err = sql.Open("sqlite", filepath.Join(dir, databaseFile)+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)")
+	if err != nil {
+		journal.Close()
+		db.Close()
+		return nil, fmt.Errorf("open ledger reads: %w", err)
+	}
+	l.reads.SetMaxOpenConns(readConnections)
+	l.reads.SetMaxIdleConns(readConnections)
 	l.journal = journal
 	journal.ledger = l
 	if !opts.ReplicaWriter {
@@ -240,7 +258,7 @@ func Rotate(dir string) (uint64, error) {
 
 func (l *Ledger) Close() error {
 	l.journal.Close()
-	return l.db.Close()
+	return errors.Join(l.reads.Close(), l.db.Close())
 }
 
 // Incarnation is the value every lease and receipt must carry.
@@ -394,7 +412,7 @@ func (l *Ledger) Command(ctx context.Context, id, kind, actor string, run func(c
 	if inserted == 0 {
 		var finished sql.NullString
 		var result, cmdErr sql.NullString
-		if err := l.db.QueryRowContext(ctx, `SELECT finished_at, result, error FROM commands WHERE id = ?`, id).Scan(&finished, &result, &cmdErr); err != nil {
+		if err := l.reads.QueryRowContext(ctx, `SELECT finished_at, result, error FROM commands WHERE id = ?`, id).Scan(&finished, &result, &cmdErr); err != nil {
 			return nil, false, err
 		}
 		if !finished.Valid {
@@ -845,7 +863,7 @@ func (t *Tx) QueryRow(query string, args ...any) *Row {
 func (l *Ledger) Operation(ctx context.Context, id string) (Operation, bool, error) {
 	var op Operation
 	var data, created, updated string
-	err := l.db.QueryRowContext(ctx, `SELECT kind, state, revision, incarnation, data, created_at, updated_at FROM operations WHERE id = ?`, id).
+	err := l.reads.QueryRowContext(ctx, `SELECT kind, state, revision, incarnation, data, created_at, updated_at FROM operations WHERE id = ?`, id).
 		Scan(&op.Kind, &op.State, &op.Revision, &op.Incarnation, &data, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
@@ -885,7 +903,7 @@ func stamps(created, updated string) (time.Time, time.Time, error) {
 
 // Operations lists operations of a kind, optionally in a state, newest first.
 func (l *Ledger) Operations(ctx context.Context, kind, state string) ([]Operation, error) {
-	return readOperations(ctx, l.db, kind, state)
+	return readOperations(ctx, l.reads, kind, state)
 }
 
 // Operations observes operation facts within the caller's mutation transaction.
@@ -935,7 +953,7 @@ func (l *Ledger) RecentEvents(ctx context.Context, before int64, limit int) ([]E
 	if before <= 0 {
 		before = 1 << 62
 	}
-	rows, err := l.db.QueryContext(ctx, `SELECT seq, operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at FROM events WHERE seq < ? ORDER BY seq DESC LIMIT ?`, before, limit)
+	rows, err := l.reads.QueryContext(ctx, `SELECT seq, operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at FROM events WHERE seq < ? ORDER BY seq DESC LIMIT ?`, before, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -961,7 +979,7 @@ func (l *Ledger) RecentEvents(ctx context.Context, before int64, limit int) ([]E
 }
 
 func (l *Ledger) Events(ctx context.Context, operationID string) ([]Event, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT seq, revision, incarnation, from_state, to_state, actor, fencings, effects, at FROM events WHERE operation_id = ? ORDER BY seq`, operationID)
+	rows, err := l.reads.QueryContext(ctx, `SELECT seq, revision, incarnation, from_state, to_state, actor, fencings, effects, at FROM events WHERE operation_id = ? ORDER BY seq`, operationID)
 	if err != nil {
 		return nil, err
 	}
@@ -996,7 +1014,7 @@ type NamedRef struct {
 
 // Name reads a named ref.
 func (l *Ledger) Name(ctx context.Context, name string) (NamedRef, bool, error) {
-	return scanName(l.db.QueryRowContext(ctx, nameSQL, name), name)
+	return scanName(l.reads.QueryRowContext(ctx, nameSQL, name), name)
 }
 
 // Name reads a named ref inside the transaction, so a write decided on it
@@ -1026,7 +1044,7 @@ func scanName(row interface{ Scan(...any) error }, name string) (NamedRef, bool,
 
 // Names lists refs under a prefix.
 func (l *Ledger) Names(ctx context.Context, prefix string) ([]NamedRef, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT name, version, artifact, updated_at FROM names WHERE name LIKE ? ORDER BY name`, prefix+"%")
+	rows, err := l.reads.QueryContext(ctx, `SELECT name, version, artifact, updated_at FROM names WHERE name LIKE ? ORDER BY name`, prefix+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -1049,7 +1067,7 @@ func (l *Ledger) Names(ctx context.Context, prefix string) ([]NamedRef, error) {
 // GetBinding reads a binding record into out.
 func (l *Ledger) GetBinding(ctx context.Context, kind, id string, out any) (bool, error) {
 	var data string
-	err := l.db.QueryRowContext(ctx, `SELECT data FROM bindings WHERE kind = ? AND id = ?`, kind, id).Scan(&data)
+	err := l.reads.QueryRowContext(ctx, `SELECT data FROM bindings WHERE kind = ? AND id = ?`, kind, id).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -1079,7 +1097,7 @@ func (l *Ledger) DeleteBinding(ctx context.Context, kind, id string) error {
 
 // Bindings lists every record of a kind as raw JSON, keyed by id.
 func (l *Ledger) Bindings(ctx context.Context, kind string) (map[string]json.RawMessage, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT id, data FROM bindings WHERE kind = ?`, kind)
+	rows, err := l.reads.QueryContext(ctx, `SELECT id, data FROM bindings WHERE kind = ?`, kind)
 	return scanBindings(rows, err)
 }
 
@@ -1110,7 +1128,7 @@ func scanBindings(rows *sql.Rows, err error) (map[string]json.RawMessage, error)
 func (l *Ledger) LeaseOf(ctx context.Context, key string) (Lease, bool, error) {
 	var lease Lease
 	var expires string
-	err := l.db.QueryRowContext(ctx, `SELECT incarnation, epoch, holder, expires_at FROM leases WHERE resource_key = ?`, key).
+	err := l.reads.QueryRowContext(ctx, `SELECT incarnation, epoch, holder, expires_at FROM leases WHERE resource_key = ?`, key).
 		Scan(&lease.Incarnation, &lease.Epoch, &lease.Holder, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, false, nil

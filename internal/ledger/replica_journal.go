@@ -64,7 +64,7 @@ func (l *Ledger) appendEffect(entry Entry) (Entry, error) {
 }
 
 func (l *Ledger) effectEntries(after int64) ([]Entry, error) {
-	rows, err := l.db.Query(`SELECT data FROM effect_entries WHERE seq > ? ORDER BY seq`, after)
+	rows, err := l.reads.Query(`SELECT data FROM effect_entries WHERE seq > ? ORDER BY seq`, after)
 	if err != nil {
 		return nil, err
 	}

@@ -31,7 +31,7 @@ func (l *Ledger) PendingCommands(ctx context.Context, kind string) ([]CommandRec
 	if kind == "" {
 		return nil, errors.New("ledger: a command kind is required")
 	}
-	rows, err := l.db.QueryContext(ctx, pendingCommandsQuery, kind)
+	rows, err := l.reads.QueryContext(ctx, pendingCommandsQuery, kind)
 	if err != nil {
 		return nil, err
 	}
