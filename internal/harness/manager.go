@@ -401,8 +401,9 @@ type Runner interface {
 }
 
 // Configurable is a Runner whose agent exposes selectors Steve can change.
-// It is optional: an agent that reports no model selector simply does not
-// satisfy it.
+// Both runner types Manager opens implement it. An agent that offers no
+// model selector is reported by ModelChoices returning no option id or no
+// choices, not by a runner that lacks the interface.
 type Configurable interface {
 	Runner
 	Settings() view.Settings
@@ -417,11 +418,6 @@ type Configurable interface {
 type Reobserver interface {
 	Reobserve()
 }
-
-var (
-	_ Reobserver = (*Session)(nil)
-	_ Reobserver = (*managedSession)(nil)
-)
 
 // ApplyPreferences sets what an agent's configuration pins on a session
 // that has just opened: the model, and any other selector the harness
