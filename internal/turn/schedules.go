@@ -20,7 +20,9 @@ import (
 var _ agentmcp.Scheduler = (*Schedules)(nil)
 
 // Schedules manages standing work on behalf of an agent's fixed execution.
-// It reads only durable state, so it runs apart from any Coordinator.
+// It depends only on durable state: it reads attempts, tasks and project
+// bindings and creates or deletes stored schedules, keeping no runtime state
+// of its own, so it runs apart from any Coordinator.
 type Schedules struct {
 	attempts  *attempt.Service
 	tasks     *task.Store
