@@ -38,8 +38,7 @@ func TestARestartClosesBackgroundPlanTasksNothingElseCanReach(t *testing.T) {
 		}
 	}
 
-	c := newCore(nil, nil, nil, nil, 0)
-	c.SetTasks(store, "hub")
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Tasks, d.Node = store, "hub" }))
 	c.cancelOrphanedPlans(map[string]bool{resuming.ID: true})
 
 	if got, _ := store.Get(stranded.ID); got.State != task.StateCancelled {
@@ -68,8 +67,7 @@ func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := newCore(nil, nil, nil, nil, 0)
-	c.SetTasks(store, "hub")
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Tasks, d.Node = store, "hub" }))
 	c.closePlanTask(tracked.ID, errors.New("no agent could take it"))
 
 	got, _ := store.Get(tracked.ID)
@@ -105,8 +103,7 @@ func TestClosingAPlanTaskLeavesAnAlreadyFinishedOneAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := newCore(nil, nil, nil, nil, 0)
-	c.SetTasks(store, "hub")
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Tasks, d.Node = store, "hub" }))
 	c.closePlanTask(finished.ID, errors.New("late failure"))
 	c.closePlanTask(resumed.ID, nil)
 

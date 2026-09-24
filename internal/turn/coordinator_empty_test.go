@@ -26,7 +26,7 @@ func TestNoAgentRequestExplainsRegistrationWithoutCreatingSession(t *testing.T) 
 				t.Fatal(err)
 			}
 			manager := &fakeManager{}
-			coordinator := newCore(catalog, store, nil, manager, time.Minute)
+			coordinator := buildCoordinator(t, withDeps(func(d *Deps) { d.Catalog, d.Store, d.Runtime, d.Timeout = catalog, store, manager, time.Minute }))
 			for _, input := range []string{"hello", "@codex hello"} {
 				_, err := coordinator.Handle(t.Context(), Request{Locale: tc.locale, ConversationID: "chat", Input: input})
 				var userError UserError

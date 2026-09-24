@@ -11,7 +11,7 @@ func TestCoordinatorClassifiesEverySupportedAgentSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &Coordinator{coordinatorState: &coordinatorState{catalog: catalog}}
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Catalog = catalog }))
 	for _, input := range []string{"@codex/cancel", "@codex!/cancel", "@my helper /tasks pause 12", "/use codex/cancel"} {
 		address, parsed := c.ParseInput(input)
 		if address != "@worker" || !(parsed.Control() || parsed.Interrupt) {

@@ -120,8 +120,7 @@ func TestCrashResumeE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c1 := newCoordinatorIn(t, map[string]string{"mock": workspace}, catalog, store1, capability.NewAssembler(nil), manager1, 30*time.Second, book)
-	c1.SetTasks(tasks1, "n1")
+	c1 := newCoordinatorIn(t, map[string]string{"mock": workspace}, catalog, store1, capability.NewAssembler(nil), manager1, 30*time.Second, onLedger(book), withTasks(tasks1, "n1"))
 	registry1 := execution.New(t.Context(), tasks1)
 	c1.SetExecution(registry1)
 	c1.artifacts.SetExecution(registry1)
@@ -153,8 +152,7 @@ func TestCrashResumeE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(manager2.Stop)
-	c2 := restartCoordinator(t, c1, catalog, store2, capability.NewAssembler(nil), manager2, 30*time.Second)
-	c2.SetTasks(tasks2, "n1")
+	c2 := restartCoordinator(t, c1, catalog, store2, capability.NewAssembler(nil), manager2, 30*time.Second, withTasks(tasks2, "n1"))
 	registry2 := execution.New(t.Context(), tasks2)
 	c2.SetExecution(registry2)
 	c2.artifacts.SetExecution(registry2)

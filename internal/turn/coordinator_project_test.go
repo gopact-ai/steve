@@ -151,9 +151,12 @@ func TestChatTurnIsAnAttemptUnderTheCanonicalLock(t *testing.T) {
 	// A failing turn records a failed attempt.
 	manager.runners["codex"] = &fakeRunner{err: errBoom}
 	_, _ = coordinator.Handle(t.Context(), Request{ConversationID: "third", Input: "break", MessageID: "om_4"})
-	// No task store in this fixture, so every attempt sits under the empty
-	// task id; one of them must be the failure.
-	all, _ := coordinator.attempts.ForTask(t.Context(), "")
+	// The failing turn's task holds exactly one attempt, and it failed.
+	third := coordinator.tasks.List("third")
+	if len(third) != 1 {
+		t.Fatalf("tasks of the failing conversation = %+v", third)
+	}
+	all, _ := coordinator.attempts.ForTask(t.Context(), third[0].ID)
 	failed := 0
 	for _, a := range all {
 		if a.State == "failed" {
@@ -185,12 +188,11 @@ func TestProjectSwitchClosesTheConversationsTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, book)
 	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator.SetTasks(tasks, "laptop")
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, onLedger(book), withTasks(tasks, "laptop"))
 	registry := execution.New(t.Context(), tasks)
 	coordinator.SetExecution(registry)
 	coordinator.artifacts.SetExecution(registry)

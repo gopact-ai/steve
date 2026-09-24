@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
-	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -192,10 +191,11 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 					}
 					runner := &fakeRunner{reply: "done"}
 					manager := &fakeManager{runners: map[string]*fakeRunner{"test": runner}}
-					c := newCore(catalog, sessions, capability.NewAssembler(nil), manager, time.Minute)
-					c.SetTasks(tasks, "hub")
-					c.SetProjects(projects, "first", "")
-					c.SetAttempts(attempt.New(book))
+					c := buildCoordinator(t, withDeps(func(d *Deps) {
+						d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), manager, time.Minute
+						d.Tasks, d.Node = tasks, "hub"
+						d.Projects, d.DefaultProject = projects, "first"
+					}), onLedger(book))
 					c.SetExecution(execution.New(t.Context(), tasks))
 					if _, err := handle(c, t.Context(), "old project work"); err != nil {
 						t.Fatal(err)

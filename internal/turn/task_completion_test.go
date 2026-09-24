@@ -42,11 +42,12 @@ func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *led
 		t.Fatal(err)
 	}
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	coordinator := newCore(catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
+	coordinator := buildCoordinator(t, withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute
+		d.Projects, d.DefaultProject = projects, "p"
+		d.Tasks, d.Node = tasks, "hub"
+	}), onLedger(book))
 	coordinator.text = i18n.New(i18n.LocaleEN)
-	coordinator.SetProjects(projects, "p", "")
-	coordinator.SetTasks(tasks, "hub")
-	coordinator.SetAttempts(attempt.New(book))
 	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	coordinator.SetArtifacts(artifacts)
 	registry := execution.New(t.Context(), tasks)

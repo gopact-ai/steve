@@ -367,8 +367,11 @@ func homeCoordinatorWithManager(t *testing.T, homeDir, owner string, books ...*l
 	runner := &fakeRunner{id: "sess", reply: "请告诉我你常用的工作方式。"}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	assembler := capability.NewAssembler(nil).SetHome(home.Dir{Path: homeDir})
-	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute, books...)
-	coordinator.SetIdentity(owner, home.Dir{Path: homeDir})
+	opts := []testOption{withDeps(func(d *Deps) { d.Owner, d.Home = owner, home.Dir{Path: homeDir} })}
+	if len(books) > 0 {
+		opts = append(opts, onLedger(books[0]))
+	}
+	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute, opts...)
 	useHome(t, coordinator, homeDir)
 	return coordinator, store, manager
 }

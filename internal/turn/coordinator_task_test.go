@@ -47,8 +47,7 @@ func taskCoordinatorOn(t *testing.T, rt runtime) (*Coordinator, *task.Store, *le
 	if err != nil {
 		t.Fatalf("open tasks: %v", err)
 	}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, book)
-	coordinator.SetTasks(tasks, "laptop")
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, onLedger(book), withTasks(tasks, "laptop"))
 	registry := execution.New(t.Context(), tasks)
 	coordinator.SetExecution(registry)
 	coordinator.artifacts.SetExecution(registry)

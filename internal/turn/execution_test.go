@@ -39,10 +39,11 @@ func TestTaskScopeStopsChatAndWaitsForDurableCleanup(t *testing.T) {
 	}
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
-	c := newCore(catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
-	c.SetProjects(projects, "p", "")
-	c.SetTasks(tasks, "hub")
-	c.SetAttempts(attempt.New(book))
+	c := buildCoordinator(t, withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute
+		d.Projects, d.DefaultProject = projects, "p"
+		d.Tasks, d.Node = tasks, "hub"
+	}), onLedger(book))
 	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	c.SetArtifacts(artifacts)
 	registry := execution.New(t.Context(), tasks)

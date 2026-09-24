@@ -24,7 +24,6 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
-	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -74,11 +73,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	t.Cleanup(func() { book.Close() })
 	c, _, runner := homeCoordinator(t, dir, "console-owner", book)
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
-	tasks, err := task.OpenLedger(book)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.SetTasks(tasks, "")
+	tasks := c.tasks
 	registry := execution.New(t.Context(), tasks)
 	c.SetExecution(registry)
 	c.artifacts.SetExecution(registry)
@@ -108,7 +103,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 }
 
 func TestChannelOwnerRegistrationIsExplicitAndFacadeSnapshotIsStable(t *testing.T) {
-	c := newCore(nil, nil, nil, nil, time.Minute)
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout = time.Minute }))
 	c.SetIdentity("console-owner", nil)
 	if _, err := c.forChannel("feishu"); err == nil {
 		t.Fatal("unregistered channel borrowed console identity")

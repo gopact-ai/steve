@@ -35,12 +35,11 @@ func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *s
 		t.Fatal(err)
 	}
 	manager := &closeRecorder{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"mock": {reply: "ok"}}}}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetTasks(tasks, "")
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, ""))
 	schedules, err := schedule.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)

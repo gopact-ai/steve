@@ -26,37 +26,116 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-// testDeps is a complete Deps over book, with an empty agent catalog and a
-// runtime that opens nothing. It mirrors turntest, which this package's own
-// tests cannot import.
-func testDeps(t *testing.T, book *ledger.Ledger) Deps {
+// fillDeps fills every dependency d leaves unset, the way turntest does
+// for other packages: an empty agent catalog, a runtime that starts no
+// agent, an empty home and skill set, the Chinese catalog, and every store
+// on book. Stores built from another default follow what d sets.
+func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	t.Helper()
-	catalog, err := agent.NewCatalog(nil)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var err error
+	if d.Catalog == nil {
+		d.Catalog, err = agent.NewCatalog(nil)
+		must(err)
+	}
+	if d.Store == nil {
+		d.Store, err = state.OpenLedger(book)
+		must(err)
+	}
+	if d.Assembler == nil {
+		d.Assembler = capability.NewAssembler(nil)
+	}
+	if d.Runtime == nil {
+		d.Runtime = noRuntime{}
+	}
+	if d.Text.IsZero() {
+		d.Text = i18n.New(i18n.LocaleZH)
+	}
+	homeDir := t.TempDir()
+	if d.Home == nil {
+		d.Home = home.Dir{Path: homeDir}
+	}
+	if d.Skills == nil {
+		d.Skills = &skills.Live{}
+	}
+	if d.Projects == nil {
+		d.Projects = project.Open(book)
+	}
+	if d.Memory == nil {
+		dir := filepath.Join(t.TempDir(), "memory")
+		d.Memory = memory.NewService(memory.NewMarkdown(homeDir, dir), filepath.Join(dir, "audit.jsonl"))
+	}
+	if d.Attempts == nil {
+		d.Attempts = attempt.New(book)
+	}
+	if d.Artifacts == nil {
+		d.Artifacts = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, d.Projects, artifact.LocalNodes{Dir: t.TempDir()})
+	}
+	if d.Intents == nil {
+		d.Intents = intent.New(book)
+	}
+	if d.Tasks == nil {
+		d.Tasks, err = task.OpenLedger(book)
+		must(err)
+	}
+	if d.Executions == nil {
+		d.Executions = execution.New(t.Context(), d.Tasks)
+	}
+	if d.Schedules == nil {
+		d.Schedules, err = schedule.OpenLedger(book)
+		must(err)
+	}
+}
+
+// testOption adjusts how buildCoordinator builds a coordinator.
+type testOption func(*testBuild)
+
+type testBuild struct {
+	book *ledger.Ledger
+	set  []func(*Deps)
+}
+
+// onLedger opens every default store on book instead of a fresh ledger.
+func onLedger(book *ledger.Ledger) testOption {
+	return func(b *testBuild) { b.book = book }
+}
+
+// withDeps sets dependencies before the defaults fill the rest; later
+// options win.
+func withDeps(set func(*Deps)) testOption {
+	return func(b *testBuild) { b.set = append(b.set, set) }
+}
+
+// withTasks sets the task store and the node it records.
+func withTasks(tasks *task.Store, node string) testOption {
+	return withDeps(func(d *Deps) { d.Tasks, d.Node = tasks, node })
+}
+
+// buildCoordinator builds a coordinator through New from the options.
+func buildCoordinator(t *testing.T, opts ...testOption) *Coordinator {
+	t.Helper()
+	var b testBuild
+	for _, opt := range opts {
+		opt(&b)
+	}
+	if b.book == nil {
+		b.book = testLedger(t)
+	}
+	var deps Deps
+	for _, set := range b.set {
+		set(&deps)
+	}
+	fillDeps(t, b.book, &deps)
+	c, err := New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.OpenLedger(book)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tasks, err := task.OpenLedger(book)
-	if err != nil {
-		t.Fatal(err)
-	}
-	schedules, err := schedule.OpenLedger(book)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projects := project.Open(book)
-	homeDir, stateDir := t.TempDir(), t.TempDir()
-	return Deps{
-		Catalog: catalog, Store: store, Assembler: capability.NewAssembler(nil), Runtime: noRuntime{},
-		Text: i18n.New(i18n.LocaleZH), Home: home.Dir{Path: homeDir}, Skills: &skills.Live{},
-		Projects: projects, Attempts: attempt.New(book),
-		Artifacts: artifact.New(filepath.Join(stateDir, "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}),
-		Intents:   intent.New(book), Tasks: tasks, Executions: execution.New(t.Context(), tasks), Schedules: schedules,
-		Memory: memory.NewService(memory.NewMarkdown(homeDir, filepath.Join(stateDir, "memory")), filepath.Join(stateDir, "memory", "audit.jsonl")),
-	}
+	return c
 }
 
 var errNoRuntime = errors.New("no agent runtime in this test")
@@ -88,7 +167,8 @@ func TestNewRefusesEveryMissingDependency(t *testing.T) {
 }
 
 func TestNewRefusesAnInvalidChannelOwner(t *testing.T) {
-	deps := testDeps(t, testLedger(t))
+	var deps Deps
+	fillDeps(t, testLedger(t), &deps)
 	deps.ChannelOwners = map[string]string{"console": "owner"}
 	if _, err := New(deps); err == nil {
 		t.Fatal("New accepted an owner for the console channel")
@@ -96,7 +176,8 @@ func TestNewRefusesAnInvalidChannelOwner(t *testing.T) {
 }
 
 func TestNewWiresEveryDependency(t *testing.T) {
-	deps := testDeps(t, testLedger(t))
+	var deps Deps
+	fillDeps(t, testLedger(t), &deps)
 	deps.Owner, deps.Node, deps.DefaultProject, deps.HomeProject = "owner", "hub", "p", "home"
 	deps.ChannelOwners = map[string]string{"feishu": "native-owner"}
 	deps.Text = i18n.New(i18n.LocaleEN)

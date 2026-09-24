@@ -125,10 +125,11 @@ func TestTurnThatNeverPromptedLeavesNoUncertainSession(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	runner := &fakeRunner{id: "ns_live", reply: "ok"}
 	manager := nativeManager{&fakeManager{runners: map[string]*fakeRunner{"codex": runner}, mcpHTTP: true}}
-	c := newCore(catalog, sessions, capability.NewAssembler(nil), manager, time.Minute)
-	c.SetProjects(projects, "p", "")
-	c.SetTasks(tasks, "hub")
-	c.SetAttempts(attempt.New(book))
+	c := buildCoordinator(t, withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), manager, time.Minute
+		d.Projects, d.DefaultProject = projects, "p"
+		d.Tasks, d.Node = tasks, "hub"
+	}), onLedger(book))
 	c.SetExecution(execution.New(t.Context(), tasks))
 	c.SetAgentGate(&refusingGate{})
 	if _, err := handle(c, t.Context(), "work"); err == nil {

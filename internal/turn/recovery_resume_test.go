@@ -86,16 +86,17 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 	}
 	runner := &retainedTestRunner{fakeRunner: &fakeRunner{id: "ns_original", reply: strings.Repeat("complete result ", 30)}}
 	manager := retainedTestManager{fakeManager: &fakeManager{}, runner: runner}
-	c := newCore(cat, sessions, capability.NewAssembler(nil), manager, time.Minute)
-	c.SetTasks(tasks, "coordinator-b")
-	c.SetExecution(execution.New(t.Context(), tasks))
-	c.SetAttempts(attempt.New(book))
 	projects := project.Open(book)
 	workspace := project.Workspace{ID: "workspace", Project: "p", Node: "node-a", Path: t.TempDir(), Kind: project.KindCanonical}
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: "node-a", Path: workspace.Path}, Level: datalevel.Internal}}); err != nil {
 		t.Fatal(err)
 	}
-	c.SetProjects(projects, "p", "")
+	c := buildCoordinator(t, withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = cat, sessions, capability.NewAssembler(nil), manager, time.Minute
+		d.Tasks, d.Node = tasks, "coordinator-b"
+		d.Projects, d.DefaultProject = projects, "p"
+	}), onLedger(book))
+	c.SetExecution(execution.New(t.Context(), tasks))
 	tracked, err := tasks.Create(task.Task{Transport: "console", Goal: "original task", Channel: "console:main", Member: "worker", Requester: "owner", ProjectID: "p", Workspace: workspace.Path})
 	if err != nil {
 		t.Fatal(err)
