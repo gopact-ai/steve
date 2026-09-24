@@ -196,7 +196,6 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 						d.Tasks, d.Node = tasks, "hub"
 						d.Projects, d.DefaultProject = projects, "first"
 					}), onLedger(book))
-					c.SetExecution(execution.New(t.Context(), tasks))
 					if _, err := handle(c, t.Context(), "old project work"); err != nil {
 						t.Fatal(err)
 					}

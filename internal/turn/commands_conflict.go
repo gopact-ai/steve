@@ -225,14 +225,12 @@ func (c *Coordinator) resolveConflict(ctx context.Context, p project.Project, st
 // runResolution is the part that can fail after the task exists, kept
 // apart so every way out of it goes through one close.
 func (c *Coordinator) runResolution(ctx context.Context, p project.Project, stuck artifact.Stuck, tracked task.Task, agentID, goal string) error {
-	if c.executions != nil {
-		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "resolve/" + tracked.ID})
-		if err != nil {
-			return err
-		}
-		defer scope.Finish(nil)
-		ctx = scope.Context()
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "resolve/" + tracked.ID})
+	if err != nil {
+		return err
 	}
+	defer scope.Finish(nil)
+	ctx = scope.Context()
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 	stored, err := c.plans.Create(plan.Plan{

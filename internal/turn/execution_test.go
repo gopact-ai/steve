@@ -3,16 +3,13 @@ package turn
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
-	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
@@ -44,11 +41,7 @@ func TestTaskScopeStopsChatAndWaitsForDurableCleanup(t *testing.T) {
 		d.Projects, d.DefaultProject = projects, "p"
 		d.Tasks, d.Node = tasks, "hub"
 	}), onLedger(book))
-	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
-	c.SetArtifacts(artifacts)
-	registry := execution.New(t.Context(), tasks)
-	c.SetExecution(registry)
-	artifacts.SetExecution(registry)
+	c.artifacts.SetExecution(c.executions)
 	finished := make(chan error, 1)
 	go func() { _, err := handle(c, t.Context(), "work"); finished <- err }()
 	<-runner.started

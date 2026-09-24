@@ -167,9 +167,6 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 			entry.err = err
 		}
 	}()
-	if c.executions == nil {
-		return Result{}, errors.New("retained execution registry is not configured")
-	}
 	scope, err := c.executions.BeginAccepted(ctx, execution.Key{TaskID: record.TaskID, InstanceID: record.TurnID, AttemptID: record.ID}, record.Execution)
 	if err != nil {
 		return Result{}, err

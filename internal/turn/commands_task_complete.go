@@ -37,7 +37,7 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 		return err
 	}
 	var err error
-	if c.executions != nil && !tracked.CompletedByUser {
+	if !tracked.CompletedByUser {
 		err = c.executions.WhileTaskIdle(tracked.ID, complete)
 	} else {
 		err = complete()

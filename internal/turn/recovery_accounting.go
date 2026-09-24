@@ -65,11 +65,9 @@ func (c *Coordinator) SettleChatAccounting(ctx context.Context, id string) error
 	if err := c.finishRetainedTask(record, runErr, nil); err != nil {
 		return err
 	}
-	if c.executions != nil {
-		// A committed prompt settlement and exact accounting supersede the
-		// old observer error, never a still-running owner or a newer epoch.
-		c.executions.ResolveStopped(record.ID, *record.Execution)
-	}
+	// A committed prompt settlement and exact accounting supersede the
+	// old observer error, never a still-running owner or a newer epoch.
+	c.executions.ResolveStopped(record.ID, *record.Execution)
 	return nil
 }
 

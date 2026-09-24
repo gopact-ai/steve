@@ -381,11 +381,6 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 	return c.store.ClearTaint(conversationID, agentID)
 }
 
-// SetExecution sets the execution registry.
-//
-// Deprecated: set Deps.Executions.
-func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
-
 // SetAutoResolve decides whether a landing that stops at a merge conflict
 // is handed to an agent without anyone asking.
 func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }

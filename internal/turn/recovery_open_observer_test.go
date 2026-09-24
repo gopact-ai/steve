@@ -55,7 +55,7 @@ func TestLostFreshNodeOpenKeepsOriginalTaskUnsettledWhileObserverCanExit(t *test
 	}
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	c.SetExecution(execution.New(lifetime, c.tasks))
+	c.executions = execution.New(lifetime, c.tasks)
 	manager := &uncertainOpenManager{fakeManager: &fakeManager{}, attempts: c.attempts}
 	c.runtime = manager
 	req.Input, req.MessageID = "next task instruction", "web-next"

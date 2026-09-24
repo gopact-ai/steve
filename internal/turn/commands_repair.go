@@ -92,15 +92,13 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	if err != nil {
 		return Result{Title: title, Text: err.Error()}
 	}
-	if c.executions != nil {
-		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "repair/" + tracked.ID})
-		if err != nil {
-			c.closePlanTask(tracked.ID, err)
-			return Result{Title: title, Text: err.Error()}
-		}
-		defer scope.Finish(nil)
-		ctx = scope.Context()
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "repair/" + tracked.ID})
+	if err != nil {
+		c.closePlanTask(tracked.ID, err)
+		return Result{Title: title, Text: err.Error()}
 	}
+	defer scope.Finish(nil)
+	ctx = scope.Context()
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 

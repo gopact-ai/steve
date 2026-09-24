@@ -50,9 +50,7 @@ func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *led
 	coordinator.text = i18n.New(i18n.LocaleEN)
 	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 	coordinator.SetArtifacts(artifacts)
-	registry := execution.New(t.Context(), tasks)
-	coordinator.SetExecution(registry)
-	artifacts.SetExecution(registry)
+	artifacts.SetExecution(coordinator.executions)
 	return coordinator, book
 }
 

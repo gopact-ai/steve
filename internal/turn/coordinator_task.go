@@ -33,7 +33,7 @@ func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID s
 	previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
 	req.stage(view.StageWorkspace)
 	binding, err := c.bindingFor(ctx, req)
-	if err != nil || c.executions == nil {
+	if err != nil {
 		return binding, nil, err
 	}
 	taskID := ""
@@ -171,9 +171,7 @@ func (c *Coordinator) releaseConversationTask(tracked task.Task) error {
 		if err != nil {
 			return err
 		}
-		if c.executions != nil {
-			c.executions.Stop(ids, task.ErrExecutionStopped)
-		}
+		c.executions.Stop(ids, task.ErrExecutionStopped)
 		return nil
 	}
 	_, err := c.tasks.Advance(tracked.ID, task.StateDone)
@@ -346,19 +344,11 @@ const (
 )
 
 func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, error) {
-	var stopErr error
-	if c.executions != nil {
-		ids, err := c.tasks.SetAside(tracked.ID, to)
-		if err != nil {
-			return Result{Title: title, Text: err.Error()}, err
-		}
-		stopErr = c.stopExecutions(ctx, ids, confirmSettlement)
-	} else {
-		if _, err := c.tasks.Advance(tracked.ID, to); err != nil {
-			return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}, err
-		}
-		c.stopTurnFor(ctx, tracked)
+	ids, err := c.tasks.SetAside(tracked.ID, to)
+	if err != nil {
+		return Result{Title: title, Text: err.Error()}, err
 	}
+	stopErr := c.stopExecutions(ctx, ids, confirmSettlement)
 	moved, _ := c.tasks.Get(tracked.ID)
 	if stopErr != nil {
 		return Result{Title: title, Text: fmt.Sprintf("task #%s: stop recorded, execution has not confirmed stopping: %v", tracked.ID, stopErr)}, stopErr
@@ -407,25 +397,6 @@ func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmS
 		}
 	}
 	return stopErr
-}
-
-// stopTurnFor stops the turn a task is running through, if any. The task's own
-// member identifies that turn — by the time the user sets work aside they may
-// well be talking to a different agent.
-func (c *Coordinator) stopTurnFor(ctx context.Context, tracked task.Task) {
-	member, ok := c.catalog.Resolve(tracked.Member)
-	if !ok {
-		return
-	}
-	c.mu.Lock()
-	running := c.cancels[sessionKey(tracked.Channel, member.ID)] != nil
-	c.mu.Unlock()
-	if !running {
-		return
-	}
-	if _, err := c.cancelTurn(ctx, tracked.Channel, member); err != nil {
-		slog.Error(fmt.Sprintf("turn: stop turn for task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", member.ID)
-	}
 }
 
 func (c *Coordinator) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {

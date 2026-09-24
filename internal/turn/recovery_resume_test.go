@@ -96,7 +96,6 @@ func retainedChatFixture(t *testing.T) (*Coordinator, *retainedTestRunner, *ledg
 		d.Tasks, d.Node = tasks, "coordinator-b"
 		d.Projects, d.DefaultProject = projects, "p"
 	}), onLedger(book))
-	c.SetExecution(execution.New(t.Context(), tasks))
 	tracked, err := tasks.Create(task.Task{Transport: "console", Goal: "original task", Channel: "console:main", Member: "worker", Requester: "owner", ProjectID: "p", Workspace: workspace.Path})
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +225,7 @@ func TestUnavailableRetainedNodeDoesNotBlockObserverGenerationShutdown(t *testin
 	c, _, _, old, req := retainedChatFixture(t)
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	c.SetExecution(execution.New(lifetime, c.tasks))
+	c.executions = execution.New(lifetime, c.tasks)
 	c.runtime = unavailableRetainedManager{&fakeManager{}}
 	if _, err := c.ResumeRetainedChat(lifetime, old.ID, req); err == nil {
 		t.Fatal("unavailable node was reported resumed")

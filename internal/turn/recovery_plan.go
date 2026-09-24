@@ -185,7 +185,7 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 		}
 		token = record.Execution
 	}
-	if token == nil || c.executions == nil {
+	if token == nil {
 		return Result{}, c.retainedBlocked("plan-authority", "检查原计划授权", "原计划缺少可核对的执行授权。", "不能使用后续任务的授权继续旧计划。", "建议核对原任务与执行记录。", nil)
 	}
 	scope, err := c.executions.BeginAccepted(ctx, execution.Key{TaskID: tracked.ID, InstanceID: driver, AttemptID: identity.AttemptID}, token)

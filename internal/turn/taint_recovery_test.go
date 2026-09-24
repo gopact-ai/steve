@@ -12,7 +12,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -130,7 +129,6 @@ func TestTurnThatNeverPromptedLeavesNoUncertainSession(t *testing.T) {
 		d.Projects, d.DefaultProject = projects, "p"
 		d.Tasks, d.Node = tasks, "hub"
 	}), onLedger(book))
-	c.SetExecution(execution.New(t.Context(), tasks))
 	c.SetAgentGate(&refusingGate{})
 	if _, err := handle(c, t.Context(), "work"); err == nil {
 		t.Fatal("refused grant did not fail the turn")

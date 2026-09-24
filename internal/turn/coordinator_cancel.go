@@ -192,7 +192,7 @@ func (c *Coordinator) stopDelegations(ctx context.Context, covered []task.Task) 
 			slog.Info(fmt.Sprintf("turn: stopped delegated task #%s with task #%s", child.ID, tracked.ID), "task", child.ID, "parent", tracked.ID, "conversation", tracked.Channel, "agent", child.Member, "node", child.Node)
 		}
 	}
-	if len(ids) > 0 && c.executions != nil {
+	if len(ids) > 0 {
 		stopErr = errors.Join(stopErr, c.stopExecutions(ctx, ids, false))
 	}
 	return stopped, stopErr

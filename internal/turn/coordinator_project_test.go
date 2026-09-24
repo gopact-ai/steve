@@ -8,7 +8,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -193,9 +192,7 @@ func TestProjectSwitchClosesTheConversationsTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, onLedger(book), withTasks(tasks, "laptop"))
-	registry := execution.New(t.Context(), tasks)
-	coordinator.SetExecution(registry)
-	coordinator.artifacts.SetExecution(registry)
+	coordinator.artifacts.SetExecution(coordinator.executions)
 
 	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
 		t.Fatal(err)

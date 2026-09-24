@@ -11,7 +11,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -121,9 +120,7 @@ func TestCrashResumeE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	c1 := newCoordinatorIn(t, map[string]string{"mock": workspace}, catalog, store1, capability.NewAssembler(nil), manager1, 30*time.Second, onLedger(book), withTasks(tasks1, "n1"))
-	registry1 := execution.New(t.Context(), tasks1)
-	c1.SetExecution(registry1)
-	c1.artifacts.SetExecution(registry1)
+	c1.artifacts.SetExecution(c1.executions)
 	result, err := c1.Handle(context.Background(), Request{
 		ConversationID: "chat", Input: "hello", MessageID: "om_1", ChatID: "oc_1", ChatType: protocol.ChatGroup,
 	})
@@ -153,9 +150,7 @@ func TestCrashResumeE2E(t *testing.T) {
 	}
 	t.Cleanup(manager2.Stop)
 	c2 := restartCoordinator(t, c1, catalog, store2, capability.NewAssembler(nil), manager2, 30*time.Second, withTasks(tasks2, "n1"))
-	registry2 := execution.New(t.Context(), tasks2)
-	c2.SetExecution(registry2)
-	c2.artifacts.SetExecution(registry2)
+	c2.artifacts.SetExecution(c2.executions)
 
 	interrupted := tasks2.Interrupted()
 	if len(interrupted) != 1 || interrupted[0].ID != tracked.ID || interrupted[0].AnchorMessage != "om_1" {

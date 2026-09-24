@@ -10,7 +10,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
@@ -60,9 +59,7 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 		}
 		coordinator := newCoordinatorIn(t, map[string]string{"codex": workspace}, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second, onLedger(book), withTasks(tasks, "e2e-node"))
 		coordinator.SetArtifacts(artifact.New(filepath.Join(stateDir, "artifacts"), book, coordinator.projects, artifact.LocalNodes{Dir: nodeDir}))
-		registry := execution.New(t.Context(), tasks)
-		coordinator.SetExecution(registry)
-		coordinator.artifacts.SetExecution(registry)
+		coordinator.artifacts.SetExecution(coordinator.executions)
 		return coordinator, manager, tasks
 	}
 

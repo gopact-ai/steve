@@ -10,7 +10,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -48,9 +47,7 @@ func taskCoordinatorOn(t *testing.T, rt runtime) (*Coordinator, *task.Store, *le
 		t.Fatalf("open tasks: %v", err)
 	}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, onLedger(book), withTasks(tasks, "laptop"))
-	registry := execution.New(t.Context(), tasks)
-	coordinator.SetExecution(registry)
-	coordinator.artifacts.SetExecution(registry)
+	coordinator.artifacts.SetExecution(coordinator.executions)
 	return coordinator, tasks, book
 }
 

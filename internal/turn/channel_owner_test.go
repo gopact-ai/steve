@@ -17,7 +17,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -74,9 +73,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	c, _, runner := homeCoordinator(t, dir, "console-owner", book)
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
 	tasks := c.tasks
-	registry := execution.New(t.Context(), tasks)
-	c.SetExecution(registry)
-	c.artifacts.SetExecution(registry)
+	c.artifacts.SetExecution(c.executions)
 	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "hello", MessageID: "om-native", ChatID: "oc-native"})
 	if err != nil {
 		t.Fatal(err)
