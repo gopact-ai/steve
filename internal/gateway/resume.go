@@ -41,10 +41,6 @@ type Revival struct {
 	Manual bool
 }
 
-type textReplier interface {
-	ReplyText(ctx context.Context, messageID, text string) (string, error)
-}
-
 // scheduledValidator is a processor that checks a scheduled fire's
 // conversation, project and requester before the notice is posted, so a
 // stale schedule is refused rather than announced. A processor without
@@ -67,8 +63,7 @@ type Notice struct {
 // deliberate: it is the second, louder knock after a card that may have
 // landed in a chat nobody was watching.
 func (g *Gateway) Notify(n Notice) {
-	tr, ok := g.ch.(textReplier)
-	if !ok || n.MessageID == "" || strings.TrimSpace(n.Text) == "" {
+	if g.ch == nil || n.MessageID == "" || strings.TrimSpace(n.Text) == "" {
 		return
 	}
 	text := n.Text
@@ -77,7 +72,7 @@ func (g *Gateway) Notify(n Notice) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, err := tr.ReplyText(ctx, n.MessageID, text); err != nil {
+	if _, err := g.ch.ReplyText(ctx, n.MessageID, text); err != nil {
 		slog.Error(fmt.Sprintf("gateway: notice for task #%s: %v", n.TaskID, err), "task", n.TaskID, "message", n.MessageID)
 	}
 }
@@ -99,15 +94,14 @@ func (g *Gateway) DeliverConfirmed(r Revival, notice, prompt string, confirm fun
 }
 
 func (g *Gateway) deliver(r Revival, notice, prompt string, confirm func(error)) error {
-	tr, ok := g.ch.(textReplier)
-	if !ok {
+	if g.ch == nil {
 		return fmt.Errorf("channel cannot post notices")
 	}
 	if r.ConversationID == "" || r.MessageID == "" || r.Member == "" {
 		return fmt.Errorf("task #%s: incomplete anchor", r.TaskID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	noticeID, err := tr.ReplyText(ctx, r.MessageID, notice)
+	noticeID, err := g.ch.ReplyText(ctx, r.MessageID, notice)
 	cancel()
 	if err != nil {
 		return noticeError(err)
@@ -160,8 +154,7 @@ type FireReceipt struct{ MessageID string }
 // announcement is also what makes an unattended run visible rather than
 // something that just appears.
 func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error) {
-	tr, ok := g.ch.(textReplier)
-	if !ok {
+	if g.ch == nil {
 		return FireReceipt{}, fmt.Errorf("channel cannot post schedule notice for #%s", f.ScheduleID)
 	}
 	if f.Channel != "feishu" || strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
@@ -176,7 +169,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 		}
 	}
 	noticeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	noticeID, err := tr.ReplyText(noticeCtx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
+	noticeID, err := g.ch.ReplyText(noticeCtx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
 	cancel()
 	if err != nil {
 		var network net.Error

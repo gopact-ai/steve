@@ -32,9 +32,6 @@ func (t remoteTransport) Start(ctx context.Context) (acphost.Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	if t.plugin != nil && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
-		return nil, plugins.ErrIncompatible
-	}
 	if !c.offers(t.harness) {
 		return nil, fmt.Errorf("node %q does not offer harness %q: %s",
 			t.node, t.harness, c.harnessTrouble(t.harness))

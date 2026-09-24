@@ -62,14 +62,14 @@ function Leases({ a }: { a: Attempt }) {
 }
 
 // AdmissionBadge says who had the last word before the attempt ran and
-// on which revision: the node itself, the hub, the hub's cached snapshot,
-// or nobody (an older node).
+// on which revision: the node itself, the hub, or the hub's cached
+// snapshot.
 function AdmissionBadge({ a }: { a: Attempt }) {
     const { t: tr } = useI18n();
     const adm = a.admission;
     const req = (a.requires || []).join(" ");
     if (!adm) return <span className="text-tertiary">{req ? tr("fleet.unrecordedRequirements", { requirements: req }) : "—"}</span>;
-    const who = ({ node: tr("fleet.nodeDecision"), hub: tr("fleet.hubDecision"), cached: tr("fleet.cachedDecision"), legacy: tr("fleet.legacyDecision") } as Record<string, string>)[adm.source] || adm.source;
+    const who = ({ node: tr("fleet.nodeDecision"), hub: tr("fleet.hubDecision"), cached: tr("fleet.cachedDecision") } as Record<string, string>)[adm.source] || adm.source;
     const color = adm.verdict === 1 ? "success" : adm.verdict === 0 ? "error" : "warning";
     const rev = adm.generation ? `@${adm.generation}/${adm.sequence}` : "";
     return (

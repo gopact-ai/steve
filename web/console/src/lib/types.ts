@@ -10,13 +10,17 @@ export interface Capability {
 }
 export interface AbilitySnapshot {
     schema: string; node: string; generation: number; sequence: number; generated_at: string; received_at?: string; digest?: string;
-    coverage: Record<string, string>; offers: Capability[]; features?: string[]; source?: string;
+    coverage: Record<string, string>; offers: Capability[]; source?: string;
 }
 export interface Node {
     name: string; display_name?: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string; snapshot?: AbilitySnapshot;
-    features?: string[]; health?: Health; projects_root?: string;
+    features?: string[]; health?: Health; projects_root?: string; protocol_mismatch?: ProtocolMismatch;
 }
+// ProtocolMismatch is set on a machine the hub refused because they share no
+// node protocol version: the version the machine speaks, the range the hub
+// speaks, and the side that has to be upgraded for the two to connect.
+export interface ProtocolMismatch { node: number; hub_min: number; hub_max: number; upgrade: "node" | "hub" }
 export interface Activity {
     agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;
     tool?: string; detail?: string; since: string; at: string;
@@ -65,7 +69,7 @@ export interface Health {
     root?: string; state_root?: string; workspace_bytes?: number; state_bytes?: number; space_at?: string; space_partial?: boolean;
 }
 export interface Admission {
-    node?: string; source: "node" | "hub" | "cached" | "legacy"; verdict: number; code?: string;
+    node?: string; source: "node" | "hub" | "cached"; verdict: number; code?: string;
     generation?: number; sequence?: number; digest?: string; atoms?: { atom: string; verdict: number; code?: string }[]; at: string;
 }
 export interface Attempt {
@@ -206,7 +210,7 @@ export interface Snapshot {
 // Skills: what the hub can hand its agents, and what it does.
 export interface SkillView { name: string; path: string; root: string; title?: string; description?: string; enabled: boolean; builtin?: boolean; source?: string; agents: string[]; projects: string[] }
 export interface SkillSource { slug: string; url: string; ref?: string; subdir?: string; root: string; head?: string; fetched_at?: string; skills: string[]; error?: string }
-export interface SkillNode { name: string; up: boolean; synced: boolean; takes: boolean }
+export interface SkillNode { name: string; up: boolean; synced: boolean }
 export interface SkillsView { plugins?: import("./plugin-types").PluginResource[]; fingerprint: string; search_paths: string[]; builtin_root?: string; skills: SkillView[]; nodes: SkillNode[]; sources: SkillSource[] }
 export interface SkillDoc { name: string; path: string; content: string }
 export interface FoundSkill { name: string; path: string; title?: string; description?: string; loaded?: boolean }
@@ -223,7 +227,7 @@ export interface MCPProbe { at: string; ok: boolean; error?: string; stale?: boo
 export interface MCPDeployment { node: string; name: string; type: string; command?: string; args?: string[]; url?: string; env_keys?: string[]; header_keys?: string[]; agents: string[]; resolvable?: boolean; provenance?: string; same_name_elsewhere?: boolean; probe?: MCPProbe }
 export interface MCPPlatform { name: string; description: string; tools: { name: string; description: string }[] }
 export interface MCPOwn { name: string; source: string; scope?: string; type: string; command?: string; args?: string[]; url?: string; env_keys?: string[]; header_keys?: string[]; adopted?: boolean }
-export interface MCPMachine { name: string; hub?: boolean; up: boolean; unsupported?: boolean; own: MCPOwn[] }
+export interface MCPMachine { name: string; hub?: boolean; up: boolean; own: MCPOwn[] }
 export interface MCPView { plugins?: import("./plugin-types").PluginResource[]; deployments: MCPDeployment[]; platform: MCPPlatform[]; machines: MCPMachine[] }
 export interface MCPRegistryEnv { name: string; description?: string; required?: boolean; secret?: boolean; default?: string }
 export interface MCPRegistryPackage { registry_type: string; identifier: string; version?: string; runtime_hint?: string; transport?: string; needs?: string; env: MCPRegistryEnv[] }

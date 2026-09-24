@@ -49,6 +49,15 @@ test("every message has both translations and matching parameters", async () => 
     assert.equal(used.size, Object.keys(catalogs.zh).length);
 });
 
+test("fleet banners about one machine speak of it in the singular", () => {
+    for (const key of ["fleet.versionDriftHint", "fleet.protocolBehindHint"]) {
+        const one = catalogs.en[key + "One"];
+        assert.ok(one, `Missing singular message: ${key}One`);
+        assert.match(one, /^One machine /, key);
+        assert.doesNotMatch(one, /\{count\}|\bmachines\b/, key);
+    }
+});
+
 test("locale preference overrides browser language without affecting message data", () => {
     assert.equal(normalizeLocale("zh_CN.UTF-8"), "zh");
     assert.equal(normalizeLocale("en-GB"), "en");

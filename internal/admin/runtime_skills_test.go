@@ -174,13 +174,11 @@ func TestSkillShipperOfflineRemainsPendingUntilRetry(t *testing.T) {
 }
 
 func TestSkillShipperReturnsDirectErrors(t *testing.T) {
-	for _, failure := range []string{"blob", "apply", "unsupported", "offline", "canceled", "pack"} {
+	for _, failure := range []string{"blob", "apply", "offline", "canceled", "pack"} {
 		t.Run(failure, func(t *testing.T) {
 			live, target := shipperLive(t)
 			peer := newSkillPeer(t, "remote")
 			switch failure {
-			case "unsupported":
-				peer.features = []string{nodewire.FeatureJournal}
 			case "offline":
 				peer.offline.Store(true)
 			default:
@@ -286,19 +284,18 @@ func assertRemoteSkill(t *testing.T, peer *skillPeer, name, want string) {
 // The production Registry and wire run unchanged; received bytes are hashed
 // and unpacked on the peer side, with no sockets or actual harness processes.
 type skillPeer struct {
-	name     string
-	dir      string
-	features []string
-	failure  atomic.Value
-	applies  atomic.Int32
-	offline  atomic.Bool
-	dials    atomic.Int32
-	t        *testing.T
+	name    string
+	dir     string
+	failure atomic.Value
+	applies atomic.Int32
+	offline atomic.Bool
+	dials   atomic.Int32
+	t       *testing.T
 }
 
 func newSkillPeer(t *testing.T, name string) *skillPeer {
 	t.Helper()
-	p := &skillPeer{name: name, dir: t.TempDir(), features: []string{nodewire.FeatureJournal, nodewire.FeatureSkills}, t: t}
+	p := &skillPeer{name: name, dir: t.TempDir(), t: t}
 	p.failure.Store("")
 	return p
 }
@@ -332,7 +329,7 @@ func (p *skillPeer) dial(context.Context, string) (net.Conn, error) {
 	go func() {
 		defer close(done)
 		defer server.Close()
-		advert := nodewire.Advert{Node: p.name, Features: p.features}
+		advert := nodewire.Advert{Node: p.name}
 		if _, err := nodewire.Accept(server, "", advert); err != nil {
 			p.t.Errorf("peer handshake: %v", err)
 			return

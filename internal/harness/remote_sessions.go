@@ -189,8 +189,9 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 
 func (s *managedSession) ID() string { return s.id }
 
-// NativeContextID is node-attested continuity across managed executions.
-// Older nodes keep the managed identity for the lifetime of a native context.
+// NativeContextID is node-attested continuity across managed executions:
+// the context the node reported for this session, or the session's own ID
+// when the node reported none.
 func (s *managedSession) NativeContextID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -274,7 +275,7 @@ func (s *managedSession) Prompt(ctx context.Context, text string, progress func(
 type remoteError struct{ message, code string }
 
 func commandError(command *nodewire.SessionCommand) remoteError {
-	return remoteError{message: command.Error, code: command.ErrorKind()}
+	return remoteError{message: command.Error, code: command.ErrorCode}
 }
 
 func (e remoteError) Error() string           { return e.message }

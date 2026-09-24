@@ -81,9 +81,6 @@ func (r *Registry) AcknowledgeNodeReceipt(ctx context.Context, node string, requ
 	if err != nil {
 		return err
 	}
-	if !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNodeReceipts) {
-		return errors.New("node does not support exact receipt acknowledgement")
-	}
 	stream, err := conn.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamNodeReceipts})
 	if err != nil {
 		return err

@@ -87,7 +87,9 @@ func (c *Coordinator) Remember(ctx context.Context, conversationID, agentID, del
 	return r, scope, err
 }
 
-// Recall answers steve_recall; an empty scope searches both.
+// Recall answers steve_recall; an empty scope searches global, then the
+// conversation's project if it has one, up to limit from each. Scores are
+// not compared across scopes.
 func (c *Coordinator) Recall(ctx context.Context, conversationID, agentID, rawScope, query string, limit int) ([]memory.Hit, string, error) {
 	if rawScope != "" {
 		svc, scope, err := c.memoryScope(ctx, conversationID, "", rawScope, false)
@@ -105,9 +107,12 @@ func (c *Coordinator) Recall(ctx context.Context, conversationID, agentID, rawSc
 		return nil, "", err
 	}
 	if id := c.memoryProject(ctx, conversationID); id != "" {
-		more, _, err := svc.Recall(ctx, memory.ProjectScope(id), query, limit)
+		more, moreFrom, err := svc.Recall(ctx, memory.ProjectScope(id), query, limit)
 		if err != nil {
 			return nil, "", err
+		}
+		if moreFrom != from {
+			from += "+" + moreFrom
 		}
 		hits = append(hits, more...)
 	}

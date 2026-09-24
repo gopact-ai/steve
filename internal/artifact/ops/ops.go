@@ -54,8 +54,7 @@ type Request struct {
 }
 
 // Result is an operation's outcome. Nested, for a snapshot of a user's
-// directory, lists the nested git repositories the snapshot left out; a
-// node that predates it reports none.
+// directory, lists the nested git repositories the snapshot left out.
 type Result struct {
 	Commit  string   `json:"commit,omitempty"`
 	Changed bool     `json:"changed,omitempty"`
