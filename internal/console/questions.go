@@ -334,7 +334,7 @@ func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, 
 
 func (s *Service) VerbsFor(ctx context.Context) []consoleapi.Verb {
 	out := []consoleapi.Verb{}
-	for _, v := range s.handler.VerbsFor(ctx) {
+	for _, v := range s.coordinator.VerbsFor(ctx) {
 		out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
 	}
 	return out

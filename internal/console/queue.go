@@ -66,10 +66,7 @@ func isInterrupt(input string) bool {
 }
 
 func (s *Service) parseInput(input string) (string, turn.ParsedInput) {
-	if parser, ok := s.handler.(inputParser); ok {
-		return parser.ParseInput(input)
-	}
-	return turn.ParseAddressedInput(input)
+	return s.coordinator.ParseInput(input)
 }
 
 // stopControl is a line that only stops work: pressing stop sends one.

@@ -2,16 +2,13 @@ package console
 
 import "github.com/gopact-ai/steve/internal/turn"
 
-// The only production implementation of capabilities console probes its
-// handler for.
+// The only production implementation of capabilities the console probes
+// for.
 var (
-	_ conversationInitializer = (*turn.Coordinator)(nil)
-	_ inputParser             = (*turn.Coordinator)(nil)
-	_ neverAdmittedDriver     = (*turn.Coordinator)(nil)
-	_ relocationDriver        = (*turn.Coordinator)(nil)
-	_ retainedPlanDriver      = (*turn.Coordinator)(nil)
-	_ retainedProber          = (*turn.Coordinator)(nil)
-	_ retainedStopDriver      = (*turn.Coordinator)(nil)
-	_ sessionResetter         = (*turn.Coordinator)(nil)
-	_ verbLister              = (*turn.Coordinator)(nil)
+	_ neverAdmittedDriver = (*turn.Coordinator)(nil)
+	_ relocationDriver    = (*turn.Coordinator)(nil)
+	_ retainedPlanDriver  = (*turn.Coordinator)(nil)
+	_ retainedProber      = (*turn.Coordinator)(nil)
+	_ retainedStopDriver  = (*turn.Coordinator)(nil)
+	_ verbLister          = (*turn.Coordinator)(nil)
 )

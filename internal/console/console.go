@@ -78,7 +78,7 @@ type Events interface {
 
 type Service struct {
 	maintenance bool
-	handler     Coordinator
+	coordinator Coordinator
 	owner       string
 	model       Events
 	titler      Titler
@@ -129,8 +129,8 @@ type Service struct {
 
 var _ consoleapi.Console = (*Service)(nil)
 
-func New(handler Coordinator, owner string, model Events) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
+func New(coordinator Coordinator, owner string, model Events) *Service {
+	return &Service{coordinator: coordinator, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }
 
 // SetRecoveryQuiet is how long a recovery rejoins the original execution
@@ -516,7 +516,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	got, err := s.handler.Context(ctx, conversation)
+	got, err := s.coordinator.Context(ctx, conversation)
 	if err != nil {
 		return consoleapi.Context{}, err
 	}
@@ -543,7 +543,7 @@ func (s *Service) Setup(ctx context.Context, conversation, agent string) (consol
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	got, err := s.handler.SessionSetup(ctx, conversation, agent)
+	got, err := s.coordinator.SessionSetup(ctx, conversation, agent)
 	if err != nil {
 		return consoleapi.Setup{}, err
 	}
@@ -563,15 +563,20 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 		conversation = Prefix + conversation
 	}
 	var out []consoleapi.Suggestion
-	for _, x := range s.handler.Suggest(ctx, conversation, line) {
+	for _, x := range s.coordinator.Suggest(ctx, conversation, line) {
 		out = append(out, consoleapi.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
 	}
 	return out
 }
 
+// verbLister names the verbs a conversation can be told.
+type verbLister interface {
+	Verbs() []turn.Verb
+}
+
 // Verbs is what the console can be told, with help, from the coordinator.
 func (s *Service) Verbs() []consoleapi.Verb {
-	aware, ok := s.handler.(verbLister)
+	aware, ok := s.coordinator.(verbLister)
 	if !ok {
 		return nil
 	}
@@ -680,7 +685,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	}
 	stop := s.follow(ctx, conversation, work)
 	identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}}
-	result, err := s.handler.Handle(ctx, turn.Request{
+	result, err := s.coordinator.Handle(ctx, turn.Request{
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
 		ExchangeID:   exchange.ID,

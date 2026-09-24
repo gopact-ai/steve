@@ -11,10 +11,6 @@ import (
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
-type conversationInitializer interface {
-	InitializeConversation(ctx context.Context, conversation, project, requester string) error
-}
-
 // InitializeConversation binds the project and persists an empty conversation
 // without sending a command or admitting any work.
 func (s *Service) InitializeConversation(ctx context.Context, conversation, project string) error {
@@ -24,10 +20,6 @@ func (s *Service) InitializeConversation(ctx context.Context, conversation, proj
 	}
 	if s.owner == "" {
 		return errors.New("the console needs feishu.owner_open_id: it acts as the owner")
-	}
-	initializer, ok := s.handler.(conversationInitializer)
-	if !ok {
-		return errors.New("conversation initialization is not available")
 	}
 	conversation = ConversationID(conversation)
 	s.mu.Lock()
@@ -43,7 +35,7 @@ func (s *Service) InitializeConversation(ctx context.Context, conversation, proj
 		s.mu.Unlock()
 		return err
 	}
-	if err := initializer.InitializeConversation(ctx, conversation, project, s.owner); err != nil {
+	if err := s.coordinator.InitializeConversation(ctx, conversation, project, s.owner); err != nil {
 		s.mu.Unlock()
 		return err
 	}

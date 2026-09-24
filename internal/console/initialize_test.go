@@ -163,7 +163,7 @@ func TestInitializeConversationRetriesCommittedBindingAfterTranscriptSaveFailure
 }
 
 func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
-	for _, reason := range []string{"conversation", "prefix", "project", "owner", "handler", "closing", "maintenance", "recovery", "canceled"} {
+	for _, reason := range []string{"conversation", "prefix", "project", "owner", "coordinator", "closing", "maintenance", "recovery", "canceled"} {
 		t.Run(reason, func(t *testing.T) {
 			h := &initializingHandler{}
 			s := New(h, "owner", nil)
@@ -179,8 +179,8 @@ func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
 				project = " "
 			case "owner":
 				s.owner = ""
-			case "handler":
-				s.handler = &echo{}
+			case "coordinator":
+				s.coordinator = &echo{}
 			case "closing":
 				s.closing = true
 			case "maintenance":
