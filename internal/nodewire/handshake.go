@@ -240,9 +240,9 @@ func acceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(H
 	// the verdict, and a peer that cannot even read it has left.
 	chosen := negotiate(peerMin, peerMax, lo, hi)
 	if chosen == 0 {
-		_ = writeJSON(conn, Advert{Version: hi,
-			Refused: fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", peerMin, peerMax, lo, hi)})
-		return Hello{}, ErrVersionMismatch
+		reason := fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", peerMin, peerMax, lo, hi)
+		_ = writeJSON(conn, Advert{Version: hi, Refused: reason})
+		return Hello{}, fmt.Errorf("%w: %s", ErrVersionMismatch, reason)
 	}
 	hello.Version = chosen
 	advert.Version = chosen

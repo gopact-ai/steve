@@ -87,7 +87,7 @@ func TestNodeAnswersWithTheSharedVersion(t *testing.T) {
 }
 
 // A hub that speaks only v1 is refused by the node with both ranges named,
-// so the hub can report what it met.
+// so the hub can report what it met, and the node's own error names them too.
 func TestNodeRefusesAProtocolV1Hub(t *testing.T) {
 	hub, node := net.Pipe()
 	defer hub.Close()
@@ -108,8 +108,8 @@ func TestNodeRefusesAProtocolV1Hub(t *testing.T) {
 	if advert.Refused != "hub speaks v1–v1, node speaks v2–v2" {
 		t.Fatalf("refused = %q", advert.Refused)
 	}
-	if err := <-done; !errors.Is(err, ErrVersionMismatch) {
-		t.Fatalf("accept = %v, want a version mismatch", err)
+	if err := <-done; !errors.Is(err, ErrVersionMismatch) || !strings.Contains(err.Error(), "hub speaks v1–v1, node speaks v2–v2") {
+		t.Fatalf("accept = %v, want a version mismatch naming both ranges", err)
 	}
 }
 
