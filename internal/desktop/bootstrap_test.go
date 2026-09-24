@@ -221,6 +221,46 @@ func TestFirstBoundPortIsRememberedForStableWebViewStorage(t *testing.T) {
 	}
 }
 
+// SetPinnedAddress changes only the configuration it is given; saving it
+// is left to the caller.
+func TestSetPinnedAddressLeavesTheFileAlone(t *testing.T) {
+	installed, err := Bootstrap(Options{StateDir: filepath.Join(t.TempDir(), "Steve")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(installed.Paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(installed.Paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := SetPinnedAddress(installed.Paths.Config, cfg, "http://127.0.0.1:41731")
+	if err != nil || !pinned {
+		t.Fatalf("SetPinnedAddress = %v, %v", pinned, err)
+	}
+	if cfg.Gateway.ReadModelAddr != "127.0.0.1:41731" {
+		t.Fatalf("the configuration keeps %q", cfg.Gateway.ReadModelAddr)
+	}
+	after, err := os.ReadFile(installed.Paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("SetPinnedAddress rewrote the configuration file")
+	}
+	if pinned, err := SetPinnedAddress(installed.Paths.Config, cfg, "http://127.0.0.1:41731"); err != nil || pinned {
+		t.Fatalf("pinning the same address again = %v, %v", pinned, err)
+	}
+	if _, err := SetPinnedAddress(installed.Paths.Config, cfg, "http://127.0.0.1:41732"); err == nil {
+		t.Fatal("a later bind moved the pinned address")
+	}
+	if cfg.Gateway.ReadModelAddr != "127.0.0.1:41731" {
+		t.Fatalf("a refused bind changed the address to %q", cfg.Gateway.ReadModelAddr)
+	}
+}
+
 // Each invalid state path gets the message for what it actually is. One
 // wording for all of them once reported a group-readable directory as a
 // symbolic link it never was.
