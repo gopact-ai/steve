@@ -39,6 +39,10 @@ func (a *applicationStopAuthority) AuthorizeNodeSession(_ context.Context, princ
 	return nil
 }
 
+func (*applicationStopAuthority) AuthorizeNodeReceipt(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error {
+	return errors.New("test authority does not authorize receipts")
+}
+
 type applicationStopConnection struct {
 	manager *harness.Manager
 	offline bool

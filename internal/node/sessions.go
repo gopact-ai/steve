@@ -21,6 +21,11 @@ import (
 // coordinator/execution authority. Request fields are claims, never credentials.
 type SessionAuthorizer interface {
 	AuthorizeNodeSession(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
+	// AuthorizeNodeReceipt returns nil only when the hub no longer needs the
+	// command the node retained for a receipt: it committed the receipt's
+	// exact result, accounting and delivery, or deleted the task along with
+	// them.
+	AuthorizeNodeReceipt(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error
 }
 
 type SessionError struct{ Code, Message string }

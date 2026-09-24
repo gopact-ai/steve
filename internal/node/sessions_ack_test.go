@@ -96,13 +96,17 @@ func TestNodeReceiptAckDeletesOnlyExactOriginalInputAndPreservesHighwater(t *tes
 }
 
 func TestNodeReceiptAckFailsClosedAndTransactionFailurePublishesNothing(t *testing.T) {
-	for _, mode := range []string{"denied", "wrong-digest", "wrong-binding", "wrong-sequence", "pending-question", "sqlite-failure"} {
+	for _, mode := range []string{"denied", "no-authorizer", "wrong-digest", "wrong-binding", "wrong-sequence", "pending-question", "sqlite-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			one, req, authority := ackFixture(t)
 			store, _ := one.service.recordsStore()
 			switch mode {
 			case "denied":
 				authority.deny = true
+			case "no-authorizer":
+				cfg := one.service.server.conf()
+				cfg.SessionAuthorizer = nil
+				one.service.server.cfg.Store(&cfg)
 			case "wrong-digest":
 				req.Receipt.Digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 				authority.want = req.Receipt
