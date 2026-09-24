@@ -45,6 +45,8 @@ type Console interface {
 	Interactions
 	ConversationInitializer
 	ExchangeIdentity
+	LocalizedVerbs
+	SubmissionCapabilities
 	Send(ctx context.Context, conversation, input string) (Reply, error)
 	// SendCommand is Send with an idempotency key from the page.
 	SendCommand(ctx context.Context, conversation, input, commandID string) (Reply, error)

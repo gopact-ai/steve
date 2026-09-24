@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/readmodel"
@@ -66,8 +67,9 @@ func TestCapabilityRoutesWithoutTheirService(t *testing.T) {
 	}
 }
 
-// ownerRequest sends a request with the owner's token and reads the answer,
-// trimmed of the line end that ends every error and JSON body.
+// ownerRequest sends a request with the owner's token, asking for English,
+// and reads the answer, trimmed of the line end that ends every error and
+// JSON body.
 func ownerRequest(t *testing.T, server *Server, method, path, body string) (*http.Response, string) {
 	t.Helper()
 	req, err := http.NewRequest(method, server.URL()+path, strings.NewReader(body))
@@ -75,6 +77,7 @@ func ownerRequest(t *testing.T, server *Server, method, path, body string) (*htt
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Accept-Language", "en")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +147,12 @@ func (portConsole) AnswerQuestion(_ context.Context, id string, answer consoleap
 func (portConsole) InitializeConversation(context.Context, string, string) error { return nil }
 func (portConsole) ExchangeConversation(string) (string, bool)                   { return "console:main", true }
 func (portConsole) DeleteQueued(string) error                                    { return nil }
+func (portConsole) VerbsFor(ctx context.Context) []consoleapi.Verb {
+	return []consoleapi.Verb{{Command: "/" + string(i18n.ContextLocale(ctx))}}
+}
+func (portConsole) SubmissionCapabilities() (materialRefs, interactiveRequests bool) {
+	return true, true
+}
 
 // A route calls what it needs through the service port it holds, so it
 // serves a service reached through a port that forwards nothing else. The
@@ -166,6 +175,8 @@ func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 		{"POST", "/console/questions/q/answer", `{"decision":"accept"}`, 200, `{"question":{"id":"q",`},
 		{"PUT", "/console/conversations/console%3Afresh/initialize", `{"project":"p"}`, 200, `{"ok":true}`},
 		{"DELETE", "/console/queue/e", "", 200, `{"ok":true}`},
+		{"GET", "/console/verbs", "", 200, `{"verbs":[{"command":"/en",`},
+		{"GET", "/console/queue?capabilities=1", "", 200, `{"interactive_requests":true,"material_refs":true,"queue":[],"submission_keys":true}`},
 	} {
 		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 		server.SetAdmin(adminPort{portAdmin{}})

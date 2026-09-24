@@ -1284,21 +1284,11 @@ func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"suggestions": items})
 }
 
-// localizedVerbs is a console that can name its verbs in the language of
-// the request; one that cannot lists them once for every language.
-type localizedVerbs interface {
-	VerbsFor(context.Context) []consoleapi.Verb
-}
-
 func (s *Server) consoleVerbs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	verbs := []consoleapi.Verb{}
 	if s.console != nil {
-		if localized, ok := s.console.(localizedVerbs); ok {
-			verbs = append(verbs, localized.VerbsFor(r.Context())...)
-		} else {
-			verbs = append(verbs, s.console.Verbs()...)
-		}
+		verbs = append(verbs, s.console.VerbsFor(r.Context())...)
 	}
 	writeJSON(w, map[string]any{"verbs": verbs})
 }

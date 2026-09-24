@@ -89,3 +89,10 @@ type Submissions interface {
 	Submit(context.Context, Submission) (Exchange, error)
 	SendSubmission(context.Context, Submission) (Reply, error)
 }
+
+// SubmissionCapabilities says which optional submission fields a console
+// honours, material references and interactive requests, so the page can
+// tell a hub that preserves them from one that only accepts them.
+type SubmissionCapabilities interface {
+	SubmissionCapabilities() (materialRefs, interactiveRequests bool)
+}

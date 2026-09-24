@@ -36,8 +36,8 @@ func (f *fakeConsole) Context(context.Context, string) (consoleapi.Context, erro
 func (f *fakeConsole) Setup(context.Context, string, string) (consoleapi.Setup, error) {
 	return consoleapi.Setup{Agent: "main", Harness: "codex", Instructions: "# 身份\n\n你是 Steve。", Sections: []consoleapi.Section{{Kind: "identity", Bytes: 18}}}, nil
 }
-func (f *fakeConsole) Verbs() []consoleapi.Verb {
-	return []consoleapi.Verb{{Command: "/plan", Summary: "split"}}
+func (f *fakeConsole) SubmissionCapabilities() (materialRefs, interactiveRequests bool) {
+	return false, false
 }
 func (f *fakeConsole) SendSubmission(ctx context.Context, req consoleapi.Submission) (consoleapi.Reply, error) {
 	return f.Send(ctx, req.Conversation, req.Input)

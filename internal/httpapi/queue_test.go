@@ -106,7 +106,7 @@ func TestConsoleQueueRoutes(t *testing.T) {
 	request("PATCH", "/console/queue/missing", `{"input":"late"}`, "token", http.StatusNotFound)
 	request("POST", "/console/queue/missing/steer", "", "token", http.StatusNotFound)
 	raw := request("GET", "/console/queue?conversation=console:other", "", "token", http.StatusOK)
-	if strings.TrimSpace(string(raw)) != `{"queue":[],"submission_keys":true}` {
+	if strings.TrimSpace(string(raw)) != `{"interactive_requests":false,"material_refs":false,"queue":[],"submission_keys":true}` {
 		t.Fatalf("empty queue = %s", raw)
 	}
 }
