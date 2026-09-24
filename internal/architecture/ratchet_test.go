@@ -324,6 +324,58 @@ func TestNamedInterfaceAssertionsOnlyShrink(t *testing.T) {
 	ratchet(t, "named_interface_assertions", namedInterfaceAssertions(t, root, sourceFiles(t, root)))
 }
 
+// consoleapi.Admin is implemented by admin and consumed by httpapi. A method
+// that no code outside admin and consoleapi calls is dead, yet still
+// compiles because admin.Service must satisfy the interface.
+func TestConsoleAdminMethodsAreAllCalled(t *testing.T) {
+	root := repoRoot(t)
+	contract, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "internal", "consoleapi", "types.go"), nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods := map[string]bool{}
+	ast.Inspect(contract, func(n ast.Node) bool {
+		spec, ok := n.(*ast.TypeSpec)
+		if !ok || spec.Name.Name != "Admin" {
+			return true
+		}
+		for _, field := range spec.Type.(*ast.InterfaceType).Methods.List {
+			for _, name := range field.Names {
+				methods[name.Name] = false
+			}
+		}
+		return false
+	})
+	if len(methods) == 0 {
+		t.Fatal("consoleapi.Admin declares no methods")
+	}
+	for _, file := range sourceFiles(t, root) {
+		rel, _ := filepath.Rel(root, file)
+		if dir := filepath.ToSlash(filepath.Dir(rel)); dir == "internal/admin" || dir == "internal/consoleapi" {
+			continue
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
+					if _, declared := methods[selector.Sel.Name]; declared {
+						methods[selector.Sel.Name] = true
+					}
+				}
+			}
+			return true
+		})
+	}
+	for name, called := range methods {
+		if !called {
+			t.Errorf("consoleapi.Admin.%s is called nowhere outside admin and consoleapi", name)
+		}
+	}
+}
+
 func TestInlineStateLiteralsOnlyShrink(t *testing.T) {
 	root := repoRoot(t)
 	var offenders []string
