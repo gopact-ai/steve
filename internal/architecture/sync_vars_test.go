@@ -21,8 +21,8 @@ import (
 // value.
 //
 // The analysis is syntactic: it does not see such a value behind a named
-// type of another package, or one returned by a function of another
-// package. A file that dot-imports sync or sync/atomic names those types
+// type of another package, or one returned by any function call other
+// than new, or one produced by a conversion. A file that dot-imports sync or sync/atomic names those types
 // without the package, so it is returned in dotImports, as its path from
 // root, instead of being analysed for them.
 func packageSyncVars(t *testing.T, root string, files []string) (found, dotImports []string) {
