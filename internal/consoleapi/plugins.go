@@ -57,6 +57,9 @@ type PluginUpdateRequest struct {
 }
 
 type PluginsService interface {
+	PluginPresetService
+	PluginRemovalService
+	PluginRuntimeCloseService
 	Plugins(context.Context) (PluginsView, error)
 	PreviewPlugin(context.Context, plugins.Source) (PluginPreview, error)
 	ImportPlugin(context.Context, PluginImportRequest) (pluginledger.PackageRecord, error)

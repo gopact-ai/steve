@@ -28,10 +28,10 @@ import (
 type wireConsole struct{ fakeConsole }
 
 func (*wireConsole) SubmissionCapabilities() (bool, bool) { return true, true }
-func (*wireConsole) EnqueueCommand(_ context.Context, conversation, input, commandID string, quotes []consoleapi.QuoteRef) (consoleapi.Exchange, error) {
+func (*wireConsole) Submit(_ context.Context, req consoleapi.Submission) (consoleapi.Exchange, error) {
 	return consoleapi.Exchange{
-		ID: "ack", Conversation: conversation, Input: input, Key: "client:" + commandID,
-		Quotes: quotes, State: consoleapi.ExchangeQueued, History: "private agent history",
+		ID: "ack", Conversation: req.Conversation, Input: req.Input, Key: "client:" + req.CommandID,
+		Quotes: req.Quotes, State: consoleapi.ExchangeQueued, History: "private agent history",
 		EnqueuedAt: time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC),
 	}, nil
 }
@@ -68,7 +68,8 @@ func TestConsoleWireFixture(t *testing.T) {
 	}
 	queue := capture("GET", "/console/queue?conversation="+conversation, "", server.consoleQueue)
 	ack := capture("POST", "/console/queue", `{"conversation":"console:wire","input":"wire input","command_id":"wire-command","quotes":[{"conversation":"console:source","reply_id":"r1"}]}`, server.consoleEnqueue)
-	// Optional capabilities and the nil -> [] normalization use the same route.
+	// A console honouring neither optional submission field, and the nil -> []
+	// normalization, use the same route.
 	basic := &Server{console: &fakeConsole{}}
 	empty := capture("GET", "/console/queue", "", basic.consoleQueue)
 	unwired := &Server{}

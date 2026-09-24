@@ -1,6 +1,17 @@
 package consoleapi
 
-import "github.com/gopact-ai/steve/internal/nativehistory"
+import (
+	"context"
+
+	"github.com/gopact-ai/steve/internal/nativehistory"
+)
+
+// NativeHistoryService lists the sessions a machine's coding tools recorded
+// on their own, and imports one of them as a console conversation.
+type NativeHistoryService interface {
+	NativeHistory(context.Context, string, nativehistory.Source) ([]nativehistory.Entry, error)
+	ImportNativeHistory(context.Context, string, NativeImportRequest) (ImportedSession, error)
+}
 
 type NativeImportRequest struct {
 	CommandID string `json:"command_id"`
