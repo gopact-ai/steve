@@ -136,8 +136,7 @@ type Advert struct {
 	SessionGraceMS int64 `json:"session_grace_ms,omitempty"`
 	// OwnSkills are the skills the machine's AI tools have of their own,
 	// outside Steve — under ~/.codex/skills and the like — so the owner
-	// can see them from the hub and load one. A machine that predates
-	// the field sends none.
+	// can see them from the hub and load one.
 	OwnSkills []OwnSkill `json:"own_skills,omitempty"`
 	// OwnMCP are the MCP servers the machine's coding agents have of
 	// their own, outside Steve — shape only: values of environment

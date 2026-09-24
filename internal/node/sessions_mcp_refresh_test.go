@@ -264,7 +264,8 @@ func TestMCPAuthorizationRefreshDoesNotWeakenConfigHash(t *testing.T) {
 			}
 		})
 	}
-	// A pre-refresh node ignores the optional wire field, then rejects the changed full hash.
+	// Without the proof the fresh header stays in the full hash, which then
+	// no longer matches the source: the resume fails closed.
 	raw, _ := json.Marshal(req)
 	var legacy map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &legacy)
@@ -273,7 +274,7 @@ func TestMCPAuthorizationRefreshDoesNotWeakenConfigHash(t *testing.T) {
 	var decoded nodewire.SessionRequest
 	_ = json.Unmarshal(raw, &decoded)
 	if decoded.MCPAuthorizationRefresh != nil || sessionConfigHash(decoded) == old.ConfigHash {
-		t.Fatal("older node would not fail closed")
+		t.Fatal("a request without the proof would not fail closed")
 	}
 }
 
