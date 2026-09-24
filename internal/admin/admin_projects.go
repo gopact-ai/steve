@@ -333,7 +333,10 @@ func (a *Service) ResumeProjectCopies(ctx context.Context) error {
 			}
 		}
 	}
-	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(ctx, a.Cfg); err != nil {
+	a.configStore().RLock()
+	declared := config.CloneProjects(a.Cfg)
+	a.configStore().RUnlock()
+	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(ctx, declared); err != nil {
 		return err
 	}
 	a.startProjectClonesLocked(ctx)

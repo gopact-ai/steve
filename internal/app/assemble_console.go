@@ -57,7 +57,13 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	}
 	life.Defer(func() { dashboard.Close() })
 	if environment == nil {
-		if err := desktop.PinAddress(*configPath, cfg, dashboard.URL()); err != nil {
+		// The launch probe already reads the configuration; PinAddress
+		// rewrites it in place.
+		store := boot.ConfigStore()
+		store.Lock()
+		err := desktop.PinAddress(*configPath, cfg, dashboard.URL())
+		store.Unlock()
+		if err != nil {
 			return nil, fmt.Errorf("remember desktop address: %w", err)
 		}
 	}
