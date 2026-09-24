@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -85,6 +86,11 @@ func (s *Server) handshake(socket net.Conn, claim *hubClaim) (nodewire.Hello, bo
 	// reported in the same breath: the hub bakes that URL into the session
 	// fingerprint, so it has to be known before any session opens.
 	mcp, err := s.listenMCP()
+	if errors.Is(err, errMCPClosed) {
+		// The node is shutting down and serves no connection, hub or peer.
+		slog.Info(fmt.Sprintf("steve-node: handshake from %s not served: node is shutting down", socket.RemoteAddr()))
+		return nodewire.Hello{}, false
+	}
 	if err != nil {
 		slog.Error(fmt.Sprintf("steve-node: reverse MCP listener: %v — agents here lose the send primitive", err))
 	}
