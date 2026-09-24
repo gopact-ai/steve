@@ -10,5 +10,4 @@ var (
 	_ retainedPlanDriver  = (*turn.Coordinator)(nil)
 	_ retainedProber      = (*turn.Coordinator)(nil)
 	_ retainedStopDriver  = (*turn.Coordinator)(nil)
-	_ verbLister          = (*turn.Coordinator)(nil)
 )

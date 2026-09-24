@@ -574,24 +574,6 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 	return out
 }
 
-// verbLister names the verbs a conversation can be told.
-type verbLister interface {
-	Verbs() []turn.Verb
-}
-
-// Verbs is what the console can be told, with help, from the coordinator.
-func (s *Service) Verbs() []consoleapi.Verb {
-	aware, ok := s.coordinator.(verbLister)
-	if !ok {
-		return nil
-	}
-	var out []consoleapi.Verb
-	for _, v := range aware.Verbs() {
-		out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
-	}
-	return out
-}
-
 // IsConsole says whether an anchor or conversation belongs to the page.
 func IsConsole(conversationOrAnchor string) bool {
 	return strings.HasPrefix(conversationOrAnchor, Prefix) || strings.HasPrefix(conversationOrAnchor, AnchorMark)
