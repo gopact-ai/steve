@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -54,5 +55,107 @@ func TestConfigStoreReadSeesTheGuardedConfiguration(t *testing.T) {
 	NewConfigStore(cfg).Read(func(cfg *config.Config) { seen = cfg.Gateway.HubID })
 	if seen != "hub-a" {
 		t.Fatalf("Read saw %q", seen)
+	}
+}
+
+func TestConfigStoreUpdateLeavesTheConfigurationAloneWhenSavingFails(t *testing.T) {
+	cfg := &config.Config{Nodes: map[string]config.Node{"a": {Addr: "127.0.0.1:1"}}}
+	store := NewConfigStore(cfg)
+	err := store.Update(func(c *config.Config) error {
+		c.Nodes["b"] = config.Node{Addr: "127.0.0.1:2"}
+		c.Gateway.HubID = "changed"
+		return nil
+	}, func(*config.Config) error { return errors.New("disk full") })
+	if err == nil || err.Error() != "disk full" {
+		t.Fatalf("Update = %v, want the save error", err)
+	}
+	if len(cfg.Nodes) != 1 || cfg.Gateway.HubID != "" {
+		t.Fatalf("a failed save changed the configuration: %+v", cfg)
+	}
+}
+
+func TestConfigStoreUpdateSavesNothingWhenTheChangeFails(t *testing.T) {
+	cfg := &config.Config{}
+	store := NewConfigStore(cfg)
+	refused := errors.New("refused")
+	saved := false
+	err := store.Update(func(c *config.Config) error {
+		c.Gateway.HubID = "changed"
+		return refused
+	}, func(*config.Config) error { saved = true; return nil })
+	if !errors.Is(err, refused) || saved || cfg.Gateway.HubID != "" {
+		t.Fatalf("Update = %v, saved=%v, hub=%q", err, saved, cfg.Gateway.HubID)
+	}
+}
+
+func TestConfigStoreUpdatePublishesASaveThatIsAlreadyInPlace(t *testing.T) {
+	cfg := &config.Config{}
+	store := NewConfigStore(cfg)
+	err := store.Update(func(c *config.Config) error {
+		c.Gateway.HubID = "changed"
+		return nil
+	}, func(*config.Config) error { return &config.CommittedError{Err: errors.New("sync dir")} })
+	if !config.Committed(err) {
+		t.Fatalf("Update = %v, want the committed error", err)
+	}
+	if cfg.Gateway.HubID != "changed" {
+		t.Fatal("a configuration already in place was not published")
+	}
+}
+
+// Readers keep reading the previous configuration while a save is in
+// flight; a writer working in place waits for the save to finish.
+func TestConfigStoreUpdateSavesWithoutHoldingUpReaders(t *testing.T) {
+	cfg := &config.Config{Gateway: config.Gateway{HubID: "before"}}
+	store := NewConfigStore(cfg)
+	entered, release := make(chan struct{}), make(chan struct{})
+	updated := make(chan error, 1)
+	go func() {
+		updated <- store.Update(func(c *config.Config) error {
+			c.Gateway.HubID = "after"
+			return nil
+		}, func(*config.Config) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	read := make(chan string, 1)
+	go store.Read(func(c *config.Config) { read <- c.Gateway.HubID })
+	select {
+	case hub := <-read:
+		if hub != "before" {
+			t.Errorf("a reader saw %q before the save finished", hub)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("a reader waited for the save")
+	}
+	locked := make(chan string, 1)
+	go func() {
+		store.Lock()
+		defer store.Unlock()
+		locked <- cfg.Gateway.HubID
+	}()
+	select {
+	case <-locked:
+		t.Error("a writer working in place did not wait for the save")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-updated; err != nil {
+		t.Fatal(err)
+	}
+	if hub := <-locked; hub != "after" {
+		t.Fatalf("the writer saw %q after the save", hub)
+	}
+}
+
+func TestConfigStoreUpdateWithNothingToChangeSavesNothing(t *testing.T) {
+	store := NewConfigStore(&config.Config{})
+	saved := false
+	err := store.Update(func(*config.Config) error { return errUnchanged }, func(*config.Config) error { saved = true; return nil })
+	if err != nil || saved {
+		t.Fatalf("Update = %v, saved=%v", err, saved)
 	}
 }

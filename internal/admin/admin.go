@@ -136,14 +136,32 @@ func orHubName(node string) string {
 
 // persistConfig preserves the commit boundary for callers with derived live state.
 func (a *Service) PersistConfig(candidate *config.Config) error {
-	ctx := a.Lifetime
-	if ctx == nil {
-		ctx = context.Background()
+	return a.persistConfigContext(a.lifetime(), candidate)
+}
+
+func (a *Service) lifetime() context.Context {
+	if a.Lifetime == nil {
+		return context.Background()
 	}
-	return a.persistConfigContext(ctx, candidate)
+	return a.Lifetime
 }
 
 func (a *Service) persistConfigContext(ctx context.Context, candidate *config.Config) error {
+	err := a.saveConfig(ctx, candidate)
+	if err == nil || config.Committed(err) {
+		a.Cfg.AdoptFileRevision(candidate)
+	}
+	return err
+}
+
+// updateConfig rewrites a.Cfg through its store, saving the candidate to
+// the configuration file or the cluster under ctx.
+func (a *Service) updateConfig(ctx context.Context, change func(*config.Config) error) error {
+	return a.configStore().Update(change, func(candidate *config.Config) error { return a.saveConfig(ctx, candidate) })
+}
+
+// saveConfig persists candidate without touching a.Cfg.
+func (a *Service) saveConfig(ctx context.Context, candidate *config.Config) error {
 	write := a.WriteConfig
 	if write == nil {
 		write = config.Save
@@ -156,11 +174,9 @@ func (a *Service) persistConfigContext(ctx context.Context, candidate *config.Co
 	}
 	if err != nil {
 		if config.Committed(err) {
-			a.Cfg.AdoptFileRevision(candidate)
 			return fmt.Errorf("配置已应用，目录同步失败，持久性尚未确认：%w", err)
 		}
 		return fmt.Errorf("写 %s 失败：%w", a.Path, err)
 	}
-	a.Cfg.AdoptFileRevision(candidate)
 	return nil
 }

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/gopact-ai/steve/internal/config"
@@ -11,26 +12,29 @@ import (
 // application read it. Each application owns one; two applications in one
 // process do not wait for each other.
 type ConfigStore struct {
-	mu  *sync.RWMutex
-	cfg *config.Config
+	// write is held by one writer at a time, across its save; mu only
+	// while a writer changes the configuration readers see.
+	write *sync.Mutex
+	mu    *sync.RWMutex
+	cfg   *config.Config
 }
 
 // NewConfigStore guards cfg. Everything that reads or rewrites cfg in place
 // must go through the returned store.
 func NewConfigStore(cfg *config.Config) *ConfigStore {
-	return &ConfigStore{mu: new(sync.RWMutex), cfg: cfg}
+	return &ConfigStore{write: new(sync.Mutex), mu: new(sync.RWMutex), cfg: cfg}
 }
 
 // ConfigMu guards the configuration of every Service built without a
 // ConfigStore of its own.
-var ConfigMu = &ConfigStore{mu: new(sync.RWMutex)}
+var ConfigMu = &ConfigStore{write: new(sync.Mutex), mu: new(sync.RWMutex)}
 
 // configStore is what guards a.Cfg.
 func (a *Service) configStore() *ConfigStore {
 	if a.ConfigStore != nil {
 		return a.ConfigStore
 	}
-	return &ConfigStore{mu: ConfigMu.mu, cfg: a.Cfg}
+	return &ConfigStore{write: ConfigMu.write, mu: ConfigMu.mu, cfg: a.Cfg}
 }
 
 // Read runs read with the configuration held still. read must not keep
@@ -41,9 +45,52 @@ func (s *ConfigStore) Read(read func(*config.Config)) {
 	read(s.cfg)
 }
 
-// Lock, Unlock, RLock and RUnlock guard code that works on the
-// configuration pointer directly.
-func (s *ConfigStore) Lock()    { s.mu.Lock() }
-func (s *ConfigStore) Unlock()  { s.mu.Unlock() }
+// errUnchanged, returned by an Update's change, ends the Update without
+// saving: there is nothing to save.
+var errUnchanged = errors.New("configuration unchanged")
+
+// Update rewrites the configuration: change edits a copy, save persists
+// the copy, and only then do readers see it. Readers are not held up while
+// save runs; writers run one at a time. When change or save fails the
+// configuration is left as it was, except that a save error for which
+// config.Committed holds is published anyway: that configuration is
+// already in place. Update returns the error from change or save.
+//
+// change and save must not use the store. change should only edit the
+// copy it is given; anything slow belongs in save or outside Update.
+func (s *ConfigStore) Update(change func(*config.Config) error, save func(*config.Config) error) error {
+	s.write.Lock()
+	defer s.write.Unlock()
+	// Every writer holds write, so the configuration stands still here.
+	candidate := s.cfg.Clone()
+	if err := change(candidate); err != nil {
+		if errors.Is(err, errUnchanged) {
+			return nil
+		}
+		return err
+	}
+	err := save(candidate)
+	if err != nil && !config.Committed(err) {
+		return err
+	}
+	s.mu.Lock()
+	*s.cfg = *candidate
+	s.mu.Unlock()
+	return err
+}
+
+// Lock and Unlock hold the configuration for code that rewrites it in
+// place; Lock waits for an Update in progress. RLock and RUnlock hold it
+// for code that reads the pointer directly.
+func (s *ConfigStore) Lock() {
+	s.write.Lock()
+	s.mu.Lock()
+}
+
+func (s *ConfigStore) Unlock() {
+	s.mu.Unlock()
+	s.write.Unlock()
+}
+
 func (s *ConfigStore) RLock()   { s.mu.RLock() }
 func (s *ConfigStore) RUnlock() { s.mu.RUnlock() }
