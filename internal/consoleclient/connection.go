@@ -99,8 +99,9 @@ func (gateway *connectionGateway) UnmarshalJSON(data []byte) error {
 }
 
 // readConsoleConnection reads where the console listens and its token. With
-// generated set, a configuration without a token falls back to the one the
-// Hub generated in its state directory; an explicit -token skips that read.
+// generated set, a configuration without a token for a loopback console falls
+// back to the one the Hub generated in its state directory; an explicit
+// -token skips that read.
 func readConsoleConnection(path string, generated bool) (consoleConnection, error) {
 	var config struct {
 		Gateway connectionGateway `json:"gateway"`
@@ -135,10 +136,12 @@ func readConsoleConnection(path string, generated bool) (consoleConnection, erro
 		return consoleConnection{}, fmt.Errorf("inspect cluster sidecar: %w", err)
 	}
 	token := string(config.Gateway.Token)
-	if token == "" && generated {
+	if token == "" && generated && loopbackURL(address) {
 		// Before the Hub's first start there is none. The state path is
 		// resolved as the Hub resolves it only for the same user and
-		// working directory; other deployments pass -token.
+		// working directory; other deployments pass -token. The Hub only
+		// generates a token for a loopback console, so no other address
+		// is sent it.
 		token, err = localtoken.Read(appconfig.StateDir(string(config.Gateway.StatePath)))
 		if errors.Is(err, os.ErrNotExist) {
 			token, err = "", nil
@@ -148,6 +151,11 @@ func readConsoleConnection(path string, generated bool) (consoleConnection, erro
 		}
 	}
 	return consoleConnection{URL: address, Token: token}, nil
+}
+
+func loopbackURL(address string) bool {
+	parsed, err := url.Parse(address)
+	return err == nil && sameorigin.LoopbackName(parsed.Hostname())
 }
 
 func readConsoleJSON(path string, target any) error {
