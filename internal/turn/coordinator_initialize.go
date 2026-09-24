@@ -15,9 +15,6 @@ func (c *Coordinator) InitializeConversation(ctx context.Context, conversation, 
 	if strings.TrimSpace(conversation) == "" || strings.TrimSpace(projectID) == "" || strings.TrimSpace(requester) == "" {
 		return errors.New("conversation, project and requester are required")
 	}
-	if c.projects == nil {
-		return UserError{Text: c.text.T(i18n.ProjectsDisabled)}
-	}
 	if _, ok, err := c.projects.Get(ctx, projectID); err != nil {
 		return err
 	} else if !ok {

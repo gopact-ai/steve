@@ -56,7 +56,7 @@ func (f *crashProbe) Handle(ctx context.Context, req turn.Request) (turn.Result,
 	return turn.Result{Text: "unexpected new execution", AgentID: "worker"}, err
 }
 
-func openCrashProbe(t *testing.T, dir string) *crashProbe {
+func openCrashProbe(t *testing.T, dir string, opts ...turntest.Option) *crashProbe {
 	t.Helper()
 	f := &crashProbe{}
 	var err error
@@ -81,11 +81,11 @@ func openCrashProbe(t *testing.T, dir string) *crashProbe {
 		t.Fatal(err)
 	}
 	f.attempts = attempt.New(f.book)
-	f.c = turntest.New(t, func(o *turntest.Options) {
+	f.c = turntest.New(t, append([]turntest.Option{func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout = f.book, catalog, sessions, manager, time.Minute
 		o.Tasks, o.Node, o.Attempts = f.tasks, "hub", f.attempts
 		o.ChannelOwners = map[string]string{"feishu": "owner"}
-	})
+	}}, opts...)...)
 	f.ctx, f.cancel = context.WithCancel(t.Context())
 	f.cons = console.New(f, "owner", nil)
 	f.cons.EnableRetainedRecovery(f.ctx)

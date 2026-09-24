@@ -359,16 +359,6 @@ func (c *Coordinator) SetAttempts(service *attempt.Service) {
 	c.attempts = service
 }
 
-// SetProjects wires the project store. defaultID binds a conversation that
-// has never chosen; homeID, when set, binds the owner's DM instead.
-//
-// Deprecated: set Deps.Projects, Deps.DefaultProject and Deps.HomeProject.
-func (c *Coordinator) SetProjects(store *project.Store, defaultID, homeID string) {
-	c.projects = store
-	c.defaultProject = defaultID
-	c.homeProject = homeID
-}
-
 // SetWorkspaceAttach wires what gives a project a directory on a machine
 // that has none. Without it a turn on such a machine is refused, which is
 // how a hub with no management service still behaves.

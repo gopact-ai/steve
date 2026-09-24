@@ -205,9 +205,6 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 
 // ProjectOf is the project a conversation works in, "" when none.
 func (c *Coordinator) ProjectOf(ctx context.Context, conversationID string) string {
-	if c.projects == nil {
-		return ""
-	}
 	id, _, _, err := c.projectFor(ctx, conversationID)
 	if err != nil {
 		return ""

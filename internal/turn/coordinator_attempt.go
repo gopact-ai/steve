@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -34,9 +33,6 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 		return attempt.Completion{}, nil, &lifecycle.Rejected{Completion: attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, Cause: cause}
 	}
 	if c.artifacts != nil && record.Base != "" {
-		if c.projects == nil {
-			return reject(errors.New("completion project source is not configured"))
-		}
 		p, ok, perr := c.projects.Get(ctx, record.Project)
 		if perr != nil {
 			return reject(fmt.Errorf("read completion project %s: %w", record.Project, perr))
@@ -117,7 +113,7 @@ type Disclosure struct {
 }
 
 func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Record, result Result) {
-	if c.projects == nil || result.Text == "" {
+	if result.Text == "" {
 		return
 	}
 	p, ok, err := c.projects.Get(ctx, record.Project)

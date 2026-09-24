@@ -19,9 +19,6 @@ import (
 // binding — version 1, by "default" — so a later switch is a visible
 // change from something, not from nothing.
 func (c *Coordinator) bindingFor(ctx context.Context, req Request) (project.Binding, error) {
-	if c.projects == nil {
-		return project.Binding{}, UserError{Text: c.text.T(i18n.ProjectsDisabled)}
-	}
 	binding, ok, err := c.projects.Binding(ctx, req.ConversationID)
 	if err != nil {
 		return project.Binding{}, err

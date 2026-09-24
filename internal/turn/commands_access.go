@@ -6,19 +6,17 @@ package turn
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
-	"strings"
 )
 
 // grantCmd: `/grant <project>` lists; `/grant <project> <open_id> <role>`
 // grants, for the owner or a project admin.
 func (c commands) grantCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	title := c.text.T(i18n.CardProject)
-	if c.projects == nil {
-		return Result{Title: title, Text: c.text.T(i18n.ProjectsDisabled)}, nil
-	}
 	fields := strings.Fields(rest)
 	switch len(fields) {
 	case 1:

@@ -16,9 +16,6 @@ import (
 
 // require refuses a principal whose role in the project is below want.
 func (c *Coordinator) require(ctx context.Context, projectID, principal string, want project.Role) error {
-	if c.projects == nil {
-		return nil
-	}
 	role, err := c.projects.Access(ctx, projectID, principal, c.ownerOpenID)
 	if err != nil {
 		return err
@@ -50,7 +47,7 @@ var disclosuresMu sync.Mutex
 // the owner approves it leaving. The requester gets the id; the content
 // waits in memory.
 func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Result) (Result, error) {
-	if c.projects == nil || result.Text == "" {
+	if result.Text == "" {
 		return result, nil
 	}
 	binding, ok, err := c.projects.Binding(ctx, req.ConversationID)

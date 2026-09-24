@@ -48,9 +48,6 @@ func (c *Coordinator) memoryProject(ctx context.Context, conversationID string) 
 		}
 		return r.Project
 	}
-	if c.projects == nil {
-		return ""
-	}
 	id, _, _, err := c.projectFor(ctx, conversationID)
 	if err != nil || id == "" || id == c.homeProject {
 		return ""

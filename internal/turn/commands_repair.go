@@ -7,6 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
+	"strings"
+
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -14,9 +18,6 @@ import (
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
-	"log/slog"
-	"sort"
-	"strings"
 )
 
 // probeCmd is `/fleet probe`: ask every harness on every machine what it
@@ -161,9 +162,6 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 // wrong one — a restricted project cannot be worked on an internal node,
 // which is exactly where a repair has to happen.
 func (c commands) repairProject(ctx context.Context, fix roster.Fix) (string, error) {
-	if c.projects == nil {
-		return "", fmt.Errorf("%s", c.text.T(i18n.ProjectsDisabled))
-	}
 	all, err := c.projects.List(ctx)
 	if err != nil {
 		return "", err
