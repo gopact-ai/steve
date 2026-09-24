@@ -102,7 +102,15 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 	if !b.runtime.valid(b.generation) || write.CoordinatorEpoch != b.generation.Assignment.Epoch {
 		return nil, ErrInactive
 	}
-	ctx, cancel := b.boundContext(parent)
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
+	// A caller that stops waiting after submission leaves an unknown
+	// outcome, which revokes the generation below. The caller's
+	// cancellation is not passed on: submission is bounded by the
+	// coordination ApplyTimeout (or the client's request timeout), the
+	// local apply by ApplyTimeout, and both by the generation.
+	ctx, cancel := b.boundContext(context.WithoutCancel(parent))
 	defer cancel()
 	command := coordination.AppCommand{ID: write.ID, CallerNodeID: b.generation.NodeID, CoordinatorEpoch: write.CoordinatorEpoch, ExpectedVersion: write.ExpectedVersion, WriterGeneration: b.generation.WriterGeneration, Payload: write.Payload}
 	result, err := b.runtime.propose(ctx, command)
@@ -112,7 +120,9 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 		b.runtime.revoke(b.generation, err)
 		return nil, err
 	}
-	if _, err := b.runtime.waitApplied(ctx, result.Index, result.AppVersion); err != nil {
+	applied, stop := context.WithTimeout(ctx, b.runtime.config.Coordination.ApplyTimeout)
+	defer stop()
+	if _, err := b.runtime.waitApplied(applied, result.Index, result.AppVersion); err != nil {
 		b.runtime.revoke(b.generation, err)
 		return nil, err
 	}
