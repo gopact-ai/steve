@@ -2745,6 +2745,55 @@ checks["fleet-version-drift"] = async (f) => {
     await eventually(async () => (await f.page.getByText("版本不同", { exact: true }).count()) === 0, "Drift should clear after a running process updates");
 };
 
+// A machine refused for an older node protocol is told apart from one that
+// is only offline, and only it is offered the upgrade that brings it back.
+// A machine refused for a newer protocol says the coordinator is behind.
+checks["fleet-protocol-mismatch"] = async (f) => {
+    const nodes = [
+        { name: "hub", role: "hub", up: true, version: "abc1234", harnesses: [] },
+        { name: "worker-v1", role: "node", addr: "10.0.0.7:7701", up: false, protocol_mismatch: { node: 1, hub_min: 2, hub_max: 2 }, harnesses: [],
+            last_error: "nodewire: protocol version mismatch: hub speaks v2–v2, node speaks v1–v1; upgrade steve on that machine over SSH to this build" },
+        { name: "worker-v3", role: "node", addr: "10.0.0.8:7701", up: false, protocol_mismatch: { node: 3, hub_min: 2, hub_max: 2 }, harnesses: [],
+            last_error: "nodewire: protocol version mismatch: hub speaks v2–v2, node speaks v3–v3; upgrade this hub to a build that speaks v3" },
+        { name: "worker-offline", role: "node", addr: "10.0.0.9:7701", up: false, version: "abc1234", last_error: "dial tcp 10.0.0.9:7701: connection refused", harnesses: [] },
+    ];
+    const state = { ...usageState(), hub: { node: "hub", version: "abc1234", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
+    const calls = f.calls.length;
+    const banner = f.page.getByRole("status").filter({ hasText: "1 台机器的节点协议比协调节点旧" });
+    await banner.waitFor();
+    const machines = f.page.locator("#fleet-machines");
+    assert.equal(await machines.getByText("协议不兼容", { exact: true }).count(), 2, "Both refused machines are marked, the offline one is not");
+    await f.page.screenshot({ path: path.join(output, "fleet-protocol-mismatch.png"), fullPage: true });
+    const drawer = async (name) => {
+        await machines.getByRole("row", { name: new RegExp(name) }).click();
+        const opened = f.page.getByRole("dialog", { name, exact: true }); await opened.waitFor();
+        return opened;
+    };
+    const close = async (opened) => { await opened.getByRole("button", { name: "关闭", exact: true }).click(); await opened.waitFor({ state: "detached" }); };
+    let opened = await drawer("worker-v1");
+    await opened.getByText(/节点协议是 v1，协调节点接受 v2/).waitFor();
+    await opened.getByRole("button", { name: "升级到 abc1234", exact: true }).waitFor();
+    await f.page.screenshot({ path: path.join(output, "fleet-protocol-mismatch-drawer.png") });
+    await close(opened);
+    opened = await drawer("worker-v3");
+    await opened.getByText(/把协调节点升级到支持 v3 的版本/).waitFor();
+    assert.equal(await opened.getByRole("button", { name: /^升级到/ }).count(), 0, "A machine newer than the coordinator is not offered an upgrade");
+    await close(opened);
+    opened = await drawer("worker-offline");
+    await opened.getByText("dial tcp 10.0.0.9:7701: connection refused", { exact: true }).waitFor();
+    assert.equal(await opened.getByRole("button", { name: /^升级到/ }).count(), 0, "An offline machine is not offered an upgrade");
+    assert.equal(await opened.getByText(/节点协议/).count(), 0, "An offline machine is not said to be refused for its protocol");
+    await close(opened);
+    await banner.getByRole("button", { name: "全部升级", exact: true }).click();
+    const upgrade = f.page.getByRole("dialog", { name: "升级机器", exact: true });
+    await upgrade.getByText("worker-v1", { exact: true }).waitFor();
+    for (const other of ["worker-v3", "worker-offline"]) assert.equal(await upgrade.getByText(other, { exact: true }).count(), 0, `${other} is not upgraded from the banner`);
+    await upgrade.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(f.calls.length, calls, "Reading the fleet and opening the upgrade must not start one");
+};
+
 async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";

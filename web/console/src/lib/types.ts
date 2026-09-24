@@ -15,8 +15,12 @@ export interface AbilitySnapshot {
 export interface Node {
     name: string; display_name?: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string; snapshot?: AbilitySnapshot;
-    features?: string[]; health?: Health; projects_root?: string;
+    features?: string[]; health?: Health; projects_root?: string; protocol_mismatch?: ProtocolMismatch;
 }
+// ProtocolMismatch is set on a machine the hub refused because they share no
+// node protocol version: the version the machine speaks, and the range the
+// hub speaks.
+export interface ProtocolMismatch { node: number; hub_min: number; hub_max: number }
 export interface Activity {
     agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;
     tool?: string; detail?: string; since: string; at: string;

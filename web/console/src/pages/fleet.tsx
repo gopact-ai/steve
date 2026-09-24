@@ -379,8 +379,30 @@ function MachineLabels({ items }: { items: string[] }) {
     );
 }
 
+// protocolBehind is a machine the hub refused for speaking only node
+// protocol versions older than the hub's: upgrading it to this build
+// brings it back.
+function protocolBehind(n: NodeT): boolean {
+    const m = n.protocol_mismatch;
+    return n.role !== "hub" && !!m && m.node < m.hub_min;
+}
+
+// protocolNote says why a machine was refused for its node protocol and
+// which side has to be upgraded: the machine when it is older, the
+// coordinator when the machine is newer.
+function protocolNote(n: NodeT, hubVersion: string, tr: Translator): string | undefined {
+    const m = n.protocol_mismatch;
+    if (!m) return undefined;
+    const hub = m.hub_min === m.hub_max ? `v${m.hub_max}` : `v${m.hub_min}–v${m.hub_max}`;
+    return m.node < m.hub_min
+        ? tr("fleet.protocolBehind", { node: `v${m.node}`, hub, version: hubVersion })
+        : tr("fleet.protocolAhead", { node: `v${m.node}`, hub });
+}
+
 function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: NodeT; hubVersion?: string; onUpgrade: (n: NodeT) => void; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
+    const note = protocolNote(n, hubVersion || "—", tr);
+    const upgradable = n.role !== "hub" && !!hubVersion && ((n.up && !!n.version && n.version !== hubVersion) || protocolBehind(n));
     const [enrolling, setEnrolling] = useState(false);
     const h = n.health;
     const [editing, setEditing] = useState(false);
@@ -403,7 +425,7 @@ function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: No
     return (
         <Drawer title={nodeLabel(n)} badges={<>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</Badge>
-                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="text-error-primary">{n.last_error}</div>}</>} actions={<>{n.role !== "hub" && n.up && n.version && hubVersion && n.version !== hubVersion && <Button size="sm" color="secondary" onClick={() => onUpgrade(n)}>{tr("fleet.upgradeTo", { version: hubVersion })}</Button>}{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
+                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div><Mono className="text-tertiary">{n.name}</Mono></div>}{note && <div className="text-warning-primary">{note}</div>}{!n.up && n.last_error && <div className="text-error-primary">{n.last_error}</div>}</>} actions={<>{upgradable && <Button size="sm" color="secondary" onClick={() => onUpgrade(n)}>{tr("fleet.upgradeTo", { version: hubVersion })}</Button>}{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
                 {renaming ? (
                     <form className="flex flex-col gap-2 rounded-lg border border-secondary p-3" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
                         <Input label={tr("fleet.displayName")} hint={tr("fleet.displayNameHint")} value={nameDraft} onChange={setNameDraft} maxLength={64} isDisabled={nameBusy} autoFocus />
@@ -518,6 +540,7 @@ export function FleetPage() {
     const setTab = (value: FleetTab) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
     const up = snap.nodes.filter((n) => n.up).length;
     const versionDrift = snap.nodes.filter((n) => n.up && n.version && snap.hub.version && n.version !== snap.hub.version);
+    const refusedBehind = snap.nodes.filter(protocolBehind);
     const [adding, setAdding] = useState(false);
     const [upgrading, setUpgrading] = useState<NodeT[] | null>(null);
     const [sshOpen, setSSHOpen] = useState(false);
@@ -549,6 +572,7 @@ export function FleetPage() {
             {tab === "coordination" && <><CoordinationPanel />{!coordination?.enabled && <p className="text-sm text-tertiary">{tr("coord.unavailable")}</p>}</>}
             {tab === "machines" && <>
             {versionDrift.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary"><span className="min-w-0 flex-1">{tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" })}</span><Button size="sm" color="secondary" onClick={() => setUpgrading(versionDrift.filter((n) => n.role !== "hub"))}>{tr("fleet.upgradeAll")}</Button></div>}
+            {refusedBehind.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary"><span className="min-w-0 flex-1">{tr("fleet.protocolBehindHint", { count: refusedBehind.length, version: snap.hub.version || "—" })}</span><Button size="sm" color="secondary" onClick={() => setUpgrading(refusedBehind)}>{tr("fleet.upgradeAll")}</Button></div>}
             <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title={tr("fleet.noMachines")}>{tr("fleet.noMachinesHint")}</Nothing> : (
@@ -578,7 +602,7 @@ export function FleetPage() {
                                             <span className="truncate font-mono text-xs text-tertiary" title={[n.host, ...(n.ips || [])].filter(Boolean).join("\n")}>{n.host && n.host !== n.name ? n.host : (n.ips || [])[0] || "—"}</span>
                                         </div>
                                     </Table.Cell>
-                                    <Table.Cell><span className="block truncate font-mono text-xs text-tertiary" title={n.version}>{n.version || "—"}</span>{n.up && n.version && snap.hub.version && n.version !== snap.hub.version && <span className="text-xs text-warning-primary">{tr("fleet.versionDrift")}</span>}</Table.Cell>
+                                    <Table.Cell><span className="block truncate font-mono text-xs text-tertiary" title={n.version}>{n.version || "—"}</span>{n.up && n.version && snap.hub.version && n.version !== snap.hub.version && <span className="text-xs text-warning-primary">{tr("fleet.versionDrift")}</span>}{n.protocol_mismatch && <span className="text-xs text-warning-primary" title={protocolNote(n, snap.hub.version || "—", tr)}>{tr("fleet.protocolMismatch")}</span>}</Table.Cell>
                                     <Table.Cell><span className="text-xs text-tertiary">{n.os ? `${n.os} / ${n.arch}` : "—"}</span></Table.Cell>
                                     <Table.Cell><span title={tr("fleet.levelHint")}>{levelName(n.level || "internal", locale)}</span></Table.Cell>
                                     <Table.Cell>
