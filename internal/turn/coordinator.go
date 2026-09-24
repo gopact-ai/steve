@@ -247,8 +247,10 @@ type Deps struct {
 	Store     *state.Store
 	Assembler *capability.Assembler
 	Runtime   Runtime
-	// Timeout bounds a prompt; TimeoutSource, when set, is read instead
-	// as each prompt starts.
+	// Timeout is how long a turn may go without progress before it is
+	// cancelled, and the deadline of a /model command and of reading an
+	// agent's selectors. TimeoutSource, when set, is read in its place
+	// each time one of them starts.
 	Timeout       time.Duration
 	TimeoutSource func() time.Duration
 	// AutoResolveSource, when set, decides at each sweep whether a merge
