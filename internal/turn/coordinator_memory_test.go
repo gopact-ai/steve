@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -198,5 +199,27 @@ func TestMemoryProjectScopeInsideAnExecutionIsTheAttemptsProject(t *testing.T) {
 	}
 	if scope, err := rememberInProject(t, inAttempt(t, c, "on-home", "home"), c); err == nil {
 		t.Fatalf("attempt on home remembered into %v", scope)
+	}
+}
+
+func TestProjectMemoryIsInjectedForTheOwnerInPrivateWhenTheProjectHasAny(t *testing.T) {
+	c := memoryCoordinator(t)
+	bind(t, c, "chat", "beta")
+	owner := Request{ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}
+	if got := c.projectMemory(t.Context(), "chat", owner); got != nil {
+		t.Fatalf("empty project injected %+v", got)
+	}
+	seedFact(t, c, memory.ProjectScope("beta"), "tests run with -race")
+	got := c.projectMemory(t.Context(), "chat", owner)
+	if len(got) != 1 || got[0].Name != "memory:project:beta" || !strings.Contains(got[0].Memory, "tests run with -race") {
+		t.Fatalf("owner in private got %+v", got)
+	}
+	for name, req := range map[string]Request{
+		"owner in a group": {ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatGroup},
+		"guest in private": {ConversationID: "chat", SenderOpenID: "guest", ChatType: protocol.ChatP2P},
+	} {
+		if got := c.projectMemory(t.Context(), "chat", req); got != nil {
+			t.Fatalf("%s got %+v", name, got)
+		}
 	}
 }
