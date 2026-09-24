@@ -46,6 +46,7 @@ func (p *unstartedProbe) ResumeRetainedChat(ctx context.Context, id string, req 
 }
 
 type textChannel struct {
+	nopChannel
 	mu    sync.Mutex
 	texts []string
 }

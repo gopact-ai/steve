@@ -65,7 +65,7 @@ func (p *slowGatewayRecovery) Handle(ctx context.Context, req turn.Request) (tur
 	}
 }
 
-type schedulingChannel struct{}
+type schedulingChannel struct{ textOnlyGatewayChannel }
 
 func (*schedulingChannel) Reply(context.Context, string, string) error { return nil }
 func (*schedulingChannel) ReplyText(_ context.Context, _ string, text string) (string, error) {

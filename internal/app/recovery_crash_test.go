@@ -259,7 +259,10 @@ func TestStartupBoundCompletionDoesNotCreateContinuation(t *testing.T) {
 	}
 }
 
-type crashGatewayChannel struct{ replies atomic.Int32 }
+type crashGatewayChannel struct {
+	textOnlyGatewayChannel
+	replies atomic.Int32
+}
 
 func (*crashGatewayChannel) Reply(context.Context, string, string) error {
 	return errors.New("unexpected non-receipted reply")

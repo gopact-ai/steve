@@ -95,6 +95,7 @@ func TestCardProgressChangeDetection(t *testing.T) {
 // All I/O stays in memory. synctest advances the real three-second scheduler
 // without sleeping in wall time or changing a package-global interval.
 type progressCards struct {
+	nopChannel
 	patches chan []byte
 }
 
