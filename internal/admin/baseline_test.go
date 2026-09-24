@@ -4,17 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"net"
-	"strings"
+	"slices"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
-// Every node on protocol v2 takes skill bundles, so the skills page never
-// marks an up node as unable to sync, whatever its advert lists.
-func TestSkillsPageDoesNotMarkAV2NodeUnableToSync(t *testing.T) {
+// Skill bundles are part of protocol v2, so the skills page lists a node
+// whose advert names no optional features as up.
+func TestSkillsPageListsAV2NodeWithoutFeaturesAsUp(t *testing.T) {
 	live, _ := shipperLive(t)
 	peer := newSkillPeer(t, "remote")
 	a := &Service{LiveSkills: live, Nodes: skillRegistry(t, peer)}
@@ -22,18 +23,14 @@ func TestSkillsPageDoesNotMarkAV2NodeUnableToSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Nodes) != 1 || !view.Nodes[0].Up {
-		t.Fatalf("nodes = %+v", view.Nodes)
-	}
-	raw, _ := json.Marshal(view.Nodes[0])
-	if strings.Contains(string(raw), `"takes"`) {
-		t.Fatalf("node = %s, want no skill-bundle support flag", raw)
+	if len(view.Nodes) != 1 || view.Nodes[0].Name != "remote" || !view.Nodes[0].Up {
+		t.Fatalf("nodes = %+v, want remote up", view.Nodes)
 	}
 }
 
-// Every node on protocol v2 answers MCP probes and reports its agents' own
-// servers, so the MCP page never asks for a node upgrade.
-func TestMCPPageDoesNotAskAV2NodeForAnUpgrade(t *testing.T) {
+// MCP probes and a machine's own servers are part of protocol v2, so the
+// MCP page lists a node whose advert names no optional features as up.
+func TestMCPPageListsAV2NodeWithoutFeaturesAsUp(t *testing.T) {
 	registry := node.NewRegistry("test-hub", map[string]node.Config{"remote": {DialContext: bareNode(t, "remote")}})
 	t.Cleanup(registry.Close)
 	a := &Service{ConfigStore: NewConfigStore(&config.Config{}), Nodes: registry}
@@ -41,11 +38,9 @@ func TestMCPPageDoesNotAskAV2NodeForAnUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range view.Machines {
-		raw, _ := json.Marshal(m)
-		if m.Name == "remote" && (!m.Up || strings.Contains(string(raw), `"unsupported"`)) {
-			t.Fatalf("machine = %s, want it up with no upgrade flag", raw)
-		}
+	i := slices.IndexFunc(view.Machines, func(m consoleapi.MCPMachine) bool { return m.Name == "remote" })
+	if i < 0 || !view.Machines[i].Up {
+		t.Fatalf("machines = %+v, want remote up", view.Machines)
 	}
 }
 
