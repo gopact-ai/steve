@@ -264,12 +264,43 @@ func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsDeferredRenewalMarker(t *testing.T) {
+// An older state document may carry the renew marker on a conversation.
+// It opens with the marker dropped, and the next write leaves it out.
+func TestOpenDropsDeferredRenewalMarker(t *testing.T) {
 	book := testLedger(t)
-	if err := book.Document("state").Save([]byte(`{"conversations":{"chat":{"active_agent":"","sessions":{},"renew":{"grok":true}}}}`)); err != nil {
+	doc := book.Document("state")
+	if err := doc.Save([]byte(`{"conversations":{"chat":{"active_agent":"grok","sessions":{},"renew":{"grok":true}}}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenLedger(book); err == nil || !strings.Contains(err.Error(), `unknown field "renew"`) {
-		t.Fatalf("renew marker = %v", err)
+	store, err := OpenLedger(book)
+	if err != nil {
+		t.Fatalf("open with renew marker: %v", err)
+	}
+	if got := store.Conversation("chat").ActiveAgent; got != "grok" {
+		t.Fatalf("active agent = %q, want the stored conversation", got)
+	}
+	if err := store.SetActiveAgent("chat", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := doc.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "renew") {
+		t.Fatalf("rewritten state still carries renew:\n%s", raw)
+	}
+	if _, err := OpenLedger(book); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+}
+
+// Fields the state document does not define are still refused.
+func TestOpenRejectsUnknownConversationField(t *testing.T) {
+	book := testLedger(t)
+	if err := book.Document("state").Save([]byte(`{"conversations":{"chat":{"active_agent":"","sessions":{},"renwe":{}}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenLedger(book); err == nil || !strings.Contains(err.Error(), `unknown field "renwe"`) {
+		t.Fatalf("unknown conversation field = %v", err)
 	}
 }

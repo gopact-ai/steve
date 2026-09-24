@@ -106,18 +106,33 @@ func OpenLedger(l *ledger.Ledger) (*Store, error) {
 	if !ok {
 		return s, nil
 	}
+	var stored storedData
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&s.data); err != nil {
+	if err := decoder.Decode(&stored); err != nil {
 		return nil, fmt.Errorf("parse state: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse state: expected one JSON object")
 	}
-	if s.data.Conversations == nil {
-		s.data.Conversations = map[string]Conversation{}
+	s.data = stored.data
+	s.data.Conversations = make(map[string]Conversation, len(stored.Conversations))
+	for id, conversation := range stored.Conversations {
+		s.data.Conversations[id] = conversation.Conversation
 	}
 	return s, nil
+}
+
+// storedData is data as a state document holds it. Older state documents
+// may carry renew on a conversation; it is dropped.
+type storedData struct {
+	data
+	Conversations map[string]storedConversation `json:"conversations"`
+}
+
+type storedConversation struct {
+	Conversation
+	Renew json.RawMessage `json:"renew,omitempty"`
 }
 
 func (s *Store) Conversation(id string) Conversation {
