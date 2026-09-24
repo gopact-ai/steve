@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -35,12 +36,17 @@ type fakeManager struct {
 	fail     error
 	failOnce bool
 	mcpHTTP  bool
-	// openDelay is how long OpenSession takes: a slow session start.
-	openDelay time.Duration
+	// opening, when set, receives once OpenSession is reached; OpenSession
+	// then waits until proceed is closed.
+	opening chan struct{}
+	proceed chan struct{}
 }
 
 func (m *fakeManager) OpenSession(_ context.Context, at harness.Placement, upstreamID, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
-	time.Sleep(m.openDelay)
+	if m.opening != nil {
+		m.opening <- struct{}{}
+		<-m.proceed
+	}
 	if m.fail != nil {
 		err := m.fail
 		if m.failOnce {
@@ -187,25 +193,130 @@ func TestCoordinatorTimeoutDoesNotAbortSharedProcess(t *testing.T) {
 	}
 }
 
+// manualClock is a prompt idle clock whose time passes only in advance.
+type manualClock struct {
+	context.Context
+	done    chan struct{}
+	limit   time.Duration
+	mu      sync.Mutex
+	err     error
+	silence time.Duration
+}
+
+// manualClocks installs manual idle clocks on c and hands each one created
+// to the test.
+func manualClocks(c *Coordinator) <-chan *manualClock {
+	clocks := make(chan *manualClock, 1)
+	c.idleClock = func(parent context.Context, d time.Duration) (idle.Context, func(), func()) {
+		clock := &manualClock{Context: parent, done: make(chan struct{}), limit: d}
+		context.AfterFunc(parent, func() { clock.finish(parent.Err()) })
+		clocks <- clock
+		return clock, func() { clock.finish(context.Canceled) }, clock.touch
+	}
+	return clocks
+}
+
+func (c *manualClock) Done() <-chan struct{} { return c.done }
+func (c *manualClock) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+func (c *manualClock) Pause()  {}
+func (c *manualClock) Resume() {}
+
+func (c *manualClock) touch() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.silence = 0
+}
+
+// advance passes d of silence; the clock expires once the silence since the
+// last touch reaches its limit.
+func (c *manualClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.silence += d
+	expired := c.silence >= c.limit
+	c.mu.Unlock()
+	if expired {
+		c.finish(context.DeadlineExceeded)
+	}
+}
+
+func (c *manualClock) finish(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err == nil {
+		c.err = err
+		close(c.done)
+	}
+}
+
+func receive[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(waitDeadline):
+		t.Fatalf("timed out waiting for %s", what)
+		var zero T
+		return zero
+	}
+}
+
 // The silence the prompt timeout measures is the agent's: preparation
 // before the prompt is sent does not use up the agent's allowance.
 func TestPromptSilenceIsMeasuredFromThePromptNotFromPreparation(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
-	// Preparation (the delayed open plus the before-snapshot, which takes
-	// up to a second or two on a loaded machine) and the agent's silent
-	// answer each stay inside the limit; together they exceed it.
-	const limit = 5 * time.Second
-	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}, openDelay: 2500 * time.Millisecond}
+	const limit = time.Minute
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}, opening: make(chan struct{}, 1), proceed: make(chan struct{})}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, limit)
+	clocks := manualClocks(coordinator)
+	done := make(chan error, 1)
 	go func() {
-		<-runner.started
-		time.Sleep(3 * time.Second)
-		runner.stop.Do(func() { close(runner.done) })
+		_, err := handle(coordinator, t.Context(), "slow start")
+		done <- err
 	}()
-	if _, err := handle(coordinator, t.Context(), "slow start"); err != nil {
+	clock := receive(t, clocks, "the prompt's idle clock")
+	receive(t, manager.opening, "the session to open")
+	// Preparation and the agent's silent answer each stay inside the
+	// limit; together they exceed it.
+	clock.advance(limit * 3 / 4)
+	close(manager.proceed)
+	receive(t, runner.started, "the prompt")
+	clock.advance(limit * 3 / 4)
+	runner.stop.Do(func() { close(runner.done) })
+	if err := receive(t, done, "the turn"); err != nil {
 		t.Fatalf("preparation time was charged to the agent's silence: %v", err)
+	}
+}
+
+// Preparation runs under the prompt timeout: a turn whose preparation
+// alone outlasts it ends without sending the prompt.
+func TestPreparationOutlastingPromptTimeoutEndsTheTurn(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.OpenLedger(testLedger(t))
+	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
+	const limit = time.Minute
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}, opening: make(chan struct{}, 1), proceed: make(chan struct{})}
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, limit)
+	clocks := manualClocks(coordinator)
+	done := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "stuck start")
+		done <- err
+	}()
+	clock := receive(t, clocks, "the prompt's idle clock")
+	receive(t, manager.opening, "the session to open")
+	clock.advance(limit)
+	close(manager.proceed)
+	if err := receive(t, done, "the turn"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("preparation outlasting the prompt timeout: %v", err)
+	}
+	if got := runner.seen(); len(got) != 0 {
+		t.Fatalf("the prompt was sent after preparation outlasted the timeout: %v", got)
 	}
 }
 

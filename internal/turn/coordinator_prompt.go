@@ -20,7 +20,6 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
-	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -55,7 +54,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// not of work, so a turn that awaits other agents is not cut short
 	// while they are still answering. Preparation runs under it once;
 	// started resets it when the prompt is sent.
-	idleCtx, expire, touch := idle.WithTimeout(turnCtx, c.promptTimeout())
+	idleCtx, expire, touch := c.newIdleClock(turnCtx, c.promptTimeout())
 	var ctx context.Context = idleCtx
 	defer expire()
 	if c.RegisterIdle != nil {
@@ -91,7 +90,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	started := time.Now()
 	// Progress is stamped with the agent the turn runs as, and the last
 	// report's usage is what the task's attempt is charged.
-	spent := &turnSpend{touch: touch}
+	spent := &turnSpend{resetIdle: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, selected.ID)
 	t.req, t.spent, t.tracked, t.binding, t.workspace = req, spent, tracked, binding, workspace
 	var settled bool
@@ -354,16 +353,22 @@ type turnSpend struct {
 	mu    sync.Mutex
 	usage view.Usage
 	used  string
-	// touch resets the turn's idle clock: every report is a sign of life.
-	touch func()
+	// resetIdle resets the turn's idle clock; nil when the turn has none.
+	resetIdle func()
+}
+
+// touch resets the turn's idle clock, if it has one: every report is a
+// sign of life.
+func (t *turnSpend) touch() {
+	if t.resetIdle != nil {
+		t.resetIdle()
+	}
 }
 
 func (t *turnSpend) wrap(next func(view.Progress), agentID string) func(view.Progress) {
 	return func(p view.Progress) {
 		p.Agent = agentID
-		if t.touch != nil {
-			t.touch()
-		}
+		t.touch()
 		t.mu.Lock()
 		t.usage = p.Usage
 		if p.Settings.Model != "" {

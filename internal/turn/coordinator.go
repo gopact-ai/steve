@@ -173,6 +173,9 @@ type coordinatorState struct {
 	assembler   *capability.Assembler
 	runtime     runtime
 	timeout     time.Duration
+	// idleClock replaces idle.WithTimeout for a prompt's idle clock when
+	// set. Only tests in this package set it.
+	idleClock func(context.Context, time.Duration) (idle.Context, func(), func())
 	// Runtime policy sources are installed before serving and read only at
 	// operation boundaries; a saved setting never interrupts a live turn.
 	TimeoutSource     func() time.Duration
@@ -321,6 +324,13 @@ func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
 // SetAutoResolve decides whether a landing that stops at a merge conflict
 // is handed to an agent without anyone asking.
 func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
+
+func (c *Coordinator) newIdleClock(parent context.Context, d time.Duration) (idle.Context, func(), func()) {
+	if c.idleClock != nil {
+		return c.idleClock(parent, d)
+	}
+	return idle.WithTimeout(parent, d)
+}
 
 func (c *Coordinator) promptTimeout() time.Duration {
 	if c.TimeoutSource != nil {
