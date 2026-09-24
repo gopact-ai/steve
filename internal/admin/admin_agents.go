@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"maps"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 )
@@ -18,27 +18,20 @@ import (
 func (a *Service) changeAgents(change func(map[string]config.Agent) error) error {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	a.configStore().Lock()
-	defer a.configStore().Unlock()
-	candidate := *a.Cfg
-	candidate.Agents = maps.Clone(a.Cfg.Agents)
-	if candidate.Agents == nil {
-		candidate.Agents = map[string]config.Agent{}
-	}
-	if err := change(candidate.Agents); err != nil {
+	var prepared *agent.Catalog
+	return a.updateConfigThen(a.lifetime(), func(c *config.Config) error {
+		if c.Agents == nil {
+			c.Agents = map[string]config.Agent{}
+		}
+		if err := change(c.Agents); err != nil {
+			return err
+		}
+		var err error
+		prepared, err = c.AgentCatalog()
 		return err
-	}
-	prepared, err := candidate.AgentCatalog()
-	if err != nil {
-		return err
-	}
-	saveErr := a.PersistConfig(&candidate)
-	if saveErr != nil && !config.Committed(saveErr) {
-		return saveErr
-	}
-	a.Catalog.Publish(prepared)
-	a.Cfg.Agents = candidate.Agents
-	return saveErr
+	}, func(*config.Config) {
+		a.Catalog.Publish(prepared)
+	})
 }
 
 // UpdateAgent preserves fields that are not editable through this endpoint.

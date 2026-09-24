@@ -201,3 +201,24 @@ func TestInvalidAgentCandidateDoesNotReachPersistence(t *testing.T) {
 		t.Fatalf("invalid candidate reached persistence: %v", err)
 	}
 }
+
+// The configuration can be read while an agent change is being saved.
+func TestConfigurationReadDuringAnAgentSave(t *testing.T) {
+	admin := agentAdminFixture(t)
+	settings := NewSettings(admin, admin.Cfg)
+	finished := readsDuringSave(t, admin, func() error {
+		return admin.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "new", Harness: "mock"})
+	}, func() error {
+		_, err := settings.Settings(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the configuration waited for an agent save")
+	}
+	if _, ok := admin.Cfg.Agents["new"]; !ok {
+		t.Fatal("the saved agent was not published")
+	}
+	if _, ok := admin.Catalog.Resolve("new"); !ok {
+		t.Fatal("the saved agent was not published to the catalog")
+	}
+}
