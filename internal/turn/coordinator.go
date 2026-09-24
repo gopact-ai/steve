@@ -301,40 +301,27 @@ func New(deps Deps) (*Coordinator, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("turn: missing dependencies: %s", strings.Join(missing, ", "))
 	}
-	c := newCore(deps.Catalog, deps.Store, deps.Assembler, deps.Runtime, deps.Timeout)
-	c.text = deps.Text
-	c.ownerOpenID, c.home = deps.Owner, deps.Home
-	if dir, ok := deps.Home.(home.Dir); ok {
-		c.homePath = dir.Path
-	}
 	owners, err := channelOwners(deps.ChannelOwners)
 	if err != nil {
 		return nil, fmt.Errorf("turn: %w", err)
 	}
-	c.channelOwners = owners
-	c.skills = deps.Skills
-	c.projects, c.defaultProject, c.homeProject = deps.Projects, deps.DefaultProject, deps.HomeProject
-	c.memory = deps.Memory
-	c.attempts = deps.Attempts
-	c.artifacts = deps.Artifacts
-	c.intents = deps.Intents
-	c.executions = deps.Executions
-	c.tasks, c.node = deps.Tasks, deps.Node
-	c.schedules = deps.Schedules
-	return c, nil
-}
-
-// newCore builds a Coordinator with only its core dependencies. Everything
-// else stays nil until set.
-func newCore(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {
+	homePath := ""
+	if dir, ok := deps.Home.(home.Dir); ok {
+		homePath = dir.Path
+	}
 	return &Coordinator{
-		text: i18n.New(i18n.LocaleZH),
+		text:        deps.Text,
+		ownerOpenID: deps.Owner,
 		coordinatorState: &coordinatorState{
-			catalog: catalog, store: store, assembler: assembler, runtime: runtime, timeout: timeout,
+			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime, timeout: deps.Timeout,
+			channelOwners: owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
+			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
+			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
+			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},
-	}
+	}, nil
 }
 
 // placement is where this agent's process belongs. It comes from the
