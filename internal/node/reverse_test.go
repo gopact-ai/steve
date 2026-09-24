@@ -258,24 +258,51 @@ func v1Node(t *testing.T, socket net.Conn) {
 }
 
 // A node on protocol v1 is refused at the handshake, whatever features it
-// lists, and the hub says which versions met and how to fix it.
+// lists, and the hub says once which node it was, which versions met and
+// how to fix it.
 func TestHubRefusesAProtocolV1Node(t *testing.T) {
-	cfg := Config{Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
+	r := NewRegistry("hub", map[string]Config{"old": {Addr: "old.example:7701", Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
 		hub, node := net.Pipe()
 		go v1Node(t, node)
 		return hub, nil
+	}}})
+	t.Cleanup(r.Close)
+	_, err := r.connect(t.Context(), "old")
+	if !errors.Is(err, nodewire.ErrVersionMismatch) {
+		t.Fatalf("connect = %v, want a version mismatch", err)
+	}
+	if n := strings.Count(err.Error(), `"old"`); n != 1 {
+		t.Fatalf("connect = %v, names the node %d times, want once", err, n)
+	}
+	for _, want := range []string{"node speaks v1–v1", "upgrade steve on that machine", "over SSH"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("connect = %v, want it to say %q", err, want)
+		}
+	}
+}
+
+// A node refused for speaking only versions newer than the hub's is not
+// told to upgrade: the hub is the one behind.
+func TestHubRefusedByANewerNodeAdvisesItsOwnUpgrade(t *testing.T) {
+	newer := nodewire.ProtocolVersion + 1
+	cfg := Config{Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
+		hub, node := net.Pipe()
+		go func() {
+			defer node.Close()
+			if _, err := nodewire.ReadFrame(node); err != nil {
+				return
+			}
+			payload, _ := json.Marshal(nodewire.Advert{Version: newer, Refused: fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", nodewire.ProtocolMin, nodewire.ProtocolVersion, newer, newer)})
+			_ = nodewire.WriteFrame(node, nodewire.Frame{Kind: nodewire.KindOpen, Payload: payload})
+		}()
+		return hub, nil
 	}}
-	c, err := dial(t.Context(), "old", "hub", cfg, nil)
+	c, err := dial(t.Context(), "new", "hub", cfg, nil)
 	if c != nil {
 		c.close()
 	}
-	if !errors.Is(err, nodewire.ErrVersionMismatch) {
-		t.Fatalf("dial = %v, want a version mismatch", err)
-	}
-	for _, want := range []string{`node "old"`, "node speaks v1–v1", "upgrade", "over SSH"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("dial = %v, want it to say %q", err, want)
-		}
+	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), fmt.Sprintf("upgrade this hub to a build that speaks v%d", newer)) || strings.Contains(err.Error(), "over SSH") {
+		t.Fatalf("dial = %v, want the hub's own upgrade advised", err)
 	}
 }
 
