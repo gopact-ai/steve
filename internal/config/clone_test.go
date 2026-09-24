@@ -126,3 +126,44 @@ func TestCloneKeepsEmptyAndAbsentCollectionsApart(t *testing.T) {
 		t.Errorf("clone of a zero configuration differs:\n%+v", clone)
 	}
 }
+
+// unexportedReferences names every unexported field reachable from t that
+// is not a plain value. fill cannot set such a field, so the tests above
+// would not notice a clone that shares it.
+func unexportedReferences(t reflect.Type, path string, seen map[reflect.Type]bool) []string {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return unexportedReferences(t.Elem(), path+"[]", seen)
+	case reflect.Map:
+		return append(unexportedReferences(t.Key(), path+"{key}", seen), unexportedReferences(t.Elem(), path+"{}", seen)...)
+	case reflect.Struct:
+		if seen[t] {
+			return nil
+		}
+		seen[t] = true
+		var out []string
+		for i := range t.NumField() {
+			field := t.Field(i)
+			if !field.IsExported() {
+				switch field.Type.Kind() {
+				case reflect.Bool, reflect.String,
+					reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+					reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+					reflect.Float32, reflect.Float64:
+				default:
+					out = append(out, path+"."+field.Name)
+				}
+				continue
+			}
+			out = append(out, unexportedReferences(field.Type, path+"."+field.Name, seen)...)
+		}
+		return out
+	}
+	return nil
+}
+
+func TestConfigurationKeepsOnlyPlainValuesUnexported(t *testing.T) {
+	if paths := unexportedReferences(reflect.TypeFor[Config](), "Config", map[reflect.Type]bool{}); len(paths) > 0 {
+		t.Fatalf("unexported fields the clone tests cannot fill: %v", paths)
+	}
+}
