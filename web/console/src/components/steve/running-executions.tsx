@@ -62,8 +62,8 @@ function Leases({ a }: { a: Attempt }) {
 }
 
 // AdmissionBadge says who had the last word before the attempt ran and
-// on which revision: the node itself, the hub, the hub's cached snapshot,
-// or nobody (an older node).
+// on which revision: the node itself, the hub, or the hub's cached
+// snapshot.
 function AdmissionBadge({ a }: { a: Attempt }) {
     const { t: tr } = useI18n();
     const adm = a.admission;
