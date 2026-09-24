@@ -301,19 +301,22 @@ func TestNewReadsRuntimePolicyFromItsSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixed.SetAutoResolve(true)
-	if fixed.promptTimeout() != time.Hour || !fixed.autoResolves() {
+	if fixed.promptTimeout() != time.Hour || fixed.autoResolves() {
 		t.Fatalf("without sources: timeout %v, auto-resolve %v", fixed.promptTimeout(), fixed.autoResolves())
 	}
 	deps.TimeoutSource = func() time.Duration { return 19 * time.Minute }
-	deps.AutoResolveSource = func() bool { return false }
+	autoResolve := true
+	deps.AutoResolveSource = func() bool { return autoResolve }
 	live, err := New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	live.SetAutoResolve(true)
-	if live.promptTimeout() != 19*time.Minute || live.autoResolves() {
+	if live.promptTimeout() != 19*time.Minute || !live.autoResolves() {
 		t.Fatalf("with sources: timeout %v, auto-resolve %v", live.promptTimeout(), live.autoResolves())
+	}
+	autoResolve = false
+	if live.autoResolves() {
+		t.Fatal("auto-resolve kept a value its source no longer gives")
 	}
 }
 

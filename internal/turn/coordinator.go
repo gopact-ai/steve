@@ -175,7 +175,8 @@ type coordinatorState struct {
 	runtime     Runtime
 	promptClock promptClock
 	// autoResolveSource is read only at operation boundaries; a saved
-	// setting never interrupts a live turn.
+	// setting never interrupts a live turn. Nil never hands a merge
+	// conflict to an agent unasked.
 	autoResolveSource func() bool
 	channelOwners     map[string]string
 	home              home.Loader
@@ -209,10 +210,7 @@ type coordinatorState struct {
 	artifacts *artifact.Store
 	// resolving guards a merge-conflict resolution in flight, which runs
 	// far longer than the sweep interval that may ask for it again.
-	resolving map[string]bool
-	// autoResolve lets the sweeper hand a merge conflict to an agent
-	// without anyone asking.
-	autoResolve bool
+	resolving   map[string]bool
 	intents     *intent.Service
 	disclosures heldDisclosures
 	// defaultProject binds a fresh conversation; homeProject binds the
@@ -252,8 +250,8 @@ type Deps struct {
 	// each time one of them starts.
 	Timeout       time.Duration
 	TimeoutSource func() time.Duration
-	// AutoResolveSource, when set, decides at each sweep whether a merge
-	// conflict is handed to an agent, in place of SetAutoResolve.
+	// AutoResolveSource decides at each sweep whether a merge conflict is
+	// handed to an agent without anyone asking; nil never does.
 	AutoResolveSource func() bool
 	Text              i18n.Catalog
 	// Owner is the baseline owner identity; ChannelOwners registers each
@@ -364,10 +362,6 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 	return c.store.ClearTaint(conversationID, agentID)
 }
 
-// SetAutoResolve decides whether a landing that stops at a merge conflict
-// is handed to an agent without anyone asking.
-func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
-
 // promptClock bounds how long a prompt may go without progress.
 type promptClock struct {
 	timeout time.Duration
@@ -394,10 +388,7 @@ func (c *Coordinator) promptTimeout() time.Duration { return c.promptClock.limit
 
 // autoResolves is whether a merge conflict goes to an agent unasked.
 func (c *Coordinator) autoResolves() bool {
-	if c.autoResolveSource != nil {
-		return c.autoResolveSource()
-	}
-	return c.autoResolve
+	return c.autoResolveSource != nil && c.autoResolveSource()
 }
 
 func injectionMode(chatType protocol.ChatType, sender, owner string) home.Mode {
