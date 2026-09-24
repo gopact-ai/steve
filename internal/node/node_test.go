@@ -39,12 +39,16 @@ func buildMockAgent(t *testing.T) string {
 }
 
 // startNode runs a real steve-node in-process and returns its address.
-func startNode(t *testing.T, cfg ServerConfig) *Server {
+// Each prepare step runs on the server before it starts serving.
+func startNode(t *testing.T, cfg ServerConfig, prepare ...func(*Server)) *Server {
 	t.Helper()
 	if cfg.Listen == "" {
 		cfg.Listen = "127.0.0.1:0"
 	}
 	server := NewServer(cfg)
+	for _, step := range prepare {
+		step(server)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
