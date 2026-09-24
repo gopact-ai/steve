@@ -1,3 +1,2 @@
-internal/artifact.generationNodes
 internal/artifact.objectLimiter
 internal/node.NodeReceiptAuthorizer
