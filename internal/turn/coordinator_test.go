@@ -207,7 +207,7 @@ type manualClock struct {
 // to the test.
 func manualClocks(c *Coordinator) <-chan *manualClock {
 	clocks := make(chan *manualClock, 1)
-	c.idleClock = func(parent context.Context, d time.Duration) (idle.Context, func(), func()) {
+	c.promptClock.start = func(parent context.Context, d time.Duration) (idle.Context, func(), func()) {
 		clock := &manualClock{Context: parent, done: make(chan struct{}), limit: d}
 		context.AfterFunc(parent, func() { clock.finish(parent.Err()) })
 		clocks <- clock
