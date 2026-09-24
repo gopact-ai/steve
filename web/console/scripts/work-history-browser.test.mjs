@@ -135,8 +135,15 @@ try {
  const detailReads=()=>requests.filter(r=>r==="/console/tasks/live").length;
  const childReads=()=>requests.filter(r=>r.startsWith("/console/tasks?") && r.includes("scope_id=live")).length;
  const stableDetail=detailReads(), stableChildren=childReads();
+ // The Drawer renders project landings, which are outside its owner's
+ // subtree and plans. The landing shows this poll's /state was applied
+ // before the fixture changes below; a snapshot applied during the next
+ // fastForward restarts the poll floor from the advanced clock and cancels
+ // the poll that would read them.
+ snapshot.landings.push({ id: "landing-p", project: "p", state: "merged", artifact: "landed-artifact", at });
  await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
- assert.equal(detailReads(),stableDetail,"unchanged polling must not reread detail");
+ await ownerDrawer.getByText("Recent merges", {exact:true}).waitFor();
+ assert.equal(detailReads(),stableDetail,"a summary change outside the owner must not reread detail");
  assert.equal(childReads(),stableChildren);
  // A related summary change invalidates the owner read, not the history
  // cursor. Even a newer-looking summary must not replace owner content.
