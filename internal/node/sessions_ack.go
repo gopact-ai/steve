@@ -10,10 +10,6 @@ import (
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-type NodeReceiptAuthorizer interface {
-	AuthorizeNodeReceipt(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error
-}
-
 // AcknowledgeReceipt requires exact committed hub proof even for a retry after
 // deletion. It never rebinds a session or authorizes execution.
 func (s *SessionService) AcknowledgeReceipt(ctx context.Context, principal string, request nodewire.SessionReceiptRequest) error {
@@ -25,8 +21,8 @@ func (s *SessionService) AcknowledgeReceipt(ctx context.Context, principal strin
 		!sessionNameValid(a.ClusterID) || !sessionNameValid(a.CoordinatorNodeID) || a.CoordinatorEpoch == 0 || a.WriterGeneration == 0 {
 		return sessionError("invalid", "receipt acknowledgement requires exact node and coordinator identities")
 	}
-	authority, ok := s.server.conf().SessionAuthorizer.(NodeReceiptAuthorizer)
-	if !ok {
+	authority := s.server.conf().SessionAuthorizer
+	if authority == nil {
 		return sessionError("forbidden", "node has no receipt authority verifier")
 	}
 	if err := authority.AuthorizeNodeReceipt(ctx, principal, a, receipt); err != nil {
