@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -24,7 +25,7 @@ import (
 func TestHubLocalStepAsksFromItsOwnExecution(t *testing.T) {
 	conversation := "console:plan"
 	tasks, attempts, tracked, record, scope := localStepFixture(t, task.Task{Goal: "plan", Channel: conversation, Transport: "console", AnchorMessage: console.AnchorMark + "plan-exchange"})
-	cons := console.New(nil, "owner", nil)
+	cons := console.New(turntest.IdleCoordinator{}, "owner", nil)
 	ask, askUser := planQuestions(cons, tasks, attempts)
 
 	answered := make(chan view.Answer, 1)
@@ -127,7 +128,7 @@ func localStepFixture(t *testing.T, origin task.Task) (*task.Store, *attempt.Ser
 // that names where the task came from.
 func TestHubLocalStepFromAnotherChannelAsksInANamedRecoveryConversation(t *testing.T) {
 	tasks, attempts, tracked, _, scope := localStepFixture(t, task.Task{Goal: "plan", Channel: "stdio:session", Transport: "stdio"})
-	cons := console.New(nil, "owner", nil)
+	cons := console.New(turntest.IdleCoordinator{}, "owner", nil)
 	_, askUser := planQuestions(cons, tasks, attempts)
 	go askUser(scope.Context(), view.Question{SessionID: "acp-step", Message: "Which colour?", AllowFreeText: true})
 	q := awaitLocalChildQuestion(t, cons, "console:recovery:"+tracked.ID)

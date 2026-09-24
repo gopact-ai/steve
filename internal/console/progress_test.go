@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -18,7 +19,7 @@ func progressTestStream(t *testing.T) (func(view.Progress), <-chan readmodel.Eve
 	model := readmodel.New(readmodel.Sources{})
 	events, stop := model.Subscribe(context.Background())
 	t.Cleanup(stop)
-	s := New(nil, "owner", model)
+	s := New(turntest.IdleCoordinator{}, "owner", model)
 	stream := s.progress("console:test", "exchange", newProcess())
 	t.Cleanup(stream.Close)
 	return stream.Update, events
@@ -88,7 +89,7 @@ func TestProgressCloseFlushesBeforeReplyAndRejectsLateCallbacks(t *testing.T) {
 	events, stop := model.Subscribe(context.Background())
 	defer stop()
 	work := newProcess()
-	stream := New(nil, "owner", model).progress("console:test", "exchange", work)
+	stream := New(turntest.IdleCoordinator{}, "owner", model).progress("console:test", "exchange", work)
 	stream.Update(view.Progress{Answer: "first"})
 	requireProgress(t, events, 30*time.Millisecond)
 	stream.Update(view.Progress{Answer: "complete"})
@@ -116,7 +117,7 @@ func TestProgressCarriesTheTaskOnceBound(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{})
 	events, stop := model.Subscribe(context.Background())
 	defer stop()
-	stream := New(nil, "owner", model).progress("console:test", "exchange", newProcess())
+	stream := New(turntest.IdleCoordinator{}, "owner", model).progress("console:test", "exchange", newProcess())
 	defer stream.Close()
 	stream.Update(view.Progress{Answer: "before"})
 	if ev := requireProgress(t, events, 30*time.Millisecond); ev.TaskID != "" {
@@ -134,7 +135,7 @@ func TestProgressFinishingFlushesLatestContentBeforeSlowSave(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{})
 	events, stop := model.Subscribe(context.Background())
 	defer stop()
-	stream := New(nil, "owner", model).progress("console:test", "exchange", newProcess())
+	stream := New(turntest.IdleCoordinator{}, "owner", model).progress("console:test", "exchange", newProcess())
 	defer stream.Close()
 	stream.Phase(view.PhaseWaking)
 	requireProgress(t, events, 30*time.Millisecond)
@@ -159,7 +160,7 @@ func TestProgressStageRidesWakingAndClearsWhenWorkBegins(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{})
 	events, stop := model.Subscribe(context.Background())
 	defer stop()
-	stream := New(nil, "owner", model).progress("console:test", "exchange", newProcess())
+	stream := New(turntest.IdleCoordinator{}, "owner", model).progress("console:test", "exchange", newProcess())
 	defer stream.Close()
 	stream.Phase(view.PhaseWaking)
 	requireProgress(t, events, 30*time.Millisecond)
@@ -218,7 +219,7 @@ func TestConsoleFinalProgressArrivesDuringFinalization(t *testing.T) {
 	defer stop()
 	finalizing := make(chan struct{})
 	release := make(chan struct{})
-	s := New(stepHandler(func(req turn.Request) turn.Result {
+	s := New(stepHandler{answer: func(req turn.Request) turn.Result {
 		req.OnPhase(view.PhaseRunning)
 		req.OnProgress(view.Progress{Answer: "first"})
 		req.OnProgress(view.Progress{Answer: "complete"})
@@ -226,7 +227,7 @@ func TestConsoleFinalProgressArrivesDuringFinalization(t *testing.T) {
 		close(finalizing)
 		<-release
 		return turn.Result{Text: "complete"}
-	}), "owner", model)
+	}}, "owner", model)
 	done := make(chan error, 1)
 	go func() {
 		_, err := s.Send(context.Background(), "test", "hello")
@@ -279,7 +280,7 @@ func TestConsoleFinalProgressArrivesDuringFinalization(t *testing.T) {
 // must outlive that: progress after the gap is still collected.
 func TestFollowKeepsCollectingAfterFallingBehind(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{})
-	s := New(nil, "owner", model)
+	s := New(turntest.IdleCoordinator{}, "owner", model)
 	work := newProcess()
 	stop := s.follow(context.Background(), "console:test", work)
 	defer stop()

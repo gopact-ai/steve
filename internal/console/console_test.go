@@ -14,10 +14,14 @@ import (
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-type echo struct{ seen []turn.Request }
+type echo struct {
+	turntest.IdleCoordinator
+	seen []turn.Request
+}
 
 func (e *echo) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	e.seen = append(e.seen, req)
@@ -150,7 +154,7 @@ func TestConsoleTranscriptSurvivesARestart(t *testing.T) {
 
 // streamer is a handler that reports progress the way an agent turn does,
 // then answers.
-type streamer struct{}
+type streamer struct{ turntest.IdleCoordinator }
 
 func (streamer) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	if req.OnProgress != nil {
@@ -219,7 +223,7 @@ func TestConsoleStreamsProgressAndKeepsTheProcess(t *testing.T) {
 }
 
 // slowStreamer waits long enough for a step's progress to arrive.
-type slowStreamer struct{}
+type slowStreamer struct{ turntest.IdleCoordinator }
 
 func (slowStreamer) Handle(context.Context, turn.Request) (turn.Result, error) {
 	time.Sleep(80 * time.Millisecond)
@@ -228,7 +232,10 @@ func (slowStreamer) Handle(context.Context, turn.Request) (turn.Result, error) {
 
 // waiter is a handler whose turn takes a while and reports whether the
 // context it was given was canceled under it.
-type waiter struct{ canceled chan bool }
+type waiter struct {
+	turntest.IdleCoordinator
+	canceled chan bool
+}
 
 func (w waiter) Handle(ctx context.Context, _ turn.Request) (turn.Result, error) {
 	select {

@@ -9,12 +9,16 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type continuationProcessor func(context.Context, turn.Request) (turn.Result, error)
+type continuationProcessor struct {
+	turntest.IdleCoordinator
+	answer func(context.Context, turn.Request) (turn.Result, error)
+}
 
 func (f continuationProcessor) Handle(ctx context.Context, r turn.Request) (turn.Result, error) {
-	return f(ctx, r)
+	return f.answer(ctx, r)
 }
 
 func TestPauseBetweenBatchPreparationAndQueueAdmissionRetainsTheAnswer(t *testing.T) {
@@ -22,14 +26,14 @@ func TestPauseBetweenBatchPreparationAndQueueAdmissionRetainsTheAnswer(t *testin
 	parent := w.running(t, "codex")
 	child := completedChild(t, w, parent, "unique child answer")
 	processed := make(chan string, 2)
-	cons := console.New(continuationProcessor(func(_ context.Context, r turn.Request) (turn.Result, error) {
+	cons := console.New(continuationProcessor{answer: func(_ context.Context, r turn.Request) (turn.Result, error) {
 		p, _ := w.tasks.Get(parent.ID)
 		if p.State != task.StateRunning {
 			return turn.Result{}, task.ErrContinuationUnavailable
 		}
 		processed <- r.Input
 		return turn.Result{Text: "parent consumed child result"}, nil
-	}), "owner", nil)
+	}}, "owner", nil)
 	paused := false
 	w.service.SetReplaySafeDelivery(func(task.Task) bool { return true })
 	w.service.SetDeliveryReceipt(func(p task.Task, key string) (bool, error) {

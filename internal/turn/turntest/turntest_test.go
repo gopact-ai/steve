@@ -76,3 +76,14 @@ func TestUnwiredLeavesWireToTheTest(t *testing.T) {
 	// Wire panics on a coordinator that is already wired.
 	turntest.Unwired(t).Wire(turntest.Callbacks(turn.Callbacks{}))
 }
+
+// IdleCoordinator runs no turn, so a test that sends it one fails at once
+// instead of taking an error reply for the answer.
+func TestIdleCoordinatorPanicsWhenAskedToRunATurn(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("IdleCoordinator.Handle returned instead of panicking")
+		}
+	}()
+	_, _ = turntest.IdleCoordinator{}.Handle(t.Context(), turn.Request{})
+}

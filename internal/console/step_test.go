@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -87,7 +88,7 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	if !found {
 		t.Fatal("no console.step event")
 	}
-	restored := New(nil, "owner", nil)
+	restored := New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
 	}
@@ -102,11 +103,11 @@ func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 	parentTimeline := []view.Span{{Kind: "text", Text: "parent narration", At: time.Now().UTC()}}
 	child := readmodel.FromStepProgress("#72", consoleapi.Progress{Timeline: []consoleapi.Span{{Kind: "thought", Text: "child thinking", At: time.Now().UTC()}}}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
 	var s *Service
-	s = New(stepHandler(func(req turn.Request) turn.Result {
+	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
 		req.OnProgress(view.Progress{Timeline: parentTimeline})
 		s.UpdateStep(req.ConversationID, "72", child)
 		return turn.Result{Text: "The reply remains the complete answer."}
-	}), "owner", nil)
+	}}, "owner", nil)
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 	child.State = "done"
 	child.Timeline = append(child.Timeline, consoleapi.Span{Kind: "text", Text: "child final", At: time.Now().UTC()})
 	s.UpdateStep("main", "72", child)
-	restored := New(nil, "owner", nil)
+	restored := New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
 	}
@@ -126,10 +127,14 @@ func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 	}
 }
 
-type stepHandler func(turn.Request) turn.Result
+// stepHandler answers each turn with its function.
+type stepHandler struct {
+	turntest.IdleCoordinator
+	answer func(turn.Request) turn.Result
+}
 
 func (h stepHandler) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
-	return h(req), nil
+	return h.answer(req), nil
 }
 
 type finishingInspector struct{ entered, release chan struct{} }
@@ -148,10 +153,10 @@ func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 	inspector := finishingInspector{make(chan struct{}), make(chan struct{})}
 	step := readmodel.FromStepProgress("#59", consoleapi.Progress{Model: "child-model"}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
 	var s *Service
-	s = New(stepHandler(func(req turn.Request) turn.Result {
+	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
 		s.UpdateStep(req.ConversationID, "59", step)
 		return turn.Result{Text: "parent finished", Attempt: "parent-attempt"}
-	}), "owner", nil)
+	}}, "owner", nil)
 	s.SetInspector(inspector)
 	e, _, err := s.enqueue(t.Context(), "main", "delegate", nil, enqueueOptions{})
 	if err != nil {

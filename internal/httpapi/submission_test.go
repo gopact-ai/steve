@@ -15,9 +15,13 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type submissionHandler struct{ calls atomic.Int32 }
+type submissionHandler struct {
+	turntest.IdleCoordinator
+	calls atomic.Int32
+}
 
 func (h *submissionHandler) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	h.calls.Add(1)

@@ -133,7 +133,7 @@ func (c *Coordinator) suggestMentions(ctx context.Context, conversationID, head,
 
 func (c *Coordinator) suggestVerbs(verb string) []Suggestion {
 	var out []Suggestion
-	for _, v := range c.Verbs() {
+	for _, v := range c.verbs() {
 		if strings.HasPrefix(v.Command, verb) {
 			insert := v.Command
 			if v.Args != "" {
@@ -405,8 +405,8 @@ type Verb struct {
 	Summary string
 }
 
-// Verbs lists the console's verbs, in the order a person would look.
-func (c *Coordinator) Verbs() []Verb {
+// verbs lists the console's verbs, in the order a person would look.
+func (c *Coordinator) verbs() []Verb {
 	t := c.text.T
 	return []Verb{
 		{string(protocol.CommandPlan), "目标", t(i18n.VerbPlan)},

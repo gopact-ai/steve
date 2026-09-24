@@ -364,7 +364,7 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 			t.Fatalf("builder = %+v, want ready but not usable for a sealed project, naming it", a)
 		}
 	}
-	verbs := c.Verbs()
+	verbs := c.verbs()
 	if len(verbs) < 15 || verbs[0].Command != "/plan" || verbs[0].Summary == "" {
 		t.Fatalf("verbs = %+v", verbs[:2])
 	}

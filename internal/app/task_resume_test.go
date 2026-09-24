@@ -93,12 +93,12 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate,
 		o.Artifacts = artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
 		o.ChannelOwners = map[string]string{"feishu": "owner", "unknown": "owner"}
 	})
-	var handler console.Handler = coordinator
+	var consoleCoordinator console.Coordinator = coordinator
 	if gate != nil {
 		gate.Coordinator = coordinator
-		handler = gate
+		consoleCoordinator = gate
 	}
-	cons := console.New(handler, "owner", nil)
+	cons := console.New(consoleCoordinator, "owner", nil)
 	if err := cons.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
