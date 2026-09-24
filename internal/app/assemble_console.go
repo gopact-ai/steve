@@ -57,20 +57,8 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	}
 	life.Defer(func() { dashboard.Close() })
 	if environment == nil {
-		// The launch probe already reads the configuration, so the pinned
-		// address is saved and published through its store.
-		pinned := false
-		err := boot.ConfigStore().Update(func(c *config.Config) (err error) {
-			pinned, err = desktop.SetPinnedAddress(*configPath, c, dashboard.URL())
-			return err
-		}, func(c *config.Config) error {
-			if !pinned {
-				return nil
-			}
-			return config.Save(*configPath, c)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("remember desktop address: %w", err)
+		if err := pinDesktopAddress(boot.ConfigStore(), *configPath, dashboard.URL()); err != nil {
+			return nil, err
 		}
 	}
 	// The console: the owner acting from the page, through this same
@@ -200,4 +188,25 @@ func consoleServerConfig(environment *Environment, cfg *config.Config) (httpapi.
 	}
 	served.Token = token
 	return served, nil
+}
+
+// pinDesktopAddress records the console's address in the configuration. The
+// launch probe already reads the configuration, so the pinned address is
+// saved and published through its store; nothing is written when the address
+// is unchanged.
+func pinDesktopAddress(store *adminsvc.ConfigStore, path, url string) error {
+	pinned := false
+	err := store.Update(func(c *config.Config) (err error) {
+		pinned, err = desktop.SetPinnedAddress(path, c, url)
+		return err
+	}, func(c *config.Config) error {
+		if !pinned {
+			return nil
+		}
+		return config.Save(path, c)
+	})
+	if err != nil {
+		return fmt.Errorf("remember desktop address: %w", err)
+	}
+	return nil
 }
