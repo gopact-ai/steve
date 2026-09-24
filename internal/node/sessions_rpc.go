@@ -100,9 +100,16 @@ func (s *Server) sessionStream(parent context.Context, principal string, stream 
 	var request nodewire.SessionRequest
 	reply := nodewire.SessionReply{}
 	var err error
-	if s.sessions == nil {
+	switch err = readSessionMessage(stream, &request); {
+	case err != nil:
+	case s.sessions == nil:
+		// Nothing is reserved without a session service, so an open it
+		// refuses provably started nothing.
 		err = sessionError("forbidden", "node sessions are not enabled")
-	} else if err = readSessionMessage(stream, &request); err == nil {
+		if request.Action == nodewire.SessionActionOpen {
+			err = notStarted(err)
+		}
+	default:
 		var state nodewire.SessionState
 		state, err = s.sessions.Do(ctx, principal, request)
 		if err == nil {

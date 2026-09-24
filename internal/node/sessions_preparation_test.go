@@ -47,6 +47,25 @@ func TestNodePreparationUnreachableNodeDoesNotClaimNativeOpenWasDispatched(t *te
 	}
 }
 
+// A node that runs without node sessions refuses an open before it holds
+// anything, so the hub fails the open without holding the execution.
+func TestNodePreparationNodeWithoutSessionsRefusesOpenAsNotStarted(t *testing.T) {
+	server := startNode(t, ServerConfig{Name: "worker", Token: "no-sessions", StateDir: t.TempDir()})
+	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "no-sessions"}})
+	defer registry.Close()
+	manager, _ := harness.NewManager(nil)
+	manager.SetTransports(registry)
+	defer manager.Stop()
+	request := nodeSessionRequest("open")
+	ctx := harness.WithNodeSession(t.Context(), harness.NodeSessionContext{Authority: request.Authority, Binding: request.Binding, CommandID: "refused-by-node"})
+	_, err := manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, "", t.TempDir(), nil)
+	var refused *nodewire.SessionOpenNotStarted
+	var uncertain *harness.NodeSessionOpenUncertain
+	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "node sessions are not enabled") || errors.As(err, &uncertain) || errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("open refused by a node without sessions = %v, want it failed without holding the execution", err)
+	}
+}
+
 func (r *lostPreparationReply) NodeSession(ctx context.Context, node string, request nodewire.SessionRequest) (nodewire.SessionState, error) {
 	state, err := r.Registry.NodeSession(ctx, node, request)
 	if err == nil && request.Action == "open" && !r.dropped {
