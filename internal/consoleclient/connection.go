@@ -35,7 +35,7 @@ func addConsoleClientFlags(flags *flag.FlagSet) *consoleClientFlags {
 	options := &consoleClientFlags{}
 	flags.StringVar(&options.configPath, "config", "", "read console connection from this config file (read-only)")
 	flags.StringVar(&options.url, "url", defaultReadModelURL, "read model URL of a running gateway")
-	flags.StringVar(&options.token, "token", "", "token, when the read model is not on loopback")
+	flags.StringVar(&options.token, "token", "", "console token; with -config, defaults to gateway.read_model_token or, for a loopback console, the Hub's loopback-token")
 	return options
 }
 
@@ -58,7 +58,7 @@ func (options *consoleClientFlags) resolve(flags *flag.FlagSet) (consoleConnecti
 		original, _ := url.Parse(connection.URL)
 		override, _ := url.Parse(address)
 		if connection.Token != "" && !explicit["token"] && consoleOrigin(original) != consoleOrigin(override) {
-			return consoleConnection{}, errors.New("-url changes the configured origin; supply an explicit -token (or -token '' to connect without credentials)")
+			return consoleConnection{}, errors.New("-url changes the configured origin; pass that console's token with -token")
 		}
 		connection.URL = address
 	}

@@ -1,0 +1,25 @@
+package gateway
+
+import (
+	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/turn"
+)
+
+// The only production implementation of capabilities gateway probes its
+// channel for.
+var (
+	_ cardPoster    = (*feishu.Channel)(nil)
+	_ inputEnricher = (*feishu.Channel)(nil)
+	_ reactor       = (*feishu.Channel)(nil)
+	_ recaller      = (*feishu.Channel)(nil)
+	_ textReplier   = (*feishu.Channel)(nil)
+	_ topicSeeder   = (*feishu.Channel)(nil)
+)
+
+// The only production implementation of capabilities gateway probes its
+// processor for.
+var (
+	_ RecoveryDriver     = (*turn.Coordinator)(nil)
+	_ inputParser        = (*turn.Coordinator)(nil)
+	_ scheduledValidator = (*turn.Coordinator)(nil)
+)

@@ -4,43 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 )
-
-// TaskAttempts are a task's attempts from the ledger, newest first.
-func (a *Service) TaskAttempts(ctx context.Context, taskID string) ([]consoleapi.AttemptView, error) {
-	if a.Attempts == nil {
-		return nil, errors.New("attempts are not wired")
-	}
-	records, err := a.Attempts.ForTask(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]consoleapi.AttemptView, 0, len(records))
-	for _, r := range records {
-		v := consoleapi.AttemptView{ID: r.ID, Kind: string(r.Kind), State: string(r.State), Agent: r.Agent, Node: r.Node, Harness: r.Harness,
-			Workspace: r.Workspace.Path, Base: r.Base, Error: r.Error, StartedAt: r.StartedAt, EndedAt: r.EndedAt}
-		if r.Result != nil {
-			v.Artifact, v.Summary = r.Result.Artifact, r.Result.Summary
-		}
-		out = append(out, v)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
-	// How many files each changed, for the newest few: one diff-tree each.
-	for i := range out {
-		if i >= 20 || a.Artifacts == nil || out[i].Artifact == "" || out[i].Artifact == out[i].Base {
-			continue
-		}
-		if changes, _, err := a.Artifacts.Changes(ctx, records[0].Project, out[i].Base, out[i].Artifact); err == nil {
-			out[i].Files = len(changes)
-		}
-	}
-	return out, nil
-}
 
 // attemptSnapshot is the snapshot an attempt is browsed at: its result
 // when it has one, else what it started from.

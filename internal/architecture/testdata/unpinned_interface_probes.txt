@@ -1,0 +1,14 @@
+internal/artifact.generationNodes
+internal/artifact.objectLimiter
+internal/consoleapi.ConversationInitializer
+internal/consoleapi.MaterialAdmin
+internal/harness.Configurable
+internal/harness.PluginRelocationPreparer
+internal/harness.PluginSessionPreparer
+internal/harness.Reobserver
+internal/harness.TurnRunner
+internal/memory.pathReporter
+internal/models.settingsReporter
+internal/node.NodeReceiptAuthorizer
+internal/onboard.initReporter
+internal/turn.pluginRuntimeCloser
