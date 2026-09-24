@@ -11,4 +11,4 @@ internal/node.ownSpace caches directory-size walks keyed by workspace and state 
 internal/node.probeMu lets one MCP probe run at a time per machine, since a probe starts a server that competes for the machine's credentials and ports.
 internal/nodewire.namesMu guards the display-name source read by nodewire.Name, a free function called from admin, turn, exec, delegate and project.
 internal/nodewire.selfMu guards the name read by nodewire.Place, a free function called from turn, exec, delegate, roster and app.
-internal/readmodel.platform holds the tool catalogue that SetPlatformTools installs from the constants agentmcp.ServerName and agentmcp.ToolTitles.
+internal/readmodel.platform holds the tool catalogue that SetPlatformTools installs from the constant agentmcp.ServerName and the result of agentmcp.ToolTitles().
