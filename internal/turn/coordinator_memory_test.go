@@ -1,8 +1,11 @@
 package turn
 
 import (
+	"context"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -122,5 +125,78 @@ func TestMemoryToolsLetADelegatedTaskRecallButNotRememberOrForget(t *testing.T) 
 	hits, _, err := c.Recall(t.Context(), "chat", "codex", "global", "tabs", 10)
 	if err != nil || len(hits) != 1 || hits[0].ID != id {
 		t.Fatalf("delegated recall: %+v %v", hits, err)
+	}
+}
+
+// rememberInProject is the owner, in private, remembering into "project".
+func rememberInProject(t *testing.T, ctx context.Context, c *Coordinator) (memory.Scope, error) {
+	t.Helper()
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	_, scope, err := c.Remember(ctx, "chat", "codex", "", "project", "", "tests run with -race", "")
+	return scope, err
+}
+
+func bind(t *testing.T, c *Coordinator, conversation, projectID string) {
+	t.Helper()
+	if _, err := c.projects.Bind(t.Context(), conversation, projectID, memoryOwner); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMemoryProjectScopeIsTheBoundProjectElseTheDefault(t *testing.T) {
+	c := memoryCoordinator(t)
+	if scope, err := rememberInProject(t, t.Context(), c); err != nil || scope != memory.ProjectScope("alpha") {
+		t.Fatalf("unbound: scope=%v err=%v", scope, err)
+	}
+	bind(t, c, "chat", "beta")
+	if scope, err := rememberInProject(t, t.Context(), c); err != nil || scope != memory.ProjectScope("beta") {
+		t.Fatalf("bound: scope=%v err=%v", scope, err)
+	}
+	if got := factsIn(t, c, memory.ProjectScope("beta")); len(got) != 1 {
+		t.Fatalf("beta holds %q", got)
+	}
+}
+
+func TestMemoryProjectScopeIsRefusedForSteveHome(t *testing.T) {
+	cases := map[string]func(*Coordinator){
+		"bound to home": func(c *Coordinator) { bind(t, c, "chat", "home") },
+		// With a home project and an owner, an unbound conversation
+		// falls to home rather than to the default project.
+		"unbound with a home project": func(*Coordinator) {},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := memoryCoordinator(t)
+			useHome(t, c, t.TempDir())
+			setup(c)
+			if scope, err := rememberInProject(t, t.Context(), c); err == nil {
+				t.Fatalf("remembered into %v", scope)
+			}
+			if _, scope, err := c.Remember(t.Context(), "chat", "codex", "", "global", "", "prefers tabs", ""); err != nil || scope != memory.Global {
+				t.Fatalf("global: scope=%v err=%v", scope, err)
+			}
+		})
+	}
+}
+
+// inAttempt is ctx inside an execution of an attempt on projectID.
+func inAttempt(t *testing.T, c *Coordinator, id, projectID string) context.Context {
+	t.Helper()
+	r := attempt.Record{Spec: attempt.Spec{ID: id, Kind: attempt.KindChat, Project: projectID}, State: attempt.Running}
+	if _, err := ledgerOf(t, c).Begin(t.Context(), r.ID, "attempt", string(r.State), "", r); err != nil {
+		t.Fatal(err)
+	}
+	return execution.WithProbeKey(t.Context(), execution.Key{AttemptID: id})
+}
+
+func TestMemoryProjectScopeInsideAnExecutionIsTheAttemptsProject(t *testing.T) {
+	c := memoryCoordinator(t)
+	useHome(t, c, t.TempDir())
+	bind(t, c, "chat", "alpha")
+	if scope, err := rememberInProject(t, inAttempt(t, c, "on-beta", "beta"), c); err != nil || scope != memory.ProjectScope("beta") {
+		t.Fatalf("attempt on beta: scope=%v err=%v", scope, err)
+	}
+	if scope, err := rememberInProject(t, inAttempt(t, c, "on-home", "home"), c); err == nil {
+		t.Fatalf("attempt on home remembered into %v", scope)
 	}
 }
