@@ -123,8 +123,8 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	}}, nil
 }
 
-// wireCoordinator hands the coordinator what the stages after execution
-// built around it. It is the one place the coordinator's cycle closes.
+// wireCoordinator hands the coordinator the callbacks the stages after
+// execution built around it.
 func wireCoordinator(work executionAssembly, planning plansAssembly, management administrationAssembly, delegates delegationAssembly, channels channelsAssembly) {
 	messaging, routes := delegates.Callbacks(), channels.Callbacks()
 	work.Coordinator().Wire(turn.Callbacks{

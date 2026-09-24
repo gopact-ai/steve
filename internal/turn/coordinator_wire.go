@@ -6,9 +6,8 @@ import (
 	"strings"
 )
 
-// Callbacks are what a coordinator reaches that the application can build
-// only after the coordinator, because each of them holds it, directly or
-// through what it serves. Wire hands them over once.
+// Callbacks are what a coordinator reaches that the application builds in
+// assembly stages after the coordinator. Wire hands them over once.
 type Callbacks struct {
 	// Supervisor drafts and runs plans.
 	Supervisor Supervisor
