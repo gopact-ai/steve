@@ -232,26 +232,44 @@ func TestScheduleMCPRefusesGuestGroupChildAndMismatchedExecution(t *testing.T) {
 	}
 }
 
-// A stored receipt is replayed only after the current caller is authorized
-// again, so a retry after the conversation moved to another project is refused.
-func TestScheduleMCPReplayRefusedAfterProjectRebinding(t *testing.T) {
-	f := newScheduleMCPFixture(t, nil)
-	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); bad {
-		t.Fatalf("owner's native session was refused: %s", text)
-	}
+// rebindScheduleConversation moves the fixture's conversation to another
+// project after the execution was bound.
+func rebindScheduleConversation(t *testing.T, f scheduleMCPFixture) {
+	t.Helper()
 	if err := f.c.projects.Declare(t.Context(), []project.Project{{ID: "elsewhere", Home: project.Home{Node: "laptop", Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.c.projects.Bind(t.Context(), f.tracked.Channel, "elsewhere", f.tracked.Requester); err != nil {
 		t.Fatal(err)
 	}
-	for tool, args := range map[string]any{"steve_schedule": createScheduleArgs(), "steve_schedules": map[string]any{}} {
-		if text, bad := scheduleToolCall(t, f.gate, tool, args); !bad || !strings.Contains(text, "project binding changed") {
-			t.Fatalf("%s after rebinding: %s", tool, text)
-		}
+}
+
+// A stored receipt is replayed only after the current caller is authorized
+// again, so a retry after the conversation moved to another project is refused.
+func TestScheduleMCPCreateReplayRefusedAfterProjectRebinding(t *testing.T) {
+	f := newScheduleMCPFixture(t, nil)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); bad {
+		t.Fatalf("owner's native session was refused: %s", text)
+	}
+	rebindScheduleConversation(t, f)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); !bad || !strings.Contains(text, "project binding changed") {
+		t.Fatalf("create replay after rebinding: %s", text)
 	}
 	if len(f.jobs.List("")) != 1 {
 		t.Fatal("refused replay mutated schedules")
+	}
+}
+
+// Listing is scoped to the project the execution was bound in; once the
+// conversation moves to another project the old execution may not list.
+func TestScheduleMCPListRefusedAfterProjectRebinding(t *testing.T) {
+	f := newScheduleMCPFixture(t, nil)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); bad {
+		t.Fatalf("owner's native session was refused: %s", text)
+	}
+	rebindScheduleConversation(t, f)
+	if text, bad := scheduleToolCall(t, f.gate, "steve_schedules", map[string]any{}); !bad || !strings.Contains(text, "project binding changed") {
+		t.Fatalf("list after rebinding: %s", text)
 	}
 }
 
