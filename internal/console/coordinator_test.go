@@ -39,3 +39,14 @@ func TestConsoleOverACoordinatorThatKnowsNothing(t *testing.T) {
 		t.Fatalf("initialization = %v, conversations %v", err, s.Conversations())
 	}
 }
+
+// A console without a coordinator has nothing to run its turns, so it is
+// refused when it is made rather than on its first line.
+func TestNewRefusesANilCoordinator(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("New accepted a nil coordinator")
+		}
+	}()
+	New(nil, "owner", nil)
+}

@@ -129,7 +129,12 @@ type Service struct {
 
 var _ consoleapi.Console = (*Service)(nil)
 
+// New makes a console that acts as owner through coordinator. It panics
+// when coordinator is nil.
 func New(coordinator Coordinator, owner string, model Events) *Service {
+	if coordinator == nil {
+		panic("console: New needs a coordinator")
+	}
 	return &Service{coordinator: coordinator, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }
 
