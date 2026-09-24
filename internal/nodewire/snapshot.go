@@ -135,9 +135,10 @@ func HasFeature(list []string, feature string) bool {
 	return false
 }
 
-// Synthesize builds a snapshot for an advert that carries none: a node's
-// whose snapshot failed the hub's validation, or the empty advert of a
-// machine that has sent none. It knows only the harnesses and tag words. Coverage is partial for everything else, so a requirement on a
+// Synthesize builds a snapshot for an advert that carries none: one whose
+// snapshot the hub dropped for failing validation, or the empty advert of
+// a machine that has not connected. It knows only the harnesses and tag
+// words. Coverage is partial for everything else, so a requirement on a
 // tool is unknown there, not absent; the source says legacy.
 func Synthesize(adv Advert, now time.Time) *ability.Snapshot {
 	if adv.Snapshot != nil {
