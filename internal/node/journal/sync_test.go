@@ -1,7 +1,9 @@
 package journal
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,4 +76,75 @@ func TestAppendDoesNotWaitForSync(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("append waited for fsync")
 	}
+}
+
+// blockedSync makes the journal's first fsync wait for release and then
+// return result(file); later fsyncs are real.
+func blockedSync(result func(*os.File) error) (Options, <-chan struct{}, chan<- struct{}) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int64
+	return Options{SegmentBytes: 64, SyncInterval: time.Millisecond, fsync: func(f *os.File) error {
+		if calls.Add(1) != 1 {
+			return f.Sync()
+		}
+		close(entered)
+		<-release
+		return result(f)
+	}}, entered, release
+}
+
+// A tick's fsync runs outside the lock, so rotation or Close can close its
+// file meanwhile. Only the closed-file error that race produces is harmless:
+// any other failure may be a writeback error the kernel reports once, which
+// the rotation's or Close's own successful sync would then hide.
+func TestSyncFailureOnAFileClosedMeanwhile(t *testing.T) {
+	eio := errors.New("input/output error")
+	long := strings.Repeat("x", 80) + "\n"
+	t.Run("rotation, write-back error", func(t *testing.T) {
+		opts, entered, release := blockedSync(func(*os.File) error { return eio })
+		j := newJournal(t, opts)
+		appendLine(t, j.Out, "one\n")
+		<-entered
+		appendLine(t, j.Out, long) // rotates, closing the file being synced
+		close(release)
+		waitUntil(t, "journal disabled", func() bool { return errors.Is(j.Err(), ErrUnresumable) })
+		if !errors.Is(j.Err(), eio) {
+			t.Fatal(j.Err())
+		}
+	})
+	t.Run("rotation, closed file", func(t *testing.T) {
+		opts, entered, release := blockedSync((*os.File).Sync)
+		j := newJournal(t, opts)
+		appendLine(t, j.Out, "one\n")
+		<-entered
+		appendLine(t, j.Out, long)
+		close(release)
+		appendLine(t, j.Out, "two\n")
+		time.Sleep(20 * time.Millisecond)
+		if err := j.Err(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("close, write-back error", func(t *testing.T) {
+		opts, entered, release := blockedSync(func(*os.File) error { return eio })
+		j, err := New(t.TempDir(), "stream-1", opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		appendLine(t, j.Out, "one\n")
+		<-entered
+		closed := make(chan error, 1)
+		go func() { closed <- j.Close() }()
+		// Close closes the files under the lock, then waits for the tick.
+		waitUntil(t, "files closed", func() bool {
+			j.mu.Lock()
+			defer j.mu.Unlock()
+			return j.Out.segments[0].file == nil
+		})
+		close(release)
+		if err := <-closed; !errors.Is(err, ErrUnresumable) || !errors.Is(err, eio) {
+			t.Fatalf("Close = %v", err)
+		}
+	})
 }

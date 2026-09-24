@@ -373,30 +373,30 @@ func (j *Journal) syncLoop() {
 // appends, which live output waits on, continue while the disk catches up;
 // an append made meanwhile leaves its file for the next tick.
 func (j *Journal) syncWritten() {
-	type open struct {
-		segment *segment
-		file    *os.File
-		err     error
-	}
 	j.mu.Lock()
 	if j.closed || j.err != nil {
 		j.mu.Unlock()
 		return
 	}
-	var files []open
+	var files []*os.File
 	for _, l := range []*Log{j.In, j.Out} {
 		for _, s := range l.segments {
 			if s.file != nil && s.unsynced {
 				s.unsynced = false
-				files = append(files, open{segment: s, file: s.file})
+				files = append(files, s.file)
 			}
 		}
 	}
 	j.mu.Unlock()
-	var failed []open
+	var failed []error
 	for _, f := range files {
-		if f.err = j.opts.fsync(f.file); f.err != nil {
-			failed = append(failed, f)
+		// Rotation and Close sync a file before closing it, so a file
+		// they closed before this sync began lost nothing. Any other
+		// error counts even if the file has since been closed: a
+		// writeback error is reported once per file, and their own
+		// later sync may have succeeded without it.
+		if err := j.opts.fsync(f); err != nil && !errors.Is(err, os.ErrClosed) {
+			failed = append(failed, err)
 		}
 	}
 	if len(failed) == 0 {
@@ -404,13 +404,7 @@ func (j *Journal) syncWritten() {
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	for _, f := range failed {
-		// Rotation and Close sync a file before closing it, so a file
-		// they closed during this sync failed it without losing anything.
-		if f.segment.file == f.file {
-			j.fail(f.err)
-		}
-	}
+	j.fail(errors.Join(failed...))
 }
 
 func (j *Journal) sync() {
@@ -442,10 +436,13 @@ func (j *Journal) Close() error {
 			}
 		}
 	}
-	err := j.err
 	j.mu.Unlock()
+	// A tick's sync may still be finishing; its failure belongs in the
+	// result.
 	<-j.stopped
-	return err
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.err
 }
 
 // Prune removes only finished streams whose retention window has elapsed.
