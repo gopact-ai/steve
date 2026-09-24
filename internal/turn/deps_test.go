@@ -38,7 +38,8 @@ import (
 // fillDeps fills every dependency d leaves unset, the way turntest does
 // for other packages: an empty agent catalog, a runtime that starts no
 // agent, a prober that finds nothing, an empty home and skill set, the
-// Chinese catalog, and every store on book. Stores built from another default follow what d sets.
+// Chinese catalog, and every store on book. Stores built from another
+// default follow what d sets.
 //
 // It repeats turntest.Deps, which imports this package and so cannot be
 // used from its own tests; change both together.
