@@ -33,8 +33,11 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("delivery acknowledgement: %w", errors.Join(channel.ErrOutcomeUnknown, err))
 	}
-	// Without a channel the input can be neither seeded nor answered. It stays
-	// pending, not run and with no step recorded, for a gateway that has one.
+	// Without a channel the input can be neither seeded nor answered, so it
+	// advances no further and records no new step. Observing an earlier
+	// dispatch and recording a silent-listen outcome need no channel, but they
+	// wait too: the input stays pending at this one point for a gateway that
+	// has a channel, as recoverInput leaves recovery input.
 	if g.ch == nil {
 		return errors.New("gateway reply channel is not available")
 	}
