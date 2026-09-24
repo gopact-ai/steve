@@ -57,7 +57,7 @@ func (d SchedulerDeps) required() []dependency {
 // NewScheduler builds a Scheduler from deps, or reports every dependency missing.
 func NewScheduler(deps SchedulerDeps) (*Scheduler, error) {
 	if missing := absent(deps.required()); len(missing) > 0 {
-		return nil, fmt.Errorf("turn: missing schedule dependencies: %s", strings.Join(missing, ", "))
+		return nil, fmt.Errorf("turn: missing scheduler dependencies: %s", strings.Join(missing, ", "))
 	}
 	owners, err := newChannelOwners(deps.Owner, deps.ChannelOwners)
 	if err != nil {

@@ -362,7 +362,7 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 
 func TestNewSchedulerRefusesMissingDependenciesAndInvalidOwners(t *testing.T) {
 	_, err := NewScheduler(SchedulerDeps{})
-	if want := "turn: missing schedule dependencies: Attempts, Tasks, Projects, Schedules, Text"; err == nil || err.Error() != want {
+	if want := "turn: missing scheduler dependencies: Attempts, Tasks, Projects, Schedules, Text"; err == nil || err.Error() != want {
 		t.Fatalf("NewScheduler with nothing: %v, want %q", err, want)
 	}
 	var deps Deps
