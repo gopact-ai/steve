@@ -140,7 +140,6 @@ const (
 	TaskNonePaused         Key = "task_none_paused"
 	TaskPaused             Key = "task_paused"
 	TaskCancelled          Key = "task_cancelled"
-	TaskResumed            Key = "task_resumed"
 	TaskHandled            Key = "task_handled"
 	TaskIgnored            Key = "task_ignored"
 	TaskReopened           Key = "task_reopened"
