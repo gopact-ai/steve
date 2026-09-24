@@ -111,13 +111,16 @@ try {
  assert.equal((await ownerDrawer.innerText()).includes("STALE PLAN FROM STATE"), false, "a previous plan ID for the same task is not the current detail plan");
  // A point revalidation started before a page request may finish later. Its
  // earlier image must not overwrite the page's successful owner response.
+ // Fixture state changes reach the page through /state, which a live
+ // stream leaves to its long recovery floor.
+ const stateFloor=61000;
  holdDetail=true;
  const started=new Promise((resolve,reject)=>{
   const timeout=setTimeout(()=>reject(new Error("Related state change did not start point revalidation")),12000);
   detailStarted=()=>{clearTimeout(timeout);resolve();};
  });
  live.title="INVALIDATE BEFORE PAGE";
- await page.clock.fastForward(11000); await page.clock.runFor(500);
+ await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
  await started;
  await ownerDrawer.getByRole("button", {name:"More subtasks",exact:true}).click();
  await ownerDrawer.getByText("First message: FRESH PAGE CHILD FROM QUERY", {exact:true}).waitFor();
@@ -132,7 +135,7 @@ try {
  const detailReads=()=>requests.filter(r=>r==="/console/tasks/live").length;
  const childReads=()=>requests.filter(r=>r.startsWith("/console/tasks?") && r.includes("scope_id=live")).length;
  const stableDetail=detailReads(), stableChildren=childReads();
- await page.clock.fastForward(11000); await page.clock.runFor(500);
+ await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
  assert.equal(detailReads(),stableDetail,"unchanged polling must not reread detail");
  assert.equal(childReads(),stableChildren);
  // A related summary change invalidates the owner read, not the history
@@ -141,7 +144,7 @@ try {
  childOwner = { ...childOwner, result_delivery: { state: "delivered", at } };
  liveOwner = { ...liveOwner, title: "REFRESHED POINT OWNER" };
  livePlan = undefined; // Explicit no-plan must also hide the old summary plan.
- await page.clock.fastForward(11000); await page.clock.runFor(500);
+ await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
  await ownerDrawer.getByRole("heading", {name:"#live REFRESHED POINT OWNER", exact:true, level:2}).waitFor();
  await ownerDrawer.getByText("Delivered", {exact:true}).waitFor();
  await ownerDrawer.getByText("accounting-20", {exact:true}).waitFor();
@@ -150,7 +153,7 @@ try {
  assert.equal((await ownerDrawer.innerText()).includes("STALE PLAN FROM STATE"),false);
  assert.equal((await ownerDrawer.innerText()).includes("FRESH PLAN FROM DETAIL"),false);
  failDetail=true; live.title="INVALIDATE FAILED READ";
- await page.clock.fastForward(11000); await page.clock.runFor(500);
+ await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
  await ownerDrawer.getByRole("alert").filter({hasText:"point owner temporarily unavailable"}).waitFor();
  assert.equal((await ownerDrawer.innerText()).includes("INVALIDATE FAILED READ"),false,"failed owner read must not fall back to summary");
  failDetail=false;
@@ -165,7 +168,7 @@ try {
  await ownerDrawer.getByRole("alert").filter({hasText:"Records changed"}).waitFor();
  const invalidatedReads=detailReads();
  snapshot.plans[0].rev++;
- await page.clock.fastForward(11000); await page.clock.runFor(500);
+ await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
  for(let i=0;i<100 && detailReads()===invalidatedReads;i++) await new Promise(r=>setTimeout(r,20));
  assert.ok(detailReads()>invalidatedReads,"same-task plan change also invalidates its owner read");
  await ownerDrawer.getByRole("alert").filter({hasText:"Records changed"}).waitFor();
@@ -211,7 +214,7 @@ try {
  assert.ok(requests.filter(r=>r.startsWith("/console/attempts?")).every(r=>new URL(r,"http://fixture").searchParams.get("conversation")==="opaque-conversation"));
  assert.equal(requests.some(r=>/\/console\/tasks\/.*\/attempts/.test(r)),false,"no per-task frontend fanout");
  const beforeNative=nativeReads(), beforeState=requests.filter(r=>r==="/state").length;
- await page.clock.fastForward(16000); await page.clock.runFor(500);
+ await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
  for(let i=0;i<100 && requests.filter(r=>r==="/state").length===beforeState;i++) await new Promise(r=>setTimeout(r,20));
  assert.ok(requests.filter(r=>r==="/state").length>beforeState);
  assert.equal(nativeReads(),beforeNative,"/state changes must not reread files");
@@ -295,7 +298,7 @@ try {
  await drawer.getByRole("status").filter({hasText:"Historical task completed"}).waitFor();
  await page.clock.runFor(1000); await rejectedState;
  const rejectedPoll=page.waitForResponse(r=>new URL(r.url()).pathname==="/state" && r.status()===503);
- await page.clock.fastForward(11000); await page.clock.runFor(500); await rejectedPoll;
+ await page.clock.fastForward(stateFloor); await page.clock.runFor(500); await rejectedPoll;
  assert.ok(rejectedStateReads>=2,"the independent summary remains unavailable");
  assert.ok(historicalReads()>beforeCompletion,"successful action must reread its healthy owner despite /state failure");
  await complete.waitFor({state:"hidden"});
