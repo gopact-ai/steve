@@ -274,7 +274,7 @@ func (s *managedSession) Prompt(ctx context.Context, text string, progress func(
 type remoteError struct{ message, code string }
 
 func commandError(command *nodewire.SessionCommand) remoteError {
-	return remoteError{message: command.Error, code: command.ErrorKind()}
+	return remoteError{message: command.Error, code: command.ErrorCode}
 }
 
 func (e remoteError) Error() string           { return e.message }

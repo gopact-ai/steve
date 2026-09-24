@@ -280,7 +280,7 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 	}
 	if one.service.ctx.Err() != nil {
 		command.State = nodewire.SessionCommandUncertain
-		command.Error = "node service stopped before dispatch"
+		command.Error, command.ErrorCode = "node service stopped before dispatch", nodewire.SessionErrorFailed
 		next.Commands[req.CommandID] = command
 		next.State.State = nodewire.SessionInterrupted
 		// A failed commit is latched in one.failure for the next request.

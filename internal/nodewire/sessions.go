@@ -162,8 +162,8 @@ type SessionCommand struct {
 	Output        string   `json:"output,omitempty"`
 	Activity      []string `json:"activity,omitempty"`
 	Error         string   `json:"error,omitempty"`
-	// ErrorCode classifies Error as one of the SessionError codes. Missing
-	// with an Error means the node predates codes; see ErrorKind.
+	// ErrorCode classifies Error as one of the SessionError codes; the node
+	// sets it whenever it sets Error.
 	ErrorCode string `json:"error_code,omitempty"`
 	// Settled describes an answered ACP prompt. ProcessStopped is stronger:
 	// the node observed exit of the original native agent process.
