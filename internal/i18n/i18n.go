@@ -345,7 +345,7 @@ const (
 	ExecTriedSaveStepMarker        Key = "exec_tried_save_step_marker"
 	ExecTriedCheckOccupancy        Key = "exec_tried_check_occupancy"
 	ExecTriedMatchAuxRequest       Key = "exec_tried_match_aux_request"
-	ExecTriedSaveSessionID         Key = "exec_tried_save_session_i_d"
+	ExecTriedSaveSessionID         Key = "exec_tried_save_session_id"
 	ExecTriedOpenExecution         Key = "exec_tried_open_execution"
 	ExecTriedSaveAuxResult         Key = "exec_tried_save_aux_result"
 	ExecTriedSaveExecutionUsage    Key = "exec_tried_save_execution_usage"
