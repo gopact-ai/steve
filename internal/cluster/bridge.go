@@ -105,11 +105,12 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 	if err := parent.Err(); err != nil {
 		return nil, err
 	}
-	// A caller that stops waiting after submission leaves an unknown
-	// outcome, which revokes the generation below. The caller's
-	// cancellation is not passed on: submission is bounded by the
-	// coordination ApplyTimeout (or the client's request timeout), the
-	// local apply by ApplyTimeout, and both by the generation.
+	// Submission and the wait for local apply do not observe the caller's
+	// cancellation. Submission on this node is bounded by coordination's
+	// barrier and apply timeouts; submission routed to the leader by the
+	// client's per-attempt timeout and attempt count. The wait for local
+	// apply stops polling after ApplyTimeout. The generation's context
+	// bounds both. Any failure after submission revokes the generation.
 	ctx, cancel := b.boundContext(context.WithoutCancel(parent))
 	defer cancel()
 	command := coordination.AppCommand{ID: write.ID, CallerNodeID: b.generation.NodeID, CoordinatorEpoch: write.CoordinatorEpoch, ExpectedVersion: write.ExpectedVersion, WriterGeneration: b.generation.WriterGeneration, Payload: write.Payload}
