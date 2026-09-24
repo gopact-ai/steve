@@ -55,6 +55,11 @@ func parseGoSources(t *testing.T, root string, files []string) []goSource {
 // is a package-level `var _ I = …` in a _test.go file; it fails to compile
 // once the production type it names stops satisfying I. Interfaces in open
 // are neither required nor expected to be pinned.
+//
+// The analysis is syntactic. It resolves an identifier to the file's own
+// package and a selector to an import of this module, so it does not see
+// instantiated generic interfaces (I[T]), interfaces named through a type
+// alias or a dot import, or a local type that shadows a package-level one.
 func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map[string]string) map[string][]string {
 	t.Helper()
 	parsedSources := parseGoSources(t, root, sources)
