@@ -1,6 +1,9 @@
-// Package turntest builds turn coordinators for tests in other packages.
-// Everything a test does not set is a real store or service on a
-// temporary ledger, so a test names only what it cares about.
+// Package turntest builds turn coordinators for tests in other packages,
+// so a test names only what it cares about. Everything it does not set is
+// a real store or service on a temporary ledger, except the agent runtime,
+// model prober and supervisor, which default to the stand-ins NoRuntime,
+// NoProber and IdleSupervisor. IdleCoordinator stands in for a coordinator
+// itself, in tests of code that is given one.
 package turntest
 
 import (
@@ -250,7 +253,8 @@ func (NoProber) Probe(context.Context, string, string) error { return nil }
 
 func (NoProber) ProbeAll(context.Context) []models.Result { return nil }
 
-// ErrIdleCoordinator is what IdleCoordinator answers a request to act with.
+// ErrIdleCoordinator is what IdleCoordinator's SessionSetup and
+// InitializeConversation answer with.
 var ErrIdleCoordinator = errors.New("turntest: the coordinator is idle")
 
 // IdleCoordinator stands in for a coordinator that runs no turn and knows
