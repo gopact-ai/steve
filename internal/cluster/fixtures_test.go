@@ -29,17 +29,25 @@ func SshCheckFixture() sshconnect.CheckResult {
 	return check
 }
 
-func FreeEnrollmentPorts(t *testing.T) (string, string) {
+// HoldEnrollmentPorts binds a machine's peer and Raft ports for an
+// enrollment and keeps them bound until the test ends. A node that serves
+// on them takes the listeners through PeerOptions.Listeners, so the ports
+// are never released and bound again.
+func HoldEnrollmentPorts(t *testing.T) *PeerListeners {
 	t.Helper()
-	first, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	held := &PeerListeners{}
+	for _, listener := range []*net.Listener{&held.Peer, &held.Raft} {
+		bound, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { bound.Close() })
+		*listener = bound
 	}
-	defer first.Close()
-	second, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Close()
-	return first.Addr().String(), second.Addr().String()
+	return held
+}
+
+// Addresses are the held peer and Raft addresses, in that order.
+func (l *PeerListeners) Addresses() (string, string) {
+	return l.Peer.Addr().String(), l.Raft.Addr().String()
 }

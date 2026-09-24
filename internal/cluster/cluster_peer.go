@@ -81,6 +81,21 @@ type PeerOptions struct {
 	// Only local process tests supply virtual independent failure domains.
 	TestFailureDomain     func() (string, error)
 	ContentRepairInterval time.Duration
+	// Listeners, when set, are served instead of binding RaftBindAddress
+	// and PeerBindAddress, for a caller that already holds those ports.
+	// OpenPeer owns them from the call on, whether or not it succeeds.
+	Listeners *PeerListeners
+}
+
+// PeerListeners are a node's Raft and peer listeners, bound in advance at
+// the addresses its cluster configuration names.
+type PeerListeners struct{ Raft, Peer net.Listener }
+
+func (l *PeerListeners) close() {
+	if l != nil {
+		l.Raft.Close()
+		l.Peer.Close()
+	}
 }
 
 type Peer struct {
@@ -131,6 +146,11 @@ type Peer struct {
 }
 
 func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr error) {
+	defer func() {
+		if runErr != nil {
+			options.Listeners.close()
+		}
+	}()
 	if options.ClusterPath == "" {
 		options.ClusterPath = DefaultClusterConfigPath(options.ConfigPath)
 	}
@@ -175,21 +195,13 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err := p.startWorker(application.LocalWorkspaceRoot()); err != nil {
 		return nil, err
 	}
-	raftListener, err := net.Listen("tcp", settings.RaftBindAddress)
+	raftListener, peerListener, err := bindPeerListeners(settings, options.Listeners)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if runErr != nil {
 			raftListener.Close()
-		}
-	}()
-	peerListener, err := net.Listen("tcp", settings.PeerBindAddress)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if runErr != nil {
 			peerListener.Close()
 		}
 	}()
@@ -264,6 +276,43 @@ func confirmPeerIdentity(options PeerOptions, settings *PeerConfig) error {
 	}
 	settings.FailureDomain = failureDomain
 	return nil
+}
+
+// bindPeerListeners opens the node's Raft and peer listeners, or takes the
+// ones handed over when they are bound where the configuration says.
+func bindPeerListeners(settings PeerConfig, held *PeerListeners) (raft, peer net.Listener, err error) {
+	if held != nil {
+		for _, bound := range []struct {
+			configured string
+			listener   net.Listener
+		}{{settings.RaftBindAddress, held.Raft}, {settings.PeerBindAddress, held.Peer}} {
+			if !boundAt(bound.configured, bound.listener) {
+				return nil, nil, fmt.Errorf("cluster: listener at %s is not the configured %s", bound.listener.Addr(), bound.configured)
+			}
+		}
+		return held.Raft, held.Peer, nil
+	}
+	raft, err = net.Listen("tcp", settings.RaftBindAddress)
+	if err != nil {
+		return nil, nil, err
+	}
+	peer, err = net.Listen("tcp", settings.PeerBindAddress)
+	if err != nil {
+		raft.Close()
+		return nil, nil, err
+	}
+	return raft, peer, nil
+}
+
+// boundAt says listener serves the configured address: the same port, or
+// any port when the configuration leaves it to the system.
+func boundAt(configured string, listener net.Listener) bool {
+	_, want, err := net.SplitHostPort(configured)
+	if err != nil {
+		return false
+	}
+	_, got, err := net.SplitHostPort(listener.Addr().String())
+	return err == nil && (want == "0" || want == got)
 }
 
 func (p *Peer) recordBoundAddresses(raftListener, peerListener, uiListener net.Listener) {
