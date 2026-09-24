@@ -72,8 +72,7 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 	if err := coordinator.projects.Declare(ctx, []project.Project{{ID: "codex", Level: datalevel.Sealed, Home: project.Home{Path: dir}, DefaultRole: project.RoleWrite}}); err != nil {
 		t.Fatal(err)
 	}
-	// The test hub must be cleared for sealed data for the turn to run.
-	coordinator.fleet = nil
+	// Without a fleet no admission runs, so the test hub takes sealed data.
 
 	result, err := coordinator.Handle(ctx, Request{ConversationID: "chat", ChatID: "oc_1", Input: "tell me", SenderOpenID: "ou_guest", MessageID: "m1"})
 	if err != nil {

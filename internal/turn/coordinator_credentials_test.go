@@ -37,9 +37,8 @@ func (g *continuityGate) PrepareExtras(conversation, agent, token, endpoint stri
 
 func credentialTurn(t *testing.T) (*chatTurn, *continuityGate, state.Session) {
 	t.Helper()
-	c, _, _, _, _ := gateCoordinator(t, true)
 	g := &continuityGate{denied: "revoked-token"}
-	c.gate = g
+	c, _, _, _, _ := gateCoordinator(t, true, withCallbacks(func(cb *Callbacks) { cb.AgentGate = g }))
 	req := Request{ConversationID: "chat", Input: "continue", MessageID: "next"}
 	selected := c.catalog.Default()
 	binding, workspace, err := c.resolveWorkspace(t.Context(), req, selected)

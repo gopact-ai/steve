@@ -11,8 +11,7 @@ import (
 // machines may run it, so it cannot be skipped. A missing one is left to
 // the checks that already refuse unknown projects.
 func TestTurnSpecReportsAnUnreadableProject(t *testing.T) {
-	c, _, book, _, req := retainedChatFixture(t)
-	c.fleet = roster.New(c.catalog)
+	c, _, book, _, req := retainedChatFixture(t, withDeps(func(d *Deps) { d.Fleet = roster.New(d.Catalog) }))
 	selected, ok := c.catalog.Resolve("worker")
 	if !ok {
 		t.Fatal("worker is not in the catalog")
