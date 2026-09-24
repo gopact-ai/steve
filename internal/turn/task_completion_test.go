@@ -121,6 +121,7 @@ func TestCompleteTaskChecksConversationEvenOnRetry(t *testing.T) {
 }
 
 func TestBareCompletionSkipsNewerTerminalRoots(t *testing.T) {
+	t.Parallel()
 	for _, state := range []task.State{task.StateDone, task.StateFailed, task.StateCancelled, task.StatePaused} {
 		t.Run(string(state), func(t *testing.T) {
 			c, _ := completionCoordinator(t, &fakeRunner{reply: "accepted"})
@@ -227,6 +228,7 @@ func TestCancelledChildWithoutResultSettlesOnlyAfterItsExecutionStops(t *testing
 }
 
 func TestTaskCompletionDurableGuardRefusesPendingFacts(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"reserved", "unknown", "unsettled", "landing", "effect", "disclosure", "plan"} {
 		t.Run(scenario, func(t *testing.T) {
 			coordinator, book := completionCoordinator(t, &fakeRunner{reply: "ok"})

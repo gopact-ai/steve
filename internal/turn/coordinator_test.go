@@ -346,6 +346,7 @@ func TestCoordinatorRejectsTaintedSession(t *testing.T) {
 }
 
 func TestCoordinatorSwitchesAgentsAndRestoresSessions(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex":  {Harness: "codex", Default: true},
 		"claude": {Harness: "claude", SystemPrompt: "Act as Claude."},
@@ -676,6 +677,7 @@ func TestFullwidthBangInterrupts(t *testing.T) {
 // to the same machine. The directory over there is the project's, so the
 // conversation is bound to a project homed on that node first.
 func TestAgentRunsOnItsConfiguredNode(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 		"lab":   {Harness: "codex", Node: "host-3", Aliases: []string{"lab"}},

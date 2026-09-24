@@ -20,6 +20,7 @@ import (
 // process and reads task records from SQLite, because the point of a task is
 // that it is still there after the process that opened it is gone.
 func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	build := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
 	build.Dir = "../.."

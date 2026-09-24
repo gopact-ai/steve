@@ -106,6 +106,7 @@ func TestChannelOwnerRegistrationIsExplicitAndKeepsTheConsoleBaseline(t *testing
 }
 
 func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
 	cmd.Dir = "../.."

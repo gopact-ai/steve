@@ -95,6 +95,7 @@ func TestReviveSessionClearsTaintSoTheTurnRuns(t *testing.T) {
 // when the gateway dies; the next process closes the orphan attempt, revives
 // the session and the continuation runs against the same upstream session.
 func TestCrashResumeE2E(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
 	cmd.Dir = "../.."
