@@ -110,7 +110,7 @@ func (s *Store) spawnLocked(parentID string, child Task, replace func(*draft) er
 
 	next := s.draft()
 	next.NextID = s.data.NextID + 1
-	next.add(&child)
+	next.add(child.clone())
 	if err := replace(next); err != nil {
 		return Task{}, err
 	}

@@ -75,7 +75,7 @@ func (s *Store) Create(t Task) (Task, error) {
 	}
 	next := s.draft()
 	next.NextID = s.data.NextID + 1
-	next.add(&t)
+	next.add(t.clone())
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err
 	}

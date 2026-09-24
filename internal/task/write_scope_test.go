@@ -199,3 +199,42 @@ func TestWritesPersistWhatMemoryServes(t *testing.T) {
 	}
 	assertReadIndexMatchesStartup(t, s)
 }
+
+// What a caller passed to Create or Spawn stays the caller's: changing its
+// slices and pointers afterwards cannot rewrite the stored task.
+func TestCreatedTasksDoNotAliasTheirInput(t *testing.T) {
+	s, _, root, _, _ := lineageStore(t)
+	input := func() Task {
+		return Task{Goal: "input", Channel: "chat", Member: "writer",
+			Interim:           []string{"m1"},
+			Result:            &Result{Answer: "kept", Refs: []string{"ref-1"}},
+			Delivery:          &Delivery{State: DeliveryPending, Key: "k"},
+			RecoveryWorkspace: &RecoveryWorkspace{ID: "w"}}
+	}
+	scribble := func(in Task) {
+		in.Interim[0] = "changed"
+		in.Result.Answer = "changed"
+		in.Result.Refs[0] = "changed"
+		in.Delivery.State = DeliveryDelivered
+		in.RecoveryWorkspace.ID = "changed"
+	}
+	created := input()
+	made, err := s.Create(created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spawnedInput := input()
+	spawned, err := s.Spawn(root.ID, spawnedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTasks(s)
+	scribble(created)
+	scribble(spawnedInput)
+	after := snapshotTasks(s)
+	for _, id := range []string{made.ID, spawned.ID} {
+		if !reflect.DeepEqual(after[id], before[id]) {
+			t.Fatalf("task %s changed with its caller's input:\n got %+v\nwant %+v", id, after[id], before[id])
+		}
+	}
+}
