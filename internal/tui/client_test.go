@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestClientRedirectPolicyCoversSnapshotAndStream(t *testing.T) {
@@ -46,5 +47,34 @@ func TestClientRedirectPolicyCoversSnapshotAndStream(t *testing.T) {
 				t.Fatal("client did not apply redirect policy")
 			}
 		})
+	}
+}
+
+// The hub ends the stream of a client that fell behind; top reconnects and
+// is poked to redraw, which re-reads the snapshot.
+func TestWatchReconnectsWhenTheHubEndsTheStream(t *testing.T) {
+	var connections atomic.Int32
+	second := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		if connections.Add(1) == 2 {
+			close(second)
+		}
+		writer.WriteHeader(http.StatusOK)
+		// Every stream ends as soon as it opens.
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var pokes atomic.Int32
+	model := New(Config{URL: server.URL})
+	go model.watch(ctx, func() { pokes.Add(1) })
+	select {
+	case <-second:
+	case <-time.After(10 * time.Second):
+		t.Fatal("top did not reconnect after the hub ended its stream")
+	}
+	if pokes.Load() < 2 {
+		t.Fatalf("pokes = %d, want a redraw for the open stream and for its end", pokes.Load())
 	}
 }

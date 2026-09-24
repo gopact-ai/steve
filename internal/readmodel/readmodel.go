@@ -1101,13 +1101,17 @@ func (m *Model) Publish(ev Event) {
 		m.recent = m.recent[len(m.recent)-recentKept:]
 	}
 	// Sent under the lock, so a subscriber cancelling — which closes its
-	// channel — cannot race a send. The send never blocks: a renderer that
-	// cannot keep up misses events and re-reads the snapshot, which is
-	// the right tradeoff.
-	for _, ch := range m.subs {
+	// channel — cannot race a send. The send never blocks: a subscriber
+	// that cannot keep up is closed instead of handed a gap, so an open
+	// stream has missed nothing and a closed one knows to re-read the
+	// snapshot when it subscribes again.
+	for id, ch := range m.subs {
 		select {
 		case ch <- ev:
 		default:
+			delete(m.subs, id)
+			close(ch)
+			slog.Warn("readmodel: closed a subscriber that fell behind", "subscriber", id, "event", ev.Kind)
 		}
 	}
 	m.mu.Unlock()
@@ -1211,7 +1215,9 @@ func (m *Model) noteActivity(ev Event) {
 	m.activity[ev.Progress.Agent] = next
 }
 
-// Subscribe returns a channel of changes and a cancel function.
+// Subscribe returns a channel of changes and a cancel function. The
+// channel is closed when ctx ends, when cancel is called, or when the
+// subscriber falls behind and an event could not be delivered to it.
 func (m *Model) Subscribe(ctx context.Context) (<-chan Event, func()) {
 	ch := make(chan Event, 64)
 	m.mu.Lock()
