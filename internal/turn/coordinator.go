@@ -174,10 +174,10 @@ type coordinatorState struct {
 	assembler   *capability.Assembler
 	runtime     Runtime
 	timeout     time.Duration
-	// Runtime policy sources are installed before serving and read only at
-	// operation boundaries; a saved setting never interrupts a live turn.
-	TimeoutSource     func() time.Duration
-	AutoResolveSource func() bool
+	// Runtime policy sources are read only at operation boundaries; a
+	// saved setting never interrupts a live turn.
+	timeoutSource     func() time.Duration
+	autoResolveSource func() bool
 	channelOwners     map[string]string
 	home              home.Loader
 	homePath          string
@@ -240,16 +240,21 @@ type coordinatorState struct {
 	skillsLock      int
 }
 
-// Deps is everything a Coordinator is built with. New refuses a Deps with
-// any store, service or loader missing; the strings may be empty.
+// Deps is everything a Coordinator is built with. New refuses a Deps
+// missing anything Deps.required lists; every other field may be zero.
 type Deps struct {
 	Catalog   *agent.Catalog
 	Store     *state.Store
 	Assembler *capability.Assembler
 	Runtime   Runtime
-	// Timeout bounds a prompt until a TimeoutSource is installed.
-	Timeout time.Duration
-	Text    i18n.Catalog
+	// Timeout bounds a prompt; TimeoutSource, when set, is read instead
+	// as each prompt starts.
+	Timeout       time.Duration
+	TimeoutSource func() time.Duration
+	// AutoResolveSource, when set, decides at each sweep whether a merge
+	// conflict is handed to an agent, in place of SetAutoResolve.
+	AutoResolveSource func() bool
+	Text              i18n.Catalog
 	// Owner is the baseline owner identity; ChannelOwners registers each
 	// trusted non-console adapter's native owner.
 	Owner         string
@@ -315,6 +320,7 @@ func New(deps Deps) (*Coordinator, error) {
 		ownerOpenID: deps.Owner,
 		coordinatorState: &coordinatorState{
 			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime, timeout: deps.Timeout,
+			timeoutSource: deps.TimeoutSource, autoResolveSource: deps.AutoResolveSource,
 			channelOwners: owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
 			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
@@ -361,10 +367,18 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
 
 func (c *Coordinator) promptTimeout() time.Duration {
-	if c.TimeoutSource != nil {
-		return c.TimeoutSource()
+	if c.timeoutSource != nil {
+		return c.timeoutSource()
 	}
 	return c.timeout
+}
+
+// autoResolves is whether a merge conflict goes to an agent unasked.
+func (c *Coordinator) autoResolves() bool {
+	if c.autoResolveSource != nil {
+		return c.autoResolveSource()
+	}
+	return c.autoResolve
 }
 
 func injectionMode(chatType protocol.ChatType, sender, owner string) home.Mode {

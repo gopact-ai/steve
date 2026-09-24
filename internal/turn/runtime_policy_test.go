@@ -18,10 +18,11 @@ func TestLiveTimeoutAppliesToNextTurnWithoutInterruptingCurrent(t *testing.T) {
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Hour)
 	var duration atomic.Int64
 	duration.Store(int64(time.Minute))
-	c.TimeoutSource = func() time.Duration { return time.Duration(duration.Load()) }
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Hour, withDeps(func(d *Deps) {
+		d.TimeoutSource = func() time.Duration { return time.Duration(duration.Load()) }
+	}))
 	done := make(chan error, 1)
 	go func() { _, err := handle(c, t.Context(), "first"); done <- err }()
 	select {

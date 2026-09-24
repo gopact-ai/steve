@@ -105,9 +105,11 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	if cfg.FeishuEnabled() {
 		channelOwners = map[string]string{"feishu": cfg.Feishu.OwnerOpenID}
 	}
+	timeoutSource, autoResolveSource := turnPolicy(boot.Settings())
 	coordinator, err := turn.New(turn.Deps{
 		Catalog: catalog, Store: store, Assembler: assembler, Runtime: manager,
-		Timeout: time.Duration(cfg.Gateway.PromptTimeout), Text: catalogText,
+		Timeout: time.Duration(cfg.Gateway.PromptTimeout), TimeoutSource: timeoutSource,
+		AutoResolveSource: autoResolveSource, Text: catalogText,
 		Owner: cfg.EffectiveOwnerID(), ChannelOwners: channelOwners, Home: profile.Home, Skills: live,
 		Projects: projects, DefaultProject: cfg.Gateway.DefaultProject, HomeProject: adminsvc.HomeProjectID,
 		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
@@ -115,10 +117,6 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	})
 	if err != nil {
 		return nil, err
-	}
-	if settings := boot.Settings(); settings != nil {
-		coordinator.TimeoutSource = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
-		coordinator.AutoResolveSource = func() bool { return settings.Load().Policies.Landing.Conflicts != config.ConflictsManual }
 	}
 	if names := live.Map.EnabledNames(); len(names) > 0 {
 		slog.Info(fmt.Sprintf("steve: isolated runtimes; skills=%s", strings.Join(names, ",")))
@@ -178,3 +176,14 @@ func (v *executionValues) Plans() *plan.Store { return v.plans }
 func (v *executionValues) Schedules() *schedule.Store { return v.schedules }
 
 func (v *executionValues) Tasks() *task.Store { return v.tasks }
+
+// turnPolicy is the prompt timeout and conflict policy a coordinator reads
+// from the latest published settings; both are nil without settings.
+func turnPolicy(settings *config.RuntimeSettings) (timeout func() time.Duration, autoResolve func() bool) {
+	if settings == nil {
+		return nil, nil
+	}
+	timeout = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
+	autoResolve = func() bool { return settings.Load().Policies.Landing.Conflicts != config.ConflictsManual }
+	return timeout, autoResolve
+}

@@ -90,11 +90,7 @@ func (c commands) resolveCmd(ctx context.Context, req Request, rest string) (Res
 // nobody asking for it, and nothing at all when the landing policy leaves
 // conflicts to a person.
 func (c *Coordinator) AutoResolveConflicts(ctx context.Context, p project.Project) []Resolution {
-	auto := c.autoResolve
-	if c.AutoResolveSource != nil {
-		auto = c.AutoResolveSource()
-	}
-	if !auto {
+	if !c.autoResolves() {
 		return nil
 	}
 	return c.ResolveConflicts(ctx, p)

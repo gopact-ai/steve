@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
@@ -260,5 +261,29 @@ func TestNewWiresEveryDependency(t *testing.T) {
 	native, err := c.forChannel("feishu")
 	if err != nil || native.ownerOpenID != "native-owner" {
 		t.Fatalf("feishu owner = %v, %v", native, err)
+	}
+}
+
+func TestNewReadsRuntimePolicyFromItsSources(t *testing.T) {
+	var deps Deps
+	fillDeps(t, testLedger(t), &deps)
+	deps.Timeout = time.Hour
+	fixed, err := New(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed.SetAutoResolve(true)
+	if fixed.promptTimeout() != time.Hour || !fixed.autoResolves() {
+		t.Fatalf("without sources: timeout %v, auto-resolve %v", fixed.promptTimeout(), fixed.autoResolves())
+	}
+	deps.TimeoutSource = func() time.Duration { return 19 * time.Minute }
+	deps.AutoResolveSource = func() bool { return false }
+	live, err := New(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live.SetAutoResolve(true)
+	if live.promptTimeout() != 19*time.Minute || live.autoResolves() {
+		t.Fatalf("with sources: timeout %v, auto-resolve %v", live.promptTimeout(), live.autoResolves())
 	}
 }
