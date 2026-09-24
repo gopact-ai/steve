@@ -494,7 +494,7 @@ if (process.env.PURE_ONLY !== "1") {
         channels.apply_mode = "restart"; delete channels.live_fields;
         channels.runtime_error = "Application credentials rejected";
         await page.getByRole("button", { name: "Reload", exact: true }).click();
-        await channelHint("feishu.group_policy").filter({ hasText: "Restart" }).waitFor();
+        await channelHint("feishu.group_policy").filter({ hasText: restartHint }).waitFor();
         await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).waitFor();
         assert.equal(await page.locator('[data-channel-apply]').filter({ hasText: "no restart" }).count(), 0);
         assert.deepEqual(errors, []); assert.deepEqual(external, []);
