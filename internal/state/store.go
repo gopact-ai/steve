@@ -65,9 +65,6 @@ type Conversation struct {
 	// harness exposes — by option id, "model" for the model. They outlive
 	// sessions and are reapplied when a native context is resumed.
 	Preferences map[string]map[string]string `json:"preferences,omitempty"`
-	// Renew retains the older deferred-preference marker for upgrades.
-	// The next turn clears it and applies Preferences without replacing context.
-	Renew map[string]bool `json:"renew,omitempty"`
 }
 
 type Archived struct {
@@ -191,33 +188,6 @@ func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]
 		delete(conversation.Preferences, agentID)
 	} else {
 		conversation.Preferences[agentID] = prefs
-	}
-	next.Conversations[conversationID] = conversation
-	return s.replaceLocked(next)
-}
-
-// SetRenew updates the legacy deferred-preference marker.
-func (s *Store) SetRenew(conversationID, agentID string, renew bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	next := cloneData(s.data)
-	conversation := next.Conversations[conversationID]
-	if conversation.Sessions == nil {
-		conversation.Sessions = map[string]Session{}
-	}
-	if !renew {
-		if _, ok := conversation.Renew[agentID]; !ok {
-			return nil
-		}
-		delete(conversation.Renew, agentID)
-	} else {
-		if conversation.Renew == nil {
-			conversation.Renew = map[string]bool{}
-		}
-		conversation.Renew[agentID] = true
-	}
-	if len(conversation.Renew) == 0 {
-		conversation.Renew = nil
 	}
 	next.Conversations[conversationID] = conversation
 	return s.replaceLocked(next)
@@ -580,12 +550,6 @@ func cloneConversation(conversation Conversation) Conversation {
 				copied[k] = v
 			}
 			clone.Preferences[agent] = copied
-		}
-	}
-	if conversation.Renew != nil {
-		clone.Renew = make(map[string]bool, len(conversation.Renew))
-		for agent, renew := range conversation.Renew {
-			clone.Renew[agent] = renew
 		}
 	}
 	clone.Sessions = make(map[string]Session, len(conversation.Sessions))

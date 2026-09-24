@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -260,5 +261,15 @@ func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
 		if ref.Conversation == "console:one" {
 			t.Fatalf("deleted conversation still holds a plugin reference: %#v", ref)
 		}
+	}
+}
+
+func TestOpenRejectsDeferredRenewalMarker(t *testing.T) {
+	book := testLedger(t)
+	if err := book.Document("state").Save([]byte(`{"conversations":{"chat":{"active_agent":"","sessions":{},"renew":{"grok":true}}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenLedger(book); err == nil || !strings.Contains(err.Error(), `unknown field "renew"`) {
+		t.Fatalf("renew marker = %v", err)
 	}
 }

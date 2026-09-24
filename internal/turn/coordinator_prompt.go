@@ -170,9 +170,6 @@ func (t *chatTurn) settleTask(parent context.Context, started time.Time, finishE
 
 func (t *chatTurn) prepareSession(ctx context.Context) error {
 	c, req, selected := t.c, t.req, t.selected
-	if err := c.renewIfAsked(ctx, req.ConversationID, selected.ID); err != nil {
-		return err
-	}
 	conversation := c.store.Conversation(req.ConversationID)
 	saved := conversation.Sessions[selected.ID]
 	saved.ConversationID = req.ConversationID
