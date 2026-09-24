@@ -31,7 +31,7 @@
 
 `internal/architecture` 的棘轮只允许数字变好：超过 120 行的非测试函数、`cmd/steve` 的行数与内部依赖数、临时接口断言和内联字符串状态都以基线文件记录，出现新违例或基线残留已消失的条目都会失败；清理后用 `RATCHET_UPDATE=1` 重新生成基线。
 
-对仓库内非空接口的类型断言或 type switch 分支（能力探测）在实现改名或签名变化后仍能编译，只会静默走回退分支。因此只有一个生产实现的被探测接口，要在一个能同时引用接口与实现的包里，用 `contracts_test.go` 中的包级 `var _ I = (*T)(nil)` 在编译期钉住实现；断言放在测试文件里，不增加生产依赖。多个生产类型有意实现或不实现的接口，记入 `internal/architecture` 的 `openCapabilities` 并写明理由。既未钉住也未列入 `openCapabilities` 的被探测接口按接口记录在棘轮基线中，只减不增。`consoleapi.Admin` 的每个方法都必须在 `internal/httpapi` 中被调用或以方法值引用，否则测试失败。
+对仓库内非空接口的类型断言或 type switch 分支（能力探测）在实现改名或签名变化后仍能编译，只会静默走回退分支。因此只有一个生产实现的被探测接口，要在一个能同时引用接口与实现的包里，用 `contracts_test.go` 中的包级 `var _ I = (*T)(nil)`、`T{}` 或 `pkg.T{}` 在编译期钉住实现，T 必须声明在非测试文件中，测试替身或 `nil` 不算钉住；断言放在测试文件里，不增加生产依赖。多个生产类型有意实现或不实现的接口，记入 `internal/architecture` 的 `openCapabilities` 并写明理由。既未钉住也未列入 `openCapabilities` 的被探测接口按接口记录在棘轮基线中，只减不增。`consoleapi.Admin` 的每个方法都必须在 `internal/httpapi` 中被调用或以方法值引用，否则测试失败。
 
 依赖门禁禁止领域层反向引用应用/传输层，禁止契约包引用服务实现。传递依赖门禁要求 `config`、`i18n` 不链接执行层（exec、lifecycle、turn、node、harness）与存储层（ledger、SQLite），`consoleapi` 不链接执行层，`cmd/steve-node` 不链接 ledger 且只经 `node` 的会话记录使用 SQLite；违规时报告最短导入链。HTTP 实现只由组合入口装配，其他内部服务不导入它。包之间采用消费方所需的接口；运行期可替换的对象才需要接口。
 

@@ -2,6 +2,12 @@ package port
 
 type Closer interface{ Close() error }
 
+type Recorder interface{ Record() }
+
+type Faked interface{ Fake() }
+
+type Nilled interface{ Nil() }
+
 type Empty interface{}
 
 type Record struct{}

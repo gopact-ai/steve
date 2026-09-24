@@ -52,9 +52,10 @@ func parseGoSources(t *testing.T, root string, files []string) []goSource {
 //
 // A probe is a type assertion or type switch case whose target is a
 // non-empty interface declared in a non-test file of this repository. A pin
-// is a package-level `var _ I = …` in a _test.go file; it fails to compile
-// once the production type it names stops satisfying I. Interfaces in open
-// are neither required nor expected to be pinned.
+// is a package-level `var _ I = (*T)(nil)`, `var _ I = T{}` or
+// `var _ I = pkg.T{}` in a _test.go file, with T declared in a non-test file;
+// it fails to compile once that production type stops satisfying I.
+// Interfaces in open are neither required nor expected to be pinned.
 //
 // The analysis is syntactic. It resolves an identifier to the file's own
 // package and a selector to an import of this module, so it does not see
@@ -65,6 +66,7 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 	parsedSources := parseGoSources(t, root, sources)
 	packages := map[string]string{}
 	interfaces := map[string]bool{}
+	declared := map[string]bool{}
 	for _, src := range parsedSources {
 		packages[src.dir] = src.syntax.Name.Name
 		for _, decl := range src.syntax.Decls {
@@ -74,6 +76,7 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 			}
 			for _, spec := range gen.Specs {
 				typeSpec := spec.(*ast.TypeSpec)
+				declared[src.dir+"."+typeSpec.Name.Name] = true
 				if iface, ok := typeSpec.Type.(*ast.InterfaceType); ok && typeSpec.Assign == 0 && len(iface.Methods.List) > 0 {
 					interfaces[src.dir+"."+typeSpec.Name.Name] = true
 				}
@@ -93,7 +96,7 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 			t.Errorf("openCapabilities lists %s without saying why several production types satisfy or lack it", name)
 		}
 	}
-	// resolve names the interface an expression refers to, or "".
+	// resolve qualifies the type name an expression refers to, or returns "".
 	resolve := func(src goSource) func(ast.Expr) string {
 		imports := map[string]string{}
 		for _, spec := range src.syntax.Imports {
@@ -122,28 +125,44 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 				}
 				target = paren.X
 			}
-			iface := ""
 			switch target := target.(type) {
 			case *ast.Ident:
 				if ownPackage {
-					iface = src.dir + "." + target.Name
+					return src.dir + "." + target.Name
 				}
 			case *ast.SelectorExpr:
 				if pkg, ok := target.X.(*ast.Ident); ok && imports[pkg.Name] != "" {
-					iface = imports[pkg.Name] + "." + target.Sel.Name
+					return imports[pkg.Name] + "." + target.Sel.Name
 				}
 			}
-			if !interfaces[iface] {
-				return ""
-			}
-			return iface
+			return ""
 		}
+	}
+	// pins reports whether a pin's value is (*T)(nil), T{} or pkg.T{} with T
+	// declared in a non-test file, so a test fake or a bare nil pins nothing.
+	pins := func(name func(ast.Expr) string, value ast.Expr) bool {
+		switch value := value.(type) {
+		case *ast.CompositeLit:
+			return declared[name(value.Type)]
+		case *ast.CallExpr:
+			if len(value.Args) != 1 {
+				return false
+			}
+			arg, isIdent := value.Args[0].(*ast.Ident)
+			conversion, isParen := value.Fun.(*ast.ParenExpr)
+			if !isIdent || arg.Name != "nil" || !isParen {
+				return false
+			}
+			pointer, isPointer := conversion.X.(*ast.StarExpr)
+			return isPointer && declared[name(pointer.X)]
+		}
+		return false
 	}
 	probes := map[string]map[string]bool{}
 	for _, src := range parsedSources {
 		name := resolve(src)
 		probe := func(target ast.Expr) {
-			if iface := name(target); iface != "" {
+			if iface := name(target); interfaces[iface] {
 				if probes[iface] == nil {
 					probes[iface] = map[string]bool{}
 				}
@@ -175,7 +194,7 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 			}
 			for _, spec := range gen.Specs {
 				value := spec.(*ast.ValueSpec)
-				if len(value.Names) == 1 && value.Names[0].Name == "_" && value.Type != nil && len(value.Values) == 1 {
+				if len(value.Names) == 1 && value.Names[0].Name == "_" && value.Type != nil && len(value.Values) == 1 && pins(name, value.Values[0]) {
 					delete(probes, name(value.Type))
 				}
 			}
@@ -201,7 +220,11 @@ func TestUnpinnedProbesExcludePinnedAndOpenInterfaces(t *testing.T) {
 	tests := []string{fixture("port", "external_test.go"), fixture("user", "contracts_test.go")}
 	open := map[string]string{"internal/user.reader": "fixture"}
 	got := unpinnedProbes(t, root, sources, tests, open)
-	want := map[string][]string{"internal/port.local": {"internal/port/port.go"}}
+	want := map[string][]string{
+		"internal/port.Faked":  {"internal/user/user.go"},
+		"internal/port.Nilled": {"internal/user/user.go"},
+		"internal/port.local":  {"internal/port/port.go"},
+	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("unpinned probes = %v, want %v", got, want)
 	}
