@@ -40,7 +40,8 @@ func (o channelOwners) of(channel string) (string, error) {
 	return owner, nil
 }
 
-// forChannel is the view a request from channel runs as.
+// forChannel is the view a request from channel runs as. The owner is always
+// resolved from channel alone, whatever owner the receiver view carries.
 func (c *Coordinator) forChannel(channel string) (*Coordinator, error) {
 	owner, err := c.owners.of(channel)
 	if err != nil {
