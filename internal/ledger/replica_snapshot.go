@@ -91,6 +91,9 @@ func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error
 // RestoreReplica durably replaces application state through SQLite's atomic
 // backup API. It never replaces an open database file or restores only an
 // in-memory connection. A successful restore clears a failed local replica.
+// The replacement commits as one write: a read transaction already open
+// keeps its snapshot of the old state, and every later read sees the new
+// one. RestoreGeneration brackets the replacement for readers that cache.
 func (l *Ledger) RestoreReplica(raw []byte) error {
 	if l.replicaWriter {
 		return ErrReplicaWriteBypass

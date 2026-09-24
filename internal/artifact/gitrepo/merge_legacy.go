@@ -77,5 +77,5 @@ func (r *Repo) mergeLegacy(ctx context.Context, base, ours, theirs, message stri
 		return "", nil, err
 	}
 	sha := strings.TrimSpace(out)
-	return sha, nil, r.Pin(ctx, sha)
+	return sha, nil, r.pinNew(ctx, sha)
 }

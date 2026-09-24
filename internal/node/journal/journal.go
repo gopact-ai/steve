@@ -39,6 +39,8 @@ type Options struct {
 	SegmentBytes int64
 	MaxBytes     int64
 	SyncInterval time.Duration
+	// fsync replaces (*os.File).Sync in tests.
+	fsync func(*os.File) error
 }
 
 type Journal struct {
@@ -71,6 +73,8 @@ type segment struct {
 	size               int64
 	first, last, order uint64
 	index              []checkpoint
+	// unsynced says an append reached file after its last sync.
+	unsynced bool
 }
 
 func ValidID(id string) bool {
@@ -97,6 +101,9 @@ func New(state, id string, opts Options) (*Journal, error) {
 	}
 	if opts.SyncInterval <= 0 {
 		opts.SyncInterval = 100 * time.Millisecond
+	}
+	if opts.fsync == nil {
+		opts.fsync = (*os.File).Sync
 	}
 	dir := filepath.Join(state, "streams", id)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
@@ -155,7 +162,8 @@ func (l *Log) Last() uint64 {
 }
 
 // Append accepts exactly one line including its newline. Sequence numbers
-// start at one. Writes precede delivery; fsync is shared across both logs.
+// start at one. Writes precede delivery; one clock fsyncs the files of both
+// logs that were appended to since its last tick.
 func (l *Log) Append(line []byte) (uint64, error) {
 	j := l.j
 	j.mu.Lock()
@@ -194,6 +202,7 @@ func (l *Log) Append(line []byte) (uint64, error) {
 	}
 	s.size += int64(n)
 	s.last, l.seq = seq, seq
+	s.unsynced = true
 	j.total += int64(n)
 	if err := j.trim(); err != nil {
 		return seq, j.fail(err)
@@ -352,20 +361,57 @@ func (j *Journal) syncLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			j.mu.Lock()
-			j.sync()
-			j.mu.Unlock()
+			j.syncWritten()
 		case <-j.done:
 			return
 		}
 	}
 }
 
+// syncWritten makes the appends since the previous sync durable; a file
+// nothing was appended to is not synced. fsync runs without the lock, so
+// appends, which live output waits on, continue while the disk catches up;
+// an append made meanwhile leaves its file for the next tick.
+func (j *Journal) syncWritten() {
+	j.mu.Lock()
+	if j.closed || j.err != nil {
+		j.mu.Unlock()
+		return
+	}
+	var files []*os.File
+	for _, l := range []*Log{j.In, j.Out} {
+		for _, s := range l.segments {
+			if s.file != nil && s.unsynced {
+				s.unsynced = false
+				files = append(files, s.file)
+			}
+		}
+	}
+	j.mu.Unlock()
+	var failed []error
+	for _, f := range files {
+		// Rotation and Close sync a file before closing it, so a file
+		// they closed before this sync began lost nothing. Any other
+		// error counts even if the file has since been closed: a
+		// writeback error is reported once per file, and their own
+		// later sync may have succeeded without it.
+		if err := j.opts.fsync(f); err != nil && !errors.Is(err, os.ErrClosed) {
+			failed = append(failed, err)
+		}
+	}
+	if len(failed) == 0 {
+		return
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.fail(errors.Join(failed...))
+}
+
 func (j *Journal) sync() {
 	for _, l := range []*Log{j.In, j.Out} {
 		for _, s := range l.segments {
 			if s.file != nil {
-				if err := s.file.Sync(); err != nil {
+				if err := j.opts.fsync(s.file); err != nil {
 					j.fail(err)
 				}
 			}
@@ -390,10 +436,13 @@ func (j *Journal) Close() error {
 			}
 		}
 	}
-	err := j.err
 	j.mu.Unlock()
+	// A tick's sync may still be finishing; its failure belongs in the
+	// result.
 	<-j.stopped
-	return err
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.err
 }
 
 // Prune removes only finished streams whose retention window has elapsed.

@@ -57,9 +57,7 @@ func (l *Ledger) ExportOperations(ctx context.Context, ids []string) (TransferFa
 		}
 		out.Events = append(out.Events, events...)
 	}
-	l.journal.mu.Lock()
 	entries, err := l.journal.readAll()
-	l.journal.mu.Unlock()
 	if err != nil {
 		return out, err
 	}
@@ -80,9 +78,7 @@ func (l *Ledger) ImportFacts(ctx context.Context, f TransferFacts, documents, ex
 	}
 	// Journal identities are stable; importing the same evidence twice does not
 	// create a new effect. The atomic database commit follows durable evidence.
-	l.journal.mu.Lock()
 	old, err := l.journal.readAll()
-	l.journal.mu.Unlock()
 	if err != nil {
 		return err
 	}

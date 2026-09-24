@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -63,8 +64,11 @@ func (l *Ledger) appendEffect(entry Entry) (Entry, error) {
 	return entry, nil
 }
 
-func (l *Ledger) effectEntries(after int64) ([]Entry, error) {
-	rows, err := l.db.Query(`SELECT data FROM effect_entries WHERE seq > ? ORDER BY seq`, after)
+// effectEntries reads the effect evidence through source. Commit, apply and
+// restore paths pass the writer connection: they run under writerMu or
+// applyMu and must not wait for a pooled read connection held by a reader.
+func effectEntries(source *sql.DB, after int64) ([]Entry, error) {
+	rows, err := source.Query(`SELECT data FROM effect_entries WHERE seq > ? ORDER BY seq`, after)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +92,7 @@ func (l *Ledger) syncEffectsJournal() error {
 	j := l.journal
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	entries, err := l.effectEntries(j.seq)
+	entries, err := effectEntries(l.db, j.seq)
 	if err != nil {
 		return err
 	}
@@ -112,7 +116,7 @@ func (l *Ledger) replaceEffectsJournal() error {
 	j := l.journal
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	entries, err := l.effectEntries(0)
+	entries, err := effectEntries(l.db, 0)
 	if err != nil {
 		return err
 	}
