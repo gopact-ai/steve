@@ -12,3 +12,10 @@ var (
 	_ retainedStepCloser = (*AgentRunner)(nil)
 	_ retainedStepRunner = (*AgentRunner)(nil)
 )
+
+// The plugin session preparers exec and lifecycle probe for: a step's Runner
+// is an *AgentRunner, and lifecycle opens a step's session through *stepRun.
+var (
+	_ harness.PluginSessionPreparer = (*AgentRunner)(nil)
+	_ harness.PluginSessionPreparer = (*stepRun)(nil)
+)

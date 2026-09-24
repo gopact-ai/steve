@@ -129,6 +129,9 @@ try {
         before = counts[domain];
         readError = true;
         await page.clock.runFor(30000); await settle();
+        // The interval can fire at the end of the window; its read is counted
+        // when the request reaches the fixture, a moment later.
+        for (let i = 0; i < 40 && counts[domain] <= before; i++) await new Promise((resolve) => setTimeout(resolve, 25));
         assert.ok(counts[domain] > before, "bounded page-local recovery remains");
         await page.getByRole("alert").filter({ hasText: "Fixture read unavailable" }).waitFor();
         readError = false; before = counts[domain];
