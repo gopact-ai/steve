@@ -615,14 +615,10 @@ func (s *Service) Send(ctx context.Context, conversation, input string) (console
 
 // SendCommand is Send with an idempotency key: a page that retries, a
 // double click, a second tab — the same command id gets the first
-// answer back and nothing runs twice.
+// answer back and nothing runs twice. It keeps the synchronous API while
+// the service owns execution.
 func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (consoleapi.Reply, error) {
-	return s.sendCommand(ctx, conversation, input, commandID, nil)
-}
-
-// sendCommand keeps the synchronous API while the service owns execution.
-func (s *Service) sendCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (consoleapi.Reply, error) {
-	exchange, _, err := s.enqueue(ctx, conversation, input, quotes, enqueueOptions{Key: clientKey(commandID)})
+	exchange, _, err := s.enqueue(ctx, conversation, input, nil, enqueueOptions{Key: clientKey(commandID)})
 	if err != nil {
 		return consoleapi.Reply{}, err
 	}
