@@ -128,8 +128,7 @@ func TestTurnThatNeverPromptedLeavesNoUncertainSession(t *testing.T) {
 		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), manager, time.Minute
 		d.Projects, d.DefaultProject = projects, "p"
 		d.Tasks, d.Node = tasks, "hub"
-	}), onLedger(book))
-	c.SetAgentGate(&refusingGate{})
+	}), onLedger(book), withCallbacks(func(cb *Callbacks) { cb.AgentGate = &refusingGate{} }))
 	if _, err := handle(c, t.Context(), "work"); err == nil {
 		t.Fatal("refused grant did not fail the turn")
 	}

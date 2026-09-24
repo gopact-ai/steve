@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
@@ -22,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -37,6 +39,9 @@ type Options struct {
 	// directory. Stores a test sets itself should share it, since the
 	// coordinator writes tasks, attempts and projects in one transaction.
 	Ledger *ledger.Ledger
+	// Callbacks are what New wires, with Callbacks filling what is unset.
+	// Unwired ignores them.
+	Callbacks turn.Callbacks
 }
 
 // Option sets part of Options.
@@ -50,10 +55,19 @@ type Option func(*Options)
 // those tests cannot import this package; change both together.
 func Deps(t testing.TB, opts ...Option) turn.Deps {
 	t.Helper()
+	return fill(t, options(opts))
+}
+
+func options(opts []Option) Options {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)
 	}
+	return o
+}
+
+func fill(t testing.TB, o Options) turn.Deps {
+	t.Helper()
 	if o.Ledger == nil {
 		book, err := ledger.Open(t.TempDir(), ledger.Options{})
 		if err != nil {
@@ -137,14 +151,75 @@ func Deps(t testing.TB, opts ...Option) turn.Deps {
 	return *d
 }
 
-// New builds a coordinator from Deps(t, opts...).
+// New builds a coordinator from Deps(t, opts...) and wires it with
+// Callbacks(the options' Callbacks).
 func New(t testing.TB, opts ...Option) *turn.Coordinator {
 	t.Helper()
-	c, err := turn.New(Deps(t, opts...))
+	o := options(opts)
+	c := build(t, o)
+	c.Wire(Callbacks(o.Callbacks))
+	return c
+}
+
+// Unwired builds a coordinator from Deps(t, opts...) and leaves Wire to the
+// test, for callbacks that are built from the coordinator itself.
+func Unwired(t testing.TB, opts ...Option) *turn.Coordinator {
+	t.Helper()
+	return build(t, options(opts))
+}
+
+func build(t testing.TB, o Options) *turn.Coordinator {
+	t.Helper()
+	c, err := turn.New(fill(t, o))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// ErrNoCallback is what a callback Callbacks filled answers with.
+var ErrNoCallback = errors.New("turntest: nothing behind this callback")
+
+// Callbacks fills every callback turn.Coordinator.Wire requires that cb
+// leaves unset: a supervisor that plans nothing and has no runs, a
+// workspace attach that refuses, a resumer that accepts, and a notifier and
+// dispatcher that drop what they are given.
+//
+// fillCallbacks in the turn package's own tests fills Callbacks the same
+// way; change both together.
+func Callbacks(cb turn.Callbacks) turn.Callbacks {
+	if cb.Supervisor == nil {
+		cb.Supervisor = IdleSupervisor{}
+	}
+	if cb.WorkspaceAttach == nil {
+		cb.WorkspaceAttach = func(context.Context, string, string) error { return ErrNoCallback }
+	}
+	if cb.Notifier == nil {
+		cb.Notifier = func(turn.TaskNotice) {}
+	}
+	if cb.Resumer == nil {
+		cb.Resumer = func(turn.TaskResume) error { return nil }
+	}
+	if cb.ResumeDispatcher == nil {
+		cb.ResumeDispatcher = func(turn.TaskResume) {}
+	}
+	return cb
+}
+
+// IdleSupervisor plans nothing and has no runs to resume.
+type IdleSupervisor struct{}
+
+func (IdleSupervisor) Plan(context.Context, planner.Request) (plan.Plan, error) {
+	return plan.Plan{}, ErrNoCallback
+}
+func (IdleSupervisor) Execute(context.Context, plan.Plan) (exec.Outcome, error) {
+	return exec.Outcome{}, ErrNoCallback
+}
+func (IdleSupervisor) Name() string                                       { return "idle" }
+func (IdleSupervisor) PrepareRecovery(context.Context) error              { return nil }
+func (IdleSupervisor) OpenRuns(context.Context) ([]exec.RunRecord, error) { return nil, nil }
+func (IdleSupervisor) Resume(context.Context, exec.RunRecord) (exec.Outcome, error) {
+	return exec.Outcome{}, ErrNoCallback
 }
 
 // ErrNoRuntime is what NoRuntime answers every session request with.

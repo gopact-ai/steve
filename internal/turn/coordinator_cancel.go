@@ -3,7 +3,7 @@
 // with it, since they only ever ran on the task's behalf; and the task is
 // held, so that nothing a child leaves can start a turn before the user
 // speaks again. What that next turn is told about the children comes
-// from the delegation service through SetTurnPreface — turn does not
+// from the delegation service through Callbacks.TurnPreface — turn does not
 // import delegate.
 
 package turn
@@ -29,13 +29,6 @@ import (
 type Preface struct {
 	Text string
 	Told func()
-}
-
-// SetTurnPreface wires the delegation service's account of the children
-// that ended, or were stopped, since the task last heard. An empty Text
-// adds nothing to the prompt.
-func (c *Coordinator) SetTurnPreface(fn func(ctx context.Context, taskID string) Preface) {
-	c.turnPreface = fn
 }
 
 func (c *Coordinator) cancel(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {

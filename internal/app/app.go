@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/logs"
+	"github.com/gopact-ai/steve/internal/turn"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 )
@@ -102,8 +103,9 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
+	wireCoordinator(execution, plans, administration, delegation, channels)
 	// The workers, the messaging server and recovery below can reach the
-	// coordinator, so they start only after everything it reaches is built.
+	// coordinator, so they start only after it is wired.
 	if err := assembleFleetWorkers(runtime, ledger, fleet, models, execution, readModel); err != nil {
 		return nil, err
 	}
@@ -119,6 +121,22 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 		}
 		return runChannel(runtime, ledger, home, execution, readModel, administration, channels)
 	}}, nil
+}
+
+// wireCoordinator hands the coordinator what the stages after execution
+// built around it. It is the one place the coordinator's cycle closes.
+func wireCoordinator(work executionAssembly, planning plansAssembly, management administrationAssembly, delegates delegationAssembly, channels channelsAssembly) {
+	messaging, routes := delegates.Callbacks(), channels.Callbacks()
+	work.Coordinator().Wire(turn.Callbacks{
+		Supervisor:       planning.Supervisor(),
+		WorkspaceAttach:  management.WorkspaceAttach(),
+		AgentGate:        messaging.AgentGate,
+		AfterTurn:        messaging.AfterTurn,
+		TurnPreface:      messaging.TurnPreface,
+		Notifier:         routes.Notifier,
+		Resumer:          routes.Resumer,
+		ResumeDispatcher: routes.ResumeDispatcher,
+	})
 }
 
 // Run waits for the application lifetime and joins shutdown before returning.

@@ -10,11 +10,13 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/state"
@@ -126,10 +128,9 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	}}}
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"),
-		withDeps(func(d *Deps) { d.Fleet = fleet }))
 	sup := &fakeSupervisor{}
-	c.SetSupervisor(sup)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"),
+		withDeps(func(d *Deps) { d.Fleet = fleet }), withCallbacks(func(cb *Callbacks) { cb.Supervisor = sup }))
 	cmds := &recordCommands{}
 	c.SetRepair(nodes, cmds)
 	return c, sup, nodes, cmds, tasks
@@ -248,8 +249,9 @@ func TestRepairReportsFailureHonestly(t *testing.T) {
 }
 
 // The context bar is computed by the rules a turn is judged by: an agent
-// on another machine is "not usable here" with the project's reason, a
-// blocked agent carries the roster's, and the current agent is marked.
+// on another machine is usable, since the project is given a directory
+// there, unless the project is sealed; a blocked agent carries the
+// roster's reason, and the current agent is marked.
 func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	c, _, _, _, _ := repairCoordinator(t)
 	got, err := c.Context(t.Context(), "chat")
@@ -267,8 +269,8 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	if a := byID["codex"]; !a.Usable || !a.Ready || !a.Current {
 		t.Fatalf("codex = %+v, want usable and current", a)
 	}
-	if a := byID["builder"]; a.Usable || !a.Ready || !strings.Contains(a.Because, "codex") {
-		t.Fatalf("builder = %+v, want ready but not usable here, naming the project", a)
+	if a := byID["builder"]; !a.Usable || !a.Ready || !strings.Contains(a.Because, "codex") {
+		t.Fatalf("builder = %+v, want usable, naming the project it attaches", a)
 	}
 	if a := byID["kimi"]; a.Usable || a.Ready || !strings.Contains(a.Because, "PATH") {
 		t.Fatalf("kimi = %+v, want blocked with the roster's reason", a)
@@ -276,6 +278,22 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	// Usable agents come first, and the verbs come with help.
 	if !got.Agents[0].Usable {
 		t.Fatalf("first agent %+v is not usable", got.Agents[0])
+	}
+	sealed, _, err := c.projects.Get(t.Context(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed.Level = datalevel.Sealed
+	if err := c.projects.Declare(t.Context(), []project.Project{sealed}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = c.Context(t.Context(), "chat"); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range got.Agents {
+		if a.ID == "builder" && (a.Usable || !a.Ready || !strings.Contains(a.Because, "codex")) {
+			t.Fatalf("builder = %+v, want ready but not usable for a sealed project, naming it", a)
+		}
 	}
 	verbs := c.Verbs()
 	if len(verbs) < 15 || verbs[0].Command != "/plan" || verbs[0].Summary == "" {

@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 
 	osexec "os/exec"
@@ -388,7 +389,7 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turntest.New(t, func(o *turntest.Options) {
+	coordinator := turntest.Unwired(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, capability.NewAssembler(nil), f.manager, 2*time.Minute
 		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
@@ -400,7 +401,7 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	consoleSup.SetPlans(f.plans)
 	consoleSup.SetLedger(f.book, "mesh")
 	consoleSup.SetTasks(f.tasks)
-	coordinator.SetSupervisor(consoleSup)
+	coordinator.Wire(turntest.Callbacks(turn.Callbacks{Supervisor: consoleSup}))
 	server.SetConsole(console.New(coordinator, "ou_owner", f.view))
 	payload, _ := json.Marshal(map[string]string{"conversation": "console:main", "input": "/fleet"})
 	req, _ := http.NewRequest(http.MethodPost, server.URL()+"/console/send", bytes.NewReader(payload))

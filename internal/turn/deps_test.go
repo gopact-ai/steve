@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
@@ -24,6 +25,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/schedule"
@@ -114,13 +116,59 @@ func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	}
 }
 
+// errNoCallback is what a callback fillCallbacks filled answers with.
+var errNoCallback = errors.New("nothing behind this callback in this test")
+
+// fillCallbacks fills every callback Wire requires that cb leaves unset:
+// a supervisor that plans nothing and has no runs, a workspace attach that
+// refuses, a resumer that accepts, and a notifier and dispatcher that
+// drop what they are given.
+//
+// It repeats turntest.Callbacks, which imports this package and so cannot
+// be used from its own tests; change both together.
+func fillCallbacks(cb Callbacks) Callbacks {
+	if cb.Supervisor == nil {
+		cb.Supervisor = idleSupervisor{}
+	}
+	if cb.WorkspaceAttach == nil {
+		cb.WorkspaceAttach = func(context.Context, string, string) error { return errNoCallback }
+	}
+	if cb.Notifier == nil {
+		cb.Notifier = func(TaskNotice) {}
+	}
+	if cb.Resumer == nil {
+		cb.Resumer = func(TaskResume) error { return nil }
+	}
+	if cb.ResumeDispatcher == nil {
+		cb.ResumeDispatcher = func(TaskResume) {}
+	}
+	return cb
+}
+
+// idleSupervisor plans nothing and has no runs to resume.
+type idleSupervisor struct{}
+
+func (idleSupervisor) Plan(context.Context, planner.Request) (plan.Plan, error) {
+	return plan.Plan{}, errNoCallback
+}
+func (idleSupervisor) Execute(context.Context, plan.Plan) (exec.Outcome, error) {
+	return exec.Outcome{}, errNoCallback
+}
+func (idleSupervisor) Name() string                                       { return "idle" }
+func (idleSupervisor) PrepareRecovery(context.Context) error              { return nil }
+func (idleSupervisor) OpenRuns(context.Context) ([]exec.RunRecord, error) { return nil, nil }
+func (idleSupervisor) Resume(context.Context, exec.RunRecord) (exec.Outcome, error) {
+	return exec.Outcome{}, errNoCallback
+}
+
 // testOption adjusts how buildCoordinator builds a coordinator.
 type testOption func(*testBuild)
 
 type testBuild struct {
-	book     *ledger.Ledger
-	lifetime context.Context
-	set      []func(*Deps)
+	book      *ledger.Ledger
+	lifetime  context.Context
+	set       []func(*Deps)
+	callbacks []func(*Callbacks)
 }
 
 // onLedger opens every default store on book instead of a fresh ledger.
@@ -132,6 +180,13 @@ func onLedger(book *ledger.Ledger) testOption {
 // options win.
 func withDeps(set func(*Deps)) testOption {
 	return func(b *testBuild) { b.set = append(b.set, set) }
+}
+
+// withCallbacks sets callbacks before the defaults fill the rest; later
+// options win. A callback that needs the coordinator reaches it through a
+// variable the test assigns once buildCoordinator returns.
+func withCallbacks(set func(*Callbacks)) testOption {
+	return func(b *testBuild) { b.callbacks = append(b.callbacks, set) }
 }
 
 // withOwner sets the baseline owner identity.
@@ -166,7 +221,8 @@ func withExecutionLifetime(lifetime context.Context) testOption {
 	return func(b *testBuild) { b.lifetime = lifetime }
 }
 
-// buildCoordinator builds a coordinator through New from the options.
+// buildCoordinator builds a coordinator through New from the options and
+// wires it.
 func buildCoordinator(t *testing.T, opts ...testOption) *Coordinator {
 	t.Helper()
 	var b testBuild
@@ -195,6 +251,11 @@ func buildCoordinator(t *testing.T, opts ...testOption) *Coordinator {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var callbacks Callbacks
+	for _, set := range b.callbacks {
+		set(&callbacks)
+	}
+	c.Wire(fillCallbacks(callbacks))
 	testLedgers.Store(c.coordinatorState, b.book)
 	t.Cleanup(func() { testLedgers.Delete(c.coordinatorState) })
 	return c

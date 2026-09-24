@@ -237,23 +237,20 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 		result.Text = c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))
 		return result, nil
 	}
-	var admission task.ResumeAdmission
-	if c.resumer != nil {
-		identity := req.MessageID
-		if req.ExchangeID != "" {
-			identity = req.ExchangeID
-		}
-		if identity == "" {
-			return result, fmt.Errorf("durable resume requires a stable control input identity")
-		}
-		id := fmt.Sprintf("task-resume:%x", sha256.Sum256([]byte(req.Channel+"\x00"+req.ConversationID+"\x00"+identity)))
-		admission = task.ResumeAdmission{ID: id, TaskID: tracked.ID, Epoch: tracked.ExecutionEpoch + 1}
-		if tracked.ResumeGrant.Admission.ID == id {
-			// Replaying the control cannot renew a consumed or revoked grant.
-			// Its channel input retains the original execution's result.
-			result.Text = c.taskDetail(tracked)
-			return result, nil
-		}
+	identity := req.MessageID
+	if req.ExchangeID != "" {
+		identity = req.ExchangeID
+	}
+	if identity == "" {
+		return result, fmt.Errorf("durable resume requires a stable control input identity")
+	}
+	id := fmt.Sprintf("task-resume:%x", sha256.Sum256([]byte(req.Channel+"\x00"+req.ConversationID+"\x00"+identity)))
+	admission := task.ResumeAdmission{ID: id, TaskID: tracked.ID, Epoch: tracked.ExecutionEpoch + 1}
+	if tracked.ResumeGrant.Admission.ID == id {
+		// Replaying the control cannot renew a consumed or revoked grant.
+		// Its channel input retains the original execution's result.
+		result.Text = c.taskDetail(tracked)
+		return result, nil
 	}
 	resume := TaskResume{
 		Admission: admission,
@@ -267,20 +264,18 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 			c.clearActive(tracked.Channel, tracked.Member)
 		}
 	}()
-	if c.resumer != nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithCancel(ctx)
-		if !c.beginTurn(tracked.Channel, tracked.Member, cancel) {
-			cancel()
-			return result, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
-		}
-		reserved = true
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		if err := c.resumer(resume); err != nil {
-			return result, err
-		}
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithCancel(ctx)
+	if !c.beginTurn(tracked.Channel, tracked.Member, cancel) {
+		cancel()
+		return result, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
+	}
+	reserved = true
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := c.resumer(resume); err != nil {
+		return result, err
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -289,19 +284,12 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 	if err != nil {
 		return result, err
 	}
-	if c.resumer == nil {
-		// Standalone coordinators unpause for the user's next input.
-		result.Text = c.text.T(i18n.TaskResumed, moved.ID)
-	} else {
-		result.Text = c.taskDetail(moved)
-		// Clear before waking a consumer. It may synchronously reserve this
-		// same slot, but no channel callback is permission to execute.
-		c.clearActive(tracked.Channel, tracked.Member)
-		reserved = false
-		if c.resumeDispatcher != nil {
-			c.resumeDispatcher(resume)
-		}
-	}
+	result.Text = c.taskDetail(moved)
+	// Clear before waking a consumer. It may synchronously reserve this
+	// same slot, but no channel callback is permission to execute.
+	c.clearActive(tracked.Channel, tracked.Member)
+	reserved = false
+	c.resumeDispatcher(resume)
 	return result, nil
 }
 

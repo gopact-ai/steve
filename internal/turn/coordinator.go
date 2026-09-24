@@ -186,9 +186,10 @@ type coordinatorState struct {
 	home              home.Loader
 	homePath          string
 	skills            *skills.Live
-	gate              AgentGate
-	nodes             Nodes
-	tasks             *task.Store
+	// gate is Callbacks.AgentGate: nil when its port cannot be bound.
+	gate  AgentGate
+	nodes Nodes
+	tasks *task.Store
 
 	consoleCompletionGuard ConsoleCompletionGuard
 
@@ -207,7 +208,7 @@ type coordinatorState struct {
 	probeAll   func(ctx context.Context) []models.Result
 	projects   *project.Store
 	// attach gives a project a directory on the machine an agent runs on
-	// when it has none there; nil refuses the turn instead.
+	// when it has none there.
 	attach    func(ctx context.Context, projectID, node string) error
 	attempts  *attempt.Service
 	artifacts *artifact.Store
@@ -218,9 +219,12 @@ type coordinatorState struct {
 	disclosures heldDisclosures
 	// defaultProject binds a fresh conversation; homeProject binds the
 	// owner's DM, where Steve's own home directory is the project.
-	defaultProject    string
-	homeProject       string
-	node              string
+	defaultProject string
+	homeProject    string
+	node           string
+	// supervisor, attach, gate and the callbacks below are set once by
+	// Wire. afterTurn and turnPreface are nil without messaging, as gate
+	// is; the rest are never nil once wired.
 	resumer           func(TaskResume) error
 	resumeDispatcher  func(TaskResume)
 	notifier          func(TaskNotice)
@@ -365,19 +369,6 @@ func New(deps Deps) (*Coordinator, error) {
 // and conversation are over there.
 func placement(selected agent.Agent) harness.Placement {
 	return harness.Placement{Node: selected.Node, Harness: selected.Harness}
-}
-
-// SetWorkspaceAttach wires what gives a project a directory on a machine
-// that has none. Without it a turn on such a machine is refused, which is
-// how a hub with no management service still behaves.
-func (c *Coordinator) SetWorkspaceAttach(attach func(ctx context.Context, projectID, node string) error) {
-	c.attach = attach
-}
-
-// SetAgentGate enables the send primitive: each session gets the messaging
-// MCP server injected with its own conversation-bound token.
-func (c *Coordinator) SetAgentGate(gate AgentGate) {
-	c.gate = gate
 }
 
 // ReviveSession clears the taint a crash left on the member's session so a

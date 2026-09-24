@@ -49,7 +49,7 @@ func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
 			runner := &fakeRunner{reply: "original completed answer"}
 			c, book := completionCoordinator(t, runner)
 			called := 0
-			c.SetAfterTurn(func(id string) {
+			c.afterTurn = func(id string) {
 				called++
 				durable, err := task.OpenLedger(book)
 				if err != nil {
@@ -59,7 +59,7 @@ func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
 				if tracked.HasOpenExecution() {
 					t.Error("continuation callback ran before accounting commit")
 				}
-			})
+			}
 			if fail {
 				_, err := book.DB().Exec(`CREATE TRIGGER reject_completion_accounting BEFORE INSERT ON bindings WHEN NEW.kind='task-attempt' AND json_extract(NEW.data,'$.ended_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'completion accounting unavailable'); END`)
 				if err != nil {
@@ -87,13 +87,13 @@ func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
 func TestRetainedCallbackWaitsForDurableAccounting(t *testing.T) {
 	c, _, _, old, req := retainedChatFixture(t)
 	called := 0
-	c.SetAfterTurn(func(id string) {
+	c.afterTurn = func(id string) {
 		called++
 		tracked, _ := c.tasks.Get(id)
 		if tracked.HasOpenExecution() {
 			t.Error("retained callback preceded accounting")
 		}
-	})
+	}
 	if _, err := c.ResumeRetainedChat(t.Context(), old.ID, req); err != nil {
 		t.Fatal(err)
 	}

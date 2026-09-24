@@ -30,9 +30,6 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 	ctx = agentexec.WithProgress(ctx, req.OnProgress)
 	title := c.text.T(i18n.CardPlan)
 	goal := strings.TrimSpace(rest)
-	if c.supervisor == nil {
-		return Result{Title: title, Text: c.text.T(i18n.PlanDisabled)}, nil
-	}
 	if goal == "" {
 		return Result{Title: title, Text: c.text.T(i18n.PlanUsage, protocol.CommandPlan)}, nil
 	}

@@ -78,7 +78,7 @@ func retainedPlanFixture(t *testing.T) (*Coordinator, *retainedPlanSupervisor, R
 		}
 	}
 	sup := &retainedPlanSupervisor{proposed: plan.Plan{TaskID: tracked.ID, Goal: tracked.Goal, By: "llm:worker", Steps: []plan.Step{{ID: "work", Goal: "original step", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "no side effects"}}}}}
-	c.SetSupervisor(sup)
+	c.supervisor = sup
 	identity := RetainedPlan{TaskID: tracked.ID, Conversation: tracked.Channel, MessageID: "web-original-plan", AttemptID: record.ID, ProjectID: "p"}
 	return c, sup, identity, Request{Channel: "console", ConversationID: tracked.Channel, MessageID: identity.MessageID, SenderOpenID: "owner", ExpectedProject: "p"}
 }
@@ -147,7 +147,7 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 			c, _, book, _, _ := retainedChatFixture(t)
 			plans := c.plans
 			rule := planner.Rule{Workflows: map[string][]plan.Step{"release": {{ID: "original-rule-step", Goal: "original declared workflow", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "no side effects"}}}}}
-			c.SetSupervisor(exec.NewSupervisor(rule, exec.Deps{}, nil))
+			c.supervisor = exec.NewSupervisor(rule, exec.Deps{}, nil)
 			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
 				_, err := tx.Exec(`CREATE TRIGGER reject_plan BEFORE INSERT ON bindings WHEN NEW.kind='document' AND NEW.id='plans' BEGIN SELECT RAISE(FAIL,'plan store unavailable'); END`)
 				return err
@@ -163,7 +163,7 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 			// Replace the planner configuration before recovery: the frozen
 			// pure result must not invoke this new planning configuration.
 			changed := &retainedPlanSupervisor{proposed: plan.Plan{Goal: "changed config"}}
-			c.SetSupervisor(changed)
+			c.supervisor = changed
 			items, err := c.RetainedPlans(t.Context())
 			if err != nil || len(items) != 1 || items[0].AttemptID != "" || items[0].PlanID != "" || items[0].MessageID != req.MessageID {
 				t.Fatalf("pure planned task disappeared: %+v %v", items, err)

@@ -68,9 +68,9 @@ func gateCoordinator(t *testing.T, mcpHTTP bool) (*Coordinator, *fakeManager, *f
 	}
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}, mcpHTTP: mcpHTTP}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	gate := &fakeGate{}
-	coordinator.SetAgentGate(gate)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
 	return coordinator, manager, runner, gate, store
 }
 
@@ -217,10 +217,10 @@ func TestRemoteAgentGetsItsOwnNodeLoopback(t *testing.T) {
 	}
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}, mcpHTTP: true}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
-		withDeps(func(d *Deps) { d.Nodes = fakeEndpoints{port: map[string]int{"host-3": 45999}} }))
 	gate := &fakeGate{}
-	coordinator.SetAgentGate(gate)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withDeps(func(d *Deps) { d.Nodes = fakeEndpoints{port: map[string]int{"host-3": 45999}} }),
+		withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
 
 	if _, err := handle(coordinator, t.Context(), "/project use lab"); err != nil {
 		t.Fatal(err)
@@ -253,10 +253,10 @@ func TestUnreachableNodeMessagingBlocksWithoutDroppingTools(t *testing.T) {
 	}
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "still answered"}}, mcpHTTP: true}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
-		withDeps(func(d *Deps) { d.Nodes = fakeEndpoints{fail: errors.New("node down")} }))
 	gate := &fakeGate{}
-	coordinator.SetAgentGate(gate)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		withDeps(func(d *Deps) { d.Nodes = fakeEndpoints{fail: errors.New("node down")} }),
+		withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
 
 	result, err := handle(coordinator, t.Context(), "go")
 	if err == nil {

@@ -34,9 +34,6 @@ func (c *Coordinator) retainedPlanRuns(ctx context.Context) ([]exec.RunRecord, e
 // RetainedPlans also finds planning calls made before a plan/run existed. The
 // task's persisted anchor is the original exchange; no command is reconstructed.
 func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error) {
-	if c.supervisor == nil {
-		return nil, nil
-	}
 	runs, err := c.retainedPlanRuns(ctx)
 	if err != nil {
 		return nil, err
@@ -128,9 +125,6 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 	}
 	if c.maintaining {
 		return Result{}, c.retainedBlocked("maintenance", "检查协调服务", "协调服务正在交接或维护。", "暂时不能接续计划。", "建议等待交接完成后继续。", nil)
-	}
-	if c.supervisor == nil {
-		return Result{}, errors.New("retained plan recovery is not configured")
 	}
 	tracked, ok := c.tasks.Get(identity.TaskID)
 	if !ok || tracked.Origin != "plan" || tracked.Channel != identity.Conversation || tracked.AnchorMessage != identity.MessageID || req.ConversationID != identity.Conversation || req.MessageID != identity.MessageID || tracked.Requester != "" && tracked.Requester != req.SenderOpenID || req.ExpectedProject != "" && req.ExpectedProject != tracked.ProjectID {

@@ -247,15 +247,6 @@ type TaskResume struct {
 	ChatType       string
 }
 
-// SetResumer wires durable acceptance of a dormant input. It must not start
-// Handle: the task owner has not yet granted this input execution authority.
-// Without a resumer, the user's next message continues the unpaused task.
-func (c *Coordinator) SetResumer(fn func(TaskResume) error) { c.resumer = fn }
-
-// SetResumeDispatcher wakes accepted inputs after the owner CAS and turn-slot
-// release. A failed wake does not undo acceptance; recovery reads the same grant.
-func (c *Coordinator) SetResumeDispatcher(fn func(TaskResume)) { c.resumeDispatcher = fn }
-
 // TaskNotice is a line Steve pushes into the chat on its own, outside any
 // turn's card. It exists because delivery is a platform promise here: a task
 // that ran for an hour and then ended must say so, whether or not the person
@@ -271,15 +262,6 @@ type TaskNotice struct {
 	Conversation string
 	Text         string
 }
-
-// SetAfterTurn wires what runs once a turn's attempt is closed and its
-// queued landings are done: the delegation service delivering the
-// results of children that ended while the turn ran.
-func (c *Coordinator) SetAfterTurn(fn func(taskID string)) { c.afterTurn = fn }
-
-// SetNotifier wires those pushes to the channel. Nil simply means Steve keeps
-// its news to the cards.
-func (c *Coordinator) SetNotifier(fn func(TaskNotice)) { c.notifier = fn }
 
 // noteActivity records that this conversation just heard from a person. The
 // question the reminder has to answer is "did they walk away?", and the only
@@ -306,7 +288,7 @@ func (c *Coordinator) heardSince(conversationID string, mark time.Time) bool {
 // into a chat nobody is looking at; the plain-text line is the second, louder
 // knock — and it is only sent when the person truly went quiet.
 func (c *Coordinator) offlineReminder(req Request, id string, started time.Time, turnErr error) {
-	if c.notifier == nil || id == "" || c.offlineAfter <= 0 {
+	if id == "" || c.offlineAfter <= 0 {
 		return
 	}
 	if turnErr != nil {

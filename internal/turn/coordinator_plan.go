@@ -48,9 +48,6 @@ type retainedPlanner interface {
 	ResumePlanning(ctx context.Context, taskID string) (plan.Plan, error)
 }
 
-// SetSupervisor enables the planning verbs.
-func (c *Coordinator) SetSupervisor(s Supervisor) { c.supervisor = s }
-
 func (c *Coordinator) planExecutionResult(ctx context.Context, planID string, outcome exec.Outcome, runErr error) (Result, error) {
 	title := c.text.T(i18n.CardPlan)
 	if blocked := c.planRecoveryError(runErr); blocked != nil {
@@ -264,9 +261,6 @@ func (c *Coordinator) landingSummary(outcome exec.Outcome) string {
 // abandoned attempts, and the outcome reaches the chat through the task's
 // anchor like a turn that finished late.
 func (c *Coordinator) ResumePlans(ctx context.Context) {
-	if c.supervisor == nil {
-		return
-	}
 	if err := c.supervisor.PrepareRecovery(ctx); err != nil {
 		slog.Error(fmt.Sprintf("turn: prepare plan recovery: %v", err))
 		return
@@ -314,7 +308,7 @@ func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracke
 	} else {
 		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + c.landingSummary(outcome)
 	}
-	if c.notifier != nil && tracked.AnchorMessage != "" {
+	if tracked.AnchorMessage != "" {
 		c.notifier(TaskNotice{TaskID: tracked.ID, Transport: tracked.Transport, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Conversation: tracked.Channel, Text: text})
 	}
 }

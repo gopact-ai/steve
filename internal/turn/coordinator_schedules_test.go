@@ -287,7 +287,7 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- gate.Start(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	c.SetAgentGate(gate)
+	c.gate = gate
 	first, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "hello"})
 	if err != nil {
 		t.Fatal(err)
