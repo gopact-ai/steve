@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -24,7 +25,10 @@ type queueCall struct {
 
 // queueHandler lets a test separately control a turn's cancellation and
 // cleanup. A replacement must not drain the FIFO while cleanup still runs.
-type queueHandler struct{ started chan *queueCall }
+type queueHandler struct {
+	turntest.IdleCoordinator
+	started chan *queueCall
+}
 
 func (h *queueHandler) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
 	call := &queueCall{req: req, finish: make(chan error, 1), canceled: make(chan struct{})}

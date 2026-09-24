@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -224,6 +225,7 @@ func TestRecoveryAdmissionProofCannotOverrideRetainedExecutionOrLookupError(t *t
 }
 
 type preparationFailureHandler struct {
+	turntest.IdleCoordinator
 	started chan struct{}
 	release chan struct{}
 	calls   atomic.Int32

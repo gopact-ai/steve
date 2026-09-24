@@ -11,11 +11,13 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // rewindable is an echo handler that also ends the sessions a thread
 // holds, the way the coordinator does.
 type rewindable struct {
+	turntest.IdleCoordinator
 	mu     sync.Mutex
 	seen   []turn.Request
 	resets []string

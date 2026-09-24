@@ -9,6 +9,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func TestContinuationReceiptWaitsForParentAndRetriesOnlyUnadmittedWork(t *testing.T) {
@@ -124,7 +125,7 @@ func TestContinuationNeverReplaysAnAdmittedFailure(t *testing.T) {
 }
 
 func TestRecoveredContinuationRequestKeepsExpectedTask(t *testing.T) {
-	s := New(nil, "owner", nil)
+	s := New(turntest.IdleCoordinator{}, "owner", nil)
 	r := exchangeRecovery{s: s, exchange: Exchange{ID: "e", Conversation: "console:c", ExpectedTask: "original-parent", ExpectedProject: "p"}}
 	req := r.request("owner", &questionIdentity{})
 	if req.ExpectedTask != "original-parent" {
