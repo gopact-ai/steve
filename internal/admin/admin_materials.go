@@ -177,8 +177,6 @@ func (a *Service) AuthorizeMaterials(ctx context.Context, conversation, principa
 	return nil
 }
 
-var _ consoleapi.MaterialAdmin = (*Service)(nil)
-
 func (a *Service) materialOwner() string {
 	if a.Owner != "" {
 		return a.Owner

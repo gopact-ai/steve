@@ -1,12 +1,15 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -54,24 +57,32 @@ func TestCapabilityRoutesWithoutTheirService(t *testing.T) {
 		{"DELETE", "/console/plugins/installations/tools", `{}`, 501, plain, "plugin removal is unavailable"},
 		{"POST", "/console/plugins/installations/tools/runtimes/r/close", "", 501, plain, "plugin runtime close unavailable"},
 	} {
-		req, err := http.NewRequest(route.method, server.URL()+route.path, strings.NewReader(route.body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Authorization", "Bearer "+testToken)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw, err := io.ReadAll(res.Body)
-		res.Body.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if header, body := responseHeader(res.Header), strings.TrimSpace(string(raw)); res.StatusCode != route.status || header != route.header || body != route.want {
+		res, body := ownerRequest(t, server, route.method, route.path, route.body)
+		if header := responseHeader(res.Header); res.StatusCode != route.status || header != route.header || body != route.want {
 			t.Errorf("%s %s = %d [%s] %s, want %d [%s] %s", route.method, route.path, res.StatusCode, header, body, route.status, route.header, route.want)
 		}
 	}
+}
+
+// ownerRequest sends a request with the owner's token and reads the answer,
+// trimmed of the line end that ends every error and JSON body.
+func ownerRequest(t *testing.T, server *Server, method, path, body string) (*http.Response, string) {
+	t.Helper()
+	req, err := http.NewRequest(method, server.URL()+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res, strings.TrimSpace(string(raw))
 }
 
 // responseHeader renders what a handler chose to send, leaving out what
@@ -85,4 +96,33 @@ func responseHeader(header http.Header) string {
 	}
 	sort.Strings(fields)
 	return strings.Join(fields, "; ")
+}
+
+// adminPort forwards the methods of consoleapi.Admin and nothing else, as a
+// decorator around the admin service would.
+type adminPort struct{ consoleapi.Admin }
+
+// portAdmin answers what the routes below ask of the admin.
+type portAdmin struct{ consoleapi.Admin }
+
+func (portAdmin) ListMaterials(_ context.Context, project string) ([]material.Material, error) {
+	return []material.Material{{ID: "m", Project: project}}, nil
+}
+
+// A route calls what it needs through the service port it holds, so it
+// serves a service reached through a port that forwards nothing else.
+func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
+	for _, route := range []struct {
+		method, path, body string
+		status             int
+		want               string
+	}{
+		{"GET", "/console/materials?project=p", "", 200, `{"materials":[{"id":"m","project":"p",`},
+	} {
+		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+		server.SetAdmin(adminPort{portAdmin{}})
+		if res, body := ownerRequest(t, server, route.method, route.path, route.body); res.StatusCode != route.status || !strings.Contains(body, route.want) {
+			t.Errorf("%s %s = %d %s, want %d with %s", route.method, route.path, res.StatusCode, body, route.status, route.want)
+		}
+	}
 }

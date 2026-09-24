@@ -244,6 +244,7 @@ type AddAgentRequest struct {
 // Admin changes the fleet at runtime and persists the change: the page
 // adds machines and agents without a restart.
 type Admin interface {
+	MaterialAdmin
 	AddNode(ctx context.Context, req AddNodeRequest) (AddNodeResult, error)
 	// RemoveNode forgets a machine: nothing may still live on it.
 	RemoveNode(ctx context.Context, name string) error

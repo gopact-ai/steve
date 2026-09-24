@@ -1,7 +1,6 @@
 internal/artifact.generationNodes
 internal/artifact.objectLimiter
 internal/consoleapi.ConversationInitializer
-internal/consoleapi.MaterialAdmin
 internal/harness.Configurable
 internal/harness.PluginRelocationPreparer
 internal/harness.PluginSessionPreparer
