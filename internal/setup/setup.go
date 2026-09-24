@@ -379,7 +379,6 @@ func collectAccess(ctx context.Context, flags Flags, opts Options, reader *bufio
 	cached.GroupPolicy = groupPolicy
 	cached.AllowedSenders = senders
 	cached.BlockedSenders = blocked
-	cached.DMPolicy = ""
 	return cached, identity, nil
 }
 

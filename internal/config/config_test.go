@@ -60,6 +60,18 @@ func TestLoadRejectsUnknownHarness(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsFeishuDMPolicy(t *testing.T) {
+	path := writeConfig(t, `{
+		"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
+		"harnesses": {"codex": {"command": "mockagent"}},
+		"feishu": {"app_id": "app", "app_secret": "secret", "dm_policy": "pairing"}
+	}`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), `unknown field "dm_policy"`) {
+		t.Fatalf("feishu.dm_policy = %v", err)
+	}
+}
+
 func TestLoadRequiresAProject(t *testing.T) {
 	path := writeConfig(t, `{
 		"agents":{"codex":{"harness":"codex","default":true}},
@@ -169,7 +181,7 @@ func TestLoadAppliesFeishuDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Feishu.Domain != DomainFeishu || cfg.Feishu.GroupPolicy != GroupPolicyOpen || cfg.Feishu.DMPolicy != "" {
+	if cfg.Feishu.Domain != DomainFeishu || cfg.Feishu.GroupPolicy != GroupPolicyOpen {
 		t.Fatalf("unexpected defaults: %#v", cfg.Feishu)
 	}
 }

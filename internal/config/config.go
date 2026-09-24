@@ -24,10 +24,6 @@ const (
 	DomainFeishu = "feishu"
 	DomainLark   = "lark"
 
-	// Legacy dm_policy values still accepted in JSON and ignored.
-	DMPolicyPairing   = "pairing"
-	DMPolicyAllowlist = "allowlist"
-
 	GroupPolicyAllowlist = "allowlist"
 	GroupPolicyOpen      = "open"
 	GroupPolicyDisabled  = "disabled"
@@ -46,7 +42,6 @@ type Feishu struct {
 	AppID            string   `json:"app_id"`
 	AppSecret        string   `json:"app_secret"`
 	Domain           string   `json:"domain,omitempty"`
-	DMPolicy         string   `json:"dm_policy,omitempty"`
 	AllowedSenders   []string `json:"allowed_senders,omitempty"`
 	BlockedSenders   []string `json:"blocked_senders,omitempty"`
 	GroupPolicy      string   `json:"group_policy,omitempty"`
@@ -76,9 +71,6 @@ func (c Feishu) validateOptions() error {
 	case DomainFeishu, DomainLark:
 	default:
 		return fmt.Errorf("feishu.domain must be %q or %q", DomainFeishu, DomainLark)
-	}
-	if c.DMPolicy != "" && c.DMPolicy != DMPolicyPairing && c.DMPolicy != DMPolicyAllowlist {
-		return fmt.Errorf("feishu.dm_policy must be %q or %q", DMPolicyPairing, DMPolicyAllowlist)
 	}
 	switch c.GroupPolicy {
 	case GroupPolicyAllowlist, GroupPolicyOpen, GroupPolicyDisabled:
@@ -292,7 +284,7 @@ type Agent struct {
 	Options map[string]string `json:"options,omitempty"`
 	About   string            `json:"about,omitempty"`
 	// Requires are capabilities the node must advertise.
-	Requires []string `json:"requires,omitempty"`
+	Requires     []string `json:"requires,omitempty"`
 	SystemPrompt string   `json:"system_prompt"`
 	Skills       []string `json:"skills"`
 	MCPServers   []string `json:"mcp_servers"`
