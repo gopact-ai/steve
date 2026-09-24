@@ -96,7 +96,8 @@ try {
     hold.release(); hold = null;
     await summary().waitFor();
     const first = counts.usage;
-    await page.clock.runFor(30000); await advance();
+    // A live stream leaves /state to its long floor; run past it.
+    await page.clock.runFor(61000); await advance();
     assert.ok(counts.state > 1, "Fleet polling must still run");
     assert.equal(counts.usage, first, "Changing snap.at must not refetch usage");
     await emit({ kind: "observe.node.up" }, { kind: "console.progress", progress: { answer: "stream" } }, { kind: "delegate.progress", step: { state: "running" } });
