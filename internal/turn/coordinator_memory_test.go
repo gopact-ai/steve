@@ -113,7 +113,7 @@ func TestMemoryToolsServeTheOwnerLastSeenInPrivate(t *testing.T) {
 	}
 }
 
-func TestMemoryToolsLetADelegatedTaskRecallButNotRememberOrForget(t *testing.T) {
+func TestMemoryToolsRefuseADelegatedTaskRememberAndForget(t *testing.T) {
 	c := memoryCoordinator(t)
 	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
 	id := seedFact(t, c, memory.Global, "prefers tabs")
@@ -125,10 +125,6 @@ func TestMemoryToolsLetADelegatedTaskRecallButNotRememberOrForget(t *testing.T) 
 	}
 	if got := factsIn(t, c, memory.Global); len(got) != 1 || got[0] != "prefers tabs" {
 		t.Fatalf("delegated task changed memory: %q", got)
-	}
-	hits, _, err := c.Recall(t.Context(), "chat", "codex", "global", "tabs", 10)
-	if err != nil || len(hits) != 1 || hits[0].ID != id {
-		t.Fatalf("delegated recall: %+v %v", hits, err)
 	}
 }
 

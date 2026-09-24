@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/memory"
@@ -75,5 +76,14 @@ func TestRecallToolKeepsLimitWithinOneToFifty(t *testing.T) {
 		if m.limit != want {
 			t.Fatalf("limit %q reached the memorizer as %d, want %d", asked, m.limit, want)
 		}
+	}
+}
+
+func TestRecallToolServesADelegatedTask(t *testing.T) {
+	s := &Server{}
+	s.SetMemorizer(&recallRecorder{})
+	out, err := s.steveRecall(t.Context(), binding{conversationID: "chat", agentID: "codex", delegatedBy: "parent"}, json.RawMessage(`{"query":"tabs"}`))
+	if err != nil || !strings.Contains(out, "prefers tabs") {
+		t.Fatalf("delegated recall: %s, %v", out, err)
 	}
 }
