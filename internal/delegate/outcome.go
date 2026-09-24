@@ -11,15 +11,21 @@ import (
 )
 
 // remoteOutcomeOf is how a delegated child's run ended: by a local context
-// error, or by the code the child's node gave its remote error.
+// error, or by the code the child's node gave its remote error. A failure
+// read back from an attempt record ends as recorded; one recorded without
+// an outcome is classified by its message.
 func remoteOutcomeOf(err error) task.Outcome {
 	code := harness.RemoteErrorCode(err)
 	var recorded *recorded
+	if errors.As(err, &recorded) {
+		if recorded.outcome != "" {
+			return recorded.outcome
+		}
+		code = nodewire.SessionCommand{Error: recorded.message}.ErrorKind()
+	}
 	switch {
 	case err == nil:
 		return task.OutcomeOK
-	case errors.As(err, &recorded) && recorded.outcome != "":
-		return recorded.outcome
 	case errors.Is(err, context.DeadlineExceeded) || code == nodewire.SessionErrorDeadline:
 		return task.OutcomeTimeout
 	case errors.Is(err, harness.ErrTurnCanceled) || errors.Is(err, context.Canceled) || code == nodewire.SessionErrorCanceled:
