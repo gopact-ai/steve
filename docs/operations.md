@@ -168,7 +168,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `tools` | string[] | `[]` | hub 需要观测的命令 | `["git","go","gh"]` |
 | `declares` | string[] | `[]` | 运维声明的能力，不能替代工具的实际观测 | `["network:internal"]` |
 | `read_model_addr` | string | `"127.0.0.1:7710"` | 控制台、状态快照和事件流监听地址 | `"0.0.0.0:7710"` |
-| `read_model_token` | string | `""`（loopback 监听时生成 `<状态目录>/loopback-token`） | 控制台/API 的 bearer token，拥有 owner 操作权限；非 loopback 监听必填，loopback 监听留空时 Hub 首次启动生成并沿用 | `"replace-me-with-a-long-random-token"` |
+| `read_model_token` | string | `""`（loopback 监听时生成 `<状态目录>/loopback-token`） | 控制台/API 的 bearer token，拥有 owner 操作权限；非 loopback 监听必填，loopback 监听留空（或只含空白）时 Hub 首次启动生成并沿用 | `"replace-me-with-a-long-random-token"` |
 | `planner` | string | `""`（规则规划器） | `/plan` 的拆解 agent；不填时开放目标按一步处理 | `"claude"` |
 | `level` | string | 按 hub 需耐久保存的项目推导，至少 `restricted` | hub 的数据等级；默认排除 home 在远端的 sealed 项目 | `"restricted"` |
 | `region` | string | `"default"`（账本的本地区域） | 本 hub 的租约签发区域 | `"east"` |

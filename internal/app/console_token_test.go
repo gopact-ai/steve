@@ -78,10 +78,15 @@ func loadConsoleConfig(t *testing.T, dir, addr, token string) *config.Config {
 }
 
 // A loopback console gets the generated token however the configuration
-// spells its listener, and is served on the listener that spelling names.
+// spells its listener, blanks around it included, and when its token is
+// only blanks. It listens where the configuration says, or on the default
+// address when that is blank.
 func TestLoopbackConsoleSpellingsStillGetAGeneratedToken(t *testing.T) {
 	for _, c := range []struct{ addr, token, wantAddr string }{
 		{"LOCALHOST:7710", "", "LOCALHOST:7710"},
+		{" 127.0.0.1:7710 ", "", "127.0.0.1:7710"},
+		{"   ", "", "127.0.0.1:7710"},
+		{"127.0.0.1:7710", "   ", "127.0.0.1:7710"},
 	} {
 		dir := t.TempDir()
 		served, err := consoleServerConfig(nil, loadConsoleConfig(t, dir, c.addr, c.token))
@@ -89,5 +94,14 @@ func TestLoopbackConsoleSpellingsStillGetAGeneratedToken(t *testing.T) {
 		if err != nil || readErr != nil || served.Token != stored || served.Addr != c.wantAddr {
 			t.Errorf("read_model_addr %q, read_model_token %q: served on %q (want %q), generated token served: %v, err: %v", c.addr, c.token, served.Addr, c.wantAddr, readErr == nil && served.Token == stored, err)
 		}
+	}
+}
+
+// A token of blanks on a network console is a missing one, and the refusal
+// names the setting to fill in.
+func TestBlankTokenOnANetworkConsoleNamesTheSetting(t *testing.T) {
+	served, err := consoleServerConfig(nil, loadConsoleConfig(t, t.TempDir(), "0.0.0.0:7710", "   "))
+	if err == nil || !strings.Contains(err.Error(), "gateway.read_model_token") {
+		t.Fatalf("network console with a blank token = %+v, %v; want a refusal naming gateway.read_model_token", served, err)
 	}
 }
