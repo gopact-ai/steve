@@ -25,8 +25,8 @@ func TestConsoleOverACoordinatorThatKnowsNothing(t *testing.T) {
 	if got := s.Suggest(ctx, "c", "/"); len(got) != 0 {
 		t.Fatalf("suggestions = %#v", got)
 	}
-	if got := s.VerbsFor(ctx); len(got) != 0 {
-		t.Fatalf("verbs = %#v", got)
+	if got := s.VerbsFor(ctx); got != nil {
+		t.Fatalf("verbs = %#v, want nil", got)
 	}
 	for _, line := range []string{"@builder fix it", "/use builder fix it", "!stop now"} {
 		target, parsed := s.parseInput(line)
