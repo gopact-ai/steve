@@ -28,6 +28,14 @@ func (a *sessionAuthorityTest) AuthorizeNodeSession(_ context.Context, principal
 	return nil
 }
 
+// errNoReceiptAuthority is how the session test authorities refuse every
+// receipt acknowledgement.
+var errNoReceiptAuthority = errors.New("test authority does not authorize receipts")
+
+func (*sessionAuthorityTest) AuthorizeNodeReceipt(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error {
+	return errNoReceiptAuthority
+}
+
 func nodeSessionRequest(action nodewire.SessionAction) nodewire.SessionRequest {
 	return nodewire.SessionRequest{Action: action, Authority: nodewire.SessionAuthority{ClusterID: "cluster-1", CoordinatorNodeID: "hub-a", CoordinatorEpoch: 1, WriterGeneration: 1}, Binding: nodewire.SessionBinding{ProjectID: "p", SessionID: "conversation-1", TaskID: "task-1", AttemptID: "attempt-1", NodeID: "worker", ExecutionEpoch: 1, TaskEpoch: 1}}
 }
