@@ -20,6 +20,7 @@ import (
 // provided that target is one it was told to allow.
 type bridge struct {
 	allowed   map[string]bool
+	bind      ListenFunc
 	mu        sync.Mutex
 	listeners map[int]net.Listener
 	session   *yamux.Session
@@ -31,7 +32,7 @@ const (
 )
 
 func newBridge(allowed []string) *bridge {
-	b := &bridge{allowed: make(map[string]bool, len(allowed)), listeners: map[int]net.Listener{}}
+	b := &bridge{allowed: make(map[string]bool, len(allowed)), bind: listenTCP, listeners: map[int]net.Listener{}}
 	for _, target := range allowed {
 		b.allowed[target] = true
 	}
@@ -51,7 +52,7 @@ func (b *bridge) listen(i int, forward PortForward) (string, error) {
 	if address == "" {
 		address = "127.0.0.1:0"
 	}
-	listener, err := net.Listen("tcp", address)
+	listener, err := b.bind(address)
 	if err != nil {
 		return "", err
 	}
@@ -190,7 +191,20 @@ func (b *bridge) close() {
 // when the hub stops answering keepalives, or when ctx ends; the
 // multiplexer's own messages go to logs.
 func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, logs io.Writer, listens []PortForward, allowed []string) error {
+	return ServeLinkWith(ctx, stdin, stdout, logs, listens, allowed, listenTCP)
+}
+
+// ListenFunc binds a far end's listen address. The listener it returns
+// belongs to the far end, which closes it when the session ends.
+type ListenFunc func(address string) (net.Listener, error)
+
+func listenTCP(address string) (net.Listener, error) { return net.Listen("tcp", address) }
+
+// ServeLinkWith is ServeLink with bind opening each listen address, for a
+// caller that already holds the ports the far end serves on.
+func ServeLinkWith(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, logs io.Writer, listens []PortForward, allowed []string, bind ListenFunc) error {
 	b := newBridge(allowed)
+	b.bind = bind
 	defer b.close()
 	for i, forward := range listens {
 		if forward.Listen == "" {

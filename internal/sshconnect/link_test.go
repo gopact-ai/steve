@@ -54,16 +54,6 @@ func echoServer(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-func freePort(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	return listener.Addr().String()
-}
-
 // echoThrough dials address, sends a line and expects it back.
 func echoThrough(t *testing.T, address, line string) error {
 	t.Helper()
@@ -100,7 +90,8 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 		defer mu.Unlock()
 		seen = append(seen, status)
 	}
-	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: "127.0.0.1:25407", Target: "127.0.0.1:7712"}}, Outbound: []sshconnect.PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }, OnChange: record})
+	inbound := sessions.Reserve(t)
+	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: inbound, Target: "127.0.0.1:7712"}}, Outbound: []sshconnect.PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }, OnChange: record})
 	t.Cleanup(link.Close)
 	first := link.Status()
 	if len(first.Outbound) != 2 || first.Outbound[0].Listen == "" || first.Outbound[0].Listen == first.Outbound[1].Listen {
@@ -112,7 +103,7 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 		t.Fatalf("link did not come up: %v", err)
 	}
 	args := strings.Join(sessions.Launches()[0], " ")
-	for _, want := range []string{"-T", "-o BatchMode=yes", "-o ClearAllForwardings=yes", `-- dev exec "$HOME/.steve-peer/bin/steve" link --listen '127.0.0.1:25407=127.0.0.1:7712' --allow '127.0.0.1:7702' --allow '127.0.0.1:7701'`} {
+	for _, want := range []string{"-T", "-o BatchMode=yes", "-o ClearAllForwardings=yes", `-- dev exec "$HOME/.steve-peer/bin/steve" link --listen '` + inbound + `=127.0.0.1:7712' --allow '127.0.0.1:7702' --allow '127.0.0.1:7701'`} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("session arguments lack %q: %s", want, args)
 		}
@@ -151,8 +142,8 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 // While the session is down, a dial at a local port is refused at once.
 func TestLinkCarriesTrafficBothWaysAndRefusesWhileDown(t *testing.T) {
 	hubEcho, machineEcho := echoServer(t), echoServer(t)
-	inbound := freePort(t)
 	sessions := &linktest.Launcher{}
+	inbound := sessions.Reserve(t)
 	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: inbound, Target: hubEcho}}, Outbound: []sshconnect.PortForward{{Target: machineEcho}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return time.Hour }})
 	t.Cleanup(link.Close)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
