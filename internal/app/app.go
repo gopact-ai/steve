@@ -72,11 +72,11 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
-	execution, err := assembleExecution(input, runtime, ledger, home, fleet)
+	execution, err := assembleExecution(input, runtime, ledger, home, fleet, models)
 	if err != nil {
 		return nil, err
 	}
-	plans, err := assemblePlans(life, input, runtime, ledger, home, fleet, models, execution)
+	plans, err := assemblePlans(life, input, runtime, ledger, home, fleet, execution)
 	if err != nil {
 		return nil, err
 	}

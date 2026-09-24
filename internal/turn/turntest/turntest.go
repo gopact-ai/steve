@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/project"
@@ -48,8 +49,9 @@ type Options struct {
 type Option func(*Options)
 
 // Deps is turn.Deps with every dependency the options leave unset filled:
-// an empty agent catalog, a runtime that starts no agent, an empty home and
-// skill set, the Chinese catalog, and every store on the options' ledger.
+// an empty agent catalog, a runtime that starts no agent, a prober that
+// finds nothing, an empty home and skill set, the Chinese catalog, and every
+// store on the options' ledger.
 //
 // fillDeps in the turn package's own tests fills Deps the same way, since
 // those tests cannot import this package; change both together.
@@ -97,6 +99,9 @@ func fill(t testing.TB, o Options) turn.Deps {
 	}
 	if d.Runtime == nil {
 		d.Runtime = NoRuntime{}
+	}
+	if d.Prober == nil {
+		d.Prober = NoProber{}
 	}
 	if d.Text.IsZero() {
 		d.Text = i18n.New(i18n.LocaleZH)
@@ -237,3 +242,10 @@ func (NoRuntime) CloseSession(context.Context, harness.Placement, string) error 
 func (NoRuntime) SupportsHTTPMCP(context.Context, harness.Placement) (bool, error) {
 	return false, ErrNoRuntime
 }
+
+// NoProber probes nothing and finds nothing.
+type NoProber struct{}
+
+func (NoProber) Probe(context.Context, string, string) error { return nil }
+
+func (NoProber) ProbeAll(context.Context) []models.Result { return nil }
