@@ -88,7 +88,6 @@ func observedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewi
 	}
 	entries, known := shipper.entries()
 	adv.Snapshot = node.Snapshot(NodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
-	adv.Features = nodewire.Features()
 	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
 	adv.WorkspaceRoot = cfg.LocalWorkspaceRoot()

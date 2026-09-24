@@ -63,8 +63,6 @@ type Hello struct {
 	// that sends only Version speaks that one version.
 	ProtocolMin int `json:"protocol_min,omitempty"`
 	ProtocolMax int `json:"protocol_max,omitempty"`
-	// Features are the protocol extensions the hub supports.
-	Features []string `json:"features,omitempty"`
 }
 
 // Harness is one agent runtime the node can actually start, with the models
@@ -102,8 +100,8 @@ type Advert struct {
 	// Snapshot is everything the machine can do, as the ability domain
 	// defines it: evidence, availability, coverage, a digest. An advert
 	// without one is from an older node; Synthesize fills in from the
-	// old fields and says so. Features are the protocol extensions the
-	// sender supports.
+	// old fields and says so. Features are what this node has beyond
+	// the negotiated protocol version.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
 	Features []string          `json:"features,omitempty"`
 	// SessionGraceMS is the node's process reconnect window, in milliseconds.

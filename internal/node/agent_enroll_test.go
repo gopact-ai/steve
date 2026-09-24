@@ -28,8 +28,7 @@ func TestConfigurePreservesCommittedSettingsErrorAndRefreshes(t *testing.T) {
 	remote := nodewire.NewMux(server, false)
 	t.Cleanup(func() { _ = remote.Close() })
 	r := NewRegistry("hub", map[string]Config{"node": {Addr: "test", Token: "test"}})
-	featureSet := nodewire.Features()
-	r.live["node"] = &conn{name: "node", mux: mux, advert: nodewire.Advert{Node: "node", Features: featureSet}}
+	r.live["node"] = &conn{name: "node", mux: mux, advert: nodewire.Advert{Node: "node"}}
 	t.Cleanup(r.Close)
 	set := nodewire.Settings{Revision: "committed-revision", Harnesses: map[string]nodewire.HarnessSetting{"kimi": {Command: "/node/bin/kimi"}}}
 	var refreshed atomic.Bool
@@ -55,7 +54,7 @@ func TestConfigurePreservesCommittedSettingsErrorAndRefreshes(t *testing.T) {
 			return
 		}
 		refreshed.Store(stream.Request().Kind == nodewire.StreamAdvert)
-		err = json.NewEncoder(stream).Encode(nodewire.Advert{Node: "node", Features: featureSet})
+		err = json.NewEncoder(stream).Encode(nodewire.Advert{Node: "node"})
 		_ = stream.Close()
 		done <- err
 	}()

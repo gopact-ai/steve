@@ -81,7 +81,7 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 		socket.Close()
 		return nil, err
 	}
-	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub, Features: nodewire.Features()})
+	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub})
 	if err != nil {
 		socket.Close()
 		if errors.Is(err, nodewire.ErrVersionMismatch) {

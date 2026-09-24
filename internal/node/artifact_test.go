@@ -330,7 +330,7 @@ func TestArtifactOperationsRemainOutsidePeerGrants(t *testing.T) {
 	if err := socket.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := nodewire.Dial(socket, nodewire.Hello{Hub: "peer:test", Token: "one-blob", Features: nodewire.Features()}); err != nil {
+	if _, err := nodewire.Dial(socket, nodewire.Hello{Hub: "peer:test", Token: "one-blob"}); err != nil {
 		t.Fatal(err)
 	}
 	mux := nodewire.NewMux(socket, true)

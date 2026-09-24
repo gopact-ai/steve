@@ -125,42 +125,10 @@ type AdmitReply struct {
 	Error     string            `json:"error,omitempty"`
 }
 
-// Features a node or hub may support beyond the base protocol. The
-// handshake exchanges them; a hub opens a stream only to a node that
-// lists the feature it needs, and treats a node without one as older,
-// never as broken.
-const (
-	FeatureJournal   = "process_journal.v1"
-	FeatureManifest  = "manifest.v1"
-	FeatureAdmission = "execution_admission.v1"
-	// FeatureSkills says the node takes skill bundles: a content-addressed
-	// tar the hub puts in its blob directory and asks it to materialize
-	// into every harness home it isolates.
-	FeatureSkills = "skill_bundle.v1"
-	// FeatureMCP says the node binds its own MCP servers at admission and
-	// hands back a secret-free launcher for each, instead of the hub
-	// shipping commands and env in session/new.
-	FeatureMCP = "node_mcp_binding.v1"
-	// FeatureConfig says the node takes its offers from the hub over
-	// StreamConfig and writes them to its own config file.
-	FeatureConfig         = "node_config.v1"
-	FeatureConfigRevision = "node_config_revision.v1"
-	// FeatureInspect says the node answers StreamInspect.
-	FeatureInspect = "inspect.v1"
-	// FeatureMCPProbe says the node answers StreamMCPProbe and reports
-	// its coding agents' own MCP servers in its advert.
-	FeatureMCPProbe = "mcp_probe.v1"
-	// FeatureOwnSkills says the node reports its coding agents' own
-	// skills in its advert, so an empty list means none, not "too old".
-	FeatureOwnSkills = "own_skills.v1"
-	FeatureArtifact  = "artifact_ops.v1"
-	FeatureFiles     = "file_ops.v1"
-)
-
-// Features is what this build supports.
-func Features() []string {
-	return []string{FeaturePluginRuntimes, FeaturePlugins, FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureConfigRevision, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal, FeatureArtifact, FeatureFiles}
-}
+// Advert.Features lists what a node on the negotiated protocol version may
+// still lack: node-owned sessions and native resume, node receipts, native
+// history and controlled restart. What every node of that version has is
+// not listed; a capability every node must have raises ProtocolVersion.
 
 // HasFeature says whether a list names a feature.
 func HasFeature(list []string, feature string) bool {

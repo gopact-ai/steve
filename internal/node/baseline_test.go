@@ -1,6 +1,8 @@
 package node
 
 import (
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,5 +59,27 @@ func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
 	}
 	if _, err := registry.AgentTools(t.Context(), "host-base"); err != nil && strings.Contains(err.Error(), "upgrade") {
 		t.Errorf("agent tools: %v", err)
+	}
+}
+
+// An advert lists only what a v2 node may lack; the baseline is the
+// protocol version, not a list, and the snapshot repeats no features.
+func TestAdvertListsOnlyConditionalFeatures(t *testing.T) {
+	server := startNode(t, ServerConfig{Name: "host-list", Token: "tok", StateDir: t.TempDir()})
+	registry := NewRegistry("hub-1", map[string]Config{"host-list": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	advert, err := registry.Advert(t.Context(), "host-list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditional := []string{nodewire.FeatureNodeSessions, nodewire.FeatureNativeResume, nodewire.FeatureNodeReceipts, nodewire.FeatureNativeHistory, nodewire.FeatureRestart}
+	for _, feature := range advert.Features {
+		if !slices.Contains(conditional, feature) {
+			t.Errorf("advert lists %q, which every v2 node has", feature)
+		}
+	}
+	raw, _ := json.Marshal(advert.Snapshot)
+	if strings.Contains(string(raw), `"features"`) {
+		t.Errorf("snapshot = %s, want no feature list", raw)
 	}
 }

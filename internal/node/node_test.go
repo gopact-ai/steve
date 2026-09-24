@@ -388,9 +388,6 @@ func TestNodeReportsASnapshot(t *testing.T) {
 	if snap == nil || snap.Schema != ability.Schema || snap.Digest == "" || snap.ReceivedAt.IsZero() {
 		t.Fatalf("snapshot = %+v", snap)
 	}
-	if !nodewire.HasFeature(advert.Features, nodewire.FeatureManifest) {
-		t.Fatalf("features = %v", advert.Features)
-	}
 	got := map[string]ability.Availability{}
 	for _, c := range snap.Offers {
 		got[c.Key()] = c.Availability
@@ -517,8 +514,8 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Skills != "" || !nodewire.HasFeature(before.Features, nodewire.FeatureSkills) {
-		t.Fatalf("fresh node advert = skills %q features %v", before.Skills, before.Features)
+	if before.Skills != "" {
+		t.Fatalf("fresh node advert = skills %q", before.Skills)
 	}
 	if _, err := os.Stat(filepath.Join(state, "runtimes", "codex")); err != nil {
 		t.Fatalf("no isolated codex home: %v", err)
@@ -613,9 +610,6 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 	}
 	if raw, _ := json.Marshal(advert); strings.Contains(string(raw), "SECRET-42") {
 		t.Fatal("the advert carries the MCP secret")
-	}
-	if !nodewire.HasFeature(advert.Features, nodewire.FeatureMCP) {
-		t.Fatalf("features = %v", advert.Features)
 	}
 	var echo, web ability.Capability
 	for _, c := range advert.Snapshot.Offers {

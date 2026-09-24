@@ -10,7 +10,7 @@ export interface Capability {
 }
 export interface AbilitySnapshot {
     schema: string; node: string; generation: number; sequence: number; generated_at: string; received_at?: string; digest?: string;
-    coverage: Record<string, string>; offers: Capability[]; features?: string[]; source?: string;
+    coverage: Record<string, string>; offers: Capability[]; source?: string;
 }
 export interface Node {
     name: string; display_name?: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
