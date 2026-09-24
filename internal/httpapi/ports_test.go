@@ -141,6 +141,7 @@ func (portConsole) Questions(conversation string) []consoleapi.PendingQuestion {
 func (portConsole) AnswerQuestion(_ context.Context, id string, answer consoleapi.QuestionAnswer) (consoleapi.PendingQuestion, error) {
 	return consoleapi.PendingQuestion{ID: id, Answer: &answer}, nil
 }
+func (portConsole) InitializeConversation(context.Context, string, string) error { return nil }
 
 // A route calls what it needs through the service port it holds, so it
 // serves a service reached through a port that forwards nothing else.
@@ -160,6 +161,7 @@ func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 		{"POST", "/console/queue", `{"input":"hi","refs":[{"id":"m"}]}`, 200, `{"id":"m","conversation":"console:main",`},
 		{"GET", "/console/questions?conversation=c", "", 200, `{"questions":[{"id":"q","conversation":"c",`},
 		{"POST", "/console/questions/q/answer", `{"decision":"accept"}`, 200, `{"question":{"id":"q",`},
+		{"PUT", "/console/conversations/console%3Afresh/initialize", `{"project":"p"}`, 200, `{"ok":true}`},
 	} {
 		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 		server.SetAdmin(adminPort{portAdmin{}})
