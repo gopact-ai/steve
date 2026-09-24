@@ -47,10 +47,11 @@ const maxLiveTurns = 64
 // approvalTimeout caps how long a turn waits for a human to tap the card.
 const approvalTimeout = 3 * time.Minute
 
-// Channel is the Feishu transport the gateway replies through. Without
-// Feishu the gateway has no channel at all, never a partial one: accepted
-// input and queued recovery stay pending for a gateway that has one, and
-// notices, schedule fires and task resumes are refused.
+// Channel is the Feishu transport the gateway replies through. When Feishu
+// is not configured or fails to start, the gateway has no channel at all,
+// never a partial one: accepted input and queued recovery stay pending for a
+// gateway that has one, Notify posts nothing, and child result delivery,
+// schedule fires and task resumes return an error.
 type Channel interface {
 	// Reply posts text without reporting the new message's id.
 	Reply(ctx context.Context, messageID, text string) error
@@ -145,8 +146,8 @@ func New(processor processor) *Gateway {
 // BindChannel sets the channel the gateway replies through. Bind once,
 // before Feishu delivers messages and before recovery runs; the channel is
 // read without a lock. ch must be usable, never a nil *feishu.Channel: any
-// non-nil value counts as a channel. Without Feishu it is not called, and
-// the gateway has no channel.
+// non-nil value counts as a channel. It is not called when Feishu is not
+// configured or fails to start, and the gateway then has no channel.
 func (g *Gateway) BindChannel(ch Channel) { g.ch = ch }
 
 // SetAgentGate wires the messaging MCP server; call before Start.
