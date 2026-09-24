@@ -57,6 +57,8 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 
 ### `projects.<name>`
 
+项目的主目录写在 `projects.<name>.home.path`；agent 没有自己的工作目录字段。配置中没有任何项目时加载会报错。
+
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
 | `home` | ProjectHome object | 必填 | 唯一主目录的机器和路径 | `{"node":"host-3","path":"/srv/lab"}` |

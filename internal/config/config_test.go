@@ -77,8 +77,8 @@ func TestLoadRequiresAProject(t *testing.T) {
 		"agents":{"codex":{"harness":"codex","default":true}},
 		"harnesses":{"codex":{"command":"mockagent"}}
 	}`)
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "projects{} is required") {
-		t.Fatalf("expected missing project error, got %v", err)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "projects{} is required") || !strings.Contains(err.Error(), "projects.<name>.home.path") {
+		t.Fatalf("expected missing project error naming where the home path goes, got %v", err)
 	}
 }
 

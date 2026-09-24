@@ -481,7 +481,7 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	if len(cfg.Projects) == 0 {
-		return nil, fmt.Errorf("projects{} is required: at least one project with a home path")
+		return nil, fmt.Errorf("projects{} is required: declare at least one project with its home directory in projects.<name>.home.path")
 	}
 	cfg.inferDefaultProject()
 	if err := cfg.validateTopology(); err != nil {
