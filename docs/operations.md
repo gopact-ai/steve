@@ -505,6 +505,12 @@ node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平
 
 `adopt` 获取实例维护锁并更新归属记录；仍运行的实例会拒绝移交。存在未确认退出的旧进程记录时必须提供核实证据。它不修改 `hubs` 的认证映射，也不迁移项目；先配置目标 Hub 的认证，再启动 node。同一物理机器可运行多个拥有独立端口、state_dir 和 harness 环境的 node 实例；单实例不同时接受多个 Hub 调度。
 
+### 节点协议版本
+
+协调节点与执行节点之间使用节点协议 v2（[internal/nodewire/handshake.go](../internal/nodewire/handshake.go) 的 `ProtocolVersion` 与 `ProtocolMin`），双方都只接受 v2，不存在跨 v1/v2 共存的混合版本。协议 v1 的 `steve-node` 在握手时即被拒绝，错误写明节点名和双方的协议版本，并提示经 SSH 将该机器上的 steve 升级到协调节点的版本；v2 的 node 同样拒绝 v1 协调节点。经 SSH 接入的机器通过 `POST /console/ssh/upgrades/{node}` 升级；手工部署的 `steve-node` 需重新构建并复制，引导脚本不更新已有二进制。
+
+v2 基线包括进程流 journal、执行准入与 MCP 绑定、技能包、节点配置及其修订号、目录检查、MCP 探测、机器自带技能与 MCP 上报、产物与文件操作、插件包与插件运行时，协调节点对这些操作不再检查 feature。advert 的 `features` 只列 v2 节点可能缺少的能力：`node_sessions.v1`、`native_resume.v1`、`node_receipts.v1`、`native_history.v1`、`service_restart.v1`。
+
 ### MCP 部署
 
 简单模式是在 node.json 的 `mcp_servers` 写定义，并删除 `mcp_broker`。例如下面两项（合并进 node.json），stdio 命令已预装，HTTP 地址和认证头换成自己的服务：
@@ -564,7 +570,7 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 共享账本模式下，由节点持有的原生会话使用任务、执行和输入回执恢复。协调实例退出只会断开观察，健康执行节点可继续运行；新协调实例核对原记录后接回同一次执行。手动接入的独立执行节点升级后也使用这条路径。以下进程流 journal 与独立部署重启说明是另一条恢复路径，不应把流断开或重启当作原生执行停止的证据。
 
-[internal/node/transport.go](../internal/node/transport.go) 要求执行节点声明 `process_journal.v1`，未声明的节点在握手时即被拒绝并提示升级。node 保留 harness 进程与有界输入/输出 journal；连接恢复后按 stream ID、已读输出位置与 `ResumeAck.HaveIn` 续接，回放缺失输出并避免重复输入。默认续接宽限 10 分钟，由 node 的 `STEVE_NODE_SESSION_GRACE` 可调整；等待重连期间相关静默时钟暂停。
+进程流 journal 属于[节点协议](#节点协议版本) v2 基线。node 保留 harness 进程与有界输入/输出 journal；连接恢复后按 stream ID、已读输出位置与 `ResumeAck.HaveIn` 续接，回放缺失输出并避免重复输入。默认续接宽限 10 分钟，由 node 的 `STEVE_NODE_SESSION_GRACE` 可调整；等待重连期间相关静默时钟暂停。
 
 超过宽限、node 进程已消失、日志超出保留范围（`too old`）、日志写入失败或不可续接都会失败；journal 有界，不保证无限期回放。显式结束、取消和干净关闭不按网络故障保留进程。journal 未能创建或写入失败的进程流不可续接，连接断开时立即结束，不等待宽限。
 
@@ -572,7 +578,7 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 执行节点正常停止后，若原生会话的每条输入都已完成、没有待答问题，而且节点保存了进程退出确认，下一条新消息会加载同一个 Agent 原生会话。Steve 为这次续接建立新的执行记录，保留旧输入回执，并禁止两个执行同时占用同一份上下文。已导入的会话继续使用导入后积累的历史目录；不会重新复制最初的快照。适配器必须支持 `session/load` 或 `session/resume`，加载失败不会静默新建空白会话。未确认停止或输入结果不明的记录仍须通过原任务恢复入口核实。
 
-打开已有会话（包括进程仍在运行时的后续回合）要求执行节点声明 `native_resume.v1` 能力。升级协调节点前应先升级执行节点；混合版本集群中的旧节点会明确提示更新 `steve-node`，不会接收这些请求。此检查不影响观察或停止已接纳的执行。
+打开已有会话（包括进程仍在运行时的后续回合）要求执行节点声明 `native_resume.v1` 能力；启用节点会话的 v2 节点同时声明 `node_sessions.v1` 与 `native_resume.v1`。此检查不影响观察或停止已接纳的执行。
 
 续接要求项目、工作目录、权限、插件运行时和 MCP 连接配置保持一致。每轮准入重新生成地址或启动参数的节点 MCP 绑定目前不能原地续接，会报告配置变化；需要显式 `/new` 开始新会话。内置 `steve` 授权及连接配置保持不变的插件不受这一限制。不要通过忽略 MCP 地址或绑定标识来跳过配置校验。
 
