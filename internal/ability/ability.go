@@ -167,9 +167,9 @@ type Snapshot struct {
 	Digest      string            `json:"digest,omitempty"`
 	Coverage    map[Kind]Coverage `json:"coverage"`
 	Offers      []Capability      `json:"offers"`
-	Features    []string          `json:"features,omitempty"`
 	// Source says where the snapshot came from: "node" for a real
-	// report, "legacy" for one synthesised from an older advert.
+	// report, "synthesized" for one the hub built from an advert without a
+	// snapshot.
 	Source string `json:"source,omitempty"`
 }
 

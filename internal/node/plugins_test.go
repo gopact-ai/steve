@@ -116,7 +116,9 @@ func TestPluginPrepareFailureDoesNotReportReady(t *testing.T) {
 	advert := c.getAdvert()
 	advert.Features = nil
 	c.setAdvert(advert)
-	if _, err := registry.Plugins(t.Context(), "worker", nodewire.PluginRequest{Action: nodewire.PluginPrepare, Deployment: d, Bundle: bundle.Data}); !errors.Is(err, plugins.ErrIncompatible) {
-		t.Fatalf("old node accepted: %v", err)
+	// Plugin packages are part of the v2 baseline: the request reaches the
+	// node whatever its advert lists, and fails there for the same reason.
+	if _, err := registry.Plugins(t.Context(), "worker", nodewire.PluginRequest{Action: nodewire.PluginPrepare, Deployment: d, Bundle: bundle.Data}); !errors.Is(err, plugins.ErrUnavailable) {
+		t.Fatalf("prepare without advertised features = %v, want the node's own refusal", err)
 	}
 }

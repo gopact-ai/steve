@@ -12,8 +12,7 @@ import "time"
 // re-checking its own offers on a fresh observation; "hub" is the hub
 // evaluating the part of the requirement it owns (models, and hub-local
 // machines); "cached" is a verdict from the hub's last accepted snapshot
-// because the node could not be asked; "legacy" is a node that does not
-// speak the admission protocol at all.
+// because the node could not be asked.
 type Admission struct {
 	Node       string       `json:"node,omitempty"`
 	Source     string       `json:"source"`
@@ -45,16 +44,9 @@ const (
 	SourceNode   = "node"
 	SourceHub    = "hub"
 	SourceCached = "cached"
-	SourceLegacy = "legacy"
 
 	// CodeAdmitted is the code of a verdict that found nothing wanting.
 	CodeAdmitted Code = "ADMITTED"
-	// CodeNoBinding says the work needs an MCP server bound on the machine
-	// and the machine does not bind them: an older node.
-	CodeNoBinding Code = "NO_MCP_BINDING"
-	// CodeNoAdmission says the machine could not be asked: an older node,
-	// or a source that cannot re-observe. The verdict is Unsure.
-	CodeNoAdmission Code = "NO_ADMISSION"
 )
 
 // OK says the admission found every requirement met.

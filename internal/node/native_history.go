@@ -137,13 +137,17 @@ func (r *Registry) ImportNativeHistory(ctx context.Context, name string, request
 	return ref, nil
 }
 
+// nativeHistoryMissing says why an advert lists no native history: the
+// node's platform cannot store it.
+const nativeHistoryMissing = "its platform cannot store native history"
+
 func (r *Registry) nativeHistoryStream(ctx context.Context, name, verb string, request nativehistory.ImportRequest) (nativeHistoryReply, error) {
 	conn, err := r.connect(ctx, name)
 	if err != nil {
 		return nativeHistoryReply{}, err
 	}
 	if !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNativeHistory) {
-		return nativeHistoryReply{}, errors.New("node does not support native history migration; update steve-node")
+		return nativeHistoryReply{}, errors.New("node does not support native history migration: " + nativeHistoryMissing)
 	}
 	stream, err := conn.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamConfig, Command: verb})
 	if err != nil {

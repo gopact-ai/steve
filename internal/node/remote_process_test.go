@@ -27,7 +27,7 @@ func memoryRegistry(t *testing.T) *Registry {
 
 func connectMemory(t *testing.T, m *memoryNode, r *Registry) *conn {
 	t.Helper()
-	c := &conn{name: "n", mux: m.connection(t), advert: nodewire.Advert{Features: nodewire.Features(),
+	c := &conn{name: "n", mux: m.connection(t), advert: nodewire.Advert{
 		SessionGraceMS: m.s.sessionGrace().Milliseconds(), Harnesses: []nodewire.Harness{{ID: "cat"}}}}
 	r.eventMu.Lock()
 	r.mu.Lock()

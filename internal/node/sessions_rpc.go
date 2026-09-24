@@ -100,9 +100,16 @@ func (s *Server) sessionStream(parent context.Context, principal string, stream 
 	var request nodewire.SessionRequest
 	reply := nodewire.SessionReply{}
 	var err error
-	if s.sessions == nil {
+	switch err = readSessionMessage(stream, &request); {
+	case err != nil:
+	case s.sessions == nil:
+		// Nothing is reserved without a session service, so an open it
+		// refuses provably started nothing.
 		err = sessionError("forbidden", "node sessions are not enabled")
-	} else if err = readSessionMessage(stream, &request); err == nil {
+		if request.Action == nodewire.SessionActionOpen {
+			err = notStarted(err)
+		}
+	default:
 		var state nodewire.SessionState
 		state, err = s.sessions.Do(ctx, principal, request)
 		if err == nil {
@@ -131,17 +138,8 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 	if err != nil {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: err}
 	}
-	if !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNodeSessions) {
-		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node does not support node-owned sessions")}
-	}
-	if request.Action == nodewire.SessionActionOpen && request.ID != "" && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNativeResume) {
-		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve resumed native context; update steve-node")}
-	}
 	if (request.NativeImport != nil || request.Binding.NativeImportID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNativeHistory) {
-		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve native history import; update steve-node")}
-	}
-	if (request.Plugin != nil || request.Binding.PluginRuntimeID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
-		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve plugin runtime binding")}
+		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot import native history: "+nativeHistoryMissing)}
 	}
 	stream, err := conn.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamNodeSessions})
 	if err != nil {

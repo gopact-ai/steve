@@ -9,7 +9,8 @@ import (
 )
 
 // A node's classification of a command's error reaches the hub as the
-// error's identity, with the node's message kept as its text.
+// error's identity, with the node's message kept as its text. The message
+// is never classified in its place.
 func TestManagedPromptErrorCarriesTheNodeErrorCode(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -19,7 +20,7 @@ func TestManagedPromptErrorCarriesTheNodeErrorCode(t *testing.T) {
 	}{
 		{"coded deadline", nodewire.SessionCommand{State: nodewire.SessionCommandCompleted, Settled: true, Error: "prompt timed out", ErrorCode: nodewire.SessionErrorDeadline}, nodewire.SessionErrorDeadline, false},
 		{"coded failure mentioning a deadline", nodewire.SessionCommand{State: nodewire.SessionCommandCompleted, Settled: true, Error: "tool: context deadline exceeded", ErrorCode: nodewire.SessionErrorFailed}, nodewire.SessionErrorFailed, false},
-		{"legacy deadline", nodewire.SessionCommand{State: nodewire.SessionCommandCompleted, Settled: true, Error: "prompt: context deadline exceeded"}, nodewire.SessionErrorDeadline, false},
+		{"uncoded message mentioning a deadline", nodewire.SessionCommand{State: nodewire.SessionCommandCompleted, Settled: true, Error: "prompt: context deadline exceeded"}, "", false},
 		{"uncertain cancel", nodewire.SessionCommand{State: nodewire.SessionCommandUncertain, Error: "prompt interrupted", ErrorCode: nodewire.SessionErrorCanceled}, nodewire.SessionErrorCanceled, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

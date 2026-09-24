@@ -151,7 +151,7 @@ if (process.env.PURE_ONLY !== "1") {
             }
             if (url.pathname === "/console/agents/approval") { approvalSyncs.push(request.method()); configRevision = `revision-approval-${approvalSyncs.length}`; return route.fulfill({ json: { intent: "full", cleared: [{ agent: "dev", was: "read-only" }], following: ["planner"], unmapped: ["dev-claude"] } }); }
             if (url.pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [{ id: "console:one", title: "发布流程", last_at: "", count: 1, running: false }] } });
-            if (url.pathname === "/console/versions") { versionsReads++; return route.fulfill({ json: { hub: "v1", hub_id: "hub-fixture", protocol_min: 1, protocol_max: 2, automatic: false, discovery_configured: false, nodes: [], projects: [], peers: [] } }); }
+            if (url.pathname === "/console/versions") { versionsReads++; return route.fulfill({ json: { hub: "v1", hub_id: "hub-fixture", protocol_min: 2, protocol_max: 2, automatic: false, discovery_configured: false, nodes: [], projects: [], peers: [] } }); }
             if (url.pathname.startsWith("/console/")) { errors.push(`Unexpected API ${url.pathname}`); return route.fulfill({ status: 501, json: { error: "Unmocked API" } }); }
             return route.continue();
         });

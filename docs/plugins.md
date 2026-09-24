@@ -44,7 +44,7 @@
 
 ## 包、配置与授权
 
-包清单 schema 1 / `steve.plugins.v1`、本地准备回执、`plugin_packages.v1` 节点准备协议与版本化凭据引用已实现，见 [本地契约](plugins-local.md)。`config.Plugins` 和共享配置保存期望安装；运行引用已进入 attempt、聊天会话和节点会话，节点通过 `plugin_runtimes.v1` 协商。
+包清单 schema 1 / `steve.plugins.v1`、本地准备回执、节点插件包准备协议与版本化凭据引用已实现，见 [本地契约](plugins-local.md)。`config.Plugins` 和共享配置保存期望安装；运行引用已进入 attempt、聊天会话和节点会话，插件运行时属于节点协议 v2 基线。
 
 ### 不可变包与可变安装
 

@@ -44,8 +44,7 @@ func TestRemoteOutcomeOfClassifiesByErrorIdentity(t *testing.T) {
 
 // A child's failure recovered from its attempt record ends as the record
 // says it did, whatever its saved message reads. A record saved without an
-// outcome is classified by its message, as a node that sends no error code
-// is.
+// outcome is classified by its message.
 func TestRecordedFailureEndsAsItsRecordSays(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

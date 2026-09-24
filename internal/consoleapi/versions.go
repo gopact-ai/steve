@@ -28,14 +28,16 @@ type ReleaseProvider interface {
 	Latest(context.Context, string, string, string) (ReleaseManifest, error)
 }
 type VersionNode struct {
-	Name       string   `json:"name"`
-	Version    string   `json:"version"`
-	OS         string   `json:"os"`
-	Arch       string   `json:"arch"`
-	Online     bool     `json:"online"`
-	MatchesHub bool     `json:"matches_hub"`
-	Protocol   int      `json:"protocol"`
-	Features   []string `json:"features"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	OS         string `json:"os"`
+	Arch       string `json:"arch"`
+	Online     bool   `json:"online"`
+	MatchesHub bool   `json:"matches_hub"`
+	// Protocol is the node protocol version the machine speaks, from its
+	// advert or from its refusal of the hub; 0 while it is unknown.
+	Protocol int      `json:"protocol"`
+	Features []string `json:"features"`
 }
 type Versions struct {
 	Projects            []project.Ownership `json:"projects"`

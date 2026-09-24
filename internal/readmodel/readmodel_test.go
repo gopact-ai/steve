@@ -2,6 +2,8 @@ package readmodel
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -276,6 +278,50 @@ func TestSnapshotCarriesMemberDisplayNames(t *testing.T) {
 	}
 	if snap.Nodes[0].Name != "hub-1" {
 		t.Fatalf("names stay the identity; hub row = %+v", snap.Nodes[0])
+	}
+}
+
+// A machine the hub refused for its protocol version says so, with the
+// versions that met and which side has to be upgraded, so a reader can tell
+// it from a machine that is merely down; the down machine carries no such
+// field.
+func TestSnapshotSaysWhichMachineWasRefusedForItsProtocol(t *testing.T) {
+	catalog, err := agent.NewCatalog(map[string]agent.Config{"local": {Harness: "mock", Default: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := roster.New(catalog)
+	reason := "hub speaks v2–v2, node speaks v1–v1"
+	ahead := "hub speaks v2–v2, node speaks v3–v3"
+	nodes := fakeNodes{statuses: []node.Status{
+		{Name: "old", LastError: "nodewire: protocol version mismatch: " + reason, Mismatch: &nodewire.VersionMismatch{Node: 1, HubMin: 2, HubMax: 2, Reason: reason}},
+		{Name: "newer", LastError: "nodewire: protocol version mismatch: " + ahead, Mismatch: &nodewire.VersionMismatch{Node: 3, HubMin: 2, HubMax: 2, Reason: ahead}},
+		{Name: "gone", LastError: "connection refused"},
+	}}
+	r.SetNodes(nodes)
+	snap := New(Sources{Hub: Hub{Node: "hub-1"}, Roster: r, Nodes: nodes}).Snapshot(t.Context())
+	listed := map[string]Node{}
+	for _, n := range snap.Nodes {
+		listed[n.Name] = n
+	}
+	old, newer, gone := listed["old"], listed["newer"], listed["gone"]
+	if old.ProtocolMismatch == nil || *old.ProtocolMismatch != (ProtocolMismatch{Node: 1, HubMin: 2, HubMax: 2, Upgrade: UpgradeNode}) {
+		t.Fatalf("refused machine = %+v, want its protocol mismatch and the machine to upgrade", old)
+	}
+	raw, _ := json.Marshal(old)
+	if !strings.Contains(string(raw), `"protocol_mismatch":{"node":1,"hub_min":2,"hub_max":2,"upgrade":"node"}`) {
+		t.Fatalf("refused machine = %s, want protocol_mismatch", raw)
+	}
+	if newer.ProtocolMismatch == nil || *newer.ProtocolMismatch != (ProtocolMismatch{Node: 3, HubMin: 2, HubMax: 2, Upgrade: UpgradeHub}) {
+		t.Fatalf("refused machine = %+v, want its protocol mismatch and the hub to upgrade", newer)
+	}
+	raw, _ = json.Marshal(newer)
+	if !strings.Contains(string(raw), `"protocol_mismatch":{"node":3,"hub_min":2,"hub_max":2,"upgrade":"hub"}`) {
+		t.Fatalf("refused machine = %s, want protocol_mismatch", raw)
+	}
+	raw, _ = json.Marshal(gone)
+	if gone.Name != "gone" || strings.Contains(string(raw), "protocol_mismatch") {
+		t.Fatalf("down machine = %s, want no protocol_mismatch", raw)
 	}
 }
 
