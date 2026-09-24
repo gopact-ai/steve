@@ -397,3 +397,37 @@ func TestRegisteredIdleClockSurvivesOutageButHardBudgetDoesNot(t *testing.T) {
 		t.Fatal(clock.Err())
 	}
 }
+
+// A grace timer that fires after the resume was acknowledged, but before
+// the reconnect stopped it, must not end the stream that just resumed.
+func TestRemoteGraceFiringAfterResumeAckKeepsTheResumedStream(t *testing.T) {
+	m := newMemoryNode(t, "/bin/cat")
+	r := memoryRegistry(t)
+	c := connectMemory(t, m, r)
+	p := startRemote(t, r)
+	expire := make(chan func(), 1)
+	fired := make(chan struct{})
+	p.mu.Lock()
+	p.afterGrace = func(_ time.Duration, f func()) func() bool {
+		expire <- f
+		// The timer fires before Stop reaches it.
+		return func() bool { <-fired; return false }
+	}
+	p.mu.Unlock()
+	rd := bufio.NewReader(p.Stdout())
+	_, _ = io.WriteString(p.Stdin(), "before\n")
+	expectLine(t, rd, "before\n")
+	_ = c.mux.Close()
+	onExpiry := <-expire
+	connectMemory(t, m, r)
+	waitFor(t, func() bool { p.mu.Lock(); defer p.mu.Unlock(); return p.ready })
+	onExpiry()
+	close(fired)
+	_, _ = io.WriteString(p.Stdin(), "after\n")
+	expectLine(t, rd, "after\n")
+	select {
+	case <-p.done:
+		t.Fatalf("the resumed process ended: %v", p.Wait())
+	default:
+	}
+}

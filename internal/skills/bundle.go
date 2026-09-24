@@ -37,6 +37,44 @@ type Bundle struct {
 // mistake, not a skill.
 const MaxBundleBytes = 32 << 20
 
+// maxUnpackEntries bounds how many files and directories one bundle or
+// imported skill may hold. Skills are a handful of text files.
+const maxUnpackEntries = 10000
+
+// unpackBudget bounds what an archive writes, counted as it is written
+// rather than taken from its headers: a gzip stream or a sparse entry
+// expands far beyond the bytes that arrived.
+type unpackBudget struct {
+	limit, left int64
+	entries     int
+}
+
+func newUnpackBudget(limit int64) *unpackBudget {
+	return &unpackBudget{limit: limit, left: limit, entries: maxUnpackEntries}
+}
+
+// entry accounts for one more file or directory.
+func (b *unpackBudget) entry() error {
+	if b.entries == 0 {
+		return fmt.Errorf("archive holds more than %d entries", maxUnpackEntries)
+	}
+	b.entries--
+	return nil
+}
+
+// copy writes src to dst while the budget lasts.
+func (b *unpackBudget) copy(dst io.Writer, src io.Reader) error {
+	n, err := io.Copy(dst, io.LimitReader(src, b.left+1))
+	b.left -= n
+	if err != nil {
+		return err
+	}
+	if b.left < 0 {
+		return fmt.Errorf("archive unpacks to more than %d bytes", b.limit)
+	}
+	return nil
+}
+
 // ResolveRefs returns a copy with each skill root resolved to its physical
 // directory. Installed sources expose roots through symlinks; resolve those
 // before Pack, which deliberately skips symlinks inside a skill.
@@ -63,6 +101,7 @@ func Pack(refs []Ref) (Bundle, error) {
 	tw := tar.NewWriter(&buf)
 	var entries []Entry
 	seen := map[string]bool{}
+	packed := 0
 	for _, ref := range sorted {
 		if ref.Name == "" || ref.Name != filepath.Base(ref.Name) || strings.HasPrefix(ref.Name, ".") {
 			return Bundle{}, fmt.Errorf("skill name %q is not a plain directory name", ref.Name)
@@ -74,6 +113,9 @@ func Pack(refs []Ref) (Bundle, error) {
 		files, err := listFiles(ref.Path)
 		if err != nil {
 			return Bundle{}, fmt.Errorf("skill %q: %w", ref.Name, err)
+		}
+		if packed += len(files); packed > maxUnpackEntries {
+			return Bundle{}, fmt.Errorf("skills hold more than %d entries", maxUnpackEntries)
 		}
 		h := sha256.New()
 		for _, rel := range files {
@@ -133,6 +175,7 @@ func Unpack(data []byte, dir string) ([]Entry, error) {
 	}
 	tr := tar.NewReader(bytes.NewReader(data))
 	names := map[string]bool{}
+	budget := newUnpackBudget(MaxBundleBytes)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -144,8 +187,11 @@ func Unpack(data []byte, dir string) ([]Entry, error) {
 		if hdr.Typeflag != tar.TypeReg {
 			return nil, fmt.Errorf("bundle entry %q is not a regular file", hdr.Name)
 		}
+		if err := budget.entry(); err != nil {
+			return nil, fmt.Errorf("bundle: %w", err)
+		}
 		clean := path.Clean(hdr.Name)
-		if path.IsAbs(clean) || clean == "." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		if strings.Contains(hdr.Name, `\`) || path.IsAbs(clean) || clean == "." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
 			return nil, fmt.Errorf("bundle entry %q escapes the bundle", hdr.Name)
 		}
 		skill, _, ok := strings.Cut(clean, "/")
@@ -165,9 +211,9 @@ func Unpack(data []byte, dir string) ([]Entry, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := io.Copy(file, io.LimitReader(tr, MaxBundleBytes)); err != nil {
+		if err := budget.copy(file, tr); err != nil {
 			file.Close()
-			return nil, err
+			return nil, fmt.Errorf("bundle: %w", err)
 		}
 		if err := file.Close(); err != nil {
 			return nil, err

@@ -56,9 +56,13 @@ func Guard(next http.Handler, reach Reach) http.Handler {
 // trusted to resolve to loopback.
 func LoopbackListener(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
+	return err == nil && LoopbackName(host)
+}
+
+// LoopbackName reports whether host, without a port, names this machine
+// for a connection: exactly "localhost" or a loopback IP. Subdomains of
+// localhost and other spellings are left to the resolver, so they are not.
+func LoopbackName(host string) bool {
 	if host == "localhost" {
 		return true
 	}
