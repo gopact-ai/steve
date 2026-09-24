@@ -277,12 +277,16 @@ func TestNewWiresEveryDependency(t *testing.T) {
 	guarded := errors.New("guarded")
 	deps.ConsoleCompletionGuard = func(*ledger.Tx, map[string]bool, string, string) error { return guarded }
 	deps.Nodes = &idleNodes{}
+	deps.PlanRecoveryOwner = func(tracked task.Task) bool { return tracked.Transport == "console" }
 	c, err := New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.nodes != deps.Nodes {
 		t.Fatal("New dropped the nodes")
+	}
+	if c.planRecoveryOwner == nil || !c.planRecoveryOwner(task.Task{Transport: "console"}) {
+		t.Fatal("New dropped the plan recovery owner")
 	}
 	if c.catalog != deps.Catalog || c.store != deps.Store || c.assembler != deps.Assembler || c.runtime != deps.Runtime ||
 		c.skills != deps.Skills || c.projects != deps.Projects || c.memory != deps.Memory || c.attempts != deps.Attempts ||

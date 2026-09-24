@@ -116,7 +116,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
 		Executions: executions, Tasks: tasks, Node: boot.NodeName(), Schedules: schedules,
 		OfflineAfter: time.Duration(cfg.Gateway.OfflineReminderAfter), ConsoleCompletionGuard: console.CheckTaskCompletionTx,
-		Nodes: nodes,
+		Nodes: nodes, PlanRecoveryOwner: planRecoveryOwner(environment != nil),
 	})
 	if err != nil {
 		return nil, err
@@ -179,6 +179,13 @@ func (v *executionValues) Plans() *plan.Store { return v.plans }
 func (v *executionValues) Schedules() *schedule.Store { return v.schedules }
 
 func (v *executionValues) Tasks() *task.Store { return v.tasks }
+
+// planRecoveryOwner reports the tasks whose transport resumes its own
+// retained plans: the console's, when the console recovers its retained
+// exchanges itself, as it does under an Environment.
+func planRecoveryOwner(consoleRecovers bool) func(task.Task) bool {
+	return func(tracked task.Task) bool { return consoleRecovers && tracked.Transport == "console" }
+}
 
 // turnPolicy is the prompt timeout and conflict policy a coordinator reads
 // from the latest published settings; both are nil without settings.

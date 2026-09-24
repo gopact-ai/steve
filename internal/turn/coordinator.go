@@ -289,6 +289,10 @@ type Deps struct {
 	// agent's turn is refused while messaging is on, and a disconnection
 	// counts as silence.
 	Nodes Nodes
+	// PlanRecoveryOwner reports a task whose transport resumes its own
+	// retained plan, preserving the original exchange, progress and asks;
+	// ResumePlans leaves such a task alone. Nil leaves none alone.
+	PlanRecoveryOwner func(task.Task) bool
 }
 
 // dependency is one Deps field New refuses to build without.
@@ -341,7 +345,7 @@ func New(deps Deps) (*Coordinator, error) {
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
 			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
-			nodes:  deps.Nodes,
+			nodes: deps.Nodes, planRecoveryOwner: deps.PlanRecoveryOwner,
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},

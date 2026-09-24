@@ -24,12 +24,6 @@ type RetainedPlan struct {
 	Completed                                      bool
 }
 
-// SetPlanRecoveryOwner excludes adapter-owned exchanges from the background
-// notifier. Their adapter preserves the original exchange, progress and asks.
-func (c *Coordinator) SetPlanRecoveryOwner(owned func(task.Task) bool) {
-	c.planRecoveryOwner = owned
-}
-
 func (c *Coordinator) retainedPlanRuns(ctx context.Context) ([]exec.RunRecord, error) {
 	if reader, ok := c.supervisor.(retainedRunReader); ok {
 		return reader.RetainedRuns(ctx)
