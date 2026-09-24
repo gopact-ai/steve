@@ -259,9 +259,10 @@ var ErrIdleCoordinator = errors.New("turntest: the coordinator is idle")
 
 // IdleCoordinator stands in for a coordinator that runs no turn and knows
 // no conversation: it has no context, setup, suggestions or verbs to give,
-// parses a line by its syntax alone, starts no conversation and has no
-// session to reset. A fake embeds it and overrides what its test is about.
-// Handle panics, so a fake whose test runs a turn overrides Handle.
+// parses a line by its syntax alone, starts no conversation, has no
+// session to reset and refuses no scheduled run. A fake embeds it and
+// overrides what its test is about. Handle panics, so a fake whose test
+// runs a turn overrides Handle.
 type IdleCoordinator struct{}
 
 func (IdleCoordinator) Handle(context.Context, turn.Request) (turn.Result, error) {
@@ -289,3 +290,5 @@ func (IdleCoordinator) InitializeConversation(context.Context, string, string, s
 }
 
 func (IdleCoordinator) ResetConversationSessions(context.Context, string) error { return nil }
+
+func (IdleCoordinator) ValidateScheduled(context.Context, string, string, string) error { return nil }
