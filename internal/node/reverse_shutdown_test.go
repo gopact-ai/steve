@@ -40,7 +40,7 @@ func TestAHandshakeAfterShutdownClosedTheReverseListenerClaimsNothing(t *testing
 	t.Cleanup(func() { _ = hub.Close() })
 	t.Cleanup(func() { _ = node.Close() })
 	go func() {
-		_, _ = nodewire.Dial(hub, nodewire.Hello{Hub: "hub", Token: "token", Features: nodewire.Features()})
+		_, _ = nodewire.Dial(hub, nodewire.Hello{Hub: "hub", Token: "token"})
 	}()
 	claim := &hubClaim{}
 	if _, ok := s.handshake(node, claim); ok || claim.claimed {
