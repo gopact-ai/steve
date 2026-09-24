@@ -128,8 +128,12 @@ type Gateway struct {
 // PoolSize is the ceiling on concurrently served conversations.
 func PoolSize() int { return max(2, runtime.NumCPU()*3/2) }
 
-// New makes a gateway whose turns run through processor.
+// New makes a gateway whose turns run through processor. It panics when
+// processor is nil.
 func New(processor Processor) *Gateway {
+	if processor == nil {
+		panic("gateway: New needs a processor")
+	}
 	return &Gateway{
 		processor: processor,
 		text:      i18n.New(i18n.LocaleZH),

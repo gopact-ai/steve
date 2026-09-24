@@ -44,6 +44,17 @@ func TestGatewayOverACoordinatorThatKnowsNothing(t *testing.T) {
 	}
 }
 
+// A gateway without a processor has nothing to run its turns, so it is
+// refused when it is made rather than on its first line.
+func TestNewRefusesANilProcessor(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("New accepted a nil processor")
+		}
+	}()
+	New(nil)
+}
+
 // catalogProcessor parses a line as a coordinator whose catalog knows
 // codex does: "@codex/" followed by a command is that command addressed
 // to codex, so "@codex/cancel" and "@codex/schedules" are controls,
