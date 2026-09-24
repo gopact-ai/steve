@@ -84,41 +84,54 @@ func cloneChannelSettings(in channelsettings.Settings) channelsettings.Settings 
 func (s *hubChannelsService) UpdateChannels(ctx context.Context, req consoleapi.ChannelsUpdate) (consoleapi.ChannelsView, error) {
 	s.admin.Mu.Lock()
 	defer s.admin.Mu.Unlock()
-	s.admin.configStore().Lock()
-	defer s.admin.configStore().Unlock()
-	if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
-		return consoleapi.ChannelsView{}, consoleapi.ErrSettingsConflict
+	var oldSecret, newSecret string
+	var view consoleapi.ChannelsView
+	saving := false
+	saveErr := s.admin.updateConfigThen(ctx, func(c *config.Config) error {
+		if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
+			return consoleapi.ErrSettingsConflict
+		}
+		if err := c.CheckFileRevision(s.admin.Path); err != nil {
+			return errors.Join(consoleapi.ErrSettingsConflict, err)
+		}
+		candidate, err := c.PatchChannels(req.Channels)
+		if err != nil {
+			return err
+		}
+		if reflect.DeepEqual(candidate.Feishu, c.Feishu) && reflect.DeepEqual(candidate.Gateway, c.Gateway) {
+			return errUnchanged
+		}
+		oldSecret, newSecret = c.Feishu.AppSecret, candidate.Feishu.AppSecret
+		*c = *candidate
+		saving = true
+		return nil
+	}, func(saved *config.Config) {
+		if s.accessUpdater != nil {
+			next := saved.ChannelSettings().Feishu
+			s.accessUpdater(channelAccess(next))
+			// Connection, credentials and identity remain the startup
+			// snapshot. Only the policy accepted by the runtime consumer
+			// becomes applied.
+			s.applied.Feishu.GroupPolicy = next.GroupPolicy
+			s.applied.Feishu.AllowUnmentioned = next.AllowUnmentioned
+			s.applied.Feishu.AllowedSenders = next.AllowedSenders
+			s.applied.Feishu.BlockedSenders = next.BlockedSenders
+		}
+		view = s.viewLocked()
+	})
+	if !saving {
+		if saveErr != nil {
+			return consoleapi.ChannelsView{}, saveErr
+		}
+		return s.Channels(ctx)
 	}
-	if err := s.admin.Cfg.CheckFileRevision(s.admin.Path); err != nil {
-		return consoleapi.ChannelsView{}, errors.Join(consoleapi.ErrSettingsConflict, err)
-	}
-	candidate, err := s.admin.Cfg.PatchChannels(req.Channels)
-	if err != nil {
-		return consoleapi.ChannelsView{}, err
-	}
-	if reflect.DeepEqual(candidate.Feishu, s.admin.Cfg.Feishu) && reflect.DeepEqual(candidate.Gateway, s.admin.Cfg.Gateway) {
-		return s.viewLocked(), nil
-	}
-	saveErr := s.admin.persistConfigContext(ctx, candidate)
-	saveErr = RedactChannelError(saveErr, s.admin.Cfg.Feishu.AppSecret, candidate.Feishu.AppSecret)
+	saveErr = RedactChannelError(saveErr, oldSecret, newSecret)
 	if saveErr != nil && !config.Committed(saveErr) {
 		if errors.Is(saveErr, config.ErrFileChanged) || errors.Is(saveErr, platformconfig.ErrConflict) {
 			return consoleapi.ChannelsView{}, errors.Join(consoleapi.ErrSettingsConflict, saveErr)
 		}
 		return consoleapi.ChannelsView{}, saveErr
 	}
-	*s.admin.Cfg = *candidate
-	if s.accessUpdater != nil {
-		next := candidate.ChannelSettings().Feishu
-		s.accessUpdater(channelAccess(next))
-		// Connection, credentials and identity remain the startup snapshot.
-		// Only the policy accepted by the runtime consumer becomes applied.
-		s.applied.Feishu.GroupPolicy = next.GroupPolicy
-		s.applied.Feishu.AllowUnmentioned = next.AllowUnmentioned
-		s.applied.Feishu.AllowedSenders = next.AllowedSenders
-		s.applied.Feishu.BlockedSenders = next.BlockedSenders
-	}
-	view := s.viewLocked()
 	if saveErr != nil {
 		view.Warning = saveErr.Error()
 	}

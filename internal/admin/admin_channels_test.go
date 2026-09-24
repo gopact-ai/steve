@@ -175,3 +175,29 @@ func TestChannelsViewsDoNotAliasAppliedConfiguration(t *testing.T) {
 		t.Fatal("public response mutated runtime snapshot or declaration")
 	}
 }
+
+// Reading the channels does not wait for a channel change to be saved.
+func TestChannelsReadDuringAChannelSave(t *testing.T) {
+	a, s := ChannelsAdminFixture(t)
+	before, err := s.Channels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during consoleapi.ChannelsView
+	finished := readsDuringSave(t, a, func() error {
+		_, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: ChannelValue("open")}}})
+		return err
+	}, func() error {
+		during, err = s.Channels(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the channels waited for a channel save")
+	}
+	if !reflect.DeepEqual(during.Desired, before.Desired) {
+		t.Fatal("a reader saw channels that were not saved yet")
+	}
+	if a.Cfg.Feishu.GroupPolicy != "open" {
+		t.Fatal("the saved channels were not published")
+	}
+}
