@@ -3,6 +3,7 @@ package agentmcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -44,5 +45,35 @@ func TestRememberToolReplaysReceipt(t *testing.T) {
 	items, err := svc.List(t.Context(), memory.ProjectScope("test"))
 	if err != nil || len(items) != 1 {
 		t.Fatalf("tool wrote more than one fact: %+v, %v", items, err)
+	}
+}
+
+// recallRecorder answers steve_recall with one hit and keeps the limit
+// it was asked for.
+type recallRecorder struct {
+	Memorizer
+	limit int
+}
+
+func (m *recallRecorder) Recall(_ context.Context, _, _, _, _ string, limit int) ([]memory.Hit, string, error) {
+	m.limit = limit
+	return []memory.Hit{{Item: memory.Item{ID: "g1", Scope: memory.Global, Text: "prefers tabs"}, Score: 1}}, "markdown", nil
+}
+
+func TestRecallToolKeepsLimitWithinOneToFifty(t *testing.T) {
+	for asked, want := range map[string]int{"": 10, "0": 10, "-3": 10, "7": 7, "50": 50, "51": 50, "500": 50} {
+		m := &recallRecorder{}
+		s := &Server{}
+		s.SetMemorizer(m)
+		raw := `{"query":"tabs"}`
+		if asked != "" {
+			raw = fmt.Sprintf(`{"query":"tabs","limit":%s}`, asked)
+		}
+		if _, err := s.steveRecall(t.Context(), binding{conversationID: "chat", agentID: "codex"}, json.RawMessage(raw)); err != nil {
+			t.Fatal(err)
+		}
+		if m.limit != want {
+			t.Fatalf("limit %q reached the memorizer as %d, want %d", asked, m.limit, want)
+		}
 	}
 }

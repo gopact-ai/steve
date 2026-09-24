@@ -76,8 +76,11 @@ func (s *Server) steveRecall(ctx context.Context, bind binding, raw json.RawMess
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return "", errors.New("bad steve_recall arguments")
 	}
-	if args.Limit <= 0 || args.Limit > 50 {
+	switch {
+	case args.Limit <= 0:
 		args.Limit = 10
+	case args.Limit > 50:
+		args.Limit = 50
 	}
 	hits, from, err := m.Recall(ctx, bind.conversationID, bind.agentID, args.Scope, args.Query, args.Limit)
 	if err != nil {
