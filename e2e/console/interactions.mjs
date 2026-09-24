@@ -2673,7 +2673,8 @@ checks["board-overview"] = async (f) => {
     await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     const summary = f.page.getByRole("region", { name: "主任务统计" });
-    await summary.getByText("主任务", { exact: true }).waitFor();
+    // The counts read 未知 until the state arrives; wait for the count itself.
+    await summary.filter({ hasText: /主任务\s*5/ }).waitFor();
     assert.match(await summary.innerText(), /主任务\s+5/);
     // Owner summary counts all roots, including archived roots. A paused
     // child of an archived root is not a new root when that root is hidden.
@@ -2862,9 +2863,14 @@ checks["sessions-arrangement"] = async (f) => {
     const titles = () => sidebar.locator(".conversation-row .u-title").allInnerTexts();
     const heading = () => sidebar.locator(".conversation-section-label").first().innerText();
     const arrange = sidebar.getByRole("button", { name: /^排列/ });
+    const newInScratch = sidebar.getByRole("button", { name: "在 scratch 下新会话", exact: true });
+    // Threads and projects arrive after the page does; read the list only once both are in.
+    const threadsIn = () => sidebar.locator(".conversation-row .u-title", { hasText: "Conversation A" }).waitFor();
     await arrange.waitFor();
+    await threadsIn();
+    await newInScratch.first().waitFor();
     assert.match(await heading(), /项目/, "The project tree stays the arrangement a fresh reader gets");
-    assert.equal(await sidebar.getByRole("button", { name: "在 scratch 下新会话", exact: true }).count(), 1);
+    assert.equal(await newInScratch.count(), 1);
 
     // Grouping and order are two choices in one visit, so the menu holds open.
     await arrange.click();
@@ -2884,7 +2890,7 @@ checks["sessions-arrangement"] = async (f) => {
     await f.page.getByRole("menuitemradio", { name: "不分组", exact: true }).click();
     await f.page.keyboard.press("Escape");
     assert.deepEqual(await titles(), ["Conversation B", "Conversation C", "Conversation A"]);
-    assert.equal(await sidebar.getByRole("button", { name: "在 scratch 下新会话", exact: true }).count(), 0);
+    assert.equal(await newInScratch.count(), 0);
 
     // What owes the owner an answer outranks what merely spoke last.
     await arrange.click();
@@ -2898,7 +2904,8 @@ checks["sessions-arrangement"] = async (f) => {
 
     // A list that forgets how it was arranged is arranged again every morning.
     await f.page.reload();
-    await sidebar.getByRole("button", { name: /^排列/ }).waitFor();
+    await arrange.waitFor();
+    await threadsIn();
     assert.match(await heading(), /会话/);
     assert.deepEqual(await titles(), ["Conversation A", "Conversation B", "Conversation C"]);
     assert.equal(f.calls.length, 0, "Arranging the list must not submit work");

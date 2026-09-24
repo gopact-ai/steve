@@ -25,7 +25,6 @@ func TestSelectedLocalTurnDoesNotDialUnrelatedNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &fakeRunner{reply: "hello"}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"mock": runner}}, time.Minute)
 	var dials atomic.Int32
 	registry := node.NewRegistry("test", map[string]node.Config{
 		"offline": {DialContext: func(ctx context.Context, _ string) (net.Conn, error) {
@@ -38,9 +37,11 @@ func TestSelectedLocalTurnDoesNotDialUnrelatedNodes(t *testing.T) {
 		}},
 	})
 	defer registry.Close()
-	c.fleet = roster.New(catalog)
-	c.fleet.SetNodes(registry)
-	c.fleet.SetHubCapabilities([]string{"chat"})
+	fleet := roster.New(catalog)
+	fleet.SetNodes(registry)
+	fleet.SetHubCapabilities([]string{"chat"})
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"mock": runner}}, time.Minute,
+		withDeps(func(d *Deps) { d.Fleet = fleet }))
 	started := time.Now()
 	result, err := handle(c, t.Context(), "hello")
 	t.Logf("selected local turn elapsed=%s", time.Since(started))
