@@ -466,7 +466,7 @@ if (process.env.PURE_ONLY !== "1") {
         await channelHint("feishu.group_policy").filter({ hasText: /subsequent incoming messages.*no restart/i }).waitFor({ state: "attached" });
         await page.getByText("Access rules", { exact: true }).click();
         for (const path of channels.live_fields) assert.match(await channelHint(path).innerText(), /subsequent incoming messages.*no restart/i);
-        for (const path of ["feishu.enabled", "feishu.app_id", "feishu.app_secret", "feishu.domain", "feishu.owner_open_id", "default_channel"]) assert.match(await channelHint(path).innerText(), /restart/i);
+        for (const path of ["feishu.enabled", "feishu.app_id", "feishu.app_secret", "feishu.domain", "feishu.owner_open_id", "default_channel"]) assert.match(await channelHint(path).innerText(), restartHint);
         await page.getByRole("switch", { name: "Receive messages without a mention", exact: true }).press("Space");
         await page.getByRole("textbox", { name: "Allowed senders", exact: true }).fill("allowed-fixture");
         await page.getByRole("textbox", { name: "Blocked senders", exact: true }).fill("blocked-fixture");
