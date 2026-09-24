@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -221,5 +222,33 @@ func TestProjectMemoryIsInjectedForTheOwnerInPrivateWhenTheProjectHasAny(t *test
 		if got := c.projectMemory(t.Context(), "chat", req); got != nil {
 			t.Fatalf("%s got %+v", name, got)
 		}
+	}
+}
+
+func hitTexts(hits []memory.Hit) []string {
+	var texts []string
+	for _, h := range hits {
+		texts = append(texts, h.Text)
+	}
+	return texts
+}
+
+// The markdown store scores a fact by the share of query words it holds:
+// with "tabs rust", a fact with both scores 1 and one with "tabs" 0.5.
+func TestRecallWithoutScopeKeepsTheBestLimitAcrossGlobalAndProject(t *testing.T) {
+	c := memoryCoordinator(t)
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	seedFact(t, c, memory.Global, "tabs in docs")
+	seedFact(t, c, memory.Global, "tabs for yaml")
+	seedFact(t, c, memory.ProjectScope("alpha"), "rust uses tabs")
+	seedFact(t, c, memory.ProjectScope("alpha"), "tabs in makefiles")
+	hits, _, err := c.Recall(t.Context(), "chat", "codex", "", "tabs rust", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Equal scores keep global first.
+	want := []string{"rust uses tabs", "tabs in docs", "tabs for yaml"}
+	if got := hitTexts(hits); !slices.Equal(got, want) {
+		t.Fatalf("recalled %q, want %q", got, want)
 	}
 }
