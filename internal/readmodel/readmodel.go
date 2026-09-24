@@ -246,8 +246,11 @@ type Node struct {
 	Capabilities []string  `json:"capabilities,omitempty"`
 	Harnesses    []Harness `json:"harnesses,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
-	Level        string    `json:"level,omitempty"`
-	Region       string    `json:"region,omitempty"`
+	// ProtocolMismatch is set when the hub's last attempt to connect was
+	// refused because the machine and the hub share no protocol version.
+	ProtocolMismatch *ProtocolMismatch `json:"protocol_mismatch,omitempty"`
+	Level            string            `json:"level,omitempty"`
+	Region           string            `json:"region,omitempty"`
 	// Snapshot is what the machine says it can do, entry by entry, with
 	// the evidence and coverage behind each.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
@@ -259,6 +262,15 @@ type Node struct {
 	// ProjectsRoot is the directory this machine keeps projects under; a
 	// project names a directory relative to it.
 	ProjectsRoot string `json:"projects_root,omitempty"`
+}
+
+// ProtocolMismatch is the protocol version a machine speaks, Node, against
+// the range HubMin–HubMax the hub speaks. A Node below HubMin runs an older
+// steve than the hub; one above HubMax, a newer one.
+type ProtocolMismatch struct {
+	Node   int `json:"node"`
+	HubMin int `json:"hub_min"`
+	HubMax int `json:"hub_max"`
 }
 
 type Harness struct {
