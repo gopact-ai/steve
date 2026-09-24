@@ -127,12 +127,7 @@ func (s *Server) consoleExchangeIdentity(w http.ResponseWriter, r *http.Request)
 	if s.channelHistory == nil {
 		return true
 	}
-	lookup, ok := s.console.(consoleapi.ExchangeIdentity)
-	if !ok {
-		http.Error(w, "Console exchange identity lookup is unavailable", http.StatusServiceUnavailable)
-		return false
-	}
-	conversation, found := lookup.ExchangeConversation(r.PathValue("id"))
+	conversation, found := s.console.ExchangeConversation(r.PathValue("id"))
 	if !found {
 		queueResponse(w, nil, consoleapi.ErrExchangeNotFound)
 		return false
