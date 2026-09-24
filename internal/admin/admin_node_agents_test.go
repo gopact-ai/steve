@@ -265,3 +265,27 @@ func TestRemoteEnrollmentCanRetryAfterCoordinatorPersistenceFailure(t *testing.T
 		t.Fatalf("retry=%+v %v", result, err)
 	}
 }
+
+// The configuration can be read while agents enrolled on a machine are
+// being saved.
+func TestConfigurationReadDuringARemoteEnrollmentSave(t *testing.T) {
+	a := remoteAgentAdminFixture(t)
+	discovery, err := a.NodeAgents(t.Context(), "node-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := NewSettings(a, a.Cfg)
+	finished := readsDuringSave(t, a, func() error {
+		_, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision})
+		return err
+	}, func() error {
+		_, err := settings.Settings(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the configuration waited for a remote enrollment save")
+	}
+	if _, ok := a.Catalog.Resolve("remote-kimi"); !ok || a.Cfg.Agents["remote-kimi"].Node != "node-test" {
+		t.Fatal("the saved agent was not published")
+	}
+}

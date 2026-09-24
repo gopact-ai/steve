@@ -8,6 +8,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/node"
@@ -31,8 +32,8 @@ func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
 	return target, nil
 }
 
-// The caller holds configMu while comparing the authenticated target with the
-// declaration it is about to commit. Reusing a display name cannot reuse an
+// The caller holds the configuration still while comparing the
+// authenticated target with the declaration it is about to commit. Reusing a display name cannot reuse an
 // earlier machine's discovery or installation result.
 func (a *Service) checkAgentNodeTarget(name string, expected config.Node) error {
 	current, ok := a.Cfg.Nodes[name]
@@ -155,45 +156,50 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	result.Agents = planned.order
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	a.configStore().Lock()
-	defer a.configStore().Unlock()
-	if err := a.checkAgentNodeTarget(name, target); err != nil {
-		return result, err
-	}
-	if err := ctx.Err(); err != nil {
-		return result, err
-	}
-	candidate := *a.Cfg
-	candidate.Agents = make(map[string]config.Agent, len(a.Cfg.Agents)+len(planned.order))
-	maps.Copy(candidate.Agents, a.Cfg.Agents)
+	var prepared *agent.Catalog
 	added := false
-	for _, id := range planned.order {
-		if current, ok := candidate.Agents[id]; ok {
-			if current.Node != name || current.Harness != planned.agents[id].Harness {
-				return result, fmt.Errorf("Agent 名称 %s 已被占用", id)
-			}
-			continue
+	saveErr := a.updateConfigThen(a.lifetime(), func(c *config.Config) error {
+		if err := a.checkAgentNodeTarget(name, target); err != nil {
+			return err
 		}
-		entry := planned.agents[id]
-		entry.Default = len(candidate.Agents) == 0
-		candidate.Agents[id] = entry
-		added = true
-	}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if c.Agents == nil {
+			c.Agents = make(map[string]config.Agent, len(planned.order))
+		}
+		for _, id := range planned.order {
+			if current, ok := c.Agents[id]; ok {
+				if current.Node != name || current.Harness != planned.agents[id].Harness {
+					return fmt.Errorf("Agent 名称 %s 已被占用", id)
+				}
+				continue
+			}
+			entry := planned.agents[id]
+			entry.Default = len(c.Agents) == 0
+			c.Agents[id] = entry
+			added = true
+		}
+		if !added {
+			return errUnchanged
+		}
+		applyDefault(c.Agents, planned.preferred, planned.order)
+		var err error
+		prepared, err = c.AgentCatalog()
+		return err
+	}, func(*config.Config) {
+		a.Catalog.Publish(prepared)
+	})
 	if !added {
+		if saveErr != nil {
+			return result, saveErr
+		}
 		result.Registered = true
 		return result, installErr
 	}
-	applyDefault(candidate.Agents, planned.preferred, planned.order)
-	prepared, err := candidate.AgentCatalog()
-	if err != nil {
-		return result, err
-	}
-	saveErr := a.PersistConfig(&candidate)
 	if saveErr != nil && !config.Committed(saveErr) {
 		return result, saveErr
 	}
-	a.Cfg.Agents = candidate.Agents
-	a.Catalog.Publish(prepared)
 	result.Registered = true
 	slog.Info(fmt.Sprintf("steve: selected agents registered agents=%s node=%s", strings.Join(planned.order, ","), name), "node", name)
 	return result, errors.Join(installErr, saveErr)
