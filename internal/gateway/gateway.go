@@ -142,7 +142,11 @@ func New(processor processor) *Gateway {
 	}
 }
 
-// BindChannel wires Feishu; a gateway that is never bound has no channel.
+// BindChannel sets the channel the gateway replies through. Bind once,
+// before Feishu delivers messages and before recovery runs; the channel is
+// read without a lock. ch must be usable, never a nil *feishu.Channel: any
+// non-nil value counts as a channel. Without Feishu it is not called, and
+// the gateway has no channel.
 func (g *Gateway) BindChannel(ch Channel) { g.ch = ch }
 
 // SetAgentGate wires the messaging MCP server; call before Start.
