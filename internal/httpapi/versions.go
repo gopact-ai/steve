@@ -1,17 +1,12 @@
 package httpapi
 
-import (
-	"net/http"
-
-	"github.com/gopact-ai/steve/internal/consoleapi"
-)
+import "net/http"
 
 func (s *Server) consoleVersions(w http.ResponseWriter, r *http.Request) {
-	service, ok := s.admin.(consoleapi.VersionService)
-	if !ok {
+	if s.admin == nil {
 		http.Error(w, "version discovery is unavailable", http.StatusNotImplemented)
 		return
 	}
-	v, err := service.Versions(r.Context())
+	v, err := s.admin.Versions(r.Context())
 	queueResponse(w, v, err)
 }
