@@ -249,3 +249,38 @@ type NoProber struct{}
 func (NoProber) Probe(context.Context, string, string) error { return nil }
 
 func (NoProber) ProbeAll(context.Context) []models.Result { return nil }
+
+// ErrIdleCoordinator is what IdleCoordinator answers a request to act with.
+var ErrIdleCoordinator = errors.New("turntest: the coordinator is idle")
+
+// IdleCoordinator stands in for a coordinator that runs no turn and knows
+// no conversation: it has no context, setup, suggestions or verbs to give,
+// parses a line by its syntax alone, starts no conversation and has no
+// session to reset. A fake embeds it and overrides what its test is about.
+type IdleCoordinator struct{}
+
+func (IdleCoordinator) Handle(context.Context, turn.Request) (turn.Result, error) {
+	return turn.Result{}, ErrIdleCoordinator
+}
+
+func (IdleCoordinator) Context(context.Context, string) (turn.Context, error) {
+	return turn.Context{}, nil
+}
+
+func (IdleCoordinator) SessionSetup(context.Context, string, string) (turn.Setup, error) {
+	return turn.Setup{}, ErrIdleCoordinator
+}
+
+func (IdleCoordinator) Suggest(context.Context, string, string) []turn.Suggestion { return nil }
+
+func (IdleCoordinator) VerbsFor(context.Context) []turn.Verb { return nil }
+
+func (IdleCoordinator) ParseInput(input string) (string, turn.ParsedInput) {
+	return turn.ParseAddressedInput(input)
+}
+
+func (IdleCoordinator) InitializeConversation(context.Context, string, string, string) error {
+	return ErrIdleCoordinator
+}
+
+func (IdleCoordinator) ResetConversationSessions(context.Context, string) error { return nil }
