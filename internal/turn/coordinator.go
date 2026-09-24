@@ -198,7 +198,7 @@ type coordinatorState struct {
 	// setting never interrupts a live turn. Nil never hands a merge
 	// conflict to an agent unasked.
 	autoResolveSource func() bool
-	channelOwners     map[string]string
+	owners            channelOwners
 	home              home.Loader
 	homePath          string
 	skills            *skills.Live
@@ -343,18 +343,23 @@ func (d Deps) required() []dependency {
 	}
 }
 
-// New builds a Coordinator from deps, or reports every dependency missing.
-func New(deps Deps) (*Coordinator, error) {
+// absent names every dependency in list that is missing.
+func absent(list []dependency) []string {
 	var missing []string
-	for _, dep := range deps.required() {
+	for _, dep := range list {
 		if dep.absent {
 			missing = append(missing, dep.name)
 		}
 	}
-	if len(missing) > 0 {
+	return missing
+}
+
+// New builds a Coordinator from deps, or reports every dependency missing.
+func New(deps Deps) (*Coordinator, error) {
+	if missing := absent(deps.required()); len(missing) > 0 {
 		return nil, fmt.Errorf("turn: missing dependencies: %s", strings.Join(missing, ", "))
 	}
-	owners, err := channelOwners(deps.ChannelOwners)
+	owners, err := newChannelOwners(deps.Owner, deps.ChannelOwners)
 	if err != nil {
 		return nil, fmt.Errorf("turn: %w", err)
 	}
@@ -369,7 +374,7 @@ func New(deps Deps) (*Coordinator, error) {
 			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
 			promptClock:       promptClock{timeout: deps.Timeout, source: deps.TimeoutSource, start: idle.WithTimeout},
 			autoResolveSource: deps.AutoResolveSource,
-			channelOwners:     owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
+			owners:            owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
 			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
