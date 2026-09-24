@@ -117,6 +117,9 @@ type Replicator interface {
 	// Read returns a manifest including a newly repaired local receipt. The
 	// consumer persists that receipt before treating its cache as restored.
 	Read(context.Context, Manifest, io.Writer) (Manifest, error)
+	// MaxObjectBytes is the largest object Prepare and PrepareBundle accept,
+	// so a consumer writing an object can stop once it grows past it.
+	MaxObjectBytes() int64
 }
 
 type Config struct {

@@ -208,6 +208,10 @@ func (a *delayedStopPromptAuthority) AuthorizeNodeSession(ctx context.Context, p
 	return nil
 }
 
+func (a *delayedStopPromptAuthority) AuthorizeNodeReceipt(ctx context.Context, principal string, authority nodewire.SessionAuthority, receipt nodewire.SessionReceipt) error {
+	return a.base.AuthorizeNodeReceipt(ctx, principal, authority, receipt)
+}
+
 func TestNodeSessionStopFencesAnAlreadyAuthorizedButUnacceptedPrompt(t *testing.T) {
 	authority := &delayedStopPromptAuthority{base: sessionAuthorityTest{epoch: 1, writer: 1}, checked: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
