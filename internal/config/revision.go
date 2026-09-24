@@ -48,9 +48,3 @@ func (c *Config) CheckFileRevision(path string) error {
 	}
 	return nil
 }
-
-// AdoptFileRevision carries a committed candidate's version to the live object
-// when an application publishes only the configuration section it changed.
-func (c *Config) AdoptFileRevision(saved *Config) {
-	c.sourcePath, c.sourceFingerprint = saved.sourcePath, saved.sourceFingerprint
-}

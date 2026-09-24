@@ -219,3 +219,58 @@ func TestServiceWithoutAConfigurationCannotChangeOne(t *testing.T) {
 		}
 	})
 }
+
+// Two changes made while the first is still being saved both stay: the
+// second is made on top of the first, not on the configuration they both
+// started from.
+func TestConfigStoreKeepsBothOfTwoConcurrentUpdates(t *testing.T) {
+	cfg := &config.Config{Nodes: map[string]config.Node{}}
+	store := NewConfigStore(cfg)
+	entered, release := make(chan struct{}), make(chan struct{})
+	first := make(chan error, 1)
+	go func() {
+		first <- store.Update(func(c *config.Config) error {
+			c.Nodes["first"] = config.Node{Addr: "127.0.0.1:1"}
+			return nil
+		}, func(*config.Config) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	var savedSecond map[string]config.Node
+	changing := make(chan struct{})
+	second := make(chan error, 1)
+	go func() {
+		second <- store.Update(func(c *config.Config) error {
+			close(changing)
+			c.Nodes["second"] = config.Node{Addr: "127.0.0.1:2"}
+			return nil
+		}, func(c *config.Config) error {
+			savedSecond = c.Nodes
+			return nil
+		})
+	}()
+	// Give the second change time to start while the first is saved.
+	select {
+	case <-changing:
+		t.Error("the second change was made while the first was being saved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"first", "second"} {
+		if _, ok := cfg.Nodes[name]; !ok {
+			t.Errorf("the %s change was lost: %v", name, cfg.Nodes)
+		}
+		if _, ok := savedSecond[name]; !ok {
+			t.Errorf("the second save lacks the %s change: %v", name, savedSecond)
+		}
+	}
+}

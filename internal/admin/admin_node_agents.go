@@ -33,8 +33,9 @@ func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
 }
 
 // The caller holds the configuration still while comparing the
-// authenticated target with the declaration it is about to commit. Reusing a display name cannot reuse an
-// earlier machine's discovery or installation result.
+// authenticated target with the declaration it is about to commit.
+// Reusing a display name cannot reuse an earlier machine's discovery or
+// installation result.
 func (a *Service) checkAgentNodeTarget(name string, expected config.Node) error {
 	current, ok := a.cfg().Nodes[name]
 	if !ok || current.Addr != expected.Addr || current.Token != expected.Token {
