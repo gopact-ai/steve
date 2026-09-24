@@ -3,7 +3,11 @@ package app
 import (
 	"os"
 	"strings"
+	"sync"
 	"testing"
+
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/cluster"
 )
 
 func TestLocalNodeNamePrefersTheClusterIdentity(t *testing.T) {
@@ -32,5 +36,28 @@ func TestConsoleAssemblyRefusesAnUnnamedNode(t *testing.T) {
 	_, err := assembleConsole(&applicationLifetime{}, &assemblyInput{}, &runtimeValues{}, nil, nil, nil, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "node name") {
 		t.Fatalf("assembled without a node name: %v", err)
+	}
+}
+
+// A cluster member's application administers the member it runs on: the
+// activation's node identity reaches the administration service, ahead of
+// STEVE_NODE.
+func TestPeerApplicationAdministersItsClusterNode(t *testing.T) {
+	t.Setenv("STEVE_NODE", "not-the-member")
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var mu sync.Mutex
+	var named, activated string
+	options.ApplicationReady = func(a *adminsvc.Service, _ cluster.ApplicationServer, activation cluster.Activation) error {
+		mu.Lock()
+		defer mu.Unlock()
+		named, activated = a.NodeName, activation.NodeID
+		return nil
+	}
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	mu.Lock()
+	defer mu.Unlock()
+	if activated == "" || activated != peer.Config.NodeID || named != activated {
+		t.Fatalf("administration service names %q; activation %q, member %q", named, activated, peer.Config.NodeID)
 	}
 }
