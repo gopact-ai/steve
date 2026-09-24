@@ -169,6 +169,7 @@ type Server struct {
 	mcpPort     int
 	listener    net.Listener
 	mcpListener net.Listener
+	mcpClosed   bool // shutdown closed the reverse listener; none is bound after it
 	hubMux      *nodewire.Mux
 	// hubWaiters is closed when a hub attaches and replaced with a fresh
 	// open channel when one leaves, so anything waiting blocks on the
