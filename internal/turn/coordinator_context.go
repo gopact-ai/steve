@@ -344,10 +344,7 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 			Level: string(p.Level.OrDefault()), Repo: string(p.Repo), Version: version, Bound: bound,
 		}
 	}
-	active := ""
-	if c.store != nil {
-		active = c.store.Conversation(conversationID).ActiveAgent
-	}
+	active := c.store.Conversation(conversationID).ActiveAgent
 	if active == "" && c.catalog != nil {
 		active = c.catalog.Default().ID
 	}

@@ -39,9 +39,7 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 		return Setup{}, errors.New("no agent catalog")
 	}
 	if agentID == "" {
-		if c.store != nil {
-			agentID = c.store.Conversation(conversationID).ActiveAgent
-		}
+		agentID = c.store.Conversation(conversationID).ActiveAgent
 		if agentID == "" {
 			agentID = c.catalog.Default().ID
 		}
@@ -63,10 +61,8 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 		Mode: string(mode), Instructions: capabilities.Instructions, Sections: capabilities.Sections,
 		MCPServers: append([]string{"steve"}, selected.MCPServers...),
 	}
-	if c.store != nil {
-		saved := c.store.Conversation(conversationID).Sessions[selected.ID]
-		out.Applied = saved.InstructionsApplied && saved.CapabilityHash == capabilities.Fingerprint
-	}
+	saved := c.store.Conversation(conversationID).Sessions[selected.ID]
+	out.Applied = saved.InstructionsApplied && saved.CapabilityHash == capabilities.Fingerprint
 	return out, nil
 }
 

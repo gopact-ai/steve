@@ -45,10 +45,8 @@ func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID st
 			return fmt.Errorf("drop schedule %s: %w", job.ID, err)
 		}
 	}
-	if c.store != nil {
-		if err := c.store.DeleteConversation(conversationID); err != nil {
-			return err
-		}
+	if err := c.store.DeleteConversation(conversationID); err != nil {
+		return err
 	}
 	c.forgetConversation(conversationID)
 	return nil
@@ -91,7 +89,7 @@ func (c *Coordinator) busyWith(conversationID string) bool {
 // anyway. The alternative is a conversation nobody can ever delete
 // because one of its agents ran somewhere that is now offline.
 func (c *Coordinator) closeConversationSessions(ctx context.Context, conversationID string) error {
-	if c.store == nil || c.runtime == nil {
+	if c.runtime == nil {
 		return nil
 	}
 	for agentID, session := range c.store.Conversation(conversationID).Sessions {
