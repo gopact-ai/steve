@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/idle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
@@ -54,7 +55,7 @@ func (g *fakeGate) seen() []string {
 	return append([]string(nil), g.calls...)
 }
 
-func gateCoordinator(t *testing.T, mcpHTTP bool) (*Coordinator, *fakeManager, *fakeRunner, *fakeGate, *state.Store) {
+func gateCoordinator(t *testing.T, mcpHTTP bool, opts ...testOption) (*Coordinator, *fakeManager, *fakeRunner, *fakeGate, *state.Store) {
 	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
@@ -69,8 +70,8 @@ func gateCoordinator(t *testing.T, mcpHTTP bool) (*Coordinator, *fakeManager, *f
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}, mcpHTTP: mcpHTTP}
 	gate := &fakeGate{}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
-		withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
+	opts = append([]testOption{withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate })}, opts...)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, opts...)
 	return coordinator, manager, runner, gate, store
 }
 
@@ -159,6 +160,15 @@ func (f fakeEndpoints) MCPEndpoint(_ context.Context, node string) (string, erro
 
 // RegisterIdle holds no clock: these tests never disconnect a node.
 func (fakeEndpoints) RegisterIdle(string, idle.Clock) func() { return func() {} }
+
+// Refresh and Files answer nothing: these tests never repair a machine.
+func (fakeEndpoints) Refresh(_ context.Context, node string) (nodewire.Advert, error) {
+	return nodewire.Advert{}, errors.New("no advert for " + node)
+}
+
+func (fakeEndpoints) Files(_ context.Context, node string, _ nodewire.FileRequest) (string, error) {
+	return "", errors.New("no files on " + node)
+}
 
 // idleNodes records the idle clocks a coordinator registers per node.
 type idleNodes struct {

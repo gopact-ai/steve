@@ -10,8 +10,7 @@ import (
 )
 
 func (s *Server) consoleQuestions(w http.ResponseWriter, r *http.Request) {
-	service, ok := s.console.(consoleapi.Interactions)
-	if !ok {
+	if s.console == nil {
 		http.Error(w, "console interactions are not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -20,12 +19,11 @@ func (s *Server) consoleQuestions(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]any{"questions": service.Questions(r.URL.Query().Get("conversation"))})
+	writeJSON(w, map[string]any{"questions": s.console.Questions(r.URL.Query().Get("conversation"))})
 }
 
 func (s *Server) consoleAnswer(w http.ResponseWriter, r *http.Request) {
-	service, ok := s.console.(consoleapi.Interactions)
-	if !ok {
+	if s.console == nil {
 		http.Error(w, "console interactions are not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -42,13 +40,13 @@ func (s *Server) consoleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.channelHistory != nil {
-		for _, question := range service.Questions("") {
+		for _, question := range s.console.Questions("") {
 			if question.ID == r.PathValue("id") && !s.consoleMutationIdentity(w, r, question.Conversation) {
 				return
 			}
 		}
 	}
-	question, err := service.AnswerQuestion(r.Context(), r.PathValue("id"), answer)
+	question, err := s.console.AnswerQuestion(r.Context(), r.PathValue("id"), answer)
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		status := http.StatusInternalServerError

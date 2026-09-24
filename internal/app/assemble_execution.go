@@ -18,13 +18,15 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/memory"
+	"github.com/gopact-ai/steve/internal/models"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
-func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly) (executionAssembly, error) {
+func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, modelInfo modelsAssembly) (executionAssembly, error) {
 	environment := input.Environment()
 	background := boot.Background()
 	book := boot.Book()
@@ -118,6 +120,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		OfflineAfter: time.Duration(cfg.Gateway.OfflineReminderAfter), ConsoleCompletionGuard: console.CheckTaskCompletionTx,
 		Nodes: nodes, PlanRecoveryOwner: planRecoveryOwner(environment != nil),
 		Plans: plans, Fleet: machines.Fleet(),
+		Prober: modelProbe{prober: modelInfo.Prober(), probeDir: modelInfo.ProbeDir(), endpoints: modelInfo.Endpoints()},
 	})
 	if err != nil {
 		return nil, err
@@ -210,4 +213,27 @@ func turnPolicy(settings *config.RuntimeSettings) (timeout func() time.Duration,
 	timeout = func() time.Duration { return time.Duration(settings.Load().Gateway.PromptTimeout) }
 	autoResolve = func() bool { return settings.Load().Policies.Landing.Conflicts != config.ConflictsManual }
 	return timeout, autoResolve
+}
+
+// modelProbe probes harnesses in each machine's probe directory.
+type modelProbe struct {
+	prober    *models.Prober
+	probeDir  func(node string) string
+	endpoints func(ctx context.Context) []models.Endpoint
+}
+
+// Probe asks one harness on node, and fails when node has no known state
+// directory to probe in.
+func (p modelProbe) Probe(ctx context.Context, node, harnessID string) error {
+	dir := p.probeDir(node)
+	if dir == "" {
+		return fmt.Errorf("no state dir known for %s", nodewire.Place(node))
+	}
+	_, err := p.prober.Probe(ctx, models.Endpoint{Node: node, Harness: harnessID, Workdir: dir})
+	return err
+}
+
+// ProbeAll asks every eligible harness, including those already seen.
+func (p modelProbe) ProbeAll(ctx context.Context) []models.Result {
+	return p.prober.ProbeAll(ctx, p.endpoints(ctx), true)
 }

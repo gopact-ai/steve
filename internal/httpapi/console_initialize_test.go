@@ -52,10 +52,6 @@ func TestConsoleInitializationIsGuardedAndDoesNotSendMessages(t *testing.T) {
 	if got := put("test-token", `{"project":"workspace"}`); got != http.StatusNotImplemented {
 		t.Fatalf("missing console: %d", got)
 	}
-	s.SetConsole(&fakeConsole{})
-	if got := put("test-token", `{"project":"workspace"}`); got != http.StatusNotImplemented {
-		t.Fatalf("missing initializer: %d", got)
-	}
 	c := &initializingConsole{}
 	s.SetConsole(c)
 	if got := put("test-token", `{"project":`); got != http.StatusBadRequest {

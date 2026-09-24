@@ -49,7 +49,11 @@ func (n *relocationResourceProbe) Release(context.Context, string, string) error
 }
 
 func TestDuplicateRelocationCannotReachOriginalDriversResources(t *testing.T) {
-	c, runner, _, old, req := retainedChatFixture(t)
+	nodes := &relocationResourceProbe{entered: make(chan struct{}), release: make(chan struct{})}
+	c, runner, _, old, req := retainedChatFixture(t, withDeps(func(d *Deps) {
+		d.Fleet = roster.New(d.Catalog)
+		d.Fleet.SetNodes(nodes)
+	}))
 	runner.state.State, runner.state.ProcessStopped = "interrupted", true
 	runner.state.Command.ProcessStopped = true
 	old, err := c.attempts.Get(t.Context(), old.ID)
@@ -61,9 +65,6 @@ func TestDuplicateRelocationCannotReachOriginalDriversResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nodes := &relocationResourceProbe{entered: make(chan struct{}), release: make(chan struct{})}
-	c.fleet = roster.New(c.catalog)
-	c.fleet.SetNodes(nodes)
 	done := make(chan error, 1)
 	go func() {
 		_, err := c.RelocateChat(t.Context(), plan.ID, "confirm-stopped-and-retry:"+plan.ID, req)

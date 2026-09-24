@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
@@ -120,6 +121,21 @@ type Nodes interface {
 	// RegisterIdle holds a prompt's silence clock while node is
 	// disconnected, until unregister is called.
 	RegisterIdle(node string, clock idle.Clock) (unregister func())
+	// Refresh asks node to check itself again, so its advert reflects a
+	// repair that just ran.
+	Refresh(ctx context.Context, node string) (nodewire.Advert, error)
+	// Files reads platform file facts on node; "" is the hub.
+	Files(ctx context.Context, node string, req nodewire.FileRequest) (string, error)
+}
+
+// ModelProber asks harnesses which models they run.
+type ModelProber interface {
+	// Probe asks one harness on node, the way a repair does for a harness
+	// that just appeared.
+	Probe(ctx context.Context, node, harness string) error
+	// ProbeAll asks every eligible harness, whether or not it has reported
+	// a model before.
+	ProbeAll(ctx context.Context) []models.Result
 }
 
 // Injected is what a turn actually gave the agent, kept so "what did it
@@ -202,10 +218,7 @@ type coordinatorState struct {
 	supervisor Supervisor
 	plans      *plan.Store
 	fleet      *roster.Roster
-	refresher  Refresher
-	files      MachineFiles
-	probeOne   func(ctx context.Context, node, harness string) error
-	probeAll   func(ctx context.Context) []models.Result
+	prober     ModelProber
 	projects   *project.Store
 	// attach gives a project a directory on the machine an agent runs on
 	// when it has none there.
@@ -222,15 +235,17 @@ type coordinatorState struct {
 	defaultProject string
 	homeProject    string
 	node           string
+	// planRecoveryOwner is Deps.PlanRecoveryOwner; nil leaves every
+	// retained plan to ResumePlans.
+	planRecoveryOwner func(task.Task) bool
 	// supervisor, attach, gate and the callbacks below are set once by
 	// Wire. gate, afterTurn and turnPreface may be nil and are checked
 	// where they are used; the rest are never nil once wired.
-	resumer           func(TaskResume) error
-	resumeDispatcher  func(TaskResume)
-	notifier          func(TaskNotice)
-	afterTurn         func(taskID string)
-	turnPreface       func(ctx context.Context, taskID string) Preface
-	planRecoveryOwner func(task.Task) bool
+	resumer          func(TaskResume) error
+	resumeDispatcher func(TaskResume)
+	notifier         func(TaskNotice)
+	afterTurn        func(taskID string)
+	turnPreface      func(ctx context.Context, taskID string) Preface
 	// offlineAfter is how long a turn runs before its completion also earns
 	// a plain-text ping; zero keeps Steve quiet.
 	offlineAfter time.Duration
@@ -288,10 +303,12 @@ type Deps struct {
 	// transaction closing a task tree; nil refuses to close one while any
 	// console fact exists.
 	ConsoleCompletionGuard ConsoleCompletionGuard
-	// Nodes resolves remote messaging endpoints and holds a prompt's
-	// silence clock while its node is disconnected. Without it a remote
-	// agent's turn is refused while messaging is on, and a disconnection
-	// counts as silence.
+	// Nodes resolves remote messaging endpoints, holds a prompt's silence
+	// clock while its node is disconnected, and refreshes and reads the
+	// machines a repair works on. Without it a remote agent's turn is
+	// refused while messaging is on, a disconnection counts as silence, a
+	// repair leaves the machine's advert as it was, and the PATH a repair
+	// reports is unknown.
 	Nodes Nodes
 	// PlanRecoveryOwner reports a task whose transport resumes its own
 	// retained plan, preserving the original exchange, progress and asks;
@@ -302,6 +319,8 @@ type Deps struct {
 	// Fleet admits and places agents on the machines they run on; without
 	// it no admission runs and /fleet reports a hub alone.
 	Fleet *roster.Roster
+	// Prober answers `/fleet probe` and fills a repaired harness's model.
+	Prober ModelProber
 }
 
 // dependency is one Deps field New refuses to build without.
@@ -320,7 +339,7 @@ func (d Deps) required() []dependency {
 		{"Skills", d.Skills == nil}, {"Projects", d.Projects == nil}, {"Memory", d.Memory == nil},
 		{"Attempts", d.Attempts == nil}, {"Artifacts", d.Artifacts == nil}, {"Intents", d.Intents == nil},
 		{"Executions", d.Executions == nil}, {"Tasks", d.Tasks == nil}, {"Schedules", d.Schedules == nil},
-		{"Plans", d.Plans == nil},
+		{"Plans", d.Plans == nil}, {"Prober", d.Prober == nil},
 	}
 }
 
@@ -361,7 +380,7 @@ func New(deps Deps) (*Coordinator, error) {
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
 			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
 			nodes: deps.Nodes, planRecoveryOwner: deps.PlanRecoveryOwner,
-			plans: deps.Plans, fleet: deps.Fleet,
+			plans: deps.Plans, fleet: deps.Fleet, prober: deps.Prober,
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},

@@ -55,28 +55,11 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if !s.consoleSubmissionIdentity(w, r, req) {
 		return
 	}
-	var exchange consoleapi.Exchange
-	var err error
-	if extended, ok := s.console.(consoleapi.Submissions); ok {
-		exchange, err = extended.Submit(r.Context(), req)
-	} else if len(req.Refs) > 0 || req.RewindTo != "" {
-		http.Error(w, "material submission is not supported", http.StatusNotImplemented)
-		return
-	} else {
-		exchange, err = s.console.EnqueueCommand(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
-	}
+	exchange, err := s.console.Submit(r.Context(), req)
 	// The history a rewound submission carries is for the agent; the
 	// acknowledgement the page reads has no use for it.
 	exchange.History = ""
 	queueResponse(w, exchange, err)
-}
-
-// submissionCapabilities is a console that says which optional submission
-// fields it honours — material references and interactive requests — so
-// the page can tell a hub that preserves them from one that only accepts
-// them. A console without the method advertises neither.
-type submissionCapabilities interface {
-	SubmissionCapabilities() (materialRefs, interactiveRequests bool)
 }
 
 func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
@@ -99,14 +82,10 @@ func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 			list = queue
 		}
 	}
+	materialRefs, interactiveRequests := s.console.SubmissionCapabilities()
 	// Clients must confirm support before submitting or retrying a command ID;
 	// older hubs accepted the field but did not preserve its identity.
-	response := map[string]any{"queue": list, "submission_keys": true}
-	if capabilities, ok := s.console.(submissionCapabilities); ok {
-		materialRefs, interactiveRequests := capabilities.SubmissionCapabilities()
-		response["material_refs"], response["interactive_requests"] = materialRefs, interactiveRequests
-	}
-	queueResponse(w, response, nil)
+	queueResponse(w, map[string]any{"queue": list, "submission_keys": true, "material_refs": materialRefs, "interactive_requests": interactiveRequests}, nil)
 }
 
 func (s *Server) consoleDeleteQueued(w http.ResponseWriter, r *http.Request) {
