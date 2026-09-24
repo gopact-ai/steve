@@ -23,8 +23,9 @@ type PluginRuntimeProvider interface {
 	PluginRuntime(context.Context, Placement, plugins.RuntimeRef) (Config, []acp.MCPServer, error)
 	PluginSessionPreparer
 	PluginRelocationPreparer
-	PluginRuntimeCloser
-	PluginRuntimeUsage
+	BeginPluginRuntimeUse(context.Context, Placement, plugins.RuntimeRef) error
+	EndPluginRuntimeUse(context.Context, Placement, plugins.RuntimeRef) error
+	ClosePluginRuntime(context.Context, Placement, string) error
 }
 
 type PluginTransports interface {
@@ -244,10 +245,6 @@ func (s *managedSession) PluginRuntime() *plugins.RuntimeRef {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state.Plugin.Clone()
-}
-
-type PluginRuntimeCloser interface {
-	ClosePluginRuntime(context.Context, Placement, string) error
 }
 
 func waitPluginProcessStop(ctx context.Context, host *acphost.Host) error {
