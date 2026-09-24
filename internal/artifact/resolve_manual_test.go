@@ -2,6 +2,8 @@ package artifact
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -107,5 +109,56 @@ func TestAllStuckSpansProjectsAndFindsOneByArtifact(t *testing.T) {
 	}
 	if _, ok, err := store.StuckOne(ctx, "art-nothing"); ok || err != nil {
 		t.Fatalf("StuckOne for an unknown artifact = ok %v err %v", ok, err)
+	}
+}
+
+// The half-merged tree is content other machines committed; a symbolic
+// link in it must not carry a person's resolution outside the workspace.
+func TestResolveByHandDoesNotWriteThroughALink(t *testing.T) {
+	ctx := context.Background()
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	canonical := t.TempDir()
+	write(t, canonical, "a", "a0")
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	base := canonicalOf(t, store, "p")
+	write(t, ws.Path, "a", "mine")
+	first, _, _ := store.Publish(ctx, ws, base, "att-1", "one")
+	ws2, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Base: base, Owner: "att-2"})
+	if err := os.Remove(filepath.Join(ws2.Path, "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws2.Path, "a")); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.Publish(ctx, ws2, base, "att-2", "two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if land, err := store.Land(ctx, p, first.ID, "test"); err != nil || land.State != LandCommitted {
+		t.Fatalf("first landing = %+v err=%v", land, err)
+	}
+	if _, err := store.Land(ctx, p, second.ID, "test"); err == nil {
+		t.Fatal("the second landing was expected to conflict")
+	}
+	stuck, err := store.Stuck(ctx, "p")
+	if err != nil || len(stuck) != 1 || !stuck[0].Resolvable() {
+		t.Fatalf("stuck = %+v err=%v", stuck, err)
+	}
+	var edits []Edit
+	for _, path := range stuck[0].Paths {
+		edits = append(edits, Edit{Path: path, Text: "resolved"})
+	}
+	if land, err := store.ResolveByHand(ctx, p, stuck[0], edits, "console"); err != nil || land.State != LandCommitted {
+		t.Fatalf("resolving by hand = %+v err=%v", land, err)
+	}
+	if body := read(t, filepath.Dir(outside), "outside"); body != "untouched" {
+		t.Fatalf("the resolution was written outside the workspace: %q", body)
+	}
+	if info, err := os.Lstat(filepath.Join(canonical, "a")); err != nil || !info.Mode().IsRegular() || read(t, canonical, "a") != "resolved" {
+		t.Fatalf("canonical a = %v %v, want the resolved text as a regular file", info, err)
 	}
 }

@@ -22,6 +22,8 @@ const inputBufferBytes = 1 << 20
 
 var errInputBufferFull = errors.New("node: disconnected input buffer exceeds 1 MiB")
 
+var errGraceExceeded = fmt.Errorf("%w: session grace exceeded", io.EOF)
+
 type inputLine struct {
 	seq  uint64
 	data []byte
@@ -57,7 +59,12 @@ type remoteProcess struct {
 	closeOnce sync.Once
 	ctx       context.Context
 	cancel    context.CancelFunc
+	// afterGrace starts an outage's grace timer and returns its Stop. It is
+	// always startGraceTimer outside tests.
+	afterGrace func(time.Duration, func()) func() bool
 }
+
+func startGraceTimer(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
 
 func newRemoteProcess(t remoteTransport, c *conn, stream *nodewire.Stream) *remoteProcess {
 	r, w := io.Pipe()
@@ -67,7 +74,7 @@ func newRemoteProcess(t remoteTransport, c *conn, stream *nodewire.Stream) *remo
 	}
 	p := &remoteProcess{transport: t, id: stream.Request().Stream, grace: grace, stdout: r, output: w,
 		conn: c, stream: stream, ready: true, resumable: true, changed: make(chan struct{}), done: make(chan struct{}),
-		requests: map[string]bool{}, answered: map[string]bool{}}
+		requests: map[string]bool{}, answered: map[string]bool{}, afterGrace: startGraceTimer}
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go p.writeLoop()
 	go p.readLoop(c, bufio.NewReader(stream))
@@ -97,7 +104,7 @@ func (p *remoteProcess) wakeLocked() { close(p.changed); p.changed = make(chan s
 
 func (p *remoteProcess) finish(err error) {
 	if errors.Is(err, context.DeadlineExceeded) {
-		err = fmt.Errorf("%w: session grace exceeded", io.EOF)
+		err = errGraceExceeded
 	}
 	if err == nil || err.Error() == "exit 0" {
 		err = io.EOF
@@ -350,7 +357,19 @@ func (p *remoteProcess) readLoop(c *conn, reader *bufio.Reader) {
 		start := time.Now()
 		// Bound open and ResumeAck too, including a peer that accepts a
 		// socket but never answers. Only a successful ResumeAck ends this wait.
-		watch := time.AfterFunc(p.grace, func() { p.finish(fmt.Errorf("%w: session grace exceeded", io.EOF)) })
+		// The timer can fire after that ResumeAck and before it is stopped,
+		// so the two settle the outage under p.mu: whichever comes first wins.
+		var expired, reattached bool
+		stopWatch := p.afterGrace(p.grace, func() {
+			p.mu.Lock()
+			if reattached {
+				p.mu.Unlock()
+				return
+			}
+			expired = true
+			p.mu.Unlock()
+			p.finish(errGraceExceeded)
+		})
 		for {
 			c, err = p.transport.registry.awaitConnection(ctx, p.transport.node)
 			if err != nil {
@@ -392,11 +411,16 @@ func (p *remoteProcess) readLoop(c *conn, reader *bufio.Reader) {
 				break
 			}
 			p.mu.Lock()
-			err = p.acknowledgeLocked(ack.HaveIn)
-			if p.err != nil {
+			switch {
+			case p.err != nil:
 				err = p.err
+			case expired:
+				err = errGraceExceeded
+			default:
+				err = p.acknowledgeLocked(ack.HaveIn)
 			}
-			if err == nil && p.err == nil {
+			if err == nil {
+				reattached = true
 				p.sent, p.ready = ack.HaveIn, true
 				p.wakeLocked()
 			}
@@ -406,7 +430,7 @@ func (p *remoteProcess) readLoop(c *conn, reader *bufio.Reader) {
 			}
 			break
 		}
-		watch.Stop()
+		stopWatch()
 		cancel()
 		if err != nil {
 			p.finish(err)
