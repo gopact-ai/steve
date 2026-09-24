@@ -17,25 +17,25 @@ import (
 func hubNodeSettingsFixture(t *testing.T) *Service {
 	t.Helper()
 	a := agentAdminFixture(t)
-	a.Cfg.Harnesses["mock"] = config.Harness{Command: "resolved-adapter", Adapter: "codex-acp", Slots: 3, Permission: config.PermissionRead, Env: []string{"SECRET=kept"}}
-	a.Cfg.MCPServers = map[string]config.MCPServer{"remote": {Type: "http", URL: "https://example.test/mcp", Env: map[string]string{"SECRET": "kept"}, Headers: map[string]string{"Authorization": "kept"}}}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Harnesses["mock"] = config.Harness{Command: "resolved-adapter", Adapter: "codex-acp", Slots: 3, Permission: config.PermissionRead, Env: []string{"SECRET=kept"}}
+	a.cfg().MCPServers = map[string]config.MCPServer{"remote": {Type: "http", URL: "https://example.test/mcp", Env: map[string]string{"SECRET": "kept"}, Headers: map[string]string{"Authorization": "kept"}}}
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := configbuild.HarnessManager(a.Cfg)
+	manager, err := configbuild.HarnessManager(a.cfg())
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.Manager = manager
 	t.Cleanup(manager.Stop)
-	a.Assembler = configbuild.CapabilityAssembler(a.Cfg)
+	a.Assembler = configbuild.CapabilityAssembler(a.cfg())
 	a.Fleet = roster.New(a.Catalog)
 	return a
 }
 
 func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	a := hubNodeSettingsFixture(t)
-	original := a.Cfg.Harnesses["mock"]
+	original := a.cfg().Harnesses["mock"]
 	before, err := a.NodeSettings(t.Context(), NodeName())
 	if err != nil || before.Revision == "" {
 		t.Fatalf("GET revision=%q err=%v", before.Revision, err)
@@ -62,7 +62,7 @@ func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	if wins != 1 || conflicts != 1 {
 		t.Fatalf("CAS winners=%d conflicts=%d", wins, conflicts)
 	}
-	if !reflect.DeepEqual(a.Cfg.Harnesses["mock"], original) {
+	if !reflect.DeepEqual(a.cfg().Harnesses["mock"], original) {
 		t.Fatal("unrelated edit lost Adapter/Slots/Permission/Env")
 	}
 	set, _ = a.NodeSettings(t.Context(), NodeName())
@@ -75,7 +75,7 @@ func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	if _, err := a.SetNodeSettings(t.Context(), NodeName(), set); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(a.Cfg.Harnesses["mock"], original) || a.Cfg.MCPServers["remote"].Env["SECRET"] != "kept" || a.Cfg.MCPServers["remote"].Headers["Authorization"] != "kept" {
+	if !reflect.DeepEqual(a.cfg().Harnesses["mock"], original) || a.cfg().MCPServers["remote"].Env["SECRET"] != "kept" || a.cfg().MCPServers["remote"].Headers["Authorization"] != "kept" {
 		t.Fatal("omitted fields cleared data")
 	}
 	set, _ = a.NodeSettings(t.Context(), NodeName())
@@ -99,8 +99,8 @@ func TestHubNodeSettingsCASAndLosslessRoundTrip(t *testing.T) {
 	if _, err := a.SetNodeSettings(t.Context(), NodeName(), posted); err != nil {
 		t.Fatal(err)
 	}
-	got := a.Cfg.Harnesses["mock"]
-	if got.Slots != 0 || got.Adapter != original.Adapter || got.Permission != original.Permission || len(got.Env) != 0 || len(a.Cfg.MCPServers["remote"].Env) != 0 || len(a.Cfg.MCPServers["remote"].Headers) != 0 {
+	got := a.cfg().Harnesses["mock"]
+	if got.Slots != 0 || got.Adapter != original.Adapter || got.Permission != original.Permission || len(got.Env) != 0 || len(a.cfg().MCPServers["remote"].Env) != 0 || len(a.cfg().MCPServers["remote"].Headers) != 0 {
 		t.Fatal("explicit clears were not preserved")
 	}
 	var disk config.Config

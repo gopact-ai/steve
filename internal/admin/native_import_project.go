@@ -29,9 +29,9 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	ConfigMu.RLock()
-	err := a.checkNativeImportTarget(name, target, selected)
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	err := checkNativeImportTarget(a.cfg(), name, target, selected)
+	a.ConfigStore.runlock()
 	if err != nil {
 		return "", err
 	}
@@ -48,9 +48,9 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		ConfigMu.RLock()
-		err := a.checkNativeImportTarget(name, target, selected)
-		ConfigMu.RUnlock()
+		a.ConfigStore.rlock()
+		err := checkNativeImportTarget(a.cfg(), name, target, selected)
+		a.ConfigStore.runlock()
 		if err != nil {
 			return err
 		}
@@ -89,11 +89,11 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 	return id, err
 }
 
-func (a *Service) checkNativeImportTarget(name string, target config.Node, selected agent.Agent) error {
-	if err := a.checkAgentNodeTarget(name, target); err != nil {
+func checkNativeImportTarget(cfg *config.Config, name string, target config.Node, selected agent.Agent) error {
+	if err := checkAgentNodeTarget(cfg, name, target); err != nil {
 		return err
 	}
-	current, exists := a.Cfg.Agents[selected.ID]
+	current, exists := cfg.Agents[selected.ID]
 	if !exists || current.Node != name || current.Harness != selected.Harness {
 		return errors.New("Agent 配置已变化，请重新选择")
 	}

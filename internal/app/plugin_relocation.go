@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 
-	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -14,9 +13,7 @@ func (p *applicationPlugins) PlanPluginRelocation(ctx context.Context, req harne
 	if req.Prior == nil || req.Prior.Selection.Project != req.Project || req.At.Node == "" {
 		return nil, plugins.ErrInvalid
 	}
-	adminsvc.ConfigMu.RLock()
-	items := config.ClonePluginInstallations(p.cfg.Plugins)
-	adminsvc.ConfigMu.RUnlock()
+	items := p.pluginInstallations()
 	return p.library.PlanRelocation(ctx, items, *req.Prior, req.At.Node, req.At.Harness)
 }
 
@@ -25,13 +22,15 @@ func (p *applicationPlugins) PreparePluginRelocation(ctx context.Context, plan, 
 		p.gate.RLock()
 		defer p.gate.RUnlock()
 	}
-	adminsvc.ConfigMu.RLock()
-	items := config.ClonePluginInstallations(p.cfg.Plugins)
-	cfg := p.cfg.Harnesses[frozen.Selection.Harness]
-	if policy, exists := p.cfg.RuntimePermissions[frozen.Selection.Harness]; exists {
-		cfg.Permission = policy
-	}
-	adminsvc.ConfigMu.RUnlock()
+	var items map[string]plugins.Installation
+	var cfg config.Harness
+	p.config.Read(func(c *config.Config) {
+		items = config.ClonePluginInstallations(c.Plugins)
+		cfg = c.Harnesses[frozen.Selection.Harness]
+		if policy, exists := c.RuntimePermissions[frozen.Selection.Harness]; exists {
+			cfg.Permission = policy
+		}
+	})
 	if err := frozen.CheckScope(items); err != nil {
 		return nil, err
 	}

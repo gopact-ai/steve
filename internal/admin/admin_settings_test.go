@@ -14,13 +14,13 @@ import (
 
 func TestSettingsCASPreservesEffectiveAndDoesNotExposeSecrets(t *testing.T) {
 	a := agentAdminFixture(t)
-	a.Cfg.Gateway.OwnerID = "owner"
-	a.Cfg.Feishu.AppID = "test-app"
-	a.Cfg.Feishu.AppSecret = "private-secret"
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Gateway.OwnerID = "owner"
+	a.cfg().Feishu.AppID = "test-app"
+	a.cfg().Feishu.AppSecret = "private-secret"
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	s := NewSettings(a, a.Cfg)
+	s := NewSettings(a, a.cfg())
 	before, err := s.Settings(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestSettingsCASPreservesEffectiveAndDoesNotExposeSecrets(t *testing.T) {
 	if _, err := s.UpdateSettings(t.Context(), consoleapi.SettingsUpdate{BaseRevision: after.Revision, Settings: json.RawMessage(`{"gateway":{"task_max_turns":0}}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if a.Cfg.Gateway.TaskMaxTurns != 0 {
+	if a.cfg().Gateway.TaskMaxTurns != 0 {
 		t.Fatal("explicit zero did not restore unlimited default")
 	}
 }
@@ -76,11 +76,11 @@ func containsSecret(v consoleapi.SettingsView, secret string) bool {
 
 func TestSettingsSaveFailuresRespectTheCommitBoundary(t *testing.T) {
 	a := agentAdminFixture(t)
-	a.Cfg.Gateway.OwnerID = "owner"
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Gateway.OwnerID = "owner"
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	s := NewSettings(a, a.Cfg)
+	s := NewSettings(a, a.cfg())
 	before, _ := s.Settings(t.Context())
 	raw, _ := os.ReadFile(a.Path)
 	a.WriteConfig = func(string, *config.Config) error { return errors.New("disk unavailable") }
@@ -100,7 +100,7 @@ func TestSettingsSaveFailuresRespectTheCommitBoundary(t *testing.T) {
 		return &config.CommittedError{Err: errors.New("directory sync unavailable")}
 	}
 	applied, err := s.UpdateSettings(t.Context(), request)
-	if err != nil || applied.Warning == "" || !applied.PendingRestart || a.Cfg.Gateway.TaskMaxTurns != 9 {
+	if err != nil || applied.Warning == "" || !applied.PendingRestart || a.cfg().Gateway.TaskMaxTurns != 9 {
 		t.Fatalf("committed warning rolled back desired: %+v %v", applied, err)
 	}
 }
@@ -110,11 +110,11 @@ func TestSettingsSaveFailuresRespectTheCommitBoundary(t *testing.T) {
 // snapshot would show the owner a stance that has already been replaced.
 func TestDefaultApprovalAppliesWithoutARestart(t *testing.T) {
 	a := approvalAdminFixture(t, "ask")
-	a.Cfg.Gateway.OwnerID = "owner"
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Gateway.OwnerID = "owner"
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	s := NewSettings(a, a.Cfg)
+	s := NewSettings(a, a.cfg())
 	before, err := s.Settings(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,38 @@ func TestDefaultApprovalAppliesWithoutARestart(t *testing.T) {
 	if got := a.Catalog.Default().Options["mode"]; got != "read-only" {
 		t.Fatalf("saving a global default cleared the Agent override: %q", got)
 	}
-	if got := a.Cfg.Agents["pinned"].Options["effort"]; got != "high" {
+	if got := a.cfg().Agents["pinned"].Options["effort"]; got != "high" {
 		t.Fatalf("saving a global default changed unrelated options: %q", got)
+	}
+}
+
+// Reading the settings does not wait for a settings change to be saved.
+func TestSettingsReadDuringASettingsSave(t *testing.T) {
+	a := agentAdminFixture(t)
+	a.cfg().Gateway.OwnerID = "owner"
+	if err := config.Save(a.Path, a.cfg()); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSettings(a, a.cfg())
+	before, err := s.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during consoleapi.SettingsView
+	finished := readsDuringSave(t, a, func() error {
+		_, err := s.UpdateSettings(t.Context(), consoleapi.SettingsUpdate{BaseRevision: before.Revision, Settings: json.RawMessage(`{"gateway":{"task_max_turns":9}}`)})
+		return err
+	}, func() error {
+		during, err = s.Settings(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the settings waited for a settings save")
+	}
+	if !reflect.DeepEqual(during.Desired, before.Desired) {
+		t.Fatal("a reader saw settings that were not saved yet")
+	}
+	if a.cfg().Gateway.TaskMaxTurns != 9 {
+		t.Fatal("the saved settings were not published")
 	}
 }

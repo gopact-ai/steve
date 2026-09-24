@@ -61,9 +61,14 @@ var (
 	hubSequence   atomic.Int64
 )
 
-func ObservedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewire.Advert {
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+// ObservedHubAdvert describes the hub machine from the configuration in
+// store and what observation has seen of it.
+func ObservedHubAdvert(store *ConfigStore, observation *LocalObservation) (adv nodewire.Advert) {
+	store.Read(func(cfg *config.Config) { adv = observedHubAdvert(cfg, observation) })
+	return adv
+}
+
+func observedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewire.Advert {
 	specs := make(map[string]node.HarnessSpec, len(cfg.Harnesses))
 	for id, h := range cfg.Harnesses {
 		specs[id] = node.HarnessSpec{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Slots: h.Slots}

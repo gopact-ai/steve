@@ -33,7 +33,7 @@ func (a *Service) materialProject(ctx context.Context, id string) error {
 	if p.Level == datalevel.Sealed && p.Home.Node != "" {
 		return errors.New("sealed project content cannot be captured on this hub")
 	}
-	if a.Cfg == nil || a.materialOwner() == "" {
+	if a.cfg() == nil || a.materialOwner() == "" {
 		return errors.New("console owner is not configured")
 	}
 	return nil
@@ -183,10 +183,10 @@ func (a *Service) materialOwner() string {
 	if a.Owner != "" {
 		return a.Owner
 	}
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
-	if a.Cfg == nil {
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
+	if a.cfg() == nil {
 		return ""
 	}
-	return a.Cfg.EffectiveOwnerID()
+	return a.cfg().EffectiveOwnerID()
 }

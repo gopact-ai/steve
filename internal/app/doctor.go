@@ -83,9 +83,10 @@ func Doctor(configPath string, timeout time.Duration) error {
 			return fmt.Errorf("grant %s in %s: %w", g.Principal, g.Project, err)
 		}
 	}
-	observation, closeObservation := newLocalObservation(ctx, cfg)
+	guarded := adminsvc.NewConfigStore(cfg)
+	observation, closeObservation := newLocalObservation(ctx, guarded)
 	defer closeObservation()
-	self := adminsvc.ObservedHubAdvert(cfg, observation)
+	self := adminsvc.ObservedHubAdvert(guarded, observation)
 	slog.Info(fmt.Sprintf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
 		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), adminsvc.HarnessSummary(self), self.Capabilities), "node", self.Node)
 	reportGit("hub "+self.Node, self)

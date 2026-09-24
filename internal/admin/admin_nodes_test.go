@@ -24,11 +24,11 @@ import (
 func nodeAdminFixture(t *testing.T) *Service {
 	t.Helper()
 	admin := agentAdminFixture(t)
-	admin.Cfg.Nodes = map[string]config.Node{"node-test": {Addr: "127.0.0.1:1", Token: "test-node-token", Level: "internal"}}
-	if err := config.Save(admin.Path, admin.Cfg); err != nil {
+	admin.cfg().Nodes = map[string]config.Node{"node-test": {Addr: "127.0.0.1:1", Token: "test-node-token", Level: "internal"}}
+	if err := config.Save(admin.Path, admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	admin.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(admin.Cfg))
+	admin.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(admin.cfg()))
 	t.Cleanup(admin.Nodes.Close)
 	admin.Fleet = roster.New(admin.Catalog)
 	return admin
@@ -57,9 +57,9 @@ func TestRemoveNodeRechecksAgentPlacementAfterPendingUpdate(t *testing.T) {
 	// Placement now checks the destination's own tool declaration. Keep the
 	// original serialization test against a real authenticated node.
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{"mock": {Command: "/bin/echo"}})
-	admin.Cfg.Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token", Level: "internal"}
+	admin.cfg().Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token", Level: "internal"}
 	admin.Nodes.Add("node-test", node.Config{Addr: server.Addr(), Token: "test-node-token", Level: "internal"})
-	if err := config.Save(admin.Path, admin.Cfg); err != nil {
+	if err := config.Save(admin.Path, admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -90,7 +90,7 @@ func TestRemoveNodeRechecksAgentPlacementAfterPendingUpdate(t *testing.T) {
 	if err := <-removed; err == nil || !strings.Contains(err.Error(), "Agent worker") {
 		t.Fatalf("removed a node acquired by the pending update: %v", err)
 	}
-	if _, ok := admin.Cfg.Nodes["node-test"]; !ok {
+	if _, ok := admin.cfg().Nodes["node-test"]; !ok {
 		t.Fatal("occupied node removed from configuration")
 	}
 	if len(admin.Nodes.Names()) != 1 {
@@ -106,11 +106,11 @@ func TestNodeMutationsSynchronizeWithConfigurationReaders(t *testing.T) {
 	go func() {
 		defer readers.Done()
 		for ctx.Err() == nil {
-			ConfigMu.RLock()
-			_, _ = json.Marshal(admin.Cfg)
-			_ = admin.Cfg.NodeLevels()
-			_ = admin.Cfg.NodeRegions()
-			ConfigMu.RUnlock()
+			admin.ConfigStore.rlock()
+			_, _ = json.Marshal(admin.cfg())
+			_ = admin.cfg().NodeLevels()
+			_ = admin.cfg().NodeRegions()
+			admin.ConfigStore.runlock()
 			runtime.Gosched()
 		}
 	}()
@@ -129,11 +129,11 @@ func TestNodeMutationsSynchronizeWithConfigurationReaders(t *testing.T) {
 func TestRemoveNodeRechecksProjectPlacementAfterAPendingCopy(t *testing.T) {
 	admin := nodeAdminFixture(t)
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
-	admin.Cfg.Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token", Level: "internal"}}
-	if err := config.Save(admin.Path, admin.Cfg); err != nil {
+	admin.cfg().Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token", Level: "internal"}}
+	if err := config.Save(admin.Path, admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	admin.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(admin.Cfg))
+	admin.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(admin.cfg()))
 	t.Cleanup(admin.Nodes.Close)
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestRemoveNodeRechecksProjectPlacementAfterAPendingCopy(t *testing.T) {
 	if err := <-removed; err == nil || !strings.Contains(err.Error(), "项目 project-test") {
 		t.Fatalf("removed a node acquired by the pending declaration: %v", err)
 	}
-	if _, ok := admin.Cfg.Nodes["node-test"]; !ok {
+	if _, ok := admin.cfg().Nodes["node-test"]; !ok {
 		t.Fatal("project's node removed from configuration")
 	}
 	if len(admin.Nodes.Names()) != 1 {
@@ -227,14 +227,14 @@ func TestRemoveNodeLeavesTheClusterWithTheConfiguration(t *testing.T) {
 	if err := admin.RemoveNode(t.Context(), "node-test"); err == nil || !strings.Contains(err.Error(), "transfer coordination") {
 		t.Fatalf("a refused membership removal did not stop the removal: %v", err)
 	}
-	if _, kept := admin.Cfg.Nodes["node-test"]; !kept {
+	if _, kept := admin.cfg().Nodes["node-test"]; !kept {
 		t.Fatal("the configuration was dropped although the machine is still a member")
 	}
 	members.err = nil
 	if err := admin.RemoveNode(t.Context(), "node-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, kept := admin.Cfg.Nodes["node-test"]; kept || len(members.removed) != 2 || members.removed[1] != "node-test" {
+	if _, kept := admin.cfg().Nodes["node-test"]; kept || len(members.removed) != 2 || members.removed[1] != "node-test" {
 		t.Fatalf("the machine did not leave the cluster with its configuration: kept=%v removed=%v", kept, members.removed)
 	}
 }
@@ -258,13 +258,13 @@ func TestRemoveNodeRetriesAfterAFailedConfigurationWrite(t *testing.T) {
 	if err := admin.RemoveNode(t.Context(), "node-test"); err == nil || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("a failed configuration write was not reported: %v", err)
 	}
-	if _, kept := admin.Cfg.Nodes["node-test"]; !kept {
+	if _, kept := admin.cfg().Nodes["node-test"]; !kept {
 		t.Fatal("the configuration was dropped although it was never written")
 	}
 	if err := admin.RemoveNode(t.Context(), "node-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, kept := admin.Cfg.Nodes["node-test"]; kept || len(members.removed) != 2 {
+	if _, kept := admin.cfg().Nodes["node-test"]; kept || len(members.removed) != 2 {
 		t.Fatalf("the retry did not finish the removal: kept=%v removed=%v", kept, members.removed)
 	}
 }

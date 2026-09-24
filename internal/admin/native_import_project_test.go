@@ -22,12 +22,12 @@ func nativeProjectFixture(t *testing.T) (*Service, config.Node, agent.Agent) {
 	a, _ := projectAdminFixture(t)
 	server := startAgentAdminNode(t, nil)
 	target := config.Node{Addr: server.Addr(), Token: "test-node-token", Level: "restricted"}
-	a.Cfg.Nodes["node-test"] = target
-	a.Cfg.Agents["importer"] = config.Agent{Node: "node-test", Harness: "codex"}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Nodes["node-test"] = target
+	a.cfg().Agents["importer"] = config.Agent{Node: "node-test", Harness: "codex"}
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.cfg()))
 	t.Cleanup(a.Nodes.Close)
 	return a, target, agent.Agent{ID: "importer", Node: "node-test", Harness: "codex"}
 }
@@ -67,8 +67,8 @@ func TestNativeImportAutoProjectConcurrentRetryUsesOneDeclaration(t *testing.T) 
 	if err != nil || !ok || p.Home.Path != dir || p.Home.Node != "node-test" || p.Repo != project.RepoInPlace || p.Level != datalevel.Internal {
 		t.Fatalf("automatic project=%+v %v", p, err)
 	}
-	if len(a.Cfg.Projects) != 3 {
-		t.Fatalf("duplicate declarations: %v", a.Cfg.Projects)
+	if len(a.cfg().Projects) != 3 {
+		t.Fatalf("duplicate declarations: %v", a.cfg().Projects)
 	}
 	var stored config.Config
 	raw, err := os.ReadFile(a.Path)
@@ -113,7 +113,7 @@ func TestNativeImportAutoProjectReusesExistingWorkspaceWithoutChangingPolicy(t *
 					t.Fatal("failed workspace was made available by auto import")
 				}
 			}
-			if err != nil || got.Level != datalevel.Restricted || got.Repo != project.RepoIsolated || got.DefaultRole != project.RoleNone || len(a.Cfg.Projects) != 3 {
+			if err != nil || got.Level != datalevel.Restricted || got.Repo != project.RepoIsolated || got.DefaultRole != project.RoleNone || len(a.cfg().Projects) != 3 {
 				t.Fatalf("existing policy changed: %+v %v", got, err)
 			}
 		})
@@ -132,13 +132,13 @@ func TestNativeImportAutoProjectFailuresDoNotRegisterDirectory(t *testing.T) {
 			case "relative":
 				dir = "relative/path"
 			case "node-replaced":
-				n := a.Cfg.Nodes["node-test"]
+				n := a.cfg().Nodes["node-test"]
 				n.Token = "replaced"
-				a.Cfg.Nodes["node-test"] = n
+				a.cfg().Nodes["node-test"] = n
 			case "agent-replaced":
-				n := a.Cfg.Agents[selected.ID]
+				n := a.cfg().Agents[selected.ID]
 				n.Harness = "other"
-				a.Cfg.Agents[selected.ID] = n
+				a.cfg().Agents[selected.ID] = n
 			case "overlap":
 				if err := a.changeProjects(ctx, func(c *config.Config) error {
 					c.Projects["parent"] = config.Project{Home: config.ProjectHome{Node: "node-test", Path: dir}}
@@ -157,11 +157,11 @@ func TestNativeImportAutoProjectFailuresDoNotRegisterDirectory(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			before := len(a.Cfg.Projects)
+			before := len(a.cfg().Projects)
 			if _, err := a.nativeImportProject(ctx, "node-test", target, selected, dir); err == nil {
 				t.Fatal("invalid auto association succeeded")
 			}
-			if len(a.Cfg.Projects) != before {
+			if len(a.cfg().Projects) != before {
 				t.Fatal("failed automatic association left a project")
 			}
 		})
@@ -175,16 +175,16 @@ func TestNativeImportAutoProjectRechecksIdentityAtCommit(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := a.nativeImportProject(t.Context(), "node-test", target, selected, dir); done <- err }()
 	waitForAgentAdminCommit(t, "nativeImportProject")
-	ConfigMu.Lock()
-	replaced := a.Cfg.Nodes["node-test"]
-	replaced.Token = "replacement"
-	a.Cfg.Nodes["node-test"] = replaced
-	ConfigMu.Unlock()
+	publishUnsaved(t, a, func(c *config.Config) {
+		replaced := c.Nodes["node-test"]
+		replaced.Token = "replacement"
+		c.Nodes["node-test"] = replaced
+	})
 	a.Mu.Unlock()
 	if err := <-done; err == nil {
 		t.Fatal("stale inspected node was registered")
 	}
-	if len(a.Cfg.Projects) != 2 {
+	if len(a.cfg().Projects) != 2 {
 		t.Fatal("node replacement left a project")
 	}
 }

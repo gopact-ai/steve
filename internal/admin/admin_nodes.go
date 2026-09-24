@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
@@ -67,46 +68,44 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 			return nodewire.Settings{}, fmt.Errorf("声明 %q 要写成 kind:id，如 network:office", d)
 		}
 	}
-	ConfigMu.Lock()
-	// Agents keep naming harnesses that exist.
-	for id, ag := range a.Cfg.Agents {
-		if ag.Node == "" {
-			if _, ok := harnesses[ag.Harness]; !ok {
-				ConfigMu.Unlock()
-				return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 AI 工具 %s，不能删", id, ag.Harness)
-			}
-			for _, srv := range ag.MCPServers {
-				if _, ok := servers[srv]; !ok {
-					ConfigMu.Unlock()
-					return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 MCP 服务器 %s，不能删", id, srv)
+	var previous map[string]config.Harness
+	var stateDir string
+	saveErr := a.updateConfig(a.lifetime(), func(c *config.Config) error {
+		// Agents keep naming harnesses that exist.
+		for id, ag := range c.Agents {
+			if ag.Node == "" {
+				if _, ok := harnesses[ag.Harness]; !ok {
+					return fmt.Errorf("Agent %s 还在用 AI 工具 %s，不能删", id, ag.Harness)
+				}
+				for _, srv := range ag.MCPServers {
+					if _, ok := servers[srv]; !ok {
+						return fmt.Errorf("Agent %s 还在用 MCP 服务器 %s，不能删", id, srv)
+					}
 				}
 			}
 		}
-	}
-	old := *a.Cfg
-	a.Cfg.Harnesses = harnesses
-	a.Cfg.MCPServers = servers
-	a.Cfg.Gateway.Tools = append([]string(nil), set.Tools...)
-	a.Cfg.Gateway.Declares = append([]string(nil), set.Declares...)
-	a.Cfg.Gateway.Capabilities = append([]string(nil), set.Capabilities...)
-	saveErr := a.PersistConfig(a.Cfg)
+		previous = c.Harnesses
+		c.Harnesses = harnesses
+		c.MCPServers = servers
+		c.Gateway.Tools = append([]string(nil), set.Tools...)
+		c.Gateway.Declares = append([]string(nil), set.Declares...)
+		c.Gateway.Capabilities = append([]string(nil), set.Capabilities...)
+		stateDir = filepath.Dir(c.Gateway.StatePath)
+		return nil
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		a.Cfg.Harnesses, a.Cfg.MCPServers, a.Cfg.Gateway = old.Harnesses, old.MCPServers, old.Gateway
-		ConfigMu.Unlock()
 		if errors.Is(saveErr, config.ErrFileChanged) {
 			return nodewire.Settings{}, errors.Join(nodewire.ErrSettingsRevisionConflict, saveErr)
 		}
 		return nodewire.Settings{}, saveErr
 	}
-	stateDir := filepath.Dir(a.Cfg.Gateway.StatePath)
-	ConfigMu.Unlock()
 	// The running pieces follow the file.
 	for id, h := range harnesses {
 		if err := a.Manager.Set(id, harness.Config{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: runtime.ApplyEnv(h.Env, id, stateDir), Permission: h.Permission}); err != nil {
 			slog.Error(fmt.Sprintf("steve: harness %s: %v", id, err), "harness", id)
 		}
 	}
-	for id := range old.Harnesses {
+	for id := range previous {
 		if _, keep := harnesses[id]; !keep {
 			a.Manager.Remove(id)
 		}
@@ -117,9 +116,9 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 	}
 	a.Assembler.SetServers(caps)
 	a.Fleet.SetHubCapabilities(set.Capabilities)
-	ConfigMu.RLock()
-	slots := a.Cfg.HubSlots()
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	slots := a.cfg().HubSlots()
+	a.ConfigStore.runlock()
 	a.Fleet.SetHubSlots(slots)
 	if a.Observation != nil {
 		a.Observation.Launch.Wake()
@@ -135,9 +134,9 @@ func (a *Service) hubHarnessSettings(settings map[string]nodewire.HarnessSetting
 		if !NameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
 			return nil, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
 		}
-		ConfigMu.RLock()
-		item := a.Cfg.Harnesses[id]
-		ConfigMu.RUnlock()
+		a.ConfigStore.rlock()
+		item := a.cfg().Harnesses[id]
+		a.ConfigStore.runlock()
 		if h.Adapter != nil && *h.Adapter != item.Adapter {
 			return nil, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
 		}
@@ -172,9 +171,9 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 
 	servers := make(map[string]config.MCPServer, len(settings))
 	for id, m := range settings {
-		ConfigMu.RLock()
-		old := a.Cfg.MCPServers[id]
-		ConfigMu.RUnlock()
+		a.ConfigStore.rlock()
+		old := a.cfg().MCPServers[id]
+		a.ConfigStore.runlock()
 		if m.Env == nil {
 			m.Env = old.Env
 		}
@@ -203,14 +202,14 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 }
 
 func (a *Service) hubSettings() nodewire.Settings {
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
-	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.Cfg.Gateway.Tools...),
-		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.Cfg.Gateway.Declares...), Capabilities: append([]string{}, a.Cfg.Gateway.Capabilities...)}
-	for id, h := range a.Cfg.Harnesses {
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
+	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.cfg().Gateway.Tools...),
+		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.cfg().Gateway.Declares...), Capabilities: append([]string{}, a.cfg().Gateway.Capabilities...)}
+	for id, h := range a.cfg().Harnesses {
 		out.Harnesses[id] = nodewire.HarnessSetting{Adapter: &h.Adapter, Slots: &h.Slots, Permission: &h.Permission, Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir}
 	}
-	for id, m := range a.Cfg.MCPServers {
+	for id, m := range a.cfg().MCPServers {
 		out.MCPServers[id] = nodewire.MCPSetting{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
 	}
 	out.Revision = nodewire.SettingsRevision(out)
@@ -235,28 +234,26 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	token := hex.EncodeToString(raw[:])
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.Lock()
-	if _, exists := a.Cfg.Nodes[name]; exists {
-		ConfigMu.Unlock()
-		return consoleapi.AddNodeResult{}, fmt.Errorf("机器 %s 已经存在", name)
-	}
-	if name == NodeName() {
-		ConfigMu.Unlock()
-		return consoleapi.AddNodeResult{}, fmt.Errorf("%s 是 hub 自己", name)
-	}
-	if a.Cfg.Nodes == nil {
-		a.Cfg.Nodes = map[string]config.Node{}
-	}
-	a.Cfg.Nodes[name] = config.Node{Addr: addr, Token: token, Level: string(level)}
-	saveErr := a.persistConfigContext(ctx, a.Cfg)
+	var levels map[string]datalevel.Level
+	var regions map[string]string
+	var binary string
+	saveErr := a.updateConfig(ctx, func(c *config.Config) error {
+		if _, exists := c.Nodes[name]; exists {
+			return fmt.Errorf("机器 %s 已经存在", name)
+		}
+		if name == NodeName() {
+			return fmt.Errorf("%s 是 hub 自己", name)
+		}
+		if c.Nodes == nil {
+			c.Nodes = map[string]config.Node{}
+		}
+		c.Nodes[name] = config.Node{Addr: addr, Token: token, Level: string(level)}
+		levels, regions, binary = c.NodeLevels(), c.NodeRegions(), c.Gateway.NodeBinary
+		return nil
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		delete(a.Cfg.Nodes, name)
-		ConfigMu.Unlock()
 		return consoleapi.AddNodeResult{}, saveErr
 	}
-	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
-	binary := a.Cfg.Gateway.NodeBinary
-	ConfigMu.Unlock()
 	a.hubURL = req.HubURL
 	a.Nodes.Add(name, node.Config{Addr: addr, Token: token, Level: string(level)})
 	a.Fleet.SetNodeLevels(levels)
@@ -268,6 +265,52 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 		out.Note = "协调节点尚未配置手动安装包。请先将 steve-node 放到目标机器的 ~/steve-bin/steve-node。如需改用 SSH 自动安装，请先移除此未接入的机器登记，再从“通过 SSH 接入”重新添加。"
 	}
 	return out, saveErr
+}
+
+// AdmitWorker records a cluster worker that has joined and dials it with
+// worker's transport. A worker already recorded with the same address and
+// token keeps its recorded level; one recorded with a different address or
+// token is refused with coordination.ErrConflict. When the configuration
+// cannot be saved, nothing is recorded and the worker is not dialed; when
+// it is saved but its directory cannot be synced, the worker is recorded
+// and dialed, and that error is returned along with any failure to reach
+// the worker.
+func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Config) error {
+	next := config.Node{Addr: worker.Addr, Token: worker.Token, Level: string(datalevel.Level(worker.Level).OrDefault())}
+	a.Mu.Lock()
+	defer a.Mu.Unlock()
+	var levels map[string]datalevel.Level
+	var regions map[string]string
+	saveErr := a.updateConfig(a.lifetime(), func(c *config.Config) error {
+		existing, known := c.Nodes[nodeID]
+		if known && (existing.Addr != next.Addr || existing.Token != next.Token) {
+			return coordination.ErrConflict
+		}
+		if known {
+			next = existing
+		} else {
+			if c.Nodes == nil {
+				c.Nodes = map[string]config.Node{}
+			}
+			c.Nodes[nodeID] = next
+		}
+		levels, regions = c.NodeLevels(), c.NodeRegions()
+		if known {
+			return errUnchanged
+		}
+		return nil
+	})
+	if saveErr != nil && !config.Committed(saveErr) {
+		return saveErr
+	}
+	worker.Level = next.Level
+	a.Nodes.Add(nodeID, worker)
+	a.Fleet.SetNodeLevels(levels)
+	a.Fleet.SetNodeRegions(regions)
+	if _, err := a.Nodes.Refresh(ctx, nodeID); err != nil {
+		return errors.Join(saveErr, err)
+	}
+	return saveErr
 }
 
 // RemoveNode forgets a machine. Nothing may still live on it: an agent
@@ -307,9 +350,9 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 			}
 		}
 	}
-	ConfigMu.RLock()
-	_, inConfig := a.Cfg.Nodes[name]
-	ConfigMu.RUnlock()
+	a.ConfigStore.rlock()
+	_, inConfig := a.cfg().Nodes[name]
+	a.ConfigStore.runlock()
 	if !inConfig {
 		return fmt.Errorf("没有叫 %q 的机器", name)
 	}
@@ -321,17 +364,16 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 			return fmt.Errorf("机器 %s 尚未退出集群：%w", name, err)
 		}
 	}
-	ConfigMu.Lock()
-	saved := a.Cfg.Nodes[name]
-	delete(a.Cfg.Nodes, name)
-	saveErr := a.persistConfigContext(ctx, a.Cfg)
+	var levels map[string]datalevel.Level
+	var regions map[string]string
+	saveErr := a.updateConfig(ctx, func(c *config.Config) error {
+		delete(c.Nodes, name)
+		levels, regions = c.NodeLevels(), c.NodeRegions()
+		return nil
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		a.Cfg.Nodes[name] = saved
-		ConfigMu.Unlock()
 		return saveErr
 	}
-	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
-	ConfigMu.Unlock()
 	a.Nodes.Remove(name)
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
@@ -345,18 +387,18 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 // their credentials.
 func (a *Service) Bootstrap(name, token string) (string, bool) {
 	a.Mu.Lock()
-	ConfigMu.RLock()
-	n, ok := a.Cfg.Nodes[name]
-	harnesses := make(map[string]nodebootstrap.Harness, len(a.Cfg.Harnesses))
-	for id, h := range a.Cfg.Harnesses {
+	a.ConfigStore.rlock()
+	n, ok := a.cfg().Nodes[name]
+	harnesses := make(map[string]nodebootstrap.Harness, len(a.cfg().Harnesses))
+	for id, h := range a.cfg().Harnesses {
 		if h.Adapter != "" {
 			harnesses[id] = nodebootstrap.Harness{Adapter: h.Adapter}
 		} else {
 			harnesses[id] = nodebootstrap.Harness{Command: h.Command, Args: append([]string(nil), h.Args...)}
 		}
 	}
-	binary, hubURL := a.Cfg.Gateway.NodeBinary, a.hubURL
-	ConfigMu.RUnlock()
+	binary, hubURL := a.cfg().Gateway.NodeBinary, a.hubURL
+	a.ConfigStore.runlock()
 	a.Mu.Unlock()
 	if !ok || token == "" || subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) != 1 {
 		return "", false
@@ -381,14 +423,14 @@ func (a *Service) Bootstrap(name, token string) (string, bool) {
 func (a *Service) NodeBinary(token string) (string, bool) {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
-	if a.Cfg.Gateway.NodeBinary == "" || token == "" {
+	a.ConfigStore.rlock()
+	defer a.ConfigStore.runlock()
+	if a.cfg().Gateway.NodeBinary == "" || token == "" {
 		return "", false
 	}
-	for _, n := range a.Cfg.Nodes {
+	for _, n := range a.cfg().Nodes {
 		if subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) == 1 {
-			return a.Cfg.Gateway.NodeBinary, true
+			return a.cfg().Gateway.NodeBinary, true
 		}
 	}
 	return "", false

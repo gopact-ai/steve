@@ -22,9 +22,11 @@ func TestSharedSettingsAndChannelConfigSurviveRealCoordinatorTransfer(t *testing
 	WaitPeerReady(t, first)
 	secondOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), first)
 	secondOptions.ApplicationReady = func(a *adminsvc.Service, _ cluster.ApplicationServer, _ cluster.Activation) error {
-		adminsvc.ConfigMu.RLock()
-		defer adminsvc.ConfigMu.RUnlock()
-		if a.Cfg.Gateway.TaskMaxTurns != 42 || a.Cfg.Feishu.AppSecret != "fixture-shared-platform-secret" || a.Cfg.FeishuEnabled() {
+		var applied bool
+		a.ConfigStore.Read(func(cfg *config.Config) {
+			applied = cfg.Gateway.TaskMaxTurns == 42 && cfg.Feishu.AppSecret == "fixture-shared-platform-secret" && !cfg.FeishuEnabled()
+		})
+		if !applied {
 			return errors.New("new coordinator did not apply private shared settings")
 		}
 		return nil

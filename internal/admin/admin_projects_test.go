@@ -18,15 +18,15 @@ import (
 func projectAdminFixture(t *testing.T, options ...ledger.Options) (*Service, *ledger.Ledger) {
 	t.Helper()
 	admin := agentAdminFixture(t)
-	admin.Cfg.Nodes = map[string]config.Node{"remote": {Addr: "127.0.0.1:1", Token: "test"}}
-	admin.Cfg.Gateway.HomePath = filepath.Join(t.TempDir(), "home")
-	admin.Cfg.Gateway.StatePath = filepath.Join(filepath.Dir(admin.Path), "state.json")
-	admin.Cfg.Gateway.DefaultProject = "p"
-	admin.Cfg.Projects = map[string]config.Project{
+	admin.cfg().Nodes = map[string]config.Node{"remote": {Addr: "127.0.0.1:1", Token: "test"}}
+	admin.cfg().Gateway.HomePath = filepath.Join(t.TempDir(), "home")
+	admin.cfg().Gateway.StatePath = filepath.Join(filepath.Dir(admin.Path), "state.json")
+	admin.cfg().Gateway.DefaultProject = "p"
+	admin.cfg().Projects = map[string]config.Project{
 		"p":      {Home: config.ProjectHome{Node: "remote", Path: "/remote-project"}, Workspaces: []config.ProjectWorkspace{{Path: t.TempDir()}}},
 		"remove": {Home: config.ProjectHome{Path: t.TempDir()}},
 	}
-	if err := config.Save(admin.Path, admin.Cfg); err != nil {
+	if err := config.Save(admin.Path, admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	var opts ledger.Options
@@ -39,7 +39,7 @@ func projectAdminFixture(t *testing.T, options ...ledger.Options) (*Service, *le
 	}
 	t.Cleanup(func() { book.Close() })
 	admin.Projects = project.Open(book)
-	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	return admin, book
@@ -50,13 +50,13 @@ func TestProjectManagementFileFailureLeavesCandidateUnpublished(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a, _ := projectAdminFixture(t)
 			if name == "add-workspace" {
-				p := a.Cfg.Projects["p"]
+				p := a.cfg().Projects["p"]
 				p.Workspaces = nil
-				a.Cfg.Projects["p"] = p
-				if err := config.Save(a.Path, a.Cfg); err != nil {
+				a.cfg().Projects["p"] = p
+				if err := config.Save(a.Path, a.cfg()); err != nil {
 					t.Fatal(err)
 				}
-				if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+				if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.cfg()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -64,7 +64,7 @@ func TestProjectManagementFileFailureLeavesCandidateUnpublished(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			beforeConfig, _ := json.Marshal(a.Cfg)
+			beforeConfig, _ := json.Marshal(a.cfg())
 			beforeProjects, err := a.Projects.List(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -84,7 +84,7 @@ func TestProjectManagementFileFailureLeavesCandidateUnpublished(t *testing.T) {
 			if !errors.Is(err, cause) {
 				t.Fatalf("file failure was not reached or reported: %v", err)
 			}
-			afterConfig, _ := json.Marshal(a.Cfg)
+			afterConfig, _ := json.Marshal(a.cfg())
 			if string(beforeConfig) != string(afterConfig) {
 				t.Fatal("failed operation mutated live configuration")
 			}
@@ -113,7 +113,7 @@ func TestProjectManagementRetryReconcilesCommittedCandidate(t *testing.T) {
 	if err := a.AddProject(t.Context(), req); !errors.As(err, &pending) {
 		t.Fatalf("committed failure missing pending receipt: %v", err)
 	}
-	if _, ok := a.Cfg.Projects["new"]; !ok {
+	if _, ok := a.cfg().Projects["new"]; !ok {
 		t.Fatal("committed candidate rolled back")
 	}
 	if _, _, err := a.Projects.Get(t.Context(), "p"); !errors.Is(err, project.ErrDeclarationPending) {
@@ -127,5 +127,24 @@ func TestProjectManagementRetryReconcilesCommittedCandidate(t *testing.T) {
 	}
 	if _, ok, err := a.Projects.Get(t.Context(), "new"); err != nil || !ok {
 		t.Fatalf("retry did not reconcile new project: %v", err)
+	}
+}
+
+// The configuration can be read while a project change is being saved.
+func TestConfigurationReadDuringAProjectSave(t *testing.T) {
+	a, _ := projectAdminFixture(t)
+	a.cfg().Gateway.OwnerID = "owner"
+	settings := NewSettings(a, a.cfg())
+	finished := readsDuringSave(t, a, func() error {
+		return a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Path: "new"})
+	}, func() error {
+		_, err := settings.Settings(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the configuration waited for a project save")
+	}
+	if _, ok := a.cfg().Projects["new"]; !ok {
+		t.Fatal("the saved project was not published")
 	}
 }
