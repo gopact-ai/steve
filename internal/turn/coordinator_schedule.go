@@ -1,15 +1,8 @@
 package turn
 
 import (
-	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/task"
 )
-
-// SetSchedules enables the scheduling verbs. Without a store they answer that
-// scheduling is off rather than pretending to have remembered something.
-//
-// Deprecated: set Deps.Schedules.
-func (c *Coordinator) SetSchedules(store *schedule.Store) { c.schedules = store }
 
 // RotateTask closes the task an unattended run opened last time, so a
 // schedule that fires for weeks gets a fresh budget on each run instead of

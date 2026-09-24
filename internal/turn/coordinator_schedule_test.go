@@ -16,12 +16,7 @@ func scheduleCoordinator(t *testing.T) (*Coordinator, *schedule.Store) {
 	if err := coordinator.SetChannelOwner("feishu", ""); err != nil {
 		t.Fatal(err)
 	}
-	store, err := schedule.OpenLedger(testLedger(t))
-	if err != nil {
-		t.Fatalf("open schedules: %v", err)
-	}
-	coordinator.SetSchedules(store)
-	return coordinator, store
+	return coordinator, coordinator.schedules
 }
 
 func schedRequest(input string) Request {

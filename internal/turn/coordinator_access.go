@@ -9,7 +9,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/i18n"
-	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
@@ -83,8 +82,3 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 	return Result{AgentID: result.AgentID, Attempt: result.Attempt, Title: c.text.T(i18n.CardDisclosure),
 		Text: c.text.T(i18n.DisclosurePending, len([]rune(result.Text)), p.ID, protocol.CommandApprove, id)}, nil
 }
-
-// SetIntents wires the side-effect ledger the /effects verb reads.
-//
-// Deprecated: set Deps.Intents.
-func (c *Coordinator) SetIntents(s *intent.Service) { c.intents = s }

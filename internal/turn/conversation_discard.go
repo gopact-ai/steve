@@ -40,11 +40,9 @@ func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID st
 	if _, err := c.tasks.DeleteChannel(conversationID); err != nil {
 		return err
 	}
-	if c.schedules != nil {
-		for _, job := range c.schedules.List(conversationID) {
-			if _, _, err := c.schedules.Delete(job.ID); err != nil {
-				return fmt.Errorf("drop schedule %s: %w", job.ID, err)
-			}
+	for _, job := range c.schedules.List(conversationID) {
+		if _, _, err := c.schedules.Delete(job.ID); err != nil {
+			return fmt.Errorf("drop schedule %s: %w", job.ID, err)
 		}
 	}
 	if c.store != nil {

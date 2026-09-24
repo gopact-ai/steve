@@ -246,9 +246,6 @@ func (c *Coordinator) suggestDisclosures(ctx context.Context, verb, rest string)
 }
 
 func (c *Coordinator) suggestEffects(ctx context.Context, rest string) []Suggestion {
-	if c.intents == nil {
-		return nil
-	}
 	unresolved, err := c.intents.Unresolved(ctx)
 	if err != nil {
 		return nil

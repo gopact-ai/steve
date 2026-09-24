@@ -110,11 +110,7 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 	if _, err := c.projects.Bind(t.Context(), tracked.Channel, tracked.ProjectID, tracked.Requester); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := schedule.OpenLedger(book)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.SetSchedules(jobs)
+	jobs := c.schedules
 	gate, err := agentmcp.New(0)
 	if err != nil {
 		t.Fatal(err)

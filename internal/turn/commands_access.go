@@ -89,9 +89,6 @@ func (c commands) decideCmd(ctx context.Context, req Request, cmd protocol.Comma
 func (c commands) effectsCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	title := c.text.T(i18n.CardEffects)
 	fields := strings.Fields(rest)
-	if c.intents == nil {
-		return Result{Title: title, Text: c.text.T(i18n.EffectsNone)}, nil
-	}
 	switch len(fields) {
 	case 0:
 		unresolved, err := c.intents.Unresolved(ctx)

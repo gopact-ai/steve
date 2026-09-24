@@ -1,3 +1,3 @@
-internal/turn.Coordinator exported methods 71
+internal/turn.Coordinator exported methods 69
 internal/turn.coordinatorState fields 54
-internal/turn.coordinatorState nil dependency checks 84
+internal/turn.coordinatorState nil dependency checks 78

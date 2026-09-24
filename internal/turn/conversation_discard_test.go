@@ -40,12 +40,7 @@ func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *s
 		t.Fatal(err)
 	}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, ""))
-	schedules, err := schedule.OpenLedger(testLedger(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.SetSchedules(schedules)
-	return c, manager, tasks, schedules
+	return c, manager, tasks, c.schedules
 }
 
 func TestDiscardConversationClosesSessionsAndDropsItsWork(t *testing.T) {
