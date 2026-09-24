@@ -201,3 +201,27 @@ func TestChannelsReadDuringAChannelSave(t *testing.T) {
 		t.Fatal("the saved channels were not published")
 	}
 }
+
+// The running channel reports its state and binds its access policy while
+// a configuration save is in flight, without waiting for it.
+func TestChannelRuntimeStateDoesNotWaitForASave(t *testing.T) {
+	a, s := ChannelsAdminFixture(t)
+	var bound []config.Feishu
+	finished := readsDuringSave(t, a, func() error {
+		return a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "new", Harness: "mock"})
+	}, func() error {
+		s.SetRuntimeError("connection failed")
+		s.BindAccessUpdater(func(f config.Feishu) { bound = append(bound, f) })
+		return nil
+	})
+	if !finished {
+		t.Fatal("the channel's runtime state waited for a configuration save")
+	}
+	view, err := s.Channels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.RuntimeError != "connection failed" || view.ApplyMode != "mixed" || len(bound) != 1 {
+		t.Fatalf("runtime error %q, apply mode %q, %d bindings", view.RuntimeError, view.ApplyMode, len(bound))
+	}
+}
