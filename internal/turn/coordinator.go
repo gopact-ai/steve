@@ -133,7 +133,8 @@ type ModelProber interface {
 	// Probe asks one harness on node, the way a repair does for a harness
 	// that just appeared.
 	Probe(ctx context.Context, node, harness string) error
-	// ProbeAll asks every harness on every machine, known or not.
+	// ProbeAll asks every eligible harness, whether or not it has reported
+	// a model before.
 	ProbeAll(ctx context.Context) []models.Result
 }
 
