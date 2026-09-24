@@ -260,13 +260,11 @@ func TestScheduleMCPCreateReplayRefusedAfterProjectRebinding(t *testing.T) {
 	}
 }
 
-// Listing is scoped to the project the execution was bound in; once the
-// conversation moves to another project the old execution may not list.
+// Once the conversation moves to another project, the execution bound in the
+// old project is refused outright: listing fails instead of returning any
+// schedules, empty or not.
 func TestScheduleMCPListRefusedAfterProjectRebinding(t *testing.T) {
 	f := newScheduleMCPFixture(t, nil)
-	if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); bad {
-		t.Fatalf("owner's native session was refused: %s", text)
-	}
 	rebindScheduleConversation(t, f)
 	if text, bad := scheduleToolCall(t, f.gate, "steve_schedules", map[string]any{}); !bad || !strings.Contains(text, "project binding changed") {
 		t.Fatalf("list after rebinding: %s", text)
