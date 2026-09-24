@@ -39,7 +39,8 @@ func HoldEnrollmentPorts(t testing.TB) *Ports {
 }
 
 // Inherit serves the Raft and peer listeners a parent process passed as
-// files, in the order Files gives them. It closes the files.
+// files, in the order Files gives them. It closes every file, whether or
+// not it succeeds.
 func Inherit(files []*os.File) (*Ports, error) {
 	ports := &Ports{held: map[string]net.Listener{}}
 	addresses := []*string{&ports.Raft, &ports.Peer}
@@ -47,6 +48,9 @@ func Inherit(files []*os.File) (*Ports, error) {
 		listener, err := net.FileListener(file)
 		file.Close()
 		if err != nil {
+			for _, rest := range files[i+1:] {
+				rest.Close()
+			}
 			ports.Release()
 			return nil, err
 		}

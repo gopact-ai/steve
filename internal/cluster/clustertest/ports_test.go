@@ -1,7 +1,10 @@
 package clustertest
 
 import (
+	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -60,5 +63,27 @@ func TestInheritedPortsServeTheParentsSockets(t *testing.T) {
 			t.Fatalf("inherited %s served at %s", address, listener.Addr())
 		}
 		listener.Close()
+	}
+}
+
+// Inherit closes every file it was given, including those after one that
+// is not a listening socket.
+func TestInheritClosesEveryFileWhenOneIsNotASocket(t *testing.T) {
+	ports := HoldEnrollmentPorts(t)
+	held := ports.Files(t)
+	plain, err := os.Create(filepath.Join(t.TempDir(), "not-a-socket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := append([]*os.File{plain}, held...)
+	if inherited, err := Inherit(files); err == nil {
+		inherited.Release()
+		t.Fatal("a file that is not a socket was inherited")
+	}
+	for _, file := range files {
+		if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
+			file.Close()
+			t.Errorf("%s was left open: %v", file.Name(), err)
+		}
 	}
 }
