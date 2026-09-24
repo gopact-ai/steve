@@ -283,3 +283,35 @@ func TestRecallWithoutScopeNamesEachSourceItSearched(t *testing.T) {
 		t.Fatalf("two sources: from=%q err=%v", from, err)
 	}
 }
+
+func TestRecallWithoutScopeSearchesGlobalAndTheProject(t *testing.T) {
+	c := memoryCoordinator(t)
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	bind(t, c, "chat", "beta")
+	seedFact(t, c, memory.Global, "tabs in docs")
+	seedFact(t, c, memory.ProjectScope("beta"), "tabs in makefiles")
+	seedFact(t, c, memory.ProjectScope("alpha"), "tabs in alpha")
+	hits, _, err := c.Recall(t.Context(), "chat", "codex", "", "tabs", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := hitTexts(hits), []string{"tabs in docs", "tabs in makefiles"}; !slices.Equal(got, want) {
+		t.Fatalf("recalled %q, want %q", got, want)
+	}
+}
+
+func TestRecallWithoutScopeSearchesOnlyGlobalWithoutAProject(t *testing.T) {
+	c := memoryCoordinator(t)
+	useHome(t, c, t.TempDir())
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	seedFact(t, c, memory.Global, "tabs in docs")
+	seedFact(t, c, memory.ProjectScope("home"), "tabs at home")
+	seedFact(t, c, memory.ProjectScope("alpha"), "tabs in alpha")
+	hits, _, err := c.Recall(t.Context(), "chat", "codex", "", "tabs", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := hitTexts(hits), []string{"tabs in docs"}; !slices.Equal(got, want) {
+		t.Fatalf("recalled %q, want %q", got, want)
+	}
+}
