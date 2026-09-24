@@ -21,6 +21,11 @@ import (
 )
 
 func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, planning plansAssembly, projection readModelAssembly) (consoleAssembly, error) {
+	// The administration service names this machine by it; an empty name
+	// would be taken for no machine at all.
+	if boot.NodeName() == "" {
+		return nil, errors.New("console: this machine has no node name")
+	}
 	configPath := input.ConfigPath()
 	environment := input.Environment()
 	book := boot.Book()

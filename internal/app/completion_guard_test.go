@@ -79,7 +79,7 @@ func assembledCompletion(t *testing.T) completionFixture {
 	})
 	_, err = assembleConsole(life,
 		&assemblyInput{parent: ctx, path: filepath.Join(dir, "unused-config.json"), environment: &Environment{HTTPConfig: &httpapi.ServerConfig{Addr: "127.0.0.1:0", Token: "completion-guard"}}},
-		&runtimeValues{book: book, catalog: catalog, cfg: cfg, ctx: ctx, manager: manager, stop: stop},
+		&runtimeValues{book: book, catalog: catalog, cfg: cfg, ctx: ctx, manager: manager, nodeName: "test", stop: stop},
 		&ledgerValues{attempts: attempts, store: sessions},
 		&homeValues{assembler: assembler},
 		&fleetValues{projects: project.Open(book)},
