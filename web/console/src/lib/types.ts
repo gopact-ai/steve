@@ -18,9 +18,9 @@ export interface Node {
     features?: string[]; health?: Health; projects_root?: string; protocol_mismatch?: ProtocolMismatch;
 }
 // ProtocolMismatch is set on a machine the hub refused because they share no
-// node protocol version: the version the machine speaks, and the range the
-// hub speaks.
-export interface ProtocolMismatch { node: number; hub_min: number; hub_max: number }
+// node protocol version: the version the machine speaks, the range the hub
+// speaks, and the side that has to be upgraded for the two to connect.
+export interface ProtocolMismatch { node: number; hub_min: number; hub_max: number; upgrade: "node" | "hub" }
 export interface Activity {
     agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;
     tool?: string; detail?: string; since: string; at: string;

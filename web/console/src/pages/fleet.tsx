@@ -383,18 +383,17 @@ function MachineLabels({ items }: { items: string[] }) {
 // protocol versions older than the hub's: upgrading it to this build
 // brings it back.
 function protocolBehind(n: NodeT): boolean {
-    const m = n.protocol_mismatch;
-    return n.role !== "hub" && !!m && m.node < m.hub_min;
+    return n.role !== "hub" && n.protocol_mismatch?.upgrade === "node";
 }
 
 // protocolNote says why a machine was refused for its node protocol and
-// which side has to be upgraded: the machine when it is older, the
-// coordinator when the machine is newer.
+// which side the hub says has to be upgraded: the machine when it is older,
+// the coordinator when the machine is newer.
 function protocolNote(n: NodeT, hubVersion: string, tr: Translator): string | undefined {
     const m = n.protocol_mismatch;
     if (!m) return undefined;
     const hub = m.hub_min === m.hub_max ? `v${m.hub_max}` : `v${m.hub_min}–v${m.hub_max}`;
-    return m.node < m.hub_min
+    return m.upgrade === "node"
         ? tr("fleet.protocolBehind", { node: `v${m.node}`, hub, version: hubVersion })
         : tr("fleet.protocolAhead", { node: `v${m.node}`, hub });
 }
