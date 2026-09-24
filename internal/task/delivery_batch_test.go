@@ -1,15 +1,13 @@
 package task
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 )
 
-func deliveryFixture(t *testing.T) (*Store, string, []string, string) {
+func deliveryFixture(t *testing.T) (*Store, string, []string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "tasks.json")
-	s, err := Open(path)
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,13 +32,13 @@ func deliveryFixture(t *testing.T) (*Store, string, []string, string) {
 		}
 		ids = append(ids, child.ID)
 	}
-	return s, root.ID, ids, path
+	return s, root.ID, ids
 }
 
 func TestDeliveryBatchesPersistAtomicallyAndReturnCopies(t *testing.T) {
-	s, parent, ids, path := deliveryFixture(t)
-	doc := &metaDocument{Doc: s.doc, fail: true}
-	s.doc = doc
+	s, parent, ids := deliveryFixture(t)
+	gate := gateWrites(t, s)
+	gate.fail = true
 	if _, err := s.PrepareDeliveries(parent, ids); err == nil {
 		t.Fatal("failed save acknowledged")
 	}
@@ -50,7 +48,7 @@ func TestDeliveryBatchesPersistAtomicallyAndReturnCopies(t *testing.T) {
 			t.Fatal("partial batch installed")
 		}
 	}
-	doc.fail = false
+	gate.fail = false
 	batches, err := s.PrepareDeliveries(parent, append(ids, ids[0]))
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +59,7 @@ func TestDeliveryBatchesPersistAtomicallyAndReturnCopies(t *testing.T) {
 	key := batches[0][0].Delivery.Key
 	batches[0][0].Delivery.Key = "tampered"
 	batches[0][1].Result.Answer = "tampered"
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(s.book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,14 +75,14 @@ func TestDeliveryBatchesPersistAtomicallyAndReturnCopies(t *testing.T) {
 
 func TestInterruptedDeliveryRetryDependsOnChannelReceiptContract(t *testing.T) {
 	for _, safe := range []bool{false, true} {
-		s, parent, ids, path := deliveryFixture(t)
+		s, parent, ids := deliveryFixture(t)
 		if _, err := s.PrepareDeliveries(parent, ids); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.StartDelivery(ids, safe); err != nil {
 			t.Fatal(err)
 		}
-		reopened, err := Open(path)
+		reopened, err := OpenLedger(s.book)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,14 +99,14 @@ func TestInterruptedDeliveryRetryDependsOnChannelReceiptContract(t *testing.T) {
 }
 
 func TestDeliveryOutcomeSaveFailureKeepsTheWholeBatchUnconfirmed(t *testing.T) {
-	s, parent, ids, _ := deliveryFixture(t)
+	s, parent, ids := deliveryFixture(t)
 	if _, err := s.PrepareDeliveries(parent, ids); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.StartDelivery(ids, true); err != nil {
 		t.Fatal(err)
 	}
-	s.doc = &metaDocument{Doc: s.doc, fail: true}
+	gateWrites(t, s).fail = true
 	if err := s.RecordDelivery(ids, DeliveryDelivered, ""); err == nil {
 		t.Fatal("failed receipt save acknowledged")
 	}
@@ -121,7 +119,7 @@ func TestDeliveryOutcomeSaveFailureKeepsTheWholeBatchUnconfirmed(t *testing.T) {
 }
 
 func TestDeliveryChangeNotifiesWithoutChangingTaskElapsedTime(t *testing.T) {
-	s, parent, ids, _ := deliveryFixture(t)
+	s, parent, ids := deliveryFixture(t)
 	before, _ := s.Get(ids[0])
 	observed := make(chan string, 8)
 	s.SetObserver(func(id string) { observed <- id })

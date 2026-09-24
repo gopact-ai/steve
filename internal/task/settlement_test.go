@@ -17,7 +17,7 @@ func TestSettlingAFailedChildLetsItsParentFinishWithoutErasingTheFailure(t *test
 			if _, err := store.Advance(child.ID, StateFailed); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, nil); err == nil {
+			if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll); err == nil {
 				t.Fatal("a failed child must hold its parent open until someone decides")
 			}
 			settled, err := store.Settle(child.ID, as)
@@ -27,7 +27,7 @@ func TestSettlingAFailedChildLetsItsParentFinishWithoutErasingTheFailure(t *test
 			if settled.State != StateFailed || settled.Settlement != as || settled.SettledAt.IsZero() {
 				t.Fatalf("settling must record the decision beside the failure: %+v", settled)
 			}
-			if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, nil); err != nil {
+			if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll); err != nil {
 				t.Fatalf("complete after settling: %v", err)
 			}
 			reopened, _ := store.Get(child.ID)

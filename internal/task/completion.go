@@ -126,29 +126,24 @@ func (s *Store) CompleteRoot(ctx context.Context, id, channel string, guard func
 		return Task{}, err
 	}
 	ids := make(map[string]bool, len(tree))
-	next := s.clone()
+	next := s.draft()
 	for _, member := range tree {
 		ids[member.ID] = true
-		next.Tasks[member.ID].ExecutionEpoch++
-		next.Tasks[member.ID].UpdatedAt = s.now()
+		edited := next.edit(member.ID)
+		edited.ExecutionEpoch++
+		edited.UpdatedAt = s.now()
 	}
-	next.Tasks[id].State = StateDone
-	next.Tasks[id].CompletedByUser = true
-	var err error
-	if s.book != nil {
-		err = s.replaceAuthorizedLocked(ctx, ExecutionToken{TaskID: id, Epoch: root.ExecutionEpoch}, next, func(tx *ledger.Tx) error {
-			if guard == nil {
-				return errors.New("task completion requires a durable admission guard")
-			}
-			return guard(tx, ids)
-		})
-	} else if guard != nil {
-		err = errors.New("durable task completion requires the ledger")
-	} else {
-		err = s.replaceLocked(next)
-	}
+	done := next.edit(id)
+	done.State = StateDone
+	done.CompletedByUser = true
+	err := s.replaceAuthorizedLocked(ctx, ExecutionToken{TaskID: id, Epoch: root.ExecutionEpoch}, next, func(tx *ledger.Tx) error {
+		if guard == nil {
+			return errors.New("task completion requires a durable admission guard")
+		}
+		return guard(tx, ids)
+	})
 	if err != nil {
 		return Task{}, err
 	}
-	return *next.Tasks[id].clone(), nil
+	return *done.clone(), nil
 }

@@ -9,6 +9,9 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
+// admitAll is a completion guard with nothing further to check.
+func admitAll(*ledger.Tx, map[string]bool) error { return nil }
+
 func idleCompletionRoot(t *testing.T, store *Store) Task {
 	t.Helper()
 	root := mustCreate(t, store, "accepted work", "chat")
@@ -26,7 +29,7 @@ func TestCompleteIdleRootPreservesHistoryAndRevokesEpoch(t *testing.T) {
 	store, _ := newStore(t)
 	root := idleCompletionRoot(t, store)
 	token, _ := store.ExecutionToken(root.ID)
-	completed, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, nil)
+	completed, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll)
 	if err != nil || completed.State != StateDone {
 		t.Fatalf("complete: %+v %v", completed, err)
 	}
@@ -49,12 +52,12 @@ func TestCompleteIdleRootPreservesHistoryAndRevokesEpoch(t *testing.T) {
 		t.Fatal("completed root resumed")
 	}
 	for range 2 {
-		repeated, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, nil)
+		repeated, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll)
 		if err != nil || !reflect.DeepEqual(completed, repeated) {
 			t.Fatalf("unstable completion retry: %+v %v", repeated, err)
 		}
 	}
-	if _, err := store.CompleteRoot(t.Context(), root.ID, "foreign", nil); err == nil {
+	if _, err := store.CompleteRoot(t.Context(), root.ID, "foreign", admitAll); err == nil {
 		t.Fatal("terminal retry bypassed ownership")
 	}
 	for _, interrupted := range store.Interrupted() {
@@ -91,10 +94,10 @@ func TestCompleteRootRequiresClosedDeliveredChildren(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := store.CompleteRoot(t.Context(), child.ID, child.Channel, nil); !errors.Is(err, ErrCompleteRoot) {
+			if _, err := store.CompleteRoot(t.Context(), child.ID, child.Channel, admitAll); !errors.Is(err, ErrCompleteRoot) {
 				t.Fatalf("child completion: %v", err)
 			}
-			_, err = store.CompleteRoot(t.Context(), root.ID, root.Channel, nil)
+			_, err = store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll)
 			if (err == nil) != (state == DeliveryDelivered) {
 				t.Fatalf("completion with child %s: %v", state, err)
 			}
@@ -131,7 +134,7 @@ func TestCompletionRefusesNonChatAndUnsettledAttempts(t *testing.T) {
 			default:
 				store.data.Tasks[root.ID].State = State(kind)
 			}
-			if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, nil); err == nil {
+			if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll); err == nil {
 				t.Fatalf("completed %s", kind)
 			}
 		})
@@ -163,7 +166,7 @@ func TestCompletionSerializesWithExecutionAndDelegationAdmission(t *testing.T) {
 					admitted <- err
 				}()
 				close(start)
-				_, completionErr := store.CompleteRoot(t.Context(), root.ID, root.Channel, nil)
+				_, completionErr := store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll)
 				admissionErr := <-admitted
 				if (completionErr == nil) == (admissionErr == nil) {
 					t.Fatalf("need exactly one winner: complete=%v admission=%v", completionErr, admissionErr)
@@ -211,7 +214,7 @@ func TestAutomaticDoneIsNotAnExplicitCompletionReceipt(t *testing.T) {
 	if _, err := store.Advance(root.ID, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, nil); !errors.Is(err, ErrCompleteState) {
+	if _, err := store.CompleteRoot(t.Context(), root.ID, root.Channel, admitAll); !errors.Is(err, ErrCompleteState) {
 		t.Fatalf("automatic done mistaken for user completion: %v", err)
 	}
 	if err := store.CheckExecution(token); err != nil {

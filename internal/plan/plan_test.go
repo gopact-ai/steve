@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -117,7 +116,7 @@ func TestReadyIsTheWholeScheduler(t *testing.T) {
 // TestRevisionsAccumulate: the point of persisting plans is being able to
 // answer "what changed and why" after the fact.
 func TestRevisionsAccumulate(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "plans.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +165,8 @@ func TestRevisionsAccumulate(t *testing.T) {
 }
 
 func TestStoreSurvivesReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "plans.json")
-	store, err := Open(path)
+	book := testLedger(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +174,7 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

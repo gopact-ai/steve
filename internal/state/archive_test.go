@@ -1,13 +1,12 @@
 package state
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 func archiveStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +147,8 @@ func TestRestoreRejectsOutOfRange(t *testing.T) {
 }
 
 func TestArchiveIsBoundedAndSurvivesReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := Open(path)
+	book := testLedger(t)
+	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +165,7 @@ func TestArchiveIsBoundedAndSurvivesReopen(t *testing.T) {
 	if store.ArchivedSessions("c1", "codex")[maxArchived-1].UpstreamID == "up-a" {
 		t.Fatal("oldest record should have been dropped")
 	}
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}

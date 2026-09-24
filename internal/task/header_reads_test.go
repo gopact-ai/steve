@@ -65,7 +65,7 @@ func TestHeaderReadAndAuthorizationAreBoundedByLineageNotHistory(t *testing.T) {
 		next.Tasks[id] = &Task{ID: id, State: StateDone, ExecutionEpoch: 1, Attempts: []Attempt{row}, CreatedAt: at, UpdatedAt: at}
 	}
 	next.NextID = 10003
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		t.Fatal(err)
 	}
 	after := check()

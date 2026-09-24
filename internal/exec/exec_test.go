@@ -463,7 +463,7 @@ func (s *scriptedPlanner) Plan(_ context.Context, req planner.Request) (plan.Pla
 
 func planStore(t *testing.T) *plan.Store {
 	t.Helper()
-	s, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	s, err := plan.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -821,7 +821,7 @@ func TestResumeAfterCrashTakesOverTheLiveAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	plans, err := plan.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -958,7 +958,7 @@ func TestReservedCapacityIsTakenOverAndWaitedFor(t *testing.T) {
 	nodes := &fakeNodes{statuses: []node.Status{{Name: "node-a", Up: true, Advert: nodewire.Advert{
 		Node: "node-a", Capabilities: []string{"gpu", "basic"}, Harnesses: []nodewire.Harness{{ID: "mock", Slots: 1}},
 	}}}}
-	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	plans, err := plan.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1054,4 +1054,15 @@ func TestStepRecordsItsAdmission(t *testing.T) {
 	if r.Admission == nil || !r.Admission.OK() || r.Admission.Source != ability.SourceCached || r.Admission.Node != "node-a" {
 		t.Fatalf("admission = %+v", r.Admission)
 	}
+}
+
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
 }

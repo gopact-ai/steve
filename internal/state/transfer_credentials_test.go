@@ -2,12 +2,11 @@ package state
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"testing"
 )
 
 func TestProjectTransferNeverCarriesPendingCredentials(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

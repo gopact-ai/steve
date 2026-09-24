@@ -1,7 +1,6 @@
 package app
 
 import (
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,7 +10,7 @@ import (
 
 func TestPlanBudgetReservationsAreAtomicWithoutSyntheticAttempts(t *testing.T) {
 	for _, limit := range []int{4, 12} {
-		s, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+		s, err := task.OpenLedger(testLedger(t))
 		if err != nil {
 			t.Fatal(err)
 		}

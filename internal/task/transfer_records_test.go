@@ -40,7 +40,7 @@ func TestTaskRecordTransferFullHistoryMetadataAtomicImportAndReplay(t *testing.T
 	}
 	next.Tasks[child.ID].Budget.Turns = 10000
 	next.Tasks[root.ID].Budget.Turns = 10000
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceData(next); err != nil {
 		t.Fatal(err)
 	}
 	title := "full history"

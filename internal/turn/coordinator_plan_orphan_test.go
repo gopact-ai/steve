@@ -2,7 +2,6 @@ package turn
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/task"
@@ -13,7 +12,7 @@ import (
 // cannot reach it by id. If its run dies with the process, the only thing
 // that can close it is the restart itself.
 func TestARestartClosesBackgroundPlanTasksNothingElseCanReach(t *testing.T) {
-	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +56,7 @@ func TestARestartClosesBackgroundPlanTasksNothingElseCanReach(t *testing.T) {
 // work in flight for good, so the failure has to land on the record — and
 // a person has to be able to settle it even though it is nobody's chat.
 func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
-	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +89,7 @@ func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 // Closing it a second time used to log an error about moving from done to
 // done on every successful resolution.
 func TestClosingAPlanTaskLeavesAnAlreadyFinishedOneAlone(t *testing.T) {
-	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
