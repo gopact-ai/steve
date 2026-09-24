@@ -1,14 +1,6 @@
 package console
 
-import (
-	"github.com/gopact-ai/steve/internal/consoleapi"
-	"github.com/gopact-ai/steve/internal/turn"
-)
-
-// The only production implementation of capabilities httpapi probes for.
-var (
-	_ consoleapi.ExchangeIdentity = (*Service)(nil)
-)
+import "github.com/gopact-ai/steve/internal/turn"
 
 // The only production implementation of capabilities console probes its
 // handler for.

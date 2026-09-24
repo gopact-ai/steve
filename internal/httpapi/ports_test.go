@@ -142,9 +142,12 @@ func (portConsole) AnswerQuestion(_ context.Context, id string, answer consoleap
 	return consoleapi.PendingQuestion{ID: id, Answer: &answer}, nil
 }
 func (portConsole) InitializeConversation(context.Context, string, string) error { return nil }
+func (portConsole) ExchangeConversation(string) (string, bool)                   { return "console:main", true }
+func (portConsole) DeleteQueued(string) error                                    { return nil }
 
 // A route calls what it needs through the service port it holds, so it
-// serves a service reached through a port that forwards nothing else.
+// serves a service reached through a port that forwards nothing else. The
+// server reads channel history too, as the assembled application's does.
 func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 	for _, route := range []struct {
 		method, path, body string
@@ -162,10 +165,12 @@ func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 		{"GET", "/console/questions?conversation=c", "", 200, `{"questions":[{"id":"q","conversation":"c",`},
 		{"POST", "/console/questions/q/answer", `{"decision":"accept"}`, 200, `{"question":{"id":"q",`},
 		{"PUT", "/console/conversations/console%3Afresh/initialize", `{"project":"p"}`, 200, `{"ok":true}`},
+		{"DELETE", "/console/queue/e", "", 200, `{"ok":true}`},
 	} {
 		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 		server.SetAdmin(adminPort{portAdmin{}})
 		server.SetConsole(consolePort{portConsole{}})
+		server.SetChannelHistory(channelHistoryStub{})
 		if res, body := ownerRequest(t, server, route.method, route.path, route.body); res.StatusCode != route.status || !strings.Contains(body, route.want) {
 			t.Errorf("%s %s = %d %s, want %d with %s", route.method, route.path, res.StatusCode, body, route.status, route.want)
 		}
