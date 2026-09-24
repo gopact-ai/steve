@@ -48,7 +48,8 @@ func parseGoSources(t *testing.T, root string, files []string) []goSource {
 }
 
 // unpinnedProbes maps each probed interface that nothing pins to the files
-// that probe it.
+// that probe it, and reports each entry of open that is not a probed
+// non-empty interface or gives no reason.
 //
 // A probe is a type assertion or type switch case whose target is a
 // non-empty interface declared in a non-test file of this repository. A pin
@@ -61,7 +62,7 @@ func parseGoSources(t *testing.T, root string, files []string) []goSource {
 // package and a selector to an import of this module, so it does not see
 // instantiated generic interfaces (I[T]), interfaces named through a type
 // alias or a dot import, or a local type that shadows a package-level one.
-func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map[string]string) map[string][]string {
+func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map[string]string) (map[string][]string, []string) {
 	t.Helper()
 	parsedSources := parseGoSources(t, root, sources)
 	packages := map[string]string{}
@@ -81,19 +82,6 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 					interfaces[src.dir+"."+typeSpec.Name.Name] = true
 				}
 			}
-		}
-	}
-	openNames := make([]string, 0, len(open))
-	for name := range open {
-		openNames = append(openNames, name)
-	}
-	sort.Strings(openNames)
-	for _, name := range openNames {
-		switch {
-		case !interfaces[name]:
-			t.Errorf("openCapabilities lists %s, which is not a non-empty interface declared in this repository; remove it", name)
-		case strings.TrimSpace(open[name]) == "":
-			t.Errorf("openCapabilities lists %s without saying why several production types satisfy or lack it", name)
 		}
 	}
 	// resolve qualifies the type name an expression refers to, or returns "".
@@ -185,6 +173,22 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 			return true
 		})
 	}
+	openNames := make([]string, 0, len(open))
+	for name := range open {
+		openNames = append(openNames, name)
+	}
+	sort.Strings(openNames)
+	var openProblems []string
+	for _, name := range openNames {
+		switch {
+		case !interfaces[name]:
+			openProblems = append(openProblems, fmt.Sprintf("%s is not a non-empty interface declared in this repository; remove it", name))
+		case probes[name] == nil:
+			openProblems = append(openProblems, fmt.Sprintf("%s is not probed anywhere; remove it", name))
+		case strings.TrimSpace(open[name]) == "":
+			openProblems = append(openProblems, fmt.Sprintf("%s does not say why several production types satisfy or lack it", name))
+		}
+	}
 	for _, src := range parseGoSources(t, root, tests) {
 		name := resolve(src)
 		for _, decl := range src.syntax.Decls {
@@ -210,7 +214,7 @@ func unpinnedProbes(t *testing.T, root string, sources, tests []string, open map
 		}
 		sort.Strings(unpinned[iface])
 	}
-	return unpinned
+	return unpinned, openProblems
 }
 
 func TestUnpinnedProbesExcludePinnedAndOpenInterfaces(t *testing.T) {
@@ -219,7 +223,10 @@ func TestUnpinnedProbesExcludePinnedAndOpenInterfaces(t *testing.T) {
 	sources := []string{fixture("port", "port.go"), fixture("user", "user.go")}
 	tests := []string{fixture("port", "external_test.go"), fixture("user", "contracts_test.go")}
 	open := map[string]string{"internal/user.reader": "fixture"}
-	got := unpinnedProbes(t, root, sources, tests, open)
+	got, problems := unpinnedProbes(t, root, sources, tests, open)
+	if len(problems) != 0 {
+		t.Fatalf("open capability problems = %v, want none", problems)
+	}
 	want := map[string][]string{
 		"internal/port.Faked":  {"internal/user/user.go"},
 		"internal/port.Nilled": {"internal/user/user.go"},
@@ -230,12 +237,38 @@ func TestUnpinnedProbesExcludePinnedAndOpenInterfaces(t *testing.T) {
 	}
 }
 
+func TestOpenCapabilitiesMustBeProbedInterfacesWithAReason(t *testing.T) {
+	root := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", "named_assertions")
+	fixture := func(parts ...string) string { return filepath.Join(append([]string{root, "internal"}, parts...)...) }
+	sources := []string{fixture("port", "port.go"), fixture("user", "user.go")}
+	open := map[string]string{
+		"internal/port.Empty":  "empty",
+		"internal/port.Idle":   "never probed",
+		"internal/port.Record": "a struct",
+		"internal/port.local":  " ",
+		"internal/user.reader": "probed",
+	}
+	_, got := unpinnedProbes(t, root, sources, nil, open)
+	want := []string{
+		"internal/port.Empty is not a non-empty interface declared in this repository; remove it",
+		"internal/port.Idle is not probed anywhere; remove it",
+		"internal/port.Record is not a non-empty interface declared in this repository; remove it",
+		"internal/port.local does not say why several production types satisfy or lack it",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("open capability problems =\n%v\nwant\n%v", got, want)
+	}
+}
+
 // A probe for an interface with one production implementation compiles on
 // and silently takes its fallback once that implementation stops matching.
 // Its pin fails to compile instead.
 func TestUnpinnedInterfaceProbesOnlyShrink(t *testing.T) {
 	root := repoRoot(t)
-	unpinned := unpinnedProbes(t, root, sourceFiles(t, root), testFiles(t, root), openCapabilities)
+	unpinned, openProblems := unpinnedProbes(t, root, sourceFiles(t, root), testFiles(t, root), openCapabilities)
+	for _, problem := range openProblems {
+		t.Errorf("openCapabilities: %s", problem)
+	}
 	current := make([]string, 0, len(unpinned))
 	for iface := range unpinned {
 		current = append(current, iface)

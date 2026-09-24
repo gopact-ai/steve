@@ -8,6 +8,8 @@ type Faked interface{ Fake() }
 
 type Nilled interface{ Nil() }
 
+type Idle interface{ Idle() }
+
 type Empty interface{}
 
 type Record struct{}
