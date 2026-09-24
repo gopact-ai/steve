@@ -47,14 +47,6 @@ type Console interface {
 	ExchangeIdentity
 	LocalizedVerbs
 	SubmissionCapabilities
-	Send(ctx context.Context, conversation, input string) (Reply, error)
-	// SendCommand is Send with an idempotency key from the page.
-	SendCommand(ctx context.Context, conversation, input, commandID string) (Reply, error)
-	// SendCommandWith carries quotes of other lines along with the input.
-	SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (Reply, error)
-	Enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef) (Exchange, error)
-	// EnqueueCommand durably accepts or replays one conversation/client key.
-	EnqueueCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (Exchange, error)
 	Queue(conversation string) []Exchange
 	DeleteQueued(id string) error
 	EditQueued(id, input string) (Exchange, error)
@@ -65,12 +57,11 @@ type Console interface {
 	Conversations() []string
 	Summaries(ctx context.Context) []Conversation
 	Update(ctx context.Context, conversation string, patch ConversationPatch) error
-	// Context is where a conversation stands; Verbs is what it can be told.
+	// Context is where a conversation stands; VerbsFor is what it can be told.
 	Context(ctx context.Context, conversation string) (Context, error)
 	// Setup is what the conversation's agent works with: the assembled
 	// instructions and the pieces they are made of.
 	Setup(ctx context.Context, conversation, agent string) (Setup, error)
-	Verbs() []Verb
 	// Suggest completes a line the page is typing, by the coordinator's
 	// rules: verbs, agents, projects, this conversation's tasks.
 	Suggest(ctx context.Context, conversation, line string) []Suggestion

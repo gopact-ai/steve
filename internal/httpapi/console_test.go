@@ -20,11 +20,6 @@ type fakeConsole struct {
 	exchanges []consoleapi.Exchange
 }
 
-func (f *fakeConsole) Send(_ context.Context, conversation, input string) (consoleapi.Reply, error) {
-	r := consoleapi.Reply{ID: "reply-id", ExchangeID: "exchange-id", Conversation: conversation, Text: "did " + input, Kind: "reply"}
-	f.replies = append(f.replies, r)
-	return r, nil
-}
 func (f *fakeConsole) Replies(string) []consoleapi.Reply { return f.replies }
 func (f *fakeConsole) Conversations() []string           { return []string{"console:main"} }
 func (f *fakeConsole) Summaries(context.Context) []consoleapi.Conversation {
@@ -39,32 +34,23 @@ func (f *fakeConsole) Setup(context.Context, string, string) (consoleapi.Setup, 
 func (f *fakeConsole) SubmissionCapabilities() (materialRefs, interactiveRequests bool) {
 	return false, false
 }
-func (f *fakeConsole) SendSubmission(ctx context.Context, req consoleapi.Submission) (consoleapi.Reply, error) {
-	return f.Send(ctx, req.Conversation, req.Input)
+func (f *fakeConsole) SendSubmission(_ context.Context, req consoleapi.Submission) (consoleapi.Reply, error) {
+	r := consoleapi.Reply{ID: "reply-id", ExchangeID: "exchange-id", Conversation: req.Conversation, Text: "did " + req.Input, Kind: "reply"}
+	f.replies = append(f.replies, r)
+	return r, nil
 }
-func (f *fakeConsole) Submit(ctx context.Context, req consoleapi.Submission) (consoleapi.Exchange, error) {
-	return f.EnqueueCommand(ctx, req.Conversation, req.Input, req.CommandID, req.Quotes)
-}
-func (f *fakeConsole) Enqueue(_ context.Context, conversation, input string, quotes []consoleapi.QuoteRef) (consoleapi.Exchange, error) {
-	e := consoleapi.Exchange{ID: fmt.Sprint(len(f.exchanges) + 1), Conversation: conversation, Input: input, Quotes: quotes, State: "queued"}
-	f.exchanges = append(f.exchanges, e)
-	return e, nil
-}
-func (f *fakeConsole) EnqueueCommand(ctx context.Context, conversation, input, commandID string, quotes []consoleapi.QuoteRef) (consoleapi.Exchange, error) {
+func (f *fakeConsole) Submit(_ context.Context, req consoleapi.Submission) (consoleapi.Exchange, error) {
 	for _, e := range f.exchanges {
-		if commandID != "" && e.Conversation == conversation && e.Key == commandID {
-			if e.Input != input {
+		if req.CommandID != "" && e.Conversation == req.Conversation && e.Key == req.CommandID {
+			if e.Input != req.Input {
 				return consoleapi.Exchange{}, consoleapi.ErrCommandConflict
 			}
 			return e, nil
 		}
 	}
-	e, err := f.Enqueue(ctx, conversation, input, quotes)
-	if err == nil {
-		e.Key = commandID
-		f.exchanges[len(f.exchanges)-1] = e
-	}
-	return e, err
+	e := consoleapi.Exchange{ID: fmt.Sprint(len(f.exchanges) + 1), Conversation: req.Conversation, Input: req.Input, Quotes: req.Quotes, Key: req.CommandID, State: "queued"}
+	f.exchanges = append(f.exchanges, e)
+	return e, nil
 }
 func (f *fakeConsole) Queue(conversation string) []consoleapi.Exchange {
 	var list []consoleapi.Exchange
