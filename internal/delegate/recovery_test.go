@@ -288,6 +288,7 @@ func TestRetainedDelegateUncertainNodeAsksOnceAndNeverSettlesOrReplays(t *testin
 	if stored.Result != nil || stored.State != task.StateRunning || !stored.Attempts[0].Open() || stored.Budget.Tokens.Total != 0 {
 		t.Fatalf("uncertainty was terminalized: %+v", stored)
 	}
+	waitDelegateRecoveryOwner(t, service, child.TaskID)
 	sessions.mu.Lock()
 	sessions.inspectErr = nil
 	sessions.mu.Unlock()
@@ -631,6 +632,7 @@ func TestRetainedDelegateSettledFailureClearsStaleRecoveryQuestion(t *testing.T)
 	if _, err := w.attempts.ConfirmStopped(t.Context(), records[0].ID, "operator", "node process exited"); err != nil {
 		t.Fatal(err)
 	}
+	waitDelegateRecoveryOwner(t, service, child.TaskID)
 	if err := service.RecoverRetained(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -743,6 +745,7 @@ func TestRetainedDelegateRejoinsShortOutageWithoutAskingTheParent(t *testing.T) 
 	if stored.Result != nil || stored.State != task.StateRunning || !stored.Attempts[0].Open() {
 		t.Fatalf("a short outage terminalized the child: %+v", stored)
 	}
+	waitDelegateRecoveryOwner(t, service, child.TaskID)
 	sessions.mu.Lock()
 	sessions.inspectErr = nil
 	sessions.mu.Unlock()
