@@ -487,7 +487,7 @@ node 要安装 Git；工作树物化和产物传输依赖它。默认 harness ho
 
 node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平台 MCP 能否注入）按二进制、参数、目录和环境缓存 1 小时，真实会话打开时以 agent 自己的回答刷新，打开失败则丢弃缓存。这意味着同一台机器上原地更换适配器二进制后，最迟在下一次会话打开时纠正；要立刻生效可重启 node。
 
-当前独立 `steve-node` 也支持由节点持有的原生会话。作为多机协作的执行节点时，它通过已认证连接向当前协调节点核对执行授权，并保存会话与输入回执；无需为此添加 `node.json` 字段，也不会成为账本副本或投票成员。旧二进制必须升级并重启才具有该能力，刷新资源页不能升级进程。协调节点与执行节点均应使用支持该协议的版本。
+当前独立 `steve-node` 也支持由节点持有的原生会话。作为多机协作的执行节点时，它通过已认证连接向当前协调节点核对执行授权，并保存会话与输入回执；无需为此添加 `node.json` 字段，也不会成为账本副本或投票成员。不支持节点协议 v2 的旧二进制在握手时即被拒绝，须升级并重启，刷新资源页不能升级进程；见[节点协议版本](#节点协议版本)。
 
 ### 在控制台添加机器
 
@@ -507,9 +507,15 @@ node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平
 
 ### 节点协议版本
 
-协调节点与执行节点之间使用节点协议 v2（[internal/nodewire/handshake.go](../internal/nodewire/handshake.go) 的 `ProtocolVersion` 与 `ProtocolMin`），双方都只接受 v2，不存在跨 v1/v2 共存的混合版本。协议 v1 的 `steve-node` 在握手时即被拒绝，错误写明节点名和双方的协议版本，并提示经 SSH 将该机器上的 steve 升级到协调节点的版本；v2 的 node 同样拒绝 v1 协调节点。经 SSH 接入的机器通过 `POST /console/ssh/upgrades/{node}` 升级；手工部署的 `steve-node` 需重新构建并复制，引导脚本不更新已有二进制。
+协调节点与执行节点之间使用节点协议 v2（[internal/nodewire/handshake.go](../internal/nodewire/handshake.go) 的 `ProtocolVersion` 与 `ProtocolMin`），双方都只接受 v2。握手时协调节点给出自己支持的协议区间，节点以双方共有的最高版本回复；没有共有版本时连接被拒绝：
 
-v2 基线包括进程流 journal、执行准入与 MCP 绑定、技能包、节点配置及其修订号、目录检查、MCP 探测、机器自带技能与 MCP 上报、产物与文件操作、插件包与插件运行时，协调节点对这些操作不再检查 feature。advert 的 `features` 只列 v2 节点可能缺少的能力：`node_sessions.v1`、`native_resume.v1`、`node_receipts.v1`、`native_history.v1`、`service_restart.v1`。
+- 只支持 v1 的 `steve-node` 被协调节点拒绝，错误写明节点名和双方的协议区间，并提示经 SSH 把该机器上的 steve 升级到协调节点的版本。
+- 节点只支持比协调节点新的协议时，协调节点的错误写明双方的协议区间，并提示把协调节点升级到支持该版本的构建。
+- v2 的 node 拒绝 v1 协调节点，node 日志写明双方的协议区间。
+
+控制台「资源 → 机器」把协调节点最近一次连接因协议不符被拒的机器标为“协议不兼容”，详情写明双方的协议版本和应升级的一方。协议比协调节点旧的机器在详情和页面提示条中提供升级入口：经 SSH 接入的机器通过 `POST /console/ssh/upgrades/{node}` 升级，手工部署的 `steve-node` 需重新构建并复制，引导脚本不更新已有二进制。协议比协调节点新的机器只显示说明。
+
+v2 基线包括进程流 journal、执行准入与 MCP 绑定、技能包、节点配置及其修订号、目录检查、MCP 探测、机器自带技能与 MCP 上报、产物与文件操作、插件包与插件运行时，协调节点对这些操作不检查 feature。advert 的 `features` 只列 v2 节点可能缺少的能力：`node_sessions.v1`、`native_resume.v1`、`node_receipts.v1`、`native_history.v1`、`service_restart.v1`。
 
 ### MCP 部署
 
