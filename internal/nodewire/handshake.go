@@ -29,14 +29,19 @@ const (
 // ranges do not overlap. A peer that names no range speaks exactly its
 // Version.
 func Negotiate(peerMin, peerMax int) int {
+	return negotiate(peerMin, peerMax, ProtocolMin, ProtocolVersion)
+}
+
+// negotiate is Negotiate for a side that speaks lo–hi.
+func negotiate(peerMin, peerMax, lo, hi int) int {
 	if peerMax == 0 {
 		return 0
 	}
 	if peerMin == 0 {
 		peerMin = peerMax
 	}
-	chosen := min(peerMax, ProtocolVersion)
-	if chosen < peerMin || chosen < ProtocolMin {
+	chosen := min(peerMax, hi)
+	if chosen < peerMin || chosen < lo {
 		return 0
 	}
 	return chosen
@@ -218,6 +223,11 @@ var ErrRefused = errors.New("nodewire: refused")
 // node may decline a hub it will not serve, and the hub learns why instead
 // of receiving an advert and then losing the link.
 func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(Hello) error, advert Advert) (Hello, error) {
+	return acceptClaim(conn, valid, claim, advert, ProtocolMin, ProtocolVersion)
+}
+
+// acceptClaim is AcceptClaim for a node that speaks lo–hi.
+func acceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(Hello) error, advert Advert, lo, hi int) (Hello, error) {
 	var hello Hello
 	if err := readJSON(conn, &hello); err != nil {
 		return Hello{}, fmt.Errorf("read hello: %w", err)
@@ -228,25 +238,25 @@ func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(H
 	}
 	// Each refusal below is a courtesy to the peer; the error returned is
 	// the verdict, and a peer that cannot even read it has left.
-	chosen := Negotiate(peerMin, peerMax)
+	chosen := negotiate(peerMin, peerMax, lo, hi)
 	if chosen == 0 {
-		_ = writeJSON(conn, Advert{Version: ProtocolVersion,
-			Refused: fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", peerMin, peerMax, ProtocolMin, ProtocolVersion)})
+		_ = writeJSON(conn, Advert{Version: hi,
+			Refused: fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", peerMin, peerMax, lo, hi)})
 		return Hello{}, ErrVersionMismatch
 	}
 	hello.Version = chosen
 	advert.Version = chosen
 	if !valid(hello.Token) {
-		_ = writeJSON(conn, Advert{Version: ProtocolVersion, Refused: "token rejected"})
+		_ = writeJSON(conn, Advert{Version: hi, Refused: "token rejected"})
 		return Hello{}, ErrBadToken
 	}
 	if claim != nil {
 		if err := claim(hello); err != nil {
-			_ = writeJSON(conn, Advert{Version: ProtocolVersion, Refused: err.Error()})
+			_ = writeJSON(conn, Advert{Version: hi, Refused: err.Error()})
 			return Hello{}, fmt.Errorf("%w: %s", ErrRefused, err)
 		}
 	}
-	advert.Version = ProtocolVersion
+	advert.Version = hi
 	if err := writeJSON(conn, advert); err != nil {
 		return Hello{}, fmt.Errorf("send advert: %w", err)
 	}
