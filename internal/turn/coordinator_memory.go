@@ -107,9 +107,12 @@ func (c *Coordinator) Recall(ctx context.Context, conversationID, agentID, rawSc
 		return nil, "", err
 	}
 	if id := c.memoryProject(ctx, conversationID); id != "" {
-		more, _, err := svc.Recall(ctx, memory.ProjectScope(id), query, limit)
+		more, moreFrom, err := svc.Recall(ctx, memory.ProjectScope(id), query, limit)
 		if err != nil {
 			return nil, "", err
+		}
+		if moreFrom != from {
+			from += "+" + moreFrom
 		}
 		// Each side is ranked alone; the answer is the best of both.
 		// Equal scores keep global first.

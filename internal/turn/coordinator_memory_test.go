@@ -2,6 +2,8 @@ package turn
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -250,5 +252,34 @@ func TestRecallWithoutScopeKeepsTheBestLimitAcrossGlobalAndProject(t *testing.T)
 	want := []string{"rust uses tabs", "tabs in docs", "tabs for yaml"}
 	if got := hitTexts(hits); !slices.Equal(got, want) {
 		t.Fatalf("recalled %q, want %q", got, want)
+	}
+}
+
+// projectIndex answers for projects only; global falls back to the store.
+type projectIndex struct{}
+
+func (projectIndex) Name() string                             { return "index" }
+func (projectIndex) Index(context.Context, memory.Item) error { return nil }
+func (projectIndex) Drop(context.Context, memory.Item) error  { return nil }
+func (projectIndex) Recall(_ context.Context, scope memory.Scope, _ string, _ int) ([]memory.Hit, error) {
+	if scope.Kind != memory.KindProject {
+		return nil, errors.New("global is not indexed")
+	}
+	return []memory.Hit{{Item: memory.Item{ID: "p1", Scope: scope, Text: "indexed"}, Score: 1}}, nil
+}
+
+func TestRecallWithoutScopeNamesEachSourceItSearched(t *testing.T) {
+	c := memoryCoordinator(t)
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	if _, from, err := c.Recall(t.Context(), "chat", "codex", "", "tabs", 10); err != nil || from != "markdown" {
+		t.Fatalf("one source: from=%q err=%v", from, err)
+	}
+	dir := t.TempDir()
+	svc := memory.NewService(memory.NewMarkdown(t.TempDir(), dir), filepath.Join(dir, "audit.jsonl"))
+	svc.SetRetriever(projectIndex{})
+	c = memoryCoordinator(t, withDeps(func(d *Deps) { d.Memory = svc }))
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
+	if _, from, err := c.Recall(t.Context(), "chat", "codex", "", "tabs", 10); err != nil || from != "markdown+index" {
+		t.Fatalf("two sources: from=%q err=%v", from, err)
 	}
 }
