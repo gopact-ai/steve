@@ -21,7 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-// Only the MCP grant adapter is replaced. Coordinator, task/attempt/project
+// Only the MCP grant adapter is replaced. Schedules, task/attempt/project
 // state, schedule persistence and HTTP tool dispatch are the real implementations.
 type scheduleGrantStore struct {
 	mu   sync.Mutex
@@ -115,7 +115,7 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 	if err := gate.SetStore(&scheduleGrantStore{data: map[string]json.RawMessage{}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	gate.SetScheduler(c)
+	gate.SetScheduler(schedulesFor(t, c))
 	gate.Extras("chat", "codex", "schedule-token", "")
 	scope := agentmcp.GrantScope{TaskID: tracked.ID, TaskEpoch: tracked.ExecutionEpoch, AttemptID: r.ID, ExecutionGeneration: attempt.SessionExecutionEpoch(r), NodeID: r.Node, SessionID: r.Session}
 	if err := gate.BindExecution(t.Context(), agentmcp.Binding{ConversationID: "chat", AgentID: "codex"}, scope); err != nil {
@@ -131,6 +131,19 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 		}
 	})
 	return scheduleMCPFixture{c: c, jobs: jobs, gate: gate, book: book, tracked: tracked, scope: scope}
+}
+
+// schedulesFor builds Schedules over c's stores and owners.
+func schedulesFor(t *testing.T, c *Coordinator) *Schedules {
+	t.Helper()
+	s, err := NewSchedules(ScheduleDeps{
+		Attempts: c.attempts, Tasks: c.tasks, Projects: c.projects, Schedules: c.schedules, Text: c.text,
+		Owner: c.owners.baseline, ChannelOwners: c.owners.byChannel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func scheduleToolCall(t *testing.T, gate *agentmcp.Server, tool string, args any) (string, bool) {
@@ -317,7 +330,7 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	}
 	before := c.store.Conversation("chat").Sessions["codex"]
 	// Adding platform tools changes guidance, not the MCP connection or token.
-	gate.SetScheduler(c)
+	gate.SetScheduler(schedulesFor(t, c))
 	second, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "continue"})
 	if err != nil {
 		t.Fatalf("schedule upgrade broke the existing conversation: %v", err)

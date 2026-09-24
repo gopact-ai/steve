@@ -122,6 +122,15 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	if err != nil {
 		return nil, err
 	}
+	// Agents manage standing work through Schedules, which reads the same
+	// stores and owners as the coordinator but none of its runtime state.
+	scheduler, err := turn.NewSchedules(turn.ScheduleDeps{
+		Attempts: attempts, Tasks: tasks, Projects: projects, Schedules: schedules, Text: catalogText,
+		Owner: cfg.EffectiveOwnerID(), ChannelOwners: channelOwners,
+	})
+	if err != nil {
+		return nil, err
+	}
 	if names := live.Map.EnabledNames(); len(names) > 0 {
 		slog.Info(fmt.Sprintf("steve: isolated runtimes; skills=%s", strings.Join(names, ",")))
 	} else {
@@ -132,7 +141,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	}
 	gw := gateway.New(coordinator)
 	gw.SetCatalog(catalogText)
-	return &executionValues{artifacts: artifacts, catalogText: catalogText, coordinator: coordinator, executions: executions, gw: gw, intents: intents, memories: memories, plans: plans, schedules: schedules, tasks: tasks}, nil
+	return &executionValues{artifacts: artifacts, catalogText: catalogText, coordinator: coordinator, executions: executions, gw: gw, intents: intents, memories: memories, plans: plans, scheduler: scheduler, schedules: schedules, tasks: tasks}, nil
 }
 
 type executionAssembly interface {
@@ -144,6 +153,7 @@ type executionAssembly interface {
 	Intents() *intent.Service
 	Memories() *memory.Service
 	Plans() *plan.Store
+	Scheduler() *turn.Schedules
 	Schedules() *schedule.Store
 	Tasks() *task.Store
 }
@@ -157,6 +167,7 @@ type executionValues struct {
 	intents     *intent.Service
 	memories    *memory.Service
 	plans       *plan.Store
+	scheduler   *turn.Schedules
 	schedules   *schedule.Store
 	tasks       *task.Store
 }
@@ -176,6 +187,8 @@ func (v *executionValues) Intents() *intent.Service { return v.intents }
 func (v *executionValues) Memories() *memory.Service { return v.memories }
 
 func (v *executionValues) Plans() *plan.Store { return v.plans }
+
+func (v *executionValues) Scheduler() *turn.Schedules { return v.scheduler }
 
 func (v *executionValues) Schedules() *schedule.Store { return v.schedules }
 
