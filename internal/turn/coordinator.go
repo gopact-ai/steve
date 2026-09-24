@@ -343,14 +343,6 @@ func placement(selected agent.Agent) harness.Placement {
 	return harness.Placement{Node: selected.Node, Harness: selected.Harness}
 }
 
-// SetArtifacts wires the artifact store: chat turns get before- and
-// after-snapshots, plans get a base and a landing.
-//
-// Deprecated: set Deps.Artifacts.
-func (c *Coordinator) SetArtifacts(store *artifact.Store) {
-	c.artifacts = store
-}
-
 // SetWorkspaceAttach wires what gives a project a directory on a machine
 // that has none. Without it a turn on such a machine is refused, which is
 // how a hub with no management service still behaves.

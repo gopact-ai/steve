@@ -3,7 +3,6 @@ package turn
 import (
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -48,9 +47,7 @@ func completionCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *led
 		d.Tasks, d.Node = tasks, "hub"
 	}), onLedger(book))
 	coordinator.text = i18n.New(i18n.LocaleEN)
-	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
-	coordinator.SetArtifacts(artifacts)
-	artifacts.SetExecution(coordinator.executions)
+	coordinator.artifacts.SetExecution(coordinator.executions)
 	return coordinator, book
 }
 

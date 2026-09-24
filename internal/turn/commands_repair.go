@@ -194,9 +194,6 @@ func (c commands) pathOn(ctx context.Context, node string) string {
 // planBase is the canonical snapshot the plan starts from, the way /plan
 // does.
 func (c commands) planBase(ctx context.Context, tracked task.Task) (string, error) {
-	if c.artifacts == nil {
-		return "", nil
-	}
 	p, ok, err := c.projects.Get(ctx, tracked.ProjectID)
 	if err != nil || !ok {
 		return "", err

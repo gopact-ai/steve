@@ -57,8 +57,9 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		coordinator := newCoordinatorIn(t, map[string]string{"codex": workspace}, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second, onLedger(book), withTasks(tasks, "e2e-node"))
-		coordinator.SetArtifacts(artifact.New(filepath.Join(stateDir, "artifacts"), book, coordinator.projects, artifact.LocalNodes{Dir: nodeDir}))
+		coordinator := newCoordinatorIn(t, map[string]string{"codex": workspace}, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second, onLedger(book), withTasks(tasks, "e2e-node"), withDeps(func(d *Deps) {
+			d.Artifacts = artifact.New(filepath.Join(stateDir, "artifacts"), book, d.Projects, artifact.LocalNodes{Dir: nodeDir})
+		}))
 		coordinator.artifacts.SetExecution(coordinator.executions)
 		return coordinator, manager, tasks
 	}

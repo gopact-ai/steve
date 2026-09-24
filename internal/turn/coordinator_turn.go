@@ -160,9 +160,6 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 		base := workspace.Base
 		return func(r *attempt.Record) { r.Base = base }, nil
 	}
-	if c.artifacts == nil {
-		return nil, nil
-	}
 	p, ok, perr := c.projects.Get(ctx, t.binding.ProjectID)
 	if perr != nil || !ok {
 		return nil, nil

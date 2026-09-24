@@ -32,7 +32,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 	reject := func(cause error) (attempt.Completion, *project.Project, error) {
 		return attempt.Completion{}, nil, &lifecycle.Rejected{Completion: attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, Cause: cause}
 	}
-	if c.artifacts != nil && record.Base != "" {
+	if record.Base != "" {
 		p, ok, perr := c.projects.Get(ctx, record.Project)
 		if perr != nil {
 			return reject(fmt.Errorf("read completion project %s: %w", record.Project, perr))
