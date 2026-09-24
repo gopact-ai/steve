@@ -168,7 +168,8 @@ type Snapshot struct {
 	Coverage    map[Kind]Coverage `json:"coverage"`
 	Offers      []Capability      `json:"offers"`
 	// Source says where the snapshot came from: "node" for a real
-	// report, "legacy" for one synthesised from an advert without a snapshot.
+	// report, "synthesized" for one the hub built from an advert without a
+	// snapshot.
 	Source string `json:"source,omitempty"`
 }
 

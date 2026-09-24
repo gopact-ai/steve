@@ -510,7 +510,7 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
                     </div>
                 </div>
             ))}
-            {snapshot.source === "legacy" && <span className="col-span-full u-meta text-quaternary">{tr("fleet.legacyHint")}</span>}
+            {snapshot.source === "synthesized" && <span className="col-span-full u-meta text-quaternary">{tr("fleet.synthesizedHint")}</span>}
         </div>
     );
 }

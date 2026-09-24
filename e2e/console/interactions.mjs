@@ -2795,6 +2795,36 @@ checks["fleet-protocol-mismatch"] = async (f) => {
     assert.equal(f.calls.length, calls, "Reading the fleet and opening the upgrade must not start one");
 };
 
+// A machine whose ability snapshot the hub synthesized from its advert says
+// only its AI tools and labels are known; one that reported its own does not.
+checks["fleet-synthesized-snapshot"] = async (f) => {
+    const offers = [{ kind: "harness", id: "codex", availability: "available" }, { kind: "tag", id: "gpu", availability: "available" }];
+    const snapshot = (node, source) => ({ schema: "v1", node, generation: 1, sequence: 1, generated_at: at, coverage: { harness: "complete", tag: "complete" }, offers, source });
+    const nodes = [
+        { name: "hub", role: "hub", up: true, version: "abc1234", harnesses: [] },
+        { name: "worker-synthesized", role: "node", addr: "10.0.0.7:7701", up: true, version: "abc1234", harnesses: [], snapshot: snapshot("worker-synthesized", "synthesized") },
+        { name: "worker-reported", role: "node", addr: "10.0.0.8:7701", up: true, version: "abc1234", harnesses: [], snapshot: snapshot("worker-reported", "node") },
+    ];
+    const state = { ...usageState(), hub: { node: "hub", version: "abc1234", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
+    const machines = f.page.locator("#fleet-machines");
+    const drawer = async (name) => {
+        await machines.getByRole("row", { name: new RegExp(name) }).click();
+        const opened = f.page.getByRole("dialog", { name, exact: true }); await opened.waitFor();
+        await opened.getByText("codex", { exact: true }).waitFor();
+        return opened;
+    };
+    const close = async (opened) => { await opened.getByRole("button", { name: "关闭", exact: true }).click(); await opened.waitFor({ state: "detached" }); };
+    let opened = await drawer("worker-synthesized");
+    await opened.getByText("未附带能力快照：只知道 AI 工具与标签，其它类别未知。", { exact: true }).waitFor();
+    await f.page.screenshot({ path: path.join(output, "fleet-synthesized-snapshot.png") });
+    await close(opened);
+    opened = await drawer("worker-reported");
+    assert.equal(await opened.getByText(/未附带能力快照/).count(), 0, "A snapshot the machine reported carries no hint");
+    await close(opened);
+};
+
 async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";

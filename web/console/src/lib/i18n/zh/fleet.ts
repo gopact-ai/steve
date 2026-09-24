@@ -171,7 +171,7 @@ export const fleetZh = {
     "fleet.machineSkillsHint": "协调节点 下发并已在每个 AI 工具 home 里物化的技能",
     "fleet.declared": "声明",
     "fleet.declaredHint": "只能由运维声明、没人核实过的：网络、凭据、标签",
-    "fleet.legacyHint": "未附带能力快照：只知道 AI 工具与标签，其它类别未知。",
+    "fleet.synthesizedHint": "未附带能力快照：只知道 AI 工具与标签，其它类别未知。",
     "fleet.title": "资源",
     "fleet.description": "查看机器状态、Agent 配置与运行中的任务。",
     "fleet.addResource": "添加机器 / Agent",

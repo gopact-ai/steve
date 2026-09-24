@@ -139,13 +139,13 @@ func HasFeature(list []string, feature string) bool {
 // snapshot the hub dropped for failing validation, or the empty advert of
 // a machine that has not connected. It knows only the harnesses and tag
 // words. Coverage is partial for everything else, so a requirement on a
-// tool is unknown there, not absent; the source says legacy.
+// tool is unknown there, not absent; the source says synthesized.
 func Synthesize(adv Advert, now time.Time) *ability.Snapshot {
 	if adv.Snapshot != nil {
 		return adv.Snapshot
 	}
 	s := &ability.Snapshot{
-		Schema: ability.Schema, Node: adv.Node, GeneratedAt: now, ReceivedAt: now, Source: "legacy",
+		Schema: ability.Schema, Node: adv.Node, GeneratedAt: now, ReceivedAt: now, Source: "synthesized",
 		Coverage: map[ability.Kind]ability.Coverage{ability.Harness: ability.Complete, ability.Tag: ability.Complete},
 	}
 	for _, h := range adv.Harnesses {

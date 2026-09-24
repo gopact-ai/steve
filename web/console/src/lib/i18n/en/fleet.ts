@@ -173,7 +173,7 @@ export const fleetEn = {
     "fleet.machineSkillsHint": "Skills delivered by the coordinator and installed for each AI tool",
     "fleet.declared": "Declared",
     "fleet.declaredHint": "Operator-declared networks, credentials and labels; not automatically verified",
-    "fleet.legacyHint": "No ability snapshot: only AI tools and labels are known. Other capabilities are unknown.",
+    "fleet.synthesizedHint": "No ability snapshot: only AI tools and labels are known. Other capabilities are unknown.",
     "fleet.title": "Resources",
     "fleet.description": "Inspect machines, agent configurations and active executions.",
     "fleet.addResource": "Add machine / agent",
