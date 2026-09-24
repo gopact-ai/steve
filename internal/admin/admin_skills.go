@@ -96,7 +96,7 @@ func (a *Service) Skills(ctx context.Context) (consoleapi.SkillsView, error) {
 	// The hub runs a node of its own, and it is the source skills are
 	// shipped from; listing it again among the machines shipped to would
 	// say the same machine twice.
-	self := nodewire.Place("")
+	self := a.place("")
 	for _, name := range a.Nodes.Names() {
 		if name == self {
 			continue
@@ -147,7 +147,7 @@ func (a *Service) MachineSkills(ctx context.Context) []consoleapi.MachineSkills 
 		}
 	}
 	found := func(name string, hub bool, own []nodewire.OwnSkill, err error) consoleapi.MachineSkills {
-		item := consoleapi.MachineSkills{Name: nodewire.Place(name), Hub: hub, Skills: []consoleapi.FoundSkill{}}
+		item := consoleapi.MachineSkills{Name: a.place(name), Hub: hub, Skills: []consoleapi.FoundSkill{}}
 		if err != nil {
 			item.Error = text.Clip(strings.TrimSpace(err.Error()), 200)
 			return item
@@ -158,7 +158,7 @@ func (a *Service) MachineSkills(ctx context.Context) []consoleapi.MachineSkills 
 		}
 		return item
 	}
-	self := nodewire.Place("")
+	self := a.place("")
 	out := []consoleapi.MachineSkills{found("", true, node.OwnSkills(5*time.Minute), nil)}
 	for _, name := range a.Nodes.Names() {
 		// The hub's own scan is the entry above; its node advert would
@@ -215,7 +215,7 @@ func (a *Service) ImportSkill(ctx context.Context, nodeName, path string) (strin
 	defer cancel()
 	encoded, err := a.Nodes.Files(sctx, a.nodeKey(nodeName), nodewire.FileRequest{Op: nodewire.FileImportSkill, Path: path})
 	if err != nil {
-		return "", fmt.Errorf("从 %s 取 %s：%s", nodewire.Place(a.nodeKey(nodeName)), path, text.Clip(strings.TrimSpace(err.Error()), 200))
+		return "", fmt.Errorf("从 %s 取 %s：%s", a.place(a.nodeKey(nodeName)), path, text.Clip(strings.TrimSpace(err.Error()), 200))
 	}
 	if err := skills.UnpackImport(encoded, dest); err != nil {
 		return "", err

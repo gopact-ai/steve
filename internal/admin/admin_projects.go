@@ -243,7 +243,7 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 				return fmt.Errorf("检查工作区失败：%w", err)
 			}
 			if missing := len(found) == 1 && found[0].Missing; !missing {
-				return fmt.Errorf("%s 上已经有 %s；克隆需要尚不存在的目录", nodewire.Place(nodeKey), path)
+				return fmt.Errorf("%s 上已经有 %s；克隆需要尚不存在的目录", a.place(nodeKey), path)
 			}
 		}
 		item.Workspaces = append(item.Workspaces, ws)

@@ -51,3 +51,15 @@ func TestHubSnapshotsAreNumberedPerObservation(t *testing.T) {
 		t.Fatalf("second observation continued at %d", other.Snapshot.Sequence)
 	}
 }
+
+// Outside a cluster the page may name the hub by its node name; the
+// service recognizes its own name without asking the process.
+func TestServiceRecognizesItsOwnNameOutsideACluster(t *testing.T) {
+	a := &Service{NodeName: "node-a"}
+	if got := a.nodeKey("node-a"); got != "" {
+		t.Fatalf("nodeKey(node-a) = %q, want the hub", got)
+	}
+	if got := a.nodeKey("node-b"); got != "node-b" {
+		t.Fatalf("nodeKey(node-b) = %q", got)
+	}
+}

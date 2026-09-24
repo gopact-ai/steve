@@ -124,10 +124,22 @@ func (a *Service) nodeKey(name string) string {
 		}
 		return name
 	}
-	if name == "" || name == "hub" || name == nodewire.Place("") {
+	if name == "" || name == "hub" || name == a.place("") {
 		return ""
 	}
 	return name
+}
+
+// place is nodewire.Place for this service's machine: node itself, or
+// for the empty node this machine's name, or "hub" while it has none.
+func (a *Service) place(node string) string {
+	if node != "" {
+		return node
+	}
+	if a.NodeName != "" {
+		return a.NodeName
+	}
+	return "hub"
 }
 
 func orHubName(node string) string {

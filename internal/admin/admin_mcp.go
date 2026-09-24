@@ -93,7 +93,7 @@ func (a *Service) MCP(ctx context.Context) (consoleapi.MCPView, error) {
 	if a.Catalog != nil {
 		for _, ag := range a.Catalog.List() {
 			for _, m := range ag.MCPServers {
-				key := nodewire.Place(ag.Node) + "/" + m
+				key := a.place(ag.Node) + "/" + m
 				attach[key] = append(attach[key], ag.ID)
 			}
 		}
@@ -110,7 +110,7 @@ func (a *Service) MCP(ctx context.Context) (consoleapi.MCPView, error) {
 	}
 	a.probeMu.Unlock()
 	for _, nodeKey := range append([]string{""}, a.Nodes.Names()...) {
-		place := nodewire.Place(nodeKey)
+		place := a.place(nodeKey)
 		adv, advErr := a.advertOf(ctx, nodeKey)
 		resolvable := map[string]*bool{}
 		if adv.Snapshot != nil {
@@ -190,7 +190,7 @@ func sortedMCP(m map[string]nodewire.MCPSetting) []string {
 // list, marked stale, beside the error.
 func (a *Service) ProbeMCP(ctx context.Context, machine, name string) (consoleapi.MCPProbeView, error) {
 	nodeKey := a.nodeKey(machine)
-	place := nodewire.Place(nodeKey)
+	place := a.place(nodeKey)
 	settings, err := a.mcpSettingsOf(ctx, nodeKey)
 	if err != nil {
 		return consoleapi.MCPProbeView{}, err
@@ -269,7 +269,7 @@ func (a *Service) AdoptMCP(ctx context.Context, machine, source, name string) er
 		if _, err := a.Nodes.AdoptMCP(ctx, nodeKey, source, name); err != nil {
 			return err
 		}
-		a.remember(nodewire.Place(nodeKey), name, "adopted:"+source)
+		a.remember(a.place(nodeKey), name, "adopted:"+source)
 		return nil
 	}
 	home, err := os.UserHomeDir()
@@ -291,7 +291,7 @@ func (a *Service) AdoptMCP(ctx context.Context, machine, source, name string) er
 	if _, err := a.setNodeSettingsLocked(ctx, a.NodeName, set); err != nil {
 		return err
 	}
-	a.remember(nodewire.Place(""), name, "adopted:"+source)
+	a.remember(a.place(""), name, "adopted:"+source)
 	node.OwnMCP(0)
 	return nil
 }
@@ -300,10 +300,10 @@ func (a *Service) AdoptMCP(ctx context.Context, machine, source, name string) er
 // that machine still naming it keeps it.
 func (a *Service) RemoveMCP(ctx context.Context, machine, name string) error {
 	nodeKey := a.nodeKey(machine)
-	place := nodewire.Place(nodeKey)
+	place := a.place(nodeKey)
 	if a.Catalog != nil {
 		for _, ag := range a.Catalog.List() {
-			if nodewire.Place(ag.Node) == place && slices.Contains(ag.MCPServers, name) {
+			if a.place(ag.Node) == place && slices.Contains(ag.MCPServers, name) {
 				return fmt.Errorf("Agent %s 还在用 %s 上的 %q；先在资源页把它从 Agent 的 MCP 列表里去掉", ag.ID, place, name)
 			}
 		}
@@ -370,7 +370,7 @@ func registryEntryView(e mcpregistry.Entry) consoleapi.MCPRegistryEntry {
 // filled from what the owner typed and sent to that machine once.
 func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPRequest) error {
 	nodeKey := a.nodeKey(req.Node)
-	place := nodewire.Place(nodeKey)
+	place := a.place(nodeKey)
 	name := strings.TrimSpace(req.Name)
 	if !NameShape.MatchString(strings.ToLower(name)) {
 		return fmt.Errorf("名字 %q 不合规：小写字母、数字、点、下划线、连字符", name)
