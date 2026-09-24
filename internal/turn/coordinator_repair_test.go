@@ -255,6 +255,30 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 	}
 }
 
+// Without the node registry a repair still runs, but it cannot ask the
+// machine for its PATH or to check itself again: the helper is told the
+// PATH is unknown, and the reply goes by the advert the machine last sent.
+func TestRepairWithoutNodesKeepsTheLastAdvert(t *testing.T) {
+	probes := &recordProbes{}
+	c, sup, nodes, cmds, _ := repairCoordinator(t, withDeps(func(d *Deps) { d.Nodes, d.Prober = nil, probes }))
+	res := say(t, c, "/repair kimi")
+	if len(sup.executed) != 1 {
+		t.Fatalf("plans executed = %d", len(sup.executed))
+	}
+	if goal := sup.executed[0].Steps[0].Goal; !strings.Contains(goal, "(unknown)") {
+		t.Fatalf("goal does not say the PATH is unknown: %s", goal)
+	}
+	if len(cmds.lines) != 0 || len(nodes.refreshd) != 0 {
+		t.Fatalf("commands = %v, refreshed = %v; want none without a registry", cmds.lines, nodes.refreshd)
+	}
+	if len(probes.probed) != 1 || probes.probed[0] != "node-a/kimi" {
+		t.Fatalf("probed = %v", probes.probed)
+	}
+	if !strings.Contains(res.Text, "仍不可用") {
+		t.Fatalf("reply = %q, want the harness still missing from the last advert", res.Text)
+	}
+}
+
 // `/fleet probe` reports what probing every harness found, a failure as
 // its error.
 func TestFleetProbeReportsEveryHarness(t *testing.T) {
