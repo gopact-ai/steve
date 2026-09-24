@@ -466,8 +466,8 @@ func (s *Services) preflight() error {
 	if s.admin.Path == "" {
 		return nil
 	}
-	s.admin.configStore().RLock()
-	defer s.admin.configStore().RUnlock()
+	s.admin.configStore().rlock()
+	defer s.admin.configStore().runlock()
 	if s.admin.cfg() != nil {
 		if err := s.admin.cfg().CheckFileRevision(s.admin.Path); err != nil {
 			return serviceFailure("conflict", "The configuration file changed outside the console; validate and deploy it before restarting")

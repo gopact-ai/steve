@@ -175,11 +175,11 @@ func TestNativeImportAutoProjectRechecksIdentityAtCommit(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := a.nativeImportProject(t.Context(), "node-test", target, selected, dir); done <- err }()
 	waitForAgentAdminCommit(t, "nativeImportProject")
-	a.configStore().Lock()
-	replaced := a.cfg().Nodes["node-test"]
-	replaced.Token = "replacement"
-	a.cfg().Nodes["node-test"] = replaced
-	a.configStore().Unlock()
+	publishUnsaved(t, a, func(c *config.Config) {
+		replaced := c.Nodes["node-test"]
+		replaced.Token = "replacement"
+		c.Nodes["node-test"] = replaced
+	})
 	a.Mu.Unlock()
 	if err := <-done; err == nil {
 		t.Fatal("stale inspected node was registered")

@@ -32,8 +32,8 @@ func NewSettings(admin *Service, startup *config.Config) *hubSettingsService {
 }
 
 func (s *hubSettingsService) Settings(context.Context) (consoleapi.SettingsView, error) {
-	s.admin.configStore().RLock()
-	defer s.admin.configStore().RUnlock()
+	s.admin.configStore().rlock()
+	defer s.admin.configStore().runlock()
 	return s.viewLocked()
 }
 

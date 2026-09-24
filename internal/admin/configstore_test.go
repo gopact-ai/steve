@@ -103,7 +103,7 @@ func TestConfigStoreUpdatePublishesASaveThatIsAlreadyInPlace(t *testing.T) {
 }
 
 // Readers keep reading the previous configuration while a save is in
-// flight; a writer working in place waits for the save to finish.
+// flight and see the saved one once it is published.
 func TestConfigStoreUpdateSavesWithoutHoldingUpReaders(t *testing.T) {
 	cfg := &config.Config{Gateway: config.Gateway{HubID: "before"}}
 	store := NewConfigStore(cfg)
@@ -130,24 +130,15 @@ func TestConfigStoreUpdateSavesWithoutHoldingUpReaders(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("a reader waited for the save")
 	}
-	locked := make(chan string, 1)
-	go func() {
-		store.Lock()
-		defer store.Unlock()
-		locked <- cfg.Gateway.HubID
-	}()
-	select {
-	case <-locked:
-		t.Error("a writer working in place did not wait for the save")
-	case <-time.After(50 * time.Millisecond):
-	}
 	close(release)
 	if err := <-updated; err != nil {
 		t.Fatal(err)
 	}
-	if hub := <-locked; hub != "after" {
-		t.Fatalf("the writer saw %q after the save", hub)
-	}
+	store.Read(func(c *config.Config) {
+		if c.Gateway.HubID != "after" {
+			t.Errorf("a reader saw %q after the save", c.Gateway.HubID)
+		}
+	})
 }
 
 func TestConfigStoreUpdateWithNothingToChangeSavesNothing(t *testing.T) {
@@ -156,6 +147,19 @@ func TestConfigStoreUpdateWithNothingToChangeSavesNothing(t *testing.T) {
 	err := store.Update(func(*config.Config) error { return errUnchanged }, func(*config.Config) error { saved = true; return nil })
 	if err != nil || saved {
 		t.Fatalf("Update = %v, saved=%v", err, saved)
+	}
+}
+
+// publishUnsaved publishes change to a's configuration without saving it,
+// the way another writer's change would appear.
+func publishUnsaved(t *testing.T, a *Service, change func(*config.Config)) {
+	t.Helper()
+	err := a.configStore().update(func(c *config.Config) error {
+		change(c)
+		return nil
+	}, func(*config.Config) error { return nil }, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

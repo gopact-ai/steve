@@ -341,3 +341,26 @@ func TestDesktopStatusReadDuringAnEnrollmentSave(t *testing.T) {
 		t.Fatal("the saved agent was not published")
 	}
 }
+
+// The running application learns the local workspace root without the
+// configuration file being rewritten.
+func TestSetLocalWorkspaceRootIsNotSaved(t *testing.T) {
+	a := agentAdminFixture(t)
+	before, err := os.ReadFile(a.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetLocalWorkspaceRoot("/work/here")
+	a.configStore().Read(func(c *config.Config) {
+		if c.Gateway.WorkspaceRoot != "/work/here" {
+			t.Errorf("workspace root = %q", c.Gateway.WorkspaceRoot)
+		}
+	})
+	after, err := os.ReadFile(a.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("recording the workspace root rewrote the configuration file")
+	}
+}

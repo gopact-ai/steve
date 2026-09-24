@@ -73,10 +73,10 @@ func (b sshNodeBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		return sshconnect.Template{}, nodebootstrap.Spec{}, err
 	}
 	a := b.admin
-	b.admin.configStore().RLock()
+	b.admin.configStore().rlock()
 	_, exists := a.cfg().Nodes[req.Name]
 	binary := a.cfg().Gateway.NodeBinary
-	b.admin.configStore().RUnlock()
+	b.admin.configStore().runlock()
 	if binary == "" && desktop.IsManagedConfig(a.Path) {
 		if bundled, ok := desktop.BundledNodeBinary(check.OS + "/" + check.Arch); ok {
 			binary = bundled

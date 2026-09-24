@@ -95,11 +95,14 @@ func TestPluginSessionsKeepOldVersionAcrossUpgradeAndGlobalRestart(t *testing.T)
 	if _, err := library.Add(t.Context(), "p", replacement); err != nil {
 		t.Fatal(err)
 	}
-	guarded.Lock()
-	item := cfg.Plugins["work"]
-	item.Digest = replacement.Digest
-	cfg.Plugins["work"] = item
-	guarded.Unlock()
+	if err := guarded.Update(func(c *config.Config) error {
+		item := c.Plugins["work"]
+		item.Digest = replacement.Digest
+		c.Plugins["work"] = item
+		return nil
+	}, func(*config.Config) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.Restart(); err != nil {
 		t.Fatal(err)
 	}

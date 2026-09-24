@@ -158,11 +158,11 @@ func TestRemoteAgentMutationRejectsNodeIdentityReplacedAfterRPC(t *testing.T) {
 				}
 			}()
 			waitForAgentAdminCommit(t, method)
-			a.configStore().Lock()
-			replacement := a.cfg().Nodes["node-test"]
-			replacement.Token = "another-machine-token"
-			a.cfg().Nodes["node-test"] = replacement
-			a.configStore().Unlock()
+			publishUnsaved(t, a, func(c *config.Config) {
+				replacement := c.Nodes["node-test"]
+				replacement.Token = "another-machine-token"
+				c.Nodes["node-test"] = replacement
+			})
 			unlock()
 			if err := <-done; !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
 				t.Fatalf("old node receipt accepted for reused name: %v", err)

@@ -57,12 +57,18 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	}
 	life.Defer(func() { dashboard.Close() })
 	if environment == nil {
-		// The launch probe already reads the configuration; PinAddress
-		// rewrites it in place.
-		store := boot.ConfigStore()
-		store.Lock()
-		err := desktop.PinAddress(*configPath, cfg, dashboard.URL())
-		store.Unlock()
+		// The launch probe already reads the configuration, so the pinned
+		// address is saved and published through its store.
+		pinned := false
+		err := boot.ConfigStore().Update(func(c *config.Config) (err error) {
+			pinned, err = desktop.SetPinnedAddress(*configPath, c, dashboard.URL())
+			return err
+		}, func(c *config.Config) error {
+			if !pinned {
+				return nil
+			}
+			return config.Save(*configPath, c)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("remember desktop address: %w", err)
 		}

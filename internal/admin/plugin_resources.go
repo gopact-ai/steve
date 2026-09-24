@@ -13,9 +13,9 @@ func (a *Service) pluginResources(ctx context.Context, kind string) ([]consoleap
 	if a.PluginLibrary == nil {
 		return nil, nil
 	}
-	a.configStore().RLock()
+	a.configStore().rlock()
 	items := config.ClonePluginInstallations(a.cfg().Plugins)
-	a.configStore().RUnlock()
+	a.configStore().runlock()
 	var resources []consoleapi.PluginResourceView
 	for id, item := range items {
 		if len(item.Projects) == 0 {

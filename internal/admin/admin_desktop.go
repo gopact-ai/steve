@@ -22,8 +22,8 @@ func (a *Service) DesktopStatus(ctx context.Context) (consoleapi.DesktopStatus, 
 	if err := ctx.Err(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	a.configStore().RLock()
-	defer a.configStore().RUnlock()
+	a.configStore().rlock()
+	defer a.configStore().runlock()
 	return a.desktopStatusLocked(), nil
 }
 
@@ -79,11 +79,11 @@ func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWo
 	if !desktop.IsManagedConfig(a.Path) {
 		return consoleapi.DesktopStatus{}, fmt.Errorf("工作目录设置仅在桌面 App 中提供")
 	}
-	a.configStore().RLock()
+	a.configStore().rlock()
 	id := config.DefaultProjectID(a.cfg().Gateway.DefaultProject, a.cfg().Projects)
 	home := a.cfg().Projects[id].Home
 	local := a.cfg().LocalHomeNode(home.Node)
-	a.configStore().RUnlock()
+	a.configStore().runlock()
 	if err := desktop.CheckWorkspaceProject(id, local, home.Node); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
@@ -106,8 +106,8 @@ func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscov
 	}
 	candidates := desktop.DiscoverAgents(desktop.DiscoveryOptions{})
 	offers := a.harnessOffers(ctx, "")
-	a.configStore().RLock()
-	defer a.configStore().RUnlock()
+	a.configStore().rlock()
+	defer a.configStore().runlock()
 	result := consoleapi.DesktopDiscovery{Agents: make([]consoleapi.DesktopAgentCandidate, 0, len(candidates))}
 	for _, item := range candidates {
 		candidate := consoleapi.DesktopAgentCandidate{
@@ -183,12 +183,12 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	for _, item := range desktop.DiscoverAgents(desktop.DiscoveryOptions{}) {
 		candidates[item.ID] = item
 	}
-	a.configStore().RLock()
+	a.configStore().rlock()
 	agents := make(map[string]config.Agent, len(a.cfg().Agents))
 	maps.Copy(agents, a.cfg().Agents)
 	harnesses := maps.Clone(a.cfg().Harnesses)
 	statePath := a.cfg().Gateway.StatePath
-	a.configStore().RUnlock()
+	a.configStore().runlock()
 	plan, err := planDesktopAgents(requested, candidates, agents, harnesses)
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
@@ -351,7 +351,9 @@ func (a *Service) SetLocalWorkspaceRoot(root string) {
 	if strings.TrimSpace(root) == "" {
 		return
 	}
-	a.configStore().Lock()
-	defer a.configStore().Unlock()
-	a.cfg().Gateway.WorkspaceRoot = root
+	// Nothing is saved; a service without a configuration records nothing.
+	_ = a.configStore().update(func(c *config.Config) error {
+		c.Gateway.WorkspaceRoot = root
+		return nil
+	}, func(*config.Config) error { return nil }, nil)
 }

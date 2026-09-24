@@ -11,6 +11,10 @@ import (
 // rewrites parts of it from the page while other parts of the same
 // application read it. Each application owns one; two applications in one
 // process do not wait for each other.
+//
+// The configuration changes only through Update, which edits a clone and
+// then copies it over the configuration in force. A map or slice reachable
+// from a published configuration is therefore never changed afterwards.
 type ConfigStore struct {
 	// write is held by one writer at a time, across its save; mu only
 	// while a writer changes the configuration readers see.
@@ -19,8 +23,8 @@ type ConfigStore struct {
 	cfg   *config.Config
 }
 
-// NewConfigStore guards cfg. Everything that reads or rewrites cfg in place
-// must go through the returned store.
+// NewConfigStore guards cfg. Everything that reads or changes cfg must go
+// through the returned store.
 func NewConfigStore(cfg *config.Config) *ConfigStore {
 	return &ConfigStore{cfg: cfg}
 }
@@ -98,18 +102,7 @@ func (s *ConfigStore) update(change, save func(*config.Config) error, published 
 	return err
 }
 
-// Lock and Unlock hold the configuration for code that rewrites it in
-// place; Lock waits for an Update in progress. RLock and RUnlock hold it
-// for code that reads the pointer directly.
-func (s *ConfigStore) Lock() {
-	s.write.Lock()
-	s.mu.Lock()
-}
-
-func (s *ConfigStore) Unlock() {
-	s.mu.Unlock()
-	s.write.Unlock()
-}
-
-func (s *ConfigStore) RLock()   { s.mu.RLock() }
-func (s *ConfigStore) RUnlock() { s.mu.RUnlock() }
+// rlock and runlock hold the configuration still for code in this package
+// that reads it through Service.cfg.
+func (s *ConfigStore) rlock()   { s.mu.RLock() }
+func (s *ConfigStore) runlock() { s.mu.RUnlock() }
