@@ -176,7 +176,7 @@ func consoleServerConfig(environment *Environment, cfg *config.Config) (httpapi.
 	}
 	served := httpapi.ServerConfig{Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken}
 	// Serving the network is the owner's decision, token included; the
-	// server refuses a network bind without one.
+	// server refuses to start without one.
 	if served.Token != "" || !sameorigin.LoopbackListener(served.Addr) {
 		return served, nil
 	}

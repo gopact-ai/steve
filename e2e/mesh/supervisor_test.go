@@ -324,6 +324,9 @@ func TestC4NodeLossRePlacesTheStep(t *testing.T) {
 	}
 }
 
+// meshToken is the owner token of the consoles these tests start.
+const meshToken = "mesh-test"
+
 // B1+B3+B4: the read model reports the whole fleet, and both renderers see it.
 func TestB1ReadModelAndRenderers(t *testing.T) {
 	requireMesh(t)
@@ -335,14 +338,14 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server, err := httpapi.NewServer(f.view, httpapi.ServerConfig{})
+	server, err := httpapi.NewServer(f.view, httpapi.ServerConfig{Token: meshToken})
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() { _ = server.Serve() }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	res, err := http.Get(server.URL() + "/state")
+	res, err := http.Get(server.URL() + "/state?token=" + meshToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,6 +402,7 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	payload, _ := json.Marshal(map[string]string{"conversation": "console:main", "input": "/fleet"})
 	req, _ := http.NewRequest(http.MethodPost, server.URL()+"/console/send", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+meshToken)
 	res2, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +434,7 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	// The console is served by the same process, from the same model: the
 	// shell names its bundle, and the bundle subscribes to the change
 	// stream and can act through the console endpoint.
-	page, err := http.Get(server.URL() + "/")
+	page, err := http.Get(server.URL() + "/?token=" + meshToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,14 +532,14 @@ func TestB3TUIRendersTheFleet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server, err := httpapi.NewServer(f.view, httpapi.ServerConfig{})
+	server, err := httpapi.NewServer(f.view, httpapi.ServerConfig{Token: meshToken})
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() { _ = server.Serve() }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	screen := tui.New(tui.Config{URL: server.URL()})
+	screen := tui.New(tui.Config{URL: server.URL(), Token: meshToken})
 	frame := screen.Once(t.Context())
 	t.Logf("\n%s", frame)
 

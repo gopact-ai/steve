@@ -48,25 +48,52 @@ func TestAcceptedRestartProgressesWhenReplyIsLost(t *testing.T) {
 	}
 }
 func TestMaintenanceRejectsNewWritesAndNeverBlocksReads(t *testing.T) {
-	s := &Server{}
+	s := &Server{token: testToken}
 	release, err := s.SealWrites()
 	if err != nil {
 		t.Fatal(err)
 	}
+	owner := func(method, target string) *http.Request {
+		r := httptest.NewRequest(method, target, nil)
+		r.Header.Set("Authorization", "Bearer "+testToken)
+		return r
+	}
 	calls := 0
 	handler := s.guard(func(w http.ResponseWriter, r *http.Request) { calls++ })
 	write := httptest.NewRecorder()
-	handler(write, httptest.NewRequest("PUT", "/console/settings", nil))
+	handler(write, owner("PUT", "/console/settings"))
 	if write.Code != http.StatusConflict || calls != 0 {
 		t.Fatal("write crossed seal")
 	}
-	handler(httptest.NewRecorder(), httptest.NewRequest("GET", "/state", nil))
+	handler(httptest.NewRecorder(), owner("GET", "/state"))
 	if calls != 1 {
 		t.Fatal("read blocked")
 	}
 	release()
-	handler(httptest.NewRecorder(), httptest.NewRequest("PUT", "/console/settings", nil))
+	handler(httptest.NewRecorder(), owner("PUT", "/console/settings"))
 	if calls != 2 {
 		t.Fatal("abandoned restart stranded writes")
+	}
+}
+
+func TestGuardRefusesEveryRequestWithoutAToken(t *testing.T) {
+	s := &Server{}
+	calls := 0
+	handler := s.guard(func(w http.ResponseWriter, r *http.Request) { calls++ })
+	for _, target := range []string{"/state", "/state?token="} {
+		for _, header := range []string{"", "Bearer "} {
+			r := httptest.NewRequest("GET", target, nil)
+			if header != "" {
+				r.Header.Set("Authorization", header)
+			}
+			w := httptest.NewRecorder()
+			handler(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("%s with Authorization %q = %d, want 401", target, header, w.Code)
+			}
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("%d requests reached the handler of a server without a token", calls)
 	}
 }

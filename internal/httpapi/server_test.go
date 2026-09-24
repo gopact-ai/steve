@@ -14,6 +14,9 @@ import (
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
+// testToken is the owner token of servers the tests start with serve.
+const testToken = "test-token"
+
 func serve(t *testing.T, model *readmodel.Model, cfg ServerConfig) *Server {
 	t.Helper()
 	server, err := NewServer(model, cfg)
@@ -27,9 +30,9 @@ func serve(t *testing.T, model *readmodel.Model, cfg ServerConfig) *Server {
 
 func TestServerServesStateEventsAndPage(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
-	server := serve(t, model, ServerConfig{})
+	server := serve(t, model, ServerConfig{Token: testToken})
 
-	res, err := http.Get(server.URL() + "/state")
+	res, err := http.Get(server.URL() + "/state?token=" + testToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +45,7 @@ func TestServerServesStateEventsAndPage(t *testing.T) {
 		t.Fatalf("snapshot over http = %+v", snap.Hub)
 	}
 
-	page, err := http.Get(server.URL() + "/")
+	page, err := http.Get(server.URL() + "/?token=" + testToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +62,7 @@ func TestServerServesStateEventsAndPage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL()+"/events", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	stream, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -77,15 +81,20 @@ func TestServerServesStateEventsAndPage(t *testing.T) {
 	t.Fatal("the event never reached the stream")
 }
 
-// Binding off loopback without a token is refused: the snapshot names hosts,
-// goals and agents, and that is not something to hand to the network by
-// accident.
-func TestNonLoopbackRequiresAToken(t *testing.T) {
+// A server without a token is refused on any address: loopback keeps other
+// machines out, not other local users or processes, and the console grants
+// owner operations.
+func TestServerRequiresAToken(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
-	if _, err := NewServer(model, ServerConfig{Addr: "0.0.0.0:0"}); err == nil {
-		t.Fatal("a public bind was accepted with no token")
-	} else if !strings.Contains(err.Error(), "token") {
-		t.Fatalf("error = %v", err)
+	for _, addr := range []string{"", "127.0.0.1:0", "0.0.0.0:0"} {
+		for _, token := range []string{"", "  "} {
+			if server, err := NewServer(model, ServerConfig{Addr: addr, Token: token}); err == nil {
+				_ = server.Close()
+				t.Fatalf("addr %q was accepted with token %q", addr, token)
+			} else if !strings.Contains(err.Error(), "token") {
+				t.Fatalf("addr %q: error = %v", addr, err)
+			}
+		}
 	}
 	server, err := NewServer(model, ServerConfig{Addr: "0.0.0.0:0", Token: "s3cret"})
 	if err != nil {

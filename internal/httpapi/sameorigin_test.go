@@ -12,7 +12,7 @@ import (
 // browser: those can POST to 127.0.0.1, and a rebound DNS name can read it.
 func TestLoopbackConsoleRefusesOtherSites(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
-	server := serve(t, model, ServerConfig{})
+	server := serve(t, model, ServerConfig{Token: testToken})
 	console := &fakeConsole{}
 	server.SetConsole(console)
 
@@ -20,6 +20,7 @@ func TestLoopbackConsoleRefusesOtherSites(t *testing.T) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodPost, server.URL()+"/console/send", strings.NewReader(`{"conversation":"console:main","input":"rm -rf"}`))
 		req.Header.Set("Content-Type", "text/plain")
+		req.Header.Set("Authorization", "Bearer "+testToken)
 		if host != "" {
 			req.Host = host
 		}
@@ -45,6 +46,7 @@ func TestLoopbackConsoleRefusesOtherSites(t *testing.T) {
 
 	read, _ := http.NewRequest(http.MethodGet, server.URL()+"/state", nil)
 	read.Host = "evil.example:7710"
+	read.Header.Set("Authorization", "Bearer "+testToken)
 	res, err := http.DefaultClient.Do(read)
 	if err != nil {
 		t.Fatal(err)

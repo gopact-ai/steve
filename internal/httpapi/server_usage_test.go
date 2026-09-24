@@ -56,8 +56,8 @@ func TestUsageEndpointIsGuardedIndependentAndFresh(t *testing.T) {
 
 func TestUsageEndpointRetainsReadFailureWithoutFabricatingZero(t *testing.T) {
 	source := &usageHTTPSource{err: errors.New("usage samples unavailable")}
-	server := serve(t, readmodel.New(readmodel.Sources{Ledger: source}), ServerConfig{})
-	code, _, raw := taskMetaRequest(t, server, http.MethodGet, "/usage", "", "")
+	server := serve(t, readmodel.New(readmodel.Sources{Ledger: source}), ServerConfig{Token: testToken})
+	code, _, raw := taskMetaRequest(t, server, http.MethodGet, "/usage", testToken, "")
 	var got readmodel.UsageSnapshot
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("usage response: %d %s: %v", code, raw, err)
@@ -68,8 +68,8 @@ func TestUsageEndpointRetainsReadFailureWithoutFabricatingZero(t *testing.T) {
 }
 
 func TestStateEndpointDoesNotExposeUsage(t *testing.T) {
-	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{})
-	code, _, raw := taskMetaRequest(t, server, http.MethodGet, "/state", "", "")
+	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+	code, _, raw := taskMetaRequest(t, server, http.MethodGet, "/state", testToken, "")
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil || code != http.StatusOK {
 		t.Fatalf("state response: %d %s: %v", code, raw, err)
