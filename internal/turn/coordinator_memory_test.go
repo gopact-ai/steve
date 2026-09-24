@@ -226,8 +226,8 @@ func TestMemoryProjectScopeInsideAnExecutionIsTheAttemptsProject(t *testing.T) {
 	}
 }
 
-// memoryCoordinator declares no home project. With one, as the gateway
-// declares at boot, an unbound owner DM falls to home and gets none.
+// memoryCoordinator declares no home project. With one, as the application
+// always declares, an unbound owner DM falls to home and gets none.
 func TestProjectMemoryOfAnUnboundConversationWithoutAHomeProjectIsTheDefaultProjects(t *testing.T) {
 	c := memoryCoordinator(t)
 	seedFact(t, c, memory.ProjectScope("alpha"), "tests run with -race")
