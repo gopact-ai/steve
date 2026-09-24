@@ -139,6 +139,12 @@ func (a *Service) place(node string) string {
 	return a.NodeName
 }
 
+// name is nodewire.Name for this service's machine: the display name of
+// place(node).
+func (a *Service) name(node string) string {
+	return nodewire.Name(a.place(node))
+}
+
 func orHubName(node string) string {
 	if node == "" {
 		return "hub"

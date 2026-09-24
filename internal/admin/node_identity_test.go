@@ -78,3 +78,15 @@ func TestZeroObservationNumbersSnapshots(t *testing.T) {
 		t.Fatalf("sequences %d, %d", one.Snapshot.Sequence, two.Snapshot.Sequence)
 	}
 }
+
+// What admin says to a person about the empty node names this service's
+// machine, not whatever the process was last told it is.
+func TestServiceNamesItsOwnMachineForPeople(t *testing.T) {
+	a := &Service{NodeName: "node-a"}
+	if got := a.name(""); got != "node-a" {
+		t.Fatalf("name(\"\") = %q", got)
+	}
+	if got := a.name("node-b"); got != "node-b" {
+		t.Fatalf("name(node-b) = %q", got)
+	}
+}

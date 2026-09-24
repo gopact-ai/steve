@@ -56,15 +56,15 @@ func (a *Service) workspaceRootOf(ctx context.Context, nodeKey string) (string, 
 		advert, err := a.Nodes.Advert(actx, nodeKey)
 		switch {
 		case err != nil && !local:
-			return "", fmt.Errorf("读取 %s 的工作区目录失败：%w", nodewire.Name(nodeKey), err)
+			return "", fmt.Errorf("读取 %s 的工作区目录失败：%w", a.name(nodeKey), err)
 		case err == nil && advert.WorkspaceRoot != "":
 			return advert.WorkspaceRoot, nil
 		case !local:
-			return "", fmt.Errorf("%s 还没有报告自己的工作区目录，等它连上再试", nodewire.Name(nodeKey))
+			return "", fmt.Errorf("%s 还没有报告自己的工作区目录，等它连上再试", a.name(nodeKey))
 		}
 	}
 	if !local {
-		return "", fmt.Errorf("还不知道 %s 的工作区目录", nodewire.Name(nodeKey))
+		return "", fmt.Errorf("还不知道 %s 的工作区目录", a.name(nodeKey))
 	}
 	a.ConfigStore.rlock()
 	defer a.ConfigStore.runlock()
@@ -123,10 +123,10 @@ func (a *Service) makeProjectDir(ctx context.Context, nodeKey, dir string) error
 		return nil
 	}
 	if a.Nodes == nil {
-		return fmt.Errorf("还不能在 %s 上建立目录", nodewire.Name(nodeKey))
+		return fmt.Errorf("还不能在 %s 上建立目录", a.name(nodeKey))
 	}
 	if _, err := a.Nodes.Files(ctx, nodeKey, nodewire.FileRequest{Op: nodewire.FileMkdir, Path: dir}); err != nil {
-		return fmt.Errorf("在 %s 上建立目录 %s 失败：%w", nodewire.Name(nodeKey), dir, err)
+		return fmt.Errorf("在 %s 上建立目录 %s 失败：%w", a.name(nodeKey), dir, err)
 	}
 	return nil
 }
