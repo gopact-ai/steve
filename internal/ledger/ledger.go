@@ -858,6 +858,15 @@ func (t *Tx) QueryRow(query string, args ...any) *Row {
 }
 
 // ---------------------------------------------------------------- reads
+//
+// The Ledger read methods below, and Read, Document.Load and DB's queries,
+// run on the read-only pool. Each call sees the state committed when it
+// starts; separate calls may see different commits, so reads that must
+// agree go through one Read. None of them sees a transaction in progress:
+// inside an Update, Transition or other mutation callback, read through the
+// callback's Tx (Tx.Name, Tx.Bindings, Tx.QueryRow) to see its own writes
+// and to decide on the same snapshot it writes to. A Ledger read called
+// from such a callback returns the last committed state instead.
 
 // Operation reads the current state.
 func (l *Ledger) Operation(ctx context.Context, id string) (Operation, bool, error) {
