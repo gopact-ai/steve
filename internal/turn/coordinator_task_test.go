@@ -28,7 +28,7 @@ func taskCoordinatorBook(t *testing.T, runner *fakeRunner, opts ...testOption) (
 
 // taskCoordinatorOn is taskCoordinatorBook with the runtime chosen: for a
 // test whose session must be more than a fakeRunner.
-func taskCoordinatorOn(t *testing.T, rt runtime, opts ...testOption) (*Coordinator, *task.Store, *ledger.Ledger) {
+func taskCoordinatorOn(t *testing.T, rt Runtime, opts ...testOption) (*Coordinator, *task.Store, *ledger.Ledger) {
 	t.Helper()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},

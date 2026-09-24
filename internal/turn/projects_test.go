@@ -16,14 +16,14 @@ import (
 // one project per agent, named after it and homed on its node at a fresh
 // directory, with the default agent's as the default project. Tests that
 // care which directory a session opens in read it back with workspaceOf.
-func newCoordinator(t *testing.T, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, opts ...testOption) *Coordinator {
+func newCoordinator(t *testing.T, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt Runtime, timeout time.Duration, opts ...testOption) *Coordinator {
 	t.Helper()
 	return newCoordinatorIn(t, nil, catalog, store, assembler, rt, timeout, opts...)
 }
 
 // newCoordinatorIn is newCoordinator with chosen directories per agent id;
 // agents not in dirs get a fresh one.
-func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, opts ...testOption) *Coordinator {
+func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt Runtime, timeout time.Duration, opts ...testOption) *Coordinator {
 	t.Helper()
 	var b testBuild
 	for _, opt := range opts {
@@ -74,7 +74,7 @@ func useHome(t *testing.T, c *Coordinator, dir string) {
 // restartCoordinator is the next gateway process: a new coordinator over
 // the same ledger, stores and bindings the previous one used, with its own
 // execution registry.
-func restartCoordinator(t *testing.T, prev *Coordinator, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, opts ...testOption) *Coordinator {
+func restartCoordinator(t *testing.T, prev *Coordinator, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt Runtime, timeout time.Duration, opts ...testOption) *Coordinator {
 	t.Helper()
 	return buildCoordinator(t, append([]testOption{onLedger(ledgerOf(t, prev)), withDeps(func(d *Deps) {
 		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, store, assembler, rt, timeout

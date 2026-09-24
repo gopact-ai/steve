@@ -5,6 +5,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
@@ -39,3 +40,6 @@ func TestDepsKeepWhatATestSetsAndOpenTheRestOnItsLedger(t *testing.T) {
 		t.Fatalf("a second Deps on the same ledger reads active agent %q, want a", got)
 	}
 }
+
+// A package outside turn can name the runtime a coordinator is built with.
+var _ turn.Runtime = turntest.NoRuntime{}

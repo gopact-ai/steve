@@ -95,7 +95,8 @@ type UserError struct{ Text string }
 
 func (e UserError) Error() string { return e.Text }
 
-type runtime interface {
+// Runtime opens and closes the agent sessions turns run in.
+type Runtime interface {
 	OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error)
 	CloseSession(context.Context, harness.Placement, string) error
 	// SupportsHTTPMCP reports whether the harness's agent accepts HTTP MCP
@@ -171,7 +172,7 @@ type coordinatorState struct {
 	catalog     *agent.Catalog
 	store       *state.Store
 	assembler   *capability.Assembler
-	runtime     runtime
+	runtime     Runtime
 	timeout     time.Duration
 	// Runtime policy sources are installed before serving and read only at
 	// operation boundaries; a saved setting never interrupts a live turn.
@@ -245,7 +246,7 @@ type Deps struct {
 	Catalog   *agent.Catalog
 	Store     *state.Store
 	Assembler *capability.Assembler
-	Runtime   runtime
+	Runtime   Runtime
 	// Timeout bounds a prompt until a TimeoutSource is installed.
 	Timeout time.Duration
 	Text    i18n.Catalog
