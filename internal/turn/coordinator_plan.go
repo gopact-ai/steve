@@ -86,9 +86,6 @@ func (c *Coordinator) openPlanTask(req Request, goal, projectID string) (task.Ta
 }
 
 func (c *Coordinator) openPreparedPlanTask(ctx context.Context, req Request, goal, projectID string) (task.Task, error) {
-	if c.tasks == nil {
-		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanDisabled))
-	}
 	var prepared *task.PreparedPlan
 	if pure, ok := c.supervisor.(rulePlanner); ok {
 		built, available, err := pure.PrepareRulePlan(ctx, goal, projectID)
@@ -110,9 +107,6 @@ func (c *Coordinator) openPreparedPlanTask(ctx context.Context, req Request, goa
 }
 
 func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID string, prepared *task.PreparedPlan) (task.Task, error) {
-	if c.tasks == nil {
-		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanDisabled))
-	}
 	created, err := c.tasks.Create(task.Task{
 		Transport: req.Channel, ChatID: req.ChatID, AnchorMessage: req.MessageID, ChatType: string(req.ChatType), OpenCard: req.CardID,
 		Goal: goal, Requester: req.SenderOpenID, Channel: req.ConversationID,
@@ -133,9 +127,6 @@ func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID stri
 // on counting it as work in flight. resuming holds the tasks whose run is
 // about to be picked back up, which are not orphans.
 func (c *Coordinator) cancelOrphanedPlans(resuming map[string]bool) {
-	if c.tasks == nil {
-		return
-	}
 	for _, tracked := range c.tasks.List("") {
 		if tracked.Origin != "plan" || tracked.Channel != "" || resuming[tracked.ID] {
 			continue
@@ -160,7 +151,7 @@ func (c *Coordinator) cancelOrphanedPlans(resuming map[string]bool) {
 // as running long after its card said it stopped. A task that is already
 // terminal is left alone: a step that closed it had the better answer.
 func (c *Coordinator) closePlanTask(id string, runErr error) {
-	if c.tasks == nil || id == "" {
+	if id == "" {
 		return
 	}
 	if tracked, ok := c.tasks.Get(id); !ok || tracked.State.Terminal() || tracked.State == task.StateFailed {
@@ -184,7 +175,7 @@ func (c *Coordinator) closePlanTask(id string, runErr error) {
 // already when the last step lands, and advancing a second time would
 // only log an error about a move from done to done.
 func (c *Coordinator) finishPlanTask(ctx context.Context, id string) {
-	if c.tasks == nil || id == "" {
+	if id == "" {
 		return
 	}
 	if tracked, ok := c.tasks.Get(id); !ok || tracked.State.Terminal() {
@@ -278,7 +269,7 @@ func (c *Coordinator) landingSummary(outcome exec.Outcome) string {
 // abandoned attempts, and the outcome reaches the chat through the task's
 // anchor like a turn that finished late.
 func (c *Coordinator) ResumePlans(ctx context.Context) {
-	if c.supervisor == nil || c.plans == nil || c.tasks == nil {
+	if c.supervisor == nil || c.plans == nil {
 		return
 	}
 	if err := c.supervisor.PrepareRecovery(ctx); err != nil {

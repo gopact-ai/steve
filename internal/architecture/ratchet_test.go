@@ -17,8 +17,9 @@ import (
 )
 
 // The ratchets below only let the codebase improve: they fail when a new
-// offender appears and when the baseline still lists one that is gone. Regenerate a
-// baseline after removing offenders with RATCHET_UPDATE=1.
+// offender appears, when the baseline still lists one that is gone, and
+// when a sized entry differs from its baseline. Regenerate a baseline after
+// an improvement with RATCHET_UPDATE=1.
 
 const (
 	// longFunction is the length a non-test function may not exceed
@@ -120,8 +121,15 @@ func ratchetWith(t *testing.T, name string, current []string, fix func(item stri
 	if err != nil {
 		t.Fatalf("read baseline %s: %v (regenerate with RATCHET_UPDATE=1)", name, err)
 	}
-	// An entry is "name" or "name size"; a sized entry may shrink below its
-	// baseline without touching the file, but not grow past it.
+	for _, problem := range ratchetProblems(name, strings.Split(string(raw), "\n"), current, fix) {
+		t.Error(problem)
+	}
+}
+
+// ratchetProblems compares current against the baseline lines. An entry is
+// "name" or "name size"; a sized entry must match its baseline, so a
+// shrink is recorded before anything can grow back into it.
+func ratchetProblems(name string, lines, current []string, fix func(item string) string) []string {
 	split := func(entry string) (string, int) {
 		if i := strings.LastIndexByte(entry, ' '); i >= 0 {
 			if size, err := strconv.Atoi(entry[i+1:]); err == nil {
@@ -131,12 +139,13 @@ func ratchetWith(t *testing.T, name string, current []string, fix func(item stri
 		return entry, 0
 	}
 	baseline := map[string]int{}
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for _, line := range lines {
 		if line = strings.TrimSpace(line); line != "" {
 			key, size := split(line)
 			baseline[key] = size
 		}
 	}
+	var problems []string
 	seen := map[string]bool{}
 	for _, item := range current {
 		key, size := split(item)
@@ -144,15 +153,48 @@ func ratchetWith(t *testing.T, name string, current []string, fix func(item stri
 		limit, listed := baseline[key]
 		switch {
 		case !listed:
-			t.Errorf("%s: new offender %s — %s", name, item, fix(item))
+			problems = append(problems, fmt.Sprintf("%s: new offender %s — %s", name, item, fix(item)))
 		case size > limit:
-			t.Errorf("%s: %s grew past its baseline (%d > %d)", name, key, size, limit)
+			problems = append(problems, fmt.Sprintf("%s: %s grew past its baseline (%d > %d)", name, key, size, limit))
+		case size < limit:
+			problems = append(problems, fmt.Sprintf("%s: %s shrank below its baseline (%d < %d); lower it in testdata/%s.txt", name, key, size, limit, name))
 		}
 	}
+	keys := make([]string, 0, len(baseline))
 	for key := range baseline {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		if !seen[key] {
-			t.Errorf("%s: %s is no longer an offender; remove it from testdata/%s.txt", name, key, name)
+			problems = append(problems, fmt.Sprintf("%s: %s is no longer an offender; remove it from testdata/%s.txt", name, key, name))
 		}
+	}
+	return problems
+}
+
+// A sized entry pins its size: growing past it is a regression, and
+// shrinking below it leaves room for the next change to grow back unseen.
+func TestRatchetPinsSizedEntries(t *testing.T) {
+	fix := func(string) string { return "fix it" }
+	baseline := []string{"a 10", "b 5", "gone"}
+	for _, tc := range []struct {
+		name    string
+		current []string
+		want    []string
+	}{
+		{"equal", []string{"a 10", "b 5", "gone"}, nil},
+		{"grew", []string{"a 11", "b 5", "gone"}, []string{"r: a grew past its baseline (11 > 10)"}},
+		{"shrank", []string{"a 9", "b 5", "gone"}, []string{"r: a shrank below its baseline (9 < 10); lower it in testdata/r.txt"}},
+		{"new", []string{"a 10", "b 5", "gone", "c"}, []string{"r: new offender c — fix it"}},
+		{"removed", []string{"a 10", "b 5"}, []string{"r: gone is no longer an offender; remove it from testdata/r.txt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ratchetProblems("r", baseline, tc.current, fix)
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("problems = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

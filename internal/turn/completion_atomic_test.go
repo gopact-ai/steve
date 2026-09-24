@@ -52,7 +52,7 @@ func TestTurnCompletionFailureDoesNotPublishItsName(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	c := &Coordinator{coordinatorState: &coordinatorState{attempts: attempts, artifacts: artifacts, projects: projects}}
+	c := buildCoordinator(t, onLedger(book), withDeps(func(d *Deps) { d.Attempts, d.Artifacts, d.Projects = attempts, artifacts, projects }))
 	if err := c.closeAttempt(t.Context(), r.ID, Result{Text: "done"}, nil, &turnSpend{}, nil); err == nil {
 		t.Fatal("terminal write failure was reported as success")
 	}
@@ -104,7 +104,9 @@ func TestTurnCompletionRequiresReadableProject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := &Coordinator{coordinatorState: &coordinatorState{attempts: attempts, projects: projects, artifacts: artifact.New(t.TempDir(), book, projects, nil)}}
+		c := buildCoordinator(t, onLedger(book), withDeps(func(d *Deps) {
+			d.Attempts, d.Projects, d.Artifacts = attempts, projects, artifact.New(t.TempDir(), book, projects, nil)
+		}))
 		if err := c.closeAttempt(t.Context(), r.ID, Result{Text: "done"}, nil, &turnSpend{}, nil); err == nil || !strings.Contains(err.Error(), "project") {
 			t.Fatalf("unread project silently completed: %v", err)
 		}

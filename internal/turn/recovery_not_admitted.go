@@ -14,7 +14,7 @@ import (
 func (c *Coordinator) ConfirmNeverAdmitted(ctx context.Context, req Request) (bool, error) {
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
-	if c.maintaining || c.attempts == nil || c.tasks == nil {
+	if c.maintaining {
 		return false, errors.New("never-admitted recovery proof is unavailable")
 	}
 	if req.Channel != "console" || !strings.HasPrefix(req.ConversationID, "console:") ||

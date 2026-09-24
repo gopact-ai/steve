@@ -75,6 +75,7 @@ func (r *orderedPreferenceRunner) SetModel(_ context.Context, _ string, value st
 }
 
 func TestConcurrentPreferencesKeepSavedAndLiveOrder(t *testing.T) {
+	t.Parallel()
 	c, rt, _ := selectorCoordinator(t, true)
 	r := &orderedPreferenceRunner{recoveryConfigurable: rt.runner.(*recoveryConfigurable),
 		entered: make(chan struct{}), release: make(chan struct{})}

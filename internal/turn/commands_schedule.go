@@ -19,9 +19,6 @@ import (
 // as the message the user would have typed themselves.
 func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Command, rest string) Result {
 	title := c.text.T(i18n.CardSchedules)
-	if c.schedules == nil {
-		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.SchedulesEmpty, cmd)}
-	}
 	if req.Origin != "" {
 		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：自动触发的任务不能再创建定时任务。"}
 	}
@@ -77,9 +74,6 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 // the user has in mind.
 func (c commands) schedulesCmd(req Request, rest string) Result {
 	title := c.text.T(i18n.CardSchedules)
-	if c.schedules == nil {
-		return Result{Title: title, Text: c.text.T(i18n.SchedulesEmpty, protocol.CommandEvery)}
-	}
 	fields := strings.Fields(rest)
 	if len(fields) == 2 && (fields[0] == "confirm" || fields[0] == "retry" || fields[0] == "确认" || fields[0] == "重试") {
 		id := strings.TrimPrefix(fields[1], "#")

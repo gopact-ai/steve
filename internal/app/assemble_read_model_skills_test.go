@@ -18,7 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/skills"
-	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // Exercise the assembled After, not a copy of its control flow. The only
@@ -86,7 +86,7 @@ func TestReadModelSkillsAfterConvergesLocallyDespiteRemoteError(t *testing.T) {
 				manager.Stop()
 			}
 			// SetSkill owns the real skills admission lock until After returns.
-			service := &adminsvc.Service{LiveSkills: live, Coordinator: turn.New(nil, nil, nil, manager, 0)}
+			service := &adminsvc.Service{LiveSkills: live, Coordinator: turntest.New(t, func(o *turntest.Options) { o.Runtime = manager })}
 			after := live.After
 			live.After = func() error {
 				if release, ok := service.Coordinator.SkillsLock(); ok {

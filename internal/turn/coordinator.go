@@ -95,7 +95,8 @@ type UserError struct{ Text string }
 
 func (e UserError) Error() string { return e.Text }
 
-type runtime interface {
+// Runtime opens and closes the agent sessions turns run in.
+type Runtime interface {
 	OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error)
 	CloseSession(context.Context, harness.Placement, string) error
 	// SupportsHTTPMCP reports whether the harness's agent accepts HTTP MCP
@@ -171,12 +172,12 @@ type coordinatorState struct {
 	catalog     *agent.Catalog
 	store       *state.Store
 	assembler   *capability.Assembler
-	runtime     runtime
+	runtime     Runtime
 	timeout     time.Duration
-	// Runtime policy sources are installed before serving and read only at
-	// operation boundaries; a saved setting never interrupts a live turn.
-	TimeoutSource     func() time.Duration
-	AutoResolveSource func() bool
+	// Runtime policy sources are read only at operation boundaries; a
+	// saved setting never interrupts a live turn.
+	timeoutSource     func() time.Duration
+	autoResolveSource func() bool
 	channelOwners     map[string]string
 	home              home.Loader
 	homePath          string
@@ -191,7 +192,7 @@ type coordinatorState struct {
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
 	modes map[string]home.Mode
-	// memory is what Steve remembers, by scope; nil until wired.
+	// memory is what Steve remembers, by scope.
 	memory     *memory.Service
 	schedules  *schedule.Store
 	supervisor Supervisor
@@ -239,23 +240,97 @@ type coordinatorState struct {
 	skillsLock      int
 }
 
-func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {
-	return &Coordinator{
-		text: i18n.New(i18n.LocaleZH),
-		coordinatorState: &coordinatorState{
-			catalog: catalog, store: store, assembler: assembler, runtime: runtime, timeout: timeout,
-			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
-			cancelPending: map[string]time.Time{},
-		},
+// Deps is everything a Coordinator is built with. New refuses a Deps
+// missing anything Deps.required lists; every other field may be zero.
+type Deps struct {
+	Catalog   *agent.Catalog
+	Store     *state.Store
+	Assembler *capability.Assembler
+	Runtime   Runtime
+	// Timeout is how long a turn may go without progress before it is
+	// cancelled, and the deadline of a /model command and of reading an
+	// agent's selectors. TimeoutSource, when set, is read in its place
+	// each time one of them starts.
+	Timeout       time.Duration
+	TimeoutSource func() time.Duration
+	// AutoResolveSource, when set, decides at each sweep whether a merge
+	// conflict is handed to an agent, in place of SetAutoResolve.
+	AutoResolveSource func() bool
+	Text              i18n.Catalog
+	// Owner is the baseline owner identity; ChannelOwners registers each
+	// trusted non-console adapter's native owner.
+	Owner         string
+	ChannelOwners map[string]string
+	Home          home.Loader
+	Skills        *skills.Live
+	Projects      *project.Store
+	// DefaultProject binds a conversation that has never chosen;
+	// HomeProject, when set, binds the owner's DM instead.
+	DefaultProject string
+	HomeProject    string
+	Memory         *memory.Service
+	Attempts       *attempt.Service
+	Artifacts      *artifact.Store
+	Intents        *intent.Service
+	Executions     *execution.Registry
+	Tasks          *task.Store
+	// Node is the name tasks record as the machine that tracks them.
+	Node      string
+	Schedules *schedule.Store
+}
+
+// dependency is one Deps field New refuses to build without.
+type dependency struct {
+	name   string
+	absent bool
+}
+
+// required is every Deps field New refuses to build without. Each is named
+// after the Coordinator field it fills, lower-cased: a field on this list is
+// never nil once New returns.
+func (d Deps) required() []dependency {
+	return []dependency{
+		{"Catalog", d.Catalog == nil}, {"Store", d.Store == nil}, {"Assembler", d.Assembler == nil},
+		{"Runtime", d.Runtime == nil}, {"Text", d.Text.IsZero()}, {"Home", d.Home == nil},
+		{"Skills", d.Skills == nil}, {"Projects", d.Projects == nil}, {"Memory", d.Memory == nil},
+		{"Attempts", d.Attempts == nil}, {"Artifacts", d.Artifacts == nil}, {"Intents", d.Intents == nil},
+		{"Executions", d.Executions == nil}, {"Tasks", d.Tasks == nil}, {"Schedules", d.Schedules == nil},
 	}
 }
 
-func (c *Coordinator) SetIdentity(ownerOpenID string, loader home.Loader) {
-	c.ownerOpenID = ownerOpenID
-	c.home = loader
-	if dir, ok := loader.(home.Dir); ok {
-		c.homePath = dir.Path
+// New builds a Coordinator from deps, or reports every dependency missing.
+func New(deps Deps) (*Coordinator, error) {
+	var missing []string
+	for _, dep := range deps.required() {
+		if dep.absent {
+			missing = append(missing, dep.name)
+		}
 	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("turn: missing dependencies: %s", strings.Join(missing, ", "))
+	}
+	owners, err := channelOwners(deps.ChannelOwners)
+	if err != nil {
+		return nil, fmt.Errorf("turn: %w", err)
+	}
+	homePath := ""
+	if dir, ok := deps.Home.(home.Dir); ok {
+		homePath = dir.Path
+	}
+	return &Coordinator{
+		text:        deps.Text,
+		ownerOpenID: deps.Owner,
+		coordinatorState: &coordinatorState{
+			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime, timeout: deps.Timeout,
+			timeoutSource: deps.TimeoutSource, autoResolveSource: deps.AutoResolveSource,
+			channelOwners: owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
+			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
+			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
+			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
+			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
+			cancelPending: map[string]time.Time{},
+		},
+	}, nil
 }
 
 // placement is where this agent's process belongs. It comes from the
@@ -266,35 +341,11 @@ func placement(selected agent.Agent) harness.Placement {
 	return harness.Placement{Node: selected.Node, Harness: selected.Harness}
 }
 
-// SetArtifacts wires the artifact store: chat turns get before- and
-// after-snapshots, plans get a base and a landing.
-func (c *Coordinator) SetArtifacts(store *artifact.Store) {
-	c.artifacts = store
-}
-
-// SetAttempts wires the attempt service: every chat turn becomes an
-// attempt, leased and fenced, from here on.
-func (c *Coordinator) SetAttempts(service *attempt.Service) {
-	c.attempts = service
-}
-
-// SetProjects wires the project store. defaultID binds a conversation that
-// has never chosen; homeID, when set, binds the owner's DM instead.
-func (c *Coordinator) SetProjects(store *project.Store, defaultID, homeID string) {
-	c.projects = store
-	c.defaultProject = defaultID
-	c.homeProject = homeID
-}
-
 // SetWorkspaceAttach wires what gives a project a directory on a machine
 // that has none. Without it a turn on such a machine is refused, which is
 // how a hub with no management service still behaves.
 func (c *Coordinator) SetWorkspaceAttach(attach func(ctx context.Context, projectID, node string) error) {
 	c.attach = attach
-}
-
-func (c *Coordinator) SetSkills(live *skills.Live) {
-	c.skills = live
 }
 
 // SetAgentGate enables the send primitive: each session gets the messaging
@@ -313,29 +364,23 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 	return c.store.ClearTaint(conversationID, agentID)
 }
 
-// SetTasks enables task tracking. It is optional: with no store the
-// coordinator behaves exactly as before, which keeps the turn path testable
-// without a filesystem.
-func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
-
 // SetAutoResolve decides whether a landing that stops at a merge conflict
 // is handed to an agent without anyone asking.
 func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
 
 func (c *Coordinator) promptTimeout() time.Duration {
-	if c.TimeoutSource != nil {
-		return c.TimeoutSource()
+	if c.timeoutSource != nil {
+		return c.timeoutSource()
 	}
 	return c.timeout
 }
 
-func (c *Coordinator) SetTasks(store *task.Store, node string) {
-	c.tasks = store
-	c.node = node
-}
-
-func (c *Coordinator) SetCatalog(cat i18n.Catalog) {
-	c.text = cat
+// autoResolves is whether a merge conflict goes to an agent unasked.
+func (c *Coordinator) autoResolves() bool {
+	if c.autoResolveSource != nil {
+		return c.autoResolveSource()
+	}
+	return c.autoResolve
 }
 
 func injectionMode(chatType protocol.ChatType, sender, owner string) home.Mode {

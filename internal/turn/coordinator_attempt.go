@@ -3,7 +3,6 @@ package turn
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -33,10 +32,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 	reject := func(cause error) (attempt.Completion, *project.Project, error) {
 		return attempt.Completion{}, nil, &lifecycle.Rejected{Completion: attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, Cause: cause}
 	}
-	if c.artifacts != nil && record.Base != "" {
-		if c.projects == nil {
-			return reject(errors.New("completion project source is not configured"))
-		}
+	if record.Base != "" {
 		p, ok, perr := c.projects.Get(ctx, record.Project)
 		if perr != nil {
 			return reject(fmt.Errorf("read completion project %s: %w", record.Project, perr))
@@ -70,7 +66,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 // landing under a lock this turn no longer holds, and the disclosure.
 func (c *Coordinator) afterCompletion(ctx context.Context, record attempt.Record, result Result, pending *project.Project, clock *turnClock) error {
 	clock.mark("finish")
-	if record.Workspace.Kind == project.KindWorktree && record.Execution != nil && c.tasks != nil {
+	if record.Workspace.Kind == project.KindWorktree && record.Execution != nil {
 		if tracked, ok := c.tasks.Get(record.TaskID); ok && tracked.RecoveryWorkspace != nil && tracked.RecoveryWorkspace.ID == record.Workspace.ID {
 			workspace := *tracked.RecoveryWorkspace
 			if record.Result != nil && record.Result.Artifact != "" {
@@ -117,7 +113,7 @@ type Disclosure struct {
 }
 
 func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Record, result Result) {
-	if c.projects == nil || result.Text == "" {
+	if result.Text == "" {
 		return
 	}
 	p, ok, err := c.projects.Get(ctx, record.Project)

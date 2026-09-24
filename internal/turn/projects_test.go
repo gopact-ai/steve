@@ -2,16 +2,12 @@ package turn
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
-	"github.com/gopact-ai/steve/internal/artifact"
-	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/datalevel"
-	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
 )
@@ -20,25 +16,22 @@ import (
 // one project per agent, named after it and homed on its node at a fresh
 // directory, with the default agent's as the default project. Tests that
 // care which directory a session opens in read it back with workspaceOf.
-func newCoordinator(t *testing.T, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, books ...*ledger.Ledger) *Coordinator {
+func newCoordinator(t *testing.T, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt Runtime, timeout time.Duration, opts ...testOption) *Coordinator {
 	t.Helper()
-	return newCoordinatorIn(t, nil, catalog, store, assembler, rt, timeout, books...)
+	return newCoordinatorIn(t, nil, catalog, store, assembler, rt, timeout, opts...)
 }
 
 // newCoordinatorIn is newCoordinator with chosen directories per agent id;
 // agents not in dirs get a fresh one.
-func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration, books ...*ledger.Ledger) *Coordinator {
+func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt Runtime, timeout time.Duration, opts ...testOption) *Coordinator {
 	t.Helper()
-	var book *ledger.Ledger
-	if len(books) > 0 {
-		book = books[0]
-	} else {
-		var err error
-		book, err = ledger.Open(t.TempDir(), ledger.Options{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { book.Close() })
+	var b testBuild
+	for _, opt := range opts {
+		opt(&b)
+	}
+	book := b.book
+	if book == nil {
+		book = testLedger(t)
 	}
 	projects := project.Open(book)
 	var declared []project.Project
@@ -52,11 +45,10 @@ func newCoordinatorIn(t *testing.T, dirs map[string]string, catalog *agent.Catal
 	if err := projects.Declare(context.Background(), declared); err != nil {
 		t.Fatal(err)
 	}
-	c := New(catalog, store, assembler, rt, timeout)
-	c.SetProjects(projects, catalog.Default().ID, "")
-	c.SetAttempts(attempt.New(book))
-	c.SetArtifacts(artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}))
-	return c
+	return buildCoordinator(t, append([]testOption{onLedger(book), withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, store, assembler, rt, timeout
+		d.Projects, d.DefaultProject = projects, catalog.Default().ID
+	})}, opts...)...)
 }
 
 // workspaceOf is the directory the agent's own project is homed at.
@@ -80,12 +72,14 @@ func useHome(t *testing.T, c *Coordinator, dir string) {
 }
 
 // restartCoordinator is the next gateway process: a new coordinator over
-// the same ledger, projects and bindings the previous one used.
-func restartCoordinator(t *testing.T, prev *Coordinator, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt runtime, timeout time.Duration) *Coordinator {
+// the same ledger, stores and bindings the previous one used, with its own
+// execution registry.
+func restartCoordinator(t *testing.T, prev *Coordinator, catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, rt Runtime, timeout time.Duration, opts ...testOption) *Coordinator {
 	t.Helper()
-	c := New(catalog, store, assembler, rt, timeout)
-	c.SetProjects(prev.projects, prev.defaultProject, prev.homeProject)
-	c.SetAttempts(prev.attempts)
-	c.SetArtifacts(prev.artifacts)
-	return c
+	return buildCoordinator(t, append([]testOption{onLedger(ledgerOf(t, prev)), withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, store, assembler, rt, timeout
+		d.Projects, d.DefaultProject, d.HomeProject = prev.projects, prev.defaultProject, prev.homeProject
+		d.Attempts, d.Artifacts, d.Tasks, d.Node = prev.attempts, prev.artifacts, prev.tasks, prev.node
+		d.Intents, d.Schedules, d.Memory = prev.intents, prev.schedules, prev.memory
+	})}, opts...)...)
 }

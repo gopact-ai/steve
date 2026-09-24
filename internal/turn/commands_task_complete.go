@@ -30,17 +30,14 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 				return task.ErrCompleteRoot
 			}
 		}
-		var guard func(*ledger.Tx, map[string]bool) error
-		if c.attempts != nil {
-			guard = func(tx *ledger.Tx, ids map[string]bool) error {
-				return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID)
-			}
+		guard := func(tx *ledger.Tx, ids map[string]bool) error {
+			return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID)
 		}
 		_, err := c.tasks.CompleteRoot(ctx, current.ID, current.Channel, guard)
 		return err
 	}
 	var err error
-	if c.executions != nil && !tracked.CompletedByUser {
+	if !tracked.CompletedByUser {
 		err = c.executions.WhileTaskIdle(tracked.ID, complete)
 	} else {
 		err = complete()

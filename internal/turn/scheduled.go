@@ -17,7 +17,7 @@ func checkScheduledProject(expected, actual string) error {
 // ValidateScheduled checks the immutable scheduled target without rebinding
 // the user's conversation. Execution repeats the project check after queueing.
 func (c *Coordinator) ValidateScheduled(ctx context.Context, conversation, expected, requester string) error {
-	if expected == "" || requester == "" || c.projects == nil {
+	if expected == "" || requester == "" {
 		return fmt.Errorf("scheduled project and requester must be recorded")
 	}
 	binding, ok, err := c.projects.Binding(ctx, conversation)

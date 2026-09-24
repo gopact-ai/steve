@@ -64,9 +64,6 @@ type chatTurn struct {
 // workspace. The machine must qualify for the project's level; the roster
 // knows both the machine's level and the endpoint's session cap.
 func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace) (attempt.Spec, roster.Candidate, error) {
-	if c.attempts == nil {
-		return attempt.Spec{}, roster.Candidate{}, errors.New("turn: attempts are not wired")
-	}
 	spec := attempt.Spec{Execution: execution.Token(ctx),
 		TaskID: taskID, TurnID: req.MessageID, Kind: attempt.KindChat, Project: binding.ProjectID,
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,
@@ -142,7 +139,7 @@ func (t *chatTurn) leased(ctx context.Context, e *lifecycle.Execution) (context.
 	if t.scope != nil {
 		t.scope.SetAttempt(e.Record.ID)
 	}
-	if c.tasks != nil && e.Record.Execution != nil {
+	if e.Record.Execution != nil {
 		if bindErr := c.tasks.BindAttempt(*e.Record.Execution, e.Record.ID, e.Record.TurnID); bindErr != nil {
 			return ctx, fmt.Errorf("bind task accounting: %w", bindErr)
 		}
@@ -162,9 +159,6 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 	if workspace.Kind == project.KindWorktree {
 		base := workspace.Base
 		return func(r *attempt.Record) { r.Base = base }, nil
-	}
-	if c.artifacts == nil {
-		return nil, nil
 	}
 	p, ok, perr := c.projects.Get(ctx, t.binding.ProjectID)
 	if perr != nil || !ok {

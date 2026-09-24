@@ -92,9 +92,6 @@ func TestApplicationLiveSettingsPreserveNativeSessionAndExistingBudget(t *testin
 	if err != nil || next.Budget.MaxTurns != 17 || next.Budget.MaxElapsed != 3*time.Hour {
 		t.Fatalf("new task did not consume saved budget: %+v %v", next.Budget, err)
 	}
-	if a.Coordinator.TimeoutSource() != 19*time.Minute || a.Coordinator.AutoResolveSource() {
-		t.Fatal("turn settings did not reach running coordinator")
-	}
 	limits, review := a.Artifacts.Policy()
 	if limits.MaxFiles != 321 || review.MaxEntries != 123 {
 		t.Fatal("artifact settings did not reach runtime consumer")

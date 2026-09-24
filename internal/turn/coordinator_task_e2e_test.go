@@ -10,7 +10,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
@@ -21,6 +20,7 @@ import (
 // process and reads task records from SQLite, because the point of a task is
 // that it is still there after the process that opened it is gone.
 func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	build := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
 	build.Dir = "../.."
@@ -58,12 +58,10 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		coordinator := newCoordinatorIn(t, map[string]string{"codex": workspace}, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second, book)
-		coordinator.SetArtifacts(artifact.New(filepath.Join(stateDir, "artifacts"), book, coordinator.projects, artifact.LocalNodes{Dir: nodeDir}))
-		coordinator.SetTasks(tasks, "e2e-node")
-		registry := execution.New(t.Context(), tasks)
-		coordinator.SetExecution(registry)
-		coordinator.artifacts.SetExecution(registry)
+		coordinator := newCoordinatorIn(t, map[string]string{"codex": workspace}, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second, onLedger(book), withTasks(tasks, "e2e-node"), withDeps(func(d *Deps) {
+			d.Artifacts = artifact.New(filepath.Join(stateDir, "artifacts"), book, d.Projects, artifact.LocalNodes{Dir: nodeDir})
+		}))
+		coordinator.artifacts.SetExecution(coordinator.executions)
 		return coordinator, manager, tasks
 	}
 

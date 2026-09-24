@@ -30,12 +30,10 @@ const goalLimit = 120
 // replace its original authorization with an empty or newer one.
 func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID string) (project.Binding, *execution.Scope, error) {
 	var previous task.Task
-	if c.tasks != nil {
-		previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
-	}
+	previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
 	req.stage(view.StageWorkspace)
 	binding, err := c.bindingFor(ctx, req)
-	if err != nil || c.executions == nil {
+	if err != nil {
 		return binding, nil, err
 	}
 	taskID := ""
@@ -60,12 +58,6 @@ func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID s
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
 	if req.ResumeAdmission != (task.ResumeAdmission{}) && req.ExpectedTask != req.ResumeAdmission.TaskID {
 		return "", fmt.Errorf("%w: resume input requires its original task", task.ErrExecutionStopped)
-	}
-	if c.tasks == nil {
-		if req.ExpectedTask != "" {
-			return "", fmt.Errorf("task continuation requires a task store")
-		}
-		return "", nil
 	}
 	executionNode := selected.Node
 	if executionNode == "" {
@@ -150,7 +142,7 @@ func onboarding(req Request) bool {
 // attempt continues it instead of opening another, and the idle sweep
 // closes it if onboarding never runs again.
 func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error) {
-	if c.tasks == nil || id == "" || turnErr != nil || !onboarding(req) {
+	if id == "" || turnErr != nil || !onboarding(req) {
 		return
 	}
 	if _, err := c.tasks.Advance(id, task.StateDone); err != nil {
@@ -163,9 +155,6 @@ func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error)
 // resume, not reported as completed. Every lineage leaves the conversation
 // slot, including unattended work, so new inputs cannot charge old work.
 func (c *Coordinator) closeTask(conversationID, agentID string) {
-	if c.tasks == nil {
-		return
-	}
 	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
 		if err := c.releaseConversationTask(tracked); err != nil {
 			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
@@ -182,9 +171,7 @@ func (c *Coordinator) releaseConversationTask(tracked task.Task) error {
 		if err != nil {
 			return err
 		}
-		if c.executions != nil {
-			c.executions.Stop(ids, task.ErrExecutionStopped)
-		}
+		c.executions.Stop(ids, task.ErrExecutionStopped)
 		return nil
 	}
 	_, err := c.tasks.Advance(tracked.ID, task.StateDone)
@@ -231,9 +218,6 @@ func (c *Coordinator) budgetStop(tracked task.Task) (string, bool) {
 // limit is what turns the brake from a surprise into something the user can
 // see coming.
 func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
-	if c.tasks == nil {
-		return nil
-	}
 	tracked, ok := c.tasks.Active(conversationID, agentID, "")
 	if !ok {
 		return nil
@@ -326,7 +310,7 @@ func (c *Coordinator) heardSince(conversationID string, mark time.Time) bool {
 // into a chat nobody is looking at; the plain-text line is the second, louder
 // knock — and it is only sent when the person truly went quiet.
 func (c *Coordinator) offlineReminder(req Request, id string, started time.Time, turnErr error) {
-	if c.notifier == nil || c.tasks == nil || id == "" || c.offlineAfter <= 0 {
+	if c.notifier == nil || id == "" || c.offlineAfter <= 0 {
 		return
 	}
 	if turnErr != nil {
@@ -360,19 +344,11 @@ const (
 )
 
 func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, error) {
-	var stopErr error
-	if c.executions != nil {
-		ids, err := c.tasks.SetAside(tracked.ID, to)
-		if err != nil {
-			return Result{Title: title, Text: err.Error()}, err
-		}
-		stopErr = c.stopExecutions(ctx, ids, confirmSettlement)
-	} else {
-		if _, err := c.tasks.Advance(tracked.ID, to); err != nil {
-			return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}, err
-		}
-		c.stopTurnFor(ctx, tracked)
+	ids, err := c.tasks.SetAside(tracked.ID, to)
+	if err != nil {
+		return Result{Title: title, Text: err.Error()}, err
 	}
+	stopErr := c.stopExecutions(ctx, ids, confirmSettlement)
 	moved, _ := c.tasks.Get(tracked.ID)
 	if stopErr != nil {
 		return Result{Title: title, Text: fmt.Sprintf("task #%s: stop recorded, execution has not confirmed stopping: %v", tracked.ID, stopErr)}, stopErr
@@ -394,56 +370,33 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 // stop; with confirmSettlement, an attempt still open counts as that.
 func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmSettlement bool) error {
 	var stopErr error
-	if c.attempts != nil {
-		for _, id := range ids {
-			if records, err := c.attempts.ForTask(ctx, id); err == nil {
-				for _, record := range records {
-					if !record.Unsettled && record.StopEvidence != "" {
-						stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
-					}
+	for _, id := range ids {
+		if records, err := c.attempts.ForTask(ctx, id); err == nil {
+			for _, record := range records {
+				if !record.Unsettled && record.StopEvidence != "" {
+					stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
 				}
-			} else {
-				stopErr = errors.Join(stopErr, err)
 			}
+		} else {
+			stopErr = errors.Join(stopErr, err)
 		}
 	}
 	waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
 	stopErr = errors.Join(stopErr, c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx))
 	finishWait()
-	if c.attempts != nil {
-		for _, id := range ids {
-			records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
-			if err != nil {
-				stopErr = errors.Join(stopErr, err)
-				continue
-			}
-			for _, record := range records {
-				if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
-					stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
-				}
+	for _, id := range ids {
+		records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
+		if err != nil {
+			stopErr = errors.Join(stopErr, err)
+			continue
+		}
+		for _, record := range records {
+			if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
+				stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
 			}
 		}
 	}
 	return stopErr
-}
-
-// stopTurnFor stops the turn a task is running through, if any. The task's own
-// member identifies that turn — by the time the user sets work aside they may
-// well be talking to a different agent.
-func (c *Coordinator) stopTurnFor(ctx context.Context, tracked task.Task) {
-	member, ok := c.catalog.Resolve(tracked.Member)
-	if !ok {
-		return
-	}
-	c.mu.Lock()
-	running := c.cancels[sessionKey(tracked.Channel, member.ID)] != nil
-	c.mu.Unlock()
-	if !running {
-		return
-	}
-	if _, err := c.cancelTurn(ctx, tracked.Channel, member); err != nil {
-		slog.Error(fmt.Sprintf("turn: stop turn for task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", member.ID)
-	}
 }
 
 func (c *Coordinator) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {

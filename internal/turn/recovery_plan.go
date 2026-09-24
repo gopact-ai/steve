@@ -40,7 +40,7 @@ func (c *Coordinator) retainedPlanRuns(ctx context.Context) ([]exec.RunRecord, e
 // RetainedPlans also finds planning calls made before a plan/run existed. The
 // task's persisted anchor is the original exchange; no command is reconstructed.
 func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error) {
-	if c.supervisor == nil || c.plans == nil || c.tasks == nil {
+	if c.supervisor == nil || c.plans == nil {
 		return nil, nil
 	}
 	runs, err := c.retainedPlanRuns(ctx)
@@ -69,22 +69,20 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 			}
 			item.RunID, item.Completed = run.RunID, run.Phase == exec.RunCompleted
 		}
-		if c.attempts != nil {
-			records, err := c.attempts.ForTask(ctx, tracked.ID)
-			if err != nil {
-				return nil, err
-			}
-			var latest attempt.Record
-			for _, record := range records {
-				if record.Kind != attempt.KindPlan || record.State == attempt.Superseded || !nodewire.IsManagedSession(record.Session) && !agentexec.PendingOpen(record) {
-					continue
-				}
-				if latest.ID == "" || record.StartedAt.After(latest.StartedAt) || record.StartedAt.Equal(latest.StartedAt) && record.ID > latest.ID {
-					latest = record
-				}
-			}
-			item.AttemptID, item.AgentID, item.NodeID = latest.ID, latest.Agent, latest.Node
+		records, err := c.attempts.ForTask(ctx, tracked.ID)
+		if err != nil {
+			return nil, err
 		}
+		var latest attempt.Record
+		for _, record := range records {
+			if record.Kind != attempt.KindPlan || record.State == attempt.Superseded || !nodewire.IsManagedSession(record.Session) && !agentexec.PendingOpen(record) {
+				continue
+			}
+			if latest.ID == "" || record.StartedAt.After(latest.StartedAt) || record.StartedAt.Equal(latest.StartedAt) && record.ID > latest.ID {
+				latest = record
+			}
+		}
+		item.AttemptID, item.AgentID, item.NodeID = latest.ID, latest.Agent, latest.Node
 		if item.PlanID != "" || item.AttemptID != "" || tracked.PreparedPlan != nil {
 			result = append(result, item)
 		}
@@ -137,7 +135,7 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 	if c.maintaining {
 		return Result{}, c.retainedBlocked("maintenance", "检查协调服务", "协调服务正在交接或维护。", "暂时不能接续计划。", "建议等待交接完成后继续。", nil)
 	}
-	if c.tasks == nil || c.plans == nil || c.supervisor == nil {
+	if c.plans == nil || c.supervisor == nil {
 		return Result{}, errors.New("retained plan recovery is not configured")
 	}
 	tracked, ok := c.tasks.Get(identity.TaskID)
@@ -181,14 +179,14 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 	if !exists && tracked.PreparedPlan != nil {
 		token = &tracked.PreparedPlan.Execution
 	}
-	if token == nil && identity.AttemptID != "" && c.attempts != nil {
+	if token == nil && identity.AttemptID != "" {
 		record, err := c.attempts.Get(ctx, identity.AttemptID)
 		if err != nil || record.TaskID != tracked.ID || record.Project != tracked.ProjectID || record.Kind != attempt.KindPlan {
 			return Result{}, errors.Join(err, errors.New("retained planning identity differs"))
 		}
 		token = record.Execution
 	}
-	if token == nil || c.executions == nil {
+	if token == nil {
 		return Result{}, c.retainedBlocked("plan-authority", "检查原计划授权", "原计划缺少可核对的执行授权。", "不能使用后续任务的授权继续旧计划。", "建议核对原任务与执行记录。", nil)
 	}
 	scope, err := c.executions.BeginAccepted(ctx, execution.Key{TaskID: tracked.ID, InstanceID: driver, AttemptID: identity.AttemptID}, token)

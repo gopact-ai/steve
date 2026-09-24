@@ -14,9 +14,6 @@ import (
 // may already have frozen the source history in an isolated snapshot; no runtime
 // starts until admission. ImportNativeSession repeats these checks at binding.
 func (c *Coordinator) PreflightNativeImport(ctx context.Context, conversation, projectID string, selected agent.Agent) (string, error) {
-	if c.projects == nil || c.store == nil {
-		return "", errors.New("native import requires project and conversation storage")
-	}
 	if err := c.require(ctx, projectID, c.ownerOpenID, project.RoleWrite); err != nil {
 		return "", err
 	}
@@ -37,9 +34,6 @@ func (c *Coordinator) PreflightNativeImport(ctx context.Context, conversation, p
 // ImportNativeSession binds history without creating a task, process or prompt.
 // The first subsequent user message follows normal admission and native open.
 func (c *Coordinator) ImportNativeSession(ctx context.Context, conversation, projectID string, selected agent.Agent, ref nativehistory.Reference) error {
-	if c.projects == nil || c.store == nil {
-		return errors.New("native import requires project and conversation storage")
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c.mu.Lock()

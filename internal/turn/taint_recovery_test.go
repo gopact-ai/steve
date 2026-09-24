@@ -12,7 +12,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -125,11 +124,11 @@ func TestTurnThatNeverPromptedLeavesNoUncertainSession(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	runner := &fakeRunner{id: "ns_live", reply: "ok"}
 	manager := nativeManager{&fakeManager{runners: map[string]*fakeRunner{"codex": runner}, mcpHTTP: true}}
-	c := New(catalog, sessions, capability.NewAssembler(nil), manager, time.Minute)
-	c.SetProjects(projects, "p", "")
-	c.SetTasks(tasks, "hub")
-	c.SetAttempts(attempt.New(book))
-	c.SetExecution(execution.New(t.Context(), tasks))
+	c := buildCoordinator(t, withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), manager, time.Minute
+		d.Projects, d.DefaultProject = projects, "p"
+		d.Tasks, d.Node = tasks, "hub"
+	}), onLedger(book))
 	c.SetAgentGate(&refusingGate{})
 	if _, err := handle(c, t.Context(), "work"); err == nil {
 		t.Fatal("refused grant did not fail the turn")

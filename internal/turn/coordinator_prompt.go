@@ -186,10 +186,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	extras = append(extras, c.projectMemory(ctx, req.ConversationID, req)...)
 	var capabilities capability.Capabilities
 	if saved.PluginRuntime != nil {
-		mode := home.ModeNone
-		if c.home != nil {
-			mode = injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
-		}
+		mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
 		capabilities, err = c.assembler.AssembleExtraPinned(selected, mode, extras, saved.PluginSkillsFingerprint)
 	} else {
 		capabilities, err = c.assemble(selected, req, extras)
@@ -269,9 +266,6 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 }
 
 func (c *Coordinator) assemble(selected agent.Agent, req Request, extras []capability.Extra) (capability.Capabilities, error) {
-	if c.home == nil {
-		return c.assembler.AssembleExtra(selected, home.ModeNone, extras)
-	}
 	return c.assembler.AssembleExtra(selected, injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID), extras)
 }
 
@@ -323,7 +317,7 @@ func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Age
 // nothing can still be writing to it, and reopening it is the same accepted
 // risk the recovery path takes: the agent replays its own history on load.
 func (c *Coordinator) clearSettledTaint(ctx context.Context, conversationID, agentID string, saved state.Session) (bool, error) {
-	if c.attempts == nil || saved.UpstreamID == "" {
+	if saved.UpstreamID == "" {
 		return false, nil
 	}
 	live, err := c.attempts.Live(ctx)

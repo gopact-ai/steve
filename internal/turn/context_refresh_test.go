@@ -57,6 +57,7 @@ func TestFirstConversationContinuesAfterIdentityGeneration(t *testing.T) {
 // turn ended cleanly or was interrupted: once nothing is still writing to it,
 // the uncertainty is over and the session keeps its history.
 func TestIdentityEditRefreshesTheConversationSession(t *testing.T) {
+	t.Parallel()
 	for _, tainted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "settled", true: "interrupted"}[tainted], func(t *testing.T) {
 			dir := t.TempDir()
@@ -95,6 +96,7 @@ func TestIdentityEditRefreshesTheConversationSession(t *testing.T) {
 }
 
 func TestIdentityRefreshAfterReopeningSessionState(t *testing.T) {
+	t.Parallel()
 	for _, missing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "persisted-baseline", true: "unknown-baseline"}[missing], func(t *testing.T) {
 			dir := t.TempDir()
@@ -124,8 +126,7 @@ func TestIdentityRefreshAfterReopeningSessionState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			next := restartCoordinator(t, c, c.catalog, reopened, c.assembler, manager, time.Minute)
-			next.SetIdentity("owner", home.Dir{Path: dir})
+			next := restartCoordinator(t, c, c.catalog, reopened, c.assembler, manager, time.Minute, withHome("owner", home.Dir{Path: dir}))
 			if err := home.WriteIdentity(dir, "updated soul", "updated name"); err != nil {
 				t.Fatal(err)
 			}

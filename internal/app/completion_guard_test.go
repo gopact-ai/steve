@@ -26,6 +26,7 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 type completionFixture struct {
@@ -63,12 +64,12 @@ func assembledCompletion(t *testing.T) completionFixture {
 	ctx, stop := context.WithCancel(t.Context())
 	t.Cleanup(stop)
 	assembler := capability.NewAssembler(nil)
-	coordinator := turn.New(catalog, sessions, assembler, manager, time.Minute)
 	attempts := attempt.New(book)
-	coordinator.SetTasks(tasks, "test")
-	coordinator.SetAttempts(attempts)
 	registry := execution.New(ctx, tasks)
-	coordinator.SetExecution(registry)
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = book, catalog, sessions, assembler, manager, time.Minute
+		o.Tasks, o.Node, o.Attempts, o.Executions = tasks, "test", attempts, registry
+	})
 	dir := t.TempDir()
 	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(dir, "state.json"), OwnerID: "test-owner"}}
 	life := &applicationLifetime{}

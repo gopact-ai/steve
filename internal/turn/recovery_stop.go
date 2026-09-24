@@ -22,7 +22,7 @@ func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req R
 	if req.Locale != "" {
 		c = c.localized(i18n.FromLang(req.Locale))
 	}
-	if c.maintaining || c.tasks == nil || c.attempts == nil || c.executions == nil {
+	if c.maintaining {
 		return Result{}, errors.New("recovery task control is unavailable")
 	}
 	tracked, ok := c.tasks.Get(taskID)

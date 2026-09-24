@@ -13,19 +13,6 @@ import (
 	"github.com/gopact-ai/steve/internal/memory"
 )
 
-// SetMemory wires what Steve remembers.
-func (c *Coordinator) SetMemory(svc *memory.Service) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.memory = svc
-}
-
-func (c *Coordinator) memoryService() *memory.Service {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.memory
-}
-
 // memoryProject is the project whose memory a conversation gets: the
 // one it is bound to, or the default, never Steve's own home (its memory
 // is the global one).
@@ -37,17 +24,11 @@ func (c *Coordinator) memoryProject(ctx context.Context, conversationID string) 
 		attemptID = key.AttemptID
 	}
 	if attemptID != "" {
-		if c.attempts == nil {
-			return ""
-		}
 		r, err := c.attempts.Get(ctx, attemptID)
 		if err != nil || r.Project == c.homeProject {
 			return ""
 		}
 		return r.Project
-	}
-	if c.projects == nil {
-		return ""
 	}
 	id, _, _, err := c.projectFor(ctx, conversationID)
 	if err != nil || id == "" || id == c.homeProject {
@@ -60,15 +41,14 @@ func (c *Coordinator) memoryProject(ctx context.Context, conversationID string) 
 // into the first turn: only for the owner in private, only when the
 // project has any.
 func (c *Coordinator) projectMemory(ctx context.Context, conversationID string, req Request) []capability.Extra {
-	svc := c.memoryService()
-	if svc == nil || injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
+	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
 		return nil
 	}
 	id := c.memoryProject(ctx, conversationID)
 	if id == "" {
 		return nil
 	}
-	text, err := svc.Snapshot(ctx, memory.ProjectScope(id))
+	text, err := c.memory.Snapshot(ctx, memory.ProjectScope(id))
 	if err != nil {
 		slog.Error(fmt.Sprintf("turn: project %s memory: %v", id, err), "conversation", conversationID, "project", id)
 		return nil
@@ -83,10 +63,7 @@ func (c *Coordinator) projectMemory(ctx context.Context, conversationID string, 
 // owner in private only, and "project" only when the conversation has
 // one. A delegated task may read but not write.
 func (c *Coordinator) memoryScope(ctx context.Context, conversationID, delegatedBy, raw string, write bool) (*memory.Service, memory.Scope, error) {
-	svc := c.memoryService()
-	if svc == nil {
-		return nil, memory.Scope{}, errors.New("memory is not wired on this gateway")
-	}
+	svc := c.memory
 	if c.modeOf(conversationID) != home.ModeOwner {
 		return nil, memory.Scope{}, errors.New("memory is the owner's, in private: this conversation is a group or a guest's, so nothing is remembered or recalled here")
 	}
