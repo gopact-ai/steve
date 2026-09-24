@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -69,46 +68,44 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 			return nodewire.Settings{}, fmt.Errorf("声明 %q 要写成 kind:id，如 network:office", d)
 		}
 	}
-	a.configStore().Lock()
-	// Agents keep naming harnesses that exist.
-	for id, ag := range a.Cfg.Agents {
-		if ag.Node == "" {
-			if _, ok := harnesses[ag.Harness]; !ok {
-				a.configStore().Unlock()
-				return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 AI 工具 %s，不能删", id, ag.Harness)
-			}
-			for _, srv := range ag.MCPServers {
-				if _, ok := servers[srv]; !ok {
-					a.configStore().Unlock()
-					return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 MCP 服务器 %s，不能删", id, srv)
+	var previous map[string]config.Harness
+	var stateDir string
+	saveErr := a.updateConfig(a.lifetime(), func(c *config.Config) error {
+		// Agents keep naming harnesses that exist.
+		for id, ag := range c.Agents {
+			if ag.Node == "" {
+				if _, ok := harnesses[ag.Harness]; !ok {
+					return fmt.Errorf("Agent %s 还在用 AI 工具 %s，不能删", id, ag.Harness)
+				}
+				for _, srv := range ag.MCPServers {
+					if _, ok := servers[srv]; !ok {
+						return fmt.Errorf("Agent %s 还在用 MCP 服务器 %s，不能删", id, srv)
+					}
 				}
 			}
 		}
-	}
-	old := *a.Cfg
-	a.Cfg.Harnesses = harnesses
-	a.Cfg.MCPServers = servers
-	a.Cfg.Gateway.Tools = append([]string(nil), set.Tools...)
-	a.Cfg.Gateway.Declares = append([]string(nil), set.Declares...)
-	a.Cfg.Gateway.Capabilities = append([]string(nil), set.Capabilities...)
-	saveErr := a.PersistConfig(a.Cfg)
+		previous = c.Harnesses
+		c.Harnesses = harnesses
+		c.MCPServers = servers
+		c.Gateway.Tools = append([]string(nil), set.Tools...)
+		c.Gateway.Declares = append([]string(nil), set.Declares...)
+		c.Gateway.Capabilities = append([]string(nil), set.Capabilities...)
+		stateDir = filepath.Dir(c.Gateway.StatePath)
+		return nil
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		a.Cfg.Harnesses, a.Cfg.MCPServers, a.Cfg.Gateway = old.Harnesses, old.MCPServers, old.Gateway
-		a.configStore().Unlock()
 		if errors.Is(saveErr, config.ErrFileChanged) {
 			return nodewire.Settings{}, errors.Join(nodewire.ErrSettingsRevisionConflict, saveErr)
 		}
 		return nodewire.Settings{}, saveErr
 	}
-	stateDir := filepath.Dir(a.Cfg.Gateway.StatePath)
-	a.configStore().Unlock()
 	// The running pieces follow the file.
 	for id, h := range harnesses {
 		if err := a.Manager.Set(id, harness.Config{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: runtime.ApplyEnv(h.Env, id, stateDir), Permission: h.Permission}); err != nil {
 			slog.Error(fmt.Sprintf("steve: harness %s: %v", id, err), "harness", id)
 		}
 	}
-	for id := range old.Harnesses {
+	for id := range previous {
 		if _, keep := harnesses[id]; !keep {
 			a.Manager.Remove(id)
 		}
@@ -237,28 +234,26 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	token := hex.EncodeToString(raw[:])
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	a.configStore().Lock()
-	if _, exists := a.Cfg.Nodes[name]; exists {
-		a.configStore().Unlock()
-		return consoleapi.AddNodeResult{}, fmt.Errorf("机器 %s 已经存在", name)
-	}
-	if name == NodeName() {
-		a.configStore().Unlock()
-		return consoleapi.AddNodeResult{}, fmt.Errorf("%s 是 hub 自己", name)
-	}
-	if a.Cfg.Nodes == nil {
-		a.Cfg.Nodes = map[string]config.Node{}
-	}
-	a.Cfg.Nodes[name] = config.Node{Addr: addr, Token: token, Level: string(level)}
-	saveErr := a.persistConfigContext(ctx, a.Cfg)
+	var levels map[string]datalevel.Level
+	var regions map[string]string
+	var binary string
+	saveErr := a.updateConfig(ctx, func(c *config.Config) error {
+		if _, exists := c.Nodes[name]; exists {
+			return fmt.Errorf("机器 %s 已经存在", name)
+		}
+		if name == NodeName() {
+			return fmt.Errorf("%s 是 hub 自己", name)
+		}
+		if c.Nodes == nil {
+			c.Nodes = map[string]config.Node{}
+		}
+		c.Nodes[name] = config.Node{Addr: addr, Token: token, Level: string(level)}
+		levels, regions, binary = c.NodeLevels(), c.NodeRegions(), c.Gateway.NodeBinary
+		return nil
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		delete(a.Cfg.Nodes, name)
-		a.configStore().Unlock()
 		return consoleapi.AddNodeResult{}, saveErr
 	}
-	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
-	binary := a.Cfg.Gateway.NodeBinary
-	a.configStore().Unlock()
 	a.hubURL = req.HubURL
 	a.Nodes.Add(name, node.Config{Addr: addr, Token: token, Level: string(level)})
 	a.Fleet.SetNodeLevels(levels)
@@ -276,41 +271,45 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 // worker's transport. A worker already recorded with the same address and
 // token keeps its recorded level; one recorded with a different address or
 // token is refused with coordination.ErrConflict. When the configuration
-// cannot be saved, nothing is recorded and the worker is not dialed.
+// cannot be saved, nothing is recorded and the worker is not dialed; when
+// it is saved but its directory cannot be synced, the worker is recorded
+// and dialed and that error returned.
 func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Config) error {
 	next := config.Node{Addr: worker.Addr, Token: worker.Token, Level: string(datalevel.Level(worker.Level).OrDefault())}
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	a.configStore().Lock()
-	old := a.Cfg.Nodes
-	existing, known := old[nodeID]
-	if known {
-		if existing.Addr != next.Addr || existing.Token != next.Token {
-			a.configStore().Unlock()
+	var levels map[string]datalevel.Level
+	var regions map[string]string
+	saveErr := a.updateConfig(a.lifetime(), func(c *config.Config) error {
+		existing, known := c.Nodes[nodeID]
+		if known && (existing.Addr != next.Addr || existing.Token != next.Token) {
 			return coordination.ErrConflict
 		}
-		next = existing
-	} else {
-		updated := maps.Clone(old)
-		if updated == nil {
-			updated = map[string]config.Node{}
+		if known {
+			next = existing
+		} else {
+			if c.Nodes == nil {
+				c.Nodes = map[string]config.Node{}
+			}
+			c.Nodes[nodeID] = next
 		}
-		updated[nodeID] = next
-		a.Cfg.Nodes = updated
-		if err := a.PersistConfig(a.Cfg); err != nil {
-			a.Cfg.Nodes = old
-			a.configStore().Unlock()
-			return err
+		levels, regions = c.NodeLevels(), c.NodeRegions()
+		if known {
+			return errUnchanged
 		}
+		return nil
+	})
+	if saveErr != nil && !config.Committed(saveErr) {
+		return saveErr
 	}
-	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
-	a.configStore().Unlock()
 	worker.Level = next.Level
 	a.Nodes.Add(nodeID, worker)
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
-	_, err := a.Nodes.Refresh(ctx, nodeID)
-	return err
+	if _, err := a.Nodes.Refresh(ctx, nodeID); err != nil {
+		return err
+	}
+	return saveErr
 }
 
 // RemoveNode forgets a machine. Nothing may still live on it: an agent
@@ -364,17 +363,16 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 			return fmt.Errorf("机器 %s 尚未退出集群：%w", name, err)
 		}
 	}
-	a.configStore().Lock()
-	saved := a.Cfg.Nodes[name]
-	delete(a.Cfg.Nodes, name)
-	saveErr := a.persistConfigContext(ctx, a.Cfg)
+	var levels map[string]datalevel.Level
+	var regions map[string]string
+	saveErr := a.updateConfig(ctx, func(c *config.Config) error {
+		delete(c.Nodes, name)
+		levels, regions = c.NodeLevels(), c.NodeRegions()
+		return nil
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
-		a.Cfg.Nodes[name] = saved
-		a.configStore().Unlock()
 		return saveErr
 	}
-	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
-	a.configStore().Unlock()
 	a.Nodes.Remove(name)
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
