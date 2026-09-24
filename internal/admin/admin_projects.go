@@ -26,7 +26,7 @@ func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
 	a.configStore().RLock()
-	candidate := config.CloneProjects(a.Cfg)
+	candidate := config.CloneProjects(a.cfg())
 	a.configStore().RUnlock()
 	if err := candidate.CheckFileRevision(a.Path); err != nil {
 		return err
@@ -279,7 +279,7 @@ func (a *Service) RemoveProject(ctx context.Context, id string) error {
 		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
 	}
 	a.configStore().RLock()
-	isDefault := id == a.Cfg.Gateway.DefaultProject
+	isDefault := id == a.cfg().Gateway.DefaultProject
 	a.configStore().RUnlock()
 	if isDefault {
 		return fmt.Errorf("%s 是默认项目，不能移除", id)
@@ -334,7 +334,7 @@ func (a *Service) ResumeProjectCopies(ctx context.Context) error {
 		}
 	}
 	a.configStore().RLock()
-	declared := config.CloneProjects(a.Cfg)
+	declared := config.CloneProjects(a.cfg())
 	a.configStore().RUnlock()
 	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(ctx, declared); err != nil {
 		return err

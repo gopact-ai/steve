@@ -41,13 +41,13 @@ func TestFailedMachineConfigurationSaveChangesNothing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := tc.fixture(t)
-			before := a.Cfg.Clone()
+			before := a.cfg().Clone()
 			a.WriteConfig = func(string, *config.Config) error { return errors.New("disk full") }
 			if err := tc.change(t, a); err == nil {
 				t.Fatal("a failed save was not reported")
 			}
-			if !reflect.DeepEqual(a.Cfg, before) {
-				t.Fatalf("a failed save changed the configuration:\n%+v\nwas\n%+v", a.Cfg, before)
+			if !reflect.DeepEqual(a.cfg(), before) {
+				t.Fatalf("a failed save changed the configuration:\n%+v\nwas\n%+v", a.cfg(), before)
 			}
 		})
 	}
@@ -68,7 +68,7 @@ func TestAdmitWorkerKeepsAWorkerWhoseConfigurationIsInPlace(t *testing.T) {
 	if !config.Committed(err) {
 		t.Fatalf("AdmitWorker = %v, want the committed save error", err)
 	}
-	if _, ok := admin.Cfg.Nodes["node-test"]; !ok {
+	if _, ok := admin.cfg().Nodes["node-test"]; !ok {
 		t.Fatal("the worker in the saved file was dropped from the configuration")
 	}
 	if !slices.Contains(admin.Nodes.Names(), "node-test") {

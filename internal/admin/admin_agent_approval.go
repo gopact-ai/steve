@@ -28,7 +28,7 @@ func (a *Service) SyncAgentApproval(ctx context.Context) (consoleapi.ApprovalSyn
 	out := consoleapi.ApprovalSync{}
 	err := a.changeAgents(func(agents map[string]config.Agent) error {
 		out = consoleapi.ApprovalSync{}
-		intent := a.Cfg.Gateway.DefaultApproval
+		intent := a.cfg().Gateway.DefaultApproval
 		if intent == "" {
 			return errors.New("还没有选择默认审批策略；先在设置里选一个，再同步给所有 Agent")
 		}

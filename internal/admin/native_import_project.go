@@ -93,7 +93,7 @@ func (a *Service) checkNativeImportTarget(name string, target config.Node, selec
 	if err := a.checkAgentNodeTarget(name, target); err != nil {
 		return err
 	}
-	current, exists := a.Cfg.Agents[selected.ID]
+	current, exists := a.cfg().Agents[selected.ID]
 	if !exists || current.Node != name || current.Harness != selected.Harness {
 		return errors.New("Agent 配置已变化，请重新选择")
 	}

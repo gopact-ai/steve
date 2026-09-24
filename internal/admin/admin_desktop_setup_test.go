@@ -23,7 +23,7 @@ func TestDesktopStatusReportsTheWorkspaceAndWhereTheGuideStands(t *testing.T) {
 	if !status.Enabled || !status.SetupRequired || status.Setup == nil || status.Setup.Step != "identity" || status.Setup.Done {
 		t.Fatalf("a fresh desktop opens the guide at its first page: %+v", status)
 	}
-	if status.WorkspacePath != admin.Cfg.Projects["workspace"].Home.Path || status.WorkspacePath == "" || !status.WorkspaceManaged {
+	if status.WorkspacePath != admin.cfg().Projects["workspace"].Home.Path || status.WorkspacePath == "" || !status.WorkspaceManaged {
 		t.Fatalf("status should name the default project's directory and that it is still the managed one: %+v", status)
 	}
 	status, err = admin.DesktopSetup(t.Context(), consoleapi.DesktopSetupRequest{Step: "agents"})
@@ -44,7 +44,7 @@ func TestDesktopStatusReportsTheWorkspaceAndWhereTheGuideStands(t *testing.T) {
 	if err != nil || status.SetupRequired || !status.Setup.Done {
 		t.Fatalf("finishing = %+v, %v", status, err)
 	}
-	reopened := &Service{Cfg: admin.Cfg, Path: admin.Path}
+	reopened := &Service{ConfigStore: admin.ConfigStore, Path: admin.Path}
 	status, _ = reopened.DesktopStatus(t.Context())
 	if status.SetupRequired || status.Setup == nil || !status.Setup.Done {
 		t.Fatalf("progress survives a restart: %+v", status)
@@ -59,14 +59,14 @@ func TestDesktopWorkspaceMovesTheDefaultProjectDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { book.Close() })
 	admin.Projects = project.Open(book)
-	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	before := admin.Cfg.Projects["workspace"].Home.Path
+	before := admin.cfg().Projects["workspace"].Home.Path
 	if _, err := admin.DesktopWorkspace(t.Context(), consoleapi.DesktopWorkspaceRequest{Path: "/etc"}); err == nil {
 		t.Fatal("system directories are refused")
 	}
-	if admin.Cfg.Projects["workspace"].Home.Path != before {
+	if admin.cfg().Projects["workspace"].Home.Path != before {
 		t.Fatal("a refused directory must not change the project")
 	}
 	status, err := admin.DesktopWorkspace(t.Context(), consoleapi.DesktopWorkspaceRequest{Path: "~/Steve"})
@@ -112,24 +112,24 @@ func TestDesktopWorkspaceLeavesAProjectOnAnotherMachineAlone(t *testing.T) {
 	}
 	t.Cleanup(func() { book.Close() })
 	admin.Projects = project.Open(book)
-	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	// A shared declaration names this machine's own node on local projects;
 	// that is still local.
-	if admin.Cfg.Nodes == nil {
-		admin.Cfg.Nodes = map[string]config.Node{}
+	if admin.cfg().Nodes == nil {
+		admin.cfg().Nodes = map[string]config.Node{}
 	}
-	admin.Cfg.Nodes[admin.Cfg.Gateway.HubID] = config.Node{Addr: "127.0.0.1:1", Token: "t", Level: "restricted"}
-	item := admin.Cfg.Projects["workspace"]
-	item.Home = config.ProjectHome{Node: admin.Cfg.Gateway.HubID, Path: item.Home.Path}
-	admin.Cfg.Projects["workspace"] = item
+	admin.cfg().Nodes[admin.cfg().Gateway.HubID] = config.Node{Addr: "127.0.0.1:1", Token: "t", Level: "restricted"}
+	item := admin.cfg().Projects["workspace"]
+	item.Home = config.ProjectHome{Node: admin.cfg().Gateway.HubID, Path: item.Home.Path}
+	admin.cfg().Projects["workspace"] = item
 	if _, err := admin.DesktopWorkspace(t.Context(), consoleapi.DesktopWorkspaceRequest{Path: "~/Here"}); err != nil {
 		t.Fatalf("a project homed on this node by name is local: %v", err)
 	}
-	item = admin.Cfg.Projects["workspace"]
+	item = admin.cfg().Projects["workspace"]
 	item.Home = config.ProjectHome{Node: "gpu-box", Path: "/srv/steve"}
-	admin.Cfg.Projects["workspace"] = item
+	admin.cfg().Projects["workspace"] = item
 	_, err = admin.DesktopWorkspace(t.Context(), consoleapi.DesktopWorkspaceRequest{Path: "~/Elsewhere"})
 	if err == nil || !desktop.IsInputError(err) || !strings.Contains(err.Error(), "另一台机器（gpu-box）") {
 		t.Fatalf("a remote default project is refused naming the machine: %v", err)
@@ -141,7 +141,7 @@ func TestDesktopWorkspaceLeavesAProjectOnAnotherMachineAlone(t *testing.T) {
 	if err := admin.SetProjectHome(t.Context(), "workspace", "/tmp/steve"); err == nil {
 		t.Fatal("SetProjectHome itself refuses a remote project")
 	}
-	if admin.Cfg.Projects["workspace"].Home.Path != "/srv/steve" {
-		t.Fatalf("the remote project is untouched: %+v", admin.Cfg.Projects["workspace"].Home)
+	if admin.cfg().Projects["workspace"].Home.Path != "/srv/steve" {
+		t.Fatalf("the remote project is untouched: %+v", admin.cfg().Projects["workspace"].Home)
 	}
 }

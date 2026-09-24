@@ -17,7 +17,7 @@ import (
 func presetFixture(t *testing.T) (*PluginService, string, plugins.Manifest) {
 	t.Helper()
 	service, source := pluginAdminFixture(t)
-	service.Admin.Cfg.Harnesses["mock"] = config.Harness{Command: "unused", Permission: "read"}
+	service.Admin.cfg().Harnesses["mock"] = config.Harness{Command: "unused", Permission: "read"}
 	catalog, err := agent.NewCatalog(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func importPresetVersion(t *testing.T, s *PluginService, source string, manifest
 
 func TestPluginPresetUpgradePreservesOverridesAndRecoversLostResult(t *testing.T) {
 	s, source, manifest := presetFixture(t)
-	req := consoleapi.PluginPresetRequest{CommandID: "create", AgentID: "reviewer", Node: "", Preset: "reviewer", Digest: s.Admin.Cfg.Plugins["tools"].Digest}
+	req := consoleapi.PluginPresetRequest{CommandID: "create", AgentID: "reviewer", Node: "", Preset: "reviewer", Digest: s.Admin.cfg().Plugins["tools"].Digest}
 	preview, err := s.PreviewPluginPreset(t.Context(), "tools", req)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestPluginPresetUpgradePreservesOverridesAndRecoversLostResult(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Proposed.Model != "base" || s.Admin.Cfg.Agents["reviewer"].PluginOrigin == nil {
+	if result.Proposed.Model != "base" || s.Admin.cfg().Agents["reviewer"].PluginOrigin == nil {
 		t.Fatal("preset was not applied")
 	}
 	// Simulate losing the independently stored result after configuration commit.
@@ -77,10 +77,10 @@ func TestPluginPresetUpgradePreservesOverridesAndRecoversLostResult(t *testing.T
 	if err != nil || replay.Proposed.Model != "base" {
 		t.Fatalf("commit gap replay: %+v %v", replay, err)
 	}
-	changed := s.Admin.Cfg.Agents["reviewer"]
+	changed := s.Admin.cfg().Agents["reviewer"]
 	changed.Model = "user-model"
 	changed.Options["effort"] = "user-effort"
-	s.Admin.Cfg.Agents["reviewer"] = changed
+	s.Admin.cfg().Agents["reviewer"] = changed
 	manifest.Version = "2.0.0"
 	template := manifest.Agents["reviewer"]
 	template.Model = "new-model"
@@ -89,7 +89,7 @@ func TestPluginPresetUpgradePreservesOverridesAndRecoversLostResult(t *testing.T
 	manifest.Agents["reviewer"] = template
 	importPresetVersion(t, s, source, manifest, "upgrade-package")
 	req.CommandID = "upgrade-agent"
-	req.Digest = s.Admin.Cfg.Plugins["tools"].Digest
+	req.Digest = s.Admin.cfg().Plugins["tools"].Digest
 	req.BaseRevision = ""
 	preview, err = s.PreviewPluginPreset(t.Context(), "tools", req)
 	if err != nil {
@@ -111,8 +111,8 @@ func TestPluginPresetUpgradePreservesOverridesAndRecoversLostResult(t *testing.T
 
 func TestPluginPresetRefusesUserOwnedAgentAndStaleRevision(t *testing.T) {
 	s, _, _ := presetFixture(t)
-	s.Admin.Cfg.Agents["user"] = config.Agent{Harness: "mock", SystemPrompt: "user-owned"}
-	req := consoleapi.PluginPresetRequest{AgentID: "user", Preset: "reviewer", Digest: s.Admin.Cfg.Plugins["tools"].Digest}
+	s.Admin.cfg().Agents["user"] = config.Agent{Harness: "mock", SystemPrompt: "user-owned"}
+	req := consoleapi.PluginPresetRequest{AgentID: "user", Preset: "reviewer", Digest: s.Admin.cfg().Plugins["tools"].Digest}
 	if _, err := s.PreviewPluginPreset(t.Context(), "tools", req); err == nil {
 		t.Fatal("overwrote user-owned Agent")
 	}
@@ -122,14 +122,14 @@ func TestPluginPresetRefusesUserOwnedAgentAndStaleRevision(t *testing.T) {
 	if _, err := s.ApplyPluginPreset(t.Context(), "tools", req); !errors.Is(err, consoleapi.ErrSettingsConflict) {
 		t.Fatalf("stale revision accepted: %v", err)
 	}
-	if _, ok := s.Admin.Cfg.Agents["new"]; ok {
+	if _, ok := s.Admin.cfg().Agents["new"]; ok {
 		t.Fatal("rejected preset created Agent")
 	}
 }
 
 func TestPluginPresetReplayFinishesPendingOperation(t *testing.T) {
 	s, _, _ := presetFixture(t)
-	req := consoleapi.PluginPresetRequest{CommandID: "create", AgentID: "reviewer", Preset: "reviewer", Digest: s.Admin.Cfg.Plugins["tools"].Digest}
+	req := consoleapi.PluginPresetRequest{CommandID: "create", AgentID: "reviewer", Preset: "reviewer", Digest: s.Admin.cfg().Plugins["tools"].Digest}
 	preview, err := s.PreviewPluginPreset(t.Context(), "tools", req)
 	if err != nil {
 		t.Fatal(err)

@@ -16,14 +16,14 @@ func ChannelValue[T any](v T) *T { return &v }
 func ChannelsAdminFixture(t *testing.T) (*adminsvc.Service, consoleapi.ChannelsService) {
 	t.Helper()
 	a := agentAdminFixture(t)
-	a.Cfg.Gateway.OwnerID, a.Cfg.Gateway.DefaultChannel = "console-owner", "feishu"
-	a.Cfg.Gateway.StatePath = filepath.Join(t.TempDir(), "state.json")
-	a.Cfg.Projects = map[string]config.Project{"work": {Home: config.ProjectHome{Path: t.TempDir()}}}
-	a.Cfg.Feishu = config.Feishu{AppID: "app", AppSecret: "original-private-secret", OwnerOpenID: "im-owner"}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	configOf(a).Gateway.OwnerID, configOf(a).Gateway.DefaultChannel = "console-owner", "feishu"
+	configOf(a).Gateway.StatePath = filepath.Join(t.TempDir(), "state.json")
+	configOf(a).Projects = map[string]config.Project{"work": {Home: config.ProjectHome{Path: t.TempDir()}}}
+	configOf(a).Feishu = config.Feishu{AppID: "app", AppSecret: "original-private-secret", OwnerOpenID: "im-owner"}
+	if err := config.Save(a.Path, configOf(a)); err != nil {
 		t.Fatal(err)
 	}
-	return a, adminsvc.NewChannels(a, a.Cfg)
+	return a, adminsvc.NewChannels(a, configOf(a))
 }
 
 func AssertNoChannelSecrets(t *testing.T, view consoleapi.ChannelsView) {
@@ -54,5 +54,12 @@ func agentAdminFixture(t *testing.T) *adminsvc.Service {
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	return &adminsvc.Service{Cfg: cfg, Path: path, Catalog: catalog}
+	return &adminsvc.Service{ConfigStore: adminsvc.NewConfigStore(cfg), Path: path, Catalog: catalog}
+}
+
+// configOf is the configuration a administers. Tests use it only while
+// nothing else changes that configuration.
+func configOf(a *adminsvc.Service) (cfg *config.Config) {
+	a.ConfigStore.Read(func(c *config.Config) { cfg = c })
+	return cfg
 }

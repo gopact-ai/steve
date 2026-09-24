@@ -21,7 +21,7 @@ func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
 		return config.Node{}, errors.New("请选择已接入的远端机器；本机工具请在本机登记")
 	}
 	a.configStore().RLock()
-	target, ok := a.Cfg.Nodes[name]
+	target, ok := a.cfg().Nodes[name]
 	a.configStore().RUnlock()
 	if !ok {
 		return config.Node{}, fmt.Errorf("没有叫 %q 的机器", name)
@@ -36,7 +36,7 @@ func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
 // authenticated target with the declaration it is about to commit. Reusing a display name cannot reuse an
 // earlier machine's discovery or installation result.
 func (a *Service) checkAgentNodeTarget(name string, expected config.Node) error {
-	current, ok := a.Cfg.Nodes[name]
+	current, ok := a.cfg().Nodes[name]
 	if !ok || current.Addr != expected.Addr || current.Token != expected.Token {
 		return fmt.Errorf("%w: 机器身份或连接已变化，请重新选择", nodewire.ErrSettingsRevisionConflict)
 	}
@@ -60,7 +60,7 @@ func (a *Service) NodeAgents(ctx context.Context, name string) (agenttools.Disco
 		return agenttools.Discovery{}, err
 	}
 	for i := range discovered.Agents {
-		for _, item := range a.Cfg.Agents {
+		for _, item := range a.cfg().Agents {
 			if item.Node == name && item.Harness == discovered.Agents[i].Harness {
 				discovered.Agents[i].Registered = true
 				break
@@ -130,7 +130,7 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 		return agenttools.Enrollment{}, errors.New("Agent 服务尚未就绪")
 	}
 	a.configStore().RLock()
-	existing := maps.Clone(a.Cfg.Agents)
+	existing := maps.Clone(a.cfg().Agents)
 	a.configStore().RUnlock()
 	planned, err := planNodeAgents(name, requested, existing)
 	if err != nil {

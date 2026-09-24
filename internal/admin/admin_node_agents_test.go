@@ -72,11 +72,11 @@ func TestLocalWorkerEnrollmentRefreshesAdvertBeforeFirstSession(t *testing.T) {
 	t.Setenv("PATH", root)
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
 	a := agentAdminFixture(t)
-	a.Cfg.Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token"}}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token"}}
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.cfg()))
 	t.Cleanup(a.Nodes.Close)
 	before, err := a.Nodes.Advert(t.Context(), "node-test")
 	if err != nil || len(before.Harnesses) != 0 {
@@ -158,16 +158,16 @@ func TestRemoteAgentMutationRejectsNodeIdentityReplacedAfterRPC(t *testing.T) {
 				}
 			}()
 			waitForAgentAdminCommit(t, method)
-			ConfigMu.Lock()
-			replacement := a.Cfg.Nodes["node-test"]
+			a.configStore().Lock()
+			replacement := a.cfg().Nodes["node-test"]
 			replacement.Token = "another-machine-token"
-			a.Cfg.Nodes["node-test"] = replacement
-			ConfigMu.Unlock()
+			a.cfg().Nodes["node-test"] = replacement
+			a.configStore().Unlock()
 			unlock()
 			if err := <-done; !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
 				t.Fatalf("old node receipt accepted for reused name: %v", err)
 			}
-			if _, ok := a.Cfg.Agents["later"]; ok || a.Cfg.Agents["worker"].Node != "" {
+			if _, ok := a.cfg().Agents["later"]; ok || a.cfg().Agents["worker"].Node != "" {
 				t.Fatal("old node receipt published an Agent on a replacement machine")
 			}
 		})
@@ -188,11 +188,11 @@ func remoteAgentAdminFixture(t *testing.T) *Service {
 	t.Setenv("PATH", bin)
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
 	a := agentAdminFixture(t)
-	a.Cfg.Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token"}}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token"}}
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.cfg()))
 	t.Cleanup(a.Nodes.Close)
 	return a
 }
@@ -203,7 +203,7 @@ func TestRemoteAgentEnrollmentRequiresSelectionAndNoLocalHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(a.Cfg.Agents) != 2 {
+	if len(a.cfg().Agents) != 2 {
 		t.Fatal("discovery registered agents")
 	}
 	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "premature", Harness: "kimi", Node: "node-test"}); err == nil {
@@ -213,10 +213,10 @@ func TestRemoteAgentEnrollmentRequiresSelectionAndNoLocalHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Registered || result.Harness != "kimi" || a.Cfg.Agents["remote-kimi"].Node != "node-test" {
-		t.Fatalf("registration=%+v agents=%+v", result, a.Cfg.Agents)
+	if !result.Registered || result.Harness != "kimi" || a.cfg().Agents["remote-kimi"].Node != "node-test" {
+		t.Fatalf("registration=%+v agents=%+v", result, a.cfg().Agents)
 	}
-	if _, ok := a.Cfg.Harnesses["kimi"]; ok {
+	if _, ok := a.cfg().Harnesses["kimi"]; ok {
 		t.Fatal("remote command copied into local harnesses")
 	}
 	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "remote-second", Harness: "kimi", Node: "node-test"}); err != nil {
@@ -250,7 +250,7 @@ func TestRemoteEnrollmentCanRetryAfterCoordinatorPersistenceFailure(t *testing.T
 	if err == nil || result.Harness != "kimi" || result.Registered {
 		t.Fatalf("partial registration result=%+v err=%v", result, err)
 	}
-	if _, ok := a.Cfg.Agents["remote-kimi"]; ok {
+	if _, ok := a.cfg().Agents["remote-kimi"]; ok {
 		t.Fatal("failed persistence published Agent")
 	}
 	a.WriteConfig = nil
@@ -274,7 +274,7 @@ func TestConfigurationReadDuringARemoteEnrollmentSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := NewSettings(a, a.Cfg)
+	settings := NewSettings(a, a.cfg())
 	finished := readsDuringSave(t, a, func() error {
 		_, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision})
 		return err
@@ -285,7 +285,7 @@ func TestConfigurationReadDuringARemoteEnrollmentSave(t *testing.T) {
 	if !finished {
 		t.Fatal("reading the configuration waited for a remote enrollment save")
 	}
-	if _, ok := a.Catalog.Resolve("remote-kimi"); !ok || a.Cfg.Agents["remote-kimi"].Node != "node-test" {
+	if _, ok := a.Catalog.Resolve("remote-kimi"); !ok || a.cfg().Agents["remote-kimi"].Node != "node-test" {
 		t.Fatal("the saved agent was not published")
 	}
 }

@@ -36,7 +36,7 @@ func pluginAdminFixture(t *testing.T) (*PluginService, string) {
 	t.Cleanup(func() { pool.Close() })
 	// A node accepts plugin operations only from a committed coordinator, so
 	// the service under test carries the authority a real one presents.
-	service := &PluginService{Admin: &Service{Cfg: cfg, Path: path}, Library: &pluginledger.Library{Store: store, Ledger: book}, Local: pool,
+	service := &PluginService{Admin: &Service{ConfigStore: NewConfigStore(cfg), Path: path}, Library: &pluginledger.Library{Store: store, Ledger: book}, Local: pool,
 		Authority: nodewire.SessionAuthority{ClusterID: "cluster-under-test", CoordinatorNodeID: "hub", CoordinatorEpoch: 1, WriterGeneration: 1}}
 	source := t.TempDir()
 	os.Mkdir(filepath.Join(source, "skill"), 0700)
@@ -123,7 +123,7 @@ func TestPluginManagementRefusesUnknownScopeAndUnimportedContent(t *testing.T) {
 	if err == nil {
 		t.Fatal("unimported package enabled")
 	}
-	if len(service.Admin.Cfg.Plugins) != 0 {
+	if len(service.Admin.cfg().Plugins) != 0 {
 		t.Fatal("failed update changed live configuration")
 	}
 }
@@ -152,7 +152,7 @@ func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := view.Revision
-	service.Admin.Cfg.Nodes = map[string]config.Node{"worker": {Addr: "127.0.0.1:1", Token: "t"}}
+	service.Admin.cfg().Nodes = map[string]config.Node{"worker": {Addr: "127.0.0.1:1", Token: "t"}}
 	if _, err := service.UpdatePlugin(ctx, "one", consoleapi.PluginUpdateRequest{
 		BaseRevision: revision,
 		Installation: plugins.Installation{PackageID: record.Manifest.ID, Digest: record.Digest,
@@ -276,7 +276,7 @@ func TestPluginsReadDuringAnInstallationSave(t *testing.T) {
 	if during.Revision != before.Revision || len(during.Installations) != 0 {
 		t.Fatal("a reader saw an installation that was not saved yet")
 	}
-	if _, ok := service.Admin.Cfg.Plugins["work"]; !ok {
+	if _, ok := service.Admin.cfg().Plugins["work"]; !ok {
 		t.Fatal("the saved installation was not published")
 	}
 }

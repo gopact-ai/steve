@@ -54,7 +54,7 @@ func (s *PluginService) coordinator(node string) error {
 func (s *PluginService) snapshot() (string, map[string]plugins.Installation) {
 	s.Admin.configStore().RLock()
 	defer s.Admin.configStore().RUnlock()
-	items := config.ClonePluginInstallations(s.Admin.Cfg.Plugins)
+	items := config.ClonePluginInstallations(s.Admin.cfg().Plugins)
 	return pluginRevision(items), items
 }
 
@@ -77,7 +77,7 @@ func (s *PluginService) Plugins(ctx context.Context) (consoleapi.PluginsView, er
 	view := consoleapi.PluginsView{Operations: operations, Revision: revision, Packages: packages, Installations: []consoleapi.PluginInstallationView{}}
 	view.Agents = []consoleapi.PluginAgentView{}
 	s.Admin.configStore().RLock()
-	for id, item := range s.Admin.Cfg.Agents {
+	for id, item := range s.Admin.cfg().Agents {
 		view.Agents = append(view.Agents, pluginAgentView(id, item))
 	}
 	s.Admin.configStore().RUnlock()
@@ -161,8 +161,8 @@ func (s *PluginService) ImportPlugin(ctx context.Context, req consoleapi.PluginI
 		return record, plugins.ErrInvalid
 	}
 	s.Admin.configStore().RLock()
-	declared, exists := s.Admin.Cfg.Projects[req.Project]
-	level := s.Admin.Cfg.HubLevel()
+	declared, exists := s.Admin.cfg().Projects[req.Project]
+	level := s.Admin.cfg().HubLevel()
 	s.Admin.configStore().RUnlock()
 	if !exists {
 		return record, errors.New("plugin import project is unknown")
@@ -202,8 +202,8 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req console
 		defer s.RuntimeGate.Unlock()
 	}
 	s.Admin.configStore().RLock()
-	candidate := *s.Admin.Cfg
-	candidate.Plugins = config.ClonePluginInstallations(s.Admin.Cfg.Plugins)
+	candidate := *s.Admin.cfg()
+	candidate.Plugins = config.ClonePluginInstallations(s.Admin.cfg().Plugins)
 	revision := pluginRevision(candidate.Plugins)
 	s.Admin.configStore().RUnlock()
 	if req.BaseRevision == "" || req.BaseRevision != revision {

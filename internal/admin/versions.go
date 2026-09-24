@@ -14,9 +14,9 @@ func (a *Service) Versions(ctx context.Context) (consoleapi.Versions, error) {
 	a.configStore().RLock()
 	hubID := ""
 	peers := []consoleapi.HubPeerInfo{}
-	if a.Cfg != nil {
-		hubID = a.Cfg.Gateway.HubID
-		for id, peer := range a.Cfg.Gateway.Peers {
+	if a.cfg() != nil {
+		hubID = a.cfg().Gateway.HubID
+		for id, peer := range a.cfg().Gateway.Peers {
 			peers = append(peers, consoleapi.HubPeerInfo{ID: id, Name: peer.Name, URL: peer.URL})
 		}
 	}

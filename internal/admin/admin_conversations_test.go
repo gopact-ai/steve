@@ -41,7 +41,7 @@ func TestRemoveProjectDeletesTheThreadsThatWorkedInIt(t *testing.T) {
 	if replies := a.Console.Replies("kept"); len(replies) == 0 {
 		t.Fatalf("another project's thread was deleted")
 	}
-	if _, exists := a.Cfg.Projects["remove"]; exists {
+	if _, exists := a.cfg().Projects["remove"]; exists {
 		t.Fatal("project declaration survived")
 	}
 }
@@ -62,7 +62,7 @@ func TestRemoveProjectKeepsEverythingWhenAThreadIsBusy(t *testing.T) {
 	if err := a.RemoveProject(t.Context(), "remove"); err == nil {
 		t.Fatal("a project was removed while one of its threads was busy")
 	}
-	if _, exists := a.Cfg.Projects["remove"]; !exists {
+	if _, exists := a.cfg().Projects["remove"]; !exists {
 		t.Fatal("project declaration was dropped despite the refusal")
 	}
 	if replies := a.Console.Replies("busy"); len(replies) == 0 {

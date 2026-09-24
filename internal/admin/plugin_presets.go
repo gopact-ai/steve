@@ -27,7 +27,7 @@ func pluginAgentView(id string, item config.Agent) consoleapi.PluginAgentView {
 
 func (s *PluginService) PreviewPluginPreset(ctx context.Context, id string, req consoleapi.PluginPresetRequest) (consoleapi.PluginPresetPreview, error) {
 	s.Admin.configStore().RLock()
-	cfg := *s.Admin.Cfg
+	cfg := *s.Admin.cfg()
 	cfg.Plugins = config.ClonePluginInstallations(cfg.Plugins)
 	cfg.Agents = maps.Clone(cfg.Agents)
 	s.Admin.configStore().RUnlock()
@@ -124,7 +124,7 @@ func (s *PluginService) ApplyPluginPreset(ctx context.Context, id string, req co
 		return saved, s.Library.FinishOperation(ctx, operation, nil)
 	}
 	s.Admin.configStore().RLock()
-	existing := s.Admin.Cfg.Agents[req.AgentID].PluginOrigin.Clone()
+	existing := s.Admin.cfg().Agents[req.AgentID].PluginOrigin.Clone()
 	s.Admin.configStore().RUnlock()
 	if existing != nil && existing.CommandID == req.CommandID && existing.Applied != nil {
 		restored := presetResult(existing)
@@ -145,13 +145,13 @@ func (s *PluginService) ApplyPluginPreset(ctx context.Context, id string, req co
 		if agentRevision(agents) != req.BaseRevision {
 			return consoleapi.ErrSettingsConflict
 		}
-		current, err := s.presetPreview(ctx, id, req, s.Admin.Cfg)
+		current, err := s.presetPreview(ctx, id, req, s.Admin.cfg())
 		if err != nil {
 			return err
 		}
 		preview = current
 		if current.Proposed.Node == "" {
-			if _, ok := s.Admin.Cfg.Harnesses[current.Proposed.Harness]; !ok {
+			if _, ok := s.Admin.cfg().Harnesses[current.Proposed.Harness]; !ok {
 				return errors.New("preset harness is not registered")
 			}
 		} else {

@@ -21,8 +21,8 @@ func TestAddProjectNamesADirectoryUnderThisMachineWorkspace(t *testing.T) {
 	if err := a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Path: "new-service"}); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(nodewire.ProjectsDir(a.Cfg.LocalWorkspaceRoot()), "new-service")
-	if got := a.Cfg.Projects["new"].Home.Path; got != want {
+	want := filepath.Join(nodewire.ProjectsDir(a.cfg().LocalWorkspaceRoot()), "new-service")
+	if got := a.cfg().Projects["new"].Home.Path; got != want {
 		t.Fatalf("project directory %q is not under the workspace %q", got, want)
 	}
 	if info, err := os.Stat(want); err != nil || !info.IsDir() {
@@ -36,7 +36,7 @@ func TestAddProjectWithoutADirectoryUsesTheProjectName(t *testing.T) {
 	if err := a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := a.Cfg.Projects["new"].Home.Path, filepath.Join(nodewire.ProjectsDir(a.Cfg.LocalWorkspaceRoot()), "new"); got != want {
+	if got, want := a.cfg().Projects["new"].Home.Path, filepath.Join(nodewire.ProjectsDir(a.cfg().LocalWorkspaceRoot()), "new"); got != want {
 		t.Fatalf("project directory %q is not %q", got, want)
 	}
 }
@@ -51,7 +51,7 @@ func TestAddProjectRefusesADirectoryOutsideTheWorkspace(t *testing.T) {
 		if err == nil {
 			t.Fatalf("directory %q was accepted; it is not under the workspace", dir)
 		}
-		if _, declared := a.Cfg.Projects["new"]; declared {
+		if _, declared := a.cfg().Projects["new"]; declared {
 			t.Fatalf("directory %q was refused but the project was declared", dir)
 		}
 	}
@@ -62,20 +62,20 @@ func TestAddProjectRefusesADirectoryOutsideTheWorkspace(t *testing.T) {
 // it now: naming a project is asking for it.
 func TestAddWorkspaceMakesTheDirectoryItAdopts(t *testing.T) {
 	a, _ := projectAdminFixture(t)
-	item := a.Cfg.Projects["p"]
+	item := a.cfg().Projects["p"]
 	item.Workspaces = nil
-	a.Cfg.Projects["p"] = item
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Projects["p"] = item
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(nodewire.ProjectsDir(a.Cfg.LocalWorkspaceRoot()), "p")
-	copies := a.Cfg.Projects["p"].Workspaces
+	want := filepath.Join(nodewire.ProjectsDir(a.cfg().LocalWorkspaceRoot()), "p")
+	copies := a.cfg().Projects["p"].Workspaces
 	if len(copies) != 1 || copies[0].Path != want {
 		t.Fatalf("copy landed outside the workspace: %+v", copies)
 	}
@@ -90,11 +90,11 @@ func TestAddWorkspaceMakesTheDirectoryItAdopts(t *testing.T) {
 func TestAddWorkspaceResolvesAnotherMachineWorkspaceFromItsAdvert(t *testing.T) {
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
 	a, _ := projectAdminFixture(t)
-	a.Cfg.Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token"}
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token"}
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.Cfg))
+	a.Nodes = node.NewRegistry("hub-test", configbuild.NodeConfigs(a.cfg()))
 	t.Cleanup(a.Nodes.Close)
 	advert, err := a.Nodes.Advert(t.Context(), "node-test")
 	if err != nil {
@@ -107,7 +107,7 @@ func TestAddWorkspaceResolvesAnotherMachineWorkspaceFromItsAdvert(t *testing.T) 
 		t.Fatal(err)
 	}
 	want := filepath.Join(nodewire.ProjectsDir(advert.WorkspaceRoot), "new-service")
-	copies := a.Cfg.Projects["new"].Workspaces
+	copies := a.cfg().Projects["new"].Workspaces
 	if len(copies) != 1 || copies[0].Node != "node-test" || copies[0].Path != want {
 		t.Fatalf("copy on another machine landed at %+v, want %q", copies, want)
 	}
@@ -121,12 +121,12 @@ func TestAddWorkspaceResolvesAnotherMachineWorkspaceFromItsAdvert(t *testing.T) 
 // same relative directory on every machine.
 func TestAddProjectRefusesAHomeOnAnotherMachine(t *testing.T) {
 	a, _ := projectAdminFixture(t)
-	a.Cfg.Nodes["node-test"] = config.Node{Addr: "127.0.0.1:1", Token: "test-node-token"}
+	a.cfg().Nodes["node-test"] = config.Node{Addr: "127.0.0.1:1", Token: "test-node-token"}
 	err := a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Node: "node-test", Path: "new-service"})
 	if err == nil {
 		t.Fatal("a project was homed on another machine")
 	}
-	if _, exists := a.Cfg.Projects["new"]; exists {
+	if _, exists := a.cfg().Projects["new"]; exists {
 		t.Fatal("the refused project was saved anyway")
 	}
 }

@@ -68,7 +68,7 @@ func (a *Service) workspaceRootOf(ctx context.Context, nodeKey string) (string, 
 	}
 	a.configStore().RLock()
 	defer a.configStore().RUnlock()
-	return a.Cfg.LocalWorkspaceRoot(), nil
+	return a.cfg().LocalWorkspaceRoot(), nil
 }
 
 // projectPath resolves a project's directory on one machine.
@@ -92,7 +92,7 @@ func (a *Service) projectPath(ctx context.Context, nodeKey, dir string) (string,
 // project's own name.
 func (a *Service) projectDirName(ctx context.Context, projectID string) (string, error) {
 	a.configStore().RLock()
-	item, exists := a.Cfg.Projects[projectID]
+	item, exists := a.cfg().Projects[projectID]
 	a.configStore().RUnlock()
 	if !exists {
 		return "", fmt.Errorf("没有叫 %q 的项目", projectID)

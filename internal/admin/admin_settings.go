@@ -38,7 +38,7 @@ func (s *hubSettingsService) Settings(context.Context) (consoleapi.SettingsView,
 }
 
 func (s *hubSettingsService) viewLocked() (consoleapi.SettingsView, error) {
-	desired := s.admin.Cfg.SettingsValues()
+	desired := s.admin.cfg().SettingsValues()
 	d, err := json.Marshal(desired)
 	if err != nil {
 		return consoleapi.SettingsView{}, fmt.Errorf("encode desired settings: %w", err)
@@ -58,8 +58,8 @@ func (s *hubSettingsService) viewLocked() (consoleapi.SettingsView, error) {
 		// Channel edits pin implicit locale/owner defaults without changing
 		// their meaning. Compare effective values, not their file spelling.
 		comparable := desired
-		comparable.Gateway.Locale = s.admin.Cfg.EffectiveLocale()
-		comparable.Gateway.OwnerID = s.admin.Cfg.EffectiveOwnerID()
+		comparable.Gateway.Locale = s.admin.cfg().EffectiveLocale()
+		comparable.Gateway.OwnerID = s.admin.cfg().EffectiveOwnerID()
 		pending = !reflect.DeepEqual(comparable, s.effective)
 		for i := range fields {
 			switch fields[i].Path {
@@ -152,25 +152,25 @@ func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.
 // does not need and the console reads back the stance now in force. A
 // catalog that will not build is left alone and remains visibly pending.
 func (s *hubSettingsService) applyApproval(previous string) {
-	if s.admin.Cfg.Gateway.DefaultApproval == previous || s.admin.Catalog == nil {
+	if s.admin.cfg().Gateway.DefaultApproval == previous || s.admin.Catalog == nil {
 		return
 	}
-	prepared, err := s.admin.Cfg.AgentCatalog()
+	prepared, err := s.admin.cfg().AgentCatalog()
 	if err != nil {
-		slog.Error(fmt.Sprintf("steve: default approval waits for a restart: %v", err), "approval", s.admin.Cfg.Gateway.DefaultApproval)
+		slog.Error(fmt.Sprintf("steve: default approval waits for a restart: %v", err), "approval", s.admin.cfg().Gateway.DefaultApproval)
 		return
 	}
 	s.admin.Catalog.Publish(prepared)
-	s.applied.Gateway.DefaultApproval = s.admin.Cfg.Gateway.DefaultApproval
-	s.effective.Gateway.DefaultApproval = s.admin.Cfg.Gateway.DefaultApproval
-	slog.Info(fmt.Sprintf("steve: default approval is now %q", s.admin.Cfg.Gateway.DefaultApproval), "approval", s.admin.Cfg.Gateway.DefaultApproval)
+	s.applied.Gateway.DefaultApproval = s.admin.cfg().Gateway.DefaultApproval
+	s.effective.Gateway.DefaultApproval = s.admin.cfg().Gateway.DefaultApproval
+	slog.Info(fmt.Sprintf("steve: default approval is now %q", s.admin.cfg().Gateway.DefaultApproval), "approval", s.admin.cfg().Gateway.DefaultApproval)
 }
 
 func (a *Service) settingsRevision() string {
 	if a.ConfigRevision != nil {
 		return a.ConfigRevision()
 	}
-	return a.Cfg.FileRevision()
+	return a.cfg().FileRevision()
 }
 
 func settingsFields() ([]consoleapi.SettingsField, error) {

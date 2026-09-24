@@ -62,10 +62,10 @@ func (s *hubChannelsService) Channels(context.Context) (consoleapi.ChannelsView,
 }
 
 func (s *hubChannelsService) viewLocked() consoleapi.ChannelsView {
-	desired := s.admin.Cfg.ChannelSettings()
+	desired := s.admin.cfg().ChannelSettings()
 	// A secret rotation is pending even if configured stays true in both
 	// public views. Compare privately without returning a secret digest.
-	pending := !reflect.DeepEqual(desired, s.applied) || s.admin.Cfg.Feishu.AppSecret != s.appliedSecret
+	pending := !reflect.DeepEqual(desired, s.applied) || s.admin.cfg().Feishu.AppSecret != s.appliedSecret
 	mode := "restart"
 	var liveFields []string
 	if s.accessUpdater != nil {

@@ -107,12 +107,12 @@ func TestRemovalRejectsOfflineUnverifiableTarget(t *testing.T) {
 
 func TestRevokedTargetRemainsInRemovalInventoryWithoutASessionReceipt(t *testing.T) {
 	s, _ := installedRuntime(t)
-	old := s.Admin.Cfg.Plugins["tools"]
+	old := s.Admin.cfg().Plugins["tools"]
 	old.Targets["retired-worker"] = plugins.Configuration{}
 	if err := s.Library.RememberTargets(t.Context(), "tools", old); err != nil {
 		t.Fatal(err)
 	}
-	delete(s.Admin.Cfg.Plugins["tools"].Targets, "retired-worker")
+	delete(s.Admin.cfg().Plugins["tools"].Targets, "retired-worker")
 	usage, err := s.PluginUsage(t.Context(), "tools")
 	if err != nil || usage.Errors["retired-worker"] == "" {
 		t.Fatalf("lost worker disappeared with no returned session receipt: %+v %v", usage, err)
@@ -201,7 +201,7 @@ func TestPluginsReadDuringARemovalSave(t *testing.T) {
 	if during.Revision != before.Revision {
 		t.Fatal("a reader saw a removal that was not saved yet")
 	}
-	if _, ok := service.Admin.Cfg.Plugins["tools"]; ok {
+	if _, ok := service.Admin.cfg().Plugins["tools"]; ok {
 		t.Fatal("the saved removal was not published")
 	}
 }

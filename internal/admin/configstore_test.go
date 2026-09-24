@@ -14,8 +14,6 @@ import (
 // that is still in flight in one does not hold up readers in the other.
 func TestConfigurationSaveDoesNotHoldUpAnotherApplication(t *testing.T) {
 	saving, other := agentAdminFixture(t), agentAdminFixture(t)
-	saving.ConfigStore = NewConfigStore(saving.Cfg)
-	other.ConfigStore = NewConfigStore(other.Cfg)
 	entered, release := make(chan struct{}), make(chan struct{})
 	saving.WriteConfig = func(path string, cfg *config.Config) error {
 		close(entered)
@@ -29,7 +27,7 @@ func TestConfigurationSaveDoesNotHoldUpAnotherApplication(t *testing.T) {
 	<-entered
 	read := make(chan error, 1)
 	go func() {
-		_, err := NewSettings(other, other.Cfg).Settings(t.Context())
+		_, err := NewSettings(other, other.cfg()).Settings(t.Context())
 		read <- err
 	}()
 	select {
@@ -205,4 +203,19 @@ func readsDuringSave(t *testing.T, a *Service, write func() error, read func() e
 	}
 	a.WriteConfig = save
 	return finished
+}
+
+// A service built without a configuration reads none and cannot change one.
+func TestServiceWithoutAConfigurationCannotChangeOne(t *testing.T) {
+	a := &Service{}
+	changed := false
+	err := a.updateConfig(t.Context(), func(*config.Config) error { changed = true; return nil })
+	if !errors.Is(err, errNoConfiguration) || changed {
+		t.Fatalf("updateConfig = %v, changed=%v", err, changed)
+	}
+	a.configStore().Read(func(cfg *config.Config) {
+		if cfg != nil {
+			t.Errorf("a service without a configuration read %+v", cfg)
+		}
+	})
 }

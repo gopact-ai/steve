@@ -16,20 +16,20 @@ import (
 // that is about to work in it.
 func TestEnsureProjectWorkspaceAttachesTheProjectWhereTheAgentRuns(t *testing.T) {
 	a, _ := projectAdminFixture(t)
-	item := a.Cfg.Projects["p"]
+	item := a.cfg().Projects["p"]
 	item.Workspaces = nil
-	a.Cfg.Projects["p"] = item
-	if err := config.Save(a.Path, a.Cfg); err != nil {
+	a.cfg().Projects["p"] = item
+	if err := config.Save(a.Path, a.cfg()); err != nil {
 		t.Fatal(err)
 	}
-	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.cfg()); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.EnsureProjectWorkspace(t.Context(), "p", ""); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(nodewire.ProjectsDir(a.Cfg.LocalWorkspaceRoot()), "p")
-	copies := a.Cfg.Projects["p"].Workspaces
+	want := filepath.Join(nodewire.ProjectsDir(a.cfg().LocalWorkspaceRoot()), "p")
+	copies := a.cfg().Projects["p"].Workspaces
 	if len(copies) != 1 || copies[0].Node != "" || copies[0].Path != want {
 		t.Fatalf("the project was not attached here: %+v, want %q", copies, want)
 	}
@@ -49,11 +49,11 @@ func TestEnsureProjectWorkspaceAttachesTheProjectWhereTheAgentRuns(t *testing.T)
 // message, so the second answer must be the cheap one.
 func TestEnsureProjectWorkspaceLeavesAPlacedProjectAlone(t *testing.T) {
 	a, _ := projectAdminFixture(t)
-	before := a.Cfg.Projects["p"].Workspaces
+	before := a.cfg().Projects["p"].Workspaces
 	if err := a.EnsureProjectWorkspace(t.Context(), "p", ""); err != nil {
 		t.Fatal(err)
 	}
-	after := a.Cfg.Projects["p"].Workspaces
+	after := a.cfg().Projects["p"].Workspaces
 	if len(after) != len(before) || after[0].Path != before[0].Path {
 		t.Fatalf("a placed project was changed: %+v -> %+v", before, after)
 	}

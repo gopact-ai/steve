@@ -14,28 +14,32 @@ import (
 type ConfigStore struct {
 	// write is held by one writer at a time, across its save; mu only
 	// while a writer changes the configuration readers see.
-	write *sync.Mutex
-	mu    *sync.RWMutex
+	write sync.Mutex
+	mu    sync.RWMutex
 	cfg   *config.Config
 }
 
 // NewConfigStore guards cfg. Everything that reads or rewrites cfg in place
 // must go through the returned store.
 func NewConfigStore(cfg *config.Config) *ConfigStore {
-	return &ConfigStore{write: new(sync.Mutex), mu: new(sync.RWMutex), cfg: cfg}
+	return &ConfigStore{cfg: cfg}
 }
 
-// ConfigMu guards the configuration of every Service built without a
-// ConfigStore of its own.
-var ConfigMu = &ConfigStore{write: new(sync.Mutex), mu: new(sync.RWMutex)}
+// noConfiguration is the store of every service built without one: it
+// holds no configuration, so it cannot be changed.
+var noConfiguration ConfigStore
 
-// configStore is what guards a.Cfg.
+// configStore is what holds the service's configuration.
 func (a *Service) configStore() *ConfigStore {
 	if a.ConfigStore != nil {
 		return a.ConfigStore
 	}
-	return &ConfigStore{write: ConfigMu.write, mu: ConfigMu.mu, cfg: a.Cfg}
+	return &noConfiguration
 }
+
+// cfg is the service's configuration, or nil when it has none. Callers
+// hold the store while they use it.
+func (a *Service) cfg() *config.Config { return a.configStore().cfg }
 
 // Read runs read with the configuration held still. read must not keep
 // the pointer or anything it shares after it returns.
@@ -48,6 +52,8 @@ func (s *ConfigStore) Read(read func(*config.Config)) {
 // errUnchanged, returned by an Update's change, ends the Update without
 // saving: there is nothing to save.
 var errUnchanged = errors.New("configuration unchanged")
+
+var errNoConfiguration = errors.New("no configuration loaded")
 
 // Update rewrites the configuration: change edits a copy, save persists
 // the copy, and only then do readers see it. Readers are not held up while
@@ -66,6 +72,9 @@ func (s *ConfigStore) Update(change func(*config.Config) error, save func(*confi
 // the saved configuration is in place and before any reader sees it.
 // published must be quick and must not use the store.
 func (s *ConfigStore) update(change, save func(*config.Config) error, published func(*config.Config)) error {
+	if s.cfg == nil {
+		return errNoConfiguration
+	}
 	s.write.Lock()
 	defer s.write.Unlock()
 	// Every writer holds write, so the configuration stands still here.

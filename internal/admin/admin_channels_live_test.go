@@ -32,9 +32,9 @@ func channelLivePatch() channelsettings.Patch {
 
 func TestChannelsLiveBindUsesAppliedStartupAndOwnsSlices(t *testing.T) {
 	a, _ := ChannelsAdminFixture(t)
-	a.Cfg.Feishu.AllowedSenders = []string{"startup"}
-	a.Cfg.Feishu.BlockedSenders = []string{"startup-blocked"}
-	s := NewChannels(a, a.Cfg)
+	a.cfg().Feishu.AllowedSenders = []string{"startup"}
+	a.cfg().Feishu.BlockedSenders = []string{"startup-blocked"}
+	s := NewChannels(a, a.cfg())
 	before, _ := s.Channels(t.Context())
 	// A saved declaration before a runtime consumer is bound is not applied.
 	pending, err := s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: before.Revision, Channels: channelLivePatch()})
@@ -81,8 +81,8 @@ func TestChannelsLivePublishesOnlyAfterCommit(t *testing.T) {
 			s.BindAccessUpdater(func(f config.Feishu) {
 				if calls.Add(1) > 1 {
 					stored, err := config.Load(a.Path)
-					if err != nil || stored.Feishu.GroupPolicy != f.GroupPolicy || a.Cfg.Feishu.GroupPolicy != f.GroupPolicy {
-						t.Error("callback ran before durable commit and Cfg publication", err)
+					if err != nil || stored.Feishu.GroupPolicy != f.GroupPolicy || a.cfg().Feishu.GroupPolicy != f.GroupPolicy {
+						t.Error("callback ran before durable commit and configuration publication", err)
 					}
 				}
 				got = f
@@ -227,7 +227,7 @@ func TestChannelsLiveMixedIdentityAndPolicyRemainPending(t *testing.T) {
 		t.Fatal("restart fields were applied or leaked through updater")
 	}
 	AssertNoChannelSecrets(t, after)
-	if a.Cfg.Feishu.AppID != "different-app" || a.Cfg.Feishu.AppSecret != "rotated-private-secret" {
+	if a.cfg().Feishu.AppID != "different-app" || a.cfg().Feishu.AppSecret != "rotated-private-secret" {
 		t.Fatal("mixed desired declaration was not saved")
 	}
 	after, err = s.UpdateChannels(t.Context(), consoleapi.ChannelsUpdate{BaseRevision: after.Revision, Channels: channelsettings.Patch{Feishu: &channelsettings.FeishuPatch{GroupPolicy: ChannelValue(config.GroupPolicyOpen)}}})

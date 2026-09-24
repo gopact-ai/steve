@@ -57,8 +57,8 @@ type Service struct {
 	Console       *console.Service
 	Lifetime      context.Context
 	Mu            sync.Mutex
-	Cfg           *config.Config
-	// ConfigStore guards Cfg. A Service without one shares ConfigMu.
+	// ConfigStore holds the configuration the service administers and
+	// guards it. A service without one has no configuration.
 	ConfigStore        *ConfigStore
 	RuntimeSettings    *config.RuntimeSettings
 	Path               string
@@ -141,7 +141,7 @@ func (a *Service) lifetime() context.Context {
 	return a.Lifetime
 }
 
-// updateConfig rewrites a.Cfg through its store, saving the candidate to
+// updateConfig rewrites the configuration through its store, saving the candidate to
 // the configuration file or the cluster under ctx.
 func (a *Service) updateConfig(ctx context.Context, change func(*config.Config) error) error {
 	return a.updateConfigThen(ctx, change, nil)
@@ -153,7 +153,8 @@ func (a *Service) updateConfigThen(ctx context.Context, change func(*config.Conf
 	return a.configStore().update(change, func(candidate *config.Config) error { return a.saveConfig(ctx, candidate) }, published)
 }
 
-// saveConfig persists candidate without touching a.Cfg.
+// saveConfig persists candidate without touching the configuration in
+// force.
 func (a *Service) saveConfig(ctx context.Context, candidate *config.Config) error {
 	write := a.WriteConfig
 	if write == nil {

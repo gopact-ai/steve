@@ -117,7 +117,7 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 	a.Assembler.SetServers(caps)
 	a.Fleet.SetHubCapabilities(set.Capabilities)
 	a.configStore().RLock()
-	slots := a.Cfg.HubSlots()
+	slots := a.cfg().HubSlots()
 	a.configStore().RUnlock()
 	a.Fleet.SetHubSlots(slots)
 	if a.Observation != nil {
@@ -135,7 +135,7 @@ func (a *Service) hubHarnessSettings(settings map[string]nodewire.HarnessSetting
 			return nil, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
 		}
 		a.configStore().RLock()
-		item := a.Cfg.Harnesses[id]
+		item := a.cfg().Harnesses[id]
 		a.configStore().RUnlock()
 		if h.Adapter != nil && *h.Adapter != item.Adapter {
 			return nil, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
@@ -172,7 +172,7 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 	servers := make(map[string]config.MCPServer, len(settings))
 	for id, m := range settings {
 		a.configStore().RLock()
-		old := a.Cfg.MCPServers[id]
+		old := a.cfg().MCPServers[id]
 		a.configStore().RUnlock()
 		if m.Env == nil {
 			m.Env = old.Env
@@ -204,12 +204,12 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 func (a *Service) hubSettings() nodewire.Settings {
 	a.configStore().RLock()
 	defer a.configStore().RUnlock()
-	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.Cfg.Gateway.Tools...),
-		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.Cfg.Gateway.Declares...), Capabilities: append([]string{}, a.Cfg.Gateway.Capabilities...)}
-	for id, h := range a.Cfg.Harnesses {
+	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.cfg().Gateway.Tools...),
+		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.cfg().Gateway.Declares...), Capabilities: append([]string{}, a.cfg().Gateway.Capabilities...)}
+	for id, h := range a.cfg().Harnesses {
 		out.Harnesses[id] = nodewire.HarnessSetting{Adapter: &h.Adapter, Slots: &h.Slots, Permission: &h.Permission, Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir}
 	}
-	for id, m := range a.Cfg.MCPServers {
+	for id, m := range a.cfg().MCPServers {
 		out.MCPServers[id] = nodewire.MCPSetting{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
 	}
 	out.Revision = nodewire.SettingsRevision(out)
@@ -351,7 +351,7 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 		}
 	}
 	a.configStore().RLock()
-	_, inConfig := a.Cfg.Nodes[name]
+	_, inConfig := a.cfg().Nodes[name]
 	a.configStore().RUnlock()
 	if !inConfig {
 		return fmt.Errorf("没有叫 %q 的机器", name)
@@ -388,16 +388,16 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 func (a *Service) Bootstrap(name, token string) (string, bool) {
 	a.Mu.Lock()
 	a.configStore().RLock()
-	n, ok := a.Cfg.Nodes[name]
-	harnesses := make(map[string]nodebootstrap.Harness, len(a.Cfg.Harnesses))
-	for id, h := range a.Cfg.Harnesses {
+	n, ok := a.cfg().Nodes[name]
+	harnesses := make(map[string]nodebootstrap.Harness, len(a.cfg().Harnesses))
+	for id, h := range a.cfg().Harnesses {
 		if h.Adapter != "" {
 			harnesses[id] = nodebootstrap.Harness{Adapter: h.Adapter}
 		} else {
 			harnesses[id] = nodebootstrap.Harness{Command: h.Command, Args: append([]string(nil), h.Args...)}
 		}
 	}
-	binary, hubURL := a.Cfg.Gateway.NodeBinary, a.hubURL
+	binary, hubURL := a.cfg().Gateway.NodeBinary, a.hubURL
 	a.configStore().RUnlock()
 	a.Mu.Unlock()
 	if !ok || token == "" || subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) != 1 {
@@ -425,12 +425,12 @@ func (a *Service) NodeBinary(token string) (string, bool) {
 	defer a.Mu.Unlock()
 	a.configStore().RLock()
 	defer a.configStore().RUnlock()
-	if a.Cfg.Gateway.NodeBinary == "" || token == "" {
+	if a.cfg().Gateway.NodeBinary == "" || token == "" {
 		return "", false
 	}
-	for _, n := range a.Cfg.Nodes {
+	for _, n := range a.cfg().Nodes {
 		if subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) == 1 {
-			return a.Cfg.Gateway.NodeBinary, true
+			return a.cfg().Gateway.NodeBinary, true
 		}
 	}
 	return "", false

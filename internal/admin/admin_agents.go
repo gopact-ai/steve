@@ -49,7 +49,7 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 		if !ok {
 			return fmt.Errorf("没有叫 %q 的 Agent", id)
 		}
-		if _, ok := a.Cfg.Harnesses[spec.Harness]; !ok && spec.Node == "" {
+		if _, ok := a.cfg().Harnesses[spec.Harness]; !ok && spec.Node == "" {
 			return fmt.Errorf("本机没有配置 AI 工具 %q", spec.Harness)
 		}
 		if spec.Node != "" {
@@ -62,7 +62,7 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 		}
 		if spec.Node == "" {
 			for _, server := range spec.MCPServers {
-				if _, ok := a.Cfg.MCPServers[server]; !ok {
+				if _, ok := a.cfg().MCPServers[server]; !ok {
 					return fmt.Errorf("hub 上没有 MCP 服务器 %q；在 hub 机器的配置里加，或把 Agent 放到有它的机器上", server)
 				}
 			}
@@ -102,7 +102,7 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 		return err
 	}
 	err = a.changeAgents(func(agents map[string]config.Agent) error {
-		if _, ok := a.Cfg.Harnesses[req.Harness]; !ok && req.Node == "" {
+		if _, ok := a.cfg().Harnesses[req.Harness]; !ok && req.Node == "" {
 			return fmt.Errorf("本机没有配置 AI 工具 %q，请先选择并登记已安装的工具", req.Harness)
 		}
 		if req.Node != "" {

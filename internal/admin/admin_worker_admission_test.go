@@ -39,7 +39,7 @@ func TestAdmitWorkerRecordsAndDialsANewWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := config.Node{Addr: server.Addr(), Token: "test-node-token", Level: "internal"}
-	if got := admin.Cfg.Nodes["node-test"]; got != want {
+	if got := admin.cfg().Nodes["node-test"]; got != want {
 		t.Fatalf("configured worker = %+v, want %+v", got, want)
 	}
 	raw, err := os.ReadFile(admin.Path)
@@ -64,7 +64,7 @@ func TestAdmitWorkerRecordsAndDialsANewWorker(t *testing.T) {
 func TestAdmitWorkerKeepsAnIdenticalRegistration(t *testing.T) {
 	admin := workerAdmissionFixture(t)
 	server := startAgentAdminNode(t, nil)
-	admin.Cfg.Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token", Level: "restricted"}}
+	admin.cfg().Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token", Level: "restricted"}}
 	writes := 0
 	admin.WriteConfig = func(path string, cfg *config.Config) error {
 		writes++
@@ -76,7 +76,7 @@ func TestAdmitWorkerKeepsAnIdenticalRegistration(t *testing.T) {
 	if writes != 0 {
 		t.Fatalf("an identical registration rewrote the configuration %d times", writes)
 	}
-	if got := admin.Cfg.Nodes["node-test"].Level; got != "restricted" {
+	if got := admin.cfg().Nodes["node-test"].Level; got != "restricted" {
 		t.Fatalf("an identical registration changed the level to %q", got)
 	}
 	if !slices.Contains(admin.Nodes.Names(), "node-test") {
@@ -87,12 +87,12 @@ func TestAdmitWorkerKeepsAnIdenticalRegistration(t *testing.T) {
 func TestAdmitWorkerRefusesADifferentRegistration(t *testing.T) {
 	admin := workerAdmissionFixture(t)
 	existing := config.Node{Addr: "127.0.0.1:1", Token: "old-token", Level: "internal"}
-	admin.Cfg.Nodes = map[string]config.Node{"node-test": existing}
+	admin.cfg().Nodes = map[string]config.Node{"node-test": existing}
 	err := admin.AdmitWorker(t.Context(), "node-test", node.Config{Addr: "127.0.0.1:2", Token: "new-token"})
 	if !errors.Is(err, coordination.ErrConflict) {
 		t.Fatalf("a different registration was not a conflict: %v", err)
 	}
-	if got := admin.Cfg.Nodes["node-test"]; got != existing {
+	if got := admin.cfg().Nodes["node-test"]; got != existing {
 		t.Fatalf("a refused registration changed the configuration: %+v", got)
 	}
 	if slices.Contains(admin.Nodes.Names(), "node-test") {
@@ -107,7 +107,7 @@ func TestAdmitWorkerLeavesNothingBehindWhenTheConfigurationIsNotSaved(t *testing
 	if err == nil {
 		t.Fatal("a failed configuration write was not reported")
 	}
-	if _, ok := admin.Cfg.Nodes["node-test"]; ok {
+	if _, ok := admin.cfg().Nodes["node-test"]; ok {
 		t.Fatal("the unsaved worker stayed in the configuration")
 	}
 	if slices.Contains(admin.Nodes.Names(), "node-test") {
@@ -134,7 +134,7 @@ func TestAdmitWorkerReportsAnUnsyncedSaveAlongWithAnUnreachableWorker(t *testing
 	if !errors.Is(err, unreachable) {
 		t.Fatalf("the unreachable worker was not reported: %v", err)
 	}
-	if _, ok := admin.Cfg.Nodes["node-test"]; !ok {
+	if _, ok := admin.cfg().Nodes["node-test"]; !ok {
 		t.Fatal("the saved worker was not recorded")
 	}
 }

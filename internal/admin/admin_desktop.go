@@ -32,15 +32,15 @@ func (a *Service) desktopStatusLocked() consoleapi.DesktopStatus {
 		return consoleapi.DesktopStatus{}
 	}
 	stateDir := filepath.Dir(a.Path)
-	status := consoleapi.DesktopStatus{Enabled: true, NodeID: a.Cfg.Gateway.HubID, AgentCount: len(a.Cfg.Agents),
-		WorkspacePath: a.Cfg.Projects[config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)].Home.Path}
-	for _, item := range a.Cfg.Agents {
+	status := consoleapi.DesktopStatus{Enabled: true, NodeID: a.cfg().Gateway.HubID, AgentCount: len(a.cfg().Agents),
+		WorkspacePath: a.cfg().Projects[config.DefaultProjectID(a.cfg().Gateway.DefaultProject, a.cfg().Projects)].Home.Path}
+	for _, item := range a.cfg().Agents {
 		if item.Node == "" {
 			status.LocalAgentCount++
 		}
 	}
 	status.WorkspaceManaged = desktop.ManagedWorkspace(stateDir, status.WorkspacePath)
-	for id, item := range a.Cfg.Agents {
+	for id, item := range a.cfg().Agents {
 		if item.Default {
 			status.DefaultAgent = id
 			break
@@ -80,9 +80,9 @@ func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWo
 		return consoleapi.DesktopStatus{}, fmt.Errorf("工作目录设置仅在桌面 App 中提供")
 	}
 	a.configStore().RLock()
-	id := config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)
-	home := a.Cfg.Projects[id].Home
-	local := a.Cfg.LocalHomeNode(home.Node)
+	id := config.DefaultProjectID(a.cfg().Gateway.DefaultProject, a.cfg().Projects)
+	home := a.cfg().Projects[id].Home
+	local := a.cfg().LocalHomeNode(home.Node)
 	a.configStore().RUnlock()
 	if err := desktop.CheckWorkspaceProject(id, local, home.Node); err != nil {
 		return consoleapi.DesktopStatus{}, err
@@ -112,7 +112,7 @@ func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscov
 	for _, item := range candidates {
 		candidate := consoleapi.DesktopAgentCandidate{
 			ID: item.ID, Name: item.Name, Harness: item.Harness, Executable: item.Executable,
-			Installed: item.Installed, Requires: item.Requires, Registered: localHarnessRegistered(a.Cfg.Agents, item.Harness),
+			Installed: item.Installed, Requires: item.Requires, Registered: localHarnessRegistered(a.cfg().Agents, item.Harness),
 		}
 		if offered, ok := offers[item.Harness]; ok {
 			candidate.Model, candidate.Models = offered.Model, offered.Models
@@ -184,10 +184,10 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 		candidates[item.ID] = item
 	}
 	a.configStore().RLock()
-	agents := make(map[string]config.Agent, len(a.Cfg.Agents))
-	maps.Copy(agents, a.Cfg.Agents)
-	harnesses := maps.Clone(a.Cfg.Harnesses)
-	statePath := a.Cfg.Gateway.StatePath
+	agents := make(map[string]config.Agent, len(a.cfg().Agents))
+	maps.Copy(agents, a.cfg().Agents)
+	harnesses := maps.Clone(a.cfg().Harnesses)
+	statePath := a.cfg().Gateway.StatePath
 	a.configStore().RUnlock()
 	plan, err := planDesktopAgents(requested, candidates, agents, harnesses)
 	if err != nil {
@@ -353,5 +353,5 @@ func (a *Service) SetLocalWorkspaceRoot(root string) {
 	}
 	a.configStore().Lock()
 	defer a.configStore().Unlock()
-	a.Cfg.Gateway.WorkspaceRoot = root
+	a.cfg().Gateway.WorkspaceRoot = root
 }
