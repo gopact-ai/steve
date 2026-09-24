@@ -98,7 +98,8 @@ type Service struct {
 	running   map[string]int
 	exchanges map[string][]*queuedExchange
 	// Processes stay attached until finish records the reply, closing the
-	// gap between the handler returning and the last child snapshot arriving.
+	// gap between the coordinator returning and the last child snapshot
+	// arriving.
 	processes map[string]*process
 	// Ledger records are the production authority. doc is an explicitly
 	// selected file/test adapter, never a ledger compatibility fallback.
@@ -602,8 +603,9 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 	return exchange.outcome.reply, exchange.outcome.err
 }
 
-// runExchange only invokes the handler; queue completion records its answer
-// and terminal state together so a restart cannot replay a finished turn.
+// runExchange only invokes the coordinator; queue completion records its
+// answer and terminal state together so a restart cannot replay a finished
+// turn.
 func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply consoleapi.Reply, err error) {
 	if s.owner == "" {
 		return consoleapi.Reply{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
