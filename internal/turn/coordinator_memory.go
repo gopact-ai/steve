@@ -87,8 +87,9 @@ func (c *Coordinator) Remember(ctx context.Context, conversationID, agentID, del
 	return r, scope, err
 }
 
-// Recall answers steve_recall; an empty scope searches both, up to limit
-// from each, global first. Scores are not compared across scopes.
+// Recall answers steve_recall; an empty scope searches global, then the
+// conversation's project if it has one, up to limit from each. Scores are
+// not compared across scopes.
 func (c *Coordinator) Recall(ctx context.Context, conversationID, agentID, rawScope, query string, limit int) ([]memory.Hit, string, error) {
 	if rawScope != "" {
 		svc, scope, err := c.memoryScope(ctx, conversationID, "", rawScope, false)
