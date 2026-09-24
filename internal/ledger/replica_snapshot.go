@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,10 @@ type restoreTarget interface {
 	NewRestore(source string) (*sqlite.Backup, error)
 }
 
+// replicaBackupStarted, when set, runs as a snapshot's backup begins
+// copying pages.
+var replicaBackupStarted func()
+
 // SnapshotReplica captures an entire SQLite database at one committed
 // boundary, including store tables, effects, sequences and replay receipts.
 // SQLite's online backup API includes WAL contents and preserves SQL types.
@@ -40,17 +45,20 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 	}
 	defer cleanup()
 	// The private backup is detached from the live database. Preparing its
-	// read schema and framing it need not hold the apply lock; only the
-	// SQLite backup defines the committed boundary.
+	// read schema and framing it need not hold the apply lock; the read
+	// transaction the backup copied defines the committed boundary.
 	return encodeReplicaSnapshot(path, incarnation)
 }
 
+// captureReplicaDatabase copies the database as of one committed boundary
+// into a private file. The boundary is a read transaction on a pooled read
+// connection, begun under applyMu so that it follows every applied batch
+// and precedes the next; the copy then runs from that transaction's WAL
+// snapshot with applyMu released, so neither applies nor local writes wait
+// for it. The read connection is taken before applyMu: a path holding
+// applyMu must not wait for the read pool.
 func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error) {
-	l.applyMu.Lock()
-	defer l.applyMu.Unlock()
-	if _, err := l.replicationState(); err != nil {
-		return "", 0, 0, nil, err
-	}
+	ctx := context.Background()
 	path, cleanup, err := l.replicaTemp(nil)
 	if err != nil {
 		return "", 0, 0, nil, err
@@ -61,15 +69,22 @@ func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error
 			cleanup()
 		}
 	}()
-	conn, err := l.db.Conn(context.Background())
+	conn, err := l.reads.Conn(ctx)
 	if err != nil {
 		return "", 0, 0, nil, err
 	}
 	defer conn.Close()
-	var incarnation uint64
-	if err := conn.QueryRowContext(context.Background(), `SELECT value FROM meta WHERE key = 'incarnation'`).Scan(&incarnation); err != nil {
+	incarnation, generation, err := l.beginReplicaBoundary(ctx, conn)
+	if err != nil {
 		return "", 0, 0, nil, err
 	}
+	// Ending the transaction returns the connection to the pool without
+	// one open; a failed rollback leaves it unusable, so it is discarded.
+	defer func() {
+		if _, err := conn.ExecContext(ctx, `ROLLBACK`); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
 	if err := conn.Raw(func(raw any) error {
 		provider, ok := raw.(backupSource)
 		if !ok {
@@ -79,13 +94,37 @@ func (l *Ledger) captureReplicaDatabase() (string, uint64, uint64, func(), error
 		if err != nil {
 			return err
 		}
+		if replicaBackupStarted != nil {
+			replicaBackupStarted()
+		}
+		// The source connection's open read transaction is the snapshot the
+		// backup copies; writers on other connections do not restart it.
 		_, stepErr := backup.Step(-1)
 		return errors.Join(stepErr, backup.Finish())
 	}); err != nil {
 		return "", 0, 0, nil, fmt.Errorf("snapshot ledger: %w", err)
 	}
 	complete = true
-	return path, incarnation, l.snapshotGeneration, cleanup, nil
+	return path, incarnation, generation, cleanup, nil
+}
+
+// beginReplicaBoundary opens a read transaction on conn under applyMu and
+// reads the incarnation in it, which fixes the transaction's snapshot.
+func (l *Ledger) beginReplicaBoundary(ctx context.Context, conn *sql.Conn) (uint64, uint64, error) {
+	l.applyMu.Lock()
+	defer l.applyMu.Unlock()
+	if _, err := l.replicationState(); err != nil {
+		return 0, 0, err
+	}
+	if _, err := conn.ExecContext(ctx, `BEGIN`); err != nil {
+		return 0, 0, err
+	}
+	var incarnation uint64
+	if err := conn.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'incarnation'`).Scan(&incarnation); err != nil {
+		_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		return 0, 0, err
+	}
+	return incarnation, l.snapshotGeneration, nil
 }
 
 // RestoreReplica durably replaces application state through SQLite's atomic
