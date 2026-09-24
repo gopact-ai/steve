@@ -55,8 +55,6 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | `gateway` | Gateway object | 各字段按下表 | 状态目录、控制台、预算与协调设置 | `{"owner_id":"local-owner","read_model_addr":"127.0.0.1:7710"}` |
 | `policies` | Policies object | 各组采用下文默认值 | 执行、规划、快照与审阅限制 | `{"execution":{"step_timeout":"15m"}}` |
 
-`Config.Migrated` 是加载时生成的迁移提示（`json:"-"`），不是可配置键。
-
 ### `projects.<name>`
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
