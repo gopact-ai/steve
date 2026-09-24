@@ -25,11 +25,11 @@ func (s *Server) materialRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /console/annotations/{id}", s.guard(s.consoleSaveMaterialAnnotation))
 }
 func (s *Server) materialAdmin(w http.ResponseWriter) (consoleapi.MaterialAdmin, bool) {
-	a, ok := s.admin.(consoleapi.MaterialAdmin)
-	if !ok {
+	if s.admin == nil {
 		http.Error(w, "materials are not enabled", http.StatusNotImplemented)
+		return nil, false
 	}
-	return a, ok
+	return s.admin, true
 }
 func materialResponse(w http.ResponseWriter, value any, err error) {
 	w.Header().Set("Cache-Control", "no-store")

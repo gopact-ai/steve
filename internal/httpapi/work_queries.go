@@ -94,8 +94,7 @@ func (s *Server) consoleNativeAttempts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) nativeAttempts(w http.ResponseWriter, r *http.Request, taskID string) {
 	w.Header().Set("Cache-Control", "no-store")
-	port, ok := s.admin.(consoleapi.AttemptQueries)
-	if !ok {
+	if s.admin == nil {
 		http.Error(w, "native attempt queries are not wired", http.StatusNotImplemented)
 		return
 	}
@@ -104,7 +103,7 @@ func (s *Server) nativeAttempts(w http.ResponseWriter, r *http.Request, taskID s
 		writeWorkQueryError(w, err)
 		return
 	}
-	page, err := port.QueryAttempts(r.Context(), consoleapi.AttemptHistoryQuery{TaskID: taskID, Conversation: r.URL.Query().Get("conversation"), Cursor: r.URL.Query().Get("cursor"), Limit: limit})
+	page, err := s.admin.QueryAttempts(r.Context(), consoleapi.AttemptHistoryQuery{TaskID: taskID, Conversation: r.URL.Query().Get("conversation"), Cursor: r.URL.Query().Get("cursor"), Limit: limit})
 	if err != nil {
 		writeWorkQueryError(w, err)
 		return

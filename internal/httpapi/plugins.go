@@ -85,8 +85,7 @@ func readPluginBody(w http.ResponseWriter, r *http.Request, value any) error {
 }
 
 func (s *Server) consolePluginPreset(w http.ResponseWriter, r *http.Request) {
-	service, ok := s.plugins.(consoleapi.PluginPresetService)
-	if !ok {
+	if s.plugins == nil {
 		http.Error(w, "plugin presets are unavailable", http.StatusNotImplemented)
 		return
 	}
@@ -95,9 +94,9 @@ func (s *Server) consolePluginPreset(w http.ResponseWriter, r *http.Request) {
 	var result consoleapi.PluginPresetPreview
 	if err == nil {
 		if strings.HasSuffix(r.URL.Path, "/preview") {
-			result, err = service.PreviewPluginPreset(r.Context(), r.PathValue("id"), req)
+			result, err = s.plugins.PreviewPluginPreset(r.Context(), r.PathValue("id"), req)
 		} else {
-			result, err = service.ApplyPluginPreset(r.Context(), r.PathValue("id"), req)
+			result, err = s.plugins.ApplyPluginPreset(r.Context(), r.PathValue("id"), req)
 		}
 	}
 	if err != nil {
@@ -113,19 +112,18 @@ func (s *Server) consolePluginPreset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) consolePluginRemoval(w http.ResponseWriter, r *http.Request) {
-	service, ok := s.plugins.(consoleapi.PluginRemovalService)
-	if !ok {
+	if s.plugins == nil {
 		http.Error(w, "plugin removal is unavailable", http.StatusNotImplemented)
 		return
 	}
 	var result any
 	var err error
 	if r.Method == http.MethodGet {
-		result, err = service.PluginUsage(r.Context(), r.PathValue("id"))
+		result, err = s.plugins.PluginUsage(r.Context(), r.PathValue("id"))
 	} else {
 		var req consoleapi.PluginRemoveRequest
 		if err = readPluginBody(w, r, &req); err == nil {
-			result, err = service.RemovePlugin(r.Context(), r.PathValue("id"), req)
+			result, err = s.plugins.RemovePlugin(r.Context(), r.PathValue("id"), req)
 		}
 	}
 	if err != nil {
@@ -141,12 +139,11 @@ func (s *Server) consolePluginRemoval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) consolePluginRuntimeClose(w http.ResponseWriter, r *http.Request) {
-	service, ok := s.plugins.(consoleapi.PluginRuntimeCloseService)
-	if !ok {
+	if s.plugins == nil {
 		http.Error(w, "plugin runtime close unavailable", http.StatusNotImplemented)
 		return
 	}
-	result, err := service.ClosePluginRuntime(r.Context(), r.PathValue("id"), r.PathValue("runtime"))
+	result, err := s.plugins.ClosePluginRuntime(r.Context(), r.PathValue("id"), r.PathValue("runtime"))
 	if err != nil {
 		w.WriteHeader(http.StatusConflict)
 		writeJSON(w, map[string]string{"error": err.Error()})
