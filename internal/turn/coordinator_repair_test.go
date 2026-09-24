@@ -346,3 +346,13 @@ func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
 		t.Fatalf("completion dialed %d times", n)
 	}
 }
+
+// Without a fleet there is nothing to find a helper in, and the refusal
+// says so rather than blaming a supervisor every coordinator has.
+func TestRepairWithoutAFleetSaysTheFleetIsMissing(t *testing.T) {
+	c, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	res := say(t, c, "/repair kimi")
+	if strings.Contains(res.Text, "supervisor") || !strings.Contains(res.Text, "机群") {
+		t.Fatalf("repair without a fleet: %q", res.Text)
+	}
+}
