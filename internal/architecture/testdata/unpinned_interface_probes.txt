@@ -1,4 +1,3 @@
 internal/artifact.generationNodes
 internal/artifact.objectLimiter
-internal/memory.pathReporter
 internal/node.NodeReceiptAuthorizer

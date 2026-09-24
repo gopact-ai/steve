@@ -176,14 +176,14 @@ type auditSink interface {
 // that stops keeping its own audit writes the Service's file instead.
 // The absences are as deliberate as the bindings — Markdown has no
 // authority to check a read against and no ledger to audit into, so it
-// is left out of those three.
+// is left out of those three. Markdown's pathReporter pin is in
+// contracts_test.go.
 var (
-	_ textReader   = (*LedgerStore)(nil)
-	_ readChecker  = (*LedgerStore)(nil)
-	_ namedSource  = (*LedgerStore)(nil)
-	_ auditSink    = (*LedgerStore)(nil)
-	_ textReader   = (*Markdown)(nil)
-	_ pathReporter = (*Markdown)(nil)
+	_ textReader  = (*LedgerStore)(nil)
+	_ readChecker = (*LedgerStore)(nil)
+	_ namedSource = (*LedgerStore)(nil)
+	_ auditSink   = (*LedgerStore)(nil)
+	_ textReader  = (*Markdown)(nil)
 )
 
 // ---------------------------------------------------------------- service
