@@ -174,9 +174,11 @@ try {
  await ownerDrawer.getByRole("button",{name:"More subtasks",exact:true}).click();
  await ownerDrawer.getByRole("alert").filter({hasText:"Records changed"}).waitFor();
  const invalidatedReads=detailReads();
- snapshot.plans[0].rev++;
+ // The reread owner has a new title; its heading shows the background read
+ // was applied before the rejected cursor is checked again.
+ snapshot.plans[0].rev++; liveOwner={...liveOwner,title:"OWNER AFTER PLAN CHANGE"};
  await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
- for(let i=0;i<100 && detailReads()===invalidatedReads;i++) await new Promise(r=>setTimeout(r,20));
+ await ownerDrawer.getByRole("heading",{name:"#live OWNER AFTER PLAN CHANGE",exact:true,level:2}).waitFor();
  assert.ok(detailReads()>invalidatedReads,"same-task plan change also invalidates its owner read");
  await ownerDrawer.getByRole("alert").filter({hasText:"Records changed"}).waitFor();
  assert.equal(await ownerDrawer.getByRole("button",{name:"More subtasks",exact:true}).isEnabled(),false);
@@ -220,10 +222,12 @@ try {
  await panel.getByRole("button",{name:"Browse files",exact:true}).waitFor();
  assert.ok(requests.filter(r=>r.startsWith("/console/attempts?")).every(r=>new URL(r,"http://fixture").searchParams.get("conversation")==="opaque-conversation"));
  assert.equal(requests.some(r=>/\/console\/tasks\/.*\/attempts/.test(r)),false,"no per-task frontend fanout");
- const beforeNative=nativeReads(), beforeState=requests.filter(r=>r==="/state").length;
+ // A node coming online is a /state change the sidebar renders; its count
+ // shows the poll was applied before native reads are compared.
+ const beforeNative=nativeReads();
+ snapshot.nodes.push({ name: "worker", up: true });
  await page.clock.fastForward(stateFloor); await page.clock.runFor(500);
- for(let i=0;i<100 && requests.filter(r=>r==="/state").length===beforeState;i++) await new Promise(r=>setTimeout(r,20));
- assert.ok(requests.filter(r=>r==="/state").length>beforeState);
+ await page.getByText("1 online",{exact:true}).waitFor();
  assert.equal(nativeReads(),beforeNative,"/state changes must not reread files");
  await page.clock.resume();
  await panel.getByRole("button",{name:"Load more",exact:true}).click();
