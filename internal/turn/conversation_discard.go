@@ -31,30 +31,22 @@ func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID st
 	if c.busyWith(conversationID) {
 		return fmt.Errorf("%w: %s", ErrConversationBusy, conversationID)
 	}
-	if c.tasks != nil {
-		if err := c.tasks.ChannelIdle(conversationID); err != nil {
-			return err
-		}
+	if err := c.tasks.ChannelIdle(conversationID); err != nil {
+		return err
 	}
 	if err := c.closeConversationSessions(ctx, conversationID); err != nil {
 		return err
 	}
-	if c.tasks != nil {
-		if _, err := c.tasks.DeleteChannel(conversationID); err != nil {
-			return err
+	if _, err := c.tasks.DeleteChannel(conversationID); err != nil {
+		return err
+	}
+	for _, job := range c.schedules.List(conversationID) {
+		if _, _, err := c.schedules.Delete(job.ID); err != nil {
+			return fmt.Errorf("drop schedule %s: %w", job.ID, err)
 		}
 	}
-	if c.schedules != nil {
-		for _, job := range c.schedules.List(conversationID) {
-			if _, _, err := c.schedules.Delete(job.ID); err != nil {
-				return fmt.Errorf("drop schedule %s: %w", job.ID, err)
-			}
-		}
-	}
-	if c.store != nil {
-		if err := c.store.DeleteConversation(conversationID); err != nil {
-			return err
-		}
+	if err := c.store.DeleteConversation(conversationID); err != nil {
+		return err
 	}
 	c.forgetConversation(conversationID)
 	return nil
@@ -97,9 +89,6 @@ func (c *Coordinator) busyWith(conversationID string) bool {
 // anyway. The alternative is a conversation nobody can ever delete
 // because one of its agents ran somewhere that is now offline.
 func (c *Coordinator) closeConversationSessions(ctx context.Context, conversationID string) error {
-	if c.store == nil || c.runtime == nil {
-		return nil
-	}
 	for agentID, session := range c.store.Conversation(conversationID).Sessions {
 		if session.UpstreamID != "" {
 			place := harness.Placement{Node: session.NodeID, Harness: session.HarnessID}

@@ -150,9 +150,6 @@ func (c *Coordinator) suggestProjects(ctx context.Context, rest string) []Sugges
 		return []Suggestion{{Label: "/project use", Args: "<id>", Detail: c.text.T(i18n.VerbProject), Insert: "/project use "}}
 	}
 	want := strings.TrimSpace(strings.TrimPrefix(rest, "use"))
-	if c.projects == nil {
-		return nil
-	}
 	all, err := c.projects.List(ctx)
 	if err != nil {
 		return nil
@@ -204,9 +201,6 @@ func (c *Coordinator) suggestAgents(ctx context.Context, conversationID, verb, r
 }
 
 func (c *Coordinator) suggestTasks(conversationID, rest string) []Suggestion {
-	if c.tasks == nil {
-		return nil
-	}
 	op, want := "", rest
 	for _, o := range []string{"pause", "resume", "cancel"} {
 		if strings.HasPrefix(rest, o+" ") {
@@ -238,9 +232,6 @@ func (c *Coordinator) suggestTasks(conversationID, rest string) []Suggestion {
 }
 
 func (c *Coordinator) suggestDisclosures(ctx context.Context, verb, rest string) []Suggestion {
-	if c.projects == nil {
-		return nil
-	}
 	pending, err := c.projects.PendingDisclosures(ctx)
 	if err != nil {
 		return nil
@@ -255,9 +246,6 @@ func (c *Coordinator) suggestDisclosures(ctx context.Context, verb, rest string)
 }
 
 func (c *Coordinator) suggestEffects(ctx context.Context, rest string) []Suggestion {
-	if c.intents == nil {
-		return nil
-	}
 	unresolved, err := c.intents.Unresolved(ctx)
 	if err != nil {
 		return nil
@@ -344,25 +332,20 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 	c = c.localized(i18n.ContextLocale(ctx))
 	out := Context{Conversation: conversationID}
 	var current *project.Project
-	if c.projects != nil {
-		// Read-only: a query must not bind the conversation as a turn would.
-		id, version, bound, err := c.projectFor(ctx, conversationID)
-		if err != nil {
-			return out, err
-		}
-		if p, ok, err := c.projects.Get(ctx, id); err == nil && ok {
-			current = &p
-			out.Project = &ContextProject{
-				ID: p.ID, Node: nodewire.Place(p.Home.Node), Path: p.Home.Path,
-				Level: string(p.Level.OrDefault()), Repo: string(p.Repo), Version: version, Bound: bound,
-			}
+	// Read-only: a query must not bind the conversation as a turn would.
+	id, version, bound, err := c.projectFor(ctx, conversationID)
+	if err != nil {
+		return out, err
+	}
+	if p, ok, err := c.projects.Get(ctx, id); err == nil && ok {
+		current = &p
+		out.Project = &ContextProject{
+			ID: p.ID, Node: nodewire.Place(p.Home.Node), Path: p.Home.Path,
+			Level: string(p.Level.OrDefault()), Repo: string(p.Repo), Version: version, Bound: bound,
 		}
 	}
-	active := ""
-	if c.store != nil {
-		active = c.store.Conversation(conversationID).ActiveAgent
-	}
-	if active == "" && c.catalog != nil {
+	active := c.store.Conversation(conversationID).ActiveAgent
+	if active == "" {
 		active = c.catalog.Default().ID
 	}
 	if c.fleet != nil {
@@ -393,7 +376,7 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 			}
 			out.Agents = append(out.Agents, choice)
 		}
-	} else if c.catalog != nil {
+	} else {
 		for _, a := range c.catalog.List() {
 			out.Agents = append(out.Agents, AgentChoice{ID: a.ID, Node: nodewire.Place(a.Node), Harness: a.Harness, Model: a.Model, Ready: true, Usable: true, Current: a.ID == active})
 		}

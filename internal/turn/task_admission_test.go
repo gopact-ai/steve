@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
-	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -22,6 +21,7 @@ import (
 )
 
 func TestTaskPersistenceFailureRefusesExecutionAndCanRetry(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"create", "begin", "close-previous-project"} {
 		t.Run(stage, func(t *testing.T) {
 			runner := &fakeRunner{reply: "done"}
@@ -157,6 +157,7 @@ func TestWorkspacePreparationCannotBypassTaskRevocation(t *testing.T) {
 }
 
 func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.T) {
+	t.Parallel()
 	for _, previous := range []task.State{task.StateFailed, task.StateBlocked} {
 		for _, entry := range []string{"command", "interrupted-switch"} {
 			for _, refuseWrite := range []bool{false, true} {
@@ -165,6 +166,7 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 					name += "/storage-failure"
 				}
 				t.Run(name, func(t *testing.T) {
+					t.Parallel()
 					book, err := ledger.Open(t.TempDir(), ledger.Options{})
 					if err != nil {
 						t.Fatal(err)
@@ -192,11 +194,11 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 					}
 					runner := &fakeRunner{reply: "done"}
 					manager := &fakeManager{runners: map[string]*fakeRunner{"test": runner}}
-					c := New(catalog, sessions, capability.NewAssembler(nil), manager, time.Minute)
-					c.SetTasks(tasks, "hub")
-					c.SetProjects(projects, "first", "")
-					c.SetAttempts(attempt.New(book))
-					c.SetExecution(execution.New(t.Context(), tasks))
+					c := buildCoordinator(t, withDeps(func(d *Deps) {
+						d.Catalog, d.Store, d.Assembler, d.Runtime, d.Timeout = catalog, sessions, capability.NewAssembler(nil), manager, time.Minute
+						d.Tasks, d.Node = tasks, "hub"
+						d.Projects, d.DefaultProject = projects, "first"
+					}), onLedger(book))
 					if _, err := handle(c, t.Context(), "old project work"); err != nil {
 						t.Fatal(err)
 					}

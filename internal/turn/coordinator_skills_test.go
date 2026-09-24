@@ -184,9 +184,8 @@ func skillsCoordinator(t *testing.T) (*Coordinator, *state.Store, *liveCounter, 
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": counter.runner}}
 	assembler := capability.NewAssembler(nil).SetHome(home.Dir{Path: homeDir}).SetSkills(m)
-	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute)
-	coordinator.SetIdentity("ou_me", home.Dir{Path: homeDir})
-	coordinator.SetSkills(live)
+	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute, withHome("ou_me", home.Dir{Path: homeDir}),
+		withDeps(func(d *Deps) { d.Skills = live }))
 	return coordinator, store, counter, dest
 }
 

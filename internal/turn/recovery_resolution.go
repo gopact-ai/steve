@@ -17,9 +17,6 @@ func (c *Coordinator) resolveStoppedExecution(record attempt.Record) error {
 		record.SessionSettled == nil || !*record.SessionSettled {
 		return errors.New("execution resolution requires the original identity and committed stop evidence")
 	}
-	if c.tasks == nil {
-		return errors.New("execution resolution requires task accounting")
-	}
 	tracked, ok := c.tasks.Get(record.TaskID)
 	if !ok {
 		return errors.New("execution resolution source task is missing")
@@ -42,9 +39,7 @@ func (c *Coordinator) resolveStoppedExecution(record attempt.Record) error {
 		if err := c.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage); err != nil {
 			return fmt.Errorf("attempt %s: stop confirmed; original accounting remains pending: %w", record.ID, err)
 		}
-		if c.executions != nil {
-			c.executions.ResolveStopped(record.ID, *record.Execution)
-		}
+		c.executions.ResolveStopped(record.ID, *record.Execution)
 		return nil
 	}
 	return fmt.Errorf("attempt %s: execution resolution has no bound accounting row", record.ID)

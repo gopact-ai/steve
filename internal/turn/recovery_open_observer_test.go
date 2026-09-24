@@ -46,16 +46,15 @@ func (m *uncertainOpenManager) OpenSession(ctx context.Context, place harness.Pl
 }
 
 func TestLostFreshNodeOpenKeepsOriginalTaskUnsettledWhileObserverCanExit(t *testing.T) {
-	c, _, _, original, req := retainedChatFixture(t)
+	lifetime, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c, _, _, original, req := retainedChatFixture(t, withExecutionLifetime(lifetime))
 	if _, err := c.ResumeRetainedChat(t.Context(), original.ID, req); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.store.DeleteSession(req.ConversationID, original.Agent); err != nil {
 		t.Fatal(err)
 	}
-	lifetime, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	c.SetExecution(execution.New(lifetime, c.tasks))
 	manager := &uncertainOpenManager{fakeManager: &fakeManager{}, attempts: c.attempts}
 	c.runtime = manager
 	req.Input, req.MessageID = "next task instruction", "web-next"

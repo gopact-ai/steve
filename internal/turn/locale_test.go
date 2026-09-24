@@ -20,8 +20,9 @@ func TestRequestLocalesShareExecutionStateWithoutChangingDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := New(catalog, store, nil, nil, time.Minute)
-	c.SetCatalog(i18n.New(i18n.LocaleZH))
+	c := buildCoordinator(t, withDeps(func(d *Deps) {
+		d.Catalog, d.Store, d.Timeout, d.Text = catalog, store, time.Minute, i18n.New(i18n.LocaleZH)
+	}))
 	var wg sync.WaitGroup
 	for n := 0; n < 24; n++ {
 		wg.Add(1)

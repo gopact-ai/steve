@@ -19,6 +19,7 @@ import (
 // nothing to show. Each step says which one it is, in order, and none is
 // reported once the agent has the prompt.
 func TestPromptReportsItsPreparationSteps(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	build := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
 	build.Dir = "../.."

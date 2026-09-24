@@ -7,6 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
+	"strings"
+
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -14,9 +18,6 @@ import (
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
-	"log/slog"
-	"sort"
-	"strings"
 )
 
 // probeCmd is `/fleet probe`: ask every harness on every machine what it
@@ -91,15 +92,13 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	if err != nil {
 		return Result{Title: title, Text: err.Error()}
 	}
-	if c.executions != nil {
-		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "repair/" + tracked.ID})
-		if err != nil {
-			c.closePlanTask(tracked.ID, err)
-			return Result{Title: title, Text: err.Error()}
-		}
-		defer scope.Finish(nil)
-		ctx = scope.Context()
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "repair/" + tracked.ID})
+	if err != nil {
+		c.closePlanTask(tracked.ID, err)
+		return Result{Title: title, Text: err.Error()}
 	}
+	defer scope.Finish(nil)
+	ctx = scope.Context()
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 
@@ -161,9 +160,6 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 // wrong one — a restricted project cannot be worked on an internal node,
 // which is exactly where a repair has to happen.
 func (c commands) repairProject(ctx context.Context, fix roster.Fix) (string, error) {
-	if c.projects == nil {
-		return "", fmt.Errorf("%s", c.text.T(i18n.ProjectsDisabled))
-	}
 	all, err := c.projects.List(ctx)
 	if err != nil {
 		return "", err
@@ -198,9 +194,6 @@ func (c commands) pathOn(ctx context.Context, node string) string {
 // planBase is the canonical snapshot the plan starts from, the way /plan
 // does.
 func (c commands) planBase(ctx context.Context, tracked task.Task) (string, error) {
-	if c.artifacts == nil {
-		return "", nil
-	}
 	p, ok, err := c.projects.Get(ctx, tracked.ProjectID)
 	if err != nil || !ok {
 		return "", err

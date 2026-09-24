@@ -11,6 +11,7 @@ import (
 // user dealt with it, or it does not matter. Both have to be reachable by
 // hand, in either language, and both have to be reversible.
 func TestSettlingAFailedTaskFromTheCardAndTakingItBack(t *testing.T) {
+	t.Parallel()
 	for _, spoken := range []struct {
 		input string
 		want  task.Settlement

@@ -1,34 +1,32 @@
 package turn
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 )
 
-// SetChannelOwner registers the trusted adapter's native owner at startup.
-// Console/internal calls keep SetIdentity's baseline; sender IDs are never
-// rewritten because tasks, notices and callbacks use their native identity.
-func (c *Coordinator) SetChannelOwner(channel, owner string) error {
-	if channel == "" || channel == "console" || strings.TrimSpace(channel) != channel {
-		return errors.New("a non-console channel is required")
+// channelOwners copies each trusted adapter's native owner, refusing a
+// console or malformed channel. Console and internal calls keep the
+// baseline owner; sender IDs are never rewritten because tasks, notices and
+// callbacks use their native identity.
+func channelOwners(owners map[string]string) (map[string]string, error) {
+	registered := make(map[string]string, len(owners))
+	for channel, owner := range owners {
+		if channel == "" || channel == "console" || strings.TrimSpace(channel) != channel {
+			return nil, fmt.Errorf("owner of channel %q: a non-console channel is required", channel)
+		}
+		registered[channel] = owner
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.channelOwners == nil {
-		c.channelOwners = map[string]string{}
-	}
-	c.channelOwners[channel] = owner
-	return nil
+	return registered, nil
 }
 
+// forChannel is the view a request from channel runs as. The owners are
+// fixed at New, so the lookup needs no lock.
 func (c *Coordinator) forChannel(channel string) (*Coordinator, error) {
 	if channel == "" || channel == "console" {
 		return c, nil
 	}
-	c.mu.Lock()
 	owner, ok := c.channelOwners[channel]
-	c.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("unregistered request channel %q", channel)
 	}

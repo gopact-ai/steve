@@ -83,13 +83,6 @@ func isTaskID(s string) bool {
 func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	title := c.text.T(i18n.CardTasks)
 	verb, id, ok := parseTaskArgs(rest)
-	if c.tasks == nil {
-		if ok && verb == taskComplete {
-			text := c.text.T(i18n.TasksEmpty)
-			return Result{Title: title, Text: text}, UserError{Text: text}
-		}
-		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}, nil
-	}
 	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}, nil
 	}

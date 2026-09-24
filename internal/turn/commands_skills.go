@@ -18,7 +18,7 @@ func (c commands) skillsCmd(ctx context.Context, req Request, selected agent.Age
 	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.SkillsOwnerOnly)}, nil
 	}
-	if c.skills == nil || c.skills.Map == nil {
+	if c.skills.Map == nil {
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.SkillsUnconfigured)}, nil
 	}
 	action, arg := skills.ParseAction(rest)
@@ -151,7 +151,7 @@ func (c commands) skillsList() string {
 }
 
 func (c commands) skillStatusLine() string {
-	if c.skills == nil || c.skills.Map == nil {
+	if c.skills.Map == nil {
 		return ""
 	}
 	enabled, err := c.skills.Map.Enabled()

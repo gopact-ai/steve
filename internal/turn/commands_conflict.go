@@ -37,7 +37,7 @@ type Resolution struct {
 func (c commands) resolveCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	ctx = agentexec.WithProgress(ctx, req.OnProgress)
 	title := c.text.T(i18n.CardResolve)
-	if c.supervisor == nil || c.plans == nil || c.artifacts == nil {
+	if c.supervisor == nil || c.plans == nil {
 		return Result{Title: title, Text: c.text.T(i18n.ResolveDisabled)}, nil
 	}
 	binding, err := c.bindingFor(ctx, req)
@@ -90,11 +90,7 @@ func (c commands) resolveCmd(ctx context.Context, req Request, rest string) (Res
 // nobody asking for it, and nothing at all when the landing policy leaves
 // conflicts to a person.
 func (c *Coordinator) AutoResolveConflicts(ctx context.Context, p project.Project) []Resolution {
-	auto := c.autoResolve
-	if c.AutoResolveSource != nil {
-		auto = c.AutoResolveSource()
-	}
-	if !auto {
+	if !c.autoResolves() {
 		return nil
 	}
 	return c.ResolveConflicts(ctx, p)
@@ -103,7 +99,7 @@ func (c *Coordinator) AutoResolveConflicts(ctx context.Context, p project.Projec
 // ResolveConflicts works through every queued result of the project that
 // is stuck on a merge conflict. It costs nothing when none is.
 func (c *Coordinator) ResolveConflicts(ctx context.Context, p project.Project) []Resolution {
-	if c.supervisor == nil || c.plans == nil || c.artifacts == nil {
+	if c.supervisor == nil || c.plans == nil {
 		return nil
 	}
 	stuck, err := c.artifacts.Stuck(ctx, p.ID)
@@ -118,7 +114,7 @@ func (c *Coordinator) ResolveConflicts(ctx context.Context, p project.Project) [
 // action taken on one of them names the artifact rather than the project
 // it happens to belong to.
 func (c *Coordinator) ResolveOneConflict(ctx context.Context, p project.Project, artifactID string) []Resolution {
-	if c.supervisor == nil || c.plans == nil || c.artifacts == nil {
+	if c.supervisor == nil || c.plans == nil {
 		return nil
 	}
 	stuck, err := c.artifacts.Stuck(ctx, p.ID)
@@ -225,14 +221,12 @@ func (c *Coordinator) resolveConflict(ctx context.Context, p project.Project, st
 // runResolution is the part that can fail after the task exists, kept
 // apart so every way out of it goes through one close.
 func (c *Coordinator) runResolution(ctx context.Context, p project.Project, stuck artifact.Stuck, tracked task.Task, agentID, goal string) error {
-	if c.executions != nil {
-		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "resolve/" + tracked.ID})
-		if err != nil {
-			return err
-		}
-		defer scope.Finish(nil)
-		ctx = scope.Context()
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "resolve/" + tracked.ID})
+	if err != nil {
+		return err
 	}
+	defer scope.Finish(nil)
+	ctx = scope.Context()
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 	stored, err := c.plans.Create(plan.Plan{

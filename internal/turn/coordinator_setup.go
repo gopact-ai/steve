@@ -2,7 +2,6 @@ package turn
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/capability"
@@ -35,13 +34,8 @@ type Setup struct {
 // the agent's prompt and skills, project memory — but starts nothing
 // and changes nothing, so the page can ask for it at any moment.
 func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID string) (Setup, error) {
-	if c.catalog == nil {
-		return Setup{}, errors.New("no agent catalog")
-	}
 	if agentID == "" {
-		if c.store != nil {
-			agentID = c.store.Conversation(conversationID).ActiveAgent
-		}
+		agentID = c.store.Conversation(conversationID).ActiveAgent
 		if agentID == "" {
 			agentID = c.catalog.Default().ID
 		}
@@ -51,9 +45,6 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 		return Setup{}, fmt.Errorf("no agent %q", agentID)
 	}
 	mode := c.modeOf(conversationID)
-	if c.home == nil {
-		mode = home.ModeNone
-	}
 	capabilities, err := c.assembler.AssembleExtra(selected, mode, c.setupExtras(ctx, conversationID, mode))
 	if err != nil {
 		return Setup{}, err
@@ -63,10 +54,8 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 		Mode: string(mode), Instructions: capabilities.Instructions, Sections: capabilities.Sections,
 		MCPServers: append([]string{"steve"}, selected.MCPServers...),
 	}
-	if c.store != nil {
-		saved := c.store.Conversation(conversationID).Sessions[selected.ID]
-		out.Applied = saved.InstructionsApplied && saved.CapabilityHash == capabilities.Fingerprint
-	}
+	saved := c.store.Conversation(conversationID).Sessions[selected.ID]
+	out.Applied = saved.InstructionsApplied && saved.CapabilityHash == capabilities.Fingerprint
 	return out, nil
 }
 
@@ -74,15 +63,14 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 // server's extras are left out: they mint a session token, which a
 // read-only question has no business doing.
 func (c *Coordinator) setupExtras(ctx context.Context, conversationID string, mode home.Mode) []capability.Extra {
-	svc := c.memoryService()
-	if svc == nil || mode != home.ModeOwner {
+	if mode != home.ModeOwner {
 		return nil
 	}
 	id := c.memoryProject(ctx, conversationID)
 	if id == "" {
 		return nil
 	}
-	text, err := svc.Snapshot(ctx, memory.ProjectScope(id))
+	text, err := c.memory.Snapshot(ctx, memory.ProjectScope(id))
 	if err != nil || text == "" {
 		return nil
 	}

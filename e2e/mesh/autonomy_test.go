@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // C-auto: nobody declared a workflow. The person states a goal; a planning
@@ -32,11 +33,11 @@ func TestAutoPlanDecomposesAndPlacesAcrossTheFleet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := turn.New(f.catalog, store, capability.NewAssembler(nil), f.manager, 3*time.Minute)
-	coordinator.SetTasks(f.tasks, "hub-e2e")
-	coordinator.SetProjects(f.projects, "local", "")
-	coordinator.SetAttempts(f.attempts)
-	coordinator.SetArtifacts(f.artifacts)
+	coordinator := turntest.New(t, func(o *turntest.Options) {
+		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, capability.NewAssembler(nil), f.manager, 3*time.Minute
+		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
+		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
+	})
 
 	// The planner is an agent on node-a: Steve does not call a model API,
 	// it opens a session on one of its own agents and holds it to the
@@ -53,7 +54,6 @@ func TestAutoPlanDecomposesAndPlacesAcrossTheFleet(t *testing.T) {
 	supervisor.SetLedger(f.book, "mesh")
 	supervisor.SetTasks(f.tasks)
 	supervisor.SetExecution(f.executions)
-	coordinator.SetExecution(f.executions)
 	supervisor.Runs().Observe(f.view)
 	coordinator.SetSupervisor(supervisor, f.plans, f.roster)
 

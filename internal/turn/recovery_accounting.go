@@ -25,9 +25,6 @@ func (c *Coordinator) ChatObserverActive(conversation, member string) bool {
 // SettleChatAccounting consumes the original execution's durable terminal
 // evidence. It neither delivers a reply nor grants a new execution.
 func (c *Coordinator) SettleChatAccounting(ctx context.Context, id string) error {
-	if c.attempts == nil || c.tasks == nil {
-		return errors.New("chat accounting recovery is not configured")
-	}
 	record, err := c.attempts.Get(ctx, id)
 	if err != nil {
 		return err
@@ -68,21 +65,19 @@ func (c *Coordinator) SettleChatAccounting(ctx context.Context, id string) error
 	if err := c.finishRetainedTask(record, runErr, nil); err != nil {
 		return err
 	}
-	if c.executions != nil {
-		// A committed prompt settlement and exact accounting supersede the
-		// old observer error, never a still-running owner or a newer epoch.
-		c.executions.ResolveStopped(record.ID, *record.Execution)
-	}
+	// A committed prompt settlement and exact accounting supersede the
+	// old observer error, never a still-running owner or a newer epoch.
+	c.executions.ResolveStopped(record.ID, *record.Execution)
 	return nil
 }
 
 // finishChatAccounting is called before any continuation callback. A committed
 // execution settles its exact row, not whichever task turn happens to be last.
 func (c *Coordinator) finishChatAccounting(ctx context.Context, id string, record attempt.Record, turnErr error, tokens task.Tokens, model string) error {
-	if c.tasks == nil || id == "" {
+	if id == "" {
 		return nil
 	}
-	if record.ID != "" && c.attempts != nil {
+	if record.ID != "" {
 		current, err := c.attempts.Get(ctx, record.ID)
 		if err != nil {
 			return err

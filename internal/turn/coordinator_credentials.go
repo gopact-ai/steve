@@ -7,7 +7,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/state"
 )
@@ -54,10 +53,7 @@ func (t *chatTurn) prepareCredentials(ctx context.Context, saved state.Session, 
 	updated := append([]capability.Extra(nil), extras...)
 	updated[0] = next[0]
 	if saved.PluginRuntime != nil {
-		mode := home.ModeNone
-		if c.home != nil {
-			mode = injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
-		}
+		mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
 		caps, err = c.assembler.AssembleExtraPinned(selected, mode, updated, saved.PluginSkillsFingerprint)
 	} else {
 		caps, err = c.assemble(selected, req, updated)

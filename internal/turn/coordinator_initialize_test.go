@@ -20,13 +20,11 @@ func TestInitializeConversationBindsWithoutTouchingSessionsOrTasks(t *testing.T)
 		t.Fatal(err)
 	}
 	manager := &selectorRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{}}}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	c.SetIdentity("owner", nil)
 	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetTasks(tasks, "")
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, ""), withOwner("owner"))
 	if err := c.InitializeConversation(t.Context(), "chat", "codex", "owner"); err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +59,7 @@ func TestInitializeConversationRequiresProjectReadAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
-	c.SetIdentity("owner", nil)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute, withOwner("owner"))
 	if err := c.projects.Declare(t.Context(), []project.Project{{ID: "private", Level: datalevel.Restricted, Home: project.Home{Path: t.TempDir()}}, {ID: "readable", DefaultRole: project.RoleRead, Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
