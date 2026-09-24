@@ -5,7 +5,10 @@ type Coordinator struct {
 	text string
 }
 
+type loader struct{}
+
 type coordinatorState struct {
+	*loader
 	tasks  *int
 	a, b   *int
 	table  map[string]int
@@ -36,6 +39,12 @@ func (c *Coordinator) checks(o *other) {
 
 func (s *coordinatorState) more() {
 	if s.b == nil {
+	}
+	if s.loader != nil {
+	}
+	if x := s.tasks; x == nil {
+	}
+	if t := s.table; t == nil {
 	}
 }
 

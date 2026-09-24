@@ -28,6 +28,9 @@ type coordinatorSurface struct {
 //   - recv.h, where h is a *Coordinator field of the receiver's struct;
 //   - a local declared from recv.h, as in `x := recv.h` or `x, y := recv.h, v`.
 //
+// A local declared from such an x.f, as in `if d := x.f; d == nil`, is
+// checked the same way. An embedded field counts under its type's name.
+//
 // The analysis is syntactic: a coordinator reached any other way is missed.
 func measureCoordinator(files []string) (coordinatorSurface, error) {
 	parsed := make([]*ast.File, 0, len(files))
@@ -59,10 +62,17 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 			for _, field := range fields.Fields.List {
 				if spec.Name.Name == "coordinatorState" {
 					_, table := field.Type.(*ast.MapType)
+					names := make([]string, 0, len(field.Names))
 					for _, name := range field.Names {
+						names = append(names, name.Name)
+					}
+					if len(field.Names) == 0 {
+						names = append(names, embeddedName(field.Type))
+					}
+					for _, name := range names {
 						surface.fields++
 						if !table {
-							dependencies[name.Name] = true
+							dependencies[name] = true
 						}
 					}
 					continue
@@ -140,6 +150,25 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 				root, ok := selector.X.(*ast.Ident)
 				return (ok && roots[root.Name]) || held(selector.X)
 			}
+			// aliases are locals declared from a dependency, as in
+			// `if x := recv.f; x == nil`.
+			aliases := map[string]bool{}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				assign, ok := n.(*ast.AssignStmt)
+				if !ok || assign.Tok != token.DEFINE || len(assign.Lhs) != len(assign.Rhs) {
+					return true
+				}
+				for i, value := range assign.Rhs {
+					if local, ok := assign.Lhs[i].(*ast.Ident); ok && dependency(value) {
+						aliases[local.Name] = true
+					}
+				}
+				return true
+			})
+			checked := func(expr ast.Expr) bool {
+				ident, ok := expr.(*ast.Ident)
+				return dependency(expr) || (ok && aliases[ident.Name])
+			}
 			isNil := func(expr ast.Expr) bool {
 				ident, ok := expr.(*ast.Ident)
 				return ok && ident.Name == "nil"
@@ -149,7 +178,7 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 				if !ok || (bin.Op != token.EQL && bin.Op != token.NEQ) {
 					return true
 				}
-				if (dependency(bin.X) && isNil(bin.Y)) || (isNil(bin.X) && dependency(bin.Y)) {
+				if (checked(bin.X) && isNil(bin.Y)) || (isNil(bin.X) && checked(bin.Y)) {
 					surface.nilChecks++
 				}
 				return true
@@ -157,6 +186,23 @@ func measureCoordinator(files []string) (coordinatorSurface, error) {
 		}
 	}
 	return surface, nil
+}
+
+// embeddedName is the field name an embedded type is reached by.
+func embeddedName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.StarExpr:
+		return embeddedName(e.X)
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		return e.Sel.Name
+	case *ast.IndexExpr:
+		return embeddedName(e.X)
+	case *ast.IndexListExpr:
+		return embeddedName(e.X)
+	}
+	return ""
 }
 
 // typeName is the name of a type or of the type a pointer points to, or ""
@@ -177,7 +223,7 @@ func TestCoordinatorSurfaceCountsReceiverRootedNilChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := coordinatorSurface{methods: 3, fields: 5, nilChecks: 8}
+	want := coordinatorSurface{methods: 3, fields: 6, nilChecks: 10}
 	if got != want {
 		t.Fatalf("coordinator surface = %+v, want %+v", got, want)
 	}
