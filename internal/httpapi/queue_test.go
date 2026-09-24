@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -108,5 +109,25 @@ func TestConsoleQueueRoutes(t *testing.T) {
 	raw := request("GET", "/console/queue?conversation=console:other", "", "token", http.StatusOK)
 	if strings.TrimSpace(string(raw)) != `{"interactive_requests":false,"material_refs":false,"queue":[],"submission_keys":true}` {
 		t.Fatalf("empty queue = %s", raw)
+	}
+}
+
+// historyConsole answers a rewound submission with the history the agent is
+// given in place of the turns that were removed.
+type historyConsole struct{ consoleapi.Console }
+
+func (historyConsole) Submit(_ context.Context, req consoleapi.Submission) (consoleapi.Exchange, error) {
+	return consoleapi.Exchange{
+		ID: "rewound", Conversation: req.Conversation, Input: req.Input,
+		State: consoleapi.ExchangeQueued, History: "private agent history",
+	}, nil
+}
+
+func TestConsoleQueueAcknowledgementLeavesOutHistory(t *testing.T) {
+	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+	server.SetConsole(historyConsole{})
+	res, body := ownerRequest(t, server, http.MethodPost, "/console/queue", `{"input":"again","rewind_to":"r1"}`)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, `"id":"rewound"`) || strings.Contains(body, "history") {
+		t.Fatalf("POST /console/queue = %d %s", res.StatusCode, body)
 	}
 }
