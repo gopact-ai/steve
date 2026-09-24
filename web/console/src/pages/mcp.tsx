@@ -211,7 +211,7 @@ function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeplo
 // in what it needs, sees the exact command, and confirms.
 function RegistryPanel({ onInstalled }: { onInstalled: () => void }) {
     const { t: tr } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const [q, setQ] = useState("");
     const [results, setResults] = useState<MCPRegistryEntry[] | null>(null);
     const [searching, setSearching] = useState(false);

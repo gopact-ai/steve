@@ -380,7 +380,8 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
 // the guide.
 function MachinesStep({ status, busy, onNext, onBack, nested, setNested }: StepProps & { nested: boolean; setNested: (open: boolean) => void }) {
     const { t } = useI18n();
-    const { snap, refresh } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const refresh = useFleet((fleet) => fleet.refresh);
     const navigate = useNavigate();
     const others = snap.nodes.filter((node) => node.role !== "hub");
     return <section className="space-y-4">
@@ -484,7 +485,7 @@ function agentSummary(status: DesktopStatus, t: Translator) {
 
 function FinishedStep({ status, busy, error, onBack, onFinish }: { status: DesktopStatus; busy: boolean; error: string; onBack: () => void; onFinish: () => void }) {
     const { t } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const others = snap.nodes.filter((node) => node.role !== "hub").length;
     return <section className="space-y-4">
         <CheckCircle className="size-6 text-fg-success-primary" aria-hidden="true" />

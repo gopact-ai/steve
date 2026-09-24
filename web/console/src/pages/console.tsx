@@ -77,7 +77,10 @@ export function ConsolePage() {
 }
 
 function ConsoleWorkbench({ initialConversation }: { initialConversation: string }) {
-    const { snap, refresh, live: connection, hubUpdated } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const refresh = useFleet((fleet) => fleet.refresh);
+    const connection = useFleet((fleet) => fleet.live);
+    const hubUpdated = useFleet((fleet) => fleet.hubUpdated);
     const nodeLabelOf = useNodeLabel();
     const { t, locale } = useI18n();
     const materials = useMaterial();

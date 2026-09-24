@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { changeMapFormat, settingsDraft, parseSettings } from "../../web/console/src/lib/settings-draft.ts";
+import { loadLocale } from "../../web/console/src/lib/i18n.ts";
+
+await Promise.all([loadLocale("zh"), loadLocale("en")]);
 
 const settings = (env, headers = {}) => ({ harnesses: {}, tools: [], declares: [], capabilities: [], mcp_servers: { sample: { type: "stdio", command: "sample", env, headers } } });
 

@@ -227,7 +227,11 @@ try {
         const notice = layers.page.getByRole("status").filter({ has: layers.page.getByRole("button", { name: "Close", exact: true }) });
         await notice.waitFor();
         assert.equal(new URL(layers.page.url()).hash, "#/console", "Escape dismisses only the real top modal");
-        await notice.getByRole("button", { name: "Close", exact: true }).focus();
+        // The dialog leaves the DOM before the modal's passive cleanup lifts
+        // inert from the page, and focus() on an inert button is a no-op that
+        // would send Escape to <body>. The notice regains focus by itself.
+        const close = await notice.getByRole("button", { name: "Close", exact: true }).elementHandle();
+        await layers.page.waitForFunction((button) => document.activeElement === button && !button.closest("[inert]"), close);
         await layers.page.keyboard.press("Escape");
         await notice.waitFor({ state: "hidden" });
         await draftRestored(layers);

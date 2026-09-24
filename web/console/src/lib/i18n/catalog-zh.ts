@@ -1,0 +1,31 @@
+import { appearanceZh } from "./zh/appearance.ts";
+import { workHistoryZh } from "./zh/work-history.ts";
+import { pluginsZh } from "./zh/plugins.ts";
+import { nodeAgentsZh } from "./zh/node-agents.ts";
+import { coordinationZh } from "./zh/coordination.ts";
+import { sshZh } from "./zh/ssh.ts";
+import { desktopZh } from "./zh/desktop.ts";
+import { selectionZh } from "./zh/selection.ts";
+import { sideChatZh } from "./zh/side-chat.ts";
+import { commonZh } from "./zh/common.ts";
+import { consoleZh } from "./zh/console.ts";
+import { domainZh as consoleChromeZh } from "./zh/console-chrome.ts";
+import { materialsZh } from "./zh/materials.ts";
+import { settingsPageZh } from "./zh/settings-page.ts";
+import { mcpToolsZh } from "./zh/mcpTools.ts";
+import { tasksZh } from "./zh/tasks.ts";
+import { settingsEditorZh } from "./zh/settingsEditor.ts";
+import { inboxZh } from "./zh/inbox.ts";
+import { conflictsZh } from "./zh/conflicts.ts";
+import { historyZh } from "./zh/history.ts";
+import { boardZh } from "./zh/board.ts";
+import { homeZh } from "./zh/home.ts";
+import { skillsZh } from "./zh/skills.ts";
+import { mcpZh } from "./zh/mcp.ts";
+import { fleetZh } from "./zh/fleet.ts";
+import { projectsZh } from "./zh/projects.ts";
+import { usageZh } from "./zh/usage.ts";
+import { setupZh } from "./zh/setup.ts";
+
+// Loaded on demand: see loadLocale in ../i18n.ts.
+export const zh = { ...appearanceZh, ...workHistoryZh, ...pluginsZh, ...nodeAgentsZh, ...coordinationZh, ...sshZh, ...desktopZh, ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...conflictsZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh, ...setupZh } as const;

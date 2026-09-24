@@ -16,7 +16,7 @@ function invalidatesUsage(event: Event): boolean {
 }
 
 export function useUsage(enabled = true) {
-    const { live } = useFleet();
+    const live = useFleet((fleet) => fleet.live);
     const events = useFleetEvents();
     const [response, setResponse] = useState<UsageResponse | null>(null);
     const [error, setError] = useState<string | null>(null);

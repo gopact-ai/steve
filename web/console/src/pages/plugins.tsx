@@ -21,7 +21,7 @@ import type { PluginInstallationView, PluginPackage, PluginsView } from "@/lib/p
 import { useI18n } from "@/providers/locale-provider";
 
 export function PluginsPage() {
-    const { t, locale } = useI18n(); const { snap } = useFleet(); const { view: coordination } = useCoordination();
+    const { t, locale } = useI18n(); const snap = useFleet((fleet) => fleet.snap); const { view: coordination } = useCoordination();
     const [params, setParams] = useSearchParams(); const [view, setView] = useState<PluginsView | null>(null);
     const [readError, setReadError] = useState(""); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
     const [busy, setBusy] = useState(""); const pending = useRef(false);

@@ -58,9 +58,18 @@ for (const dependency of ["recharts", "mermaid", "highlight.js"]) {
     if (modules.some((id) => id.includes(`/node_modules/${dependency}/`))) failures.push(`${dependency} must be demand-loaded`);
     if (!reachableModules.some((id) => id.includes(`/node_modules/${dependency}/`))) failures.push(`${dependency} must remain reachable`);
 }
+// Messages are identified by their text, not by file layout: the first
+// paint carries neither language, and each language loads on its own.
+const holding = (text) => [...reachable].filter((name) => chunks.get(name)?.code.includes(text));
+for (const [locale, text] of [["en", "Devices online: {online}/{total}"], ["zh", "{online}/{total} 台设备在线"]]) {
+    const found = holding(text);
+    if (found.length !== 1) failures.push(`${locale} messages must live in exactly one chunk, found ${found.length}`);
+    else if (initial.has(found[0])) failures.push(`${locale} messages must be demand-loaded, not part of the first paint`);
+}
+if (holding("Devices online: {online}/{total}").some((name) => holding("{online}/{total} 台设备在线").includes(name))) failures.push("each language must load without the other");
 assert.ok(modules.some((id) => id.endsWith("/src/pages/console.tsx")), "the default Console is immediately available");
 assert.ok(modules.some((id) => id.endsWith("/src/components/steve/desktop-onboarding.tsx")), "the lightweight desktop availability gate remains eager");
-if (bytes > 1_800_000) failures.push(`initial JS aggregate ${bytes} exceeds 1,800,000 bytes`);
-if (gzipBytes > 560 * 1024) failures.push(`initial JS aggregate gzip ${gzipBytes} exceeds 560 KiB`);
+if (bytes > 1_550_000) failures.push(`initial JS aggregate ${bytes} exceeds 1,550,000 bytes`);
+if (gzipBytes > 480 * 1024) failures.push(`initial JS aggregate gzip ${gzipBytes} exceeds 480 KiB`);
 assert.deepEqual(failures, [], "production demand boundaries and aggregate budgets");
 console.log("Route production chunk boundary passed");

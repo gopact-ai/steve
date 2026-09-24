@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { translate } from "../../web/console/src/lib/i18n.ts";
+import { loadLocale, translate } from "../../web/console/src/lib/i18n.ts";
 import { describeHistory, familyOf } from "../../web/console/src/lib/history-lines.ts";
 import { stateWordIn } from "../../web/console/src/lib/states.ts";
+
+await Promise.all([loadLocale("zh"), loadLocale("en")]);
 
 const zh = (key, params) => translate("zh", key, params);
 const en = (key, params) => translate("en", key, params);

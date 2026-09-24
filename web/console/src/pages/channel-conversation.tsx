@@ -24,7 +24,7 @@ import type { Conversation } from "@/lib/types";
 export function ChannelConversationPane({ id }: { id: string }) {
     const { t } = useI18n();
     const navigate = useNavigate();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const { intent, consume } = useIntent();
     const materials = useMaterial();
     const side = useSideChat();

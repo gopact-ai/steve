@@ -191,6 +191,49 @@ func TestSlowSubscriberDoesNotBlockThePublisher(t *testing.T) {
 	}
 }
 
+// A subscriber that misses an event is told so by the end of its stream:
+// a reader that stays connected must be able to trust it saw everything.
+func TestSubscriberThatFallsBehindIsClosed(t *testing.T) {
+	model := New(Sources{})
+	slow, stopSlow := model.Subscribe(t.Context())
+	defer stopSlow()
+	keeping, stopKeeping := model.Subscribe(t.Context())
+	defer stopKeeping()
+
+	var kept int
+	for i := range 200 {
+		model.Publish(Event{Kind: "task.changed", Seq: int64(i)})
+		// The reader that keeps up drains as it goes.
+		for drained := false; !drained; {
+			select {
+			case <-keeping:
+				kept++
+			default:
+				drained = true
+			}
+		}
+	}
+	if kept != 200 {
+		t.Fatalf("a reader that keeps up saw %d of 200 events", kept)
+	}
+	received := 0
+	for ended := false; !ended; {
+		select {
+		case _, open := <-slow:
+			if !open {
+				ended = true
+			} else {
+				received++
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the slow reader's stream stayed open after %d events", received)
+		}
+	}
+	if received == 0 || received >= 200 {
+		t.Fatalf("the slow reader received %d events before its stream ended, want its buffer and then the end", received)
+	}
+}
+
 // The model column comes from observation: a harness seen running reports
 // its model on the agent and on the node, and a blocked agent whose
 // binary is missing names who could repair it.

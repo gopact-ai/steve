@@ -19,6 +19,7 @@ export { default as React } from "react";
 export { createRoot } from "react-dom/client";
 export { flushSync } from "react-dom";
 export { LocaleProvider } from "/src/providers/locale-provider.tsx";
+export { loadLocale } from "/src/lib/i18n.ts";
 export { SelectionSurface } from "/src/providers/selection-provider.tsx";
 export { selectionForReply } from "/src/lib/selection.ts";
 export { Md } from "/src/components/steve/markdown.tsx";
@@ -79,6 +80,8 @@ try {
         window.$RefreshSig$ = () => (type) => type;
         window.__vite_plugin_react_preamble_installed__ = true;
         const api = await import("/@id/__x00__deferred-test");
+        // Renders below are synchronous; the page's messages load first.
+        await api.loadLocale("en");
         const h = api.React.createElement, root = api.createRoot(document.getElementById("fixture"));
         window.api = api;
         window.render = (children) => api.flushSync(() => root.render(h(api.LocaleProvider, null, h(api.SplitPaneProvider, null, children))));

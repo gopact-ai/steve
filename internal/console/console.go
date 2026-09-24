@@ -752,18 +752,27 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 	if s.model == nil {
 		return func() {}
 	}
-	events, stop := s.model.Subscribe(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for ev := range events {
-			if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
-				work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, consoleapi.StepInfo{}))
+		// The model closes a subscriber that falls behind; subscribing
+		// again resumes collection. Each step's progress is a whole
+		// snapshot, so a later event for a step replaces what was missed,
+		// but a step whose last snapshot fell in the gap keeps the state
+		// collected before it.
+		for ctx.Err() == nil {
+			events, stop := s.model.Subscribe(ctx)
+			for ev := range events {
+				if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
+					work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, consoleapi.StepInfo{}))
+				}
 			}
+			stop()
 		}
 	}()
 	return func() {
-		stop()
+		cancel()
 		<-done
 	}
 }

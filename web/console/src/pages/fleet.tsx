@@ -76,7 +76,7 @@ function machineOptions(snap: Snapshot, tr: Translator): { id: string; label: st
 // TroubleLine is the same reason in one line, for a table row.
 function TroubleLine({ a }: { a: Agent }) {
     const { t: tr } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const words = troubleWords(a, nodeLabelIn(snap.nodes, a.node || snap.hub.node), tr);
     if (!words) return null;
     return <span className="truncate text-xs text-error-primary" title={words}>{words}</span>;
@@ -88,7 +88,7 @@ function TroubleLine({ a }: { a: Agent }) {
 // hunt through two settings pages for the word they already typed.
 function AgentTrouble({ a, onChanged }: { a: Agent; onChanged: () => void }) {
     const { t: tr } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     if (a.eligible) return null;
@@ -135,7 +135,7 @@ function agentSpecKey(spec: AgentSpec): string {
 // and the config file with it.
 function AgentDrawer({ a: observed, live, onClose, onChanged }: { a: Agent; live?: LiveActivity; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const { fill } = useIntent();
     const [editing, setEditing] = useState(false);
     const [removing, setRemoving] = useState(false);
@@ -503,7 +503,8 @@ const fleetTabs: FleetTab[] = ["coordination", "machines", "agents"];
 
 export function FleetPage() {
     const { t: tr, locale } = useI18n();
-    const { snap, refresh } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const refresh = useFleet((fleet) => fleet.refresh);
     // Streamed progress keeps the activity column current between the
     // snapshot re-reads; the buffer is trimmed from the front, so the
     // cursor is an arrival number, not an index.

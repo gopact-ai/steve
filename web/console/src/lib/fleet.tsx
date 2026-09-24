@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { desktopEnsureService } from "./api/desktop";
 import { emptySnapshot, fetchState } from "./api/fleet";
 import { eventsURL, HTTPError } from "./http";
@@ -6,17 +6,37 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import type { Event, Snapshot } from "./types";
 import { NodeNamesContext, useNodeNames } from "./node-name";
 import { serviceWatch } from "./service-watch";
+import { statePoll } from "./state-poll";
 
 export type Live = "connecting" | "live" | "reconnecting" | "unauthorized";
 
-interface FleetState {
+export interface FleetState {
     snap: Snapshot;
     live: Live;
     refresh: () => void;
     hubUpdated: boolean;
 }
 
-const FleetContext = createContext<FleetState | null>(null);
+// Readers select the one field they use: the snapshot changes on every
+// /state read, and a reader of the connection or of refresh alone has no
+// reason to render for it.
+class FleetStore {
+    private listeners = new Set<() => void>();
+    constructor(private state: FleetState) {}
+    get = () => this.state;
+    subscribe = (listener: () => void) => {
+        this.listeners.add(listener);
+        return () => { this.listeners.delete(listener); };
+    };
+    update(patch: Partial<FleetState>) {
+        const next = { ...this.state, ...patch };
+        if ((Object.keys(patch) as (keyof FleetState)[]).every((key) => Object.is(next[key], this.state[key]))) return;
+        this.state = next;
+        for (const listener of [...this.listeners]) listener();
+    }
+}
+
+const FleetContext = createContext<FleetStore | null>(null);
 const FleetEventsContext = createContext<Event[] | null>(null);
 const ConsoleFeedContext = createContext<ConsoleFeed | null>(null);
 
@@ -97,35 +117,37 @@ export class ConsoleFeed {
 }
 
 // The snapshot is re-read when the stream says something moved, with a
-// polling floor in case the stream drops silently.
+// polling floor in case the stream drops silently (see statePoll).
 export function FleetProvider({ children }: { children: ReactNode }) {
-    const [snap, setSnap] = useState<Snapshot>(emptySnapshot);
-    const [live, setLive] = useState<Live>("connecting");
     const [events, setEvents] = useState<Event[]>([]);
     const [feed] = useState(() => new ConsoleFeed());
     const pending = useRef<number | null>(null);
     const firstVersion = useRef<string | null>(null);
-    const [hubUpdated, setHubUpdated] = useState(false);
+    const poll = useRef<ReturnType<typeof statePoll> | null>(null);
 
     const load = useResourceRead("fleet", fetchState, (snapshot) => {
         if (snapshot.hub.version) {
             firstVersion.current ??= snapshot.hub.version;
-            if (snapshot.hub.version !== firstVersion.current) setHubUpdated(true);
+            if (snapshot.hub.version !== firstVersion.current) store.update({ hubUpdated: true });
         }
-        setSnap(snapshot);
-        setLive((state) => state === "unauthorized" ? "connecting" : state);
+        store.update({ snap: snapshot, live: store.get().live === "unauthorized" ? "connecting" : store.get().live });
+        poll.current?.fresh();
     }, (error) => {
-        if (error instanceof HTTPError && error.status === 401) setLive("unauthorized");
+        if (error instanceof HTTPError && error.status === 401) store.update({ live: "unauthorized" });
     });
 
     const refresh = useCallback(() => {
         if (pending.current) return;
         pending.current = window.setTimeout(() => { pending.current = null; void load(); }, 250);
     }, [load]);
+    const [store] = useState(() => new FleetStore({ snap: emptySnapshot, live: "connecting", refresh, hubUpdated: false }));
 
     useEffect(() => {
         void load();
-        const floor = window.setInterval(() => void load(), 10000);
+        const floor = poll.current = statePoll(() => void load());
+        const shown = () => floor.visible(document.visibilityState !== "hidden");
+        shown();
+        document.addEventListener("visibilitychange", shown);
         let source: EventSource | null = null;
         let retry: number | null = null;
         let reconnecting = false;
@@ -134,7 +156,8 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             source = new EventSource(eventsURL());
             source.onopen = () => {
                 watch.up();
-                setLive("live");
+                floor.live(true);
+                store.update({ live: "live" });
                 if (reconnecting) { reconnecting = false; void load(); }
             };
             source.onmessage = (e) => {
@@ -149,25 +172,29 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             };
             source.onerror = () => {
                 watch.down();
+                floor.live(false);
                 reconnecting = true;
-                setLive("reconnecting");
+                store.update({ live: "reconnecting" });
                 source?.close();
                 retry = window.setTimeout(connect, 3000);
             };
         };
         connect();
-        return () => { window.clearInterval(floor); source?.close(); feed.stop(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
-    }, [load, refresh, feed]);
+        return () => { floor.stop(); poll.current = null; document.removeEventListener("visibilitychange", shown); source?.close(); feed.stop(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
+    }, [load, refresh, feed, store]);
 
-    const value = useMemo(() => ({ snap, live, refresh, hubUpdated }), [snap, live, refresh, hubUpdated]);
-    const names = useNodeNames(snap.nodes);
-    return <FleetContext.Provider value={value}><FleetEventsContext.Provider value={events}><NodeNamesContext.Provider value={names}><ConsoleFeedContext.Provider value={feed}>{children}</ConsoleFeedContext.Provider></NodeNamesContext.Provider></FleetEventsContext.Provider></FleetContext.Provider>;
+    const nodes = useSyncExternalStore(store.subscribe, () => store.get().snap.nodes);
+    const names = useNodeNames(nodes);
+    return <FleetContext.Provider value={store}><FleetEventsContext.Provider value={events}><NodeNamesContext.Provider value={names}><ConsoleFeedContext.Provider value={feed}>{children}</ConsoleFeedContext.Provider></NodeNamesContext.Provider></FleetEventsContext.Provider></FleetContext.Provider>;
 }
 
-export function useFleet(): FleetState {
-    const ctx = useContext(FleetContext);
-    if (!ctx) throw new Error("useFleet outside FleetProvider");
-    return ctx;
+/** useFleet renders its caller when the selected value changes. The
+ *  selector must return a value already held by the state, not a new
+ *  object, or every read looks like a change. */
+export function useFleet<T>(select: (state: FleetState) => T): T {
+    const store = useContext(FleetContext);
+    if (!store) throw new Error("useFleet outside FleetProvider");
+    return useSyncExternalStore(store.subscribe, () => select(store.get()));
 }
 
 export function useFleetEvents(): Event[] {

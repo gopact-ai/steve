@@ -190,7 +190,7 @@ function MCPBlock({ servers, agent, node }: { servers: string[]; agent: string; 
 // folded-in ones would say an agent has no skills when it has several.
 function MachineSkills({ node, harness }: { node?: string; harness: string }) {
     const { t } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const skills = useMemo(() => {
         const machine = snap.nodes.find((n) => n.name === node);
         const offers = (machine?.snapshot?.offers || []).filter((c) => c.kind === "skill" && (!c.scope || c.scope === harness));
@@ -210,7 +210,7 @@ function MachineSkills({ node, harness }: { node?: string; harness: string }) {
 // says so rather than leaving the list looking complete.
 function Commands({ node }: { node?: string }) {
     const { t } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const tools = useMemo(() => {
         const machine = snap.nodes.find((n) => n.name === node);
         return (machine?.snapshot?.offers || []).filter((c) => c.kind === "tool");

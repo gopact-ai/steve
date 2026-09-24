@@ -51,7 +51,8 @@ export function App() {
 }
 
 function Shell() {
-    const { snap, live } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
+    const live = useFleet((fleet) => fleet.live);
     const { view: coordination, error: coordinationError } = useCoordination();
     const location = useLocation();
     const navigate = useNavigate();

@@ -26,9 +26,9 @@ try {
         import { LocaleProvider } from "@/providers/locale-provider";
         import { BoardPage } from "@/pages/board";
         const hit = key => window.renders[key] = (window.renders[key] || 0) + 1;
-        const Snapshot = memo(function Snapshot() { const { snap } = useFleet(); hit("snapshot"); return <output id="ready">{snap.hub.node}</output>; });
-        const Connection = memo(function Connection() { const { live } = useFleet(); hit("connection"); return <output id="connection">{live}</output>; });
-        const Actions = memo(function Actions() { const { refresh } = useFleet(); hit("actions"); window.refreshFleet = refresh; return null; });
+        const Snapshot = memo(function Snapshot() { const snap = useFleet((fleet) => fleet.snap); hit("snapshot"); return <output id="ready">{snap.hub.node}</output>; });
+        const Connection = memo(function Connection() { const live = useFleet((fleet) => fleet.live); hit("connection"); return <output id="connection">{live}</output>; });
+        const Actions = memo(function Actions() { const refresh = useFleet((fleet) => fleet.refresh); hit("actions"); window.refreshFleet = refresh; return null; });
         const Material = memo(function Material() { const value = useMaterial(); hit("material"); window.material = value; return <output id="pins">{value.pins("p").map(pin => pin.title).join(",")}</output>; });
         const Coordination = memo(function Coordination() { const value = useCoordination(); hit("coordination"); window.coordination = value; return <output id="revision">{value.view?.revision}</output>; });
         window.emit = event => flushSync(() => window.source.onmessage({ data: JSON.stringify(event) }));
@@ -131,6 +131,12 @@ try {
 
     await settle();
     assert.equal(reads.state, before.state + 1, "The existing 250ms snapshot refresh still runs");
+    // The read is counted when it is requested; its readers render once
+    // the response has been handled.
+    await page.waitForFunction(() => (window.renders.snapshot || 0) > 0, null, { timeout: 5000 }).catch(() => assert.fail("A new snapshot reaches its readers"));
+    const refreshed = await counts();
+    assert.equal(refreshed.connection || 0, 0, "Connection readers do not render for a new snapshot");
+    assert.equal(refreshed.actions || 0, 0, "Readers of refresh alone do not render for a new snapshot");
     assert.equal(reads.usage, before.usage, "Unrelated events do not invalidate usage");
     assert.equal((await counts()).material || 0, 0, "An unchanged hub node does not republish the material context");
     assert.equal((await counts()).coordination || 0, 0, "An unchanged coordination view does not republish");
@@ -159,12 +165,47 @@ try {
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem(`steve.material.pins:${location.origin}:first:p`)).length), 1, "Stable actions use the latest hub, not the initial closure");
 
     const reconnect = { ...reads };
+    await reset();
     await page.evaluate(() => window.source.onerror());
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "reconnecting");
+    assert.equal((await counts()).snapshot || 0, 0, "Snapshot readers do not render for a connection change");
     await page.clock.runFor(3100);
     await settle();
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "live");
     assert.ok(reads.state > reconnect.state && reads.coordination > reconnect.coordination && reads.usage > reconnect.usage, "Reconnect recovery is retained");
+
+    // Settle the reconnect burst, then measure the floor alone. It counts
+    // from the reconnect's snapshot, which lands a little after the stream
+    // opens, so each window keeps a margin from the 60s mark.
+    await page.clock.runFor(1000);
+    const quiet = reads.state;
+    // A read is counted when its request reaches the fixture, a moment after
+    // the timer that sends it.
+    const stateReads = async (count) => { for (let i = 0; i < 40 && reads.state < count; i++) await new Promise((resolve) => setTimeout(resolve, 25)); return reads.state; };
+    await page.clock.runFor(55_000);
+    assert.equal(await stateReads(quiet + 1), quiet, "A live stream does not re-read /state on the 10s floor");
+    await page.clock.runFor(6_000);
+    assert.equal(await stateReads(quiet + 1), quiet + 1, "A live stream still bounds a silent drop with a long floor");
+    await page.evaluate(() => window.source.onerror());
+    await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "reconnecting");
+    // Hold the stream down: the retry fails again as soon as it opens.
+    await page.evaluate(() => { window.EventSource = class { constructor() { window.source = this; setTimeout(() => this.onerror?.(), 0); } close() {} }; });
+    const down = reads.state;
+    await page.clock.runFor(20_500);
+    assert.equal(await stateReads(down + 2), down + 2, "A dropped stream falls back to the 10s floor");
+    const setVisible = (visible) => page.evaluate((visible) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible ? "visible" : "hidden" });
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => !visible });
+        document.dispatchEvent(new Event("visibilitychange"));
+    }, visible);
+    await setVisible(false);
+    const hidden = reads.state;
+    await page.clock.runFor(120_000);
+    assert.equal(await stateReads(hidden + 1), hidden, "A hidden page does not poll /state");
+    await setVisible(true);
+    await page.waitForFunction(() => document.querySelector("#ready")?.textContent);
+    await page.clock.runFor(100);
+    assert.equal(await stateReads(hidden + 1), hidden + 1, "Showing the page refreshes /state at once");
     assert.deepEqual(errors, []);
     console.log("Fleet read surfaces: event-only renders 0; state, usage, node.updated, hub pins and reconnect recovery passed");
     await context.close();

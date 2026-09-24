@@ -16,7 +16,8 @@ const DesktopSetupDialog = lazy(() => import("./desktop-setup-dialog").then((mod
 // agents page directly with #/console?setup=agents.
 export function DesktopOnboarding() {
     const { t } = useI18n();
-    const { refresh, live } = useFleet();
+    const refresh = useFleet((fleet) => fleet.refresh);
+    const live = useFleet((fleet) => fleet.live);
     const location = useLocation();
     const navigate = useNavigate();
     const requested = new URLSearchParams(location.search).get("setup");

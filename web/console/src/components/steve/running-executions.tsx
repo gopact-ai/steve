@@ -13,7 +13,7 @@ import { Mono, Nothing, StateBadge, Where } from "@/components/steve/ui";
 // rather than with the machine and agent inventory.
 export function RunningExecutions() {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     return (
         <TableCard.Root size="sm" className="workbench-table min-w-0">
             <TableCard.Header title={tr("fleet.runningExecutions")} badge={`${snap.attempts.length}`} description={tr("fleet.leaseHint")} />

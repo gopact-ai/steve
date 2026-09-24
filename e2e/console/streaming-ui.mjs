@@ -336,7 +336,8 @@ try {
         // A missed event must converge through polling, without submitting work.
         f.replies.push({ id: "missed-reply", kind: "reply", conversation: A, at, text: "Completed while disconnected" });
         const readsBeforePoll = f.stateReads;
-        await page.clock.runFor(10100);
+        // With the stream live, /state keeps only its long recovery floor.
+        await page.clock.runFor(60100);
         await page.getByText("Completed while disconnected", { exact: true }).waitFor();
         assert.ok(f.stateReads > readsBeforePoll, "The periodic fleet recovery read must remain active");
         await f.emit({ kind: "console.progress", exchange_id: "narrow-turn", progress: { phase: "saving", answer: "Stream continued after recovery polling" } });

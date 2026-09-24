@@ -274,3 +274,39 @@ func TestConsoleFinalProgressArrivesDuringFinalization(t *testing.T) {
 	case <-time.After(2 * progressEvery):
 	}
 }
+
+// The model closes a subscriber that falls behind. Following a turn's plan
+// must outlive that: progress after the gap is still collected.
+func TestFollowKeepsCollectingAfterFallingBehind(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{})
+	s := New(nil, "owner", model)
+	work := newProcess()
+	stop := s.follow(context.Background(), "console:test", work)
+	defer stop()
+	step := func(id string) {
+		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:test", StepID: id, Progress: &consoleapi.Progress{Answer: id}})
+	}
+
+	// Hold the collector so it cannot read while far more than its buffer
+	// is published.
+	work.mu.Lock()
+	for range 200 {
+		step("behind")
+	}
+	work.mu.Unlock()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		step("after")
+		work.mu.Lock()
+		_, seen := work.steps["after"]
+		work.mu.Unlock()
+		if seen {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("progress published after falling behind was not collected")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

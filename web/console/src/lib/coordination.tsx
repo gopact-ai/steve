@@ -22,7 +22,7 @@ function validView(value: CoordinationView) { return value && typeof value.enabl
 
 export function CoordinationProvider({ children }: { children: ReactNode }) {
     const { t } = useI18n();
-    const { live } = useFleet();
+    const live = useFleet((fleet) => fleet.live);
     const events = useFleetEvents();
     const [view, setView] = useState<CoordinationView | null>(null);
     const currentView = useRef<CoordinationView | null>(null);

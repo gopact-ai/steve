@@ -20,7 +20,7 @@ import { ConflictsPanel } from "@/components/steve/conflicts";
 // backticks the reader has to decode.
 export function InboxPage() {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const { act } = useIntent();
     const unavailable = unavailableSource(snap.sources, "ledger-attention");
     // Conflicts block work until somebody settles them, which is what this

@@ -33,7 +33,7 @@ type TabKey = "active" | "all" | "scheduled";
 // cost". Cards are top-level tasks only; steps and subtasks unfold inside.
 export function BoardPage() {
     const { t: tr, locale } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const indexedWork = useMemo(() => indexBoardWork(snap.plans, snap.agents), [snap.plans, snap.agents]);
     const { fill } = useIntent();
     const [params, setParams] = useSearchParams();

@@ -5,7 +5,7 @@ import { reconcileSubmission, useStops } from "@/lib/drafts";
 import { useConsoleEvents, useFleet } from "@/lib/fleet";
 
 export function useConversationController(conversation: string, pollMs = 10000) {
-    const { live: connection } = useFleet();
+    const connection = useFleet((fleet) => fleet.live);
     const stops = useStops();
     const stop = stops[conversation];
     const controller = useMemo(() => new ConversationController(conversation, { fetchQueue, fetchReplies, reconcileSubmission }), [conversation]);

@@ -6,6 +6,7 @@ import { installBackNavigationGuard } from "@/lib/navigation-guard";
 import { RouteProvider } from "@/providers/router-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { LocaleProvider } from "@/providers/locale-provider";
+import { RootBoundary } from "@/components/steve/root-boundary";
 import "@/styles/globals.css";
 import "@/styles/settings.css";
 
@@ -13,7 +14,7 @@ import "@/styles/settings.css";
 // reload; the hub serves one shell for all of them.
 installBackNavigationGuard();
 createRoot(document.getElementById("root")!).render(
-    <StrictMode>
+    <StrictMode><RootBoundary>
         <LocaleProvider><ThemeProvider>
             <HashRouter>
                 <RouteProvider>
@@ -21,5 +22,5 @@ createRoot(document.getElementById("root")!).render(
                 </RouteProvider>
             </HashRouter>
         </ThemeProvider></LocaleProvider>
-    </StrictMode>,
+    </RootBoundary></StrictMode>,
 );

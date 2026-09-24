@@ -81,6 +81,32 @@ func TestServerServesStateEventsAndPage(t *testing.T) {
 	t.Fatal("the event never reached the stream")
 }
 
+// A client that cannot keep up loses events; the stream ends rather than
+// carry on with a gap, so the client reconnects and re-reads the snapshot.
+func TestEventStreamEndsWhenTheClientFallsBehind(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
+	server := serve(t, model, ServerConfig{Token: testToken})
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL()+"/events?token="+testToken, nil)
+	stream, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+
+	// The client reads nothing while far more is published than the
+	// connection can buffer, so the server's writes stall and its
+	// subscription overflows.
+	text := strings.Repeat("x", 8<<10)
+	for i := range 4000 {
+		model.Publish(readmodel.Event{Kind: "task.changed", Seq: int64(i), Text: text})
+	}
+	if _, err := io.Copy(io.Discard, stream.Body); err != nil {
+		t.Fatalf("the stream of a client that fell behind did not end: %v", err)
+	}
+}
+
 // A server without a token is refused on any address: loopback keeps other
 // machines out, not other local users or processes, and the console grants
 // owner operations.

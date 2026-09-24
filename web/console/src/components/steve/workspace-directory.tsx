@@ -21,7 +21,7 @@ export function projectDirName(root: string, home: string, fallback: string) {
 // project's, not the machine's.
 export function WorkspaceDirectoryPreview({ node, dir }: { node: string; dir: string }) {
     const { t } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const root = snap.nodes.find((n) => n.name === node)?.projects_root || "";
     return <div className="space-y-1.5">
         <p className="text-sm font-medium text-secondary">{t("projects.copyDirectory")}</p>
@@ -32,7 +32,7 @@ export function WorkspaceDirectoryPreview({ node, dir }: { node: string; dir: st
 
 export function WorkspaceDirectoryField({ node, fallback, value, onChange, isDisabled, autoFocus }: { node: string; fallback: string; value: string; onChange: (dir: string) => void; isDisabled?: boolean; autoFocus?: boolean }) {
     const { t } = useI18n();
-    const { snap } = useFleet();
+    const snap = useFleet((fleet) => fleet.snap);
     const root = snap.nodes.find((n) => n.name === node)?.projects_root || "";
     const dir = value.trim() || fallback.trim();
     return <div className="space-y-1.5">
