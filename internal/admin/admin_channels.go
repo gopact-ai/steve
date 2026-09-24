@@ -15,8 +15,8 @@ import (
 
 type hubChannelsService struct {
 	admin *Service
-	// mu guards the fields below. It is taken after the configuration
-	// store is held, never before.
+	// mu guards the fields below. When both mu and the configuration
+	// store are held, the store is taken first.
 	mu            sync.Mutex
 	applied       channelsettings.Settings
 	appliedSecret string
