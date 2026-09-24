@@ -210,3 +210,61 @@ func TestReplicaReceiptIdentityIsVersionScopedAcrossPhysicalFloors(t *testing.T)
 		})
 	}
 }
+
+// A checkpoint whose boundary was taken before a restore still encodes the
+// state at its boundary, and its callback leaves the restored replay
+// evidence in place.
+func TestCheckpointTakenBeforeARestoreEncodesItsBoundary(t *testing.T) {
+	book, _ := replicaBook(t)
+	for i := range 5 {
+		if err := book.PutBinding(t.Context(), "fact", "current", i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	earlier, err := book.SnapshotReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 5; i < 10; i++ {
+		if err := book.PutBinding(t.Context(), "fact", "current", i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkpoint, err := book.SnapshotReplicaCheckpoint(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer checkpoint.Release()
+	if err := book.RestoreReplica(earlier); err != nil {
+		t.Fatal(err)
+	}
+	data, err := checkpoint.Encode()
+	if err != nil {
+		t.Fatalf("a checkpoint taken before a restore did not encode: %v", err)
+	}
+	if err := checkpoint.Persisted(); err != nil {
+		t.Fatal(err)
+	}
+	if got := receiptCount(t, book); got != 5 {
+		t.Fatalf("the checkpoint's callback pruned restored replay evidence: %d receipts", got)
+	}
+	var live int
+	if ok, err := book.GetBinding(t.Context(), "fact", "current", &live); err != nil || !ok || live != 4 {
+		t.Fatalf("live state after restore = %d %v %v, want 4", live, ok, err)
+	}
+	target, err := Open(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	if err := target.RestoreReplica(data); err != nil {
+		t.Fatal(err)
+	}
+	var encoded int
+	if ok, err := target.GetBinding(t.Context(), "fact", "current", &encoded); err != nil || !ok || encoded != 9 {
+		t.Fatalf("checkpoint state = %d %v %v, want the boundary's 9", encoded, ok, err)
+	}
+	if got := receiptCount(t, target); got != 2 {
+		t.Fatalf("checkpoint kept %d receipts above its floor, want 2", got)
+	}
+}
