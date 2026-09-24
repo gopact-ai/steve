@@ -9,7 +9,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/turn"
 )
 
 // SetIngressLifetime shares the application's close-before-join worker owner.
@@ -18,24 +17,13 @@ func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorker
 	g.ingressContext, g.ingressWorkers = ctx, workers
 }
 
-type inputParser interface {
-	ParseInput(string) (string, turn.ParsedInput)
-}
-
 func (g *Gateway) immediateInput(text string) bool {
-	if parser, ok := g.processor.(inputParser); ok {
-		_, parsed := parser.ParseInput(text)
-		return parsed.Interrupt || parsed.Control()
-	}
-	return turn.ImmediateInput(text)
+	_, parsed := g.processor.ParseInput(text)
+	return parsed.Interrupt || parsed.Control()
 }
 
 func (g *Gateway) scheduleControl(text string) bool {
-	if parser, ok := g.processor.(inputParser); ok {
-		_, parsed := parser.ParseInput(text)
-		return parsed.ScheduleControl()
-	}
-	_, parsed := turn.ParseAddressedInput(text)
+	_, parsed := g.processor.ParseInput(text)
 	return parsed.ScheduleControl()
 }
 
