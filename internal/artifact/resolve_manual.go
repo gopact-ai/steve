@@ -71,20 +71,41 @@ func (s *Store) ResolveByHand(ctx context.Context, p project.Project, stuck Stuc
 			_ = err
 		}
 	}()
-	for path, text := range wanted {
-		full := filepath.Join(ws.Path, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			return Landing{}, fmt.Errorf("%s: %w", path, err)
-		}
-		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
-			return Landing{}, fmt.Errorf("%s: %w", path, err)
-		}
+	if err := writeResolution(ws.Path, wanted); err != nil {
+		return Landing{}, err
 	}
 	m, _, err := s.Publish(ctx, ws, stuck.Marked, by, "resolved "+short(stuck.Artifact)+" by hand")
 	if err != nil {
 		return Landing{}, err
 	}
 	return s.Land(ctx, p, m.ID, by)
+}
+
+// writeResolution writes each resolved file into the workspace at dir. The
+// half-merged tree is content other machines committed, so a link in it is
+// never followed out of the workspace, and a link where a resolved file goes
+// is replaced by the text rather than written through.
+func writeResolution(dir string, files map[string]string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for path, text := range files {
+		name := filepath.FromSlash(path)
+		if err := root.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if info, err := root.Lstat(name); err == nil && !info.Mode().IsRegular() {
+			if err := root.Remove(name); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+		}
+		if err := root.WriteFile(name, []byte(text), 0o644); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // resolvedFiles checks a resolution before any of it is written: only the

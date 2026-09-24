@@ -338,7 +338,7 @@ steve run -config /home/me/steve-bin/config.json
 连接规则：
 
 - 不传 `-config` 时不自动查找配置，使用 `http://127.0.0.1:7710`、空 token 和原命令参数默认值；Hub 总有 token，所以此时须用 `-token` 提供，否则请求返回 401。
-- 传入时读取 `gateway.read_model_addr` / `gateway.read_model_token`，token 为空时读取 `gateway.state_path` 所在目录的 `loopback-token`（Hub 尚未启动过则为空）；存在 `<config>.cluster.json` 时，地址改用 sidecar 的 `ui_address`，token 仍来自原配置。普通 `gateway` 的空地址使用原默认地址，其监听地址可省略 `http://`，`0.0.0.0`、`[::]` 和省略主机的 `:端口` 分别转为 `127.0.0.1`、`[::1]` 和 `127.0.0.1`。
+- 传入时读取 `gateway.read_model_addr` / `gateway.read_model_token`，token 为空且连接地址是 loopback（精确的 `localhost` 或 loopback IP）时读取 `gateway.state_path` 所在目录的 `loopback-token`（Hub 尚未启动过则为空），其他地址不读取该文件；显式传入 `-token`（包括 `-token ''`）时也不读取该文件；存在 `<config>.cluster.json` 时，地址改用 sidecar 的 `ui_address`，token 仍来自原配置。普通 `gateway` 的空地址使用原默认地址，其监听地址可省略 `http://`，`0.0.0.0`、`[::]` 和省略主机的 `:端口` 分别转为 `127.0.0.1`、`[::1]` 和 `127.0.0.1`。
 - 自动发现的 cluster sidecar 沿用服务的私有文件要求：必须是普通文件，不能是链接，不能授予 group/other 权限，最多 8 MiB。`ui_address` 必须有明确的 loopback IP 和端口；缺失、空值、`null`、通配或远程地址都会拒绝，不会带着配置凭据退回其他监听。普通配置可省略连接字段使用默认值，但显式 `null` 不是有效字段值。
 - 显式 `-url` / `-token` 覆盖对应配置值，`-token ''` 明确禁用凭据。同 origin（协议、主机、有效端口相同，默认端口等价）的 URL 覆盖可继承配置 token；改变 origin 且配置有 token 时，必须显式给出 `-token`，否则报错，不发送请求。`localhost` 与 `127.0.0.1` 视为不同主机，不做 DNS 等价判断。客户端也不跟随跨 origin 或含 userinfo 的重定向。
 - `-url` 必须是 HTTP(S) URL；连接地址禁止 userinfo、query 和 fragment。缺失或损坏的显式配置、损坏的已存在 sidecar、非法连接地址都会报错，显式覆盖也不会跳过配置读取和地址校验。无须让其他服务配置合法，不读取证书或初始化运行目录，不启动 Hub、探测 Agent、修改配置；`say` 仍会向正在运行的控制台发送所给命令。
