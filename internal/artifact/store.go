@@ -84,7 +84,8 @@ func (m Manifest) Durable(p project.Project) bool {
 }
 
 // Nodes is what the store needs from the node registry: typed artifact
-// operations, blob transfer, and the node's git and placement facts.
+// operations, blob transfer, and the node's git, placement and generation
+// facts.
 type Nodes interface {
 	Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error)
 	PutBlob(ctx context.Context, node, name string, content io.Reader, size int64) error
@@ -94,6 +95,10 @@ type Nodes interface {
 	Level(ctx context.Context, node string) (string, error)
 	// Region is whose leases the node's resources carry ("" is the hub's).
 	Region(ctx context.Context, node string) (string, error)
+	// Generation numbers the node's incarnations: it moves when the node
+	// comes back, and a replica recorded under an earlier one is no longer
+	// trusted.
+	Generation(ctx context.Context, node string) (int64, error)
 }
 
 // Store holds every project's shadow repository on the hub — the default

@@ -31,6 +31,10 @@ func (a diskSessionAuthority) AuthorizeNodeSession(_ context.Context, principal 
 	return nil
 }
 
+func (diskSessionAuthority) AuthorizeNodeReceipt(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error {
+	return errNoReceiptAuthority
+}
+
 type subprocessSessionReceipt struct{ ID, Question, Output string }
 
 // TestNodeSessionSubprocess is an isolated worker/client process entrypoint.

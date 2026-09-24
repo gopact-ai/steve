@@ -15,6 +15,10 @@ func (f sessionAuthorizerFunc) AuthorizeNodeSession(ctx context.Context, princip
 	return f(ctx, principal, a, b, action)
 }
 
+func (sessionAuthorizerFunc) AuthorizeNodeReceipt(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error {
+	return errNoReceiptAuthority
+}
+
 func TestSessionAuthorityChallengeCannotAuthorizeUnrelatedActions(t *testing.T) {
 	for _, mode := range []string{"unrelated-action", "too-many-challenges"} {
 		t.Run(mode, func(t *testing.T) {

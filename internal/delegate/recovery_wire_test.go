@@ -37,6 +37,10 @@ func (a *delegateNodeAuthority) AuthorizeNodeSession(_ context.Context, principa
 	return nil
 }
 
+func (*delegateNodeAuthority) AuthorizeNodeReceipt(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error {
+	return errors.New("test authority does not authorize receipts")
+}
+
 type delegateWireCount struct {
 	mu      sync.Mutex
 	prompts int

@@ -24,12 +24,6 @@ import (
 
 const artifactContentKind = "artifact-content"
 
-// objectLimiter is a replicator that bounds the bundle it will take; one
-// that does not gets the package default.
-type objectLimiter interface {
-	MaxObjectBytes() int64
-}
-
 type contentReplicationState struct {
 	mu       sync.Mutex
 	projects map[string]*sync.Mutex
@@ -123,10 +117,7 @@ func (s *Store) prepareContent(ctx context.Context, m Manifest) (contentreplica.
 			}
 		}
 	}
-	maxBytes := contentreplica.DefaultMaxObjectBytes
-	if limited, ok := s.replication.(objectLimiter); ok {
-		maxBytes = limited.MaxObjectBytes()
-	}
+	maxBytes := s.replication.MaxObjectBytes()
 	if err := repo.Pin(ctx, m.ID); err != nil {
 		return contentreplica.Manifest{}, err
 	}
