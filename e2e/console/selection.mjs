@@ -12,7 +12,7 @@ const { chromium } = playwright.default || playwright;
 const vite = await createServer({ root, server: { host: "127.0.0.1", port: 0 }, optimizeDeps: { include: ["react", "react-dom", "react-dom/client", "react-markdown", "remark-gfm", "@untitledui/icons"] }, plugins: [{
     name: "selection-test-entry",
     resolveId: (id) => id === "virtual:selection-test" ? "\0selection-test" : null,
-    load: (id) => id === "\0selection-test" ? 'export {default as React} from "react"; export {createRoot} from "react-dom/client"; export {flushSync} from "react-dom"; export {Md} from "/src/components/steve/markdown.tsx"; export * as pick from "/src/lib/selection.ts";' : null,
+    load: (id) => id === "\0selection-test" ? 'export {default as React} from "react"; export {createRoot} from "react-dom/client"; export {flushSync} from "react-dom"; export {Md} from "/src/components/steve/markdown.tsx"; export {loadLocale, resolveLocale} from "/src/lib/i18n.ts"; export * as pick from "/src/lib/selection.ts";' : null,
 }] });
 await vite.listen();
 const url = vite.resolvedUrls.local[0];
@@ -29,7 +29,9 @@ try {
         window.$RefreshReg$ = () => {};
         window.$RefreshSig$ = () => (type) => type;
         window.__vite_plugin_react_preamble_installed__ = true;
-        const { React, createRoot, flushSync, Md, pick } = await import("/@id/__x00__selection-test");
+        const { React, createRoot, flushSync, Md, pick, loadLocale, resolveLocale } = await import("/@id/__x00__selection-test");
+        // Md renders synchronously below; its browser-language messages load first.
+        await loadLocale(resolveLocale("system", navigator.languages));
         window.pick = pick;
         const host = document.getElementById("fixture");
         const renderer = createRoot(host);

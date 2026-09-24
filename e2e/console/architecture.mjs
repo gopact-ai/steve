@@ -86,6 +86,7 @@ async function submissionSupportChecks() {
 await submissionSupportChecks();
 
 const { settingsDraft, parseSettings } = await import("../../web/console/src/lib/settings-draft.ts");
+await (await import("../../web/console/src/lib/i18n.ts")).loadLocale("zh");
 const original = { revision: "settings-fixture-1", harnesses: { sample: { command: "sample", args: ["hello world", "", "--flag", "--flag"] } }, mcp_servers: { sample: { type: "stdio", env: { FOO: "bar", SPACED: " value " }, headers: { Accept: "text/plain", Spaced: " value " } } }, tools: [], declares: [], capabilities: [] };
 const draft = settingsDraft(original);
 assert.deepEqual(parseSettings(draft), original, "Arguments including whitespace, empty values and duplicates must round-trip");
