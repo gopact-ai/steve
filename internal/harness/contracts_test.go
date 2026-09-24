@@ -22,3 +22,10 @@ var (
 	_ TurnRunner = (*Session)(nil)
 	_ TurnRunner = (*managedSession)(nil)
 )
+
+// Manager is the Runtime turn probes for plugin relocation and the Sessions
+// lifecycle and exec probe for plugin session preparation.
+var (
+	_ PluginRelocationPreparer = (*Manager)(nil)
+	_ PluginSessionPreparer    = (*Manager)(nil)
+)
