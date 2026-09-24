@@ -44,7 +44,7 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 		o.Ledger, o.Catalog, o.Store, o.Timeout, o.Owner = book, a.Catalog, store, time.Second, "owner"
 		o.Projects, o.DefaultProject = a.Projects, "p"
 	})
-	a.Console = console.New(nil, "owner", nil)
+	a.Console = console.New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := a.Console.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}

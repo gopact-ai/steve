@@ -16,5 +16,5 @@ func (c *Coordinator) localized(locale i18n.Locale) *Coordinator {
 // VerbsFor localizes system labels without changing the coordinator used by
 // another conversation or by a background channel.
 func (c *Coordinator) VerbsFor(ctx context.Context) []Verb {
-	return c.localized(i18n.ContextLocale(ctx)).Verbs()
+	return c.localized(i18n.ContextLocale(ctx)).verbs()
 }

@@ -459,7 +459,8 @@ func (s *Service) saveRecords() error {
 
 // PersistLedger loads one consistent record snapshot, then durably projects
 // interrupted work before the caller invokes RecoverChats or Drain. A failed
-// load/save installs no partial service state and never starts the handler.
+// load/save installs no partial service state and never calls the
+// coordinator.
 func (s *Service) PersistLedger(book *ledger.Ledger) error {
 	records, err := loadConsoleRecords(book)
 	if err != nil {

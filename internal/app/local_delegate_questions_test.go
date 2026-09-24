@@ -23,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -93,7 +94,7 @@ func TestHubLocalChildWaitsForItsOwnerInTheParentConversation(t *testing.T) {
 	// not mistaken for silence; the waits below still exceed it.
 	delegation.MaxSilence = time.Second
 	delegation.InlineWait = 0
-	cons := console.New(nil, "owner", nil)
+	cons := console.New(turntest.IdleCoordinator{}, "owner", nil)
 	wireDelegateQuestions(delegation, cons)
 
 	conversation := "console:parent"

@@ -99,7 +99,8 @@ func (s *Service) retryRecoveryStopLocked(e *queuedExchange) (*queuedExchange, e
 }
 
 // Stop targets are fixed in the control's first durable admission. A crash
-// before the handler or a failed lookup cannot turn a retry into a new target.
+// before the coordinator is called or a failed lookup cannot turn a retry
+// into a new target.
 func (s *Service) bindRecoveryStopTargetLocked(control *queuedExchange) {
 	if control.RecoveryStopTarget != nil {
 		return

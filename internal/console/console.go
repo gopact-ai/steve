@@ -43,11 +43,6 @@ type outcome struct {
 	err   error
 }
 
-// Handler is the coordinator's door.
-type Handler interface {
-	Handle(ctx context.Context, req turn.Request) (turn.Result, error)
-}
-
 // Meta is what is known about a conversation beyond its lines: a name —
 // the agent's summary of the first exchange, or the owner's own — and
 // whether it has been put away.
@@ -83,7 +78,7 @@ type Events interface {
 
 type Service struct {
 	maintenance bool
-	handler     Handler
+	coordinator Coordinator
 	owner       string
 	model       Events
 	titler      Titler
@@ -103,7 +98,8 @@ type Service struct {
 	running   map[string]int
 	exchanges map[string][]*queuedExchange
 	// Processes stay attached until finish records the reply, closing the
-	// gap between the handler returning and the last child snapshot arriving.
+	// gap between the coordinator returning and the last child snapshot
+	// arriving.
 	processes map[string]*process
 	// Ledger records are the production authority. doc is an explicitly
 	// selected file/test adapter, never a ledger compatibility fallback.
@@ -134,8 +130,13 @@ type Service struct {
 
 var _ consoleapi.Console = (*Service)(nil)
 
-func New(handler Handler, owner string, model Events) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
+// New makes a console that acts as owner through coordinator. It panics
+// when coordinator is nil.
+func New(coordinator Coordinator, owner string, model Events) *Service {
+	if coordinator == nil {
+		panic("console: New needs a coordinator")
+	}
+	return &Service{coordinator: coordinator, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }
 
 // SetRecoveryQuiet is how long a recovery rejoins the original execution
@@ -521,11 +522,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(contextProvider)
-	if !ok {
-		return consoleapi.Context{Conversation: conversation, Agents: []consoleapi.AgentChoice{}}, nil
-	}
-	got, err := aware.Context(ctx, conversation)
+	got, err := s.coordinator.Context(ctx, conversation)
 	if err != nil {
 		return consoleapi.Context{}, err
 	}
@@ -552,11 +549,7 @@ func (s *Service) Setup(ctx context.Context, conversation, agent string) (consol
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(setupProvider)
-	if !ok {
-		return consoleapi.Setup{}, errors.New("this gateway cannot report an agent's setup")
-	}
-	got, err := aware.SessionSetup(ctx, conversation, agent)
+	got, err := s.coordinator.SessionSetup(ctx, conversation, agent)
 	if err != nil {
 		return consoleapi.Setup{}, err
 	}
@@ -575,26 +568,9 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(suggester)
-	if !ok {
-		return nil
-	}
 	var out []consoleapi.Suggestion
-	for _, x := range aware.Suggest(ctx, conversation, line) {
+	for _, x := range s.coordinator.Suggest(ctx, conversation, line) {
 		out = append(out, consoleapi.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
-	}
-	return out
-}
-
-// Verbs is what the console can be told, with help, from the coordinator.
-func (s *Service) Verbs() []consoleapi.Verb {
-	aware, ok := s.handler.(verbLister)
-	if !ok {
-		return nil
-	}
-	var out []consoleapi.Verb
-	for _, v := range aware.Verbs() {
-		out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
 	}
 	return out
 }
@@ -627,8 +603,9 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 	return exchange.outcome.reply, exchange.outcome.err
 }
 
-// runExchange only invokes the handler; queue completion records its answer
-// and terminal state together so a restart cannot replay a finished turn.
+// runExchange only invokes the coordinator; queue completion records its
+// answer and terminal state together so a restart cannot replay a finished
+// turn.
 func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply consoleapi.Reply, err error) {
 	if s.owner == "" {
 		return consoleapi.Reply{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
@@ -697,7 +674,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	}
 	stop := s.follow(ctx, conversation, work)
 	identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}}
-	result, err := s.handler.Handle(ctx, turn.Request{
+	result, err := s.coordinator.Handle(ctx, turn.Request{
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
 		ExchangeID:   exchange.ID,

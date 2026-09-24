@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 func consoleRecordFixture(t testing.TB, count int) (*Service, *ledger.Ledger) {
@@ -172,7 +173,7 @@ func TestConsoleRecordsReopenPreservesOrderReceiptsAndRecovery(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, saved) {
 		t.Fatalf("SQLite reopen changed durable owner state: got=%+v err=%v", got, err)
 	}
-	s := New(nil, "owner", nil)
+	s := New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := s.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestConsoleRecordStartupFailureInstallsNothingAndCanRetry(t *testing.T) {
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_console_startup BEFORE UPDATE ON bindings WHEN new.kind='console-store' BEGIN SELECT RAISE(ABORT, 'startup refusal'); END`); err != nil {
 		t.Fatal(err)
 	}
-	s := New(nil, "owner", nil)
+	s := New(turntest.IdleCoordinator{}, "owner", nil)
 	s.replies["console:local"] = []consoleapi.Reply{{ID: "local", Conversation: "console:local", Text: "preexisting"}}
 	if err := s.PersistLedger(book); err == nil {
 		t.Fatal("startup ignored durable recovery refusal")
@@ -260,7 +261,7 @@ func TestConsoleRecordStartupFailureInstallsNothingAndCanRetry(t *testing.T) {
 
 func TestConsoleRecordStaleOwnerFailsWithoutPublishingMutation(t *testing.T) {
 	first, book := consoleRecordFixture(t, 0)
-	second := New(nil, "owner", nil)
+	second := New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := second.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +280,7 @@ func TestConsoleRecordStaleOwnerFailsWithoutPublishingMutation(t *testing.T) {
 
 func TestConsoleRecordComparisonImageDoesNotAliasInstalledPointers(t *testing.T) {
 	_, book := consoleRecordFixture(t, 1)
-	s := New(nil, "owner", nil)
+	s := New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := s.PersistLedger(book); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +309,7 @@ func TestConsoleRecordStoreDoesNotReadOrMigrateLegacyDocument(t *testing.T) {
 	if err := book.Document("console").Save(raw); err != nil {
 		t.Fatal(err)
 	}
-	s := New(nil, "owner", nil)
+	s := New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := s.Persist(book.Document("console")); err == nil {
 		t.Fatal("ledger document was accepted as a production adapter")
 	}

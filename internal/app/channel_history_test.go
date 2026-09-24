@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 type historyContextProbe struct{ seen []string }
@@ -74,7 +75,7 @@ func TestChannelHistoryHTTPRetainedMessagesAndExecutionLifecycle(t *testing.T) {
 		"ConversationID": identity, "ChatID": "chat", "MessageID": "message", "SenderOpenID": "owner", "Text": "retained original input", "Mentioned": true,
 	}})
 	model := readmodel.New(readmodel.Sources{})
-	cons := console.New(nil, "owner", model)
+	cons := console.New(turntest.IdleCoordinator{}, "owner", model)
 	server, err := httpapi.NewServer(model, httpapi.ServerConfig{Addr: "127.0.0.1:0", Token: "isolated-test"})
 	if err != nil {
 		t.Fatal(err)

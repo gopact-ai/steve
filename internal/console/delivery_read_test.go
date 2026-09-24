@@ -9,9 +9,10 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type receiptHandler struct{}
+type receiptHandler struct{ turntest.IdleCoordinator }
 
 func (receiptHandler) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{Attempt: "original-attempt", Text: "durable answer"}, nil

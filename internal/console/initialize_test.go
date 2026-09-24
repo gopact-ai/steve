@@ -163,13 +163,14 @@ func TestInitializeConversationRetriesCommittedBindingAfterTranscriptSaveFailure
 }
 
 func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
-	for _, reason := range []string{"conversation", "prefix", "project", "owner", "handler", "closing", "maintenance", "recovery", "canceled"} {
+	for _, reason := range []string{"conversation", "prefix", "project", "owner", "coordinator", "closing", "maintenance", "recovery", "canceled"} {
 		t.Run(reason, func(t *testing.T) {
 			h := &initializingHandler{}
 			s := New(h, "owner", nil)
 			conversation, project := "new", "p"
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
+			wantCalls := 0
 			switch reason {
 			case "conversation":
 				conversation = " "
@@ -179,8 +180,9 @@ func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
 				project = " "
 			case "owner":
 				s.owner = ""
-			case "handler":
-				s.handler = &echo{}
+			case "coordinator":
+				h.failure = errors.New("project denied")
+				wantCalls = 1
 			case "closing":
 				s.closing = true
 			case "maintenance":
@@ -194,7 +196,10 @@ func TestInitializeConversationRejectsInvalidOrStoppedRequests(t *testing.T) {
 			if err := s.InitializeConversation(ctx, conversation, project); err == nil {
 				t.Fatal("invalid initialization accepted")
 			}
-			if len(h.calls) != 0 || len(s.Conversations()) != 0 {
+			if len(h.calls) != wantCalls {
+				t.Fatalf("the coordinator was asked %d times, want %d", len(h.calls), wantCalls)
+			}
+			if len(s.Conversations()) != 0 {
 				t.Fatal("invalid initialization changed state")
 			}
 		})

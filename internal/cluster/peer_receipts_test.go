@@ -16,12 +16,16 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
-type nodeReceiptHandler func(turn.Request) (turn.Result, error)
+type nodeReceiptHandler struct {
+	turntest.IdleCoordinator
+	answer func(turn.Request) (turn.Result, error)
+}
 
 func (h nodeReceiptHandler) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
-	return h(req)
+	return h.answer(req)
 }
 
 func TestNodeReceiptProofNeedsExactResultAccountingAndDelivery(t *testing.T) {
@@ -136,7 +140,7 @@ func consoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string, fai
 	}
 	attempts := attempt.New(book)
 	var receipt nodewire.SessionReceipt
-	run := nodeReceiptHandler(func(req turn.Request) (turn.Result, error) {
+	run := nodeReceiptHandler{answer: func(req turn.Request) (turn.Result, error) {
 		transport := "console"
 		if missing == "other-transport" {
 			transport = "unsupported"
@@ -209,7 +213,7 @@ func consoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string, fai
 			return turn.Result{}, errors.New("receipt authorized before delivery commit")
 		}
 		return result, nil
-	})
+	}}
 	cons := console.New(run, "owner", nil)
 	if err := cons.PersistLedger(book); err != nil {
 		t.Fatal(err)

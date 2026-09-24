@@ -266,10 +266,8 @@ func (s *Service) beginRewind(ctx context.Context, conversation, replyID, key st
 	if err != nil {
 		return "", err
 	}
-	if resetter, ok := s.handler.(sessionResetter); ok {
-		if err := resetter.ResetConversationSessions(ctx, conversation); err != nil {
-			return "", fmt.Errorf("结束这个会话的 agent 会话失败，没有改动任何记录：%w", err)
-		}
+	if err := s.coordinator.ResetConversationSessions(ctx, conversation); err != nil {
+		return "", fmt.Errorf("结束这个会话的 agent 会话失败，没有改动任何记录：%w", err)
 	}
 	return replyID, nil
 }
