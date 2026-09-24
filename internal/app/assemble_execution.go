@@ -111,7 +111,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 			return p.TaskMaxTurns, time.Duration(p.TaskMaxElapsed)
 		}
 	}
-	coordinator.SetTasks(tasks, adminsvc.NodeName())
+	coordinator.SetTasks(tasks, boot.NodeName())
 	schedules, err := schedule.OpenLedger(book)
 	if err != nil {
 		return nil, fmt.Errorf("open schedules: %w", err)

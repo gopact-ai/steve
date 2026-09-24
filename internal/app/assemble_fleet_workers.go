@@ -31,7 +31,9 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 	nodes.Start(ctx)
 	// What earlier processes and dropped connections left behind: the
 	// hub's own orphaned worktrees now, queued landings from here on.
-	background.Go(func(ctx context.Context) { sweepWorktrees(ctx, artifacts, attempts, tasks, view, "", "") })
+	background.Go(func(ctx context.Context) {
+		sweepWorktrees(ctx, artifacts, attempts, tasks, view, boot.NodeName(), "", "")
+	})
 	// A landing that stops at a merge conflict used to sit in the queue
 	// being recomputed every pass. Now the same sweep that retries it can
 	// hand it to an agent, in the half-merged tree git kept.

@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -128,15 +127,15 @@ func liveWorktrees(ctx context.Context, attempts *attempt.Service) map[string]bo
 }
 
 // sweepWorktrees removes the orphaned worktrees on one machine ("" is
-// the hub) and says what it took.
-func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *attempt.Service, tasks *task.Store, view *readmodel.Model, node, root string) {
+// the hub, whose node name is hub) and says what it took.
+func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *attempt.Service, tasks *task.Store, view *readmodel.Model, hub, node, root string) {
 	keep := liveWorktrees(ctx, attempts)
 	if keep == nil {
 		return
 	}
 	physical := node
 	if physical == "" {
-		physical = adminsvc.NodeName()
+		physical = hub
 	}
 	prepared, err := attempts.RelocationWorkspaces(ctx, physical)
 	if err != nil {
@@ -148,7 +147,7 @@ func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *at
 	})
 	where := node
 	if where == "" {
-		where = adminsvc.NodeName()
+		where = hub
 	}
 	if err != nil {
 		slog.Error(fmt.Sprintf("sweep: worktrees on %s: %v", where, err), "node", where)

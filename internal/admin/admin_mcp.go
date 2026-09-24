@@ -74,7 +74,7 @@ func (a *Service) mcpSettingsOf(ctx context.Context, nodeKey string) (map[string
 // advertOf is what a machine last said about itself; the hub's is made now.
 func (a *Service) advertOf(ctx context.Context, nodeKey string) (nodewire.Advert, error) {
 	if nodeKey == "" {
-		return ObservedHubAdvert(a.ConfigStore, a.Observation), nil
+		return ObservedHubAdvert(a.NodeName, a.ConfigStore, a.Observation), nil
 	}
 	return a.Nodes.Advert(ctx, nodeKey)
 }
@@ -288,7 +288,7 @@ func (a *Service) AdoptMCP(ctx context.Context, machine, source, name string) er
 		set.MCPServers = map[string]nodewire.MCPSetting{}
 	}
 	set.MCPServers[name] = nodewire.MCPSetting{Type: full.Type, Command: full.Command, Args: full.Args, Env: full.Env, URL: full.URL, Headers: full.Headers}
-	if _, err := a.setNodeSettingsLocked(ctx, NodeName(), set); err != nil {
+	if _, err := a.setNodeSettingsLocked(ctx, a.NodeName, set); err != nil {
 		return err
 	}
 	a.remember(nodewire.Place(""), name, "adopted:"+source)
@@ -322,7 +322,7 @@ func (a *Service) RemoveMCP(ctx context.Context, machine, name string) error {
 	}
 	delete(set.MCPServers, name)
 	if nodeKey == "" {
-		_, err = a.setNodeSettingsLocked(ctx, NodeName(), set)
+		_, err = a.setNodeSettingsLocked(ctx, a.NodeName, set)
 	} else {
 		_, err = a.Nodes.Configure(ctx, nodeKey, set)
 	}
@@ -474,7 +474,7 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 	}
 	set.MCPServers[name] = nodewire.MCPSetting{Type: setting.Type, Command: setting.Command, Args: setting.Args, Env: setting.Env, URL: setting.URL, Headers: setting.Headers}
 	if nodeKey == "" {
-		_, err = a.setNodeSettingsLocked(ctx, NodeName(), set)
+		_, err = a.setNodeSettingsLocked(ctx, a.NodeName, set)
 	} else {
 		_, err = a.Nodes.Configure(ctx, nodeKey, set)
 	}

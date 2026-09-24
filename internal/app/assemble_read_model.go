@@ -43,14 +43,16 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 	// operator sees in one place cannot contradict the other.
 	// What each project's directory holds is asked of its machine on a
 	// slow clock and kept: a page must not run git on every repaint.
-	repos := &adminsvc.RepoCache{Projects: projects, Nodes: nodes, Hub: adminsvc.NodeName(), Poke: make(chan struct{}, 1)}
+	repos := &adminsvc.RepoCache{Projects: projects, Nodes: nodes, Hub: boot.NodeName(), Poke: make(chan struct{}, 1)}
 	view := readmodel.New(readmodel.Sources{
 		Hub: readmodel.Hub{
-			Node: adminsvc.NodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
+			Node: boot.NodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
 			Level: string(cfg.HubLevel()),
 		},
-		HubAdvert: func() nodewire.Advert { return adminsvc.ObservedHubAdvert(boot.ConfigStore(), observation) },
-		Repos:     repos.Get, HomeProject: adminsvc.HomeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
+		HubAdvert: func() nodewire.Advert {
+			return adminsvc.ObservedHubAdvert(boot.NodeName(), boot.ConfigStore(), observation)
+		},
+		Repos: repos.Get, HomeProject: adminsvc.HomeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
 		Models: seen,
 		Roster: fleet, Nodes: nodes, NodeNames: memberNames(environment), Tasks: tasks, Plans: plans,
 		Ledger:       readmodel.Ledger{Book: book, Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
@@ -98,7 +100,9 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 			// A machine that comes back may hold worktrees of attempts that
 			// died with the connection; nothing else ever returns for them.
 			if root := s.Advert.WorkspaceRoot; root != "" {
-				background.Go(func(ctx context.Context) { sweepWorktrees(ctx, artifacts, attempts, tasks, view, s.Name, root) })
+				background.Go(func(ctx context.Context) {
+					sweepWorktrees(ctx, artifacts, attempts, tasks, view, boot.NodeName(), s.Name, root)
+				})
 			}
 			return
 		}

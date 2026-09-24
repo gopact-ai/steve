@@ -41,7 +41,7 @@ func CheckProjectDir(input string) (string, error) {
 // localMachine reports whether the page named this machine: outside a
 // cluster the hub is the empty name, inside it the node's own identity.
 func (a *Service) localMachine(nodeKey string) bool {
-	return nodeKey == "" || a.ClusterMode && nodeKey == NodeName()
+	return nodeKey == "" || a.ClusterMode && nodeKey == a.NodeName
 }
 
 // workspaceRootOf is where a machine keeps its projects: what it says

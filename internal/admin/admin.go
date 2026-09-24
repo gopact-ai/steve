@@ -45,7 +45,10 @@ type MemberRemover interface {
 type Service struct {
 	PluginLibrary *pluginledger.Library
 	Observation   *LocalObservation
-	ClusterMode   bool
+	// NodeName is this machine's node name: its cluster identity when it
+	// is a member, the name it was started with otherwise.
+	NodeName    string
+	ClusterMode bool
 	// Members, when set, takes a removed machine out of the cluster along
 	// with whatever this node keeps for it.
 	Members       MemberRemover
@@ -117,7 +120,7 @@ var NameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 func (a *Service) nodeKey(name string) string {
 	if a.ClusterMode {
 		if name == "" || name == "hub" {
-			return NodeName()
+			return a.NodeName
 		}
 		return name
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,19 +60,19 @@ var (
 	hubSequence   atomic.Int64
 )
 
-// ObservedHubAdvert describes the hub machine from the configuration in
-// store and what observation has seen of it.
-func ObservedHubAdvert(store *ConfigStore, observation *LocalObservation) (adv nodewire.Advert) {
-	store.Read(func(cfg *config.Config) { adv = observedHubAdvert(cfg, observation) })
+// ObservedHubAdvert describes the hub machine, named nodeName, from the
+// configuration in store and what observation has seen of it.
+func ObservedHubAdvert(nodeName string, store *ConfigStore, observation *LocalObservation) (adv nodewire.Advert) {
+	store.Read(func(cfg *config.Config) { adv = observedHubAdvert(nodeName, cfg, observation) })
 	return adv
 }
 
-func observedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewire.Advert {
+func observedHubAdvert(nodeName string, cfg *config.Config, observation *LocalObservation) nodewire.Advert {
 	specs := make(map[string]node.HarnessSpec, len(cfg.Harnesses))
 	for id, h := range cfg.Harnesses {
 		specs[id] = node.HarnessSpec{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Slots: h.Slots}
 	}
-	adv := node.Advertise(NodeName(), specs, cfg.Gateway.Capabilities)
+	adv := node.Advertise(nodeName, specs, cfg.Gateway.Capabilities)
 	mcp := make(map[string]node.MCPSpec, len(cfg.MCPServers))
 	for id, m := range cfg.MCPServers {
 		mcp[id] = node.MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, URL: m.URL}
@@ -87,7 +86,7 @@ func observedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewi
 		}
 	}
 	entries, known := shipper.entries()
-	adv.Snapshot = node.Snapshot(NodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
+	adv.Snapshot = node.Snapshot(nodeName, hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
 	adv.Features = nodewire.Features()
 	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
@@ -314,21 +313,4 @@ func (s *SkillShipper) ShipAll(ctx context.Context) error {
 		}
 	}
 	return errors.Join(failures...)
-}
-
-// nodeName labels which machine ran a turn: the hub's own node name.
-var LocalNodeIdentity atomic.Value
-
-func NodeName() string {
-	if id, ok := LocalNodeIdentity.Load().(string); ok && id != "" {
-		return id
-	}
-	if name := strings.TrimSpace(os.Getenv("STEVE_NODE")); name != "" {
-		return name
-	}
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		return "local"
-	}
-	return host
 }

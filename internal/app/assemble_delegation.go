@@ -76,7 +76,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		// in the tree, funded from the caller's remainder, with its own
 		// token. It is offered only when the messaging server exists,
 		// because that is where the tool lives.
-		delegation := delegate.New(tasks, fleet, manager, assembler, artifacts, adminsvc.NodeName())
+		delegation := delegate.New(tasks, fleet, manager, assembler, artifacts, boot.NodeName())
 		delegation.SetExecution(executions)
 		delegation.SetLedger(attempts, artifacts)
 		delegation.SetGate(gate)
@@ -174,7 +174,7 @@ func delegateObserver(ctx context.Context, admin *adminsvc.Service, view *readmo
 	return func(c delegate.Child, p steveview.Progress) {
 		where := c.Node
 		if where == "" {
-			where = adminsvc.NodeName() // the hub itself, named like any machine
+			where = admin.NodeName // the hub itself, named like any machine
 		}
 		info := consoleapi.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
 			Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
