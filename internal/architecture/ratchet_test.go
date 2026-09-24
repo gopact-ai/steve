@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -203,34 +204,37 @@ func TestInlineInterfaceAssertionsOnlyShrink(t *testing.T) {
 	ratchet(t, "interface_assertions", offenders)
 }
 
-// consoleapi.Admin is implemented by admin and consumed by httpapi. A method
-// that no code outside admin and consoleapi calls is dead, yet still
-// compiles because admin.Service must satisfy the interface.
-func TestConsoleAdminMethodsAreAllCalled(t *testing.T) {
+// consoleapi.Admin is implemented by admin and consumed only by httpapi. A
+// method httpapi neither calls nor takes as a method value is dead, yet
+// still compiles because admin.Service must satisfy the interface.
+func TestConsoleAdminMethodsAreAllUsedByHTTPAPI(t *testing.T) {
 	root := repoRoot(t)
 	contract, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "internal", "consoleapi", "types.go"), nil, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	methods := map[string]bool{}
+	used := map[string]bool{}
 	ast.Inspect(contract, func(n ast.Node) bool {
 		spec, ok := n.(*ast.TypeSpec)
 		if !ok || spec.Name.Name != "Admin" {
 			return true
 		}
 		for _, field := range spec.Type.(*ast.InterfaceType).Methods.List {
+			if len(field.Names) == 0 {
+				t.Fatalf("consoleapi.Admin embeds %s; this test only reads methods declared in Admin itself", types.ExprString(field.Type))
+			}
 			for _, name := range field.Names {
-				methods[name.Name] = false
+				used[name.Name] = false
 			}
 		}
 		return false
 	})
-	if len(methods) == 0 {
+	if len(used) == 0 {
 		t.Fatal("consoleapi.Admin declares no methods")
 	}
 	for _, file := range sourceFiles(t, root) {
 		rel, _ := filepath.Rel(root, file)
-		if dir := filepath.ToSlash(filepath.Dir(rel)); dir == "internal/admin" || dir == "internal/consoleapi" {
+		if filepath.ToSlash(filepath.Dir(rel)) != "internal/httpapi" {
 			continue
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
@@ -238,20 +242,23 @@ func TestConsoleAdminMethodsAreAllCalled(t *testing.T) {
 			t.Fatal(err)
 		}
 		ast.Inspect(parsed, func(n ast.Node) bool {
-			if call, ok := n.(*ast.CallExpr); ok {
-				if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if _, declared := methods[selector.Sel.Name]; declared {
-						methods[selector.Sel.Name] = true
-					}
+			if selector, ok := n.(*ast.SelectorExpr); ok {
+				if _, declared := used[selector.Sel.Name]; declared {
+					used[selector.Sel.Name] = true
 				}
 			}
 			return true
 		})
 	}
-	for name, called := range methods {
-		if !called {
-			t.Errorf("consoleapi.Admin.%s is called nowhere outside admin and consoleapi", name)
+	var unused []string
+	for name, ok := range used {
+		if !ok {
+			unused = append(unused, name)
 		}
+	}
+	sort.Strings(unused)
+	for _, name := range unused {
+		t.Errorf("consoleapi.Admin.%s is neither called nor referenced in internal/httpapi; remove it from Admin and admin.Service", name)
 	}
 }
 
