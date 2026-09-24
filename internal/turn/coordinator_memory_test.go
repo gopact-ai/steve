@@ -237,19 +237,21 @@ func hitTexts(hits []memory.Hit) []string {
 
 // The markdown store scores a fact by the share of query words it holds:
 // with "tabs rust", a fact with both scores 1 and one with "tabs" 0.5.
-func TestRecallWithoutScopeKeepsTheBestLimitAcrossGlobalAndProject(t *testing.T) {
+func TestRecallWithoutScopeReturnsUpToLimitFromEachScopeGlobalFirst(t *testing.T) {
 	c := memoryCoordinator(t)
 	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
 	seedFact(t, c, memory.Global, "tabs in docs")
 	seedFact(t, c, memory.Global, "tabs for yaml")
-	seedFact(t, c, memory.ProjectScope("alpha"), "rust uses tabs")
+	seedFact(t, c, memory.Global, "rust and tabs in go")
 	seedFact(t, c, memory.ProjectScope("alpha"), "tabs in makefiles")
-	hits, _, err := c.Recall(t.Context(), "chat", "codex", "", "tabs rust", 3)
+	seedFact(t, c, memory.ProjectScope("alpha"), "rust uses tabs")
+	seedFact(t, c, memory.ProjectScope("alpha"), "tabs in ci")
+	hits, _, err := c.Recall(t.Context(), "chat", "codex", "", "tabs rust", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Equal scores keep global first.
-	want := []string{"rust uses tabs", "tabs in docs", "tabs for yaml"}
+	// Each scope keeps its own ranking; scores are not compared across them.
+	want := []string{"rust and tabs in go", "tabs in docs", "rust uses tabs", "tabs in makefiles"}
 	if got := hitTexts(hits); !slices.Equal(got, want) {
 		t.Fatalf("recalled %q, want %q", got, want)
 	}

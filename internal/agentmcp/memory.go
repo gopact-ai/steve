@@ -149,7 +149,7 @@ func memoryTools() []map[string]any {
 				"properties": map[string]any{
 					"query": map[string]any{"type": "string", "description": "What you want to know, in plain words. Empty lists everything, newest last."},
 					"scope": map[string]any{"type": "string", "enum": []string{"", "global", "project"}, "description": "Where to look; empty is both."},
-					"limit": map[string]any{"type": "integer", "description": "At most this many, 1–50. Default 10."},
+					"limit": map[string]any{"type": "integer", "description": "At most this many from each scope searched, 1–50. Default 10."},
 				},
 				"required": []string{"query"},
 			},
