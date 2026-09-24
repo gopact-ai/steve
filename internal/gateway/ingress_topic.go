@@ -36,9 +36,6 @@ func (g *Gateway) topicGuard(msg feishu.InboundMessage) string {
 	if conversationID(msg) != msg.ChatID {
 		return g.text.T(i18n.TopicAlready)
 	}
-	if g.ch == nil {
-		return g.text.T(i18n.TopicFailed)
-	}
 	return ""
 }
 
@@ -58,7 +55,7 @@ func topicMessage(input gatewayInput, receipt ledger.CommandRecord, key string) 
 
 // prepareTopic derives a new address from one input's external seed receipt.
 // Unknown seed effects stay fenced, including a missing response after success.
-// topicGuard has already refused a topic when there is no channel.
+// consumeInput calls it only when there is a channel.
 func (g *Gateway) prepareTopic(ctx context.Context, book *ledger.Ledger, key string, input gatewayInput) (feishu.InboundMessage, error) {
 	text, topic := topicTask(input.Message)
 	if !topic {

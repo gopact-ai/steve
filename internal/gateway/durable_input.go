@@ -33,6 +33,11 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("delivery acknowledgement: %w", errors.Join(channel.ErrOutcomeUnknown, err))
 	}
+	// Without a channel the input can be neither seeded nor answered. It stays
+	// pending, not run and with no step recorded, for a gateway that has one.
+	if g.ch == nil {
+		return errors.New("gateway reply channel is not available")
+	}
 	msg := input.Message
 	// Remote context reads are retryable, but never an input/dispatch proof.
 	// Complete or unknown dispatches are observed without fetching it again.
@@ -40,7 +45,7 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 	if err != nil {
 		return err
 	}
-	if !dispatched && g.ch != nil {
+	if !dispatched {
 		msg = g.ch.EnrichInput(ctx, msg)
 	}
 	input.Message = msg

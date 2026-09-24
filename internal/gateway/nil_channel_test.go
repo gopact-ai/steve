@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
 // Without Feishu the gateway has no channel, yet it still owns durable input
-// and task recovery. These tests pin what that state does.
+// and task recovery, which wait for a gateway that has one. These tests pin
+// what that state does.
 
 func openNilChannelBook(t *testing.T) *ledger.Ledger {
 	t.Helper()
@@ -23,42 +23,47 @@ func openNilChannelBook(t *testing.T) *ledger.Ledger {
 	return book
 }
 
-func TestNilChannelDurableInputRunsButCannotDeliver(t *testing.T) {
-	book := openNilChannelBook(t)
-	p := &durableInputProbe{}
-	g := New(p)
-	g.SetRecoveryLedger(book)
-	if err := g.processAcceptedFixture(inboundFixture()); err == nil {
-		t.Fatal("delivery without a channel reported success")
-	}
-	if p.calls.Load() != 1 {
-		t.Fatalf("accepted input dispatched %d times, want 1", p.calls.Load())
-	}
-	r, _, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/reply")
-	if err != nil || !strings.Contains(r.Error, "gateway reply channel is not available") {
-		t.Fatalf("reply receipt = %+v, %v", r, err)
-	}
-}
-
-func TestNilChannelDurableTopicIsRefusedWithoutDispatch(t *testing.T) {
-	book := openNilChannelBook(t)
-	p := &durableInputProbe{}
-	g := New(p)
-	g.SetRecoveryLedger(book)
-	msg := inboundFixture()
-	msg.ConversationID, msg.Text = msg.ChatID, "/t split the work"
-	if err := g.processAcceptedFixture(msg); err == nil {
-		t.Fatal("delivery without a channel reported success")
-	}
-	if p.calls.Load() != 0 {
-		t.Fatal("a topic that cannot be seeded reached the processor")
-	}
-	dispatch, found, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/dispatch")
-	if err != nil || !found || !strings.Contains(string(dispatch.Result), g.text.T(i18n.TopicFailed)) {
-		t.Fatalf("dispatch receipt = %+v, %v, %v; want the topic refusal", dispatch, found, err)
-	}
-	if _, seeded, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/topic"); err != nil || seeded {
-		t.Fatalf("topic seed reserved without a channel: %v, %v", seeded, err)
+// An accepted input, flat or /t, is neither run nor answered without a
+// channel. It stays pending with no step recorded, so a gateway that has a
+// channel later seeds, runs and answers it once.
+func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
+	for name, tc := range map[string]struct {
+		text  string
+		seeds int32
+	}{
+		"ordinary": {"original work", 0},
+		"topic":    {"/t split the work", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			book := openNilChannelBook(t)
+			p := &durableInputProbe{}
+			g := New(p)
+			g.SetRecoveryLedger(book)
+			msg := inboundFixture()
+			msg.ConversationID, msg.Text = msg.ChatID, tc.text
+			if err := g.processAcceptedFixture(msg); err == nil {
+				t.Fatal("input without a channel reported success")
+			}
+			if p.calls.Load() != 0 || pendingInputs(t, book) != 1 {
+				t.Fatalf("without a channel: calls=%d pending=%d; want 0 and 1", p.calls.Load(), pendingInputs(t, book))
+			}
+			for _, step := range []string{"dispatch", "topic", "reply"} {
+				if _, found, err := book.CommandReceipt(t.Context(), "gateway-input/input-message/"+step); err != nil || found {
+					t.Fatalf("%s recorded without a channel: %v, %v", step, found, err)
+				}
+			}
+			ch := &ingressTopicChannel{}
+			later := New(p)
+			later.BindChannel(ch)
+			later.SetRecoveryLedger(book)
+			if err := later.RecoverQueued(t.Context(), book, p, nil); err != nil {
+				t.Fatalf("recovery with a channel: %v", err)
+			}
+			if pendingInputs(t, book) != 0 || p.calls.Load() != 1 || ch.seeds.Load() != tc.seeds || ch.results.Load() != 1 {
+				t.Fatalf("with a channel: pending=%d calls=%d seeds=%d results=%d; want 0, 1, %d, 1",
+					pendingInputs(t, book), p.calls.Load(), ch.seeds.Load(), ch.results.Load(), tc.seeds)
+			}
+		})
 	}
 }
 

@@ -48,8 +48,9 @@ const maxLiveTurns = 64
 const approvalTimeout = 3 * time.Minute
 
 // Channel is the Feishu transport the gateway replies through. Without
-// Feishu the gateway has no channel at all, never a partial one, and still
-// owns durable input, recovery and notices.
+// Feishu the gateway has no channel at all, never a partial one: accepted
+// input and queued recovery stay pending for a gateway that has one, and
+// notices, schedule fires and task resumes are refused.
 type Channel interface {
 	// Reply posts text without reporting the new message's id.
 	Reply(ctx context.Context, messageID, text string) error
