@@ -6,7 +6,9 @@ export function eventCursor() {
     let epoch = "", count = 0, lastID = "";
     return {
         last: () => lastID,
-        accept(id: string): boolean {
+        // A message without an id (a stream that sends none) is delivered.
+        accept(id: string | undefined): boolean {
+            if (!id) return true;
             const dot = id.lastIndexOf(".");
             const n = Number(id.slice(dot + 1));
             if (dot <= 0 || !Number.isSafeInteger(n) || n <= 0) return true;

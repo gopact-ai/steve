@@ -31,6 +31,7 @@ test("an event without an id is delivered and leaves the cursor alone", () => {
     const cursor = eventCursor();
     cursor.accept("run1.3");
     assert.equal(cursor.accept(""), true);
+    assert.equal(cursor.accept(undefined), true);
     assert.equal(cursor.accept("garbage"), true);
     assert.equal(cursor.last(), "run1.3");
 });
