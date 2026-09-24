@@ -460,6 +460,8 @@ if (process.env.PURE_ONLY !== "1") {
         await englishNav.getByRole("link", { name: "Channels", exact: true }).click();
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         const channelHint = (path) => page.locator(`[data-channel-apply="${path}"]`);
+        // "no restart" in the live hint also contains "restart"; only the restart hint opens with it.
+        const restartHint = /^Restart the coordinator service/;
         // The hints keep showing the previous view until Reload is answered.
         await channelHint("feishu.group_policy").filter({ hasText: /subsequent incoming messages.*no restart/i }).waitFor({ state: "attached" });
         await page.getByText("Access rules", { exact: true }).click();
@@ -486,7 +488,7 @@ if (process.env.PURE_ONLY !== "1") {
         assert.equal(await page.locator('.settings-content [role="status"] .settings-restart-link').count(), 1);
         channels.live_fields = ["feishu.group_policy"];
         await page.getByRole("button", { name: "Reload", exact: true }).click();
-        await channelHint("feishu.allow_unmentioned").filter({ hasText: "Restart" }).waitFor();
+        await channelHint("feishu.allow_unmentioned").filter({ hasText: restartHint }).waitFor();
         assert.match(await channelHint("feishu.group_policy").innerText(), /no restart/i);
         // Startup failure / older servers do not advertise live fields.
         channels.apply_mode = "restart"; delete channels.live_fields;
