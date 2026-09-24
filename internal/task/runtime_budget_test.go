@@ -7,7 +7,7 @@ import (
 )
 
 func TestBudgetSourceAppliesOnlyToNewTasksAndCanRestoreUnlimited(t *testing.T) {
-	store, err := OpenLedger(testBook(t))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -101,7 +101,7 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 		t.Fatal(err)
 	}
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	}}}
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
-	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	plans, err := plan.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

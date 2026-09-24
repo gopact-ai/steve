@@ -23,7 +23,7 @@ func TestInitializeConversationBindsWithoutTouchingSessionsOrTasks(t *testing.T)
 	manager := &selectorRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{}}}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	c.SetIdentity("owner", nil)
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

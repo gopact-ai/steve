@@ -67,7 +67,7 @@ func TestHubLocalChildWaitsForItsOwnerInTheParentConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

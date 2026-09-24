@@ -10,7 +10,7 @@ import (
 
 func TestPlanBudgetReservationsAreAtomicWithoutSyntheticAttempts(t *testing.T) {
 	for _, limit := range []int{4, 12} {
-		s, err := task.OpenLedger(taskBook(t))
+		s, err := task.OpenLedger(testLedger(t))
 		if err != nil {
 			t.Fatal(err)
 		}

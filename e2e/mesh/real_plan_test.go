@@ -90,7 +90,7 @@ func newRealFleet(t *testing.T) *realFleet {
 		t.Fatal(err)
 	}
 	tasks.SetBudget(30, 2*time.Hour)
-	plans, err := plan.Open(filepath.Join(dir, "plans.json"))
+	plans, err := plan.OpenLedger(ledgerOf(t, dir))
 	if err != nil {
 		t.Fatal(err)
 	}

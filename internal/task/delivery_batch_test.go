@@ -7,7 +7,7 @@ import (
 
 func deliveryFixture(t *testing.T) (*Store, string, []string) {
 	t.Helper()
-	s, err := OpenLedger(testBook(t))
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 func TestMetaPersistsWithTasks(t *testing.T) {
-	book := testBook(t)
+	book := testLedger(t)
 	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestMetaPersistsWithTasks(t *testing.T) {
 }
 
 func TestMetaDefaultsUntilSet(t *testing.T) {
-	book := testBook(t)
+	book := testLedger(t)
 	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)

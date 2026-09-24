@@ -5,7 +5,7 @@ import (
 )
 
 func TestAChildsResultAndDeliveryOutliveTheProcess(t *testing.T) {
-	book := testBook(t)
+	book := testLedger(t)
 	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)

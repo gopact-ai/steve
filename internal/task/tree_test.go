@@ -8,7 +8,7 @@ import (
 
 func treeStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := OpenLedger(testBook(t))
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func ids(tasks []Task) []string {
 // delegates freely: its children run as long as it does. Zero minus what
 // it spent must never read as "nothing left".
 func TestUnlimitedParentDelegatesWithoutACeiling(t *testing.T) {
-	s, err := OpenLedger(testBook(t)) // the defaults: no ceiling
+	s, err := OpenLedger(testLedger(t)) // the defaults: no ceiling
 	if err != nil {
 		t.Fatal(err)
 	}

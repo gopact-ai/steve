@@ -12,7 +12,7 @@ import (
 func TestContinuationCannotCreateAnotherTaskOrResumeAPausedOne(t *testing.T) {
 	for _, state := range []task.State{task.StatePaused, task.StateCancelled, task.StateDone, task.StateFailed} {
 		t.Run(string(state), func(t *testing.T) {
-			store, err := task.OpenLedger(taskBook(t))
+			store, err := task.OpenLedger(testLedger(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -42,7 +42,7 @@ func TestContinuationCannotCreateAnotherTaskOrResumeAPausedOne(t *testing.T) {
 }
 
 func TestContinuationPreservesScheduledParentLineage(t *testing.T) {
-	store, err := task.OpenLedger(taskBook(t))
+	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +61,8 @@ func TestContinuationPreservesScheduledParentLineage(t *testing.T) {
 	}
 }
 
-// taskBook opens a ledger for a task store that lives as long as the test.
-func taskBook(t *testing.T) *ledger.Ledger {
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {

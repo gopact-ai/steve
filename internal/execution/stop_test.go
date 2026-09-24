@@ -12,7 +12,7 @@ import (
 
 func stopTestScope(t *testing.T, lifetime context.Context) (*Registry, *Scope, *task.Store) {
 	t.Helper()
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 func TestDeliveryUsesParentsLatestExplicitAddress(t *testing.T) {
-	store, err := task.OpenLedger(taskBook(t))
+	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

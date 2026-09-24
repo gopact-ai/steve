@@ -43,7 +43,7 @@ func TestReceiptSettlesUncertainOrDelayedDeliveryWithoutDispatch(t *testing.T) {
 
 func TestReceiptSaveFailureRetainsBatchAcrossRestartWithoutDispatch(t *testing.T) {
 	w := newWorld(t)
-	book := taskBook(t)
+	book := testLedger(t)
 	var err error
 	w.tasks, err = task.OpenLedger(book)
 	if err != nil {

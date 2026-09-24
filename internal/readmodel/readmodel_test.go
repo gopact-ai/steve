@@ -2,7 +2,6 @@ package readmodel
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -49,7 +48,7 @@ func fixture(t *testing.T) *Model {
 	}}
 	r.SetNodes(nodes)
 
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +63,7 @@ func fixture(t *testing.T) *Model {
 		t.Fatal(err)
 	}
 
-	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	plans, err := plan.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +236,8 @@ func TestSnapshotCarriesMemberDisplayNames(t *testing.T) {
 	}
 }
 
-// taskBook opens a ledger for a task store that lives as long as the test.
-func taskBook(t *testing.T) *ledger.Ledger {
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {

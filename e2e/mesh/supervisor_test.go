@@ -4,12 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/console"
-	"github.com/gopact-ai/steve/internal/planner"
-	"github.com/gopact-ai/steve/internal/state"
-	"github.com/gopact-ai/steve/internal/turn"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -18,6 +12,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/planner"
+	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/turn"
 
 	osexec "os/exec"
 
@@ -127,7 +128,7 @@ func newFleet(t *testing.T) *fleet {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := plan.Open(filepath.Join(dir, "plans.json"))
+	plans, err := plan.OpenLedger(ledgerOf(t, dir))
 	if err != nil {
 		t.Fatal(err)
 	}

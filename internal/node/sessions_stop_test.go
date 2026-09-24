@@ -29,7 +29,7 @@ func TestNodeSessionExplicitTaskStopEndsNativePromptWhileLifetimeOnlyDetaches(t 
 			defer manager.Stop()
 			lifetime, cancelLifetime := context.WithCancel(t.Context())
 			defer cancelLifetime()
-			tasks, err := task.OpenLedger(taskBook(t))
+			tasks, err := task.OpenLedger(testLedger(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +114,7 @@ func TestNodeSessionRetainedAttachmentCanStopTheOriginalNativeCommand(t *testing
 	server := startNode(t, ServerConfig{Name: "worker", Token: "attached-stop", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "attached-stop"}})
 	defer registry.Close()
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestNodeSessionStopFencesAnAlreadyAuthorizedButUnacceptedPrompt(t *testing.
 	manager.SetTransports(registry)
 	manager.SetStopRegistrar(execution.RegisterStopHandler)
 	defer manager.Stop()
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,8 +282,8 @@ func TestNodeSessionStopFencesAnAlreadyAuthorizedButUnacceptedPrompt(t *testing.
 	}
 }
 
-// taskBook opens a ledger for a task store that lives as long as the test.
-func taskBook(t *testing.T) *ledger.Ledger {
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {

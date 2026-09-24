@@ -43,7 +43,7 @@ func TestChannelHistoryHTTPRetainedMessagesAndExecutionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer book.Close()
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

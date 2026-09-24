@@ -6,7 +6,7 @@ import (
 )
 
 func TestPendingDelegationsListOnlyChildrenStillOwingTheirParent(t *testing.T) {
-	s, err := OpenLedger(testBook(t))
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

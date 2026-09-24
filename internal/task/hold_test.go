@@ -8,7 +8,7 @@ import (
 // the process, so the start-up delivery pass cannot wake the task either,
 // and it does not change what the children still owe.
 func TestAHoldOutlivesTheProcessAndLeavesTheChildrensDebtAlone(t *testing.T) {
-	book := testBook(t)
+	book := testLedger(t)
 	s, err := OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestAHoldOutlivesTheProcessAndLeavesTheChildrensDebtAlone(t *testing.T) {
 // the hold again, and a turn composed under the earlier stamp — the one
 // that stop cancelled — cannot lift it.
 func TestALaterStopRestampsTheHoldSoTheEarlierTurnCannotLiftIt(t *testing.T) {
-	s, err := OpenLedger(testBook(t))
+	s, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

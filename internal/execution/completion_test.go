@@ -9,7 +9,7 @@ import (
 )
 
 func TestCompletionClosesRegistryAdmissionBeforeReleasingIdleGate(t *testing.T) {
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestCompletionClosesRegistryAdmissionBeforeReleasingIdleGate(t *testing.T) 
 }
 
 func TestCompletionWaitsForDescendantScopeCleanup(t *testing.T) {
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

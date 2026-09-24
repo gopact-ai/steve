@@ -98,7 +98,7 @@ func localStepFixture(t *testing.T, origin task.Task) (*task.Store, *attempt.Ser
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

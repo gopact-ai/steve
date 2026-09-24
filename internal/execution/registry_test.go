@@ -12,7 +12,7 @@ import (
 )
 
 func TestStopFindsAllTaskAttemptsAndWaitsForOwners(t *testing.T) {
-	tasks, err := task.OpenLedger(taskBook(t))
+	tasks, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +93,8 @@ func TestDetachedWorkDoesNotHoldItsOriginsSilenceClock(t *testing.T) {
 	}
 }
 
-// taskBook opens a ledger for a task store that lives as long as the test.
-func taskBook(t *testing.T) *ledger.Ledger {
+// testLedger opens a ledger that lives as long as the test.
+func testLedger(t *testing.T) *ledger.Ledger {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
