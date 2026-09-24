@@ -17,7 +17,9 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     const [preference, setPreference] = useState(savedPreference);
     const [languages, setLanguages] = useState(() => [...navigator.languages]);
     const locale = resolveLocale(preference, languages);
-    const [unavailable, setUnavailable] = useState(false);
+    // Which change could not be loaded: one this page selected, or one
+    // made in another window or by the browser.
+    const [unavailable, setUnavailable] = useState<"" | "selected" | "elsewhere">("");
     // Only the first paint waits for its messages; if they cannot be
     // fetched, use() throws to the root boundary. A later change of
     // language fetches first and switches after (see apply), so the page
@@ -27,10 +29,10 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     const asked = useRef(0);
     const chosen = useRef(preference);
     chosen.current = preference;
-    const apply = useCallback((next: LocalePreference, browser: readonly string[], commit: () => void) => {
+    const apply = useCallback((next: LocalePreference, browser: readonly string[], from: "selected" | "elsewhere", commit: () => void) => {
         const turn = ++asked.current;
         // Unavailable messages leave the current language in place.
-        requestLocale(resolveLocale(next, browser)).then(() => { if (turn === asked.current) { setUnavailable(false); commit(); } }, () => { if (turn === asked.current) setUnavailable(true); });
+        requestLocale(resolveLocale(next, browser)).then(() => { if (turn === asked.current) { setUnavailable(""); commit(); } }, () => { if (turn === asked.current) setUnavailable(from); });
     }, []);
     // Children read and write during their own effects, which React runs
     // before this provider's. The language a request asks for is therefore
@@ -49,9 +51,9 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
             if (event.key !== localeStorageKey && event.key !== null) return;
             try { if (event.storageArea !== localStorage) return; } catch { return; }
             const next = validPreference(event.newValue);
-            apply(next, navigator.languages, () => setPreference(next));
+            apply(next, navigator.languages, "elsewhere", () => setPreference(next));
         };
-        const onLanguage = () => { const next = [...navigator.languages]; apply(chosen.current, next, () => setLanguages(next)); };
+        const onLanguage = () => { const next = [...navigator.languages]; apply(chosen.current, next, "elsewhere", () => setLanguages(next)); };
         window.addEventListener("storage", onStorage);
         window.addEventListener("languagechange", onLanguage);
         return () => { window.removeEventListener("storage", onStorage); window.removeEventListener("languagechange", onLanguage); };
@@ -60,7 +62,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     const value = useMemo<LocaleContextValue>(() => ({
         locale, preference,
         setLocale(next) {
-            apply(next, navigator.languages, () => {
+            apply(next, navigator.languages, "selected", () => {
                 setRequestLocale(resolveLocale(next, navigator.languages));
                 setPreference(next);
                 try { localStorage.setItem(localeStorageKey, next); } catch { /* The current window can still change language. */ }
@@ -70,7 +72,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     }), [locale, preference, apply]);
 
     return <LocaleContext.Provider value={value}><I18nProvider locale={intlLocale(locale)}>{children}
-        {unavailable && <FloatingNotice text={translate(locale, "common.languageUnavailable")} closeLabel={translate(locale, "common.close")} onClose={() => setUnavailable(false)} />}
+        {unavailable && <FloatingNotice text={translate(locale, unavailable === "selected" ? "common.languageUnavailable" : "common.languageElsewhereUnavailable")} closeLabel={translate(locale, "common.close")} onClose={() => setUnavailable("")} />}
     </I18nProvider></LocaleContext.Provider>;
 }
 

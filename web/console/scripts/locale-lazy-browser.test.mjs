@@ -131,6 +131,15 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.lang), "en");
     assert.equal(await page.evaluate(() => localStorage.getItem("steve.ui.locale")), "en", "a switch that did not happen is not saved");
     await page.getByRole("status").filter({ hasText: "The selected language could not be loaded" }).waitFor();
+    // The notice dismisses itself; the settings dialog keeps its close button out of reach.
+    await page.getByRole("status").filter({ hasText: "could not be loaded" }).waitFor({ state: "detached" });
+
+    // A language chosen in another window is not one this page selected:
+    // its failure says where the change came from.
+    await page.evaluate(() => window.dispatchEvent(new StorageEvent("storage", { key: "steve.ui.locale", oldValue: "en", newValue: "zh", storageArea: localStorage })));
+    await page.getByRole("status").filter({ hasText: "changed in another window or in the browser" }).waitFor();
+    assert.equal(await page.getByRole("status").filter({ hasText: "The selected language" }).count(), 0, "a change from elsewhere is not called the selected language");
+    assert.equal(await page.evaluate(() => document.documentElement.lang), "en");
 
     // The first paint cannot fall back to an old language: it says so in
     // both, without the messages, and offers to load the page again.
@@ -145,7 +154,7 @@ try {
     await language.waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.lang), "en");
     assert.deepEqual(errors, []);
-    console.log("PASS first paint fetches one language; a failed first paint offers a reload; a failed switch keeps the page; switching keeps the page mounted and in its old language until the new one arrives");
+    console.log("PASS first paint fetches one language; a failed first paint offers a reload; a failed switch keeps the page and names where it came from; switching keeps the page mounted and in its old language until the new one arrives");
     await context.close();
 } finally {
     await browser?.close();
