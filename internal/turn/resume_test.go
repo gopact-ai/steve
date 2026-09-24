@@ -253,13 +253,12 @@ func TestIncompleteProfileOnlyInterceptsHomeProject(t *testing.T) {
 	for _, projectID := range []string{"codex", "home"} {
 		t.Run(projectID, func(t *testing.T) {
 			runner := &fakeRunner{reply: "ok"}
-			coordinator, tasks := taskCoordinator(t, runner)
 			dir := t.TempDir()
 			if err := home.BootstrapLocale(dir, "owner", home.LocaleZH); err != nil {
 				t.Fatal(err)
 			}
+			coordinator, tasks := taskCoordinator(t, runner, withHome("owner", home.Dir{Path: dir}))
 			useHome(t, coordinator, dir)
-			coordinator.SetIdentity("owner", home.Dir{Path: dir})
 			if _, err := coordinator.projects.Bind(t.Context(), "chat", projectID, "owner"); err != nil {
 				t.Fatal(err)
 			}

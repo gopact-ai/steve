@@ -15,20 +15,20 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-func taskCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Store) {
+func taskCoordinator(t *testing.T, runner *fakeRunner, opts ...testOption) (*Coordinator, *task.Store) {
 	t.Helper()
-	c, tasks, _ := taskCoordinatorBook(t, runner)
+	c, tasks, _ := taskCoordinatorBook(t, runner, opts...)
 	return c, tasks
 }
 
-func taskCoordinatorBook(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Store, *ledger.Ledger) {
+func taskCoordinatorBook(t *testing.T, runner *fakeRunner, opts ...testOption) (*Coordinator, *task.Store, *ledger.Ledger) {
 	t.Helper()
-	return taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": runner}})
+	return taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, opts...)
 }
 
 // taskCoordinatorOn is taskCoordinatorBook with the runtime chosen: for a
 // test whose session must be more than a fakeRunner.
-func taskCoordinatorOn(t *testing.T, rt runtime) (*Coordinator, *task.Store, *ledger.Ledger) {
+func taskCoordinatorOn(t *testing.T, rt runtime, opts ...testOption) (*Coordinator, *task.Store, *ledger.Ledger) {
 	t.Helper()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
@@ -46,7 +46,7 @@ func taskCoordinatorOn(t *testing.T, rt runtime) (*Coordinator, *task.Store, *le
 	if err != nil {
 		t.Fatalf("open tasks: %v", err)
 	}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, onLedger(book), withTasks(tasks, "laptop"))
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, append([]testOption{onLedger(book), withTasks(tasks, "laptop")}, opts...)...)
 	coordinator.artifacts.SetExecution(coordinator.executions)
 	return coordinator, tasks, book
 }

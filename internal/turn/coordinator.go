@@ -293,7 +293,10 @@ func New(deps Deps) (*Coordinator, error) {
 	}
 	c := newCore(deps.Catalog, deps.Store, deps.Assembler, deps.Runtime, deps.Timeout)
 	c.text = deps.Text
-	c.SetIdentity(deps.Owner, deps.Home)
+	c.ownerOpenID, c.home = deps.Owner, deps.Home
+	if dir, ok := deps.Home.(home.Dir); ok {
+		c.homePath = dir.Path
+	}
 	for channel, owner := range deps.ChannelOwners {
 		if err := c.SetChannelOwner(channel, owner); err != nil {
 			return nil, fmt.Errorf("turn: owner of channel %q: %w", channel, err)
@@ -321,17 +324,6 @@ func newCore(catalog *agent.Catalog, store *state.Store, assembler *capability.A
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},
-	}
-}
-
-// SetIdentity sets the baseline owner and the home loader.
-//
-// Deprecated: set Deps.Owner and Deps.Home.
-func (c *Coordinator) SetIdentity(ownerOpenID string, loader home.Loader) {
-	c.ownerOpenID = ownerOpenID
-	c.home = loader
-	if dir, ok := loader.(home.Dir); ok {
-		c.homePath = dir.Path
 	}
 }
 

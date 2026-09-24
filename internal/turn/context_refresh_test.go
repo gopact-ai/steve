@@ -124,8 +124,7 @@ func TestIdentityRefreshAfterReopeningSessionState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			next := restartCoordinator(t, c, c.catalog, reopened, c.assembler, manager, time.Minute)
-			next.SetIdentity("owner", home.Dir{Path: dir})
+			next := restartCoordinator(t, c, c.catalog, reopened, c.assembler, manager, time.Minute, withHome("owner", home.Dir{Path: dir}))
 			if err := home.WriteIdentity(dir, "updated soul", "updated name"); err != nil {
 				t.Fatal(err)
 			}

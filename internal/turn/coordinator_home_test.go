@@ -10,7 +10,6 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/home"
-	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 )
@@ -341,13 +340,15 @@ func TestUnmentionedGroupAsksAgentToStaySilent(t *testing.T) {
 	}
 }
 
-func homeCoordinator(t *testing.T, homeDir, owner string, books ...*ledger.Ledger) (*Coordinator, *state.Store, *fakeRunner) {
+func homeCoordinator(t *testing.T, homeDir, owner string, opts ...testOption) (*Coordinator, *state.Store, *fakeRunner) {
 	t.Helper()
-	coordinator, store, manager := homeCoordinatorWithManager(t, homeDir, owner, books...)
+	coordinator, store, manager := homeCoordinatorWithManager(t, homeDir, owner, opts...)
 	return coordinator, store, manager.runners["codex"]
 }
 
-func homeCoordinatorWithManager(t *testing.T, homeDir, owner string, books ...*ledger.Ledger) (*Coordinator, *state.Store, *fakeManager) {
+// homeCoordinatorWithManager builds a coordinator for owner whose home is
+// homeDir; opts apply after, so a test can give it another home loader.
+func homeCoordinatorWithManager(t *testing.T, homeDir, owner string, opts ...testOption) (*Coordinator, *state.Store, *fakeManager) {
 	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
@@ -355,23 +356,23 @@ func homeCoordinatorWithManager(t *testing.T, homeDir, owner string, books ...*l
 	if err != nil {
 		t.Fatal(err)
 	}
-	var store *state.Store
-	if len(books) > 0 {
-		store, err = state.OpenLedger(books[0])
-	} else {
-		store, err = state.OpenLedger(testLedger(t))
+	var b testBuild
+	for _, opt := range opts {
+		opt(&b)
 	}
+	book := b.book
+	if book == nil {
+		book = testLedger(t)
+	}
+	store, err := state.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &fakeRunner{id: "sess", reply: "请告诉我你常用的工作方式。"}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	assembler := capability.NewAssembler(nil).SetHome(home.Dir{Path: homeDir})
-	opts := []testOption{withDeps(func(d *Deps) { d.Owner, d.Home = owner, home.Dir{Path: homeDir} })}
-	if len(books) > 0 {
-		opts = append(opts, onLedger(books[0]))
-	}
-	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute, opts...)
+	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute,
+		append([]testOption{onLedger(book), withHome(owner, home.Dir{Path: homeDir})}, opts...)...)
 	useHome(t, coordinator, homeDir)
 	return coordinator, store, manager
 }

@@ -120,6 +120,16 @@ func withDeps(set func(*Deps)) testOption {
 	return func(b *testBuild) { b.set = append(b.set, set) }
 }
 
+// withOwner sets the baseline owner identity.
+func withOwner(owner string) testOption {
+	return withDeps(func(d *Deps) { d.Owner = owner })
+}
+
+// withHome sets the baseline owner identity and the home it reads.
+func withHome(owner string, loader home.Loader) testOption {
+	return withDeps(func(d *Deps) { d.Owner, d.Home = owner, loader })
+}
+
 // withTasks sets the task store and the node it records.
 func withTasks(tasks *task.Store, node string) testOption {
 	return withDeps(func(d *Deps) { d.Tasks, d.Node = tasks, node })

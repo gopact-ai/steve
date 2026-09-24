@@ -186,10 +186,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	extras = append(extras, c.projectMemory(ctx, req.ConversationID, req)...)
 	var capabilities capability.Capabilities
 	if saved.PluginRuntime != nil {
-		mode := home.ModeNone
-		if c.home != nil {
-			mode = injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
-		}
+		mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
 		capabilities, err = c.assembler.AssembleExtraPinned(selected, mode, extras, saved.PluginSkillsFingerprint)
 	} else {
 		capabilities, err = c.assemble(selected, req, extras)
@@ -269,9 +266,6 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 }
 
 func (c *Coordinator) assemble(selected agent.Agent, req Request, extras []capability.Extra) (capability.Capabilities, error) {
-	if c.home == nil {
-		return c.assembler.AssembleExtra(selected, home.ModeNone, extras)
-	}
 	return c.assembler.AssembleExtra(selected, injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID), extras)
 }
 

@@ -36,8 +36,7 @@ func configureChannelOwner(t *testing.T, c *Coordinator, channel, owner string) 
 func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute)
-	c.SetIdentity("console-owner", nil)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"))
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
 	for _, test := range []struct {
 		channel, sender string
@@ -70,7 +69,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
-	c, _, runner := homeCoordinator(t, dir, "console-owner", book)
+	c, _, runner := homeCoordinator(t, dir, "console-owner", onLedger(book))
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
 	tasks := c.tasks
 	c.artifacts.SetExecution(c.executions)
@@ -100,8 +99,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 }
 
 func TestChannelOwnerRegistrationIsExplicitAndFacadeSnapshotIsStable(t *testing.T) {
-	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout = time.Minute }))
-	c.SetIdentity("console-owner", nil)
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout = time.Minute }), withOwner("console-owner"))
 	if _, err := c.forChannel("feishu"); err == nil {
 		t.Fatal("unregistered channel borrowed console identity")
 	}
@@ -137,8 +135,7 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer manager.Stop()
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 10*time.Second)
-	c.SetIdentity("console-owner", nil)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 10*time.Second, withOwner("console-owner"))
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
 	asks := 0
 	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "perm askme", MessageID: "om-native", ChatID: "oc-native",
@@ -159,8 +156,7 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute)
-	c.SetIdentity("console-owner", nil)
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"))
 	configureChannelOwner(t, c, "feishu", "ou_im_owner")
 	var wg sync.WaitGroup
 	for n := range 24 {

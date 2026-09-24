@@ -75,8 +75,7 @@ type scheduleMCPFixture struct {
 
 func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record)) scheduleMCPFixture {
 	t.Helper()
-	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "ok"})
-	c.SetIdentity("console-owner", nil)
+	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "ok"}, withOwner("console-owner"))
 	if err := c.SetChannelOwner("feishu", "feishu-owner"); err != nil {
 		t.Fatal(err)
 	}

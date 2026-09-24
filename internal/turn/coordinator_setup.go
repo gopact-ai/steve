@@ -45,9 +45,6 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 		return Setup{}, fmt.Errorf("no agent %q", agentID)
 	}
 	mode := c.modeOf(conversationID)
-	if c.home == nil {
-		mode = home.ModeNone
-	}
 	capabilities, err := c.assembler.AssembleExtra(selected, mode, c.setupExtras(ctx, conversationID, mode))
 	if err != nil {
 		return Setup{}, err
