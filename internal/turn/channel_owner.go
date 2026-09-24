@@ -5,30 +5,49 @@ import (
 	"strings"
 )
 
-// channelOwners copies each trusted adapter's native owner, refusing a
-// console or malformed channel. Console and internal calls keep the
-// baseline owner; sender IDs are never rewritten because tasks, notices and
-// callbacks use their native identity.
-func channelOwners(owners map[string]string) (map[string]string, error) {
+// channelOwners is who owns a request by the channel it arrives on: the
+// baseline owner for console and internal calls, and each trusted adapter's
+// native owner for its own channel. Sender IDs are never rewritten because
+// tasks, notices and callbacks use their native identity.
+type channelOwners struct {
+	baseline  string
+	byChannel map[string]string
+}
+
+// newChannelOwners copies each adapter's owner, refusing a console or
+// malformed channel.
+func newChannelOwners(baseline string, owners map[string]string) (channelOwners, error) {
 	registered := make(map[string]string, len(owners))
 	for channel, owner := range owners {
 		if channel == "" || channel == "console" || strings.TrimSpace(channel) != channel {
-			return nil, fmt.Errorf("owner of channel %q: a non-console channel is required", channel)
+			return channelOwners{}, fmt.Errorf("owner of channel %q: a non-console channel is required", channel)
 		}
 		registered[channel] = owner
 	}
-	return registered, nil
+	return channelOwners{baseline: baseline, byChannel: registered}, nil
 }
 
-// forChannel is the view a request from channel runs as. The owners are
-// fixed at New, so the lookup needs no lock.
-func (c *Coordinator) forChannel(channel string) (*Coordinator, error) {
+// of is the owner a request from channel runs as. The owners are fixed at
+// construction, so the lookup needs no lock.
+func (o channelOwners) of(channel string) (string, error) {
 	if channel == "" || channel == "console" {
-		return c, nil
+		return o.baseline, nil
 	}
-	owner, ok := c.channelOwners[channel]
+	owner, ok := o.byChannel[channel]
 	if !ok {
-		return nil, fmt.Errorf("unregistered request channel %q", channel)
+		return "", fmt.Errorf("unregistered request channel %q", channel)
+	}
+	return owner, nil
+}
+
+// forChannel is the view a request from channel runs as.
+func (c *Coordinator) forChannel(channel string) (*Coordinator, error) {
+	owner, err := c.owners.of(channel)
+	if err != nil {
+		return nil, err
+	}
+	if owner == c.ownerOpenID {
+		return c, nil
 	}
 	return &Coordinator{coordinatorState: c.coordinatorState, text: c.text, ownerOpenID: owner}, nil
 }
