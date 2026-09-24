@@ -331,3 +331,29 @@ func TestIngressRecoversAnUnsettledTurnThroughItsDriver(t *testing.T) {
 		t.Fatalf("pending inputs = %d, %v; want none", len(pending), err)
 	}
 }
+
+// Ingress claims only the gateway input it accepted: a recovery receipt,
+// whose recovery may revive a member, is refused without claiming its
+// input or its conversation.
+func TestIngressClaimRefusesARecoveryReceipt(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	g := New(idleCoordinator{})
+	if err := g.QueueRecovery(t.Context(), book, "restart:parent", revivalFixture(), ""); err != nil {
+		t.Fatal(err)
+	}
+	receipt, found, err := book.CommandReceipt(t.Context(), "restart:parent")
+	if err != nil || !found {
+		t.Fatalf("recovery receipt found = %v, %v", found, err)
+	}
+	run, release, err := g.claimGatewayInput(t.Context(), book, receipt, nil, false)
+	if err == nil || run != nil || release != nil {
+		t.Fatalf("claimed a %s receipt: %v", receipt.Kind, err)
+	}
+	if len(g.slots) != 0 || len(g.durableRunning) != 0 {
+		t.Fatal("the refused receipt holds its conversation or input")
+	}
+}
