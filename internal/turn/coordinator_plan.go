@@ -15,7 +15,6 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
-	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -50,11 +49,7 @@ type retainedPlanner interface {
 }
 
 // SetSupervisor enables the planning verbs.
-func (c *Coordinator) SetSupervisor(s Supervisor, plans *plan.Store, fleet *roster.Roster) {
-	c.supervisor = s
-	c.plans = plans
-	c.fleet = fleet
-}
+func (c *Coordinator) SetSupervisor(s Supervisor) { c.supervisor = s }
 
 func (c *Coordinator) planExecutionResult(ctx context.Context, planID string, outcome exec.Outcome, runErr error) (Result, error) {
 	title := c.text.T(i18n.CardPlan)
@@ -269,7 +264,7 @@ func (c *Coordinator) landingSummary(outcome exec.Outcome) string {
 // abandoned attempts, and the outcome reaches the chat through the task's
 // anchor like a turn that finished late.
 func (c *Coordinator) ResumePlans(ctx context.Context) {
-	if c.supervisor == nil || c.plans == nil {
+	if c.supervisor == nil {
 		return
 	}
 	if err := c.supervisor.PrepareRecovery(ctx); err != nil {

@@ -293,6 +293,11 @@ type Deps struct {
 	// retained plan, preserving the original exchange, progress and asks;
 	// ResumePlans leaves such a task alone. Nil leaves none alone.
 	PlanRecoveryOwner func(task.Task) bool
+	// Plans holds every plan the planning verbs draft and run.
+	Plans *plan.Store
+	// Fleet admits and places agents on the machines they run on; without
+	// it no admission runs and /fleet reports a hub alone.
+	Fleet *roster.Roster
 }
 
 // dependency is one Deps field New refuses to build without.
@@ -311,6 +316,7 @@ func (d Deps) required() []dependency {
 		{"Skills", d.Skills == nil}, {"Projects", d.Projects == nil}, {"Memory", d.Memory == nil},
 		{"Attempts", d.Attempts == nil}, {"Artifacts", d.Artifacts == nil}, {"Intents", d.Intents == nil},
 		{"Executions", d.Executions == nil}, {"Tasks", d.Tasks == nil}, {"Schedules", d.Schedules == nil},
+		{"Plans", d.Plans == nil},
 	}
 }
 
@@ -346,6 +352,7 @@ func New(deps Deps) (*Coordinator, error) {
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
 			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
 			nodes: deps.Nodes, planRecoveryOwner: deps.PlanRecoveryOwner,
+			plans: deps.Plans, fleet: deps.Fleet,
 			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 			cancelPending: map[string]time.Time{},
 		},

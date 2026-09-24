@@ -30,7 +30,7 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 	ctx = agentexec.WithProgress(ctx, req.OnProgress)
 	title := c.text.T(i18n.CardPlan)
 	goal := strings.TrimSpace(rest)
-	if c.supervisor == nil || c.plans == nil {
+	if c.supervisor == nil {
 		return Result{Title: title, Text: c.text.T(i18n.PlanDisabled)}, nil
 	}
 	if goal == "" {
@@ -89,9 +89,6 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 // plansCmd lists what has been planned in this conversation, newest first.
 func (c commands) plansCmd(req Request, rest string) Result {
 	title := c.text.T(i18n.CardPlan)
-	if c.plans == nil {
-		return Result{Title: title, Text: c.text.T(i18n.PlanDisabled)}
-	}
 	id := strings.TrimSpace(strings.TrimPrefix(rest, "#"))
 	if id != "" {
 		stored, ok := c.plans.Latest(id)

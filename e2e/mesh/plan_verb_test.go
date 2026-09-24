@@ -32,6 +32,7 @@ func TestChatPlanVerbAcrossTheFleet(t *testing.T) {
 		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, capability.NewAssembler(nil), f.manager, 2*time.Minute
 		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
+		o.Plans, o.Fleet = f.plans, f.roster
 	})
 
 	// A declared workflow, so the test asserts placement rather than a
@@ -62,7 +63,7 @@ func TestChatPlanVerbAcrossTheFleet(t *testing.T) {
 	supervisor.SetLedger(f.book, "mesh")
 	supervisor.SetTasks(f.tasks)
 	supervisor.Runs().Observe(f.view)
-	coordinator.SetSupervisor(supervisor, f.plans, f.roster)
+	coordinator.SetSupervisor(supervisor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

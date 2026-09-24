@@ -117,7 +117,6 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 		t.Fatal(err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"))
 	nodes := &flipNodes{statuses: []node.Status{{
 		Name: "node-a", Up: true,
 		Advert: nodewire.Advert{Node: "node-a", Harnesses: []nodewire.Harness{
@@ -127,12 +126,10 @@ func repairCoordinator(t *testing.T) (*Coordinator, *fakeSupervisor, *flipNodes,
 	}}}
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
-	plans, err := plan.OpenLedger(testLedger(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, withTasks(tasks, "laptop"),
+		withDeps(func(d *Deps) { d.Fleet = fleet }))
 	sup := &fakeSupervisor{}
-	c.SetSupervisor(sup, plans, fleet)
+	c.SetSupervisor(sup)
 	cmds := &recordCommands{}
 	c.SetRepair(nodes, cmds)
 	return c, sup, nodes, cmds, tasks

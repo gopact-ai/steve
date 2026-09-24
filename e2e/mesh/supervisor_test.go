@@ -393,13 +393,14 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
 		o.Owner = "ou_owner"
+		o.Plans, o.Fleet = f.plans, f.roster
 	})
 	consoleSup := exec.NewSupervisor(planner.Rule{}, exec.Deps{Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts, Roster: f.roster,
 		Runner: exec.NewAgentRunner(f.manager, noCaps{}, f.roster), Recorder: f.plans}, nil)
 	consoleSup.SetPlans(f.plans)
 	consoleSup.SetLedger(f.book, "mesh")
 	consoleSup.SetTasks(f.tasks)
-	coordinator.SetSupervisor(consoleSup, f.plans, f.roster)
+	coordinator.SetSupervisor(consoleSup)
 	server.SetConsole(console.New(coordinator, "ou_owner", f.view))
 	payload, _ := json.Marshal(map[string]string{"conversation": "console:main", "input": "/fleet"})
 	req, _ := http.NewRequest(http.MethodPost, server.URL()+"/console/send", bytes.NewReader(payload))

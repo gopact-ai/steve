@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
+	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -127,6 +128,10 @@ func Deps(t testing.TB, opts ...Option) turn.Deps {
 	}
 	if d.Schedules == nil {
 		d.Schedules, err = schedule.OpenLedger(book)
+		must(err)
+	}
+	if d.Plans == nil {
+		d.Plans, err = plan.OpenLedger(book)
 		must(err)
 	}
 	return *d

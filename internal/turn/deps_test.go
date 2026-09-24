@@ -23,7 +23,9 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
+	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
@@ -104,6 +106,10 @@ func fillDeps(t *testing.T, book *ledger.Ledger, d *Deps) {
 	}
 	if d.Schedules == nil {
 		d.Schedules, err = schedule.OpenLedger(book)
+		must(err)
+	}
+	if d.Plans == nil {
+		d.Plans, err = plan.OpenLedger(book)
 		must(err)
 	}
 }
@@ -277,13 +283,14 @@ func TestNewWiresEveryDependency(t *testing.T) {
 	guarded := errors.New("guarded")
 	deps.ConsoleCompletionGuard = func(*ledger.Tx, map[string]bool, string, string) error { return guarded }
 	deps.Nodes = &idleNodes{}
+	deps.Fleet = roster.New(deps.Catalog)
 	deps.PlanRecoveryOwner = func(tracked task.Task) bool { return tracked.Transport == "console" }
 	c, err := New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.nodes != deps.Nodes {
-		t.Fatal("New dropped the nodes")
+	if c.nodes != deps.Nodes || c.fleet != deps.Fleet || c.plans != deps.Plans {
+		t.Fatal("New dropped the nodes, the fleet or the plans")
 	}
 	if c.planRecoveryOwner == nil || !c.planRecoveryOwner(task.Task{Transport: "console"}) {
 		t.Fatal("New dropped the plan recovery owner")

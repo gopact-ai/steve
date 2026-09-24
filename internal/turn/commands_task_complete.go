@@ -25,10 +25,8 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 		if !current.CompletedByUser && c.cancels[sessionKey(current.Channel, current.Member)] != nil {
 			return task.ErrCompleteBusy
 		}
-		if c.plans != nil {
-			if _, ok := c.plans.ForTask(current.ID); ok {
-				return task.ErrCompleteRoot
-			}
+		if _, ok := c.plans.ForTask(current.ID); ok {
+			return task.ErrCompleteRoot
 		}
 		guard := func(tx *ledger.Tx, ids map[string]bool) error {
 			return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID)
