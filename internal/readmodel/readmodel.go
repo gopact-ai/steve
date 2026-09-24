@@ -254,8 +254,8 @@ type Node struct {
 	// Snapshot is what the machine says it can do, entry by entry, with
 	// the evidence and coverage behind each.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
-	// Features are the protocol features the machine negotiated; a node
-	// without execution_admission.v1 cannot be asked for a final word.
+	// Features are the optional capabilities the machine's advert lists;
+	// nodewire.Advert.Features says which those are.
 	Features []string `json:"features,omitempty"`
 	// Health is the machine's room to work, as of its last advert.
 	Health *nodewire.Health `json:"health,omitempty"`
