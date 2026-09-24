@@ -55,7 +55,7 @@ func (g *fakeGate) seen() []string {
 	return append([]string(nil), g.calls...)
 }
 
-func gateCoordinator(t *testing.T, mcpHTTP bool) (*Coordinator, *fakeManager, *fakeRunner, *fakeGate, *state.Store) {
+func gateCoordinator(t *testing.T, mcpHTTP bool, opts ...testOption) (*Coordinator, *fakeManager, *fakeRunner, *fakeGate, *state.Store) {
 	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
@@ -70,8 +70,8 @@ func gateCoordinator(t *testing.T, mcpHTTP bool) (*Coordinator, *fakeManager, *f
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}, mcpHTTP: mcpHTTP}
 	gate := &fakeGate{}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
-		withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
+	opts = append([]testOption{withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate })}, opts...)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, opts...)
 	return coordinator, manager, runner, gate, store
 }
 
