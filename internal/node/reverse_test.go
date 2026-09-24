@@ -342,6 +342,55 @@ func TestStatusesKeepWhyANodeWasRefusedForItsVersion(t *testing.T) {
 	}
 }
 
+// A dial that fails after its machine was removed or reconfigured records
+// nothing: the machine is listed under its current configuration as not
+// contacted yet, not with the refusal the old configuration earned.
+func TestAStaleDialFailureIsNotRecorded(t *testing.T) {
+	for name, change := range map[string]func(r *Registry, cfg Config){
+		"removed and added again": func(r *Registry, cfg Config) { r.Remove("old"); r.Add("old", cfg) },
+		"reconfigured":            func(r *Registry, cfg Config) { r.Add("old", cfg) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			started, release, parked := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			t.Cleanup(func() { close(parked) })
+			r := NewRegistry("hub", map[string]Config{"old": {Addr: "old.example:7701", Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
+				close(started)
+				<-release
+				hub, node := net.Pipe()
+				go v1Node(t, node)
+				return hub, nil
+			}}})
+			t.Cleanup(r.Close)
+			done := make(chan error, 1)
+			go func() {
+				_, err := r.connect(t.Context(), "old")
+				done <- err
+			}()
+			<-started
+			// The new configuration's dial waits for the old one, then parks
+			// until the test ends, so only the old dial can record anything.
+			change(r, Config{Addr: "new.example:7701", Token: "t", DialContext: func(ctx context.Context, _ string) (net.Conn, error) {
+				select {
+				case <-parked:
+				case <-ctx.Done():
+				}
+				return nil, errors.New("parked")
+			}})
+			close(release)
+			if err := <-done; !errors.Is(err, nodewire.ErrVersionMismatch) {
+				t.Fatalf("old dial = %v, want the version refusal", err)
+			}
+			all := r.Statuses()
+			if len(all) != 1 {
+				t.Fatalf("statuses = %+v", all)
+			}
+			if got := all[0]; got.Addr != "new.example:7701" || got.LastError != "not contacted yet" || got.Mismatch != nil {
+				t.Fatalf("status = %+v (mismatch %+v), want the new address not contacted yet", got, got.Mismatch)
+			}
+		})
+	}
+}
+
 // A node refused for speaking only versions newer than the hub's is not
 // told to upgrade: the hub is the one behind.
 func TestHubRefusedByANewerNodeAdvisesItsOwnUpgrade(t *testing.T) {

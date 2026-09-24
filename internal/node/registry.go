@@ -487,7 +487,11 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 			if errors.As(err, &mismatch) {
 				failed.Mismatch = mismatch
 			}
-			r.remember(failed)
+			r.mu.Lock()
+			if r.currentLocked(name, configurationRevision) {
+				r.last[name] = failed
+			}
+			r.mu.Unlock()
 		} else {
 			adv := c.getAdvert()
 			r.accept(name, &adv)
@@ -495,7 +499,7 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 			r.noteDrift(name, adv)
 			r.eventMu.Lock()
 			r.mu.Lock()
-			if _, ok := r.confs[name]; !ok || r.configRevisions[name] != configurationRevision || r.closed {
+			if !r.currentLocked(name, configurationRevision) {
 				err = fmt.Errorf("node %q released while dialing", name)
 				r.mu.Unlock()
 				// A connection nobody will use; its close is not the error.
@@ -531,10 +535,12 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 	}
 }
 
-func (r *Registry) remember(status *Status) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.last[status.Name] = status
+// currentLocked reports whether a dial started under the configuration
+// revision still speaks for the machine: it has not been removed or
+// reconfigured since, and the registry is open. The caller holds r.mu.
+func (r *Registry) currentLocked(name string, revision uint64) bool {
+	_, known := r.confs[name]
+	return known && r.configRevisions[name] == revision && !r.closed
 }
 
 func levelOr(level string) string {
