@@ -15,11 +15,20 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
+// errMCPClosed is listenMCP's answer once shutdown has closed the reverse
+// listener.
+var errMCPClosed = errors.New("reverse MCP listener closed for shutdown")
+
 // listenMCP belongs to the server, not a hub connection. Its port is part of
 // the ACP session fingerprint, including throughout a network interruption.
+// Once closeMCP has run it binds nothing: shutdown waits for the goroutine
+// serving the listener, and nothing would close one bound afterwards.
 func (s *Server) listenMCP() (net.Listener, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.mcpClosed {
+		return nil, errMCPClosed
+	}
 	if s.mcpListener != nil {
 		return s.mcpListener, nil
 	}
@@ -44,6 +53,7 @@ func (s *Server) listenMCP() (net.Listener, error) {
 func (s *Server) closeMCP() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.mcpClosed = true
 	if s.mcpListener != nil {
 		// Shutdown: closing ends forwardMCP, which is the point.
 		_ = s.mcpListener.Close()
