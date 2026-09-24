@@ -132,6 +132,8 @@ type Service struct {
 	authorizeMaterials  func(context.Context, string, string, string) error
 }
 
+var _ consoleapi.Console = (*Service)(nil)
+
 func New(handler Handler, owner string, model Events) *Service {
 	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }

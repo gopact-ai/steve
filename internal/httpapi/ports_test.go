@@ -123,6 +123,19 @@ func (portAdmin) QueryAttempts(_ context.Context, query consoleapi.AttemptHistor
 	return consoleapi.AttemptHistoryPage{NextCursor: query.TaskID}, nil
 }
 
+// consolePort forwards the methods of consoleapi.Console and nothing else.
+type consolePort struct{ consoleapi.Console }
+
+// portConsole answers what the routes below ask of the console.
+type portConsole struct{ consoleapi.Console }
+
+func (portConsole) SendSubmission(_ context.Context, submission consoleapi.Submission) (consoleapi.Reply, error) {
+	return consoleapi.Reply{ID: submission.Refs[0].ID, Conversation: submission.Conversation}, nil
+}
+func (portConsole) Submit(_ context.Context, submission consoleapi.Submission) (consoleapi.Exchange, error) {
+	return consoleapi.Exchange{ID: submission.Refs[0].ID, Conversation: submission.Conversation}, nil
+}
+
 // A route calls what it needs through the service port it holds, so it
 // serves a service reached through a port that forwards nothing else.
 func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
@@ -137,9 +150,12 @@ func TestCapabilityRoutesNeedNothingOutsideTheirPort(t *testing.T) {
 		{"GET", "/console/versions", "", 200, `"hub":"v"`},
 		{"GET", "/console/attempts?task_id=t", "", 200, `{"items":null,"next_cursor":"t"}`},
 		{"GET", "/console/tasks/t/attempts", "", 200, `{"items":null,"next_cursor":"t"}`},
+		{"POST", "/console/send", `{"input":"hi","refs":[{"id":"m"}]}`, 200, `{"reply":{"id":"m",`},
+		{"POST", "/console/queue", `{"input":"hi","refs":[{"id":"m"}]}`, 200, `{"id":"m","conversation":"console:main",`},
 	} {
 		server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 		server.SetAdmin(adminPort{portAdmin{}})
+		server.SetConsole(consolePort{portConsole{}})
 		if res, body := ownerRequest(t, server, route.method, route.path, route.body); res.StatusCode != route.status || !strings.Contains(body, route.want) {
 			t.Errorf("%s %s = %d %s, want %d with %s", route.method, route.path, res.StatusCode, body, route.status, route.want)
 		}

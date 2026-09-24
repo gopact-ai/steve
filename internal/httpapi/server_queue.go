@@ -55,16 +55,7 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if !s.consoleSubmissionIdentity(w, r, req) {
 		return
 	}
-	var exchange consoleapi.Exchange
-	var err error
-	if extended, ok := s.console.(consoleapi.Submissions); ok {
-		exchange, err = extended.Submit(r.Context(), req)
-	} else if len(req.Refs) > 0 || req.RewindTo != "" {
-		http.Error(w, "material submission is not supported", http.StatusNotImplemented)
-		return
-	} else {
-		exchange, err = s.console.EnqueueCommand(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
-	}
+	exchange, err := s.console.Submit(r.Context(), req)
 	// The history a rewound submission carries is for the agent; the
 	// acknowledgement the page reads has no use for it.
 	exchange.History = ""

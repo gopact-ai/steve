@@ -9,7 +9,6 @@ import (
 var (
 	_ consoleapi.ExchangeIdentity = (*Service)(nil)
 	_ consoleapi.Interactions     = (*Service)(nil)
-	_ consoleapi.Submissions      = (*Service)(nil)
 )
 
 // The only production implementation of capabilities console probes its

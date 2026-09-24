@@ -15,6 +15,7 @@ import (
 )
 
 type fakeConsole struct {
+	consoleapi.Console
 	replies   []consoleapi.Reply
 	exchanges []consoleapi.Exchange
 }
@@ -38,12 +39,11 @@ func (f *fakeConsole) Setup(context.Context, string, string) (consoleapi.Setup, 
 func (f *fakeConsole) Verbs() []consoleapi.Verb {
 	return []consoleapi.Verb{{Command: "/plan", Summary: "split"}}
 }
-func (f *fakeConsole) SendCommand(ctx context.Context, conversation, input, _ string) (consoleapi.Reply, error) {
-	return f.Send(ctx, conversation, input)
+func (f *fakeConsole) SendSubmission(ctx context.Context, req consoleapi.Submission) (consoleapi.Reply, error) {
+	return f.Send(ctx, req.Conversation, req.Input)
 }
-
-func (f *fakeConsole) SendCommandWith(ctx context.Context, conversation, input, _ string, _ []consoleapi.QuoteRef) (consoleapi.Reply, error) {
-	return f.Send(ctx, conversation, input)
+func (f *fakeConsole) Submit(ctx context.Context, req consoleapi.Submission) (consoleapi.Exchange, error) {
+	return f.EnqueueCommand(ctx, req.Conversation, req.Input, req.CommandID, req.Quotes)
 }
 func (f *fakeConsole) Enqueue(_ context.Context, conversation, input string, quotes []consoleapi.QuoteRef) (consoleapi.Exchange, error) {
 	e := consoleapi.Exchange{ID: fmt.Sprint(len(f.exchanges) + 1), Conversation: conversation, Input: input, Quotes: quotes, State: "queued"}

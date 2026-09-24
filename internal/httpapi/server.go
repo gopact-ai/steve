@@ -1156,18 +1156,7 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if !s.consoleSubmissionIdentity(w, r, req) {
 		return
 	}
-	var reply consoleapi.Reply
-	var err error
-	if extended, ok := s.console.(consoleapi.Submissions); ok {
-		reply, err = extended.SendSubmission(r.Context(), req)
-	} else if len(req.Refs) > 0 {
-		http.Error(w, "material submission is not supported", http.StatusNotImplemented)
-		return
-	} else if len(req.Quotes) > 0 {
-		reply, err = s.console.SendCommandWith(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
-	} else {
-		reply, err = s.console.SendCommand(r.Context(), req.Conversation, req.Input, req.CommandID)
-	}
+	reply, err := s.console.SendSubmission(r.Context(), req)
 	w.Header().Set("Content-Type", "application/json")
 	if errors.Is(err, consoleapi.ErrCommandConflict) {
 		w.WriteHeader(http.StatusConflict)
