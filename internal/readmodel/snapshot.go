@@ -651,7 +651,10 @@ func nodes(statuses []node.Status) []Node {
 			Harnesses: harnesses(s.Advert), ProjectsRoot: nodewire.ProjectsDir(s.Advert.WorkspaceRoot),
 		}
 		if m := s.Mismatch; m != nil {
-			n.ProtocolMismatch = &ProtocolMismatch{Node: m.Node, HubMin: m.HubMin, HubMax: m.HubMax}
+			n.ProtocolMismatch = &ProtocolMismatch{Node: m.Node, HubMin: m.HubMin, HubMax: m.HubMax, Upgrade: UpgradeNode}
+			if m.HubBehind() {
+				n.ProtocolMismatch.Upgrade = UpgradeHub
+			}
 		}
 		out = append(out, n)
 	}

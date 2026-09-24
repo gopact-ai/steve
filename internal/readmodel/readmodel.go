@@ -265,13 +265,21 @@ type Node struct {
 }
 
 // ProtocolMismatch is the protocol version a machine speaks, Node, against
-// the range HubMin–HubMax the hub speaks. A Node below HubMin runs an older
-// steve than the hub; one above HubMax, a newer one.
+// the range HubMin–HubMax the hub speaks, and Upgrade, the side that has to
+// be upgraded for the two to connect: UpgradeNode when the machine runs an
+// older steve than the hub, UpgradeHub when it runs a newer one.
 type ProtocolMismatch struct {
-	Node   int `json:"node"`
-	HubMin int `json:"hub_min"`
-	HubMax int `json:"hub_max"`
+	Node    int    `json:"node"`
+	HubMin  int    `json:"hub_min"`
+	HubMax  int    `json:"hub_max"`
+	Upgrade string `json:"upgrade"`
 }
+
+// The sides a protocol mismatch can ask to upgrade.
+const (
+	UpgradeNode = "node"
+	UpgradeHub  = "hub"
+)
 
 type Harness struct {
 	ID    string `json:"id"`

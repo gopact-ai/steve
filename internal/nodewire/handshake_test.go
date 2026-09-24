@@ -126,8 +126,8 @@ func TestDialRefusesAnAdvertOutsideItsRange(t *testing.T) {
 }
 
 // A node's refusal for its version is reported with the version its reply
-// carried, older or newer than the hub's range, in the node's own words.
-// Any other refusal is not a version mismatch.
+// carried, older or newer than the hub's range, in the node's own words, and
+// says which side is behind. Any other refusal is not a version mismatch.
 func TestDialReportsTheVersionsOfARefusal(t *testing.T) {
 	for _, node := range []int{ProtocolMin - 1, ProtocolVersion + 1} {
 		reason := fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", ProtocolMin, ProtocolVersion, node, node)
@@ -138,6 +138,9 @@ func TestDialReportsTheVersionsOfARefusal(t *testing.T) {
 		}
 		if !errors.Is(err, ErrVersionMismatch) || !strings.HasSuffix(err.Error(), ": "+reason) {
 			t.Fatalf("dial = %v, want a version mismatch in the node's words", err)
+		}
+		if mismatch.HubBehind() != (node > ProtocolVersion) {
+			t.Fatalf("node v%d: hub behind = %v, want %v", node, mismatch.HubBehind(), node > ProtocolVersion)
 		}
 	}
 	_, err := dialReply(t, Advert{Version: ProtocolVersion, Refused: "token rejected"})

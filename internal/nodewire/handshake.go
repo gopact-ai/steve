@@ -71,6 +71,10 @@ func (e *VersionMismatch) Error() string { return ErrVersionMismatch.Error() + "
 // Unwrap makes every VersionMismatch an ErrVersionMismatch.
 func (e *VersionMismatch) Unwrap() error { return ErrVersionMismatch }
 
+// HubBehind says the node speaks only versions newer than the hub's, so it
+// is the hub that has to be upgraded; otherwise it is the node.
+func (e *VersionMismatch) HubBehind() bool { return e.Node > e.HubMax }
+
 // Hello is what the hub sends first. The token authenticates the hub to the
 // node independently of whatever the network layer does — the two are
 // deliberately not one chain.
