@@ -47,9 +47,12 @@ func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "accounting-failure"}[fail], func(t *testing.T) {
 			runner := &fakeRunner{reply: "original completed answer"}
-			c, book := completionCoordinator(t, runner)
+			afterTurn := func(string) {}
+			c, book := completionCoordinator(t, runner, withCallbacks(func(cb *Callbacks) {
+				cb.AfterTurn = func(id string) { afterTurn(id) }
+			}))
 			called := 0
-			c.afterTurn = func(id string) {
+			afterTurn = func(id string) {
 				called++
 				durable, err := task.OpenLedger(book)
 				if err != nil {
@@ -85,9 +88,12 @@ func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
 }
 
 func TestRetainedCallbackWaitsForDurableAccounting(t *testing.T) {
-	c, _, _, old, req := retainedChatFixture(t)
+	afterTurn := func(string) {}
+	c, _, _, old, req := retainedChatFixture(t, withCallbacks(func(cb *Callbacks) {
+		cb.AfterTurn = func(id string) { afterTurn(id) }
+	}))
 	called := 0
-	c.afterTurn = func(id string) {
+	afterTurn = func(id string) {
 		called++
 		tracked, _ := c.tasks.Get(id)
 		if tracked.HasOpenExecution() {

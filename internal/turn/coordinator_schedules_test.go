@@ -276,18 +276,17 @@ func TestScheduledMCPWorkCanInspectButCannotCreate(t *testing.T) {
 }
 
 func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
-	c, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
-	manager := c.runtime.(*fakeManager)
-	manager.mcpHTTP = true
 	gate, err := agentmcp.New(0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	c, _ := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
+	manager := c.runtime.(*fakeManager)
+	manager.mcpHTTP = true
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- gate.Start(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	c.gate = gate
 	first, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "hello"})
 	if err != nil {
 		t.Fatal(err)
