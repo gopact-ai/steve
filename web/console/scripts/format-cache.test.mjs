@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { number, relative } from "../src/lib/format.ts";
+import { loadLocale } from "../src/lib/i18n.ts";
+
+await Promise.all([loadLocale("zh"), loadLocale("en")]);
 
 test("repeated list values reuse formatters without freezing locale, options or relative time", () => {
     const originals = { NumberFormat: Intl.NumberFormat, RelativeTimeFormat: Intl.RelativeTimeFormat };

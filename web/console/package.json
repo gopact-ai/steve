@@ -38,7 +38,7 @@
     "test:usage-demand": "node ../../e2e/console/usage-demand.mjs",
     "test:work-history-ui": "node scripts/work-history-browser.test.mjs",
     "test:styles": "node scripts/style-contract-browser.test.mjs && node scripts/style-controls-browser.test.mjs && node scripts/dialog-surface-browser.test.mjs && node scripts/conversation-typography-browser.test.mjs",
-    "test:performance": "node ../../e2e/console/performance-ui.mjs && node ../../e2e/console/deferred-details.mjs && node scripts/lazy-region-browser.test.mjs && node scripts/fleet-render-browser.test.mjs && node scripts/sessions-render-browser.test.mjs",
+    "test:performance": "node ../../e2e/console/performance-ui.mjs && node ../../e2e/console/deferred-details.mjs && node scripts/lazy-region-browser.test.mjs && node scripts/locale-lazy-browser.test.mjs && node scripts/fleet-render-browser.test.mjs && node scripts/sessions-render-browser.test.mjs",
     "test:channel-conversations": "node scripts/channel-history-refresh-browser.test.mjs && node scripts/channel-conversation-browser.test.mjs",
     "generate:palettes": "node scripts/generate-palettes.mjs",
     "test:appearance": "node scripts/generate-palettes.mjs --check && node scripts/appearance-browser.test.mjs"

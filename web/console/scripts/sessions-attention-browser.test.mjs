@@ -123,6 +123,8 @@ test("session attention uses rolled roots in the real SessionsTree", async (t) =
             await setTasks(cases[1].tasks);
             await page.setViewportSize({ width: 390, height: 844 });
             await page.evaluate(() => window.fixture.setLocale("zh"));
+            // Chinese messages are fetched on demand before the page switches.
+            await page.locator("html[lang='zh-CN']").waitFor({ state: "attached" });
             await settle();
             assert.equal(await page.getByText("2 待你处理", { exact: true }).count(), 1);
         });

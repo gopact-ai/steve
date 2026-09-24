@@ -1,0 +1,32 @@
+import { appearanceEn } from "./en/appearance.ts";
+import { workHistoryEn } from "./en/work-history.ts";
+import { pluginsEn } from "./en/plugins.ts";
+import { nodeAgentsEn } from "./en/node-agents.ts";
+import { coordinationEn } from "./en/coordination.ts";
+import { sshEn } from "./en/ssh.ts";
+import { desktopEn } from "./en/desktop.ts";
+import { selectionEn } from "./en/selection.ts";
+import { sideChatEn } from "./en/side-chat.ts";
+import { commonEn } from "./en/common.ts";
+import { consoleEn } from "./en/console.ts";
+import { domainEn as consoleChromeEn } from "./en/console-chrome.ts";
+import { materialsEn } from "./en/materials.ts";
+import { settingsPageEn } from "./en/settings-page.ts";
+import { mcpToolsEn } from "./en/mcpTools.ts";
+import { tasksEn } from "./en/tasks.ts";
+import { settingsEditorEn } from "./en/settingsEditor.ts";
+import { inboxEn } from "./en/inbox.ts";
+import { conflictsEn } from "./en/conflicts.ts";
+import { historyEn } from "./en/history.ts";
+import { boardEn } from "./en/board.ts";
+import { homeEn } from "./en/home.ts";
+import { skillsEn } from "./en/skills.ts";
+import { mcpEn } from "./en/mcp.ts";
+import { fleetEn } from "./en/fleet.ts";
+import { projectsEn } from "./en/projects.ts";
+import { usageEn } from "./en/usage.ts";
+import { setupEn } from "./en/setup.ts";
+import type { zh } from "./catalog-zh.ts";
+
+// Loaded on demand: see loadLocale in ../i18n.ts.
+export const en = { ...appearanceEn, ...workHistoryEn, ...pluginsEn, ...nodeAgentsEn, ...coordinationEn, ...sshEn, ...desktopEn, ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...conflictsEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn, ...setupEn } as const satisfies Record<keyof typeof zh, string>;

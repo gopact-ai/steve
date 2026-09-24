@@ -7,7 +7,7 @@ import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { useNodeLabel } from "@/lib/node-name";
-import { label, zh } from "@/lib/labels";
+import { label, labelsFor } from "@/lib/labels";
 import { placeLabel } from "@/lib/workspaces";
 import type { ConversationContext, Plan, Reply, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
@@ -66,7 +66,7 @@ export const Rail = memo(function Rail({ conversation, context, live, plans, rep
                                     { k: t("console.projectHost"), v: <Where node={context.project.node} /> },
                                     { k: t("console.canonical"), v: <Mono className="text-secondary">{context.project.path}</Mono> },
                                     { k: t("console.workspace"), v: context.agent?.place ? placeLabel(context.agent.place, locale, nodeLabelOf) : t("console.notSelected") },
-                                    { k: t("console.workMode"), v: label(zh.repo, context.project.repo), hint: t("console.workModeHint") },
+                                    { k: t("console.workMode"), v: label(labelsFor(locale).repo, context.project.repo), hint: t("console.workModeHint") },
                                     { k: t("console.level"), v: context.project.level },
                                 ]} />
                             ) : <span className="text-sm text-quaternary">{t("console.noProject")}</span>}

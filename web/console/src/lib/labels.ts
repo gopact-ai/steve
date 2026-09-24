@@ -15,8 +15,6 @@ export function labelsFor(locale: Locale): Record<keyof typeof labelKeys | "leve
     return { ...groups, level: { public: "public", internal: "internal", restricted: "restricted", sealed: "sealed" } };
 }
 
-// Existing consumers migrate to labelsFor(locale) as their views subscribe.
-export const zh = labelsFor("zh");
 export const label = (table: Record<string, string>, key?: string) => (key ? table[key] ?? key : "—");
 
 // Keep K/M units consistent across the workbench; only the number is localized.

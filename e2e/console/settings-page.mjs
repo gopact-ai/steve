@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { channelInputs, channelPatch, changedInputs } from "../../web/console/src/lib/settings-channels.ts";
 import { settingsInputs, settingsPatch } from "../../web/console/src/lib/settings-values.ts";
+import { loadLocale } from "../../web/console/src/lib/i18n.ts";
+await Promise.all([loadLocale("zh"), loadLocale("en")]);
 
 const values = () => ({ gateway: { locale: "", owner_id: "owner-fixture", default_approval: "", task_max_turns: 0, task_max_elapsed: "0s", prompt_timeout: "10m" }, policies: { execution: { step_timeout: "15m", verify_timeout: "10m" }, planning: { timeout: "3m", attempts: 2 }, snapshot: { max_files: 20000, max_bytes: 1000, max_file_bytes: 100 }, review: { max_changes: 500, max_diff_bytes: 204800, max_file_bytes: 204800, max_entries: 2000, timeout: "30s" }, landing: { conflicts: "agent" } } });
 function fixtureView(mode = "restart") {

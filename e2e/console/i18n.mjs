@@ -2,11 +2,24 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import ts from "../../web/console/node_modules/typescript/lib/typescript.js";
-import { catalogs } from "../../web/console/src/lib/i18n/catalog.ts";
-import { errorText, normalizeLocale, resolveLocale, translate } from "../../web/console/src/lib/i18n.ts";
+import { zh } from "../../web/console/src/lib/i18n/catalog-zh.ts";
+import { en } from "../../web/console/src/lib/i18n/catalog-en.ts";
+import { errorText, loadLocale, localeLoaded, normalizeLocale, resolveLocale, translate } from "../../web/console/src/lib/i18n.ts";
 import { dateTime, number, relative, when } from "../../web/console/src/lib/format.ts";
 import { fmtSeconds, fmtTokens, labelsFor, spend } from "../../web/console/src/lib/labels.ts";
 import { parseSettings, settingsDraft } from "../../web/console/src/lib/settings-draft.ts";
+
+const catalogs = { zh, en };
+
+test("messages are loaded one language at a time, before they are read", async () => {
+    assert.equal(localeLoaded("en"), false);
+    assert.throws(() => translate("en", "common.save"), /Messages for en are not loaded/);
+    await loadLocale("en");
+    assert.equal(localeLoaded("en"), true);
+    assert.equal(localeLoaded("zh"), false, "loading one language leaves the other alone");
+    assert.equal(translate("en", "common.save"), "Save");
+    await loadLocale("zh");
+});
 
 test("every message has both translations and matching parameters", async () => {
     assert.deepEqual(Object.keys(catalogs.zh).sort(), Object.keys(catalogs.en).sort());
@@ -18,10 +31,14 @@ test("every message has both translations and matching parameters", async () => 
     }
     const used = new Set();
     const directory = new URL("../../web/console/src/lib/i18n/", import.meta.url);
-    for (const file of readdirSync(directory).filter((name) => name.endsWith(".ts") && name !== "catalog.ts")) {
-        const domain = await import(new URL(file, directory));
-        for (const [name, messages] of Object.entries(domain).filter(([name]) => name.endsWith("Zh"))) {
-            assert.deepEqual(Object.keys(messages).sort(), Object.keys(domain[name.slice(0, -2) + "En"]).sort(), `Unpaired domain: ${file}`);
+    const files = (locale) => readdirSync(new URL(locale + "/", directory)).filter((name) => name.endsWith(".ts")).sort();
+    assert.deepEqual(files("zh"), files("en"), "every domain has both languages");
+    for (const file of files("zh")) {
+        const domain = await import(new URL("zh/" + file, directory));
+        const english = await import(new URL("en/" + file, directory));
+        for (const [name, messages] of Object.entries(domain)) {
+            assert.ok(name.endsWith("Zh"), `Unexpected export ${file}/${name}`);
+            assert.deepEqual(Object.keys(messages).sort(), Object.keys(english[name.slice(0, -2) + "En"] ?? {}).sort(), `Unpaired domain: ${file}`);
             for (const key of Object.keys(messages)) {
                 assert.ok(!used.has(key), `Duplicate message key: ${key}`);
                 assert.equal(catalogs.zh[key], messages[key], `Domain missing from catalog: ${file}/${key}`);
