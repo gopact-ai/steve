@@ -69,17 +69,17 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 			return nodewire.Settings{}, fmt.Errorf("声明 %q 要写成 kind:id，如 network:office", d)
 		}
 	}
-	ConfigMu.Lock()
+	a.configStore().Lock()
 	// Agents keep naming harnesses that exist.
 	for id, ag := range a.Cfg.Agents {
 		if ag.Node == "" {
 			if _, ok := harnesses[ag.Harness]; !ok {
-				ConfigMu.Unlock()
+				a.configStore().Unlock()
 				return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 AI 工具 %s，不能删", id, ag.Harness)
 			}
 			for _, srv := range ag.MCPServers {
 				if _, ok := servers[srv]; !ok {
-					ConfigMu.Unlock()
+					a.configStore().Unlock()
 					return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 MCP 服务器 %s，不能删", id, srv)
 				}
 			}
@@ -94,14 +94,14 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 	saveErr := a.PersistConfig(a.Cfg)
 	if saveErr != nil && !config.Committed(saveErr) {
 		a.Cfg.Harnesses, a.Cfg.MCPServers, a.Cfg.Gateway = old.Harnesses, old.MCPServers, old.Gateway
-		ConfigMu.Unlock()
+		a.configStore().Unlock()
 		if errors.Is(saveErr, config.ErrFileChanged) {
 			return nodewire.Settings{}, errors.Join(nodewire.ErrSettingsRevisionConflict, saveErr)
 		}
 		return nodewire.Settings{}, saveErr
 	}
 	stateDir := filepath.Dir(a.Cfg.Gateway.StatePath)
-	ConfigMu.Unlock()
+	a.configStore().Unlock()
 	// The running pieces follow the file.
 	for id, h := range harnesses {
 		if err := a.Manager.Set(id, harness.Config{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: runtime.ApplyEnv(h.Env, id, stateDir), Permission: h.Permission}); err != nil {
@@ -119,9 +119,9 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 	}
 	a.Assembler.SetServers(caps)
 	a.Fleet.SetHubCapabilities(set.Capabilities)
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	slots := a.Cfg.HubSlots()
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	a.Fleet.SetHubSlots(slots)
 	if a.Observation != nil {
 		a.Observation.Launch.Wake()
@@ -137,9 +137,9 @@ func (a *Service) hubHarnessSettings(settings map[string]nodewire.HarnessSetting
 		if !NameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
 			return nil, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
 		}
-		ConfigMu.RLock()
+		a.configStore().RLock()
 		item := a.Cfg.Harnesses[id]
-		ConfigMu.RUnlock()
+		a.configStore().RUnlock()
 		if h.Adapter != nil && *h.Adapter != item.Adapter {
 			return nil, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
 		}
@@ -174,9 +174,9 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 
 	servers := make(map[string]config.MCPServer, len(settings))
 	for id, m := range settings {
-		ConfigMu.RLock()
+		a.configStore().RLock()
 		old := a.Cfg.MCPServers[id]
-		ConfigMu.RUnlock()
+		a.configStore().RUnlock()
 		if m.Env == nil {
 			m.Env = old.Env
 		}
@@ -205,8 +205,8 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 }
 
 func (a *Service) hubSettings() nodewire.Settings {
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.configStore().RLock()
+	defer a.configStore().RUnlock()
 	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.Cfg.Gateway.Tools...),
 		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.Cfg.Gateway.Declares...), Capabilities: append([]string{}, a.Cfg.Gateway.Capabilities...)}
 	for id, h := range a.Cfg.Harnesses {
@@ -237,13 +237,13 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	token := hex.EncodeToString(raw[:])
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.Lock()
+	a.configStore().Lock()
 	if _, exists := a.Cfg.Nodes[name]; exists {
-		ConfigMu.Unlock()
+		a.configStore().Unlock()
 		return consoleapi.AddNodeResult{}, fmt.Errorf("机器 %s 已经存在", name)
 	}
 	if name == NodeName() {
-		ConfigMu.Unlock()
+		a.configStore().Unlock()
 		return consoleapi.AddNodeResult{}, fmt.Errorf("%s 是 hub 自己", name)
 	}
 	if a.Cfg.Nodes == nil {
@@ -253,12 +253,12 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	saveErr := a.persistConfigContext(ctx, a.Cfg)
 	if saveErr != nil && !config.Committed(saveErr) {
 		delete(a.Cfg.Nodes, name)
-		ConfigMu.Unlock()
+		a.configStore().Unlock()
 		return consoleapi.AddNodeResult{}, saveErr
 	}
 	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
 	binary := a.Cfg.Gateway.NodeBinary
-	ConfigMu.Unlock()
+	a.configStore().Unlock()
 	a.hubURL = req.HubURL
 	a.Nodes.Add(name, node.Config{Addr: addr, Token: token, Level: string(level)})
 	a.Fleet.SetNodeLevels(levels)
@@ -281,12 +281,12 @@ func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Co
 	next := config.Node{Addr: worker.Addr, Token: worker.Token, Level: string(datalevel.Level(worker.Level).OrDefault())}
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.Lock()
+	a.configStore().Lock()
 	old := a.Cfg.Nodes
 	existing, known := old[nodeID]
 	if known {
 		if existing.Addr != next.Addr || existing.Token != next.Token {
-			ConfigMu.Unlock()
+			a.configStore().Unlock()
 			return coordination.ErrConflict
 		}
 		next = existing
@@ -299,12 +299,12 @@ func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Co
 		a.Cfg.Nodes = updated
 		if err := a.PersistConfig(a.Cfg); err != nil {
 			a.Cfg.Nodes = old
-			ConfigMu.Unlock()
+			a.configStore().Unlock()
 			return err
 		}
 	}
 	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
-	ConfigMu.Unlock()
+	a.configStore().Unlock()
 	worker.Level = next.Level
 	a.Nodes.Add(nodeID, worker)
 	a.Fleet.SetNodeLevels(levels)
@@ -350,9 +350,9 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 			}
 		}
 	}
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	_, inConfig := a.Cfg.Nodes[name]
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	if !inConfig {
 		return fmt.Errorf("没有叫 %q 的机器", name)
 	}
@@ -364,17 +364,17 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 			return fmt.Errorf("机器 %s 尚未退出集群：%w", name, err)
 		}
 	}
-	ConfigMu.Lock()
+	a.configStore().Lock()
 	saved := a.Cfg.Nodes[name]
 	delete(a.Cfg.Nodes, name)
 	saveErr := a.persistConfigContext(ctx, a.Cfg)
 	if saveErr != nil && !config.Committed(saveErr) {
 		a.Cfg.Nodes[name] = saved
-		ConfigMu.Unlock()
+		a.configStore().Unlock()
 		return saveErr
 	}
 	levels, regions := a.Cfg.NodeLevels(), a.Cfg.NodeRegions()
-	ConfigMu.Unlock()
+	a.configStore().Unlock()
 	a.Nodes.Remove(name)
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
@@ -388,7 +388,7 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 // their credentials.
 func (a *Service) Bootstrap(name, token string) (string, bool) {
 	a.Mu.Lock()
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	n, ok := a.Cfg.Nodes[name]
 	harnesses := make(map[string]nodebootstrap.Harness, len(a.Cfg.Harnesses))
 	for id, h := range a.Cfg.Harnesses {
@@ -399,7 +399,7 @@ func (a *Service) Bootstrap(name, token string) (string, bool) {
 		}
 	}
 	binary, hubURL := a.Cfg.Gateway.NodeBinary, a.hubURL
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	a.Mu.Unlock()
 	if !ok || token == "" || subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) != 1 {
 		return "", false
@@ -424,8 +424,8 @@ func (a *Service) Bootstrap(name, token string) (string, bool) {
 func (a *Service) NodeBinary(token string) (string, bool) {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.configStore().RLock()
+	defer a.configStore().RUnlock()
 	if a.Cfg.Gateway.NodeBinary == "" || token == "" {
 		return "", false
 	}

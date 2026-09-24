@@ -74,7 +74,7 @@ func (a *Service) mcpSettingsOf(ctx context.Context, nodeKey string) (map[string
 // advertOf is what a machine last said about itself; the hub's is made now.
 func (a *Service) advertOf(ctx context.Context, nodeKey string) (nodewire.Advert, error) {
 	if nodeKey == "" {
-		return ObservedHubAdvert(a.Cfg, a.Observation), nil
+		return ObservedHubAdvert(a.configStore(), a.Observation), nil
 	}
 	return a.Nodes.Advert(ctx, nodeKey)
 }

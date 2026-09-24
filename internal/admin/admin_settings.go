@@ -32,8 +32,8 @@ func NewSettings(admin *Service, startup *config.Config) *hubSettingsService {
 }
 
 func (s *hubSettingsService) Settings(context.Context) (consoleapi.SettingsView, error) {
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	s.admin.configStore().RLock()
+	defer s.admin.configStore().RUnlock()
 	return s.viewLocked()
 }
 
@@ -78,8 +78,8 @@ func (s *hubSettingsService) viewLocked() (consoleapi.SettingsView, error) {
 func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.SettingsUpdate) (consoleapi.SettingsView, error) {
 	s.admin.Mu.Lock()
 	defer s.admin.Mu.Unlock()
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	s.admin.configStore().Lock()
+	defer s.admin.configStore().Unlock()
 	if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
 		return consoleapi.SettingsView{}, consoleapi.ErrSettingsConflict
 	}

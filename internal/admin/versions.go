@@ -11,7 +11,7 @@ import (
 )
 
 func (a *Service) Versions(ctx context.Context) (consoleapi.Versions, error) {
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	hubID := ""
 	peers := []consoleapi.HubPeerInfo{}
 	if a.Cfg != nil {
@@ -20,7 +20,7 @@ func (a *Service) Versions(ctx context.Context) (consoleapi.Versions, error) {
 			peers = append(peers, consoleapi.HubPeerInfo{ID: id, Name: peer.Name, URL: peer.URL})
 		}
 	}
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	v := consoleapi.Versions{Hub: nodewire.Version(), HubID: hubID, ProtocolMin: nodewire.ProtocolMin, ProtocolMax: nodewire.ProtocolVersion, Nodes: []consoleapi.VersionNode{}}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].ID < peers[j].ID })
 	v.Peers = peers

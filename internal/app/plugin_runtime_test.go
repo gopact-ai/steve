@@ -64,7 +64,8 @@ func TestPluginSessionsKeepOldVersionAcrossUpgradeAndGlobalRestart(t *testing.T)
 	cfg := &config.Config{Harnesses: map[string]config.Harness{"mock": {Command: bin, Permission: "read"}}, Plugins: map[string]plugins.Installation{"work": {PackageID: original.Manifest.ID, Digest: original.Digest, Enabled: true, Projects: []string{"p"}, Targets: map[string]plugins.Configuration{"": {}}}}}
 	pool := &node.PluginRuntimePool{Store: store, StateDir: state}
 	t.Cleanup(func() { pool.Close() })
-	provider := &applicationPlugins{cfg: cfg, library: library, local: pool}
+	guarded := adminsvc.NewConfigStore(cfg)
+	provider := &applicationPlugins{config: guarded, library: library, local: pool}
 	manager, err := harness.NewManager(map[string]harness.Config{"mock": {Command: bin, Permission: "read"}})
 	if err != nil {
 		t.Fatal(err)
@@ -94,11 +95,11 @@ func TestPluginSessionsKeepOldVersionAcrossUpgradeAndGlobalRestart(t *testing.T)
 	if _, err := library.Add(t.Context(), "p", replacement); err != nil {
 		t.Fatal(err)
 	}
-	adminsvc.ConfigMu.Lock()
+	guarded.Lock()
 	item := cfg.Plugins["work"]
 	item.Digest = replacement.Digest
 	cfg.Plugins["work"] = item
-	adminsvc.ConfigMu.Unlock()
+	guarded.Unlock()
 	if err := manager.Restart(); err != nil {
 		t.Fatal(err)
 	}

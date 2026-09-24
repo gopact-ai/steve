@@ -229,9 +229,9 @@ func (s *PluginService) RemovePlugin(ctx context.Context, id string, req console
 			return consoleapi.PluginsView{}, err
 		}
 	}
-	ConfigMu.Lock()
+	s.Admin.configStore().Lock()
 	if pluginRevision(s.Admin.Cfg.Plugins) != revision {
-		ConfigMu.Unlock()
+		s.Admin.configStore().Unlock()
 		return consoleapi.PluginsView{}, consoleapi.ErrSettingsConflict
 	}
 	candidate := *s.Admin.Cfg
@@ -246,12 +246,12 @@ func (s *PluginService) RemovePlugin(ctx context.Context, id string, req console
 	}
 	catalog, err := candidate.AgentCatalog()
 	if err != nil {
-		ConfigMu.Unlock()
+		s.Admin.configStore().Unlock()
 		return consoleapi.PluginsView{}, err
 	}
 	saveErr := s.Admin.persistConfigContext(ctx, &candidate)
 	if saveErr != nil && !config.Committed(saveErr) {
-		ConfigMu.Unlock()
+		s.Admin.configStore().Unlock()
 		return consoleapi.PluginsView{}, saveErr
 	}
 	s.Admin.Cfg.Plugins = candidate.Plugins
@@ -259,7 +259,7 @@ func (s *PluginService) RemovePlugin(ctx context.Context, id string, req console
 	if s.Admin.Catalog != nil {
 		s.Admin.Catalog.Publish(catalog)
 	}
-	ConfigMu.Unlock()
+	s.Admin.configStore().Unlock()
 	view, err := s.Plugins(ctx)
 	if saveErr != nil {
 		view.Warning = saveErr.Error()

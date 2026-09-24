@@ -183,8 +183,8 @@ func (a *Service) materialOwner() string {
 	if a.Owner != "" {
 		return a.Owner
 	}
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.configStore().RLock()
+	defer a.configStore().RUnlock()
 	if a.Cfg == nil {
 		return ""
 	}

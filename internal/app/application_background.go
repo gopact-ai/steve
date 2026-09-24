@@ -40,18 +40,19 @@ func (b *applicationBackground) Close() {
 	b.wg.Wait()
 }
 
-func newLocalObservation(ctx context.Context, cfg *config.Config) (*adminsvc.LocalObservation, func()) {
+func newLocalObservation(ctx context.Context, store *adminsvc.ConfigStore) (*adminsvc.LocalObservation, func()) {
 	observation := &adminsvc.LocalObservation{Launch: node.NewLaunchProbe()}
 	background := newApplicationBackground(ctx)
 	background.Go(func(ctx context.Context) {
-		observation.Launch.Run(ctx, func() []string {
-			adminsvc.ConfigMu.RLock()
-			defer adminsvc.ConfigMu.RUnlock()
-			out := make([]string, 0, len(cfg.Harnesses)+len(cfg.Gateway.Tools))
-			for _, h := range cfg.Harnesses {
-				out = append(out, h.Command)
-			}
-			return append(out, cfg.Gateway.Tools...)
+		observation.Launch.Run(ctx, func() (out []string) {
+			store.Read(func(cfg *config.Config) {
+				out = make([]string, 0, len(cfg.Harnesses)+len(cfg.Gateway.Tools))
+				for _, h := range cfg.Harnesses {
+					out = append(out, h.Command)
+				}
+				out = append(out, cfg.Gateway.Tools...)
+			})
+			return out
 		})
 	})
 	return observation, background.Close

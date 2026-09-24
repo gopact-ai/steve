@@ -48,16 +48,18 @@ type Service struct {
 	ClusterMode   bool
 	// Members, when set, takes a removed machine out of the cluster along
 	// with whatever this node keeps for it.
-	Members            MemberRemover
-	ssh                *sshconnect.Service
-	releases           consoleapi.ReleaseProvider
-	Owner              string
-	MaterialLevel      datalevel.Level
-	Materials          *material.Store
-	Console            *console.Service
-	Lifetime           context.Context
-	Mu                 sync.Mutex
-	Cfg                *config.Config
+	Members       MemberRemover
+	ssh           *sshconnect.Service
+	releases      consoleapi.ReleaseProvider
+	Owner         string
+	MaterialLevel datalevel.Level
+	Materials     *material.Store
+	Console       *console.Service
+	Lifetime      context.Context
+	Mu            sync.Mutex
+	Cfg           *config.Config
+	// ConfigStore guards Cfg. A Service without one shares ConfigMu.
+	ConfigStore        *ConfigStore
 	RuntimeSettings    *config.RuntimeSettings
 	Path               string
 	WriteConfig        func(string, *config.Config) error
@@ -107,10 +109,6 @@ type Service struct {
 	// the bootstrap script fetches the binary from there.
 	hubURL string
 }
-
-// ConfigMu guards the loaded configuration: the admin rewrites parts of
-// it from the page while hubAdvert and the launch probe read it.
-var ConfigMu sync.RWMutex
 
 var NameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 

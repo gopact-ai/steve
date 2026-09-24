@@ -25,9 +25,9 @@ import (
 func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config) error) error {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	candidate := config.CloneProjects(a.Cfg)
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	if err := candidate.CheckFileRevision(a.Path); err != nil {
 		return err
 	}
@@ -48,8 +48,8 @@ func (a *Service) changeProjects(ctx context.Context, mutate func(*config.Config
 	}
 	defer release()
 	err = controller.Commit(ctx, candidate, func() error {
-		ConfigMu.Lock()
-		defer ConfigMu.Unlock()
+		a.configStore().Lock()
+		defer a.configStore().Unlock()
 		saveErr := a.PersistConfig(candidate)
 		if saveErr == nil || config.Committed(saveErr) {
 			a.Cfg.Projects = candidate.Projects
@@ -281,9 +281,9 @@ func (a *Service) RemoveProject(ctx context.Context, id string) error {
 	if id == HomeProjectID {
 		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
 	}
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	isDefault := id == a.Cfg.Gateway.DefaultProject
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	if isDefault {
 		return fmt.Errorf("%s 是默认项目，不能移除", id)
 	}

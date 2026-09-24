@@ -20,8 +20,8 @@ func (a *Service) DesktopStatus(ctx context.Context) (consoleapi.DesktopStatus, 
 	if err := ctx.Err(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.configStore().RLock()
+	defer a.configStore().RUnlock()
 	return a.desktopStatusLocked(), nil
 }
 
@@ -77,11 +77,11 @@ func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWo
 	if !desktop.IsManagedConfig(a.Path) {
 		return consoleapi.DesktopStatus{}, fmt.Errorf("工作目录设置仅在桌面 App 中提供")
 	}
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	id := config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)
 	home := a.Cfg.Projects[id].Home
 	local := a.Cfg.LocalHomeNode(home.Node)
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	if err := desktop.CheckWorkspaceProject(id, local, home.Node); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
@@ -104,8 +104,8 @@ func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscov
 	}
 	candidates := desktop.DiscoverAgents(desktop.DiscoveryOptions{})
 	offers := a.harnessOffers(ctx, "")
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.configStore().RLock()
+	defer a.configStore().RUnlock()
 	result := consoleapi.DesktopDiscovery{Agents: make([]consoleapi.DesktopAgentCandidate, 0, len(candidates))}
 	for _, item := range candidates {
 		candidate := consoleapi.DesktopAgentCandidate{
@@ -181,12 +181,12 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	for _, item := range desktop.DiscoverAgents(desktop.DiscoveryOptions{}) {
 		candidates[item.ID] = item
 	}
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	agents := make(map[string]config.Agent, len(a.Cfg.Agents))
 	maps.Copy(agents, a.Cfg.Agents)
 	harnesses := maps.Clone(a.Cfg.Harnesses)
 	statePath := a.Cfg.Gateway.StatePath
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	plan, err := planDesktopAgents(requested, candidates, agents, harnesses)
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
@@ -283,8 +283,8 @@ func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map
 // saveDesktopAgents commits the prepared agents under the configuration lock,
 // rebuilding from whatever else was saved while adapters were installing.
 func (a *Service) saveDesktopAgents(ctx context.Context, addedAgents map[string]config.Agent, addedHarnesses map[string]config.Harness, agentIDs []string, preferred string) (consoleapi.DesktopStatus, error) {
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	a.configStore().Lock()
+	defer a.configStore().Unlock()
 	if err := ctx.Err(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
@@ -346,7 +346,7 @@ func (a *Service) SetLocalWorkspaceRoot(root string) {
 	if strings.TrimSpace(root) == "" {
 		return
 	}
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	a.configStore().Lock()
+	defer a.configStore().Unlock()
 	a.Cfg.Gateway.WorkspaceRoot = root
 }

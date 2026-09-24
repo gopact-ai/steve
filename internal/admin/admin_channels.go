@@ -22,13 +22,14 @@ type hubChannelsService struct {
 
 // BindAccessUpdater binds a successfully initialized runtime channel and
 // immediately publishes its applied startup policy, not pending declarations.
-// The callback runs synchronously under ConfigMu to preserve publication order;
-// it must be nonblocking and must not call back into administration services.
+// The callback runs synchronously under the configuration lock to preserve
+// publication order; it must be nonblocking and must not call back into
+// administration services.
 // Its payload contains only the four access fields, never channel credentials.
 // Passing nil removes the consumer and restores restart-only semantics.
 func (s *hubChannelsService) BindAccessUpdater(update func(config.Feishu)) {
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	s.admin.configStore().Lock()
+	defer s.admin.configStore().Unlock()
 	s.accessUpdater = update
 	if update != nil {
 		update(channelAccess(s.applied.Feishu))
@@ -45,8 +46,8 @@ func channelAccess(f channelsettings.FeishuSetting) config.Feishu {
 }
 
 func (s *hubChannelsService) SetRuntimeError(message string) {
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	s.admin.configStore().Lock()
+	defer s.admin.configStore().Unlock()
 	s.runtimeError = message
 }
 
@@ -55,8 +56,8 @@ func NewChannels(admin *Service, startup *config.Config) *hubChannelsService {
 }
 
 func (s *hubChannelsService) Channels(context.Context) (consoleapi.ChannelsView, error) {
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	s.admin.configStore().RLock()
+	defer s.admin.configStore().RUnlock()
 	return s.viewLocked(), nil
 }
 
@@ -83,8 +84,8 @@ func cloneChannelSettings(in channelsettings.Settings) channelsettings.Settings 
 func (s *hubChannelsService) UpdateChannels(ctx context.Context, req consoleapi.ChannelsUpdate) (consoleapi.ChannelsView, error) {
 	s.admin.Mu.Lock()
 	defer s.admin.Mu.Unlock()
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	s.admin.configStore().Lock()
+	defer s.admin.configStore().Unlock()
 	if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
 		return consoleapi.ChannelsView{}, consoleapi.ErrSettingsConflict
 	}

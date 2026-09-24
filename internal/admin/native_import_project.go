@@ -29,9 +29,9 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	err := a.checkNativeImportTarget(name, target, selected)
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	if err != nil {
 		return "", err
 	}
@@ -48,9 +48,9 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		ConfigMu.RLock()
+		a.configStore().RLock()
 		err := a.checkNativeImportTarget(name, target, selected)
-		ConfigMu.RUnlock()
+		a.configStore().RUnlock()
 		if err != nil {
 			return err
 		}

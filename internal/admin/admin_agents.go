@@ -18,8 +18,8 @@ import (
 func (a *Service) changeAgents(change func(map[string]config.Agent) error) error {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	a.configStore().Lock()
+	defer a.configStore().Unlock()
 	candidate := *a.Cfg
 	candidate.Agents = maps.Clone(a.Cfg.Agents)
 	if candidate.Agents == nil {

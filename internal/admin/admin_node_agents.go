@@ -19,9 +19,9 @@ func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
 	if name == "" || name == "hub" {
 		return config.Node{}, errors.New("请选择已接入的远端机器；本机工具请在本机登记")
 	}
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	target, ok := a.Cfg.Nodes[name]
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	if !ok {
 		return config.Node{}, fmt.Errorf("没有叫 %q 的机器", name)
 	}
@@ -53,8 +53,8 @@ func (a *Service) NodeAgents(ctx context.Context, name string) (agenttools.Disco
 	if err != nil {
 		return agenttools.Discovery{}, err
 	}
-	ConfigMu.RLock()
-	defer ConfigMu.RUnlock()
+	a.configStore().RLock()
+	defer a.configStore().RUnlock()
 	if err := a.checkAgentNodeTarget(name, target); err != nil {
 		return agenttools.Discovery{}, err
 	}
@@ -128,9 +128,9 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	if a.Catalog == nil {
 		return agenttools.Enrollment{}, errors.New("Agent 服务尚未就绪")
 	}
-	ConfigMu.RLock()
+	a.configStore().RLock()
 	existing := maps.Clone(a.Cfg.Agents)
-	ConfigMu.RUnlock()
+	a.configStore().RUnlock()
 	planned, err := planNodeAgents(name, requested, existing)
 	if err != nil {
 		return agenttools.Enrollment{}, err
@@ -155,8 +155,8 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	result.Agents = planned.order
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
-	ConfigMu.Lock()
-	defer ConfigMu.Unlock()
+	a.configStore().Lock()
+	defer a.configStore().Unlock()
 	if err := a.checkAgentNodeTarget(name, target); err != nil {
 		return result, err
 	}
