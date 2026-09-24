@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/localtoken"
 	"github.com/gopact-ai/steve/internal/material"
+	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/sameorigin"
 )
 
@@ -85,13 +86,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	})
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.
-	projects.Levels = func(node string) datalevel.Level {
-		level, err := nodes.Level(context.Background(), node)
-		if err != nil {
-			return ""
-		}
-		return datalevel.Level(level)
-	}
+	projects.Levels = registryLevels(nodes)
 	admin := &adminsvc.Service{Lifetime: ctx, NodeName: boot.NodeName(), ConfigStore: boot.ConfigStore(), Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, View: view,
 		LiveSkills: live, Shipper: shipper, Observation: observation, Coordinator: coordinator, HomePath: cfg.Gateway.HomePath, Memory: memories, Artifacts: artifacts}
 	admin.RuntimeSettings = boot.Settings()
@@ -142,6 +137,18 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 		manager.Stop()
 	})
 	return &consoleValues{admin: admin, cons: cons, dashboard: dashboard, materials: materials, reconciliations: reconciliations}, nil
+}
+
+// registryLevels reads a machine's data level from nodes; a machine the
+// registry cannot answer for has none.
+func registryLevels(nodes *node.Registry) func(string) datalevel.Level {
+	return func(machine string) datalevel.Level {
+		level, err := nodes.Level(context.Background(), machine)
+		if err != nil {
+			return ""
+		}
+		return datalevel.Level(level)
+	}
 }
 
 type consoleAssembly interface {
