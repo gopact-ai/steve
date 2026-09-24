@@ -509,7 +509,7 @@ node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平
 
 协调节点与执行节点之间使用节点协议 v2（[internal/nodewire/handshake.go](../internal/nodewire/handshake.go) 的 `ProtocolVersion` 与 `ProtocolMin`），双方都只接受 v2。握手时协调节点给出自己支持的协议区间，节点以双方共有的最高版本回复；没有共有版本时连接被拒绝：
 
-- 只支持 v1 的 `steve-node` 被协调节点拒绝，错误写明节点名和双方的协议区间，并提示经 SSH 把该机器上的 steve 升级到协调节点的版本。
+- 只支持 v1 的 `steve-node` 被协调节点拒绝，错误写明节点名和双方的协议区间，并提示把该机器上的 steve 升级到协调节点的版本；经 SSH 接入的机器可以在控制台升级。
 - 节点只支持比协调节点新的协议时，协调节点的错误写明双方的协议区间，并提示把协调节点升级到支持该版本的构建。
 - v2 的 node 拒绝 v1 协调节点，node 日志写明双方的协议区间。
 

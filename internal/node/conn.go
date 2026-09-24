@@ -90,7 +90,7 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 			if mismatch.Node > mismatch.HubMax {
 				return nil, fmt.Errorf("%w; upgrade this hub to a build that speaks v%d", err, mismatch.Node)
 			}
-			return nil, fmt.Errorf("%w; upgrade steve on that machine over SSH to this build", err)
+			return nil, fmt.Errorf("%w; upgrade steve on that machine to this build (a machine enrolled over SSH can be upgraded from the console)", err)
 		}
 		return nil, err
 	}

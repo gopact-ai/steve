@@ -260,7 +260,7 @@ func v1Node(t *testing.T, socket net.Conn) {
 
 // A node on protocol v1 is refused at the handshake, whatever features it
 // lists, and the hub says once which node it was, which versions met and
-// how to fix it.
+// how to fix it, whichever way the machine was enrolled.
 func TestHubRefusesAProtocolV1Node(t *testing.T) {
 	r := NewRegistry("hub", map[string]Config{"old": {Addr: "old.example:7701", Token: "t", DialContext: func(context.Context, string) (net.Conn, error) {
 		hub, node := net.Pipe()
@@ -275,7 +275,7 @@ func TestHubRefusesAProtocolV1Node(t *testing.T) {
 	if n := strings.Count(err.Error(), `"old"`); n != 1 {
 		t.Fatalf("connect = %v, names the node %d times, want once", err, n)
 	}
-	for _, want := range []string{"node speaks v1–v1", "upgrade steve on that machine", "over SSH"} {
+	for _, want := range []string{"node speaks v1–v1", "upgrade steve on that machine to this build", "enrolled over SSH can be upgraded from the console"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("connect = %v, want it to say %q", err, want)
 		}
@@ -411,7 +411,7 @@ func TestHubRefusedByANewerNodeAdvisesItsOwnUpgrade(t *testing.T) {
 	if c != nil {
 		c.close()
 	}
-	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), fmt.Sprintf("upgrade this hub to a build that speaks v%d", newer)) || strings.Contains(err.Error(), "over SSH") {
+	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), fmt.Sprintf("upgrade this hub to a build that speaks v%d", newer)) || strings.Contains(err.Error(), "that machine") {
 		t.Fatalf("dial = %v, want the hub's own upgrade advised", err)
 	}
 }
@@ -435,8 +435,8 @@ func TestHubRefusesAnAdvertOnAnOlderProtocol(t *testing.T) {
 	if c != nil {
 		c.close()
 	}
-	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), "node speaks v1") || !strings.Contains(err.Error(), "over SSH") {
-		t.Fatalf("dial = %v, want a version mismatch naming v1 and the SSH upgrade", err)
+	if !errors.Is(err, nodewire.ErrVersionMismatch) || !strings.Contains(err.Error(), "node speaks v1") || !strings.Contains(err.Error(), "upgrade steve on that machine to this build") {
+		t.Fatalf("dial = %v, want a version mismatch naming v1 and the machine's upgrade", err)
 	}
 }
 
