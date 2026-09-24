@@ -184,7 +184,7 @@ func createScheduleArgs() agentmcp.ScheduleRequest {
 	return agentmcp.ScheduleRequest{Mode: "every", When: "1h", Prompt: "check build\n\n- preserve indentation\n  - details", IdempotencyKey: "user-request"}
 }
 
-func TestScheduleMCPUsesTrustedExecutionIdentityWithoutModeCache(t *testing.T) {
+func TestScheduleMCPCreatesDurableJobFromExecutionIdentity(t *testing.T) {
 	f := newScheduleMCPFixture(t, nil)
 	text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs())
 	if bad {
@@ -222,8 +222,6 @@ func TestScheduleMCPRefusesGuestGroupChildAndMismatchedExecution(t *testing.T) {
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newScheduleMCPFixture(t, change)
-			// A stale "owner" cache must not override persisted identity.
-			f.c.rememberMode(Request{ConversationID: "chat", SenderOpenID: "console-owner", ChatType: protocol.ChatP2P})
 			if text, bad := scheduleToolCall(t, f.gate, "steve_schedule", createScheduleArgs()); !bad {
 				t.Fatalf("accepted %s: %s", name, text)
 			}
@@ -259,7 +257,6 @@ func TestScheduleMCPReplayRefusedAfterProjectRebinding(t *testing.T) {
 
 func TestScheduleMCPScopesListCancelAndPreservesUnknownFiring(t *testing.T) {
 	f := newScheduleMCPFixture(t, nil)
-	f.c.rememberMode(Request{ConversationID: "chat", SenderOpenID: "console-owner", ChatType: protocol.ChatP2P})
 	var owned schedule.Job
 	for _, route := range []struct{ conversation, project, transport string }{
 		{"chat", "codex", "feishu"}, {"other-chat", "codex", "feishu"}, {"chat", "other-project", "feishu"}, {"chat", "codex", "console"},
