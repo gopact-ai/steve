@@ -175,10 +175,12 @@ func consoleServerConfig(environment *Environment, cfg *config.Config) (httpapi.
 		return *environment.HTTPConfig, nil
 	}
 	served := httpapi.ServerConfig{Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken}
-	// Serving the network is the owner's decision, token included; the
-	// server refuses to start without one.
-	if served.Token != "" || !sameorigin.LoopbackListener(served.Addr) {
+	if served.Token != "" {
 		return served, nil
+	}
+	// Serving the network is the owner's decision, token included.
+	if !sameorigin.LoopbackListener(served.Addr) {
+		return httpapi.ServerConfig{}, fmt.Errorf("gateway.read_model_addr %s is not a loopback address: set gateway.read_model_token to serve the console there", served.Addr)
 	}
 	token, err := localtoken.Resolve(filepath.Dir(cfg.Gateway.StatePath))
 	if err != nil {
