@@ -9,10 +9,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -280,43 +282,46 @@ func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map
 	return plan, nil
 }
 
-// saveDesktopAgents commits the prepared agents under the configuration lock,
-// rebuilding from whatever else was saved while adapters were installing.
+// saveDesktopAgents saves the prepared agents, rebuilding from whatever
+// else was saved while adapters were installing.
 func (a *Service) saveDesktopAgents(ctx context.Context, addedAgents map[string]config.Agent, addedHarnesses map[string]config.Harness, agentIDs []string, preferred string) (consoleapi.DesktopStatus, error) {
-	a.configStore().Lock()
-	defer a.configStore().Unlock()
 	if err := ctx.Err(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	// Rebuild from the current configuration after preparation, preserving
-	// unrelated settings saved while adapters were being installed.
-	candidate := *a.Cfg
-	candidate.Agents = make(map[string]config.Agent, len(a.Cfg.Agents)+len(addedAgents))
-	maps.Copy(candidate.Agents, a.Cfg.Agents)
-	candidate.Harnesses = make(map[string]config.Harness, len(a.Cfg.Harnesses)+len(addedHarnesses))
-	maps.Copy(candidate.Harnesses, a.Cfg.Harnesses)
-	for _, id := range agentIDs {
-		candidate.Agents[id] = addedAgents[id]
-	}
-	applyDefault(candidate.Agents, preferred, agentIDs)
-	maps.Copy(candidate.Harnesses, addedHarnesses)
-	preparedCatalog, err := candidate.AgentCatalog()
-	if err != nil {
-		return consoleapi.DesktopStatus{}, err
-	}
-	preparedManager, err := configbuild.HarnessManager(HarnessRuntimeConfig(&candidate))
-	if err != nil {
-		return consoleapi.DesktopStatus{}, err
-	}
-	saveErr := a.PersistConfig(&candidate)
+	var preparedCatalog *agent.Catalog
+	var preparedManager *harness.Manager
+	var status consoleapi.DesktopStatus
+	saveErr := a.updateConfigThen(a.lifetime(), func(c *config.Config) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if c.Agents == nil {
+			c.Agents = make(map[string]config.Agent, len(addedAgents))
+		}
+		if c.Harnesses == nil {
+			c.Harnesses = make(map[string]config.Harness, len(addedHarnesses))
+		}
+		for _, id := range agentIDs {
+			c.Agents[id] = addedAgents[id]
+		}
+		applyDefault(c.Agents, preferred, agentIDs)
+		maps.Copy(c.Harnesses, addedHarnesses)
+		var err error
+		if preparedCatalog, err = c.AgentCatalog(); err != nil {
+			return err
+		}
+		preparedManager, err = configbuild.HarnessManager(HarnessRuntimeConfig(c))
+		return err
+	}, func(*config.Config) {
+		a.Manager.Publish(preparedManager)
+		a.Catalog.Publish(preparedCatalog)
+		status = a.desktopStatusLocked()
+	})
 	if saveErr != nil && !config.Committed(saveErr) {
 		return consoleapi.DesktopStatus{}, saveErr
 	}
-	a.Manager.Publish(preparedManager)
-	a.Cfg.Agents, a.Cfg.Harnesses = candidate.Agents, candidate.Harnesses
-	a.Catalog.Publish(preparedCatalog)
 	slog.Info(fmt.Sprintf("steve: local agents registered agents=%s", strings.Join(agentIDs, ",")))
-	return a.desktopStatusLocked(), saveErr
+	return status, saveErr
 }
 
 func (a *Service) prepareDesktopAgents(ctx context.Context, statePath string, selected []string, harnesses map[string]config.Harness) error {

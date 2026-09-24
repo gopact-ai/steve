@@ -318,3 +318,26 @@ func TestDesktopConcurrentRegistrationAndReadsRetainBothAgents(t *testing.T) {
 		t.Fatalf("concurrent registrations lost persisted Agent: %v", err)
 	}
 }
+
+// The desktop status can be read while newly chosen agents are being saved.
+func TestDesktopStatusReadDuringAnEnrollmentSave(t *testing.T) {
+	admin, _ := desktopAdminFixture(t)
+	var during consoleapi.DesktopStatus
+	finished := readsDuringSave(t, admin, func() error {
+		_, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})
+		return err
+	}, func() error {
+		var err error
+		during, err = admin.DesktopStatus(t.Context())
+		return err
+	})
+	if !finished {
+		t.Fatal("reading the desktop status waited for an enrollment save")
+	}
+	if during.AgentCount != 0 {
+		t.Fatal("a reader saw agents that were not saved yet")
+	}
+	if _, ok := admin.Catalog.Resolve("grok"); !ok {
+		t.Fatal("the saved agent was not published")
+	}
+}
