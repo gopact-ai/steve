@@ -165,6 +165,34 @@ try {
     await settle();
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "live");
     assert.ok(reads.state > reconnect.state && reads.coordination > reconnect.coordination && reads.usage > reconnect.usage, "Reconnect recovery is retained");
+
+    // Settle the reconnect burst, then measure the floor alone.
+    await page.clock.runFor(1000);
+    const quiet = reads.state;
+    await page.clock.runFor(59_000);
+    assert.equal(reads.state, quiet, "A live stream does not re-read /state on the 10s floor");
+    await page.clock.runFor(1500);
+    assert.equal(reads.state, quiet + 1, "A live stream still bounds a silent drop with a long floor");
+    await page.evaluate(() => window.source.onerror());
+    await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "reconnecting");
+    // Hold the stream down: the retry fails again as soon as it opens.
+    await page.evaluate(() => { window.EventSource = class { constructor() { window.source = this; setTimeout(() => this.onerror?.(), 0); } close() {} }; });
+    const down = reads.state;
+    await page.clock.runFor(20_500);
+    assert.equal(reads.state, down + 2, "A dropped stream falls back to the 10s floor");
+    const setVisible = (visible) => page.evaluate((visible) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible ? "visible" : "hidden" });
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => !visible });
+        document.dispatchEvent(new Event("visibilitychange"));
+    }, visible);
+    await setVisible(false);
+    const hidden = reads.state;
+    await page.clock.runFor(120_000);
+    assert.equal(reads.state, hidden, "A hidden page does not poll /state");
+    await setVisible(true);
+    await page.waitForFunction(() => document.querySelector("#ready")?.textContent);
+    await page.clock.runFor(100);
+    assert.equal(reads.state, hidden + 1, "Showing the page refreshes /state at once");
     assert.deepEqual(errors, []);
     console.log("Fleet read surfaces: event-only renders 0; state, usage, node.updated, hub pins and reconnect recovery passed");
     await context.close();

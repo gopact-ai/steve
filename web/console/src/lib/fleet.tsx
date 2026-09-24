@@ -6,6 +6,7 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import type { Event, Snapshot } from "./types";
 import { NodeNamesContext, useNodeNames } from "./node-name";
 import { serviceWatch } from "./service-watch";
+import { statePoll } from "./state-poll";
 
 export type Live = "connecting" | "live" | "reconnecting" | "unauthorized";
 
@@ -97,7 +98,7 @@ export class ConsoleFeed {
 }
 
 // The snapshot is re-read when the stream says something moved, with a
-// polling floor in case the stream drops silently.
+// polling floor in case the stream drops silently (see statePoll).
 export function FleetProvider({ children }: { children: ReactNode }) {
     const [snap, setSnap] = useState<Snapshot>(emptySnapshot);
     const [live, setLive] = useState<Live>("connecting");
@@ -106,6 +107,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
     const pending = useRef<number | null>(null);
     const firstVersion = useRef<string | null>(null);
     const [hubUpdated, setHubUpdated] = useState(false);
+    const poll = useRef<ReturnType<typeof statePoll> | null>(null);
 
     const load = useResourceRead("fleet", fetchState, (snapshot) => {
         if (snapshot.hub.version) {
@@ -113,6 +115,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             if (snapshot.hub.version !== firstVersion.current) setHubUpdated(true);
         }
         setSnap(snapshot);
+        poll.current?.fresh();
         setLive((state) => state === "unauthorized" ? "connecting" : state);
     }, (error) => {
         if (error instanceof HTTPError && error.status === 401) setLive("unauthorized");
@@ -125,7 +128,10 @@ export function FleetProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         void load();
-        const floor = window.setInterval(() => void load(), 10000);
+        const floor = poll.current = statePoll(() => void load());
+        const shown = () => floor.visible(document.visibilityState !== "hidden");
+        shown();
+        document.addEventListener("visibilitychange", shown);
         let source: EventSource | null = null;
         let retry: number | null = null;
         let reconnecting = false;
@@ -134,6 +140,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             source = new EventSource(eventsURL());
             source.onopen = () => {
                 watch.up();
+                floor.live(true);
                 setLive("live");
                 if (reconnecting) { reconnecting = false; void load(); }
             };
@@ -149,6 +156,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             };
             source.onerror = () => {
                 watch.down();
+                floor.live(false);
                 reconnecting = true;
                 setLive("reconnecting");
                 source?.close();
@@ -156,7 +164,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             };
         };
         connect();
-        return () => { window.clearInterval(floor); source?.close(); feed.stop(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
+        return () => { floor.stop(); poll.current = null; document.removeEventListener("visibilitychange", shown); source?.close(); feed.stop(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
     }, [load, refresh, feed]);
 
     const value = useMemo(() => ({ snap, live, refresh, hubUpdated }), [snap, live, refresh, hubUpdated]);
