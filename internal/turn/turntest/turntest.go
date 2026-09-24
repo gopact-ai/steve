@@ -257,10 +257,11 @@ var ErrIdleCoordinator = errors.New("turntest: the coordinator is idle")
 // no conversation: it has no context, setup, suggestions or verbs to give,
 // parses a line by its syntax alone, starts no conversation and has no
 // session to reset. A fake embeds it and overrides what its test is about.
+// Handle panics, so a fake whose test runs a turn overrides Handle.
 type IdleCoordinator struct{}
 
 func (IdleCoordinator) Handle(context.Context, turn.Request) (turn.Result, error) {
-	return turn.Result{}, ErrIdleCoordinator
+	panic("turntest: IdleCoordinator runs no turn; a test that needs one embeds it and overrides Handle")
 }
 
 func (IdleCoordinator) Context(context.Context, string) (turn.Context, error) {
