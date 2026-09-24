@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"strings"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
@@ -221,16 +223,38 @@ func (noRuntime) SupportsHTTPMCP(context.Context, harness.Placement) (bool, erro
 	return false, errNoRuntime
 }
 
-func TestNewRefusesEveryMissingDependency(t *testing.T) {
-	_, err := New(Deps{})
-	if err == nil {
-		t.Fatal("New(Deps{}) succeeded")
+// Each entry of Deps.required names a Deps field, is refused alone when
+// that field is zero, and fills the coordinator field of the same type
+// named after it, lower-cased.
+func TestNewRefusesEachRequiredDependencyAlone(t *testing.T) {
+	var full Deps
+	fillDeps(t, testLedger(t), &full)
+	if _, err := New(full); err != nil {
+		t.Fatal(err)
 	}
-	for _, name := range []string{"Catalog", "Store", "Assembler", "Runtime", "Text", "Home", "Skills", "Projects",
-		"Memory", "Attempts", "Artifacts", "Intents", "Executions", "Tasks", "Schedules"} {
-		if !strings.Contains(err.Error(), name) {
-			t.Errorf("New(Deps{}) error %q does not name %s", err, name)
-		}
+	required := full.required()
+	if len(required) == 0 {
+		t.Fatal("Deps.required lists no dependency")
+	}
+	coordinator := reflect.TypeFor[Coordinator]()
+	for _, dep := range required {
+		t.Run(dep.name, func(t *testing.T) {
+			field, ok := reflect.TypeFor[Deps]().FieldByName(dep.name)
+			if !ok {
+				t.Fatalf("Deps.required lists %s, which is no Deps field", dep.name)
+			}
+			first, size := utf8.DecodeRuneInString(dep.name)
+			filled := string(unicode.ToLower(first)) + dep.name[size:]
+			if target, ok := coordinator.FieldByName(filled); !ok || target.Type != field.Type {
+				t.Fatalf("Deps.%s fills no coordinator field %s of type %v", dep.name, filled, field.Type)
+			}
+			without := full
+			reflect.ValueOf(&without).Elem().FieldByIndex(field.Index).SetZero()
+			_, err := New(without)
+			if want := "turn: missing dependencies: " + dep.name; err == nil || err.Error() != want {
+				t.Fatalf("New without %s: %v, want %q", dep.name, err, want)
+			}
+		})
 	}
 }
 
