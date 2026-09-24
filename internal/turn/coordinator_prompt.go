@@ -53,7 +53,8 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// burn its own running time standing behind the turn it waited for.
 	// And it is an idle clock: it runs out after c.timeout of silence,
 	// not of work, so a turn that awaits other agents is not cut short
-	// while they are still answering.
+	// while they are still answering. Preparation runs under it once;
+	// started resets it when the prompt is sent.
 	idleCtx, expire, touch := idle.WithTimeout(turnCtx, c.promptTimeout())
 	var ctx context.Context = idleCtx
 	defer expire()

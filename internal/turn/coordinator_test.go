@@ -35,9 +35,12 @@ type fakeManager struct {
 	fail     error
 	failOnce bool
 	mcpHTTP  bool
+	// openDelay is how long OpenSession takes: a slow session start.
+	openDelay time.Duration
 }
 
 func (m *fakeManager) OpenSession(_ context.Context, at harness.Placement, upstreamID, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
+	time.Sleep(m.openDelay)
 	if m.fail != nil {
 		err := m.fail
 		if m.failOnce {
@@ -181,6 +184,28 @@ func TestCoordinatorTimeoutDoesNotAbortSharedProcess(t *testing.T) {
 	}
 	if saved, ok := store.Conversation("chat").Sessions["codex"]; !ok || saved.UpstreamID == "" {
 		t.Fatal("timed-out turn lost its native context")
+	}
+}
+
+// The silence the prompt timeout measures is the agent's: preparation
+// before the prompt is sent does not use up the agent's allowance.
+func TestPromptSilenceIsMeasuredFromThePromptNotFromPreparation(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.OpenLedger(testLedger(t))
+	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
+	// Preparation (the delayed open plus the before-snapshot, which takes
+	// up to a second or two on a loaded machine) and the agent's silent
+	// answer each stay inside the limit; together they exceed it.
+	const limit = 5 * time.Second
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}, openDelay: 2500 * time.Millisecond}
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, limit)
+	go func() {
+		<-runner.started
+		time.Sleep(3 * time.Second)
+		runner.stop.Do(func() { close(runner.done) })
+	}()
+	if _, err := handle(coordinator, t.Context(), "slow start"); err != nil {
+		t.Fatalf("preparation time was charged to the agent's silence: %v", err)
 	}
 }
 

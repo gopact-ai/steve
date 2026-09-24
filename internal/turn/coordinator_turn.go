@@ -254,6 +254,9 @@ func (t *chatTurn) started(ctx context.Context, e *lifecycle.Execution) error {
 		return err
 	}
 	t.clock.mark("arm")
+	// The prompt is sent next. The agent's silence is measured from here,
+	// not from the start of preparation.
+	t.spent.touch()
 	return nil
 }
 
