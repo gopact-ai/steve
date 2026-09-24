@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/acp"
@@ -53,6 +54,12 @@ func idlePluginHost(m *Manager, ref plugins.RuntimeRef) string {
 	return key
 }
 
+// sessionRuntime is a runtime with a 64-character id; CloseSession refuses a
+// plugin session id whose runtime id has any other length.
+func sessionRuntime() plugins.RuntimeRef {
+	return plugins.RuntimeRef{ID: strings.Repeat("a", 64), Selection: plugins.Selection{Harness: "mock"}}
+}
+
 func TestManagerWithoutPluginProviderRefusesOrSkipsPluginWork(t *testing.T) {
 	m, err := NewManager(nil)
 	if err != nil {
@@ -84,6 +91,14 @@ func TestManagerWithoutPluginProviderRefusesOrSkipsPluginWork(t *testing.T) {
 	if m.hosts[key] != nil {
 		t.Fatal("closed runtime host is still registered")
 	}
+	session := sessionRuntime()
+	key = idlePluginHost(m, session)
+	if err := m.CloseSession(WithPluginProfile(ctx, &session), Placement{Harness: "mock"}, profileSessionID(session, "native")); err != nil {
+		t.Fatalf("close session = %v, want the host closed and nothing else", err)
+	}
+	if m.hosts[key] != nil {
+		t.Fatal("closed session host is still registered")
+	}
 }
 
 func TestManagerHandsPluginWorkToItsProvider(t *testing.T) {
@@ -111,7 +126,15 @@ func TestManagerHandsPluginWorkToItsProvider(t *testing.T) {
 	if err := m.ClosePluginRuntime(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"prepare", "plan-relocation", "prepare-relocation", "begin runtime", "end runtime", "close runtime"}
+	session := sessionRuntime()
+	idlePluginHost(m, session)
+	if err := m.CloseSession(WithPluginProfile(ctx, &session), Placement{Harness: "mock"}, profileSessionID(session, "native")); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"prepare", "plan-relocation", "prepare-relocation", "begin runtime", "end runtime", "close runtime",
+		"end " + session.ID, "close " + session.ID,
+	}
 	if !slices.Equal(provider.calls, want) {
 		t.Fatalf("provider calls = %v, want %v", provider.calls, want)
 	}
