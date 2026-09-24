@@ -42,7 +42,7 @@ func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *s
 		t.Fatal(err)
 	}
 	c.SetTasks(tasks, "")
-	schedules, err := schedule.Open(filepath.Join(t.TempDir(), "schedules.json"))
+	schedules, err := schedule.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

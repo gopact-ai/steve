@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -100,7 +99,7 @@ func TestParseRejectsWhatCannotWork(t *testing.T) {
 // Ids are decimal counters. Comparing them as text puts #10 before #2 the
 // moment a conversation gets past its ninth schedule.
 func TestListingAndFiringOrderIdsNumerically(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "schedules.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -141,7 +140,7 @@ func TestListingAndFiringOrderIdsNumerically(t *testing.T) {
 }
 
 func TestDueClaimsAndAdvancesInOneWrite(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "schedules.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -197,8 +196,8 @@ func TestDueClaimsAndAdvancesInOneWrite(t *testing.T) {
 }
 
 func TestStoreSurvivesReopenAndBoundsOneConversation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "schedules.json")
-	store, _ := Open(path)
+	book := testLedger(t)
+	store, _ := OpenLedger(book)
 	now := at(t, "2026-08-28 09:30")
 	store.now = func() time.Time { return now }
 	for i := 0; i < MaxPerConversation; i++ {
@@ -223,7 +222,7 @@ func TestStoreSurvivesReopenAndBoundsOneConversation(t *testing.T) {
 		t.Fatalf("other conversation: %v", err)
 	}
 
-	reopened, err := Open(path)
+	reopened, err := OpenLedger(book)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -246,7 +245,7 @@ func TestStoreSurvivesReopenAndBoundsOneConversation(t *testing.T) {
 // job it slept through — but the jobs still have to move on to their next
 // moment rather than staying permanently overdue.
 func TestDueSkipsFiringsItSleptThrough(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "schedules.json"))
+	store, err := OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
