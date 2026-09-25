@@ -360,6 +360,35 @@ func TestContinuityBusinessEvents(t *testing.T) {
 	}
 }
 
+// Only discovery sessions that nothing used are dropped; a session in the
+// probe directory that was prompted or loaded is evidence and stays.
+func TestWithoutDiscovery(t *testing.T) {
+	discovery := discoveryDir("/node")
+	probe := continuityEvent{Kind: "new", Session: "probe", PID: 1, Cwd: discovery}
+	probePrompt := continuityEvent{Kind: "prompt", Session: "probe", PID: 1, Input: "fixture-recall"}
+	probeLoad := continuityEvent{Kind: "load", Session: "probe", PID: 2, Cwd: discovery}
+	elsewhere := continuityEvent{Kind: "new", Session: "other", PID: 3, Cwd: "/workspace"}
+	opened := continuityEvent{Kind: "new", Session: "native", PID: 4, Cwd: "/workspace"}
+	prompt := continuityEvent{Kind: "prompt", Session: "native", PID: 4, Input: "fixture-remember marker"}
+	for _, tc := range []struct {
+		name   string
+		events []continuityEvent
+		want   []continuityEvent
+	}{
+		{"unused_discovery_new_dropped", []continuityEvent{opened, probe, prompt}, []continuityEvent{opened, prompt}},
+		{"prompted_discovery_session_kept", []continuityEvent{probe, probePrompt}, []continuityEvent{probe, probePrompt}},
+		{"loaded_discovery_session_kept", []continuityEvent{probe, probeLoad}, []continuityEvent{probe, probeLoad}},
+		{"prompt_to_earlier_discovery_session_kept", []continuityEvent{probePrompt}, []continuityEvent{probePrompt}},
+		{"unused_new_elsewhere_kept", []continuityEvent{elsewhere}, []continuityEvent{elsewhere}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := withoutDiscovery(tc.events, discovery); !slices.Equal(got, tc.want) {
+				t.Fatalf("withoutDiscovery = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 // continuityBusinessEvents selects the business session's events from a
 // window that no longer contains unused model discovery sessions.
 func continuityBusinessEvents(events []continuityEvent, kind, native string) []continuityEvent {
