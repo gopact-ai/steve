@@ -60,8 +60,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					Command: bin, Env: []string{"MOCKAGENT_MEMORY_DIR=" + memory},
 				}},
 			}
-			// Model discovery opens its throwaway sessions here.
-			discovery := filepath.Join(worker.StateDir, "probe")
+			discovery := discoveryDir(worker.StateDir)
 			if err := cluster.SaveClusterJSON(cfg.WorkerConfigFile, worker, true); err != nil {
 				t.Fatal(err)
 			}
@@ -327,7 +326,7 @@ type continuityEvent struct {
 }
 
 func TestContinuityBusinessEvents(t *testing.T) {
-	const discovery = "/node/probe"
+	discovery := discoveryDir("/node")
 	probe := continuityEvent{Kind: "new", Session: "probe", PID: 1, Cwd: discovery}
 	opened := continuityEvent{Kind: "new", Session: "native", PID: 2}
 	prompt := continuityEvent{Kind: "prompt", Session: "native", PID: 2, Input: "fixture-remember marker"}

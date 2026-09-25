@@ -43,14 +43,14 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 	})
 	// The closures below outlive assembly, while the administration
 	// rewrites cfg; they keep only what they need from it.
-	hubProbeDir := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "probe")
+	hubProbeDir := discoveryDir(filepath.Dir(cfg.Gateway.StatePath))
 	probeDir := func(node string) string {
 		if node == "" {
 			return hubProbeDir
 		}
 		for _, s := range nodes.Statuses() {
 			if s.Name == node && s.Advert.StateDir != "" {
-				return filepath.Join(s.Advert.StateDir, "probe")
+				return discoveryDir(s.Advert.StateDir)
 			}
 		}
 		return ""
@@ -103,6 +103,10 @@ type modelsValues struct {
 	prober    *models.Prober
 	seen      *models.Book
 }
+
+// discoveryDir is the working directory in which model discovery opens its
+// throwaway sessions for a hub or node whose state lives in stateDir.
+func discoveryDir(stateDir string) string { return filepath.Join(stateDir, "probe") }
 
 func (v *modelsValues) Endpoints() func(ctx context.Context) []models.Endpoint { return v.endpoints }
 
