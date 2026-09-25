@@ -299,6 +299,25 @@ func (s *Service) wait(ctx context.Context, future raft.Future) error {
 	}
 }
 
+// waitConfigurationChange waits for a membership change to commit, for at most
+// ApplyTimeout. Raft's timeout argument bounds only enqueueing: an appended
+// configuration entry resolves on commit, leadership loss or shutdown, and a
+// leader that keeps its lease without a quorum acknowledging the entry never
+// resolves it. Every caller holds membershipMu, which serializes membership
+// changes and makes automatic demotion skip its pass; SetVoting also holds
+// opMu, which every write, coordinator transfer and automatic failover takes.
+// An unbounded wait would hold those locks for as long as the entry stays
+// uncommitted.
+func (s *Service) waitConfigurationChange(ctx context.Context, change raft.IndexFuture) error {
+	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	defer cancel()
+	err := s.wait(bounded, change)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return fmt.Errorf("%w: configuration change did not commit within %s; it may still commit later", ErrUnavailable, s.config.ApplyTimeout)
+	}
+	return err
+}
+
 func (s *Service) barrier(ctx context.Context) error {
 	if s.closed.Load() {
 		return ErrUnavailable
@@ -442,7 +461,7 @@ func (s *Service) SetVoting(ctx context.Context, request VotingRequest) (Result,
 		} else {
 			change = s.raft.DemoteVoter(raft.ServerID(request.NodeID), state.ConfigurationIndex, s.config.ApplyTimeout)
 		}
-		if err := s.wait(ctx, change); err != nil {
+		if err := s.waitConfigurationChange(ctx, change); err != nil {
 			return Result{}, err
 		}
 		configurationIndex = change.Index()
@@ -608,7 +627,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		}
 	}
 	if !present {
-		if err := s.wait(ctx, s.raft.AddNonvoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
+		if err := s.waitConfigurationChange(ctx, s.raft.AddNonvoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
 			return Result{}, err
 		}
 	}
@@ -628,7 +647,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		if err := s.wait(ctx, configuration); err != nil {
 			return Result{}, err
 		}
-		if err := s.wait(ctx, s.raft.AddVoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
+		if err := s.waitConfigurationChange(ctx, s.raft.AddVoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
 			return Result{}, err
 		}
 	}
@@ -694,7 +713,7 @@ func (s *Service) UpdateMemberAddress(ctx context.Context, request MemberAddress
 	} else {
 		change = s.raft.AddNonvoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
 	}
-	if err := s.wait(ctx, change); err != nil {
+	if err := s.waitConfigurationChange(ctx, change); err != nil {
 		return Result{}, err
 	}
 	return s.submit(ctx, command{Kind: "address", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Address: request})
@@ -750,7 +769,7 @@ func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, er
 	if err := s.wait(ctx, configuration); err != nil {
 		return Result{}, err
 	}
-	if err := s.wait(ctx, s.raft.RemoveServer(raft.ServerID(request.NodeID), configuration.Index(), s.config.ApplyTimeout)); err != nil {
+	if err := s.waitConfigurationChange(ctx, s.raft.RemoveServer(raft.ServerID(request.NodeID), configuration.Index(), s.config.ApplyTimeout)); err != nil {
 		return Result{}, err
 	}
 	return s.submit(ctx, command{Kind: "remove", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Remove: request})
