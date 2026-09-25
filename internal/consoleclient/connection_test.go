@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	appconfig "github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/localtoken"
 )
 
@@ -630,6 +631,33 @@ func TestConsoleConnectionReadsTheConfigurationAsTheHubDoes(t *testing.T) {
 		connection, err := resolveTestConnection("-config", path)
 		if err != nil || connection.URL != c.wantURL || connection.Token != c.wantToken {
 			t.Errorf("read_model_addr %q, read_model_token %q: URL %q, token %q, err: %v; want %s with token %q", c.addr, c.token, connection.URL, connection.Token, err, c.wantURL, c.wantToken)
+		}
+	}
+}
+
+// The client reads one file as config.Load does: it reaches the address the
+// Hub listens on and presents the token the Hub checks.
+func TestConsoleConnectionReadsWhatConfigLoadReads(t *testing.T) {
+	for _, c := range []struct{ addr, token string }{
+		{" 127.0.0.1:8800 ", " config-owner-token\t"},
+		{"\t[::1]:8800\n", "config-owner-token"},
+		{"   ", "\nconfig-owner-token "},
+		{"LOCALHOST:8800", "config owner token"},
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.json")
+		data, _ := json.Marshal(map[string]any{
+			"gateway":  map[string]string{"read_model_addr": c.addr, "read_model_token": c.token, "state_path": filepath.Join(dir, "state.json")},
+			"projects": map[string]any{"p": map[string]any{"home": map[string]string{"path": filepath.Join(dir, "home")}}},
+		})
+		writeClientFixture(t, path, string(data))
+		loaded, err := appconfig.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connection, err := readConsoleConnection(path, false)
+		if err != nil || connection.URL != "http://"+loaded.Gateway.ReadModelAddr || connection.Token != loaded.Gateway.ReadModelToken {
+			t.Errorf("read_model_addr %q, read_model_token %q: client read %q and %q (%v); Load read %q and %q", c.addr, c.token, connection.URL, connection.Token, err, loaded.Gateway.ReadModelAddr, loaded.Gateway.ReadModelToken)
 		}
 	}
 }

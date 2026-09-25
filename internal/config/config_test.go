@@ -188,6 +188,22 @@ func TestLoadTrimsTheBlanksAroundTheConsoleToken(t *testing.T) {
 	}
 }
 
+// ConsoleAddr and ConsoleToken are the rule Load applies to the console's
+// address and token: the blanks around each go, a blank address is the
+// default one, and blanks inside a token stay part of it.
+func TestConsoleAddrAndTokenTrimTheSettings(t *testing.T) {
+	for raw, want := range map[string]string{"": DefaultConsoleAddr, " \t": DefaultConsoleAddr, " [::1]:8800\n": "[::1]:8800", "LOCALHOST:8800": "LOCALHOST:8800"} {
+		if got := ConsoleAddr(raw); got != want {
+			t.Errorf("ConsoleAddr(%q) = %q, want %q", raw, got, want)
+		}
+	}
+	for raw, want := range map[string]string{" \t ": "", "\towner-token ": "owner-token", "owner token": "owner token"} {
+		if got := ConsoleToken(raw); got != want {
+			t.Errorf("ConsoleToken(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestStarterSaveOmitsHomePath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := Save(path, StarterFeishu(Feishu{AppID: "app", AppSecret: "secret", OwnerOpenID: "ou_me"})); err != nil {

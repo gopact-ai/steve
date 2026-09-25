@@ -537,15 +537,11 @@ func (c *Config) applyDefaults() {
 	if c.Gateway.StatePath == "" {
 		c.Gateway.StatePath = DefaultStatePath
 	}
-	// The console listens on the trimmed address and checks the trimmed
-	// token, since a header value arrives without its outer blanks. A token
-	// of blanks is an omitted one: loopback gets the generated token, and
-	// any other address is refused until the owner sets one.
-	c.Gateway.ReadModelAddr = strings.TrimSpace(c.Gateway.ReadModelAddr)
-	if c.Gateway.ReadModelAddr == "" {
-		c.Gateway.ReadModelAddr = "127.0.0.1:7710"
-	}
-	c.Gateway.ReadModelToken = strings.TrimSpace(c.Gateway.ReadModelToken)
+	// A console token of blanks is an omitted one: loopback gets the
+	// generated token, and any other address is refused until the owner
+	// sets one.
+	c.Gateway.ReadModelAddr = ConsoleAddr(c.Gateway.ReadModelAddr)
+	c.Gateway.ReadModelToken = ConsoleToken(c.Gateway.ReadModelToken)
 	for id, item := range c.Harnesses {
 		if item.Permission == "" {
 			item.Permission = PermissionRead
@@ -832,6 +828,28 @@ func StateDir(statePath string) string {
 		statePath = DefaultStatePath
 	}
 	return filepath.Dir(absolute(statePath))
+}
+
+// DefaultConsoleAddr is where a Hub serves its console unless configured
+// otherwise.
+const DefaultConsoleAddr = "127.0.0.1:7710"
+
+// ConsoleAddr is the address a gateway.read_model_addr names, read as Load
+// reads it: without the blanks around it, and DefaultConsoleAddr when
+// nothing else is left. Clients use it and ConsoleToken to reach the console
+// without loading the whole configuration.
+func ConsoleAddr(readModelAddr string) string {
+	if addr := strings.TrimSpace(readModelAddr); addr != "" {
+		return addr
+	}
+	return DefaultConsoleAddr
+}
+
+// ConsoleToken is the token a gateway.read_model_token names, read as Load
+// reads it: without the blanks around it, since an Authorization header value
+// arrives without its outer blanks. A token of blanks is none.
+func ConsoleToken(readModelToken string) string {
+	return strings.TrimSpace(readModelToken)
 }
 
 func absolute(path string) string {

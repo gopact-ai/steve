@@ -99,10 +99,10 @@ func (gateway *connectionGateway) UnmarshalJSON(data []byte) error {
 }
 
 // readConsoleConnection reads where the console listens and its token as the
-// Hub reads them: the address and the token without the blanks around them,
-// so a token of blanks is none. With generated set, a configuration without a
-// token for a loopback console falls back to the one the Hub generated in its
-// state directory; an explicit -token skips that read.
+// Hub reads them, through config.ConsoleAddr and config.ConsoleToken. With
+// generated set, a configuration without a token for a loopback console falls
+// back to the one the Hub generated in its state directory; an explicit
+// -token skips that read.
 func readConsoleConnection(path string, generated bool) (consoleConnection, error) {
 	var config struct {
 		Gateway connectionGateway `json:"gateway"`
@@ -110,7 +110,7 @@ func readConsoleConnection(path string, generated bool) (consoleConnection, erro
 	if err := readConsoleJSON(path, &config); err != nil {
 		return consoleConnection{}, err
 	}
-	address, err := normalizeConsoleURL(strings.TrimSpace(string(config.Gateway.Address)), true)
+	address, err := normalizeConsoleURL(appconfig.ConsoleAddr(string(config.Gateway.Address)), true)
 	if err != nil {
 		return consoleConnection{}, fmt.Errorf("config gateway.read_model_addr: %w", err)
 	}
@@ -136,7 +136,7 @@ func readConsoleConnection(path string, generated bool) (consoleConnection, erro
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return consoleConnection{}, fmt.Errorf("inspect cluster sidecar: %w", err)
 	}
-	token := strings.TrimSpace(string(config.Gateway.Token))
+	token := appconfig.ConsoleToken(string(config.Gateway.Token))
 	if token == "" && generated && loopbackURL(address) {
 		// Before the Hub's first start there is none. The state path is
 		// resolved as the Hub resolves it only for the same user and
@@ -177,9 +177,6 @@ func decodeConsoleJSON(path string, data []byte, target any) error {
 
 func normalizeConsoleURL(address string, listeningAddress bool) (string, error) {
 	invalid := errors.New("expected an HTTP(S) URL with a valid host and port, without userinfo, query or fragment")
-	if address == "" && listeningAddress {
-		return defaultReadModelURL, nil
-	}
 	if listeningAddress && !strings.Contains(address, "://") {
 		if parsed, err := netip.ParseAddr(address); err == nil && parsed.Is6() {
 			address = "[" + address + "]"
