@@ -159,7 +159,8 @@ type NetworkTransportConfig struct {
 	MaxRPCsInFlight int
 
 	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-	// the timeout by (SnapshotSize / TimeoutScale).
+	// the timeout by (SnapshotSize / TimeoutScale). AppendEntries adds one
+	// timeout for every TimeoutScale bytes of entry data.
 	Timeout time.Duration
 
 	// MsgpackUseNewTimeFormat when set to true, force the underlying msgpack
@@ -247,7 +248,8 @@ func NewNetworkTransportWithConfig(
 // NewNetworkTransport creates a new network transport with the given dialer
 // and listener. The maxPool controls how many connections we will pool. The
 // timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale).
+// the timeout by (SnapshotSize / TimeoutScale). AppendEntries adds one
+// timeout for every TimeoutScale bytes of entry data.
 func NewNetworkTransport(
 	stream StreamLayer,
 	maxPool int,
@@ -269,7 +271,8 @@ func NewNetworkTransport(
 // NewNetworkTransportWithLogger creates a new network transport with the given logger, dialer
 // and listener. The maxPool controls how many connections we will pool. The
 // timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale).
+// the timeout by (SnapshotSize / TimeoutScale). AppendEntries adds one
+// timeout for every TimeoutScale bytes of entry data.
 func NewNetworkTransportWithLogger(
 	stream StreamLayer,
 	maxPool int,
@@ -466,7 +469,24 @@ func (n *NetworkTransport) AppendEntriesPipeline(id ServerID, target ServerAddre
 
 // AppendEntries implements the Transport interface.
 func (n *NetworkTransport) AppendEntries(id ServerID, target ServerAddress, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
-	return n.genericRPC(id, target, rpcAppendEntries, args, resp)
+	return n.genericRPCWithTimeout(id, target, rpcAppendEntries, args, resp, n.appendEntriesTimeout(args))
+}
+
+// appendEntriesTimeout is the I/O deadline for args: the fixed timeout plus
+// one timeout for every TimeoutScale bytes of entry data, so a batch only
+// needs the link to carry TimeoutScale bytes per timeout, as InstallSnapshot
+// does. A request without entries, such as a heartbeat, keeps the fixed
+// timeout.
+func (n *NetworkTransport) appendEntriesTimeout(args *AppendEntriesRequest) time.Duration {
+	if n.timeout <= 0 {
+		return n.timeout
+	}
+	var size int64
+	for _, entry := range args.Entries {
+		size += int64(len(entry.Data) + len(entry.Extensions))
+	}
+	scale := int64(n.TimeoutScale)
+	return n.timeout + n.timeout*time.Duration(size/scale) + n.timeout*time.Duration(size%scale)/time.Duration(scale)
 }
 
 // RequestVote implements the Transport interface.
@@ -481,6 +501,11 @@ func (n *NetworkTransport) RequestPreVote(id ServerID, target ServerAddress, arg
 
 // genericRPC handles a simple request/response RPC.
 func (n *NetworkTransport) genericRPC(id ServerID, target ServerAddress, rpcType uint8, args interface{}, resp interface{}) error {
+	return n.genericRPCWithTimeout(id, target, rpcType, args, resp, n.timeout)
+}
+
+// genericRPCWithTimeout is genericRPC with the given I/O deadline.
+func (n *NetworkTransport) genericRPCWithTimeout(id ServerID, target ServerAddress, rpcType uint8, args interface{}, resp interface{}, timeout time.Duration) error {
 	// Get a conn
 	conn, err := n.getConnFromAddressProvider(id, target)
 	if err != nil {
@@ -488,8 +513,8 @@ func (n *NetworkTransport) genericRPC(id ServerID, target ServerAddress, rpcType
 	}
 
 	// Set a deadline
-	if n.timeout > 0 {
-		conn.conn.SetDeadline(time.Now().Add(n.timeout))
+	if timeout > 0 {
+		conn.conn.SetDeadline(time.Now().Add(timeout))
 	}
 
 	// Send the RPC
@@ -839,11 +864,10 @@ func newNetPipeline(trans *NetworkTransport, conn *netConn, maxInFlight int) *ne
 // decodeResponses is a long running routine that decodes the responses
 // sent on the connection.
 func (n *netPipeline) decodeResponses() {
-	timeout := n.trans.timeout
 	for {
 		select {
 		case future := <-n.inprogressCh:
-			if timeout > 0 {
+			if timeout := n.trans.appendEntriesTimeout(future.args); timeout > 0 {
 				n.conn.conn.SetReadDeadline(time.Now().Add(timeout))
 			}
 
@@ -871,7 +895,7 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 	future.init()
 
 	// Add a send timeout
-	if timeout := n.trans.timeout; timeout > 0 {
+	if timeout := n.trans.appendEntriesTimeout(args); timeout > 0 {
 		n.conn.conn.SetWriteDeadline(time.Now().Add(timeout))
 	}
 
