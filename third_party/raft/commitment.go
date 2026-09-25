@@ -17,11 +17,8 @@ type commitment struct {
 	// notified when commitIndex increases
 	commitCh chan struct{}
 	// server ID to log index: the server stores up through this log entry.
-	// Every server in the configuration is tracked, nonvoters included.
-	// appendConfigurationEntry dispatches an entry that promotes a nonvoter,
-	// which wakes replication, before it calls setConfiguration; the
-	// promoted server's acknowledgement of that entry can therefore arrive
-	// while it is still a nonvoter and must be kept for when it votes.
+	// Every server in the configuration is tracked, nonvoters included, so
+	// a match reported before a server's promotion counts once it votes.
 	matchIndexes map[ServerID]uint64
 	// the servers whose matchIndexes count toward commitIndex
 	voters map[ServerID]struct{}
@@ -99,7 +96,7 @@ func (c *commitment) match(server ServerID, matchIndex uint64) {
 	}
 }
 
-// Internal helper to calculate new commitIndex from matchIndexes.
+// Internal helper to calculate new commitIndex from the voters' matchIndexes.
 // Must be called with lock held.
 func (c *commitment) recalculate() {
 	if len(c.voters) == 0 {
