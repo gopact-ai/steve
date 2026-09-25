@@ -3,6 +3,8 @@ package agentmcp
 import (
 	"context"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -32,6 +34,28 @@ func TestPlatformOverviewIsAvailableThroughMCP(t *testing.T) {
 	out, bad := callTool(t, server.URL(), "token", "steve_help", map[string]any{"topic": "overview"})
 	if bad || !strings.Contains(out, "steve_context") || !strings.Contains(out, "steve_projects") || !strings.Contains(out, "steve_delegate") {
 		t.Fatalf("platform overview is unavailable via MCP: %s", out)
+	}
+}
+
+// The memory help states the same cap on steve_recall's limit as the one
+// the tool cuts a larger limit to.
+func TestMemoryHelpStatesTheRecallLimitCap(t *testing.T) {
+	help, err := helpText("memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recall string
+	for line := range strings.Lines(help) {
+		if strings.HasPrefix(line, "- `steve_recall(") {
+			recall = line
+		}
+	}
+	caps := regexp.MustCompile(`最多 (\d+)`).FindAllStringSubmatch(recall, -1)
+	if len(caps) != 1 {
+		t.Fatalf("steve_recall entry states %d limit caps, want one: %q", len(caps), recall)
+	}
+	if want := strconv.Itoa(maxRecallLimit); caps[0][1] != want {
+		t.Fatalf("steve_recall entry caps limit at %s, the tool at %s: %s", caps[0][1], want, recall)
 	}
 }
 

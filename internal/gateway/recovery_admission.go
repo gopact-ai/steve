@@ -51,9 +51,9 @@ func (g *Gateway) DispatchResume(ctx context.Context, book *ledger.Ledger, admis
 	if !exists || json.Unmarshal(receipt.Result, &input) != nil || input.Admission != admission || input.TaskID != admission.TaskID {
 		return fmt.Errorf("%w: gateway resume input does not match its admission", task.ErrExecutionStopped)
 	}
-	// Wakes are best-effort and never wait for capacity in a new goroutine.
+	// Wakes are best-effort and never wait for capacity.
 	// The durable accepted input remains pending for the runtime scheduler.
-	release, err := g.claimRecovery(ctx, receipt, false)
+	release, err := g.claimRecovery(ctx, receipt)
 	if err != nil {
 		return err
 	}

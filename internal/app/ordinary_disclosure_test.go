@@ -75,9 +75,11 @@ func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T
 			}
 			workers.Close()
 			for range 2 {
-				if err := g.RecoverQueued(f.ctx, f.book, f.c, nil); err != nil {
+				pass := &reconciliationWorkers{}
+				if err := g.ReconcileQueued(f.ctx, f.book, f.c, nil, pass); err != nil {
 					t.Errorf("retained recovery: %v", err)
 				}
+				pass.Close()
 			}
 			pending, err := f.book.PendingCommands(f.ctx, "gateway-input")
 			if err != nil {

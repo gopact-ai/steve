@@ -216,14 +216,14 @@ func TestGatewaySameInputJoinsNativeAndUnknownRetainedObserver(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 2)
-			go func() { done <- g.RecoverQueued(ctx, book, p, func(string, string) error { return nil }) }()
+			go func() { done <- g.recoverQueuedFixture(ctx, book, p, func(string, string) error { return nil }) }()
 			select {
 			case <-p.entered:
 			case <-time.After(time.Second):
 				cancel()
 				t.Fatal("original observer never started")
 			}
-			go func() { done <- g.RecoverQueued(ctx, book, p, func(string, string) error { return nil }) }()
+			go func() { done <- g.recoverQueuedFixture(ctx, book, p, func(string, string) error { return nil }) }()
 			select {
 			case err := <-done:
 				if err != nil && !errors.Is(err, channel.ErrDeliveryQueued) {
@@ -243,7 +243,7 @@ func TestGatewaySameInputJoinsNativeAndUnknownRetainedObserver(t *testing.T) {
 			// Cancellation must release only the in-process owner. The unknown
 			// dispatch remains fenced; retry observes its original attempt.
 			close(p.release)
-			if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+			if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
 			expectedCalls := int32(1)
@@ -299,15 +299,8 @@ func TestGatewayRuntimeRecoveryUsesBoundedSlotsAndCancellation(t *testing.T) {
 	if p.calls.Load() != 2 || p.resumes.Load() != 0 {
 		t.Fatalf("pending inputs created unbounded observers: calls=%d resumes=%d", p.calls.Load(), p.resumes.Load())
 	}
-	waiting := make(chan error, 1)
-	go func() { waiting <- g.RecoverQueued(ctx, book, p, func(string, string) error { return nil }) }()
 	cancel()
 	workers.Wait()
-	select {
-	case <-waiting:
-	case <-time.After(time.Second):
-		t.Fatal("cancelled slot waiters did not leave")
-	}
 	g.mu.Lock()
 	inFlight := len(g.durableRunning)
 	g.mu.Unlock()
@@ -345,7 +338,7 @@ func TestGatewayClosedWorkerAdmissionReleasesClaimAndSlot(t *testing.T) {
 	if len(g.durableRunning) != 0 || len(g.slots) != 0 || p.calls.Load() != 0 {
 		t.Fatal("rejected worker leaked ownership or dispatched work")
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -412,7 +405,9 @@ func TestGatewayRecoverySlotDoesNotBlockItsOrdinaryStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 2)
-	go func() { done <- g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }) }()
+	go func() {
+		done <- g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil })
+	}()
 	select {
 	case <-p.entered:
 	case <-time.After(time.Second):

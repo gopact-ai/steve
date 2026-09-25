@@ -229,7 +229,7 @@ func TestOrdinaryTopicUnknownSeedDoesNotDispatchOrReseed(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, nil); !errors.Is(err, channel.ErrOutcomeUnknown) {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, nil); !errors.Is(err, channel.ErrOutcomeUnknown) {
 			t.Fatalf("unknown topic receipt was cleared: %v", err)
 		}
 	}
@@ -368,7 +368,7 @@ func TestIngressClaimRefusesARecoveryReceipt(t *testing.T) {
 			if err != nil || !found {
 				t.Fatalf("recovery receipt found = %v, %v", found, err)
 			}
-			run, release, err := g.claimGatewayInput(t.Context(), book, receipt, nil, false)
+			run, release, err := g.claimGatewayInput(t.Context(), book, receipt, nil)
 			// acceptAndWake takes ErrDeliveryQueued as an accepted input, not a refusal.
 			if err == nil || errors.Is(err, channel.ErrDeliveryQueued) || run != nil || release != nil {
 				t.Fatalf("claimed a %s receipt: %v", receipt.Kind, err)
