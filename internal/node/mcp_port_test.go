@@ -16,7 +16,7 @@ import (
 
 func requireStablePort(t *testing.T, what string, port int) {
 	t.Helper()
-	if port < stableport.First || port > stableport.Last || port >= stableport.LinkFirst && port <= stableport.LinkLast {
+	if !stableport.InRange(port) {
 		t.Fatalf("%s bound port %d, outside the stable range", what, port)
 	}
 }

@@ -41,7 +41,7 @@ func TestZeroPortsPersistInTheStableRange(t *testing.T) {
 			t.Fatal(err)
 		}
 		port, _ := strconv.Atoi(text)
-		if port < stableport.First || port > stableport.Last || port >= stableport.LinkFirst && port <= stableport.LinkLast {
+		if !stableport.InRange(port) {
 			t.Errorf("%s persisted %s, outside the stable range", name, address)
 		}
 	}

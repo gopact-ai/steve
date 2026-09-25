@@ -19,11 +19,11 @@ import (
 
 // A port the kernel picks for ":0" comes from its ephemeral range, which
 // it keeps handing to other sockets while the process is down. Ports from
-// First to Last sit below the default ephemeral ranges (Linux hands out
+// first to last sit below the default ephemeral ranges (Linux hands out
 // 32768 and up, macOS 49152 and up), so with those defaults the kernel
 // never gives one away on its own; a Linux ip_local_port_range lowered
 // into the range undoes that.
-// Last also stops short of the Kubernetes NodePort default range
+// last also stops short of the Kubernetes NodePort default range
 // (30000-32767): kube-proxy forwards those ports on a node without holding
 // a socket, so a bind cannot find one in use, yet connections to it would
 // be forwarded away. The SSH link window, LinkFirst to LinkLast, is left
@@ -31,8 +31,8 @@ import (
 // took one would shrink the window or be blocked by it while the link is
 // up.
 const (
-	First = 20000
-	Last  = 29999
+	first = 20000
+	last  = 29999
 
 	LinkFirst = 25407
 	LinkLast  = 25426
@@ -40,6 +40,13 @@ const (
 	// attempts bounds how many ports in the range are tried.
 	attempts = 64
 )
+
+// InRange reports whether port is one Listen may resolve port 0 to on
+// Unix: a port of the range outside the SSH link window. A port the
+// kernel picks, when Listen falls back to it, is not.
+func InRange(port int) bool {
+	return port >= first && port <= last && (port < LinkFirst || port > LinkLast)
+}
 
 // Listen binds address with listen. An address with a nonzero port is
 // bound as given. For port 0, or an empty port, it binds a random port in
@@ -80,7 +87,7 @@ func (p picker) listen(listen func(network, address string) (net.Listener, error
 			return listener, err
 		}
 	}
-	slog.Warn(fmt.Sprintf("stableport: %d ports in %d-%d were in use; %s takes a port the system picks, which a restart may find taken", attempts, First, Last, address), "network", network)
+	slog.Warn(fmt.Sprintf("stableport: %d ports in %d-%d were in use; %s takes a port the system picks, which a restart may find taken", attempts, first, last, address), "network", network)
 	return listen(network, address)
 }
 
@@ -120,17 +127,17 @@ func bindAndClose(network, address string) error {
 var exclusive = net.ListenConfig{Control: clearReuseAddr}
 
 // size is how many ports the range holds without the SSH link window.
-const size = Last - First + 1 - (LinkLast - LinkFirst + 1)
+const size = last - first + 1 - (LinkLast - LinkFirst + 1)
 
 // candidate picks uniformly from the range without the SSH link window.
 func candidate() int {
 	return portAt(rand.IntN(size))
 }
 
-// portAt is the i-th port of the range, counting from First and skipping
+// portAt is the i-th port of the range, counting from first and skipping
 // the SSH link window, for i from 0 to size-1.
 func portAt(i int) int {
-	port := First + i
+	port := first + i
 	if port >= LinkFirst {
 		port += LinkLast - LinkFirst + 1
 	}

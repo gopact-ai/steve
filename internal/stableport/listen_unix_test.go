@@ -18,8 +18,8 @@ func TestListenResolvesZeroFromTheRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if port := listener.Addr().(*net.TCPAddr).Port; port < First || port > Last {
-		t.Fatalf("port 0 resolved to %d, outside %d-%d", port, First, Last)
+	if port := listener.Addr().(*net.TCPAddr).Port; !InRange(port) {
+		t.Fatalf("port 0 resolved to %d, outside %d-%d", port, first, last)
 	}
 }
 

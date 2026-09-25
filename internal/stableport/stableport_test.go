@@ -35,8 +35,8 @@ func addressInUse(address string) error {
 // forwards without holding a socket, so a bind cannot find it in use.
 func TestRangeEndsBelowNodePortsAndEphemeralRanges(t *testing.T) {
 	const firstDefaultNodePort = 30000
-	if First < 1024 || Last >= firstDefaultNodePort || Last >= lowestDefaultEphemeralPort {
-		t.Fatalf("range %d-%d reaches a privileged, NodePort or ephemeral port", First, Last)
+	if first < 1024 || last >= firstDefaultNodePort || last >= lowestDefaultEphemeralPort {
+		t.Fatalf("range %d-%d reaches a privileged, NodePort or ephemeral port", first, last)
 	}
 }
 
@@ -55,7 +55,7 @@ func free(network, address string) error { return nil }
 func TestKeepsAnExplicitPort(t *testing.T) {
 	refused := errors.New("refused")
 	var asked []string
-	_, err := picker{candidate: sequence(First), probe: func(network, address string) error {
+	_, err := picker{candidate: sequence(first), probe: func(network, address string) error {
 		t.Fatalf("probed %s for an explicit port", address)
 		return nil
 	}}.listen(func(network, address string) (net.Listener, error) {
@@ -84,21 +84,34 @@ func TestResolvesAnEmptyPortAsZero(t *testing.T) {
 // order, to distinct ports in the range, and none to a link port.
 func TestPortAtNumbersTheRangeWithoutTheLinkWindow(t *testing.T) {
 	window := LinkLast - LinkFirst + 1
-	if size != Last-First+1-window {
-		t.Fatalf("size %d, want %d", size, Last-First+1-window)
+	if size != last-first+1-window {
+		t.Fatalf("size %d, want %d", size, last-first+1-window)
 	}
-	for i, want := range map[int]int{0: First, LinkFirst - First - 1: LinkFirst - 1, LinkFirst - First: LinkLast + 1, size - 1: Last} {
+	for i, want := range map[int]int{0: first, LinkFirst - first - 1: LinkFirst - 1, LinkFirst - first: LinkLast + 1, size - 1: last} {
 		if got := portAt(i); got != want {
 			t.Errorf("portAt(%d) = %d, want %d", i, got, want)
 		}
 	}
-	previous := First - 1
+	previous := first - 1
 	for i := range size {
 		port := portAt(i)
-		if port <= previous || port > Last || port >= LinkFirst && port <= LinkLast {
+		if port <= previous || port > last || port >= LinkFirst && port <= LinkLast {
 			t.Fatalf("portAt(%d) = %d after %d", i, port, previous)
 		}
 		previous = port
+	}
+}
+
+// InRange holds for the range's ends and the ports next to the SSH link
+// window, and not for the ports just outside the range or in the window.
+func TestInRangeIsTheRangeWithoutTheLinkWindow(t *testing.T) {
+	for port, want := range map[int]bool{
+		first - 1: false, first: true, LinkFirst - 1: true, LinkFirst: false,
+		LinkLast: false, LinkLast + 1: true, last: true, last + 1: false,
+	} {
+		if InRange(port) != want {
+			t.Errorf("InRange(%d) = %v, want %v", port, !want, want)
+		}
 	}
 }
 
@@ -117,7 +130,7 @@ func TestResolvesZeroOnTheSameHostBelowEphemeralRanges(t *testing.T) {
 		if !address.IP.Equal(net.IPv4(127, 0, 0, 1)) {
 			t.Fatalf("host changed: %s", address)
 		}
-		if address.Port < First || address.Port >= lowestDefaultEphemeralPort {
+		if address.Port < first || address.Port >= lowestDefaultEphemeralPort {
 			t.Fatalf("port %d is not below every default ephemeral range", address.Port)
 		}
 		seen[address.Port] = true
