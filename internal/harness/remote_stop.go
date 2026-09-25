@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
@@ -107,6 +108,9 @@ func (s *managedSession) endObservation(ctx context.Context, request nodewire.Se
 	if silent {
 		if err := s.stopExecution(context.WithoutCancel(ctx)); err != nil {
 			*runErr = errors.Join(*runErr, err)
+			slog.Warn(fmt.Sprintf("harness: session %s on %s went silent; stop of command %s is unconfirmed: %v", s.id, s.at.Node, request.CommandID, err), "node", s.at.Node, "session", s.id, "command", request.CommandID, "confirmed", false, "error", err)
+		} else {
+			slog.Info(fmt.Sprintf("harness: session %s on %s went silent; stopped command %s", s.id, s.at.Node, request.CommandID), "node", s.at.Node, "session", s.id, "command", request.CommandID, "confirmed", true)
 		}
 	}
 	s.reconcileStop(request, output, activity, runErr)
