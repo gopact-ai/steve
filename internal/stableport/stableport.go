@@ -51,12 +51,20 @@ func Listen(listen func(network, address string) (net.Listener, error), network,
 	return listen(network, address)
 }
 
+// size is how many ports the range holds without the SSH link window.
+const size = Last - First + 1 - (LinkLast - LinkFirst + 1)
+
 // candidate picks uniformly from the range without the SSH link window.
 func candidate() int {
-	window := LinkLast - LinkFirst + 1
-	port := First + rand.IntN(Last-First+1-window)
+	return portAt(rand.IntN(size))
+}
+
+// portAt is the i-th port of the range, counting from First and skipping
+// the SSH link window, for i from 0 to size-1.
+func portAt(i int) int {
+	port := First + i
 	if port >= LinkFirst {
-		port += window
+		port += LinkLast - LinkFirst + 1
 	}
 	return port
 }

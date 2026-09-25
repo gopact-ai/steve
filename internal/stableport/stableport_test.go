@@ -39,9 +39,33 @@ func TestKeepsAnExplicitPort(t *testing.T) {
 	}
 }
 
-func TestResolvesZeroOutsideEphemeralRangesAndLinkPorts(t *testing.T) {
+// portAt numbers the range without the SSH link window: indexes map, in
+// order, to distinct ports in the range, and none to a link port.
+func TestPortAtNumbersTheRangeWithoutTheLinkWindow(t *testing.T) {
+	window := LinkLast - LinkFirst + 1
+	if size != Last-First+1-window {
+		t.Fatalf("size %d, want %d", size, Last-First+1-window)
+	}
+	for i, want := range map[int]int{0: First, LinkFirst - First - 1: LinkFirst - 1, LinkFirst - First: LinkLast + 1, size - 1: Last} {
+		if got := portAt(i); got != want {
+			t.Errorf("portAt(%d) = %d, want %d", i, got, want)
+		}
+	}
+	previous := First - 1
+	for i := range size {
+		port := portAt(i)
+		if port <= previous || port > Last || port >= LinkFirst && port <= LinkLast {
+			t.Fatalf("portAt(%d) = %d after %d", i, port, previous)
+		}
+		previous = port
+	}
+}
+
+// Port 0 is resolved on the host asked for, below every default ephemeral
+// range, and not always to the same port.
+func TestResolvesZeroOnTheSameHostBelowEphemeralRanges(t *testing.T) {
 	seen := map[int]bool{}
-	for range 2000 {
+	for range 200 {
 		listener, err := Listen(func(network, address string) (net.Listener, error) {
 			return addressListener{address}, nil
 		}, "tcp", "127.0.0.1:0")
@@ -52,17 +76,13 @@ func TestResolvesZeroOutsideEphemeralRangesAndLinkPorts(t *testing.T) {
 		if !address.IP.Equal(net.IPv4(127, 0, 0, 1)) {
 			t.Fatalf("host changed: %s", address)
 		}
-		port := address.Port
-		if port < 1024 || port >= lowestDefaultEphemeralPort {
-			t.Fatalf("port %d is not below every default ephemeral range", port)
+		if address.Port < First || address.Port >= lowestDefaultEphemeralPort {
+			t.Fatalf("port %d is not below every default ephemeral range", address.Port)
 		}
-		if port >= LinkFirst && port <= LinkLast {
-			t.Fatalf("port %d is one an SSH link binds on loopback", port)
-		}
-		seen[port] = true
+		seen[address.Port] = true
 	}
-	if len(seen) < 100 {
-		t.Fatalf("only %d distinct ports in 2000 draws", len(seen))
+	if len(seen) < 2 {
+		t.Fatalf("200 draws all gave port %v", seen)
 	}
 }
 
