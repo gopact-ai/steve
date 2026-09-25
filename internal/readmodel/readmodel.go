@@ -1036,7 +1036,10 @@ func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleap
 // tool call starting or finishing always is. An update the throttle holds
 // back is published when the step's window ends, unless a later one was
 // published first: a step reports no end of its own, so its last update
-// must not be the one dropped.
+// must not be the one dropped. What that guarantees is that the update
+// appears in the model's event stream, up to a window late; a subscriber
+// that stopped before then, such as a turn's reply that ended within the
+// window, does not receive it.
 func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.Progress) {
 	key := planID + "/" + stepID
 	signature := fmt.Sprintf("%d", len(p.Tools))
