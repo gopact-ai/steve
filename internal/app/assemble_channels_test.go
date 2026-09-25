@@ -8,15 +8,18 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
@@ -113,5 +116,64 @@ func TestAssembledChannelsGiveTheAgentGateTheScheduler(t *testing.T) {
 	status, out := agentGateCall(t, gate, "schedule-token", "tools/call", map[string]any{"name": "steve_schedules", "arguments": map[string]any{}})
 	if status != http.StatusOK || !strings.Contains(out, agentmcp.ErrGrantDenied.Error()) {
 		t.Fatalf("steve_schedules was not answered by the Scheduler: %d %s", status, out)
+	}
+}
+
+// unsettledIngressTurn admits the attempt it is given and returns a result
+// without it, as a turn that does not settle the attempt it admitted.
+type unsettledIngressTurn struct {
+	turntest.IdleCoordinator
+	task, attempt string
+	calls         atomic.Int32
+}
+
+func (u *unsettledIngressTurn) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
+	u.calls.Add(1)
+	req.OnTurnReady(u.task, u.attempt)
+	return turn.Result{Text: "unsettled result"}, nil
+}
+
+// assembleChannels hands ingress the coordinator as its recovery driver.
+// An accepted Feishu input whose turn leaves its admitted attempt unsettled
+// is then recovered while ingress still handles it: the attempt's committed
+// answer is delivered and accounted, and no reconciler pass is needed.
+func TestAssembledIngressRecoversAnUnsettledTurnThroughTheCoordinator(t *testing.T) {
+	f := openCrashProbe(t, t.TempDir())
+	t.Cleanup(func() { f.close(t) })
+	r := f.seed(t, true, "", "feishu")
+	unsettled := &unsettledIngressTurn{task: r.TaskID, attempt: r.ID}
+	g := gateway.New(unsettled)
+	ch := &crashGatewayChannel{}
+	g.BindChannel(ch)
+	workers := &reconciliationWorkers{}
+	t.Cleanup(workers.Close)
+	if _, err := assembleChannels(
+		&runtimeValues{book: f.book, cfg: &config.Config{}, ctx: f.ctx},
+		&ledgerValues{},
+		&executionValues{coordinator: f.c, gw: g, catalogText: i18n.New(i18n.LocaleEN)},
+		&readModelValues{}, &consoleValues{cons: f.cons, reconciliations: workers},
+		&administrationValues{}, &delegationValues{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.HandleMessage(feishu.InboundMessage{
+		ConversationID: crashConversation, ChatID: "console", MessageID: "web-original",
+		SenderOpenID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	workers.Close()
+	pending, err := f.book.PendingCommands(f.ctx, "gateway-input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked, found := f.tasks.Get(r.TaskID)
+	if !found {
+		t.Fatalf("task %s is gone", r.TaskID)
+	}
+	if len(pending) != 0 || ch.replies.Load() != 1 || unsettled.calls.Load() != 1 ||
+		tracked.Budget.Tokens.Total != 18 || tracked.Attempts[0].Open() {
+		t.Fatalf("ingress left the unsettled turn to the reconciler: pending=%d replies=%d turns=%d tokens=%d attempt open=%v",
+			len(pending), ch.replies.Load(), unsettled.calls.Load(), tracked.Budget.Tokens.Total, tracked.Attempts[0].Open())
 	}
 }
