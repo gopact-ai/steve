@@ -1322,7 +1322,7 @@ func (m *Model) keepObservations() {
 }
 
 // LoadObservations brings back what an earlier process observed. What this
-// process observed and has not saved yet stays, after them.
+// process observed and has not saved yet stays, after them, once each.
 func (m *Model) LoadObservations() error {
 	m.observeMu.Lock()
 	defer m.observeMu.Unlock()
@@ -1340,6 +1340,12 @@ func (m *Model) loadObservations() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.loaded && last > m.saved {
+		// Once loaded, only this model writes, oldest unsaved first: numbers
+		// past the last it knows saved are saves that committed although
+		// they were reported as failed. Those observations are in list.
+		m.unsaved -= int(min(last-m.saved, uint64(m.unsaved)))
+	}
 	m.observations = append(list, m.observations[len(m.observations)-m.unsaved:]...)
 	m.keepObservations()
 	m.saved, m.loaded = last, true
