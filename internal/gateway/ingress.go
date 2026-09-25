@@ -22,7 +22,7 @@ func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorker
 
 func (g *Gateway) immediateInput(text string) bool {
 	_, parsed := g.coordinator.ParseInput(text)
-	return parsed.Interrupt || parsed.Control()
+	return parsed.Immediate()
 }
 
 func (g *Gateway) scheduleControl(text string) bool {
