@@ -95,13 +95,14 @@ type Registry struct {
 	// or down with a reason. History is made of these. drift hears what
 	// changed in a node's manifest between two adverts. Both hear through
 	// notices, never on the path that made the change.
-	observe func(Status)
-	drift   func(node string, changes []ability.Change)
+	observe func(Status, time.Time)
+	drift   func(node string, changes []ability.Change, at time.Time)
 	notices notices
 }
 
-// SetDriftObserver installs where manifest changes are reported.
-func (r *Registry) SetDriftObserver(drift func(node string, changes []ability.Change)) {
+// SetDriftObserver installs where manifest changes are reported; at is
+// when the change is dated in history.
+func (r *Registry) SetDriftObserver(drift func(node string, changes []ability.Change, at time.Time)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.drift = drift
@@ -155,11 +156,12 @@ func (r *Registry) noteDrift(name string, adv nodewire.Advert) {
 	if len(changes) == 0 {
 		return
 	}
-	r.notices.post(func() { drift(name, changes) })
+	r.notices.post(func() { drift(name, changes, time.Now()) })
 }
 
-// SetObserver installs where connectivity changes are reported.
-func (r *Registry) SetObserver(observe func(Status)) {
+// SetObserver installs where connectivity changes are reported; at is
+// when the change is dated in history.
+func (r *Registry) SetObserver(observe func(Status, time.Time)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.observe = observe
@@ -170,7 +172,7 @@ func (r *Registry) SetObserver(observe func(Status)) {
 // the order the changes were made.
 func (r *Registry) noticeLocked(s Status) {
 	if observe := r.observe; observe != nil {
-		r.notices.post(func() { observe(s) })
+		r.notices.post(func() { observe(s, time.Now()) })
 	}
 }
 

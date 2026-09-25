@@ -46,7 +46,7 @@ func TestArrivalHeardAfterItsConnectionEndedSetsNothingGoing(t *testing.T) {
 	nodes := node.NewRegistry("hub", map[string]node.Config{"worker": {Addr: addr, Token: "arrival-test"}})
 	t.Cleanup(nodes.Close)
 	lost := make(chan struct{})
-	nodes.SetObserver(func(s node.Status) {
+	nodes.SetObserver(func(s node.Status, _ time.Time) {
 		if !s.Up {
 			close(lost)
 		}
@@ -66,19 +66,19 @@ func TestArrivalHeardAfterItsConnectionEndedSetsNothingGoing(t *testing.T) {
 
 	var recorded []string
 	var setUp []int64
-	observe := nodeObserver(nodes, func(kind, _, _ string, _ map[string]string) { recorded = append(recorded, kind) },
+	observe := nodeObserver(nodes, func(_ time.Time, kind, _, _ string, _ map[string]string) { recorded = append(recorded, kind) },
 		func(s node.Status) { setUp = append(setUp, s.Generation) })
 	earlier := arrival
 	earlier.Generation--
-	observe(earlier)
-	observe(arrival)
+	observe(earlier, time.Now())
+	observe(arrival, time.Now())
 	stopWorker()
 	select {
 	case <-lost:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the registry never noticed the worker leave")
 	}
-	observe(arrival)
+	observe(arrival, time.Now())
 
 	if len(recorded) != 3 || recorded[0] != "node.up" || recorded[1] != "node.up" || recorded[2] != "node.up" {
 		t.Fatalf("history recorded %v, want every arrival heard", recorded)

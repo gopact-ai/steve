@@ -100,7 +100,7 @@ func TestSlowObserverDelaysNoConnectionChange(t *testing.T) {
 	t.Cleanup(r.Close)
 	gate := newObserverGate(t)
 	heard := make(chan Status, 16)
-	r.SetObserver(func(s Status) {
+	r.SetObserver(func(s Status, _ time.Time) {
 		if s.Name == "alpha" && s.Up {
 			gate.hold()
 		}
@@ -141,7 +141,7 @@ func TestSlowDriftObserverDelaysNoAdvert(t *testing.T) {
 	r.mu.Unlock()
 	gate := newObserverGate(t)
 	heard := make(chan string, 1)
-	r.SetDriftObserver(func(name string, _ []ability.Change) {
+	r.SetDriftObserver(func(name string, _ []ability.Change, _ time.Time) {
 		gate.hold()
 		heard <- name
 	})
@@ -168,7 +168,7 @@ func TestClosedRegistryDeliversNothingStillQueued(t *testing.T) {
 	gate := newObserverGate(t)
 	var mu sync.Mutex
 	var heard []bool
-	r.SetObserver(func(s Status) {
+	r.SetObserver(func(s Status, _ time.Time) {
 		if s.Up {
 			gate.hold()
 		}

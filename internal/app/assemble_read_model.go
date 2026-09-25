@@ -66,14 +66,14 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 	// explains the placement that failed after it.
 	// Keys: changes — one change per line, each "key\tfrom\tto"; an empty
 	// from means the ability appeared, an empty to means it went away.
-	nodes.SetDriftObserver(func(name string, changes []ability.Change) {
+	nodes.SetDriftObserver(func(name string, changes []ability.Change, at time.Time) {
 		said := make([]string, 0, len(changes))
 		rows := make([]string, 0, len(changes))
 		for _, c := range changes {
 			said = append(said, c.String())
 			rows = append(rows, c.Key+"\t"+c.From+"\t"+c.To)
 		}
-		view.Observe("node.manifest", name, name+": "+strings.Join(said, "; "), map[string]string{"changes": strings.Join(rows, "\n")})
+		view.ObserveAt(at, "node.manifest", name, name+": "+strings.Join(said, "; "), map[string]string{"changes": strings.Join(rows, "\n")})
 	})
 	// Skills are the hub's to enable and every machine's to have: each
 	// node gets the enabled set as a content-addressed bundle when it
@@ -91,7 +91,7 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 		return errors.Join(remoteErr, localErr)
 	}
 	// Machines coming and going are history, not just log lines.
-	nodes.SetObserver(nodeObserver(nodes, view.Observe, func(s node.Status) {
+	nodes.SetObserver(nodeObserver(nodes, view.ObserveAt, func(s node.Status) {
 		background.Go(func(ctx context.Context) { shipper.Ship(ctx, s.Name) })
 		// A machine that comes back may hold worktrees of attempts that
 		// died with the connection; nothing else ever returns for them.
@@ -116,11 +116,11 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 // Observers hear changes late when history is slow to write; an arrival
 // heard after its connection dropped or was replaced is history only, as
 // there is nothing left on that connection to set going.
-func nodeObserver(nodes *node.Registry, record func(kind, subject, text string, data map[string]string), arrived func(node.Status)) func(node.Status) {
-	return func(s node.Status) {
+func nodeObserver(nodes *node.Registry, record func(at time.Time, kind, subject, text string, data map[string]string), arrived func(node.Status)) func(node.Status, time.Time) {
+	return func(s node.Status, at time.Time) {
 		if s.Up {
 			// Keys: host, os, arch, build.
-			record("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion),
+			record(at, "node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion),
 				map[string]string{"host": s.Advert.Hostname, "os": s.Advert.OS, "arch": s.Advert.Arch, "build": s.Advert.BuildVersion})
 			if stillConnected(nodes, s) {
 				arrived(s)
@@ -128,7 +128,7 @@ func nodeObserver(nodes *node.Registry, record func(kind, subject, text string, 
 			return
 		}
 		// Keys: reason.
-		record("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError), map[string]string{"reason": s.LastError})
+		record(at, "node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError), map[string]string{"reason": s.LastError})
 	}
 }
 

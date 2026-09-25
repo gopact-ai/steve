@@ -353,7 +353,7 @@ func TestLateDownCannotPauseNewConnectionOrEmitOldEvent(t *testing.T) {
 	defer unregister()
 	var mu sync.Mutex
 	var events []Status
-	r.SetObserver(func(s Status) { mu.Lock(); defer mu.Unlock(); events = append(events, s) })
+	r.SetObserver(func(s Status, _ time.Time) { mu.Lock(); defer mu.Unlock(); events = append(events, s) })
 	_ = old.mux.Close()
 	r.down(old)
 	newConn := connectMemory(t, m, r)
