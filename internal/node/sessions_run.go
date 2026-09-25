@@ -539,10 +539,11 @@ func configHash(req nodewire.SessionRequest, servers []acp.MCPServer) string {
 	}{ref, req.Harness, req.Workdir, policy, servers, req.NativeImport})
 }
 
-// serverIdentities is what a native context was given. The platform
-// messaging server is reached on this node's loopback port, which this node
-// may listen on elsewhere after a restart; a context resumed with the new
-// port still has the same server. Any other change, including a host that is
+// serverIdentities are the servers as a native context's recorded
+// configuration identifies them; the context itself is given them
+// unchanged. The platform messaging server is reached on this node's
+// loopback port, which this node may listen on elsewhere after a restart; a
+// context resumed with the new port still has the same server. Any other change, including a host that is
 // not loopback, remains a different configuration.
 //
 // The hub leaves the same port out of its fingerprints, but it knows the
