@@ -497,6 +497,60 @@ func TestControlCommandTheLeaderCannotFinishIsNotForwardedToItself(t *testing.T)
 	}
 }
 
+// A leader that loses its leadership while it runs a control command no
+// longer leads when the command fails, so the command goes, with its ID, to
+// the member elected next. Here node-1 stops hearing from both other members
+// once the command has started, and steps down when its lease runs out.
+func TestControlCommandWhoseLeaderStepsDownPartWayGoesToTheNextLeader(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
+	}
+	state, err := first.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := first.service.Status(); !status.IsLeader {
+		t.Fatalf("node-1 is to lose its leadership part-way, but the leader is %q", status.LeaderID)
+	}
+	for _, n := range nodes[1:] {
+		n.raft.pause()
+		t.Cleanup(n.raft.resume)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := first.Rename(t.Context(), coordination.RenameRequest{ID: "rename-node-3", Actor: "owner", ExpectedRevision: state.Revision, NodeID: "node-3", Name: "third"})
+		done <- err
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for first.service.Status().IsLeader {
+		if time.Now().After(deadline) {
+			t.Fatal("node-1 kept its leadership without hearing from a quorum")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, n := range nodes[1:] {
+		n.raft.resume()
+	}
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the rename did not finish after node-1 stepped down")
+	}
+	if err != nil {
+		t.Fatalf("a rename whose leader stepped down part-way did not reach the next leader: %v", err)
+	}
+	deadline = time.Now().Add(8 * time.Second)
+	for first.MemberNames()["node-3"] != "third" {
+		if time.Now().After(deadline) {
+			t.Fatalf("node-3 is named %q on node-1 after its rename", first.MemberNames()["node-3"])
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // Which answers from this member send a control command on to the member
 // the client finds leading. A member that no longer leads, because it lost
 // leadership part-way, its replica stopped or its service closed, forwards an
