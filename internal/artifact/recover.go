@@ -346,7 +346,13 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	// The recovery wrote relative to its own snapshot, where the canonical
 	// name was left. A commit that does not go through — the name is not
 	// there, or cannot be read — leaves the landing recovery-pending: the
-	// next retry snapshots again and commits against that.
+	// next retry snapshots again and commits against that. A lock another
+	// region issued leaves the window commitLanding describes, bounded the
+	// same way: a new holder names a snapshot before it writes, which moves
+	// the name off onto once the recovery's writes are in the workspace.
+	// Without such writes, target names the workspace as it stood before
+	// the new holder took the lock, and the name at most lags the holder's
+	// writes until its next snapshot.
 	committed := land
 	committed.State = LandCommitted
 	committed.Error = ""

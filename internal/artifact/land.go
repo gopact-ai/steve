@@ -622,6 +622,18 @@ func (s *Store) snapshotUnderLanding(ctx context.Context, p project.Project, hel
 // paths, so the name can briefly lag what is on disk. The lender's turn
 // ends with a snapshot cut from the workspace as it is, which moves the
 // name to it and closes the gap.
+//
+// A lock another region issued is checked just before the transaction,
+// not inside it (see ledger.Transition). It may run out in between and a
+// new holder take the lock. The commit still cannot move the name over the
+// new holder's writes: every holder names a snapshot of the workspace
+// under its lock before it writes. Once this landing's writes are in the
+// workspace, that snapshot differs from land.Now and moves the name off
+// it, which fails moveCanonical. The move goes through only when the
+// holder has not named its snapshot yet, or the landing changed nothing
+// that snapshot would see; nothing of the holder's is overwritten then,
+// and the name at most lags its writes until its next snapshot, as under
+// a lent lock.
 func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Landing) error {
 	committed := *land
 	committed.State = LandCommitted
