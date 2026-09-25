@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -101,6 +102,49 @@ func TestReachOfFollowsTheBoundAddress(t *testing.T) {
 	} {
 		if got := ReachOf(&net.TCPAddr{IP: c.bound, Port: 7710}); got != c.want {
 			t.Errorf("ReachOf(%s) = %v, want %v", c.bound, got, c.want)
+		}
+	}
+}
+
+// A bound service refuses to start when its address and the IP it bound
+// disagree: a name bound to loopback must be one the Host check accepts, or
+// every client using that name is refused, and an address that names
+// loopback must not have bound beyond it. The refusal names the address, the
+// bound IP and the addresses to write instead.
+func TestCheckBoundRefusesAnAddressThatDisagreesWithItsBinding(t *testing.T) {
+	for _, c := range []struct {
+		addr  string
+		bound net.IP
+		want  []string // nil accepts; otherwise the refusal mentions each
+	}{
+		{"localtest.me:7710", net.IPv4(127, 0, 0, 1), []string{`"localtest.me:7710"`, "127.0.0.1", "localhost:7710", "127.0.0.1:7710"}},
+		{"ip6-localhost:7710", net.IPv6loopback, []string{`"ip6-localhost:7710"`, "::1", "localhost:7710", "[::1]:7710"}},
+		{"localhost:7710", net.IPv4(192, 0, 2, 10), []string{`"localhost:7710"`, "192.0.2.10", "127.0.0.1:7710"}},
+		{"foo.localhost:7710", net.IPv4(127, 0, 0, 1), nil},
+		{"localhost.:7710", net.IPv4(127, 0, 0, 1), nil},
+		{"LOCALHOST:7710", net.IPv4(127, 0, 0, 1), nil},
+		{"127.0.0.2:7710", net.IPv4(127, 0, 0, 2), nil},
+		{"[::1]:7710", net.IPv6loopback, nil},
+		{"[::ffff:127.0.0.1]:7710", net.IPv4(127, 0, 0, 1), nil},
+		{"0.0.0.0:7710", net.IPv6unspecified, nil},
+		{":7710", net.IPv6unspecified, nil},
+		{"hub.example:7710", net.IPv4(192, 0, 2, 10), nil},
+	} {
+		err := CheckBound(c.addr, &net.TCPAddr{IP: c.bound, Port: 7710})
+		if c.want == nil {
+			if err != nil {
+				t.Errorf("CheckBound(%q, %s) = %v, want nil", c.addr, c.bound, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("CheckBound(%q, %s) = nil, want a refusal", c.addr, c.bound)
+			continue
+		}
+		for _, part := range c.want {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("CheckBound(%q, %s) = %q, want it to mention %s", c.addr, c.bound, err, part)
+			}
 		}
 	}
 }

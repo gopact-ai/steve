@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
@@ -98,6 +99,39 @@ func TestNetworkBoundConsoleAnswersAnyHostWithTheToken(t *testing.T) {
 	url := strings.NewReplacer("0.0.0.0", "127.0.0.1", "[::]", "127.0.0.1").Replace(server.URL())
 	if code := readState(t, url, "evil.example:7710"); code != http.StatusOK {
 		t.Fatalf("read through another name = %d, want 200", code)
+	}
+}
+
+// NewServer refuses to serve when the address it was given and the IP it
+// bound disagree, and closes what it bound. listen stands in for the
+// resolver, so a name binds where the test says on every platform.
+func TestNewServerRefusesAnAddressThatDisagreesWithItsBinding(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
+	for addr, bind := range map[string]string{"hub.example:7710": "127.0.0.1:0", "localhost:7710": "0.0.0.0:0"} {
+		var bound *net.TCPListener
+		listen := func(network, _ string) (net.Listener, error) {
+			listener, err := net.Listen(network, bind)
+			if err == nil {
+				bound = listener.(*net.TCPListener)
+			}
+			return listener, err
+		}
+		server, err := newServer(model, ServerConfig{Addr: addr, Token: testToken}, listen)
+		if err == nil {
+			_ = server.Close()
+			t.Fatalf("%s bound to %s was served", addr, bind)
+		}
+		if !strings.Contains(err.Error(), addr) {
+			t.Errorf("%s bound to %s: error %q does not name the address", addr, bind, err)
+		}
+		if bound == nil {
+			t.Fatalf("%s: nothing was bound", addr)
+		}
+		_ = bound.SetDeadline(time.Now())
+		if _, err := bound.Accept(); !errors.Is(err, net.ErrClosed) {
+			_ = bound.Close()
+			t.Errorf("%s bound to %s: the listener was left open (%v)", addr, bind, err)
+		}
 	}
 }
 
