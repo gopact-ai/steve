@@ -91,10 +91,9 @@ func decodeGatewayInput(receipt ledger.CommandRecord) (gatewayInput, error) {
 	return input, nil
 }
 
-// claimQueued claims a pending receipt of either kind for ReconcileQueued and
-// RecoverQueued: a gatewayInputKind receipt through claimGatewayInput, any
-// other through claimRecovery, to be run by recoverAcceptedInput with driver
-// and revive.
+// claimQueued claims a pending receipt of either kind for ReconcileQueued: a
+// gatewayInputKind receipt through claimGatewayInput, any other through
+// claimRecovery, to be run by recoverAcceptedInput with driver and revive.
 func (g *Gateway) claimQueued(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error, wait bool) (func() error, func(), error) {
 	if receipt.Kind != gatewayInputKind {
 		release, err := g.claimRecovery(ctx, receipt, wait)

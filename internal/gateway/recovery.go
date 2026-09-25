@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
@@ -96,70 +95,6 @@ func (g *Gateway) QueueRecovery(ctx context.Context, book *ledger.Ledger, key st
 	return book.RecordCommand(ctx, key, recoveryInputKind, r.Requester, raw)
 }
 
-// RecoverQueued waits for a bounded recovery pass. Native input is protected
-// by Command; unknown dispatch can only recover the matching persisted attempt.
-// The running reconciler schedules the same work without waiting below.
-func (g *Gateway) RecoverQueued(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error) error {
-	inputs, err := pendingGatewayInputs(ctx, book)
-	if err != nil {
-		return err
-	}
-	var result error
-	batches := recoveryBatches(inputs)
-	var mu sync.Mutex
-	var workers sync.WaitGroup
-	next := 0
-	for range min(cap(g.slots), len(batches)) {
-		workers.Go(func() {
-			for {
-				mu.Lock()
-				if next == len(batches) {
-					mu.Unlock()
-					return
-				}
-				batch := batches[next]
-				next++
-				mu.Unlock()
-				for _, receipt := range batch {
-					if err := g.recoverQueuedInput(ctx, book, receipt, driver, revive); err != nil {
-						mu.Lock()
-						result = errors.Join(result, fmt.Errorf("gateway recovery %s: %w", receipt.ID, err))
-						mu.Unlock()
-					}
-				}
-			}
-		})
-	}
-	workers.Wait()
-	return result
-}
-
-func recoveryBatches(inputs []ledger.CommandRecord) [][]ledger.CommandRecord {
-	var batches [][]ledger.CommandRecord
-	conversations := map[string]int{}
-	for _, receipt := range inputs {
-		var input recoveryInput
-		if receipt.Kind == gatewayInputKind {
-			ordinary, _ := decodeGatewayInput(receipt)
-			input.ConversationID = conversationID(ordinary.Message)
-		} else {
-			_ = json.Unmarshal(receipt.Result, &input)
-		}
-		if input.ConversationID == "" {
-			batches = append(batches, []ledger.CommandRecord{receipt})
-			continue
-		}
-		index, found := conversations[input.ConversationID]
-		if !found {
-			index = len(batches)
-			conversations[input.ConversationID] = index
-			batches = append(batches, nil)
-		}
-		batches[index] = append(batches[index], receipt)
-	}
-	return batches
-}
-
 // RecoveryWorkers is the application's existing lifetime owner. Go rejects
 // new work after shutdown closes admission, before joining admitted workers.
 type RecoveryWorkers interface {
@@ -167,8 +102,9 @@ type RecoveryWorkers interface {
 }
 
 // ReconcileQueued schedules only inputs with available capacity and returns
-// without waiting for native turns or retained observers. Execution and error
-// semantics are shared with the synchronous RecoverQueued/DispatchResume path.
+// without waiting for native turns or retained observers. It claims each input
+// through claimQueued; its workers report a run's error through reportPending
+// instead of returning it.
 func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error, workers RecoveryWorkers) error {
 	inputs, err := pendingGatewayInputs(ctx, book)
 	if err != nil {
@@ -255,15 +191,6 @@ func (g *Gateway) forgetSettledReasons(pending []ledger.CommandRecord) {
 			delete(g.pendingReasons, id)
 		}
 	}
-}
-
-func (g *Gateway) recoverQueuedInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error) error {
-	run, release, err := g.claimQueued(ctx, book, receipt, driver, revive, true)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return run()
 }
 
 func (g *Gateway) recoverAcceptedInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error) error {
