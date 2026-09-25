@@ -29,7 +29,8 @@ func (g *Gateway) claimInput(key string) (func(), bool) {
 }
 
 // Recovery shares ingress's bounded capacity and never waits for a slot:
-// without one it leaves that input pending for another pass.
+// without one, or while its conversation is being served, it leaves that
+// input pending for another pass.
 func (g *Gateway) claimRecovery(ctx context.Context, receipt ledger.CommandRecord) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

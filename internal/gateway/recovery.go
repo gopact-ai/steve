@@ -104,7 +104,8 @@ type RecoveryWorkers interface {
 // ReconcileQueued schedules only inputs with available capacity and returns
 // without waiting for native turns or retained observers. It claims each input
 // through claimQueued; its workers report a run's error through reportPending
-// instead of returning it.
+// instead of returning it, and report nothing if ctx is done when the run
+// returns.
 func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error, workers RecoveryWorkers) error {
 	inputs, err := pendingGatewayInputs(ctx, book)
 	if err != nil {
