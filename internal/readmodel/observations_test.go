@@ -277,6 +277,29 @@ func TestObserveSaveFailureKeepsLiveStateAndRetries(t *testing.T) {
 	}
 }
 
+// A save the ledger committed but reported as failed leaves its facts
+// unsaved in memory. Loading again finds them in the ledger already: they
+// are shown once and are not written a second time under new numbers.
+func TestLoadObservationsAfterAnUnacknowledgedSaveKeepsItOnce(t *testing.T) {
+	book, r := replicatedBook(t, t.TempDir())
+	store := ledgerObservationStore(book)
+	m := New(Sources{Observations: store})
+	m.Observe("node.up", "A", "A connected", nil)
+	r.after = func() error { return errors.New("outcome unknown") }
+	m.Observe("node.up", "B", "B connected", nil)
+	r.after = nil
+	if err := m.LoadObservations(); err != nil {
+		t.Fatal(err)
+	}
+	if live := subjects(m.observations); !reflect.DeepEqual(live, []string{"A", "B"}) {
+		t.Fatalf("reload showed the committed observation again: %v", live)
+	}
+	m.Observe("node.up", "C", "C connected", nil)
+	if got, live := subjects(restoredObservations(t, store)), subjects(m.observations); !reflect.DeepEqual(got, []string{"A", "B", "C"}) || !reflect.DeepEqual(got, live) {
+		t.Fatalf("after reload: restored=%v live=%v, want A B C once each", got, live)
+	}
+}
+
 // A hub that could not read its kept observations must not number new ones
 // from the start: they would be filed among, or over, the old. They wait in
 // memory and are saved after the old ones once a load succeeds.
