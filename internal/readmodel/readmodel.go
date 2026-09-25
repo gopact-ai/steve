@@ -1039,7 +1039,9 @@ func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleap
 // must not be the one dropped. What that guarantees is that the update
 // appears in the model's event stream, up to a window late; a subscriber
 // that stopped before then, such as a turn's reply that ended within the
-// window, does not receive it.
+// window, does not receive it. A step's updates are expected one call at a
+// time, in the order its session reports them, and are published in that
+// order; calls for one step that overlap have no order the model can keep.
 func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.Progress) {
 	key := planID + "/" + stepID
 	signature := fmt.Sprintf("%d", len(p.Tools))
