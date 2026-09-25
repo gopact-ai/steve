@@ -74,6 +74,8 @@ type transcript struct {
 type Events interface {
 	Publish(readmodel.Event)
 	Subscribe(context.Context) (<-chan readmodel.Event, func())
+	SubscribeAfter(context.Context, ...string) (readmodel.Resume, <-chan readmodel.Event, func())
+	EventID(readmodel.Event) string
 }
 
 type Service struct {
@@ -723,22 +725,50 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	// Subscribed before follow returns, so that nothing the turn publishes
+	// once it starts comes before the subscription.
+	events, stopEvents := s.model.Subscribe(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// The model closes a subscriber that falls behind; subscribing
-		// again resumes collection. Each step's progress is a whole
-		// snapshot, so a later event for a step replaces what was missed,
-		// but a step whose last snapshot fell in the gap keeps the state
-		// collected before it.
-		for ctx.Err() == nil {
-			events, stop := s.model.Subscribe(ctx)
-			for ev := range events {
-				if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
-					work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, consoleapi.StepInfo{}))
-				}
+		last := ""
+		collect := func(ev readmodel.Event) {
+			last = s.model.EventID(ev)
+			if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
+				work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, consoleapi.StepInfo{}))
 			}
-			stop()
+		}
+		// The model closes a subscriber that falls behind. Subscribing
+		// again after the last event read replays the gap while the model
+		// still keeps it; each step's progress is a whole snapshot, so only
+		// a step whose last snapshot the model no longer keeps stays at the
+		// state collected before it. The first subscription replays
+		// nothing: what the model kept from before is not this turn's.
+		subscribe := func() (<-chan readmodel.Event, func()) {
+			if last == "" {
+				return s.model.Subscribe(ctx)
+			}
+			resume, events, stop := s.model.SubscribeAfter(ctx, last)
+			// A reset replays every event the model keeps. It comes only when
+			// the events right after last are no longer kept, so each event it
+			// replays came after last: none is from before this follow began.
+			if resume.Reset {
+				slog.Warn("console: fell behind the change stream further than it keeps; some step progress may be stale", "conversation", conversation)
+			}
+			for _, ev := range resume.Replay {
+				collect(ev)
+			}
+			return events, stop
+		}
+		for {
+			for ev := range events {
+				collect(ev)
+			}
+			stopEvents()
+			if ctx.Err() != nil {
+				return
+			}
+			events, stopEvents = subscribe()
 		}
 	}()
 	return func() {
