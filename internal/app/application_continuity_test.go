@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,9 +203,11 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 				}
 			}
 			remembered := ""
+			var squatted atomic.Int32
 			if portMoved {
 				// Another process takes the node's remembered reverse messaging
 				// port while it is down, so the restarted node listens elsewhere.
+				// It counts every connection, since none may reach it.
 				raw, err := os.ReadFile(filepath.Join(worker.StateDir, "mcp.port"))
 				if err != nil {
 					t.Fatal(err)
@@ -215,6 +218,16 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer squatter.Close()
+				go func() {
+					for {
+						conn, err := squatter.Accept()
+						if err != nil {
+							return
+						}
+						squatted.Add(1)
+						conn.Close()
+					}
+				}()
 			}
 			second := StartTestPeer(t, options)
 			WaitPeerReady(t, second)
@@ -269,6 +282,9 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					t.Fatalf("restart did not load the exact native session in a new process: %+v", events)
 				}
 				continuityOpenedForWork(t, resumed[0], discovery)
+				if n := squatted.Load(); n != 0 {
+					t.Fatalf("the process on the old messaging port received %d connections", n)
+				}
 				if strings.Contains(resumed[1].Input, marker) || strings.Contains(resumed[1].Input, "fixture-remember") {
 					t.Fatal("recall prompt replayed the marker instead of using native memory")
 				}

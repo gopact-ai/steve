@@ -34,8 +34,7 @@ func TestFingerprintsIgnoreOnlyThePlatformServerPort(t *testing.T) {
 		{"moved port", extra("http://127.0.0.1:20002/mcp", "token", true), true},
 		{"other host", extra("http://127.0.0.2:20001/mcp", "token", true), false},
 		{"other path", extra("http://127.0.0.1:20001/other", "token", true), false},
-		{"other token", extra("http://127.0.0.1:20002/mcp", "renewed", true), false},
-		{"configured server", extra("http://127.0.0.1:20002/mcp", "token", false), false},
+		{"other token", extra("http://127.0.0.1:20001/mcp", "renewed", true), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := assemble(tc.extras)

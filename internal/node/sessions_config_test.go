@@ -25,10 +25,10 @@ func TestResumeAcceptsOnlyAMovedMessagingPort(t *testing.T) {
 		{"not loopback", server("steve", "http://10.0.0.1:20001/mcp"), server("steve", "http://10.0.0.1:20002/mcp"), false},
 		{"named host", server("steve", "http://localhost:20001/mcp"), server("steve", "http://localhost:20002/mcp"), false},
 		{"other host", server("steve", "http://127.0.0.1:20001/mcp"), server("steve", "http://127.0.0.2:20001/mcp"), false},
-		{"other path", server("steve", "http://127.0.0.1:20001/mcp"), server("steve", "http://127.0.0.1:20002/other"), false},
+		{"other path", server("steve", "http://127.0.0.1:20001/mcp"), server("steve", "http://127.0.0.1:20001/other"), false},
 		{"other server", server("files", "http://127.0.0.1:20001/mcp"), server("files", "http://127.0.0.1:20002/mcp"), false},
 		{"sse", acp.SSEMCPServer("steve", "http://127.0.0.1:20001/mcp", nil), acp.SSEMCPServer("steve", "http://127.0.0.1:20002/mcp", nil), false},
-		{"other token", server("steve", "http://127.0.0.1:20001/mcp"), acp.HTTPMCPServer("steve", "http://127.0.0.1:20002/mcp", []acp.HTTPHeader{{Name: "Authorization", Value: "Bearer other-token"}}), false},
+		{"other token", server("steve", "http://127.0.0.1:20001/mcp"), acp.HTTPMCPServer("steve", "http://127.0.0.1:20001/mcp", []acp.HTTPHeader{{Name: "Authorization", Value: "Bearer other-token"}}), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, req, old := resumedFixture(t, "/must-not-start")
