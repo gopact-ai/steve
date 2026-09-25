@@ -175,6 +175,17 @@ func WaitPeerReady(t *testing.T, peer *cluster.Peer) cluster.Activation {
 
 func PeerRequest(t *testing.T, peer *cluster.Peer, method, path string, body any) (int, []byte) {
 	t.Helper()
+	status, data, err := peerRequestWithin(t, peer, peerRequestTimeout, method, path, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status, data
+}
+
+// peerRequestWithin is one UI request that gives up after limit; the error
+// is the caller's to report.
+func peerRequestWithin(t *testing.T, peer *cluster.Peer, limit time.Duration, method, path string, body any) (int, []byte, error) {
+	t.Helper()
 	var data []byte
 	if body != nil {
 		var err error
@@ -190,17 +201,14 @@ func PeerRequest(t *testing.T, peer *cluster.Peer, method, path string, body any
 	request.Header.Set("Authorization", "Bearer "+peer.UIToken)
 	request.Header.Set("Cookie", "local-secret-cookie")
 	request.Header.Set("Referer", peer.UiURL+"/?token="+peer.UIToken)
-	client := &http.Client{Timeout: peerRequestTimeout}
+	client := &http.Client{Timeout: limit}
 	response, err := client.Do(request)
 	if err != nil {
-		t.Fatal(err)
+		return 0, nil, err
 	}
 	defer response.Body.Close()
 	data, err = io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return response.StatusCode, data
+	return response.StatusCode, data, err
 }
 
 // peerRequestTimeout bounds one request to a test peer's UI. A console

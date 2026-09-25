@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -76,5 +80,50 @@ func TestManagedStopDoesNotMaskAnUnrelatedPromptError(t *testing.T) {
 	s.reconcileStop(s.request(t.Context(), "poll"), &output, &activity, &result)
 	if !errors.Is(result, failure) || output != "partial" || len(activity) != 1 {
 		t.Fatal("stop masked unrelated failure or output")
+	}
+}
+
+// An observer whose turn went silent past its idle timeout stops the native
+// command and reports the timeout; one whose coordinator went away only
+// detaches, leaving the command to the observer that comes back.
+func TestManagedObserverStopsTheCommandOnlyWhenItsSilenceRunsOut(t *testing.T) {
+	for _, silent := range []bool{true, false} {
+		binding := NodeSessionContext{Binding: nodewire.SessionBinding{TaskID: "task", AttemptID: "attempt", NodeID: "worker"}, CommandID: "command"}
+		s := &managedSession{base: binding, id: "ns_original", at: Placement{Node: "worker"}}
+		var mu sync.Mutex
+		var actions []nodewire.SessionAction
+		s.transport = stopTransportFunc(func(ctx context.Context, _ string, request nodewire.SessionRequest) (nodewire.SessionState, error) {
+			mu.Lock()
+			actions = append(actions, request.Action)
+			sequence := uint64(len(actions))
+			mu.Unlock()
+			state := nodewire.SessionState{ID: request.ID, Binding: request.Binding, Sequence: sequence, Command: &nodewire.SessionCommand{ID: request.CommandID, State: "running"}}
+			switch request.Action {
+			case nodewire.SessionActionPoll:
+				<-ctx.Done()
+				return nodewire.SessionState{}, ctx.Err()
+			case nodewire.SessionActionCancel:
+				state.Command.State, state.Command.Settled = nodewire.SessionCommandCancelled, true
+			}
+			return state, nil
+		})
+		parent, lose := context.WithCancel(t.Context())
+		silence := time.Minute
+		if silent {
+			silence = 20 * time.Millisecond
+		} else {
+			time.AfterFunc(20*time.Millisecond, lose)
+		}
+		ctx, stop, _ := idle.WithTimeout(parent, silence)
+		_, _, err := s.ResumeTurn(ctx, nil, nil, nil)
+		stop()
+		lose()
+		stopped := slices.Contains(actions, nodewire.SessionActionCancel) || slices.Contains(actions, nodewire.SessionActionAbort)
+		if silent && (!stopped || !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrStopUnconfirmed) || !acphost.PromptSettled(err)) {
+			t.Fatalf("silent turn: actions=%v err=%v", actions, err)
+		}
+		if !silent && (stopped || !errors.Is(err, ErrStopUnconfirmed)) {
+			t.Fatalf("lost coordinator: actions=%v err=%v", actions, err)
+		}
 	}
 }
