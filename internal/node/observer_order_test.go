@@ -203,6 +203,30 @@ func TestClosedRegistryDeliversNothingStillQueued(t *testing.T) {
 	}
 }
 
+// A closed registry reports nothing it learns later either, such as the
+// changed advert a refresh already under way at Close brings back.
+func TestClosedRegistryReportsNoLaterDrift(t *testing.T) {
+	r := NewRegistry("hub-1", map[string]Config{"n": {}})
+	r.mu.Lock()
+	r.last["n"] = &Status{Name: "n", Up: true, Advert: nodewire.Advert{Node: "n", Capabilities: []string{"gpu"}}}
+	r.mu.Unlock()
+	heard := make(chan string, 1)
+	r.SetDriftObserver(func(name string, _ []ability.Change, _ time.Time) { heard <- name })
+	r.Close()
+	r.noteDrift("n", nodewire.Advert{Node: "n", Capabilities: []string{"gpu", "fpga"}})
+	r.notices.mu.Lock()
+	running, queued := r.notices.running, len(r.notices.pending)
+	r.notices.mu.Unlock()
+	select {
+	case name := <-heard:
+		t.Fatalf("drift of %s heard after close", name)
+	default:
+	}
+	if running || queued != 0 {
+		t.Fatalf("drift taken for delivery after close: running=%v queued=%d", running, queued)
+	}
+}
+
 // Observers can hear a change long after the registry acted on it; the
 // time they are handed is when the registry made the change, or history
 // would date a machine's loss after the failures it caused.
