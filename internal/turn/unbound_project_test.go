@@ -1,12 +1,44 @@
 package turn
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
+
+// unboundCoordinator is memoryCoordinator with an agent to answer, the
+// owner's home project declared, and the owner also owning the feishu
+// channel.
+func unboundCoordinator(t *testing.T, opts ...testOption) *Coordinator {
+	t.Helper()
+	catalog, err := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := memoryCoordinator(t, append([]testOption{withChannelOwner("feishu", memoryOwner), withDeps(func(d *Deps) { d.Catalog = catalog })}, opts...)...)
+	if err := c.projects.Declare(t.Context(), []project.Project{{ID: "home", Home: project.Home{Path: t.TempDir()}}}); err != nil {
+		t.Fatal(err)
+	}
+	c.homeProject = "home"
+	return c
+}
+
+// hear sends a line that answers without binding: the conversation has
+// been heard from and is still unbound.
+func hear(t *testing.T, c *Coordinator, req Request) {
+	t.Helper()
+	req.Input = "/status"
+	if _, err := c.Handle(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	if _, bound, err := c.projects.Binding(t.Context(), req.ConversationID); err != nil || bound {
+		t.Fatalf("/status left %s bound=%v err=%v", req.ConversationID, bound, err)
+	}
+}
 
 // An unbound conversation reads as the project its first turn will bind:
 // home only for the owner in private, the default for a group or a guest
@@ -14,15 +46,7 @@ import (
 // conversation before any line arrives, since the console only ever
 // speaks as the owner.
 func TestUnboundConversationReadsAsTheProjectItsFirstTurnBinds(t *testing.T) {
-	catalog, err := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := memoryCoordinator(t, withChannelOwner("feishu", memoryOwner), withDeps(func(d *Deps) { d.Catalog = catalog }))
-	if err := c.projects.Declare(t.Context(), []project.Project{{ID: "home", Home: project.Home{Path: t.TempDir()}}}); err != nil {
-		t.Fatal(err)
-	}
-	c.homeProject = "home"
+	c := unboundCoordinator(t)
 	for _, tc := range []struct {
 		name string
 		req  Request
@@ -36,16 +60,7 @@ func TestUnboundConversationReadsAsTheProjectItsFirstTurnBinds(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.seen {
-				// A line that answers without binding: the conversation
-				// has been heard from and is still unbound.
-				status := tc.req
-				status.Input = "/status"
-				if _, err := c.Handle(t.Context(), status); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, bound, err := c.projects.Binding(t.Context(), tc.req.ConversationID); err != nil || bound {
-				t.Fatalf("precondition: bound=%v err=%v", bound, err)
+				hear(t, c, tc.req)
 			}
 			read := c.ProjectOf(t.Context(), tc.req.ConversationID)
 			context, err := c.Context(t.Context(), tc.req.ConversationID)
@@ -58,6 +73,61 @@ func TestUnboundConversationReadsAsTheProjectItsFirstTurnBinds(t *testing.T) {
 			}
 			if first.ProjectID != tc.want || read != first.ProjectID || context.Project.ID != first.ProjectID {
 				t.Fatalf("read %q, context %q, first turn bound %q, want %q", read, context.Project.ID, first.ProjectID, tc.want)
+			}
+		})
+	}
+}
+
+// A channel conversation this process has not heard from could be a
+// group, a guest or the owner in private, and each binds a different
+// project. Every read of it says it has no project yet — without an
+// error, and without lending it the owner's memory — until a line
+// arrives. A restart forgets what was heard.
+func TestUnheardChannelConversationReadsAsNoProject(t *testing.T) {
+	before := unboundCoordinator(t)
+	hear(t, before, Request{Channel: "feishu", ConversationID: "oc_heard", SenderOpenID: memoryOwner, ChatType: protocol.ChatGroup})
+	seedFact(t, before, memory.ProjectScope("alpha"), "alpha fact")
+	c := unboundCoordinator(t, onLedger(ledgerOf(t, before)), withDeps(func(d *Deps) {
+		d.Store, d.Projects, d.Memory = before.store, before.projects, before.memory
+	}))
+	for _, id := range []string{"oc_heard", "oc_never"} {
+		t.Run(id, func(t *testing.T) {
+			ctx := t.Context()
+			if got := c.ProjectOf(ctx, id); got != "" {
+				t.Fatalf("ProjectOf = %q", got)
+			}
+			context, err := c.Context(ctx, id)
+			if err != nil || context.Project != nil {
+				t.Fatalf("Context project %+v err=%v", context.Project, err)
+			}
+			if context.Agent == nil || context.Agent.Place != nil {
+				t.Fatalf("Context agent %+v", context.Agent)
+			}
+			where, err := c.Where(ctx, id, "codex")
+			if err != nil || where.Project != "" || where.Workspace != "" || where.Mode != "guest" {
+				t.Fatalf("Where %+v err=%v", where, err)
+			}
+			projects, err := c.WhereProjects(ctx, id, "codex")
+			if err != nil || !strings.Contains(projects, "当前项目：（无）") || strings.Contains(projects, "\n* ") {
+				t.Fatalf("WhereProjects err=%v\n%s", err, projects)
+			}
+			if id := c.memoryProject(ctx, id); id != "" {
+				t.Fatalf("memoryProject = %q", id)
+			}
+			if _, scope, err := c.Remember(ctx, id, "codex", "", "project", "", "leak", ""); err == nil {
+				t.Fatalf("remembered into %v", scope)
+			}
+			if hits, _, err := c.Recall(ctx, id, "codex", "", "fact", 10); err == nil {
+				t.Fatalf("recalled %+v", hits)
+			}
+			setup, err := c.SessionSetup(ctx, id, "")
+			if err != nil || setup.Mode != "guest" {
+				t.Fatalf("SessionSetup mode %q err=%v", setup.Mode, err)
+			}
+			for _, s := range setup.Sections {
+				if strings.HasPrefix(s.Name, "memory:project:") {
+					t.Fatalf("SessionSetup carries %+v", s)
+				}
 			}
 		})
 	}
