@@ -189,13 +189,12 @@ type Server struct {
 // New binds the loopback listener immediately so the URL is known before any
 // capability is assembled. Serving starts with Start.
 //
-// The URL is part of every session's capability fingerprint and lives inside
-// resumed agent sessions, so the port must survive gateway restarts: pass
-// the previously used port to bind it again. 0 picks one through
-// stableport, from a range the kernel does not hand to other sockets while
-// the gateway is down. A port meanwhile taken falls back the same way —
-// existing sessions then drift and ask for /new, which is the honest
-// outcome.
+// Pass the previously used port to bind it again, so agents that still hold
+// the old URL keep reaching this server across gateway restarts. 0 picks
+// one through stableport, from a range the kernel does not hand to other
+// sockets while the gateway is down. A port meanwhile taken falls back the
+// same way; a resumed session is given the new URL, and its fingerprint
+// leaves this server's port out (capability.Extra.Platform).
 func New(preferredPort int) (*Server, error) {
 	var listener net.Listener
 	var err error
@@ -459,7 +458,8 @@ func (s *Server) DescribeExtras(token, endpoint string) []capability.Extra {
 	}
 	s.mu.Unlock()
 	return []capability.Extra{{
-		Name: ServerName,
+		Name:     ServerName,
+		Platform: true,
 		Server: capability.MCPServer{
 			Type:    "http",
 			URL:     endpoint,

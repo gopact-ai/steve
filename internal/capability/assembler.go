@@ -125,8 +125,13 @@ func (a *Assembler) Assemble(selected agent.Agent) (Capabilities, error) {
 // the fingerprint, so a session keeps a stable hash only while its extras
 // stay stable.
 type Extra struct {
-	Name         string
-	Server       MCPServer
+	Name   string
+	Server MCPServer
+	// Platform marks Steve's own messaging server. Steve picks its port
+	// when the listener starts, so the port can change across a restart
+	// without the session being given anything different; fingerprints
+	// identify this server without it.
+	Platform     bool
 	Instructions string
 	// Memory is remembered text to append after the home's memory: it
 	// reaches the agent but, like the home's memory, not the fingerprint.
@@ -217,6 +222,8 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 		}
 	}
 	servers := make([]acp.MCPServer, 0, len(selected.MCPServers))
+	// identities is servers as the fingerprints see them.
+	identities := make([]acp.MCPServer, 0, len(selected.MCPServers))
 	for _, name := range selected.MCPServers {
 		// An agent on another machine uses that machine's MCP servers:
 		// they are bound there at admission and joined to the session by
@@ -235,6 +242,7 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 			return Capabilities{}, err
 		}
 		servers = append(servers, server)
+		identities = append(identities, server)
 	}
 	for _, extra := range extras {
 		if extra.Server.Type == "" {
@@ -246,6 +254,11 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 			return Capabilities{}, err
 		}
 		servers = append(servers, server)
+		hashed := server
+		if extra.Platform {
+			hashed.URL = withoutPort(hashed.URL)
+		}
+		identities = append(identities, hashed)
 	}
 	hashMode := home.ModeNone
 	if a.home != nil {
@@ -257,11 +270,11 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 	} else if a.skills != nil {
 		skillsHash = a.skills.Fingerprint()
 	}
-	fp, err := fingerprint(identity, servers, hashMode, skillsHash)
+	fp, err := fingerprint(identity, identities, hashMode, skillsHash)
 	if err != nil {
 		return Capabilities{}, err
 	}
-	sessionFP, err := fingerprint(sessionInstructions, servers, hashMode, skillsHash)
+	sessionFP, err := fingerprint(sessionInstructions, identities, hashMode, skillsHash)
 	if err != nil {
 		return Capabilities{}, err
 	}
@@ -314,6 +327,20 @@ func fingerprint(instructions string, servers []acp.MCPServer, mode home.Mode, s
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// withoutPort drops the port from a URL makeMCPServer already accepted.
+func withoutPort(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	host := parsed.Hostname()
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	parsed.Host = host
+	return parsed.String()
 }
 
 func sortedKeys(values map[string]string) []string {
