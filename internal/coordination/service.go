@@ -297,9 +297,18 @@ func (s *Service) wait(ctx context.Context, future raft.Future) error {
 	case errors.Is(err, raft.ErrLeadershipLost), errors.Is(err, raft.ErrRaftShutdown), errors.Is(err, raft.ErrEnqueueTimeout), errors.Is(err, raft.ErrLeadershipTransferInProgress):
 		return fmt.Errorf("%w: %s", ErrUnavailable, err)
 	default:
-		return err
+		return unclassifiedRaftError{err}
 	}
 }
+
+// unclassifiedRaftError is a Raft error that wait could not map to a
+// coordination error because Raft reports it without a sentinel. It reads and
+// unwraps as the original error; a caller that knows what such an error means
+// for its request can recognize it with errors.As.
+type unclassifiedRaftError struct{ err error }
+
+func (e unclassifiedRaftError) Error() string { return e.err.Error() }
+func (e unclassifiedRaftError) Unwrap() error { return e.err }
 
 // waitConfigurationChange waits for a membership change to commit, for at most
 // ApplyTimeout. Raft's timeout argument bounds only enqueueing: an appended
@@ -755,16 +764,16 @@ func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, er
 				continue
 			}
 			err = s.wait(ctx, s.raft.LeadershipTransferToServer(raft.ServerID(target), raft.ServerAddress(state.Voters[target])))
-			switch {
-			case err == nil:
-			case errors.Is(err, ErrNotLeader), errors.Is(err, ErrUnavailable), errors.Is(err, ErrApplication), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-				return Result{}, err
-			default:
-				// Raft reports an unfinished transfer, such as its election
-				// timeout expiring or a failed TimeoutNow RPC, without a
-				// sentinel error. The target may still take over, so the
-				// caller should retry.
+			// Raft reports an unfinished transfer, such as its election
+			// timeout expiring or a failed TimeoutNow RPC, without a sentinel
+			// error. The target may still take over, so the caller should
+			// retry.
+			var unfinished unclassifiedRaftError
+			if errors.As(err, &unfinished) {
 				return Result{}, fmt.Errorf("%w: consensus leadership transfer to %s: %v", ErrUnavailable, target, err)
+			}
+			if err != nil {
+				return Result{}, err
 			}
 			return Result{}, ErrNotLeader
 		}

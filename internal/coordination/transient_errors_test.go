@@ -1,6 +1,7 @@
 package coordination
 
 import (
+	"context"
 	"errors"
 	"sort"
 	"strings"
@@ -14,6 +15,11 @@ type resolvedFuture struct{ err error }
 
 func (f resolvedFuture) Error() error { return f.err }
 
+// pendingFuture resolves, without an error, once it is closed.
+type pendingFuture chan struct{}
+
+func (f pendingFuture) Error() error { <-f; return nil }
+
 // While its own leadership transfer runs, a leader rejects applies, barriers,
 // snapshots, configuration changes, restores and further transfers. The
 // rejection ends with the transfer, so callers must see it as retryable, not
@@ -24,6 +30,31 @@ func TestWaitReportsTransientRaftRejectionsAsUnavailable(t *testing.T) {
 		if err := s.wait(t.Context(), resolvedFuture{cause}); !errors.Is(err, ErrUnavailable) {
 			t.Errorf("%v was reported as %v", cause, err)
 		}
+	}
+}
+
+// Raft reports some outcomes, such as an unfinished leadership transfer, only
+// as text. wait marks them so that a caller can classify them, and leaves
+// errors it has already classified unmarked.
+func TestWaitMarksRaftErrorsWithoutSentinel(t *testing.T) {
+	s := &Service{ctx: t.Context(), fsm: newMachine("test-cluster", nil)}
+	cause := errors.New("leadership transfer timeout")
+	err := s.wait(t.Context(), resolvedFuture{cause})
+	var unclassified unclassifiedRaftError
+	if !errors.As(err, &unclassified) || !errors.Is(err, cause) || err.Error() != cause.Error() {
+		t.Fatalf("raft error without a sentinel was returned as %#v", err)
+	}
+	for _, cause := range []error{raft.ErrLeadershipTransferInProgress, raft.ErrLeadershipLost, raft.ErrRaftShutdown, raft.ErrEnqueueTimeout} {
+		if err := s.wait(t.Context(), resolvedFuture{cause}); errors.As(err, &unclassified) {
+			t.Errorf("classified %v was also marked unclassified", cause)
+		}
+	}
+	pending := make(pendingFuture)
+	defer close(pending)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := s.wait(canceled, pending); errors.As(err, &unclassified) || !errors.Is(err, context.Canceled) {
+		t.Errorf("caller cancellation was returned as %v", err)
 	}
 }
 
