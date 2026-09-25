@@ -1039,10 +1039,10 @@ func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleap
 // What that guarantees is that the update appears in the model's event
 // stream, up to a window late; a subscriber that stopped before then,
 // such as a turn's reply that ended within the window, does not receive
-// it. StepEnded publishes the update a step returns with at once. A
-// step's updates are expected one call at a time, in the order its
-// session reports them, and are published in that order; calls for one
-// step that overlap have no order the model can keep.
+// it. StepEnded publishes the snapshot a step's prompt returned with at
+// once. A step's updates are expected one call at a time, in the order
+// its session reports them, and are published in that order; calls for
+// one step that overlap have no order the model can keep.
 func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.Progress) {
 	key := planID + "/" + stepID
 	signature := fmt.Sprintf("%d", len(p.Tools))
@@ -1084,9 +1084,13 @@ func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.
 	m.publishLocked(ev)
 }
 
-// StepEnded publishes the update a step returned with, without throttling:
-// nothing follows it for the step. An update the throttle holds for the
-// step is dropped rather than published after it.
+// StepEnded publishes the snapshot a step's prompt returned with, without
+// throttling. An update the throttle holds for the step is dropped rather
+// than published after it. It marks the end of that prompt, not always
+// of the step: a node-owned step whose observer was lost keeps running on
+// its node, and once resumed it reports progress again, in a window of
+// its own, and ends with another StepEnded when the resumed prompt
+// returns.
 func (m *Model) StepEnded(taskID, planID, stepID, agent, node string, p view.Progress) {
 	ev := stepEvent(taskID, planID, stepID, agent, node, p)
 	ev.Conversation = m.conversationOf(taskID)

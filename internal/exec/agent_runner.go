@@ -166,7 +166,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 }
 
 // stepSpend follows a step's progress for its cost and model, and for the
-// snapshot the step ends with.
+// snapshot its prompt returns with.
 type stepSpend struct {
 	mu   sync.Mutex
 	last view.Progress
@@ -265,8 +265,12 @@ const ReportingContract = `
 - 其余正常写。没有就不写，不要编。`
 
 // StepObserver sees a step's progress as it streams: what the agent is
-// thinking and calling. ended marks the snapshot the step returned with,
-// sent once as the step's prompt returns, however it ended.
+// thinking and calling. ended marks the snapshot a step's prompt
+// returned with, sent once as that prompt returns, however it ended. It
+// marks the end of the prompt, not always of the step: a node-owned step
+// whose observer was lost keeps running on its node, and once resumed it
+// reports progress again and sends another ended snapshot when the
+// resumed prompt returns.
 type StepObserver func(req StepRequest, p view.Progress, ended bool)
 
 // SetObserver installs where step progress goes; nil discards it.
@@ -282,7 +286,7 @@ func (a *AgentRunner) progress(ctx context.Context, req StepRequest) func(view.P
 }
 
 // ended sends the last snapshot a step's prompt reported once more, as
-// the one the step returned with. It takes no context, so a cancelled
+// the one the prompt returned with. It takes no context, so a cancelled
 // step still ends with it; a step that reported nothing sends nothing.
 func (a *AgentRunner) ended(req StepRequest, spent *stepSpend) {
 	spent.mu.Lock()
@@ -308,8 +312,8 @@ type RetainedStep struct {
 	Ask     permission.AskFunc
 	AskUser acphost.AskUserFunc
 	Observe func(view.Progress)
-	// Ended sends the last snapshot Observe saw as the one the step
-	// returned with; call it once the resumed prompt returns.
+	// Ended sends the last snapshot Observe saw as the one the resumed
+	// prompt returned with; call it once that prompt returns.
 	Ended func()
 }
 
