@@ -1082,8 +1082,19 @@ func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.
 		m.throttle[key] = last
 		return
 	}
-	m.throttle[key] = throttled{at: time.Now(), signature: signature}
+	now := time.Now()
+	m.sweepThrottleLocked(now)
+	m.throttle[key] = throttled{at: now, signature: signature}
 	m.publishLocked(ev)
+}
+
+// sweepThrottleLocked forgets keys whose window ended with nothing held.
+func (m *Model) sweepThrottleLocked(now time.Time) {
+	for key, last := range m.throttle {
+		if last.held == nil && now.Sub(last.at) >= progressEvery {
+			delete(m.throttle, key)
+		}
+	}
 }
 
 // releaseStep publishes the update a step's throttle held back, once the

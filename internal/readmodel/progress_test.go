@@ -192,6 +192,34 @@ func TestStepProgressKeepsEachStepsUpdatesInOrder(t *testing.T) {
 	}
 }
 
+// A step whose window ended with nothing held is forgotten, and its next
+// update is published at once, as it would have been anyway.
+func TestStepProgressForgetsStepsWhoseWindowEnded(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	m.StepProgress("task", "plan", "a", "builder", "node-a", view.Progress{Answer: "a"})
+	<-events
+	time.Sleep(progressEvery)
+	m.StepProgress("task", "plan", "b", "builder", "node-a", view.Progress{Answer: "b"})
+	<-events
+	m.mu.Lock()
+	kept := len(m.throttle)
+	m.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("throttling %d steps, want only b", kept)
+	}
+	m.StepProgress("task", "plan", "a", "builder", "node-a", view.Progress{Answer: "a again"})
+	select {
+	case ev := <-events:
+		if ev.StepID != "a" || ev.Progress.Answer != "a again" {
+			t.Fatalf("published %+v, want step a's next update", ev)
+		}
+	default:
+		t.Fatal("step a's next update was held back")
+	}
+}
+
 func TestTimelineSurvivesProjectionWithEveryToolReference(t *testing.T) {
 	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	p := view.Progress{Timeline: []view.Span{{Kind: "text", Text: "first", At: at}}}
