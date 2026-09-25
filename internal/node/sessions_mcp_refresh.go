@@ -8,11 +8,11 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
-// previousMCPConfigHash reconstructs the complete source configuration without
+// previousMCPRequest reconstructs the complete source request without
 // changing the request sent to the native agent. No other field is replaceable.
-func previousMCPConfigHash(req nodewire.SessionRequest) (string, error) {
-	refuse := func() (string, error) {
-		return "", sessionError("forbidden", "invalid built-in MCP authorization refresh")
+func previousMCPRequest(req nodewire.SessionRequest) (nodewire.SessionRequest, error) {
+	refuse := func() (nodewire.SessionRequest, error) {
+		return nodewire.SessionRequest{}, sessionError("forbidden", "invalid built-in MCP authorization refresh")
 	}
 	proof := req.MCPAuthorizationRefresh
 	if proof == nil || !validMCPBearer(proof.PreviousAuthorization) {
@@ -53,7 +53,7 @@ func previousMCPConfigHash(req nodewire.SessionRequest) (string, error) {
 	req.MCPServers = slices.Clone(req.MCPServers)
 	req.MCPServers[serverIndex].Headers = slices.Clone(server.Headers)
 	req.MCPServers[serverIndex].Headers[headerIndex].Value = proof.PreviousAuthorization
-	return sessionConfigHash(req), nil
+	return req, nil
 }
 
 func validMCPBearer(value string) bool {

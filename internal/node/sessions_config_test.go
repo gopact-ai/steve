@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"testing"
 
 	"github.com/gopact-ai/acp"
@@ -55,5 +56,60 @@ func TestMCPAuthorizationRefreshAfterTheMessagingPortMoved(t *testing.T) {
 	req.MCPAuthorizationRefresh = &nodewire.MCPAuthorizationRefresh{PreviousAuthorization: "Bearer another-token"}
 	if err := validateResumeSource(req, old); err == nil {
 		t.Fatal("a wrong previous credential was accepted with a moved port")
+	}
+}
+
+// Only a node restart moves the messaging port, and a restart ends every
+// native process. A process this node opened keeps the address it was given,
+// so a request naming another port describes a different configuration,
+// whether the process is still running or has stopped.
+func TestOwnedSessionKeepsItsMessagingPort(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		name := "running"
+		if stopped {
+			name = "stopped"
+		}
+		t.Run(name, func(t *testing.T) {
+			anyAttempt := sessionAuthorizerFunc(func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error {
+				return nil
+			})
+			s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: anyAttempt})
+			if err := s.startSessions(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			defer s.sessions.Close()
+			workdir := t.TempDir()
+			request := func(id, attempt, port string) nodewire.SessionRequest {
+				req := nodeSessionRequest(nodewire.SessionActionOpen)
+				req.ID, req.Harness, req.Workdir, req.CommandID = id, "mock", workdir, "open/"+attempt
+				req.Binding.AttemptID, req.Binding.TaskID = attempt, "task/"+attempt
+				req.MCPServers = []acp.MCPServer{acp.HTTPMCPServer("steve", "http://127.0.0.1:"+port+"/mcp", []acp.HTTPHeader{{Name: "Authorization", Value: "Bearer test-token"}})}
+				return req
+			}
+			first, err := s.sessions.Do(t.Context(), "cluster-1", request("", "attempt-1", "20001"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.sessions.mu.Lock()
+			one := s.sessions.sessions[first.ID]
+			s.sessions.mu.Unlock()
+			if stopped {
+				one.host.Close()
+			}
+			if _, err := s.sessions.Do(t.Context(), "cluster-1", request(first.ID, "attempt-2", "20002")); err == nil {
+				t.Fatal("a native process given port 20001 was admitted for a request naming port 20002")
+			}
+			one.mu.Lock()
+			err = one.admitLocked(request(first.ID, "attempt-3", "20002"))
+			binding := one.record.State.Binding
+			one.mu.Unlock()
+			if err == nil || binding.AttemptID != "attempt-1" {
+				t.Fatalf("admission rebound the process to another messaging port: %v, bound to %s", err, binding.AttemptID)
+			}
+			// The same address is still the same configuration.
+			if _, err := s.sessions.Do(t.Context(), "cluster-1", request(first.ID, "attempt-4", "20001")); err != nil {
+				t.Fatalf("the process's own address was refused: %v", err)
+			}
+		})
 	}
 }

@@ -20,8 +20,9 @@ func TestSessionDispatchPreservesObservationAndRejectsClientStart(t *testing.T) 
 	req.ID = "ns_" + strings.Repeat("a", 64)
 	state := nodewire.SessionState{ID: req.ID, Binding: req.Binding, State: nodewire.SessionIdle, Sequence: 7}
 	server.sessions.sessions[req.ID] = &ownedSession{
-		service: server.sessions,
-		changed: make(chan struct{}),
+		service:           server.sessions,
+		changed:           make(chan struct{}),
+		processConfigHash: processConfigHash(req),
 		record: sessionRecord{
 			Format:     1,
 			ClusterID:  req.Authority.ClusterID,

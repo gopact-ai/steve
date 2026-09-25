@@ -509,7 +509,20 @@ func (s *SessionService) directory() string {
 	return filepath.Join(s.server.conf().StateDir, "node-sessions")
 }
 
+// sessionConfigHash identifies the configuration a native context was
+// admitted with. It is kept with the record and compared when a later process
+// resumes the context, possibly after a node restart moved the messaging port.
 func sessionConfigHash(req nodewire.SessionRequest) string {
+	return configHash(req, configuredServers(req.MCPServers))
+}
+
+// processConfigHash is sessionConfigHash with every server exactly as a
+// native process was given it, messaging port included.
+func processConfigHash(req nodewire.SessionRequest) string {
+	return configHash(req, req.MCPServers)
+}
+
+func configHash(req nodewire.SessionRequest, servers []acp.MCPServer) string {
 	policy := req.Permission
 	if policy == "" {
 		policy = permission.PolicyRead
@@ -523,7 +536,7 @@ func sessionConfigHash(req nodewire.SessionRequest) string {
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
 		NativeImport                 *nativehistory.Reference `json:"native_import,omitempty"`
-	}{ref, req.Harness, req.Workdir, policy, configuredServers(req.MCPServers), req.NativeImport})
+	}{ref, req.Harness, req.Workdir, policy, servers, req.NativeImport})
 }
 
 // configuredServers is what a native context was given. The platform
