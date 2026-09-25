@@ -37,13 +37,13 @@ const (
 )
 
 // Listen binds address with listen. An address with a nonzero port is
-// bound as given. For port 0 it binds a random port in the range on the
-// same host, trying another only when the port is in use; any other error
-// is returned as is. A port another socket listens on at an overlapping
-// address counts as in use, even where the platform would let both bind
-// it. If every attempt finds its port in use, it binds the address
-// unchanged and the kernel picks an ephemeral port, which a later restart
-// may find taken.
+// bound as given. For port 0, or an empty port, it binds a random port in
+// the range on the same host, trying another only when the port is in
+// use; any other error is returned as is. A port another socket listens
+// on at an overlapping address counts as in use, even where the platform
+// would let both bind it. If every attempt finds its port in use, it
+// binds the address unchanged and the kernel picks an ephemeral port,
+// which a later restart may find taken.
 func Listen(listen func(network, address string) (net.Listener, error), network, address string) (net.Listener, error) {
 	return picker{candidate: candidate, probe: probe}.listen(listen, network, address)
 }
@@ -57,7 +57,8 @@ type picker struct {
 
 func (p picker) listen(listen func(network, address string) (net.Listener, error), network, address string) (net.Listener, error) {
 	host, port, err := net.SplitHostPort(address)
-	if err != nil || port != "0" {
+	// An empty port is port 0 to net.Listen as well.
+	if err != nil || port != "0" && port != "" {
 		return listen(network, address)
 	}
 	for range attempts {

@@ -65,6 +65,19 @@ func TestKeepsAnExplicitPort(t *testing.T) {
 	}
 }
 
+// An empty port asks the kernel to pick, as port 0 does, so it is resolved
+// from the range too.
+func TestResolvesAnEmptyPortAsZero(t *testing.T) {
+	var asked []string
+	listener, err := picker{candidate: sequence(20001), probe: free}.listen(func(network, address string) (net.Listener, error) {
+		asked = append(asked, address)
+		return addressListener{address}, nil
+	}, "tcp", "127.0.0.1:")
+	if err != nil || len(asked) != 1 || listener.Addr().String() != "127.0.0.1:20001" {
+		t.Fatalf("empty port: asked %v, err %v", asked, err)
+	}
+}
+
 // portAt numbers the range without the SSH link window: indexes map, in
 // order, to distinct ports in the range, and none to a link port.
 func TestPortAtNumbersTheRangeWithoutTheLinkWindow(t *testing.T) {
