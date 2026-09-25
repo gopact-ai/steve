@@ -1206,3 +1206,40 @@ func TestRunCompletesAManagedPromptWhoseCompletionOutlastsItsSilence(t *testing.
 		t.Fatalf("completed past the silence left: %+v err=%v history=%s", res, err, w.attempts.history())
 	}
 }
+
+// A run gives its silence clock back when it returns: the hold a settled
+// prompt keeps on it ends with the run, and the clock runs again for
+// whatever the caller does next under it.
+func TestRunAndReattachGiveTheSilenceClockBackWhenTheyReturn(t *testing.T) {
+	const silence = 20 * time.Millisecond
+	for _, reattach := range []bool{false, true} {
+		w := newWorld("ns_1")
+		ctx, stop, _ := idle.WithTimeout(t.Context(), silence)
+		release := idle.Hold(ctx)
+		w.runner.during = release
+		o := w.options()
+		o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
+		var res Result
+		var err error
+		if reattach {
+			running := attempt.Record{Spec: o.Spec, State: attempt.Running, Session: "ns_1"}
+			w.attempts.record = running
+			o.Resume = true
+			res, err = Reattach(ctx, o, running, w.runner)
+		} else {
+			res, err = Run(ctx, o)
+		}
+		if err != nil || res.Record.State != attempt.Bound {
+			t.Fatalf("reattach=%v: %+v err=%v history=%s", reattach, res, err, w.attempts.history())
+		}
+		select {
+		case <-ctx.Done():
+			if !idle.Expired(ctx) {
+				t.Fatalf("reattach=%v: the clock ended, but not on silence: %v", reattach, context.Cause(ctx))
+			}
+		case <-time.After(100 * silence):
+			t.Fatalf("reattach=%v: the clock is still held after the run returned", reattach)
+		}
+		stop()
+	}
+}
