@@ -1472,14 +1472,24 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	} else {
 		r.setLeader(r.trans.DecodePeer(a.Leader), ServerID(a.ID))
 	}
+	// A snapshot holds only committed entries, committed in a term no later
+	// than the current one. Requests from older terms were rejected above, so
+	// by Leader Completeness the sender's log holds the snapshot's last entry,
+	// and by Log Matching it equals the compacted log up to that index. A
+	// predecessor below the snapshot index therefore matches, and batch
+	// entries up to that index are already in the snapshot. A leader resends
+	// from below the snapshot when the follower installed a later snapshot or
+	// compacted a batch whose response was lost.
+	snapshotIdx, snapshotTerm := r.getLastSnapshot()
+
 	// Verify the last log entry
-	if a.PrevLogEntry > 0 {
+	if a.PrevLogEntry > 0 && a.PrevLogEntry >= snapshotIdx {
 		lastIdx, lastTerm := r.getLastEntry()
 
 		var prevLogTerm uint64
 		if a.PrevLogEntry == lastIdx {
 			prevLogTerm = lastTerm
-		} else if snapshotIdx, snapshotTerm := r.getLastSnapshot(); a.PrevLogEntry == snapshotIdx {
+		} else if a.PrevLogEntry == snapshotIdx {
 			// The snapshot boundary is durable predecessor state even
 			// though its log entry has already been compacted. This is
 			// essential when the leader retransmits an AppendEntries batch
@@ -1515,6 +1525,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		lastLogIdx, _ := r.getLastLog()
 		var newEntries []*Log
 		for i, entry := range a.Entries {
+			if entry.Index <= snapshotIdx {
+				continue
+			}
 			if entry.Index > lastLogIdx {
 				newEntries = a.Entries[i:]
 				break
