@@ -50,8 +50,9 @@ type UpgradeStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// PinAddress remembers the OS-selected port once so subsequent service
-// restarts retain the web view's origin, including local drafts and preferences.
+// PinAddress remembers the port the console first bound so subsequent
+// service restarts retain the web view's origin, including local drafts and
+// preferences.
 // Call after the initial listener binds, before publishing configuration users.
 func PinAddress(configPath string, cfg *config.Config, address string) error {
 	before := cfg.Gateway.ReadModelAddr

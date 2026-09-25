@@ -21,8 +21,9 @@ func (l *countedListener) Close() error {
 }
 
 // OpenPeer binds its Raft, peer and UI listeners through Listen, at the
-// configured addresses, and a peer that fails to open closes each
-// listener it was given exactly once.
+// configured addresses (a configured port 0 at a port it picks on the same
+// host), and a peer that fails to open closes each listener it was given
+// exactly once.
 func TestOpenPeerBindsThroughListenAndClosesWhatItTookOnce(t *testing.T) {
 	options, _ := testPeerOptions(t, filepath.Join(ClusterPeerTestDir(t), "peer"), nil)
 	settings, err := LoadClusterPeerConfig(options.ClusterPath)
@@ -36,14 +37,17 @@ func TestOpenPeerBindsThroughListenAndClosesWhatItTookOnce(t *testing.T) {
 	options.Listen = func(network, address string) (net.Listener, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		asked = append(asked, address)
-		if len(asked) == 3 {
+		if len(asked) == 2 {
+			asked = append(asked, address)
 			return nil, refused
 		}
 		listener, err := net.Listen(network, address)
 		if err != nil {
+			// A picked port in use is retried with another; only the
+			// binds OpenPeer keeps are recorded.
 			return nil, err
 		}
+		asked = append(asked, address)
 		counted := &countedListener{Listener: listener}
 		taken = append(taken, counted)
 		return counted, nil
@@ -56,7 +60,7 @@ func TestOpenPeerBindsThroughListenAndClosesWhatItTookOnce(t *testing.T) {
 		t.Fatalf("asked for %v, want %v", asked, want)
 	}
 	for i := range want {
-		if asked[i] != want[i] {
+		if !sameListenAddress(asked[i], want[i]) {
 			t.Fatalf("asked for %v, want %v", asked, want)
 		}
 	}
@@ -65,4 +69,18 @@ func TestOpenPeerBindsThroughListenAndClosesWhatItTookOnce(t *testing.T) {
 			t.Fatalf("%s was closed %d times", listener.Addr(), closes)
 		}
 	}
+}
+
+// sameListenAddress reports whether asked binds configured: the same
+// address, or, for a configured port 0, a nonzero port on the same host.
+func sameListenAddress(asked, configured string) bool {
+	if asked == configured {
+		return true
+	}
+	askedHost, askedPort, err := net.SplitHostPort(asked)
+	if err != nil {
+		return false
+	}
+	host, port, err := net.SplitHostPort(configured)
+	return err == nil && port == "0" && askedHost == host && askedPort != "0"
 }
