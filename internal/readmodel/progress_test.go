@@ -3,7 +3,9 @@ package readmodel
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -143,6 +145,50 @@ func TestStepProgressReleaseLeavesAnAgentThatMovedOnWhereItIs(t *testing.T) {
 	m.mu.Unlock()
 	if at.StepID != "second" {
 		t.Fatalf("builder's activity is on step %q, want the step it went on to", at.StepID)
+	}
+}
+
+// Several steps streaming at once, each now and then starting or
+// finishing a tool call: each step's updates reach a subscriber in the
+// order they were made, and each step's last update lands.
+func TestStepProgressKeepsEachStepsUpdatesInOrder(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	const steps, updates = 8, 1500
+	for k := range steps {
+		go func() {
+			r := rand.New(rand.NewSource(int64(k)))
+			var tools []view.Tool
+			for i := range updates {
+				if r.Intn(300) == 0 {
+					tools = make([]view.Tool, 1-len(tools))
+				}
+				m.StepProgress("task", "plan", fmt.Sprint(k), "builder", "node-a", view.Progress{Answer: strconv.Itoa(i), Tools: tools})
+				time.Sleep(time.Duration(r.Intn(1000)) * time.Microsecond)
+			}
+		}()
+	}
+	next := map[string]int{}
+	finished := 0
+	deadline := time.After(time.Minute)
+	for finished < steps {
+		select {
+		case ev, open := <-events:
+			if !open {
+				t.Fatal("the subscriber fell behind")
+			}
+			i, _ := strconv.Atoi(ev.Progress.Answer)
+			if i < next[ev.StepID] {
+				t.Fatalf("step %s published update %d after a later one", ev.StepID, i)
+			}
+			next[ev.StepID] = i + 1
+			if i == updates-1 {
+				finished++
+			}
+		case <-deadline:
+			t.Fatalf("steps' last updates never all landed: %v", next)
+		}
 	}
 }
 
