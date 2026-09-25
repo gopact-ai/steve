@@ -242,3 +242,75 @@ func TestCommitment_singleVoter(t *testing.T) {
 		t.Fatalf("expected commit notify")
 	}
 }
+
+// Tests that a server's match survives its promotion to voter. The leader's
+// appendConfigurationEntry dispatches the promoting entry, which wakes
+// replication, before it calls setConfiguration, so the promoted server can
+// acknowledge that entry before it votes.
+func TestCommitment_promotedServerKeepsEarlierMatch(t *testing.T) {
+	for _, suffrage := range []ServerSuffrage{Nonvoter, Staging} {
+		t.Run(suffrage.String(), func(t *testing.T) {
+			commitCh := make(chan struct{}, 1)
+			configuration := makeConfiguration([]string{"s1", "s2", "s3"})
+			configuration.Servers = append(configuration.Servers, Server{Suffrage: suffrage, ID: "s4", Address: "s4addr"})
+			c := newCommitment(commitCh, configuration, 4)
+			c.match("s1", 5)
+			c.match("s2", 5)
+			c.match("s3", 5)
+			if c.getCommitIndex() != 5 || !drainNotifyCh(commitCh) {
+				t.Fatalf("expected 5 entries committed, found %d", c.getCommitIndex())
+			}
+
+			// Entry 6 promotes s4. s1 is the leader; s3 no longer answers.
+			c.match("s1", 6)
+			c.match("s4", 6)
+			if c.getCommitIndex() != 5 {
+				t.Fatalf("a %v server's match must not commit, found %d", suffrage, c.getCommitIndex())
+			}
+			if drainNotifyCh(commitCh) {
+				t.Fatalf("unexpected commit notify")
+			}
+			c.setConfiguration(voters(4))
+			c.match("s2", 6)
+			if c.getCommitIndex() != 6 {
+				t.Fatalf("expected 6 entries committed with s1, s2 and s4, found %d", c.getCommitIndex())
+			}
+			if !drainNotifyCh(commitCh) {
+				t.Fatalf("expected commit notify")
+			}
+		})
+	}
+}
+
+// Tests that a demoted voter's match stops counting but is kept, so it counts
+// again if the server is promoted later in the same term.
+func TestCommitment_demotedVoterKeepsMatch(t *testing.T) {
+	commitCh := make(chan struct{}, 1)
+	c := newCommitment(commitCh, voters(3), 4)
+	c.match("s1", 5)
+	c.match("s2", 5)
+	if c.getCommitIndex() != 5 || !drainNotifyCh(commitCh) {
+		t.Fatalf("expected 5 entries committed, found %d", c.getCommitIndex())
+	}
+
+	// Demote s2. s1 is the leader; s3 no longer answers.
+	demoted := voters(3)
+	demoted.Servers[1].Suffrage = Nonvoter
+	c.setConfiguration(demoted)
+	c.match("s1", 6)
+	c.match("s2", 6)
+	if c.getCommitIndex() != 5 {
+		t.Fatalf("a demoted server's match must not commit, found %d", c.getCommitIndex())
+	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
+
+	c.setConfiguration(voters(3))
+	if c.getCommitIndex() != 6 {
+		t.Fatalf("expected 6 entries committed with s1 and s2, found %d", c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
+	}
+}
