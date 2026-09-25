@@ -15,7 +15,7 @@ type resolvedFuture struct{ err error }
 func (f resolvedFuture) Error() error { return f.err }
 
 // While its own leadership transfer runs, a leader rejects applies, barriers,
-// configuration reads and changes, restores and further transfers. The
+// snapshots, configuration changes, restores and further transfers. The
 // rejection ends with the transfer, so callers must see it as retryable, not
 // as a bad request.
 func TestWaitReportsTransientRaftRejectionsAsUnavailable(t *testing.T) {
@@ -58,8 +58,9 @@ func TestRemoveLeaderReportsUnfinishedLeadershipTransferAsUnavailable(t *testing
 	})
 	applied := leader.Status().AppliedIndex
 	eventually(t, 5*time.Second, func() bool { return c.nodes[target].Status().AppliedIndex >= applied })
-	// The target keeps answering heartbeats and progress probes but never
-	// handles the TimeoutNow request.
+	// The target keeps answering heartbeats and progress probes but
+	// acknowledges no new entry, so the transfer cannot catch it up before the
+	// election timeout ends the attempt, and TimeoutNow is never sent.
 	if err := newRaftLoopPause(t, c.nodes[target]).pause(); err != nil {
 		t.Fatal(err)
 	}
