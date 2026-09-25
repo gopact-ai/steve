@@ -195,3 +195,39 @@ func TestRestoreTapKeepsHowAConversationArrives(t *testing.T) {
 		t.Fatalf("after the restore tap: read %q mode %q, next line binds %q", read, mode, first.ProjectID)
 	}
 }
+
+// Before any line arrives, a console conversation's agent may remember
+// and recall, because every console line is the owner's in private. A
+// channel conversation not heard from may not, and neither may a console
+// with no owner, which never runs a line at all.
+func TestMemoryBeforeAnyLineIsTheConsoleOwners(t *testing.T) {
+	for _, tc := range []struct {
+		name, id string
+		opts     []testOption
+		allowed  bool
+	}{
+		{"console", "console:new", nil, true},
+		{"channel not heard from", "oc_never", nil, false},
+		{"console with no owner", "console:new", []testOption{withOwner("")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := unboundCoordinator(t, tc.opts...)
+			ctx := t.Context()
+			_, _, rememberErr := c.Remember(ctx, tc.id, "codex", "", "global", "", "the owner prefers short answers", "")
+			hits, _, recallErr := c.Recall(ctx, tc.id, "codex", "", "short answers", 10)
+			setup, err := c.SessionSetup(ctx, tc.id, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.allowed {
+				if rememberErr == nil || recallErr == nil || setup.Mode != string(home.ModeGuest) {
+					t.Fatalf("remember err=%v, recall err=%v, setup mode %q: want both refused and guest", rememberErr, recallErr, setup.Mode)
+				}
+				return
+			}
+			if rememberErr != nil || recallErr != nil || len(hits) != 1 || setup.Mode != string(home.ModeOwner) {
+				t.Fatalf("remember err=%v, recall %+v err=%v, setup mode %q: want both allowed and owner", rememberErr, hits, recallErr, setup.Mode)
+			}
+		})
+	}
+}
