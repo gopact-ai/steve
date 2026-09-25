@@ -112,7 +112,7 @@ func restoreStep(ctx context.Context, p plan.Plan, step *plan.Step, upstream []R
 			return plan.StepResult{}, false, fmt.Errorf("%w: step %s exhausted its retries", ErrRecovery, step.ID)
 		}
 		if found && r.State.Terminal() && !r.Unsettled {
-			if err := agentexec.SettleBudget(deps.Budget, r, nil); err != nil {
+			if err := agentexec.SettleBudget(ctx, deps.Budget, r, nil); err != nil {
 				return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", agentexec.Diagnosis{Attempted: i18n.ExecTriedCheckStepUsage, Problem: i18n.ExecProblemEndedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorage}, err)
 			}
 			if err := cleanupFailedStep(ctx, deps, r); err != nil {
@@ -145,7 +145,7 @@ func restoreStep(ctx context.Context, p plan.Plan, step *plan.Step, upstream []R
 		}
 		scope.Finish(nil)
 	}
-	if err := agentexec.SettleBudget(deps.Budget, r, nil); err != nil {
+	if err := agentexec.SettleBudget(ctx, deps.Budget, r, nil); err != nil {
 		return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", agentexec.Diagnosis{Attempted: i18n.ExecTriedCheckCommittedUsage, Problem: i18n.ExecProblemCommittedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, err)
 	}
 	step.Attempts = max(step.Attempts, output.Attempts)

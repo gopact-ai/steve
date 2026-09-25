@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -75,7 +76,7 @@ func settleAccounting(next *draft, tracked *Task, row *Attempt, endedAt time.Tim
 
 // SettleAttempt consumes durable results or stop receipts for exactly one
 // execution; it remains valid after that execution's task token was revoked.
-func (s *Store) SettleAttempt(taskID, attemptID, turnID string, endedAt time.Time, outcome Outcome, usage RecoveryUsage) error {
+func (s *Store) SettleAttempt(ctx context.Context, taskID, attemptID, turnID string, endedAt time.Time, outcome Outcome, usage RecoveryUsage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if attemptID == "" {
@@ -100,7 +101,7 @@ func (s *Store) SettleAttempt(taskID, attemptID, turnID string, endedAt time.Tim
 		if err := settleAccounting(next, tracked, row, endedAt, outcome, usage); err != nil {
 			return err
 		}
-		return s.replaceLocked(next)
+		return s.replaceRecordsLocked(ctx, next, nil)
 	}
 	return errors.New("execution has no bound task accounting row")
 }
