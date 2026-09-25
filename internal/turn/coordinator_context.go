@@ -11,7 +11,6 @@ import (
 	"github.com/gopact-ai/steve/internal/text"
 
 	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
@@ -39,12 +38,15 @@ type ContextProject struct {
 	Repo    string
 	Version int64
 	// Bound is false when the conversation has no binding yet and the
-	// project shown is the default it would get on its first line.
+	// project shown is the one its first line will bind.
 	Bound bool
 }
 
 // projectFor is the conversation's project without side effects: its
-// binding if it has one, else the default it would be bound to.
+// binding if it has one, else the project its first turn will bind. A
+// channel conversation not heard from yet has none: which project it
+// gets depends on who speaks there and in what kind of chat, and its key
+// does not say.
 func (c *Coordinator) projectFor(ctx context.Context, conversationID string) (id string, version int64, bound bool, err error) {
 	binding, ok, err := c.projects.Binding(ctx, conversationID)
 	if err != nil {
@@ -53,11 +55,11 @@ func (c *Coordinator) projectFor(ctx context.Context, conversationID string) (id
 	if ok {
 		return binding.ProjectID, binding.Version, true, nil
 	}
-	id = c.defaultProject
-	if c.homeProject != "" && injectionMode(protocol.ChatP2P, c.ownerOpenID, c.ownerOpenID) == home.ModeOwner {
-		id = c.homeProject
+	mode, known := c.arrivalMode(conversationID)
+	if !known {
+		return "", 0, false, nil
 	}
-	return id, 0, false, nil
+	return c.unboundProject(mode), 0, false, nil
 }
 
 // Suggestion is one completion for a line being typed.

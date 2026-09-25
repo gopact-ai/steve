@@ -43,6 +43,25 @@ func (c *Coordinator) rememberMode(req Request) {
 	c.mu.Unlock()
 }
 
+// consolePrefix starts every console conversation's key. The console
+// sends each of its lines as the owner, in private.
+const consolePrefix = "console:"
+
+// arrivalMode is how a conversation reaches Steve, as far as a read with
+// no request in hand can know: a console conversation as the owner in
+// private, any other as its last line did. known is false for a channel
+// conversation not heard from since this process started — a group, a
+// guest and the owner in private look alike by their key.
+func (c *Coordinator) arrivalMode(conversationID string) (mode home.Mode, known bool) {
+	if strings.HasPrefix(conversationID, consolePrefix) {
+		return injectionMode(protocol.ChatP2P, c.owners.baseline, c.owners.baseline), true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	mode, known = c.modes[conversationID]
+	return mode, known
+}
+
 func (c *Coordinator) modeOf(conversationID string) home.Mode {
 	c.mu.Lock()
 	defer c.mu.Unlock()
