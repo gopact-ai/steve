@@ -129,6 +129,11 @@ func TestObserveReplicatesOneObservationWhateverTheHistory(t *testing.T) {
 	if late > early+512 {
 		t.Fatalf("one observation replicated %d bytes with %d kept but %d bytes with 9 kept: the write grows with the retained history", late, observationsKept, early)
 	}
+	// Forgetting the oldest included, one observation's write stays under
+	// the 1 KiB that sizes a batch of catch-up saves.
+	if late > 1<<10 {
+		t.Fatalf("one observation replicated %d bytes with %d kept, want at most %d", late, observationsKept, 1<<10)
+	}
 }
 
 // A hub that could not write for a while catches up in writes no larger

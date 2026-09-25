@@ -100,7 +100,9 @@ func subjects(list []Observation) []string {
 	return out
 }
 
-func TestObserveConcurrentSavesPreserveBothRecords(t *testing.T) {
+// An Observe that arrives while another's save is in progress waits for
+// it, so both are kept, and in the order they were observed.
+func TestObserveWaitsForTheSaveInProgressAndKeepsBothInOrder(t *testing.T) {
 	entered, block, release := observationGate()
 	store := &observationHooks{ObservationStore: observationStore(t), beforeSave: func(first uint64, _ []Observation) error {
 		if first == 1 {
