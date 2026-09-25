@@ -180,22 +180,33 @@ try {
         assert.ok(await readsOf(key, reconnect[key] + 1) > reconnect[key], `Reconnect recovery is retained for ${key}`);
     }
 
-    // Settle the reconnect burst, then measure the floor alone. It counts
-    // from the reconnect's snapshot, which lands a little after the stream
-    // opens, so each window keeps a margin from the 60s mark.
+    // Measure the floor alone, from the reconnect's snapshot. A read is
+    // counted when its request reaches the fixture, but the floor counts
+    // from when its snapshot is in, and the clock fires the timers after
+    // it without waiting for the response. So each window starts once the
+    // snapshot it counts from is in, and keeps a margin from its mark.
+    const snapshots = () => page.evaluate(() => window.renders.snapshot || 0);
+    const snapshotIn = (after) => page.waitForFunction((after) => (window.renders.snapshot || 0) > after, after);
+    await snapshotIn(0);
     await page.clock.runFor(1000);
     const quiet = reads.state;
     const stateReads = (count) => readsOf("state", count);
     await page.clock.runFor(55_000);
     assert.equal(await stateReads(quiet + 1), quiet, "A live stream does not re-read /state on the 10s floor");
+    let shown = await snapshots();
     await page.clock.runFor(6_000);
     assert.equal(await stateReads(quiet + 1), quiet + 1, "A live stream still bounds a silent drop with a long floor");
+    await snapshotIn(shown);
     await page.evaluate(() => window.source.onerror());
     await page.waitForFunction(() => document.querySelector("#connection")?.textContent === "reconnecting");
     // Hold the stream down: the retry fails again as soon as it opens.
     await page.evaluate(() => { window.EventSource = class { addEventListener() {} constructor() { window.source = this; setTimeout(() => this.onerror?.(), 0); } close() {} }; });
     const down = reads.state;
-    await page.clock.runFor(20_500);
+    shown = await snapshots();
+    await page.clock.runFor(10_000);
+    assert.equal(await stateReads(down + 1), down + 1, "A dropped stream reads /state on the 10s floor");
+    await snapshotIn(shown);
+    await page.clock.runFor(10_000);
     assert.equal(await stateReads(down + 2), down + 2, "A dropped stream falls back to the 10s floor");
     const setVisible = (visible) => page.evaluate((visible) => {
         Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible ? "visible" : "hidden" });

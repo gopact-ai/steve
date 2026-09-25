@@ -311,3 +311,66 @@ func TestFollowKeepsCollectingAfterFallingBehind(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A step whose last snapshot is published while the follower is being
+// dropped for falling behind still ends at that snapshot: following again
+// resumes after the last event read, not at whatever comes next.
+func TestFollowKeepsTheLastSnapshotPublishedWhileItWasBehind(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{})
+	s := New(turntest.IdleCoordinator{}, "owner", model)
+	work := newProcess()
+	stop := s.follow(context.Background(), "console:test", work)
+	defer stop()
+	step := func(answer string) {
+		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:test", StepID: "A", Progress: &consoleapi.Progress{Answer: answer}})
+	}
+
+	// Holding the collector, publish more than its buffer: the model
+	// closes the follower before A's last snapshot. Nothing is published
+	// after it, so only the subscription resumed after the last event
+	// read can still deliver it, from the events the model keeps.
+	work.mu.Lock()
+	for range 100 {
+		step("early")
+	}
+	step("final")
+	work.mu.Unlock()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		work.mu.Lock()
+		got := work.steps["A"].Answer
+		work.mu.Unlock()
+		if got == "final" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("step A = %q after the follower fell behind; want its last snapshot %q", got, "final")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Following is subscribed by the time follow returns: a step's update
+// published right after it is collected, with nothing published again.
+func TestFollowCollectsWhatIsPublishedRightAfterItStarts(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{})
+	s := New(turntest.IdleCoordinator{}, "owner", model)
+	work := newProcess()
+	stop := s.follow(context.Background(), "console:test", work)
+	defer stop()
+	model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:test", StepID: "first", Progress: &consoleapi.Progress{Answer: "first"}})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		work.mu.Lock()
+		_, seen := work.steps["first"]
+		work.mu.Unlock()
+		if seen {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a step's update published right after following started was never collected")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
