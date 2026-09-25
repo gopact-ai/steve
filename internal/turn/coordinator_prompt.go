@@ -54,12 +54,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// not of work, so a turn that awaits other agents is not cut short
 	// while they are still answering. Preparation runs under it once;
 	// started resets it when the prompt is sent.
-	idleCtx, expire, touch := c.newIdleClock(turnCtx, c.promptTimeout())
+	idleCtx, expire, touch := c.newIdleClock(turnCtx, selected.Node)
 	var ctx context.Context = idleCtx
 	defer expire()
-	if c.nodes != nil {
-		defer c.nodes.RegisterIdle(selected.Node, idleCtx)()
-	}
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
 	}

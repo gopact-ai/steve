@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -1120,5 +1121,65 @@ func TestRunQuarantinesAHubCompletionThatEndsUnconfirmed(t *testing.T) {
 	res, err = Run(t.Context(), o)
 	if !errors.Is(err, harness.ErrStopUnconfirmed) || res.Unsettled || res.Record.State != attempt.Failed || plain.workspaces.discarded != 1 {
 		t.Fatalf("unconfirmed completion without the rule: %+v err=%v", res, err)
+	}
+}
+
+// A node-owned prompt the silence clock stopped is the attempt's timeout:
+// it fails on a context of its own, even for a caller whose cancelled runs
+// detach. The same settled prompt under an ordinary cancel still detaches.
+func TestRunFailsAManagedPromptItsSilenceClockStopped(t *testing.T) {
+	for _, silent := range []bool{true, false} {
+		w := newWorld("ns_1")
+		w.attempts.refusesDone = true
+		w.runner.err = fmt.Errorf("%w: %w", context.DeadlineExceeded, harness.ErrTurnCanceled)
+		parent, cancel := context.WithCancel(t.Context())
+		ctx, stop, _ := idle.WithTimeout(parent, 20*time.Millisecond)
+		release := idle.Hold(ctx)
+		w.runner.block = true
+		w.runner.during = func() {
+			if release(); !silent {
+				cancel()
+			}
+		}
+		o := w.options()
+		o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
+		res, err := Run(ctx, o)
+		stop()
+		cancel()
+		var detached *execution.RetainedObserverDetached
+		if silent && (errors.As(err, &detached) || !errors.Is(err, context.DeadlineExceeded) || res.Record.State != attempt.Failed || !res.Durable || res.Unsettled) {
+			t.Fatalf("silence: %+v err=%v history=%s", res, err, w.attempts.history())
+		}
+		if !silent && (!errors.As(err, &detached) || res.Record.State != attempt.Running || res.Durable) {
+			t.Fatalf("ordinary cancel: %+v err=%v history=%s", res, err, w.attempts.history())
+		}
+	}
+}
+
+// A node-owned prompt whose result arrived as its silence clock ran out
+// completes: the clock stops silent commands, not ones that answered. The
+// completion is written on a context of its own, even for a caller whose
+// cancelled runs detach.
+func TestRunCompletesAManagedPromptThatAnsweredAsItsSilenceClockRanOut(t *testing.T) {
+	w := newWorld("ns_1")
+	w.attempts.refusesDone = true
+	ctx, stop, _ := idle.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer stop()
+	release := idle.Hold(ctx)
+	var run context.Context
+	w.runner.during = func() {
+		release()
+		<-run.Done()
+	}
+	o := w.options()
+	o.Leased = func(ctx context.Context, _ *Execution) (context.Context, error) {
+		run = ctx
+		return ctx, nil
+	}
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
+	res, err := Run(ctx, o)
+	var detached *execution.RetainedObserverDetached
+	if err != nil || errors.As(err, &detached) || !idle.Expired(ctx) || res.Record.State != attempt.Bound || !res.Durable || res.Unsettled {
+		t.Fatalf("answered as the silence ran out: %+v err=%v history=%s", res, err, w.attempts.history())
 	}
 }

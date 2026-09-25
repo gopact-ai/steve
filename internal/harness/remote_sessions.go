@@ -298,7 +298,7 @@ func RemoteErrorCode(err error) string {
 
 func (s *managedSession) PromptTurn(ctx context.Context, text string, media []Media, ask permission.AskFunc, askUser acphost.AskUserFunc, progress func(view.Progress)) (output string, activity []string, runErr error) {
 	request := s.request(ctx, nodewire.SessionActionPrompt)
-	defer s.reconcileStop(request, &output, &activity, &runErr)
+	defer s.endObservation(ctx, request, &output, &activity, &runErr)
 	s.mu.Lock()
 	stopping := s.stopDone != nil
 	s.mu.Unlock()
@@ -349,7 +349,7 @@ func (s *managedSession) InspectRetained(ctx context.Context) (nodewire.SessionS
 
 func (s *managedSession) ResumeTurn(ctx context.Context, ask permission.AskFunc, askUser acphost.AskUserFunc, progress func(view.Progress)) (output string, activity []string, runErr error) {
 	request := s.request(ctx, nodewire.SessionActionAttach)
-	defer s.reconcileStop(request, &output, &activity, &runErr)
+	defer s.endObservation(ctx, request, &output, &activity, &runErr)
 	state, err := s.call(ctx, request)
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: %w", ErrStopUnconfirmed, err)

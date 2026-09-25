@@ -51,10 +51,10 @@ func WithProbeKey(ctx context.Context, key Key) context.Context {
 }
 
 // Detached retains trace values while work belongs to the service lifetime.
-// It does not retain the parent prompt's cancellation, deadline or silence
-// clock.
+// It does not retain the parent prompt's cancellation, the cause it ended
+// on, its deadline or its silence clock.
 func (r *Registry) Detached(values context.Context) context.Context {
-	return detached{Context: r.lifetime, values: idle.Detach(values)}
+	return detached{Context: r.lifetime, values: idle.Detach(context.WithoutCancel(values))}
 }
 
 type detached struct {

@@ -122,23 +122,29 @@ func TestApplicationLiveSettingsPreserveNativeSessionAndExistingBudget(t *testin
 	if WaitPeerReady(t, peer).Generation != generation {
 		t.Fatal("saving runtime policy restarted the application")
 	}
-	// A saved prompt timeout reaches the running coordinator: under a saved
-	// 1ms the turn's idle clock runs out while the turn is still being
-	// prepared, before the agent is prompted. A coordinator that kept its
-	// startup timeout would let the agent answer.
+	// A saved prompt timeout reaches the running coordinator: a silent turn
+	// ends on a saved 3s, which leaves a turn prepared under -race room to
+	// reach its prompt. A coordinator that kept its startup timeout would
+	// leave the turn running past the bound.
 	const expiring = "console:live-timeout"
 	continuitySend(t, peer, expiring, "/project use workspace", "bind-timeout")
-	update(`{"gateway":{"prompt_timeout":"1ms"}}`)
+	const timeout = 3 * time.Second
+	update(`{"gateway":{"prompt_timeout":"` + timeout.String() + `"}}`)
+	const bound = 20 * time.Second
 	started := time.Now()
-	status, body := PeerRequest(t, peer, http.MethodPost, "/console/send", consoleapi.Submission{
-		Conversation: expiring, Input: "fixture-remember expired-turn-memory", CommandID: "expired-turn",
+	status, body, err := peerRequestWithin(t, peer, bound, http.MethodPost, "/console/send", consoleapi.Submission{
+		Conversation: expiring, Input: "slow expired-turn", CommandID: "expired-turn",
 	})
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("a silent turn under a saved %v prompt timeout did not end within %v: %v", timeout, bound, err)
+	}
 	var failed struct {
 		Error string `json:"error"`
 	}
 	if status != http.StatusBadGateway || json.Unmarshal(body, &failed) != nil ||
-		!strings.Contains(failed.Error, context.DeadlineExceeded.Error()) {
-		t.Fatalf("turn under a saved 1ms prompt timeout: %d after %v: %s", status, time.Since(started), body)
+		!strings.Contains(failed.Error, context.DeadlineExceeded.Error()) || elapsed < timeout {
+		t.Fatalf("silent turn under a saved %v prompt timeout: %d after %v: %s", timeout, status, elapsed, body)
 	}
 	if WaitPeerReady(t, peer).Generation != generation {
 		t.Fatal("ending a turn on its prompt timeout restarted the application")

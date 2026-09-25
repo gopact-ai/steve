@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -310,5 +313,87 @@ func TestRetainedTaskAccountingFailureRemainsRetryableWithoutPromptReplay(t *tes
 	result, err = c.ResumeRetainedChat(t.Context(), old.ID, req)
 	if err != nil || result.Attempt != old.ID || runner.resumeCalls != 1 {
 		t.Fatalf("settlement retry replayed input or lost result: %+v %v calls=%d", result, err, runner.resumeCalls)
+	}
+}
+
+// silentRetainedRunner stays silent until its observation ends, then ends
+// the way a node-owned observer does: stopped on the turn's silence clock,
+// or detached.
+type silentRetainedRunner struct{ *retainedTestRunner }
+
+func (r silentRetainedRunner) ResumeTurn(ctx context.Context, _ permission.AskFunc, _ acphost.AskUserFunc, _ func(view.Progress)) (string, []string, error) {
+	<-ctx.Done()
+	if idle.Expired(ctx) {
+		return "", nil, fmt.Errorf("%w: %w", context.DeadlineExceeded, harness.ErrTurnCanceled)
+	}
+	return "", nil, fmt.Errorf("%w: observer detached: %w", harness.ErrStopUnconfirmed, ctx.Err())
+}
+
+// A reattached observer runs under the prompt timeout like the prompt it
+// resumes: a retained command that stays silent ends the turn as a timeout.
+func TestRetainedChatEndsOnItsPromptTimeout(t *testing.T) {
+	c, runner, _, old, req := retainedChatFixture(t)
+	c.promptClock.timeout = 50 * time.Millisecond
+	c.runtime = stoppedRetainedManager{fakeManager: &fakeManager{}, runner: silentRetainedRunner{runner}}
+	ended := make(chan error, 1)
+	go func() {
+		_, err := c.ResumeRetainedChat(t.Context(), old.ID, req)
+		ended <- err
+	}()
+	var err error
+	select {
+	case err = <-ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a silent retained command did not end on its 50ms prompt timeout within 10s")
+	}
+	record, getErr := c.attempts.Get(t.Context(), old.ID)
+	tracked, _ := c.tasks.Get(old.TaskID)
+	if !errors.Is(err, context.DeadlineExceeded) || getErr != nil || record.State != attempt.Failed || tracked.Attempts[len(tracked.Attempts)-1].Open() {
+		t.Fatalf("retained timeout: err=%v attempt=%s %v task=%+v", err, record.State, getErr, tracked.Attempts)
+	}
+}
+
+// reportingRetainedRunner reports progress every interval until it has run
+// for length, then completes; it ends early, like silentRetainedRunner, if
+// its observation ends first.
+type reportingRetainedRunner struct {
+	*retainedTestRunner
+	interval, length time.Duration
+}
+
+func (r reportingRetainedRunner) ResumeTurn(ctx context.Context, _ permission.AskFunc, _ acphost.AskUserFunc, progress func(view.Progress)) (string, []string, error) {
+	tick := time.NewTicker(r.interval)
+	defer tick.Stop()
+	for end := time.After(r.length); ; {
+		select {
+		case <-ctx.Done():
+			return silentRetainedRunner{r.retainedTestRunner}.ResumeTurn(ctx, nil, nil, nil)
+		case <-tick.C:
+			progress(view.Progress{})
+		case <-end:
+			return r.reply, nil, nil
+		}
+	}
+}
+
+// A reattached observer's prompt timeout is a silence clock like the
+// prompt's: progress resets it, so a command that keeps reporting runs past
+// the timeout, and the clock is registered with the command's node.
+func TestRetainedChatProgressKeepsItsPromptTimeoutAway(t *testing.T) {
+	c, runner, _, old, req := retainedChatFixture(t)
+	const timeout = 400 * time.Millisecond
+	c.promptClock.timeout = timeout
+	nodes := &idleNodes{}
+	c.nodes = nodes
+	c.runtime = stoppedRetainedManager{fakeManager: &fakeManager{}, runner: reportingRetainedRunner{runner, timeout / 8, 5 * timeout / 2}}
+	result, err := c.ResumeRetainedChat(t.Context(), old.ID, req)
+	record, getErr := c.attempts.Get(t.Context(), old.ID)
+	if err != nil || result.Text != runner.reply || getErr != nil || record.State == attempt.Failed {
+		t.Fatalf("reporting retained command under a %v prompt timeout: err=%v attempt=%s %v", timeout, err, record.State, getErr)
+	}
+	nodes.mu.Lock()
+	defer nodes.mu.Unlock()
+	if !slices.Equal(nodes.registered, []string{old.Node}) || !slices.Equal(nodes.unregistered, []string{old.Node}) {
+		t.Fatalf("idle clock registration: registered=%v unregistered=%v, want [%s]", nodes.registered, nodes.unregistered, old.Node)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -732,6 +733,16 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 		}
 	}
 	cancelled := ctx.Err() != nil
+	if settled && idle.Expired(ctx) {
+		// The turn's silence clock ran out on a settled prompt: the
+		// attempt ends on what the prompt settled with — a timeout for a
+		// prompt the clock stopped, a completion for a result that came
+		// first — written on a context the clock did not end.
+		var stop context.CancelFunc
+		ctx, stop = Cleanup(ctx)
+		defer stop()
+		cancelled = false
+	}
 	quarantines := o.Settlement.Quarantine == QuarantineAlways || o.Settlement.Quarantine == QuarantineManaged
 	if errors.Is(err, harness.ErrStopUnconfirmed) || !settled && (quarantines || cancelled) || cancelled && o.Settlement.CancelDetaches {
 		return e.detach(ctx, StepDrive, errors.Join(err, ctx.Err()), cancelled)

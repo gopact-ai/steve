@@ -93,6 +93,26 @@ func TestDetachedWorkDoesNotHoldItsOriginsSilenceClock(t *testing.T) {
 	}
 }
 
+// Detached work does not end on its origin's silence: when the service
+// lifetime ends, work derived from a Detached context does not read as a
+// silence clock that ran out, even though the turn it came from did.
+func TestDetachedWorkDoesNotEndOnItsOriginsSilence(t *testing.T) {
+	origin, stop, _ := idle.WithTimeout(t.Context(), time.Millisecond)
+	defer stop()
+	turn, cancel := context.WithCancel(origin)
+	defer cancel()
+	<-turn.Done()
+	lifetime, end := context.WithCancel(t.Context())
+	detached := New(lifetime, nil).Detached(turn)
+	work, finish := context.WithCancel(detached)
+	defer finish()
+	end()
+	<-work.Done()
+	if !idle.Expired(turn) || idle.Expired(detached) || idle.Expired(work) {
+		t.Fatalf("expired: turn=%v detached=%v work=%v", idle.Expired(turn), idle.Expired(detached), idle.Expired(work))
+	}
+}
+
 // testLedger opens a ledger that lives as long as the test.
 func testLedger(t *testing.T) *ledger.Ledger {
 	t.Helper()

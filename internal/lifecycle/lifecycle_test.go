@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"testing"
@@ -20,7 +21,7 @@ type runner struct {
 	prompts  int
 	resumes  int
 	stopped  bool
-	block    bool
+	block    bool // until the context ends; then err, or the context's error
 	err      error
 	progress []view.Progress
 	// during runs while the prompt is in flight, before it ends.
@@ -38,7 +39,7 @@ func (r *runner) Prompt(ctx context.Context, _ string, observe func(view.Progres
 	}
 	if r.block {
 		<-ctx.Done()
-		return "", nil, ctx.Err()
+		return "", nil, cmp.Or(r.err, ctx.Err())
 	}
 	return "plain", nil, r.err
 }
@@ -52,7 +53,7 @@ func (r *runner) PromptTurn(ctx context.Context, _ string, _ []harness.Media, _ 
 	}
 	if r.block {
 		<-ctx.Done()
-		return "", nil, ctx.Err()
+		return "", nil, cmp.Or(r.err, ctx.Err())
 	}
 	return "turn", []string{"did"}, r.err
 }
@@ -66,7 +67,7 @@ func (r *runner) ResumeTurn(ctx context.Context, _ permission.AskFunc, _ acphost
 	}
 	if r.block {
 		<-ctx.Done()
-		return "", nil, ctx.Err()
+		return "", nil, cmp.Or(r.err, ctx.Err())
 	}
 	return "resumed", nil, r.err
 }
