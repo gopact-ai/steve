@@ -705,6 +705,9 @@ go run ./e2e/fleet -scenario autonomous
 | `sweep: removed N orphaned worktree(s) on ...` | 清理没有活 attempt 持有的隔离工作树；启动及 node 连接时会触发检查。 |
 | `sweep: worktrees on <node>: <error>` | 该机器的孤儿工作树清扫失败；检查可达性、目录和文件权限。 |
 | `coordination: unavailable: local replica did not reach applied index ...` | 协调节点本机的账本副本落后于集群已提交的状态。写入在提交前最多等副本追上 5 秒，超时即放弃，这次写入没有提交，可以重试；激活业务代时等不到自己的写入 fence 也会放弃，副本追上后重新激活。持续出现时检查该节点与共识 leader 之间的 Raft 连接和本机磁盘。 |
+| `coordination: unavailable: no member took <动作> within 5s: ...` | 发往共识 leader 的集群调用（成员加入/移除、协调交接、改名等控制命令，读取集群状态和账本写入）5 秒内轮询了所有已知成员，没有成员接下：尚未选出 leader、成员不可达或正在交接领导权。本机执行控制命令途中失去 leader 身份或副本停止时，命令也会转给其他成员。命令沿用原 ID，已提交的部分按回执去重，可以原样重试；持续出现时检查成员之间的 Raft 与 peer HTTPS 连接。 |
+| `coordination: unavailable: snapshot of the application baseline for <节点> did not finish within ...; it may still finish later` | 加入成员前，共识 leader 为新成员生成账本基线快照，5 秒内没有完成就放弃这次加入；快照仍可能稍后完成，重试加入时等的是尚未完成的同一个快照。持续出现时检查 leader 的磁盘和账本大小。 |
+| `coordination: peer error: ...` | 对端返回了未分类的错误（peer RPC 以 HTTP 500、code `unclassified` 回复），不是请求本身的问题，不会自动重试，也不作为无效请求返回；按对端日志中的原始错误处理。 |
 | `gateway.owner_id is required for a console-only hub` | 独立控制台缺少 owner。设置稳定的 `gateway.owner_id`；控制台 token 用于认证，不能代替 owner 身份。 |
 | `能力或身份文件已变化，请先发送 /new` / `Capabilities or identity files changed` | 会话保存的能力指纹与当前装配结果不同。只有身份与平台说明的变化可以原地补发；MCP、技能或可见性配置变化，以及没有会话配置基线的旧会话（在引入基线之前最后一次对话的会话），都要求 `/new` 一次，之后新会话带基线，身份/平台说明的更新不再要求 `/new`。不要为了隐藏提示跳过校验。 |
 | `Authentication required`，但资源页 harness 可用 | 可执行程序存在/能启动不等于模型认证有效；检查 node 的登录环境、认证链接和隔离 home，尤其不要用裸环境启动 node/nodectl。 |
