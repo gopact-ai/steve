@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,5 +126,60 @@ func TestClientDoesNotRetryAnAnswerAboutTheRequest(t *testing.T) {
 	}
 	if n := peers.requests.Load(); n != 1 {
 		t.Fatalf("a conflicting join was sent %d times", n)
+	}
+}
+
+// An error the leader could not classify says nothing about whether another
+// attempt would succeed, so the call is not repeated; it reaches the caller
+// with the leader's text and as neither unavailable nor an invalid request.
+func TestClientDoesNotRetryAnErrorTheLeaderCouldNotClassify(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	peers.answer = func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(rpcFailure{Code: unclassifiedCode, Message: "leadership transfer timeout"})
+	}
+	peers.elected.Store(true)
+	client := newElectionClient(t, authority, peers, ClientConfig{})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	_, err := client.Join(t.Context(), JoinRequest{ID: "join-unclassified", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if err == nil || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "leadership transfer timeout") {
+		t.Fatalf("a join the leader failed with an unclassified error returned %v", err)
+	}
+	if n := peers.requests.Load(); n != 1 {
+		t.Fatalf("a join the leader failed with an unclassified error was sent %d times", n)
+	}
+}
+
+// A caller that gives up while the client waits for a leader gets its own
+// cancellation or deadline back, not a report that the cluster is
+// unavailable, and gets it when it gives up, not when the retry window ends.
+func TestClientReturnsTheCallersOwnContextError(t *testing.T) {
+	for name, cause := range map[string]error{"canceled": context.Canceled, "deadline": context.DeadlineExceeded} {
+		t.Run(name, func(t *testing.T) {
+			authority := newTestAuthority(t)
+			peers := newElectionPeers(t, authority)
+			client := newElectionClient(t, authority, peers, ClientConfig{})
+			const after = 300 * time.Millisecond
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if cause == context.DeadlineExceeded {
+				ctx, cancel = context.WithTimeout(ctx, after)
+				defer cancel()
+			} else {
+				time.AfterFunc(after, cancel)
+			}
+			started := time.Now()
+			_, err := client.Join(ctx, JoinRequest{ID: "join-" + name, Actor: "owner", Member: Member{NodeID: "node-4"}})
+			elapsed := time.Since(started)
+			if err != cause {
+				t.Fatalf("a join whose caller gave up without a leader returned %v, not %v", err, cause)
+			}
+			if elapsed > after+time.Second {
+				t.Fatalf("a join whose caller gave up after %s returned after %s", after, elapsed)
+			}
+		})
 	}
 }
