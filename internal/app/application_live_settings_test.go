@@ -123,11 +123,13 @@ func TestApplicationLiveSettingsPreserveNativeSessionAndExistingBudget(t *testin
 		t.Fatal("saving runtime policy restarted the application")
 	}
 	// A saved prompt timeout reaches the running coordinator: a silent turn
-	// ends on a saved 1s. A coordinator that kept its startup timeout would
+	// ends on a saved 3s, which leaves a turn prepared under -race room to
+	// reach its prompt. A coordinator that kept its startup timeout would
 	// leave the turn running past the bound.
 	const expiring = "console:live-timeout"
 	continuitySend(t, peer, expiring, "/project use workspace", "bind-timeout")
-	update(`{"gateway":{"prompt_timeout":"1s"}}`)
+	const timeout = 3 * time.Second
+	update(`{"gateway":{"prompt_timeout":"` + timeout.String() + `"}}`)
 	const bound = 20 * time.Second
 	started := time.Now()
 	status, body, err := peerRequestWithin(t, peer, bound, http.MethodPost, "/console/send", consoleapi.Submission{
@@ -135,14 +137,14 @@ func TestApplicationLiveSettingsPreserveNativeSessionAndExistingBudget(t *testin
 	})
 	elapsed := time.Since(started)
 	if err != nil {
-		t.Fatalf("a silent turn under a saved 1s prompt timeout did not end within %v: %v", bound, err)
+		t.Fatalf("a silent turn under a saved %v prompt timeout did not end within %v: %v", timeout, bound, err)
 	}
 	var failed struct {
 		Error string `json:"error"`
 	}
 	if status != http.StatusBadGateway || json.Unmarshal(body, &failed) != nil ||
-		!strings.Contains(failed.Error, context.DeadlineExceeded.Error()) || elapsed < time.Second {
-		t.Fatalf("silent turn under a saved 1s prompt timeout: %d after %v: %s", status, elapsed, body)
+		!strings.Contains(failed.Error, context.DeadlineExceeded.Error()) || elapsed < timeout {
+		t.Fatalf("silent turn under a saved %v prompt timeout: %d after %v: %s", timeout, status, elapsed, body)
 	}
 	if WaitPeerReady(t, peer).Generation != generation {
 		t.Fatal("ending a turn on its prompt timeout restarted the application")

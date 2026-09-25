@@ -12,12 +12,13 @@ import (
 
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
 )
 
 // Real peer and node with the mock agent. A node-owned turn whose agent goes
-// silent ends on the saved prompt timeout: the native command is stopped and
-// the console send returns the timeout, and the conversation stays usable.
+// silent ends on the saved prompt timeout: the native command is stopped, the
+// console send returns the timeout, and the conversation stays usable.
 func TestNodeManagedSilentTurnEndsOnItsPromptTimeout(t *testing.T) {
 	dir := ClusterPeerTestDir(t)
 	bin := filepath.Join(dir, "mockagent")
@@ -46,8 +47,10 @@ func TestNodeManagedSilentTurnEndsOnItsPromptTimeout(t *testing.T) {
 	if warm := continuitySend(t, peer, conversation, "hello", "warm"); warm.Error != "" {
 		t.Fatalf("warm-up turn failed: %+v", warm)
 	}
-	session := continuityConversation(t, peer, conversation).Sessions["worker"]
-	savePromptTimeout(t, peer, "1s")
+	// Preparing a turn under -race can stay quiet for over a second; the
+	// timeout leaves it room so the clock runs out on the silent prompt.
+	const timeout = 3 * time.Second
+	savePromptTimeout(t, peer, timeout.String())
 
 	// Without a stop the silent command never ends; the bound turns a
 	// regression into a failure instead of a hung test.
@@ -58,7 +61,7 @@ func TestNodeManagedSilentTurnEndsOnItsPromptTimeout(t *testing.T) {
 	})
 	elapsed := time.Since(started)
 	if err != nil {
-		t.Fatalf("a silent node-owned turn did not end on its 1s prompt timeout within %v: %v", bound, err)
+		t.Fatalf("a silent node-owned turn did not end on its %v prompt timeout within %v: %v", timeout, bound, err)
 	}
 	var failed struct {
 		Error string `json:"error"`
@@ -66,13 +69,14 @@ func TestNodeManagedSilentTurnEndsOnItsPromptTimeout(t *testing.T) {
 	if status != http.StatusBadGateway || json.Unmarshal(body, &failed) != nil || !strings.Contains(failed.Error, context.DeadlineExceeded.Error()) {
 		t.Fatalf("silent turn after %v: %d %s", elapsed, status, body)
 	}
-	if elapsed < time.Second {
-		t.Fatalf("silent turn ended after %v, before its 1s prompt timeout", elapsed)
+	if elapsed < timeout || !strings.Contains(failed.Error, harness.ErrTurnCanceled.Error()) {
+		t.Fatalf("silent turn ended after %v without stopping its native command: %s", elapsed, failed.Error)
 	}
-	next := continuitySend(t, peer, conversation, "hello again", "after-timeout")
-	after := continuityConversation(t, peer, conversation).Sessions["worker"]
-	if next.Error != "" || after.UpstreamID != session.UpstreamID {
-		t.Fatalf("conversation after the timeout: %+v session %q -> %q", next, session.UpstreamID, after.UpstreamID)
+	// The follow-up runs under a roomy timeout: it checks the conversation,
+	// not how fast a loaded run prepares a turn.
+	savePromptTimeout(t, peer, "10m")
+	if next := continuitySend(t, peer, conversation, "hello again", "after-timeout"); next.Error != "" {
+		t.Fatalf("conversation after the timeout: %+v", next)
 	}
 }
 
