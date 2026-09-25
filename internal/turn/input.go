@@ -31,14 +31,6 @@ func ParseInput(prompt string) ParsedInput {
 	return parsed
 }
 
-// ImmediateInput identifies work that must reach Handle while the current
-// turn is running. A syntactic @agent or /use agent prefix is skipped only
-// for classification; the coordinator still resolves and authorizes it.
-func ImmediateInput(input string) bool {
-	_, parsed := ParseAddressedInput(input)
-	return parsed.Interrupt || parsed.Control()
-}
-
 // ParseInput uses the same catalog selector as Handle without mutating the
 // conversation. Transports must use it when classifying addressed controls:
 // aliases and selectors without separating whitespace are valid too.
@@ -66,6 +58,14 @@ func ParseAddressedInput(input string) (string, ParsedInput) {
 		}
 	}
 	return address, ParseInput(prompt)
+}
+
+// Immediate reports whether the input is work that must reach Handle while
+// the current turn is running: an interrupt or a control. The @agent or
+// /use agent address a parser returns beside it is skipped only for this
+// classification; the coordinator still resolves and authorizes it.
+func (parsed ParsedInput) Immediate() bool {
+	return parsed.Interrupt || parsed.Control()
 }
 
 func (parsed ParsedInput) Control() bool {
