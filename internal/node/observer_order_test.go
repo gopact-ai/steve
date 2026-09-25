@@ -160,3 +160,45 @@ func TestSlowDriftObserverDelaysNoAdvert(t *testing.T) {
 		t.Fatal("drift was never heard")
 	}
 }
+
+// A closed registry reports nothing more: what was still queued behind a
+// slow observer is dropped rather than written after the hub let go.
+func TestClosedRegistryDeliversNothingStillQueued(t *testing.T) {
+	r := NewRegistry("hub-1", map[string]Config{"n": {}})
+	gate := newObserverGate(t)
+	var mu sync.Mutex
+	var heard []bool
+	r.SetObserver(func(s Status) {
+		if s.Up {
+			gate.hold()
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		heard = append(heard, s.Up)
+	})
+	r.mu.Lock()
+	r.noticeLocked(Status{Name: "n", Up: true})
+	r.noticeLocked(Status{Name: "n"})
+	r.mu.Unlock()
+	gate.waitEntered(t)
+	r.Close()
+	gate.open()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		r.notices.mu.Lock()
+		running := r.notices.running
+		r.notices.mu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the delivery under way never finished")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(heard) != 1 || !heard[0] {
+		t.Fatalf("heard up=%v after close, want only the delivery already under way", heard)
+	}
+}
