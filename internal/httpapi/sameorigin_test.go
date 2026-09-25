@@ -66,14 +66,17 @@ func TestLoopbackConsoleRefusesOtherSites(t *testing.T) {
 
 // The Host check follows the address the console is bound to, not how the
 // configuration spells it: each of these listens on loopback, so a rebound
-// Host is refused even when the page has the owner's token.
+// Host is refused even when the page has the owner's token. LOCALHOST and
+// localhost. spell localhost itself, which the hosts file answers, so they
+// must resolve; only a subdomain of localhost is left to a resolver that may
+// not know it.
 func TestLoopbackBoundConsoleRefusesReboundHostsHoweverItIsNamed(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
 	for _, addr := range []string{"LOCALHOST:0", "localhost.:0", "foo.localhost:0"} {
 		t.Run(addr, func(t *testing.T) {
 			server, err := NewServer(model, ServerConfig{Addr: addr, Token: testToken})
 			var unresolved *net.DNSError
-			if errors.As(err, &unresolved) {
+			if addr == "foo.localhost:0" && errors.As(err, &unresolved) {
 				t.Skipf("this platform does not resolve %s: %v", addr, err)
 			}
 			if err != nil {
