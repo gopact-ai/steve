@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -70,7 +71,7 @@ func TestGatewayDurableInputRecoversAfterCompletionBeforeReply(t *testing.T) {
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -99,7 +100,7 @@ func TestGatewayDurableInputRecoversUnknownDispatchByOriginalReceipt(t *testing.
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_input_dispatch`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if p.calls.Load() != 1 || p.resumes.Load() != 1 || ch.results.Load() != 1 {
@@ -128,7 +129,7 @@ func TestGatewayDurableReplyUnknownStaysPendingAndVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, channel.ErrOutcomeUnknown) {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, channel.ErrOutcomeUnknown) {
 			t.Fatalf("unknown delivery hidden: %v", err)
 		}
 	}
@@ -166,7 +167,7 @@ func TestGatewayCompletedAttemptKeepsItsOriginalInputOwner(t *testing.T) {
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_owned_reply`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if ch.results.Load() != 1 {
@@ -175,18 +176,43 @@ func TestGatewayCompletedAttemptKeepsItsOriginalInputOwner(t *testing.T) {
 }
 
 // processAcceptedFixture accepts msg and consumes it on the calling
-// goroutine. A dispatch that must be recovered from its admitted attempt
-// resumes through driver, as ingress resumes it through the driver
-// SetIngressLifetime wires.
+// goroutine. Its claim joins a conversation already being served and fails
+// with channel.ErrDeliveryQueued, without waiting, when no slot is free. A
+// dispatch that must be recovered from its admitted attempt resumes through
+// driver, as ingress resumes it through the driver SetIngressLifetime wires.
 func (g *Gateway) processAcceptedFixture(msg feishu.InboundMessage, driver RecoveryDriver) error {
 	ctx, key, input := context.Background(), "gateway-input/"+msg.MessageID, gatewayInput{Message: msg}
 	if err := g.acceptInput(ctx, key, input); err != nil {
 		return err
 	}
-	claim, err := g.claimOrdinary(ctx, key, conversationID(input.Message), true, true)
+	claim, err := g.claimOrdinary(ctx, key, conversationID(input.Message), true)
 	if err != nil {
 		return err
 	}
 	defer claim.close()
 	return g.consumeInput(ctx, g.recoveryLedger, key, input, driver, claim)
+}
+
+// recoverQueuedFixture claims every pending input through claimQueued, as
+// ReconcileQueued does, and runs each one on the calling goroutine, oldest
+// first. Claims do not wait for capacity: an input that cannot be claimed
+// contributes its claim error, such as channel.ErrDeliveryQueued. It wraps
+// each input's error as "gateway recovery <id>" and joins them in that order.
+func (g *Gateway) recoverQueuedFixture(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error) error {
+	inputs, err := pendingGatewayInputs(ctx, book)
+	if err != nil {
+		return err
+	}
+	var result error
+	for _, receipt := range inputs {
+		run, release, err := g.claimQueued(ctx, book, receipt, driver, revive)
+		if err == nil {
+			err = run()
+			release()
+		}
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("gateway recovery %s: %w", receipt.ID, err))
+		}
+	}
+	return result
 }

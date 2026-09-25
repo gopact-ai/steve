@@ -130,6 +130,11 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	}
 	p.journal, err = journal.New(s.conf().StateDir, req.Stream, journal.Options{})
 	if err != nil {
+		// Without a journal the process still serves this attachment; it
+		// only cannot be resumed. resumeErr reports it unresumable, so a
+		// lost link ends it at once and the hub's resume is refused: the
+		// same end as a journal that fails mid-run, which is why the open
+		// is not refused here.
 		slog.Warn(fmt.Sprintf("steve-node: stream %s not resumable: %v", req.Stream, err), "stream", req.Stream)
 	}
 	// Publish only after the initial attachment exists, so an immediate

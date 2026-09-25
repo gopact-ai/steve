@@ -301,8 +301,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	// staring at nothing until the next change. A client reconnecting names
 	// the last event it received, by the Last-Event-ID an EventSource sends
 	// or by the after parameter of one it opened anew, and is replayed only
-	// what followed it. One the stream cannot continue is first sent a
-	// reset event, telling it to re-read /state.
+	// what followed it. A client whose stream cannot be continued is first
+	// sent a reset event, telling it to re-read /state.
 	resume, stream, stop := s.model.SubscribeAfter(r.Context(), r.Header.Get("Last-Event-ID"), r.URL.Query().Get("after"))
 	defer stop()
 	if resume.Reset {
