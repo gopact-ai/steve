@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	appconfig "github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/tui"
 	"net/http"
 	neturl "net/url"
@@ -92,7 +93,7 @@ func answered(surface, url string, res *http.Response) error {
 
 // defaultReadModelURL is where `steve run` puts the read model unless the
 // config says otherwise.
-const defaultReadModelURL = "http://127.0.0.1:7710"
+const defaultReadModelURL = "http://" + appconfig.DefaultConsoleAddr
 
 // say sends one line to a running gateway's console and prints the reply:
 // the page's send box, from a shell.

@@ -3,10 +3,12 @@ package debugapi
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/gateway"
@@ -112,6 +114,37 @@ func TestServeRejectsNonLoopback(t *testing.T) {
 	}
 	if err := checkLoopback("127.0.0.1:7788"); err != nil {
 		t.Fatalf("loopback rejected: %v", err)
+	}
+}
+
+// The endpoint serves only from a loopback IP: an address that names
+// loopback but binds beyond it is refused, and what it bound is closed.
+// listen stands in for the resolver, so a name binds where the test says on
+// every platform; the context is already done, so a served endpoint returns.
+func TestServeRefusesABindingBeyondLoopback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for bind, refused := range map[string]bool{"0.0.0.0:0": true, "127.0.0.1:0": false} {
+		var bound *net.TCPListener
+		listen := func(network, _ string) (net.Listener, error) {
+			listener, err := net.Listen(network, bind)
+			if err == nil {
+				bound = listener.(*net.TCPListener)
+			}
+			return listener, err
+		}
+		err := serve(ctx, "localhost:7788", &fakeGateway{}, Defaults{}, listen)
+		if refused != (err != nil) || refused && !strings.Contains(err.Error(), "localhost:7788") {
+			t.Errorf("localhost:7788 bound to %s: err = %v, want refused: %v", bind, err, refused)
+		}
+		if bound == nil {
+			t.Fatalf("localhost:7788: nothing was bound to %s", bind)
+		}
+		_ = bound.SetDeadline(time.Now())
+		if _, err := bound.Accept(); !errors.Is(err, net.ErrClosed) {
+			_ = bound.Close()
+			t.Errorf("localhost:7788 bound to %s: the listener was left open (%v)", bind, err)
+		}
 	}
 }
 

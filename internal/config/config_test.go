@@ -153,6 +153,57 @@ func TestLoadDerivesHomePathAndTrimsOwner(t *testing.T) {
 	}
 }
 
+// The console listens on its address without the blanks around it, a blank
+// address is the default one, and a token of blanks is no token.
+func TestLoadTrimsTheConsoleAddressAndTreatsABlankTokenAsUnset(t *testing.T) {
+	for addr, want := range map[string]string{`" 127.0.0.1:7710 "`: "127.0.0.1:7710", `"\t[::1]:7710\n"`: "[::1]:7710", `"   "`: "127.0.0.1:7710"} {
+		cfg, err := Load(writeConfig(t, `{
+			"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+			"gateway": {"state_path": "/tmp/steve-state.json", "read_model_addr": `+addr+`, "read_model_token": " \t "}
+		}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Gateway.ReadModelAddr != want || cfg.Gateway.ReadModelToken != "" {
+			t.Errorf("read_model_addr %s loaded as %q with token %q; want %q and no token", addr, cfg.Gateway.ReadModelAddr, cfg.Gateway.ReadModelToken, want)
+		}
+	}
+}
+
+// A console token is what lies between the blanks around it: a header value
+// arrives without its outer blanks, so a token that kept them could only be
+// presented in ?token=.
+func TestLoadTrimsTheBlanksAroundTheConsoleToken(t *testing.T) {
+	for _, token := range []string{`" owner-token"`, `"owner-token\t"`, `"\nowner-token "`} {
+		cfg, err := Load(writeConfig(t, `{
+			"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+			"gateway": {"state_path": "/tmp/steve-state.json", "read_model_token": `+token+`}
+		}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Gateway.ReadModelToken != "owner-token" {
+			t.Errorf("read_model_token %s loaded as %q, want %q", token, cfg.Gateway.ReadModelToken, "owner-token")
+		}
+	}
+}
+
+// ConsoleAddr and ConsoleToken are the rule Load applies to the console's
+// address and token: the blanks around each go, a blank address is the
+// default one, and blanks inside a token stay part of it.
+func TestConsoleAddrAndTokenTrimTheSettings(t *testing.T) {
+	for raw, want := range map[string]string{"": DefaultConsoleAddr, " \t": DefaultConsoleAddr, " [::1]:8800\n": "[::1]:8800", "LOCALHOST:8800": "LOCALHOST:8800"} {
+		if got := ConsoleAddr(raw); got != want {
+			t.Errorf("ConsoleAddr(%q) = %q, want %q", raw, got, want)
+		}
+	}
+	for raw, want := range map[string]string{" \t ": "", "\towner-token ": "owner-token", "owner token": "owner token"} {
+		if got := ConsoleToken(raw); got != want {
+			t.Errorf("ConsoleToken(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestStarterSaveOmitsHomePath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := Save(path, StarterFeishu(Feishu{AppID: "app", AppSecret: "secret", OwnerOpenID: "ou_me"})); err != nil {

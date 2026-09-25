@@ -74,8 +74,15 @@ type Server struct {
 	stopRequests   context.CancelFunc
 }
 
-// NewServer binds immediately so the caller knows the URL before serving.
+// NewServer binds immediately so the caller knows the URL before serving. It
+// refuses an address that disagrees with the IP it bound, as
+// sameorigin.CheckBound judges, and releases what it bound.
 func NewServer(model Model, cfg ServerConfig) (*Server, error) {
+	return newServer(model, cfg, net.Listen)
+}
+
+// newServer is NewServer binding through listen.
+func newServer(model Model, cfg ServerConfig, listen func(network, address string) (net.Listener, error)) (*Server, error) {
 	addr := strings.TrimSpace(cfg.Addr)
 	if addr == "" {
 		addr = "127.0.0.1:0"
@@ -83,13 +90,17 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	if strings.TrimSpace(cfg.Token) == "" {
 		return nil, fmt.Errorf("console on %s needs a token: it grants owner operations", addr)
 	}
-	listener, err := net.Listen("tcp", addr)
+	listener, err := listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
+	if err := sameorigin.CheckBound(addr, listener.Addr()); err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("console: %w", err)
+	}
 	requestContext, stopRequests := context.WithCancel(context.Background())
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
-	return &Server{model: model, token: cfg.Token, reach: sameorigin.Reach(sameorigin.LoopbackListener(addr)), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
+	return &Server{model: model, token: cfg.Token, reach: sameorigin.ReachOf(listener.Addr()), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
