@@ -87,6 +87,24 @@ func TestClientRoutesACallThroughALeaderElection(t *testing.T) {
 	}
 }
 
+// Without an elected leader a routed call gives up once its retry window
+// ends, as unavailable, and says what it last heard.
+func TestClientGivesUpWhenNoLeaderIsElectedWithinItsRetryWindow(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	const window = 300 * time.Millisecond
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: window})
+	started := time.Now()
+	_, err := client.Join(t.Context(), JoinRequest{ID: "join-without-leader", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	elapsed := time.Since(started)
+	if !errors.Is(err, ErrUnavailable) || !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("a join without a leader returned %v", err)
+	}
+	if elapsed < window || elapsed > window+time.Second {
+		t.Fatalf("a join without a leader gave up after %s; its retry window is %s", elapsed, window)
+	}
+}
+
 // Only a refusal that ends once the cluster settles is retried: an answer
 // about the request itself comes back after one call.
 func TestClientDoesNotRetryAnAnswerAboutTheRequest(t *testing.T) {
