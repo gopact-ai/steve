@@ -115,7 +115,7 @@ func confirmedUnprojectedStop(t *testing.T, f *stopRegistryFixture) attempt.Reco
 // A stop pass whose context has ended starts none of the writes that
 // finish a confirmed stop — accounting, resolution, the projection mark —
 // and the next pass finishes them.
-func TestApplicationStopProjectionStaysWithinItsPass(t *testing.T) {
+func TestApplicationStopEndedPassLeavesConfirmedStopToNextPass(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated ACP peer: %v %s", err, output)
