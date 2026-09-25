@@ -80,7 +80,7 @@ func (s *Service) stopControl(input string) bool {
 
 func (s *Service) immediate(input string) bool {
 	_, parsed := s.parseInput(input)
-	return parsed.Interrupt || parsed.Control()
+	return parsed.Immediate()
 }
 
 func copyExchange(e Exchange) Exchange {

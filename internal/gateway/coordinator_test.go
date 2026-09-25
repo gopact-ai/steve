@@ -31,7 +31,7 @@ func TestGatewayOverACoordinatorThatKnowsNothing(t *testing.T) {
 	g := New(idleCoordinator{})
 	for _, line := range []string{"hello", "!now", "/cancel", "@builder /cancel", "/use builder /cancel", "@builder/cancel", "@builder /every 30m inspect", "/schedules"} {
 		_, parsed := turn.ParseAddressedInput(line)
-		if got, want := g.immediateInput(line), parsed.Interrupt || parsed.Control(); got != want {
+		if got, want := g.immediateInput(line), parsed.Immediate(); got != want {
 			t.Errorf("%q immediate = %v; want %v", line, got, want)
 		}
 		if got, want := g.scheduleControl(line), parsed.ScheduleControl(); got != want {
@@ -94,7 +94,7 @@ func (p *catalogCoordinator) Handle(ctx context.Context, req turn.Request) (turn
 // conversation is running instead of queueing behind it.
 func TestGatewayClassifiesALineAsItsCoordinatorParsesIt(t *testing.T) {
 	const stop = "@codex/cancel"
-	if _, parsed := turn.ParseAddressedInput(stop); parsed.Interrupt || parsed.Control() {
+	if _, parsed := turn.ParseAddressedInput(stop); parsed.Immediate() {
 		t.Fatalf("the syntax alone already reads %q as a stop", stop)
 	}
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
