@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // SetStopRegistrar connects explicit task Pause/Cancel to its native session.
 // The registrar owns task scope admission; inspection contexts can be no-ops.
-// Manager.Stop and ordinary context cancellation keep their detach semantics.
+// Manager.Stop and ordinary context cancellation keep their detach semantics;
+// a turn's silence clock running out stops the command (endObservation).
 func (m *Manager) SetStopRegistrar(register func(context.Context, string, func(context.Context) error) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -91,6 +94,23 @@ func (s *managedSession) stopExecution(ctx context.Context) (stopErr error) {
 
 func stopReceiptMatches(state nodewire.SessionState, request nodewire.SessionRequest) bool {
 	return state.ID == request.ID && state.Binding == request.Binding
+}
+
+// endObservation settles how an observation ended. An observer cut off by
+// the turn's silence clock stops the native command instead of detaching:
+// the turn timed out, and nobody else will come back for it. Without a stop
+// receipt the observation stays unconfirmed.
+func (s *managedSession) endObservation(ctx context.Context, request nodewire.SessionRequest, output *string, activity *[]string, runErr *error) {
+	silent := errors.Is(*runErr, ErrStopUnconfirmed) && idle.Expired(ctx)
+	if silent {
+		if err := s.stopExecution(context.WithoutCancel(ctx)); err != nil {
+			*runErr = errors.Join(*runErr, err)
+		}
+	}
+	s.reconcileStop(request, output, activity, runErr)
+	if silent && *runErr != nil && acphost.PromptSettled(*runErr) {
+		*runErr = fmt.Errorf("%w: %w", context.DeadlineExceeded, *runErr)
+	}
 }
 
 // A stop receipt can arrive while an observation RPC is being cancelled.
