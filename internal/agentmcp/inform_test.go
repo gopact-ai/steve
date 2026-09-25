@@ -35,6 +35,31 @@ func TestPlatformOverviewIsAvailableThroughMCP(t *testing.T) {
 	}
 }
 
+// The memory help describes steve_recall as it behaves: the project is
+// searched only when the conversation is bound to one other than Steve's
+// home, limit is capped at 50, scores compare only within a scope, and an
+// empty query lists facts in stored order.
+func TestMemoryHelpDescribesRecallAsItBehaves(t *testing.T) {
+	help, err := helpText("memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recall string
+	for line := range strings.Lines(help) {
+		if strings.HasPrefix(line, "- `steve_recall(") {
+			recall = line
+		}
+	}
+	if recall == "" {
+		t.Fatalf("memory help has no steve_recall entry:\n%s", help)
+	}
+	for _, condition := range []string{"绑了项目", "主目录", "最多 50", "同一层内可比", "存储顺序"} {
+		if !strings.Contains(recall, condition) {
+			t.Errorf("steve_recall entry does not say %q: %s", condition, recall)
+		}
+	}
+}
+
 type nodeAddCall struct{ name, address, level, hubURL string }
 
 type capturingFleeter struct {
