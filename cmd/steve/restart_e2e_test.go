@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/stableport"
 )
 
 // isolatedHub is a real Hub built from this tree and run on its own port,
@@ -39,7 +40,7 @@ func startIsolatedHub(t *testing.T) *isolatedHub {
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v %s", err, out)
 	}
-	reserve, err := net.Listen("tcp", "127.0.0.1:0")
+	reserve, err := stableport.Listen(net.Listen, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

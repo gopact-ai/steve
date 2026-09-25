@@ -17,6 +17,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/stableport"
 )
 
 func TestNodeCommandReexecutesAndKeepsDurableCommandIdentity(t *testing.T) {
@@ -28,7 +29,7 @@ func TestNodeCommandReexecutesAndKeepsDurableCommandIdentity(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build node: %v %s", err, out)
 	}
-	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	reserved, err := stableport.Listen(net.Listen, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

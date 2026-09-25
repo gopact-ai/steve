@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/stableport"
 	"github.com/hashicorp/raft"
 )
 
@@ -33,7 +34,7 @@ func newTestCluster(t *testing.T, count int, applications ...func(string, string
 		cfg.LeaderLeaseTimeout = 90 * time.Millisecond
 		cfg.CommitTimeout = 10 * time.Millisecond
 		cfg.SnapshotInterval = 20 * time.Second
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := stableport.Listen(net.Listen, "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
