@@ -24,7 +24,7 @@
 ./steve peer --config /home/me/steve-service/config.json
 ```
 
-默认监听端口在首次启动时从 20000–29999 中随机选取（不含 SSH 接入使用的 25407–25426，低于 Linux 与 macOS 的系统临时端口范围，也不进入 Kubernetes NodePort 的默认范围 30000–32767），之后持久保存，重启继续使用；连续 64 次遇到端口被占用时改由系统分配。控制台始终绑定 loopback；地址见日志 `UI available at` 或输出指定的 `endpoint_file`。从另一台机器访问时，用 SSH 本地端口转发连接该地址，并使用 `token_file` 中的本地访问凭据登录。Raft 和 peer 通信沿用集群证书验证；初始化不会开启自动容灾。
+默认监听端口在首次启动时从 20000–29999 中随机选取（不含 SSH 接入使用的 25407–25426，低于 Linux 与 macOS 默认的系统临时端口范围，也不进入 Kubernetes NodePort 的默认范围 30000–32767），之后持久保存，重启继续使用；范围内找不到空闲端口时改由系统分配，并在日志中警告。此前安装的节点保留原来的端口。控制台始终绑定 loopback；地址见日志 `UI available at` 或输出指定的 `endpoint_file`。从另一台机器访问时，用 SSH 本地端口转发连接该地址，并使用 `token_file` 中的本地访问凭据登录。Raft 和 peer 通信沿用集群证书验证；初始化不会开启自动容灾。
 
 独立执行节点的 owner 绑定使用初始化输出的 **`cluster_id`**，不是 `node_id` 或配置文件中的 `gateway.hub_id`。为新执行节点配置 `hubs` 时使用该集群 ID，并把节点地址及其访问凭据配置到 hub 的 `nodes` 中。已有节点更换 owner 应使用现有的 `steve-node adopt` 流程，先确认旧 owner 已停止；`peer-init` 不会接管或重启它们。完整副本节点继续按[桌面多机接入流程](desktop.md)加入。
 

@@ -18,8 +18,10 @@ import (
 
 // A port the kernel picks for ":0" comes from its ephemeral range, which
 // it keeps handing to other sockets while the process is down. Ports from
-// First to Last sit below every ephemeral range (Linux hands out 32768 and
-// up, macOS 49152 and up), so the kernel never gives one away on its own.
+// First to Last sit below the default ephemeral ranges (Linux hands out
+// 32768 and up, macOS 49152 and up), so with those defaults the kernel
+// never gives one away on its own; a Linux ip_local_port_range lowered
+// into the range undoes that.
 // Last also stops short of the Kubernetes NodePort default range
 // (30000-32767): kube-proxy forwards those ports on a node without holding
 // a socket, so a bind cannot find one in use, yet connections to it would

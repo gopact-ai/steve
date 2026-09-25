@@ -20,10 +20,11 @@ type Linker interface {
 }
 
 // The link binds this machine's listeners on the target's loopback at one
-// of these ports. They sit below every ephemeral range (Linux hands out
-// 32768 and up, macOS 49152 and up), so an outgoing connection on the
-// target cannot take a port while the session is down; the target's own
-// node ports are excluded by the backend when it picks.
+// of these ports. They sit below the default ephemeral ranges (Linux hands
+// out 32768 and up, macOS 49152 and up), so an outgoing connection on a
+// target with those defaults cannot take a port while the session is down;
+// the target's own node ports are excluded by the backend when it picks,
+// and stableport leaves the window out of the ports it picks.
 const (
 	FirstLoopbackPort = stableport.LinkFirst
 	LastLoopbackPort  = stableport.LinkLast
