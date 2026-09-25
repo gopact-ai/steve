@@ -8,7 +8,7 @@ func TestScheduleCommandsAreImmediateControls(t *testing.T) {
 		"/schedules", "/schedules cancel 1", "/schedules retry 1",
 		"@codex /schedules confirm 1", "@codex /every 1h check",
 	} {
-		if !ImmediateInput(input) {
+		if _, parsed := ParseAddressedInput(input); !parsed.Immediate() {
 			t.Errorf("schedule control must not wait for an agent or become a quoted prompt: %q", input)
 		}
 	}
