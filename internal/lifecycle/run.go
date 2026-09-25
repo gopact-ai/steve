@@ -734,8 +734,10 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 	}
 	cancelled := ctx.Err() != nil
 	if settled && idle.Expired(ctx) {
-		// The turn's silence clock stopped the prompt: a timeout the
-		// attempt ends on, written on a context the clock did not end.
+		// The turn's silence clock ran out on a settled prompt: the
+		// attempt ends on what the prompt settled with — a timeout for a
+		// prompt the clock stopped, a completion for a result that came
+		// first — written on a context the clock did not end.
 		var stop context.CancelFunc
 		ctx, stop = Cleanup(ctx)
 		defer stop()
