@@ -47,10 +47,11 @@ func (o *observedStep) requireEnded(t *testing.T) {
 	}
 }
 
-// reportingSessions open a session that reports two snapshots and then
+// reportingSessions open a session that reports its snapshots and then
 // ends its prompt the way end says.
 type reportingSessions struct {
-	end func(context.Context) (string, error)
+	reports []view.Progress
+	end     func(context.Context) (string, error)
 }
 
 func (s reportingSessions) OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error) {
@@ -62,8 +63,9 @@ type reportingRunner reportingSessions
 
 func (reportingRunner) ID() string { return "reporting-test" }
 func (r reportingRunner) Prompt(ctx context.Context, _ string, progress func(view.Progress)) (string, []string, error) {
-	progress(view.Progress{Answer: "working"})
-	progress(view.Progress{Answer: "working… done"})
+	for _, p := range r.reports {
+		progress(p)
+	}
 	answer, err := r.end(ctx)
 	return answer, nil, err
 }
@@ -84,13 +86,33 @@ func TestAgentRunnerEndsEveryStepWithItsLastSnapshot(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			sessions := reportingSessions{end: func(ctx context.Context) (string, error) { return end(ctx, cancel) }}
+			sessions := reportingSessions{
+				reports: []view.Progress{{Answer: "working"}, {Answer: "working… done"}},
+				end:     func(ctx context.Context) (string, error) { return end(ctx, cancel) },
+			}
 			runner := NewAgentRunner(sessions, nil, testRoster(t, bothNodes()))
 			var seen observedStep
 			runner.SetObserver(seen.observe)
 			_, _ = runner.RunStep(ctx, StepRequest{Agent: "builder", Workspace: t.TempDir(), Goal: "work"})
 			seen.requireEnded(t)
 		})
+	}
+}
+
+// A step whose prompt reported nothing has no snapshot to end with, and
+// sends none: an empty one would replace what the step last showed.
+func TestAgentRunnerEndsASilentStepWithNothing(t *testing.T) {
+	sessions := reportingSessions{end: func(context.Context) (string, error) { return "done", nil }}
+	runner := NewAgentRunner(sessions, nil, testRoster(t, bothNodes()))
+	var seen observedStep
+	runner.SetObserver(seen.observe)
+	if _, err := runner.RunStep(t.Context(), StepRequest{Agent: "builder", Workspace: t.TempDir(), Goal: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	seen.mu.Lock()
+	defer seen.mu.Unlock()
+	if len(seen.calls) != 0 {
+		t.Fatalf("observed %+v, want nothing from a step that reported nothing", seen.calls)
 	}
 }
 
