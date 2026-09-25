@@ -292,7 +292,9 @@ func (s *Service) wait(ctx context.Context, future raft.Future) error {
 		return nil
 	case errors.Is(err, raft.ErrNotLeader):
 		return fmt.Errorf("%w: leader is %s", ErrNotLeader, s.Status().LeaderID)
-	case errors.Is(err, raft.ErrLeadershipLost), errors.Is(err, raft.ErrRaftShutdown), errors.Is(err, raft.ErrEnqueueTimeout):
+	// A leader rejects new work while its own leadership transfer runs; the
+	// rejection ends with the transfer.
+	case errors.Is(err, raft.ErrLeadershipLost), errors.Is(err, raft.ErrRaftShutdown), errors.Is(err, raft.ErrEnqueueTimeout), errors.Is(err, raft.ErrLeadershipTransferInProgress):
 		return fmt.Errorf("%w: %s", ErrUnavailable, err)
 	default:
 		return err
