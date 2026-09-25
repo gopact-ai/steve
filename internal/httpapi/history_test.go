@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
@@ -46,15 +45,11 @@ func TestHistoryHTTPContract(t *testing.T) {
 	if _, err := book.Begin(t.Context(), "ten", "test", "open", "test", nil); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal([]readmodel.Observation{{At: now.Add(-time.Hour), Kind: "node.up", Subject: "nine"}})
-	if err != nil {
+	store := readmodel.Observations{Book: book}
+	if err := store.Save(t.Context(), 1, []readmodel.Observation{{At: now.Add(-time.Hour), Kind: "node.up", Subject: "nine"}}, 0); err != nil {
 		t.Fatal(err)
 	}
-	doc := book.Document("history-http-observations")
-	if err := doc.Save(raw); err != nil {
-		t.Fatal(err)
-	}
-	model := readmodel.New(readmodel.Sources{Ledger: readmodel.Ledger{Book: book}, Observations: doc})
+	model := readmodel.New(readmodel.Sources{Ledger: readmodel.Ledger{Book: book}, Observations: store})
 	if err := model.LoadObservations(); err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +82,17 @@ func TestHistoryHTTPRejectsInvalidAndLegacyPagination(t *testing.T) {
 }
 
 func TestHistoryHTTPExpiredCursorAndSourceFailure(t *testing.T) {
-	doc := &filedoc.Document{Path: t.TempDir() + "/observations.json"}
-	obs := []readmodel.Observation{{At: time.Now().UTC(), Kind: "node.up", Subject: "first"}, {At: time.Now().UTC(), Kind: "node.up", Subject: "second"}}
-	raw, _ := json.Marshal(obs)
-	if err := doc.Save(raw); err != nil {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	model := readmodel.New(readmodel.Sources{Observations: doc})
+	t.Cleanup(func() { _ = book.Close() })
+	store := readmodel.Observations{Book: book}
+	obs := []readmodel.Observation{{At: time.Now().UTC(), Kind: "node.up", Subject: "first"}, {At: time.Now().UTC(), Kind: "node.up", Subject: "second"}}
+	if err := store.Save(t.Context(), 1, obs, 0); err != nil {
+		t.Fatal(err)
+	}
+	model := readmodel.New(readmodel.Sources{Observations: store})
 	if err := model.LoadObservations(); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +101,8 @@ func TestHistoryHTTPExpiredCursorAndSourceFailure(t *testing.T) {
 	if cursor == "" {
 		t.Fatal("missing continuation")
 	}
-	if err := doc.Save([]byte("[]")); err != nil {
+	// Retention forgets both observations the cursor was pinned to.
+	if err := store.Save(t.Context(), 3, []readmodel.Observation{{At: time.Now().UTC(), Kind: "node.up", Subject: "third"}}, 3); err != nil {
 		t.Fatal(err)
 	}
 	if err := model.LoadObservations(); err != nil {
