@@ -90,11 +90,11 @@ func TestTaskRecordSmallWritesIgnoreTenThousandHistoricalAttempts(t *testing.T) 
 			bounded("meta", func() error { title := "new title"; _, err := s.SetMeta(root.ID, MetaPatch{Title: &title}); return err })
 			ended := time.Now().UTC()
 			bounded("settle", func() error {
-				return s.SettleAttempt(root.ID, "current", "turn", ended, OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 7}, Reported: true})
+				return s.SettleAttempt(t.Context(), root.ID, "current", "turn", ended, OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 7}, Reported: true})
 			})
 			before := len(replicated.payloads)
 			bounded("settle-retry", func() error {
-				return s.SettleAttempt(root.ID, "current", "turn", ended, OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 7}, Reported: true})
+				return s.SettleAttempt(t.Context(), root.ID, "current", "turn", ended, OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 7}, Reported: true})
 			})
 			if len(replicated.payloads) != before {
 				t.Fatal("identical settlement produced another mutation")

@@ -52,7 +52,7 @@ func TestParallelReservedExecutionsHaveIndependentAccountingAndSharedBudget(t *t
 		if _, err := s.ReserveAttempt(token, first.ExecutionID, first.TurnID, first.Member, first.Node, first.StartedAt); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.SettleAttempt(parent.ID, first.ExecutionID, first.TurnID, start.Add(time.Second), OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 7, Output: 3}, Reported: true}); err != nil {
+		if err := s.SettleAttempt(t.Context(), parent.ID, first.ExecutionID, first.TurnID, start.Add(time.Second), OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 7, Output: 3}, Reported: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -69,7 +69,7 @@ func TestParallelReservedExecutionsHaveIndependentAccountingAndSharedBudget(t *t
 	if _, err := s.ReserveAttempt(token, "late", "late", "worker", "node-a", start); err == nil {
 		t.Fatal("old authorization admitted a new execution")
 	}
-	if err := s.SettleAttempt(parent.ID, second.ExecutionID, second.TurnID, start.Add(time.Second), OutcomeCancelled, RecoveryUsage{Tokens: Tokens{Input: 5}, Reported: true}); err != nil {
+	if err := s.SettleAttempt(t.Context(), parent.ID, second.ExecutionID, second.TurnID, start.Add(time.Second), OutcomeCancelled, RecoveryUsage{Tokens: Tokens{Input: 5}, Reported: true}); err != nil {
 		t.Fatal(err)
 	}
 	tracked, _ = s.Get(parent.ID)
@@ -131,7 +131,7 @@ func TestIndependentAccountingDoesNotHideOrCloseOtherOpenExecutions(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	if err := s.SettleAttempt(tracked.ID, "parallel-b", "parallel-b", time.Now(), OutcomeOK, RecoveryUsage{}); err != nil {
+	if err := s.SettleAttempt(t.Context(), tracked.ID, "parallel-b", "parallel-b", time.Now(), OutcomeOK, RecoveryUsage{}); err != nil {
 		t.Fatal(err)
 	}
 	if running, ok := s.Running("chat", "parent"); !ok || running.ID != tracked.ID {
@@ -162,7 +162,7 @@ func TestIndependentAccountingDoesNotHideOrCloseOtherOpenExecutions(t *testing.T
 	if err := s.BindAttempt(token, "next-chat", "next-turn"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SettleAttempt(tracked.ID, "parallel-a", "parallel-a", time.Now(), OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 3}, Reported: true}); err != nil {
+	if err := s.SettleAttempt(t.Context(), tracked.ID, "parallel-a", "parallel-a", time.Now(), OutcomeOK, RecoveryUsage{Tokens: Tokens{Input: 3}, Reported: true}); err != nil {
 		t.Fatal(err)
 	}
 	after, _ = s.Get(tracked.ID)

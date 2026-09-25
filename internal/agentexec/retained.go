@@ -184,7 +184,7 @@ func (r *Runner) resumeAttempt(parent context.Context, record attempt.Record, va
 		if record.Unsettled {
 			return out, Blocked(record, "unsettled", Diagnosis{Attempted: i18n.ExecTriedStopRecord, Problem: i18n.ExecProblemStopUnconfirmed, Recommendation: i18n.ExecAdviceCheckNodeEffects}, harness.ErrStopUnconfirmed)
 		}
-		if err := SettleBudget(r.budget, record, nil); err != nil {
+		if err := SettleBudget(context.Background(), r.budget, record, nil); err != nil {
 			return out, Blocked(record, "accounting", Diagnosis{Attempted: i18n.ExecTriedBudgetRecord, Problem: i18n.ExecProblemEndedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, err)
 		}
 		if err := r.cleanupAuxiliary(ctx, record); err != nil {

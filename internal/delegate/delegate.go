@@ -534,7 +534,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 			err = errors.New("delegate result has not been durably settled")
 		}
 		if err == nil {
-			err = s.finishFromRecord(retainedRecord, remoteOutcomeOf(runErr))
+			err = s.finishFromRecord(ctx, retainedRecord, remoteOutcomeOf(runErr))
 		}
 		if err != nil {
 			binding := QuestionBinding{Conversation: conversationID, Transport: parent.Transport, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
@@ -1185,7 +1185,7 @@ func (s *Service) finish(id string, outcome task.Outcome) error {
 	if attemptID := s.attemptOf(id); attemptID != "" {
 		for _, row := range tracked.Attempts {
 			if row.ExecutionID == attemptID {
-				if err := s.tasks.SettleAttempt(id, attemptID, row.TurnID, time.Time{}, outcome, task.RecoveryUsage{Tokens: tokens, Model: spent.Settings.Model, Reported: spent.Usage.TokensReported()}); err != nil {
+				if err := s.tasks.SettleAttempt(context.Background(), id, attemptID, row.TurnID, time.Time{}, outcome, task.RecoveryUsage{Tokens: tokens, Model: spent.Settings.Model, Reported: spent.Usage.TokensReported()}); err != nil {
 					return fmt.Errorf("settle delegate task #%s: %w", id, err)
 				}
 				s.mu.Lock()
