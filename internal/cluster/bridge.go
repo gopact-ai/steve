@@ -92,7 +92,7 @@ func (b *replicator) Prepare(parent context.Context) (ledger.ReplicaPosition, er
 	// caller may have no deadline. Catching up is bounded by ApplyTimeout so
 	// a replica that stays behind fails this write as unavailable instead of
 	// stalling every writer queued behind it. Nothing has been proposed, so
-	// the generation keeps its authority and the write can be retried.
+	// this path does not revoke the generation and the write can be retried.
 	if _, err := b.runtime.awaitApplied(ctx, state.AppliedIndex, state.AppVersion); err != nil {
 		return ledger.ReplicaPosition{}, err
 	}
