@@ -118,7 +118,7 @@ type Nodes interface {
 	// MCPEndpoint resolves the messaging URL an agent on node must call.
 	// Only remote placements consult it.
 	MCPEndpoint(ctx context.Context, node string) (string, error)
-	// RegisterIdle holds a prompt's silence clock while node is
+	// RegisterIdle pauses a prompt's silence clock while node is
 	// disconnected, until unregister is called.
 	RegisterIdle(node string, clock idle.Clock) (unregister func())
 	// Refresh asks node to check itself again, so its advert reflects a
@@ -421,7 +421,7 @@ func (p promptClock) limit() time.Duration {
 }
 
 // newIdleClock starts a prompt timeout's clock for a prompt on node; the
-// clock holds while the node is away. stop ends it and its registration.
+// clock pauses while the node is away. stop ends it and its registration.
 func (c *Coordinator) newIdleClock(parent context.Context, node string) (clock idle.Context, stop func(), touch func()) {
 	clock, expire, touch := c.promptClock.start(parent, c.promptTimeout())
 	if c.nodes == nil {
