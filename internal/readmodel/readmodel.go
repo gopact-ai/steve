@@ -484,8 +484,9 @@ type Sources struct {
 // the order they were made, so recording one writes one record rather than
 // the whole history. Observations (in ledger.go) keeps them in the ledger.
 type ObservationStore interface {
-	// Load returns every kept observation, oldest first, and the number
-	// of the last one; 0 when none is kept.
+	// Load returns every kept observation it can read, oldest first, and
+	// the number of the last one kept, read or not; 0 when none is kept.
+	// It fails only when the store cannot be read at all.
 	Load(context.Context) ([]Observation, uint64, error)
 	// Save writes list as the observations numbered first, first+1, …,
 	// replacing any already kept under those numbers, and forgets every

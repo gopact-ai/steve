@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 
@@ -235,23 +236,29 @@ func (o Observations) Load(ctx context.Context) ([]Observation, uint64, error) {
 		n   uint64
 		obs Observation
 	}
+	// A record that cannot be read costs that record only: failing the
+	// load would keep every later observation from being saved. One whose
+	// id is a number still holds that number, so none is reused.
 	kept := make([]numbered, 0, len(raw))
+	var last uint64
 	for id, data := range raw {
 		n, err := strconv.ParseUint(id, 10, 64)
 		if err != nil || id != observationID(n) {
-			return nil, 0, fmt.Errorf("observation %q: not a number", id)
+			slog.Warn("readmodel: skipped an observation record whose id is not an observation number", "id", id)
+			continue
 		}
+		last = max(last, n)
 		var obs Observation
 		if err := json.Unmarshal(data, &obs); err != nil {
-			return nil, 0, fmt.Errorf("observation %d: %w", n, err)
+			slog.Warn("readmodel: skipped an unreadable observation record", "id", id, "error", err.Error())
+			continue
 		}
 		kept = append(kept, numbered{n, obs})
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].n < kept[j].n })
 	list := make([]Observation, len(kept))
-	var last uint64
 	for i, k := range kept {
-		list[i], last = k.obs, k.n
+		list[i] = k.obs
 	}
 	return list, last, nil
 }
