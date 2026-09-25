@@ -42,6 +42,7 @@ type clusterNode struct {
 	holdApp   atomic.Bool
 	heldApp   chan coordination.AppCommand
 	gateApp   atomic.Pointer[appGate]
+	gateFence atomic.Pointer[appGate]
 	raft      *gatedListener
 	server    *httptest.Server
 	listener  net.Listener
@@ -54,8 +55,9 @@ type clusterNode struct {
 	activated []*businessStores
 }
 
-// appGate stops application commands at the consensus leader's RPC
-// handler until release is closed, then serves them unchanged.
+// appGate stops application commands (gateApp) or writer fences (gateFence)
+// at the consensus leader's RPC handler until release is closed, then serves
+// them unchanged.
 type appGate struct {
 	once    sync.Once
 	arrived chan struct{}
@@ -149,6 +151,10 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 			if current := n.runtime.Load(); current != nil {
 				handler := current.RPCHandler(coordination.RPCOptions{AuthorizeControl: func(*http.Request, coordination.Identity, string) (string, error) { return "test-owner", nil }})
 				if gate := n.gateApp.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"app" {
+					gate.once.Do(func() { close(gate.arrived) })
+					<-gate.release
+				}
+				if gate := n.gateFence.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"writer" {
 					gate.once.Do(func() { close(gate.arrived) })
 					<-gate.release
 				}
@@ -539,6 +545,71 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	release()
 	if published := ready(t, second); published.Generation != active.Generation {
 		t.Fatalf("generation %d was published instead of generation %d, whose write failed", published.Generation, active.Generation)
+	}
+}
+
+// Activation commits a writer fence and waits for this replica to apply it
+// before building any store. The runtime loop runs activation itself, so if
+// nothing bounded that wait the node would stay silently stuck, unable to
+// notice a lost assignment or try again.
+func TestActivationWhoseWriterFenceCannotApplyGivesUpAndRetries(t *testing.T) {
+	nodes := testNodes(t, 3)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		r := openNode(t, nodes[i])
+		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second := nodes[1].runtime.Load()
+	gate := &appGate{arrived: make(chan struct{}), release: make(chan struct{})}
+	nodes[0].gateFence.Store(gate)
+	release := sync.OnceFunc(func() { close(gate.release) })
+	t.Cleanup(release)
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-gate.arrived:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-2 did not ask for a writer fence: %+v", second.Status())
+	}
+	second.mu.Lock()
+	stalled := second.current
+	second.mu.Unlock()
+	if stalled == nil {
+		t.Fatal("node-2 asked for a writer fence without a generation being activated")
+	}
+	if !first.Status().IsLeader {
+		t.Fatal("fixture no longer commits node-2's writer fence on a remote consensus leader")
+	}
+	// node-2 stops receiving Raft traffic before its fence is committed:
+	// node-1 and node-3 commit it, and node-2 cannot apply it.
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	release()
+	nodes[0].gateFence.Store(nil)
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	select {
+	case <-stalled.Context.Done():
+	case <-time.After(2 * applyTimeout):
+		t.Fatalf("activation of generation %d kept waiting for a writer fence node-2 cannot apply; ApplyTimeout is %s", stalled.Generation, applyTimeout)
+	}
+	second.mu.Lock()
+	cause := second.lastError
+	second.mu.Unlock()
+	if !errors.Is(cause, coordination.ErrUnavailable) {
+		t.Fatalf("activation gave up without reporting that the replica is behind: %v", cause)
+	}
+	nodes[1].raft.resume()
+	fresh := ready(t, second)
+	if fresh.Generation <= stalled.Generation {
+		t.Fatalf("generation %d was published, not a new attempt after generation %d", fresh.Generation, stalled.Generation)
+	}
+	if err := fresh.Ledger.PutBinding(t.Context(), "test", "after-fence", "written"); err != nil {
+		t.Fatalf("the generation activated after the stall cannot write: %v", err)
 	}
 }
 
