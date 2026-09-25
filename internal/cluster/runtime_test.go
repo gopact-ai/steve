@@ -387,6 +387,36 @@ func TestCallerCancellationDuringProposalKeepsBusinessGeneration(t *testing.T) {
 	}
 }
 
+// A control command this member answers as unavailable goes to the member
+// that leads next. Here this member's consensus replica has stopped; a
+// leadership lost part-way through a command is answered the same way.
+func TestJoinThisMemberCannotTakeGoesToTheNextLeader(t *testing.T) {
+	nodes := testNodes(t, 4)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:3] {
+		joinNode(t, first, n, true, false)
+	}
+	if err := first.service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The runtime stops with its replica and reports that when closed.
+	nodes[0].runtime.Store(nil)
+	t.Cleanup(func() { _ = first.Close() })
+	fourth := openNode(t, nodes[3])
+	member := coordination.Member{NodeID: "node-4", Address: fourth.Status().Address, APIAddress: nodes[3].server.URL}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-node-4", Actor: "owner", Member: member}); err != nil {
+		t.Fatalf("a join this member could not take did not reach the next leader: %v", err)
+	}
+	state, err := nodes[1].runtime.Load().ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.Members["node-4"]; !ok {
+		t.Fatalf("node-4 is not a member after its join: %+v", state.Members)
+	}
+}
+
 func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing.T) {
 	nodes := testNodes(t, 3)
 	first := openNode(t, nodes[0])
