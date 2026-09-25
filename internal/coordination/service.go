@@ -274,6 +274,11 @@ func (s *Service) Close() error {
 	return s.closeErr
 }
 
+// wait returns the result of future, or returns early when ctx ends, the
+// service closes or the application fails. A Raft future cannot be cancelled,
+// so after an early return the goroutine reading future.Error stays until Raft
+// resolves the future; for an entry the leader has appended, that happens on
+// commit, leadership loss or shutdown.
 func (s *Service) wait(ctx context.Context, future raft.Future) error {
 	result := make(chan error, 1)
 	go func() { result <- future.Error() }()
@@ -292,11 +297,45 @@ func (s *Service) wait(ctx context.Context, future raft.Future) error {
 		return nil
 	case errors.Is(err, raft.ErrNotLeader):
 		return fmt.Errorf("%w: leader is %s", ErrNotLeader, s.Status().LeaderID)
-	case errors.Is(err, raft.ErrLeadershipLost), errors.Is(err, raft.ErrRaftShutdown), errors.Is(err, raft.ErrEnqueueTimeout):
+	// ErrLeadershipTransferInProgress: a leader rejects new work while its own
+	// leadership transfer runs, and the rejection ends with the transfer.
+	case errors.Is(err, raft.ErrLeadershipLost), errors.Is(err, raft.ErrRaftShutdown), errors.Is(err, raft.ErrEnqueueTimeout), errors.Is(err, raft.ErrLeadershipTransferInProgress):
 		return fmt.Errorf("%w: %s", ErrUnavailable, err)
 	default:
-		return err
+		return unclassifiedRaftError{err}
 	}
+}
+
+// unclassifiedRaftError is a Raft error that wait could not map to a
+// coordination error because Raft reports it without a sentinel. It reads and
+// unwraps as the original error; a caller that knows what such an error means
+// for its request can recognize it with errors.As.
+type unclassifiedRaftError struct{ err error }
+
+func (e unclassifiedRaftError) Error() string { return e.err.Error() }
+func (e unclassifiedRaftError) Unwrap() error { return e.err }
+
+// waitConfigurationChange waits for a membership change to commit, for at most
+// ApplyTimeout, and names the change by description if it gives up. Raft's
+// timeout argument bounds only enqueueing: an appended configuration entry
+// resolves on commit, leadership loss or shutdown, and a leader that keeps its
+// lease without a quorum acknowledging the entry never resolves it. Every
+// caller holds membershipMu, which serializes membership changes and makes
+// automatic demotion skip its pass; SetVoting also holds opMu, which every
+// write, coordinator transfer and automatic failover takes. An unbounded wait
+// would hold those locks for as long as the entry stays uncommitted. Raft keeps
+// at most one uncommitted configuration entry: until it commits the leader
+// takes no further change, and another request gives up at enqueueing with an
+// already resolved future, so after a timeout at most one such wait stays in
+// the background.
+func (s *Service) waitConfigurationChange(ctx context.Context, description string, change raft.IndexFuture) error {
+	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	defer cancel()
+	err := s.wait(bounded, change)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return fmt.Errorf("%w: configuration change to %s did not commit within %s; it may still commit later", ErrUnavailable, description, s.config.ApplyTimeout)
+	}
+	return err
 }
 
 func (s *Service) barrier(ctx context.Context) error {
@@ -437,12 +476,14 @@ func (s *Service) SetVoting(ctx context.Context, request VotingRequest) (Result,
 	configurationIndex := state.ConfigurationIndex
 	if (state.Voters[request.NodeID] != "") != request.Voting {
 		var change raft.IndexFuture
+		description := "add voter " + request.NodeID
 		if request.Voting {
 			change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(member.Address), state.ConfigurationIndex, s.config.ApplyTimeout)
 		} else {
+			description = "demote voter " + request.NodeID
 			change = s.raft.DemoteVoter(raft.ServerID(request.NodeID), state.ConfigurationIndex, s.config.ApplyTimeout)
 		}
-		if err := s.wait(ctx, change); err != nil {
+		if err := s.waitConfigurationChange(ctx, description, change); err != nil {
 			return Result{}, err
 		}
 		configurationIndex = change.Index()
@@ -608,7 +649,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		}
 	}
 	if !present {
-		if err := s.wait(ctx, s.raft.AddNonvoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
+		if err := s.waitConfigurationChange(ctx, "add nonvoter "+request.Member.NodeID, s.raft.AddNonvoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
 			return Result{}, err
 		}
 	}
@@ -628,7 +669,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		if err := s.wait(ctx, configuration); err != nil {
 			return Result{}, err
 		}
-		if err := s.wait(ctx, s.raft.AddVoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
+		if err := s.waitConfigurationChange(ctx, "add voter "+request.Member.NodeID, s.raft.AddVoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
 			return Result{}, err
 		}
 	}
@@ -689,12 +730,14 @@ func (s *Service) UpdateMemberAddress(ctx context.Context, request MemberAddress
 		return Result{}, err
 	}
 	var change raft.IndexFuture
+	description := "move voter " + request.NodeID + " to " + request.Address
 	if prepared.Voters[request.NodeID] != "" {
 		change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
 	} else {
+		description = "move nonvoter " + request.NodeID + " to " + request.Address
 		change = s.raft.AddNonvoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
 	}
-	if err := s.wait(ctx, change); err != nil {
+	if err := s.waitConfigurationChange(ctx, description, change); err != nil {
 		return Result{}, err
 	}
 	return s.submit(ctx, command{Kind: "address", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Address: request})
@@ -733,7 +776,16 @@ func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, er
 			if err != nil || progress.AppliedIndex < state.AppliedIndex || progress.AppVersion < state.AppVersion {
 				continue
 			}
-			if err := s.wait(ctx, s.raft.LeadershipTransferToServer(raft.ServerID(target), raft.ServerAddress(state.Voters[target]))); err != nil {
+			err = s.wait(ctx, s.raft.LeadershipTransferToServer(raft.ServerID(target), raft.ServerAddress(state.Voters[target])))
+			// Raft reports an unfinished transfer, such as its election
+			// timeout expiring or a failed TimeoutNow RPC, without a sentinel
+			// error. The target may still take over, so the caller should
+			// retry.
+			var unfinished unclassifiedRaftError
+			if errors.As(err, &unfinished) {
+				return Result{}, fmt.Errorf("%w: consensus leadership transfer to %s: %v", ErrUnavailable, target, err)
+			}
+			if err != nil {
 				return Result{}, err
 			}
 			return Result{}, ErrNotLeader
@@ -750,7 +802,7 @@ func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, er
 	if err := s.wait(ctx, configuration); err != nil {
 		return Result{}, err
 	}
-	if err := s.wait(ctx, s.raft.RemoveServer(raft.ServerID(request.NodeID), configuration.Index(), s.config.ApplyTimeout)); err != nil {
+	if err := s.waitConfigurationChange(ctx, "remove "+request.NodeID, s.raft.RemoveServer(raft.ServerID(request.NodeID), configuration.Index(), s.config.ApplyTimeout)); err != nil {
 		return Result{}, err
 	}
 	return s.submit(ctx, command{Kind: "remove", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Remove: request})
