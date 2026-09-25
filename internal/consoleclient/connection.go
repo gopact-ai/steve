@@ -63,7 +63,9 @@ func (options *consoleClientFlags) resolve(flags *flag.FlagSet) (consoleConnecti
 		connection.URL = address
 	}
 	if explicit["token"] {
-		connection.Token = options.token
+		// Read as the Hub reads its own: the Hub serves it without the
+		// blanks around it.
+		connection.Token = appconfig.ConsoleToken(options.token)
 	}
 	return connection, nil
 }

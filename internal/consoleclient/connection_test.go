@@ -661,3 +661,24 @@ func TestConsoleConnectionReadsWhatConfigLoadReads(t *testing.T) {
 		}
 	}
 }
+
+// An explicit -token is read by the rule the Hub reads its token by: the
+// blanks around it go, since the Hub serves the token without them, and a
+// -token of blanks is none, still keeping -config from the generated token.
+func TestExplicitTokenIsReadAsTheHubReadsItsToken(t *testing.T) {
+	state := t.TempDir()
+	if _, err := localtoken.Resolve(state); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	data, _ := json.Marshal(map[string]any{"gateway": map[string]string{"read_model_addr": "127.0.0.1:8800", "state_path": filepath.Join(state, "state.json")}})
+	writeClientFixture(t, path, string(data))
+	for token, want := range map[string]string{" explicit-token\t": "explicit-token", "explicit token": "explicit token", " \t ": ""} {
+		for _, args := range [][]string{{"-token", token}, {"-config", path, "-token", token}} {
+			connection, err := resolveTestConnection(args...)
+			if err != nil || connection.Token != want {
+				t.Errorf("%q: token %q, err: %v; want %q", args, connection.Token, err, want)
+			}
+		}
+	}
+}
