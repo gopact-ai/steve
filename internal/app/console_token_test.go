@@ -2,13 +2,17 @@ package app
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/localtoken"
+	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
 // A Hub is never served without a token: an unconfigured one gets its own,
@@ -103,5 +107,37 @@ func TestBlankTokenOnANetworkConsoleNamesTheSetting(t *testing.T) {
 	served, err := consoleServerConfig(nil, loadConsoleConfig(t, t.TempDir(), "0.0.0.0:7710", "   "))
 	if err == nil || !strings.Contains(err.Error(), "gateway.read_model_token") {
 		t.Fatalf("network console with a blank token = %+v, %v; want a refusal naming gateway.read_model_token", served, err)
+	}
+}
+
+// The console serves a configured token without the blanks around it, so the
+// token signs in alike through the Authorization header, whose value arrives
+// without its outer blanks, and through ?token=.
+func TestConfiguredTokenSignsInAlikeThroughTheHeaderAndTheQuery(t *testing.T) {
+	served, err := consoleServerConfig(nil, loadConsoleConfig(t, t.TempDir(), "127.0.0.1:0", "padded-owner-token\t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if served.Token != "padded-owner-token" {
+		t.Errorf("served token %q, want %q", served.Token, "padded-owner-token")
+	}
+	server, err := httpapi.NewServer(readmodel.New(readmodel.Sources{}), served)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Serve() }()
+	header, _ := http.NewRequest(http.MethodGet, server.URL()+"/state", nil)
+	header.Header.Set("Authorization", "Bearer "+served.Token)
+	query, _ := http.NewRequest(http.MethodGet, server.URL()+"/state?token="+url.QueryEscape(served.Token), nil)
+	for name, req := range map[string]*http.Request{"header": header, "query": query} {
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("served token in the %s = %d, want 200", name, res.StatusCode)
+		}
 	}
 }

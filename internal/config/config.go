@@ -512,8 +512,8 @@ func readConfigFile(path string) (*Config, error) {
 }
 
 // applyDefaults fills what the file left out and trims the identities and the
-// console address it gave; a console token of blanks is none. Nothing here
-// can fail; the checks come after.
+// console address and token it gave; a console token of blanks is none.
+// Nothing here can fail; the checks come after.
 func (c *Config) applyDefaults() {
 	c.Policies = c.Policies.WithDefaults()
 	c.Gateway.OwnerID = strings.TrimSpace(c.Gateway.OwnerID)
@@ -537,16 +537,15 @@ func (c *Config) applyDefaults() {
 	if c.Gateway.StatePath == "" {
 		c.Gateway.StatePath = DefaultStatePath
 	}
-	// The console listens on the trimmed address, and a token of blanks is
-	// an omitted one: loopback gets the generated token, and any other
-	// address is refused until the owner sets one.
+	// The console listens on the trimmed address and checks the trimmed
+	// token, since a header value arrives without its outer blanks. A token
+	// of blanks is an omitted one: loopback gets the generated token, and
+	// any other address is refused until the owner sets one.
 	c.Gateway.ReadModelAddr = strings.TrimSpace(c.Gateway.ReadModelAddr)
 	if c.Gateway.ReadModelAddr == "" {
 		c.Gateway.ReadModelAddr = "127.0.0.1:7710"
 	}
-	if strings.TrimSpace(c.Gateway.ReadModelToken) == "" {
-		c.Gateway.ReadModelToken = ""
-	}
+	c.Gateway.ReadModelToken = strings.TrimSpace(c.Gateway.ReadModelToken)
 	for id, item := range c.Harnesses {
 		if item.Permission == "" {
 			item.Permission = PermissionRead

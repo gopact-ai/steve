@@ -609,25 +609,27 @@ func TestConsoleConnectionReadsTheGeneratedToken(t *testing.T) {
 }
 
 // -config reads the console's address and token as the Hub does: the address
-// without the blanks around it, a blank address as the default one, and a
-// token of blanks as none, so the client finds the token the Hub generated.
+// and the token without the blanks around them, a blank address as the
+// default one, and a token of blanks as none, so the client finds the token
+// the Hub generated.
 func TestConsoleConnectionReadsTheConfigurationAsTheHubDoes(t *testing.T) {
 	state := t.TempDir()
-	token, err := localtoken.Resolve(state)
+	generated, err := localtoken.Resolve(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct{ addr, token, wantURL string }{
-		{" 127.0.0.1:8800 ", "", "http://127.0.0.1:8800"},
-		{"   ", "", defaultReadModelURL},
-		{"127.0.0.1:8800", " \t ", "http://127.0.0.1:8800"},
+	for _, c := range []struct{ addr, token, wantURL, wantToken string }{
+		{" 127.0.0.1:8800 ", "", "http://127.0.0.1:8800", generated},
+		{"   ", "", defaultReadModelURL, generated},
+		{"127.0.0.1:8800", " \t ", "http://127.0.0.1:8800", generated},
+		{"127.0.0.1:8800", " config-owner-token\t", "http://127.0.0.1:8800", "config-owner-token"},
 	} {
 		path := filepath.Join(t.TempDir(), "config.json")
 		data, _ := json.Marshal(map[string]any{"gateway": map[string]string{"read_model_addr": c.addr, "read_model_token": c.token, "state_path": filepath.Join(state, "state.json")}})
 		writeClientFixture(t, path, string(data))
 		connection, err := resolveTestConnection("-config", path)
-		if err != nil || connection.URL != c.wantURL || connection.Token != token {
-			t.Errorf("read_model_addr %q, read_model_token %q: URL %q, generated token: %v, err: %v; want %s with the generated token", c.addr, c.token, connection.URL, connection.Token == token, err, c.wantURL)
+		if err != nil || connection.URL != c.wantURL || connection.Token != c.wantToken {
+			t.Errorf("read_model_addr %q, read_model_token %q: URL %q, token %q, err: %v; want %s with token %q", c.addr, c.token, connection.URL, connection.Token, err, c.wantURL, c.wantToken)
 		}
 	}
 }

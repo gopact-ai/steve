@@ -170,6 +170,24 @@ func TestLoadTrimsTheConsoleAddressAndTreatsABlankTokenAsUnset(t *testing.T) {
 	}
 }
 
+// A console token is what lies between the blanks around it: a header value
+// arrives without its outer blanks, so a token that kept them could only be
+// presented in ?token=.
+func TestLoadTrimsTheBlanksAroundTheConsoleToken(t *testing.T) {
+	for _, token := range []string{`" owner-token"`, `"owner-token\t"`, `"\nowner-token "`} {
+		cfg, err := Load(writeConfig(t, `{
+			"projects": {"p": {"home": {"path": "/tmp/steve-test"}}},
+			"gateway": {"state_path": "/tmp/steve-state.json", "read_model_token": `+token+`}
+		}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Gateway.ReadModelToken != "owner-token" {
+			t.Errorf("read_model_token %s loaded as %q, want %q", token, cfg.Gateway.ReadModelToken, "owner-token")
+		}
+	}
+}
+
 func TestStarterSaveOmitsHomePath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := Save(path, StarterFeishu(Feishu{AppID: "app", AppSecret: "secret", OwnerOpenID: "ou_me"})); err != nil {

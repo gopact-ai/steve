@@ -99,10 +99,10 @@ func (gateway *connectionGateway) UnmarshalJSON(data []byte) error {
 }
 
 // readConsoleConnection reads where the console listens and its token as the
-// Hub reads them: the address without the blanks around it, and a token of
-// blanks as none. With generated set, a configuration without a token for a
-// loopback console falls back to the one the Hub generated in its state
-// directory; an explicit -token skips that read.
+// Hub reads them: the address and the token without the blanks around them,
+// so a token of blanks is none. With generated set, a configuration without a
+// token for a loopback console falls back to the one the Hub generated in its
+// state directory; an explicit -token skips that read.
 func readConsoleConnection(path string, generated bool) (consoleConnection, error) {
 	var config struct {
 		Gateway connectionGateway `json:"gateway"`
@@ -136,10 +136,7 @@ func readConsoleConnection(path string, generated bool) (consoleConnection, erro
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return consoleConnection{}, fmt.Errorf("inspect cluster sidecar: %w", err)
 	}
-	token := string(config.Gateway.Token)
-	if strings.TrimSpace(token) == "" {
-		token = ""
-	}
+	token := strings.TrimSpace(string(config.Gateway.Token))
 	if token == "" && generated && loopbackURL(address) {
 		// Before the Hub's first start there is none. The state path is
 		// resolved as the Hub resolves it only for the same user and
