@@ -259,7 +259,7 @@ func (c *Coordinator) resolveRelocationSource(ctx context.Context, p attempt.Rel
 		*source.Execution != *replacement.Execution || source.Execution.Epoch != p.TaskEpoch {
 		return errors.New("relocation resolution does not match the committed source and replacement")
 	}
-	return c.resolveStoppedExecution(source)
+	return c.resolveStoppedExecution(ctx, source)
 }
 
 // bindRelocation prepares the replacement and binds its workspace to the

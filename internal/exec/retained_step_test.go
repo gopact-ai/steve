@@ -114,12 +114,12 @@ func (b retainedStepBudget) ReserveAttempt(record attempt.Record) (int, time.Tim
 	_, err := b.tasks.ReserveAttempt(*record.Execution, record.ID, record.TurnID, record.Agent, record.Node, record.StartedAt)
 	return 0, time.Time{}, err
 }
-func (b retainedStepBudget) SettleAttempt(record attempt.Record, outcome task.Outcome) error {
+func (b retainedStepBudget) SettleAttempt(ctx context.Context, record attempt.Record, outcome task.Outcome) error {
 	var usage task.RecoveryUsage
 	if u := record.Usage; u != nil {
 		usage = task.RecoveryUsage{Tokens: task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite}, Model: u.Model, Reported: u.Reported}
 	}
-	return b.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage)
+	return b.tasks.SettleAttempt(ctx, record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage)
 }
 
 // retainedStepWorld is a plan whose one step runs on a node-owned session
@@ -519,7 +519,9 @@ func (failingBudget) Reserve(string) (int, time.Time, error) { return 0, time.Ti
 func (failingBudget) ReserveAttempt(attempt.Record) (int, time.Time, error) {
 	return 0, time.Time{}, nil
 }
-func (b failingBudget) SettleAttempt(attempt.Record, task.Outcome) error { return b.err }
+func (b failingBudget) SettleAttempt(context.Context, attempt.Record, task.Outcome) error {
+	return b.err
+}
 
 // TestStepSettlementBlocksAsBefore pins how a step reports a settlement it
 // could not finish — its budget, its node session — on each path it had

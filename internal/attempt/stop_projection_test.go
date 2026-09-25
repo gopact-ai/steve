@@ -42,11 +42,11 @@ func TestMarkStopProjectedWaitsForSettledAccounting(t *testing.T) {
 		}
 	}
 	requireMark(false)
-	if err := tasks.SettleAttempt(root.ID, r.ID, r.TurnID, time.Now(), task.OutcomeCancelled, task.RecoveryUsage{Tokens: task.Tokens{Input: 3}, Model: "m", Reported: true}); err != nil {
+	if err := tasks.SettleAttempt(t.Context(), root.ID, r.ID, r.TurnID, time.Now(), task.OutcomeCancelled, task.RecoveryUsage{Tokens: task.Tokens{Input: 3}, Model: "m", Reported: true}); err != nil {
 		t.Fatal(err)
 	}
 	requireMark(false)
-	if err := tasks.SettleAttempt(root.ID, r.ID, r.TurnID, time.Now(), task.OutcomeCancelled, StoppedUsage(r)); err != nil {
+	if err := tasks.SettleAttempt(t.Context(), root.ID, r.ID, r.TurnID, time.Now(), task.OutcomeCancelled, StoppedUsage(r)); err != nil {
 		t.Fatal(err)
 	}
 	requireMark(true)
@@ -83,7 +83,7 @@ func TestStopProjectionIsClearedWhenTheStopIsConfirmedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tasks.SettleAttempt(old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(confirmed)); err != nil {
+	if err := tasks.SettleAttempt(t.Context(), old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(confirmed)); err != nil {
 		t.Fatal(err)
 	}
 	if marked, err := s.MarkStopProjected(t.Context(), old.ID, "stopper"); err != nil || !marked {
@@ -101,7 +101,7 @@ func TestStopProjectionIsClearedWhenTheStopIsConfirmedAgain(t *testing.T) {
 	if _, err := s.l.DB().Exec(`CREATE TRIGGER reject_accounting BEFORE UPDATE ON bindings WHEN NEW.kind = 'task-attempt' BEGIN SELECT RAISE(FAIL, 'accounting unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := tasks.SettleAttempt(old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(reconfirmed)); err == nil {
+	if err := tasks.SettleAttempt(t.Context(), old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(reconfirmed)); err == nil {
 		t.Fatal("injected accounting failure did not fail the settle")
 	}
 	current, err := s.Get(t.Context(), old.ID)
@@ -118,7 +118,7 @@ func TestStopProjectionIsClearedWhenTheStopIsConfirmedAgain(t *testing.T) {
 	if _, err := s.l.DB().Exec(`DROP TRIGGER reject_accounting`); err != nil {
 		t.Fatal(err)
 	}
-	if err := tasks.SettleAttempt(old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(reconfirmed)); err != nil {
+	if err := tasks.SettleAttempt(t.Context(), old.TaskID, old.ID, old.TurnID, now.t, task.OutcomeCancelled, StoppedUsage(reconfirmed)); err != nil {
 		t.Fatal(err)
 	}
 	if marked, err := s.MarkStopProjected(t.Context(), old.ID, "stopper"); err != nil || !marked {

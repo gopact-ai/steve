@@ -37,12 +37,12 @@ func (b testBudget) ReserveAttempt(record attempt.Record) (int, time.Time, error
 	return 0, time.Time{}, err
 }
 
-func (b testBudget) SettleAttempt(record attempt.Record, outcome task.Outcome) error {
+func (b testBudget) SettleAttempt(ctx context.Context, record attempt.Record, outcome task.Outcome) error {
 	var usage task.RecoveryUsage
 	if u := record.Usage; u != nil {
 		usage = task.RecoveryUsage{Tokens: task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite}, Model: u.Model, Reported: u.Reported}
 	}
-	return b.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage)
+	return b.tasks.SettleAttempt(ctx, record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage)
 }
 
 type testSessions struct {

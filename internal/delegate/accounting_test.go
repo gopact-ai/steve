@@ -22,7 +22,7 @@ func TestDelegateKnownExecutionNeverSettlesALaterUnboundRow(t *testing.T) {
 			}
 			w.service.rememberAttempt(tracked.ID, "old-admitted-execution")
 			if fromRecord {
-				err = w.service.finishFromRecord(attempt.Record{Spec: attempt.Spec{ID: "old-admitted-execution", TaskID: tracked.ID, TurnID: "old-turn"}, EndedAt: time.Now(), Usage: &attempt.Usage{Input: 100, Output: 50, Reported: true}}, task.OutcomeCancelled)
+				err = w.service.finishFromRecord(t.Context(), attempt.Record{Spec: attempt.Spec{ID: "old-admitted-execution", TaskID: tracked.ID, TurnID: "old-turn"}, EndedAt: time.Now(), Usage: &attempt.Usage{Input: 100, Output: 50, Reported: true}}, task.OutcomeCancelled)
 			} else {
 				err = w.service.finish(tracked.ID, task.OutcomeCancelled)
 			}

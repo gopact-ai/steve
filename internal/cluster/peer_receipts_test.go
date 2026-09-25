@@ -192,7 +192,7 @@ func consoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string, fai
 			if err != nil {
 				return turn.Result{}, err
 			}
-			if err := tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, record.EndedAt, failed, task.RecoveryUsage{Reported: usage.Reported}); err != nil {
+			if err := tasks.SettleAttempt(t.Context(), tracked.ID, record.ID, record.TurnID, record.EndedAt, failed, task.RecoveryUsage{Reported: usage.Reported}); err != nil {
 				return turn.Result{}, err
 			}
 			return turn.Result{Attempt: record.ID}, errors.New("turn ended")
@@ -203,7 +203,7 @@ func consoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string, fai
 			return turn.Result{}, err
 		}
 		if missing != "accounting" {
-			if err := tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, record.EndedAt, task.OutcomeOK, task.RecoveryUsage{Reported: usage.Reported}); err != nil {
+			if err := tasks.SettleAttempt(t.Context(), tracked.ID, record.ID, record.TurnID, record.EndedAt, task.OutcomeOK, task.RecoveryUsage{Reported: usage.Reported}); err != nil {
 				return turn.Result{}, err
 			}
 		}

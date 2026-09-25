@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 func stopCandidateIDs(t *testing.T, f *stopRegistryFixture) []string {
@@ -84,17 +87,12 @@ func TestApplicationStopRetiresProjectedStopsFromCandidates(t *testing.T) {
 	}
 }
 
-// A stop pass whose context has ended starts none of the writes that
-// finish a confirmed stop — accounting, resolution, the projection mark —
-// and the next pass finishes them.
-func TestApplicationStopProjectionStaysWithinItsPass(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "mockagent")
-	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
-		t.Fatalf("build isolated ACP peer: %v %s", err, output)
-	}
-	f := newStopRegistryFixture(t, bin, false)
+// confirmedUnprojectedStop has a first pass confirm the fixture's native
+// stop but fail to settle its accounting: the stop is confirmed, and
+// neither accounted nor marked projected.
+func confirmedUnprojectedStop(t *testing.T, f *stopRegistryFixture) attempt.Record {
+	t.Helper()
 	f.owner.Finish(&execution.RetainedObserverDetached{AttemptID: f.record.ID, NodeID: f.record.Node, SessionID: f.record.Session, Cause: harness.ErrStopUnconfirmed})
-	// A first pass confirms the native stop but cannot settle its accounting.
 	if _, err := f.book.DB().Exec(`CREATE TRIGGER reject_stop_settlement BEFORE INSERT ON bindings WHEN NEW.kind = 'task-attempt' BEGIN SELECT RAISE(FAIL, 'isolated accounting failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +109,19 @@ func TestApplicationStopProjectionStaysWithinItsPass(t *testing.T) {
 	if confirmed.StopEvidence != "task-stop/"+confirmed.ID || confirmed.SessionSettled == nil || !*confirmed.SessionSettled || confirmed.Unsettled || confirmed.StopProjected {
 		t.Fatalf("stop is not confirmed and unprojected: %+v", confirmed)
 	}
+	return confirmed
+}
+
+// A stop pass whose context has ended starts none of the writes that
+// finish a confirmed stop — accounting, resolution, the projection mark —
+// and the next pass finishes them.
+func TestApplicationStopProjectionStaysWithinItsPass(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mockagent")
+	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
+		t.Fatalf("build isolated ACP peer: %v %s", err, output)
+	}
+	f := newStopRegistryFixture(t, bin, false)
+	confirmed := confirmedUnprojectedStop(t, f)
 
 	ended, cancel := context.WithCancel(f.ctx)
 	cancel()
@@ -136,4 +147,80 @@ func TestApplicationStopProjectionStaysWithinItsPass(t *testing.T) {
 		t.Fatalf("the next pass did not finish the stop: %+v (%v)", current, err)
 	}
 	f.requireResolved(t)
+}
+
+// passEndingReplica stands in for a cluster whose local replica is behind
+// at one write of a stop pass: that write's Prepare ends the pass, then
+// waits for the replica until the write's ctx ends. A write that does not
+// wait under the pass's ctx gets an error after ten seconds instead.
+type passEndingReplica struct {
+	applicationMCPReplicator
+	at       int64
+	prepares atomic.Int64
+	end      context.CancelFunc
+}
+
+var errReplicaOutlivedPass = errors.New("write waited on the replica after its stop pass ended")
+
+func (r *passEndingReplica) Prepare(ctx context.Context) (ledger.ReplicaPosition, error) {
+	if r.prepares.Add(1) != r.at {
+		return r.applicationMCPReplicator.Prepare(ctx)
+	}
+	r.end()
+	select {
+	case <-ctx.Done():
+		return ledger.ReplicaPosition{}, ctx.Err()
+	case <-time.After(10 * time.Second):
+		return ledger.ReplicaPosition{}, errReplicaOutlivedPass
+	}
+}
+
+// A stop pass that ends while one of its writes waits on a lagging replica
+// gets that write back with the pass's error rather than waiting for the
+// replica, and the next pass finishes the stop.
+func TestApplicationStopWritesWaitOnAReplicaOnlyWithinTheirPass(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mockagent")
+	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
+		t.Fatalf("build isolated ACP peer: %v %s", err, output)
+	}
+	for _, tc := range []struct {
+		name    string
+		write   int64 // the pass's write the replica is behind at
+		settled bool  // whether the accounting was settled before it
+	}{
+		{name: "accounting", write: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStopRegistryFixture(t, bin, false)
+			confirmed := confirmedUnprojectedStop(t, f)
+			pass, end := context.WithCancel(f.ctx)
+			defer end()
+			if err := f.book.AttachReplication(&passEndingReplica{applicationMCPReplicator: applicationMCPReplicator{f.book}, at: tc.write, end: end}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.stops.stop(pass, confirmed); !errors.Is(err, context.Canceled) {
+				t.Fatalf("stop whose pass ended at write %d = %v, want context.Canceled", tc.write, err)
+			}
+			current, err := f.attempts.Get(f.ctx, f.record.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.StopProjected {
+				t.Fatal("an ended pass marked the stop projected")
+			}
+			if row, _ := f.tasks.Get(current.TaskID); row.Attempts[0].Open() == tc.settled {
+				t.Fatalf("accounting open = %v after the pass ended at write %d", row.Attempts[0].Open(), tc.write)
+			}
+			if !tc.settled {
+				f.requireBusy(t)
+			}
+			if err := f.stops.Reconcile(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if current, err = f.attempts.Get(f.ctx, f.record.ID); err != nil || !current.StopProjected {
+				t.Fatalf("the next pass did not finish the stop: %+v (%v)", current, err)
+			}
+			f.requireResolved(t)
+		})
+	}
 }

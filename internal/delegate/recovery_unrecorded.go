@@ -75,7 +75,7 @@ func (s *Service) settleUnrecordedChildren(ctx context.Context) error {
 				continue
 			}
 		}
-		if err := s.settleUnrecorded(tracked, row); err != nil {
+		if err := s.settleUnrecorded(ctx, tracked, row); err != nil {
 			slog.Error(fmt.Sprintf("delegate: settle unrecorded task #%s: %v", tracked.ID, err), "task", tracked.ID, "parent", tracked.Parent, "attempt", row.ExecutionID, "node", tracked.Node)
 			continue
 		}
@@ -92,12 +92,12 @@ func (s *Service) settleUnrecordedChildren(ctx context.Context) error {
 // one left here, it got no further, and the child is told the same way as
 // any other failure; a turn still queued opens its row from failed. No
 // time is charged for a row that never ran.
-func (s *Service) settleUnrecorded(tracked task.Task, row task.Attempt) error {
+func (s *Service) settleUnrecorded(ctx context.Context, tracked task.Task, row task.Attempt) error {
 	if row.ExecutionID == "" {
 		if _, err := s.tasks.FinishUnstarted(tracked.ID, task.OutcomeInterrupted); err != nil {
 			return err
 		}
-	} else if err := s.tasks.SettleAttempt(tracked.ID, row.ExecutionID, row.TurnID, row.StartedAt, task.OutcomeInterrupted, task.RecoveryUsage{}); err != nil {
+	} else if err := s.tasks.SettleAttempt(ctx, tracked.ID, row.ExecutionID, row.TurnID, row.StartedAt, task.OutcomeInterrupted, task.RecoveryUsage{}); err != nil {
 		return err
 	}
 	slog.Warn(fmt.Sprintf("delegate: task #%s interrupted before its attempt was admitted; accounting row closed", tracked.ID), "task", tracked.ID, "parent", tracked.Parent, "attempt", row.ExecutionID, "node", tracked.Node, "state", tracked.State)

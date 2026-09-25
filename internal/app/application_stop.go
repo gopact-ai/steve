@@ -182,7 +182,7 @@ func (s *applicationStops) projectStopped(ctx context.Context, r attempt.Record)
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("task %s attempt %s: native stop confirmed; its accounting is left to the next pass: %w", r.TaskID, r.ID, err)
 	}
-	if err := s.tasks.SettleAttempt(r.TaskID, r.ID, r.TurnID, r.EndedAt, task.OutcomeCancelled, stoppedAccounting(r)); err != nil {
+	if err := s.tasks.SettleAttempt(ctx, r.TaskID, r.ID, r.TurnID, r.EndedAt, task.OutcomeCancelled, stoppedAccounting(r)); err != nil {
 		return fmt.Errorf("task %s attempt %s: native stop confirmed; original usage accounting remains pending: %w", r.TaskID, r.ID, err)
 	}
 	s.resolveStopped(r)

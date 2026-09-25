@@ -31,7 +31,7 @@ func TestDelayedStopUsageSettlesItsOriginalRowAfterTaskResumes(t *testing.T) {
 	if _, err := s.SetAside(tracked.ID, StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SettleAttempt(tracked.ID, "old-execution", "old-turn", time.Now(), OutcomeCancelled, RecoveryUsage{}); err != nil {
+	if err := s.SettleAttempt(t.Context(), tracked.ID, "old-execution", "old-turn", time.Now(), OutcomeCancelled, RecoveryUsage{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Advance(tracked.ID, StateRunning); err != nil {
@@ -45,12 +45,12 @@ func TestDelayedStopUsageSettlesItsOriginalRowAfterTaskResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := s.Get(tracked.ID)
-	if err := s.SettleAttempt(tracked.ID, "old-execution", "new-turn", time.Now(), OutcomeCancelled, RecoveryUsage{Reported: true, Tokens: Tokens{Input: 999}}); err == nil {
+	if err := s.SettleAttempt(t.Context(), tracked.ID, "old-execution", "new-turn", time.Now(), OutcomeCancelled, RecoveryUsage{Reported: true, Tokens: Tokens{Input: 999}}); err == nil {
 		t.Fatal("wrong turn accepted old usage")
 	}
 	usage := RecoveryUsage{Tokens: Tokens{Input: 100, Output: 50}, Model: "original-model", Reported: true}
 	for range 2 {
-		if err := s.SettleAttempt(tracked.ID, "old-execution", "old-turn", time.Now(), OutcomeCancelled, usage); err != nil {
+		if err := s.SettleAttempt(t.Context(), tracked.ID, "old-execution", "old-turn", time.Now(), OutcomeCancelled, usage); err != nil {
 			t.Fatal(err)
 		}
 	}
