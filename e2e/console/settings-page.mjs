@@ -283,6 +283,7 @@ if (process.env.PURE_ONLY !== "1") {
         await nav.getByRole("link", { name: "审批与权限", exact: true }).click();
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "approval-desktop.png") });
         await page.setViewportSize({ width: 390, height: 620 });
+        await page.locator(".app-mobile-bar").waitFor();
         await page.evaluate(() => document.documentElement.style.setProperty("--ui-font-size", "18px"));
         assert.ok(await page.locator(".settings-content").evaluate(el => el.scrollWidth <= el.clientWidth + 1), "Approval defaults and reset controls wrap at UI18");
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "approval-mobile.png"), fullPage: true });
@@ -351,7 +352,7 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByText("Error details", { exact: true }).click();
         await page.getByText("Application credentials rejected", { exact: true }).waitFor();
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.waitForTimeout(150);
+        await page.locator(".app-mobile-bar").waitFor();
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Narrow settings must not overflow the viewport");
         const englishNav = page.getByRole("navigation", { name: "Settings categories", exact: true });
         await englishNav.getByRole("link", { name: "Channels", exact: true }).click();
@@ -417,6 +418,10 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByText("Result landing", { exact: true }).click();
         await row("policies.landing.conflicts").getByRole("button").first().click();
         await page.getByRole("option", { name: "Manual (/resolve)", exact: true }).click();
+        // The closing Select popover stays in a body portal at its desktop
+        // position until its exit animation ends; it must be gone before the
+        // viewport shrinks or it widens the document.
+        await page.locator('[data-trigger="Select"]').waitFor({ state: "detached" });
         await page.getByRole("button", { name: "Save system settings", exact: true }).click();
         await page.waitForFunction(() => !document.querySelector(".settings-dirty-dot"));
         assert.deepEqual(writes.at(-1).settings, { policies: { landing: { conflicts: "manual" } } });
@@ -424,6 +429,8 @@ if (process.env.PURE_ONLY !== "1") {
         assert.equal(await row("gateway.owner_id").count(), 0);
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "settings-live-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
+        // useBreakpoint("sm") switches the shell after a matchMedia change event.
+        await page.locator(".app-mobile-bar").waitFor();
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Apply-mode help and landing options fit on mobile");
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "settings-live-mobile.png"), fullPage: true });
 
