@@ -22,7 +22,7 @@ func (g *Gateway) SetIngressLifetime(ctx context.Context, workers RecoveryWorker
 
 func (g *Gateway) immediateInput(text string) bool {
 	_, parsed := g.coordinator.ParseInput(text)
-	return parsed.Interrupt || parsed.Control()
+	return parsed.Immediate()
 }
 
 func (g *Gateway) scheduleControl(text string) bool {
@@ -42,9 +42,7 @@ func (g *Gateway) acceptAndWake(key string, input gatewayInput) error {
 	if err != nil || !found {
 		return fmt.Errorf("gateway accepted input cannot be read: %w", err)
 	}
-	// Ingress claims only the gatewayInputKind receipt acceptInput recorded,
-	// so the claimQueued branch that calls revive is unreachable here.
-	run, release, err := g.claimQueued(ctx, g.recoveryLedger, receipt, g.ingressDriver, nil, false)
+	run, release, err := g.claimGatewayInput(ctx, g.recoveryLedger, receipt, g.ingressDriver, false)
 	if errors.Is(err, channel.ErrDeliveryQueued) {
 		return nil // Acceptance is durable; the running reconciler owns retry.
 	}
@@ -93,16 +91,26 @@ func decodeGatewayInput(receipt ledger.CommandRecord) (gatewayInput, error) {
 	return input, nil
 }
 
-// claimQueued uses the same input and conversation owner for ingress, runtime
-// recovery and manual wakes. Only explicit controls/interrupts may join an
-// already serving conversation; normal input remains accepted without a
-// premature dispatch reservation while its owner is busy. Topic preparation
-// may share the original chat, but must acquire its own thread before Handle.
+// claimQueued claims a pending receipt of either kind for ReconcileQueued and
+// RecoverQueued: a gatewayInputKind receipt through claimGatewayInput, any
+// other through claimRecovery, to be run by recoverAcceptedInput with driver
+// and revive.
 func (g *Gateway) claimQueued(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error, wait bool) (func() error, func(), error) {
 	if receipt.Kind != gatewayInputKind {
 		release, err := g.claimRecovery(ctx, receipt, wait)
 		return func() error { return g.recoverAcceptedInput(ctx, book, receipt, driver, revive) }, release, err
 	}
+	return g.claimGatewayInput(ctx, book, receipt, driver, wait)
+}
+
+// claimGatewayInput claims an accepted gateway input for ingress and runtime
+// recovery through the input and conversation owner that manual wakes share.
+// Only explicit controls/interrupts may join an already serving conversation;
+// normal input remains accepted without a premature dispatch reservation
+// while its owner is busy. Topic preparation may share the original chat, but
+// must acquire its own thread before Handle. decodeGatewayInput refuses a
+// receipt of any other kind.
+func (g *Gateway) claimGatewayInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, wait bool) (func() error, func(), error) {
 	input, err := decodeGatewayInput(receipt)
 	if err != nil {
 		return nil, nil, err
