@@ -417,6 +417,10 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByText("Result landing", { exact: true }).click();
         await row("policies.landing.conflicts").getByRole("button").first().click();
         await page.getByRole("option", { name: "Manual (/resolve)", exact: true }).click();
+        // The closing Select popover stays in a body portal at its desktop
+        // position until its exit animation ends; it must be gone before the
+        // viewport shrinks or it widens the document.
+        await page.locator('[data-trigger="Select"]').waitFor({ state: "detached" });
         await page.getByRole("button", { name: "Save system settings", exact: true }).click();
         await page.waitForFunction(() => !document.querySelector(".settings-dirty-dot"));
         assert.deepEqual(writes.at(-1).settings, { policies: { landing: { conflicts: "manual" } } });
@@ -424,6 +428,8 @@ if (process.env.PURE_ONLY !== "1") {
         assert.equal(await row("gateway.owner_id").count(), 0);
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "settings-live-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
+        // useBreakpoint("sm") switches the shell after a matchMedia change event.
+        await page.locator(".app-mobile-bar").waitFor();
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Apply-mode help and landing options fit on mobile");
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "settings-live-mobile.png"), fullPage: true });
 
