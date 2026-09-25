@@ -54,9 +54,9 @@ type AgentRunner struct {
 	// TimeoutSource supplies a snapshot for each new step; nil uses Timeout.
 	// Install before use, never replace while running, and read atomic state.
 	TimeoutSource func() time.Duration
-	// observe sees each step's progress as it streams: what the agent is
-	// thinking and calling, for whoever is watching the plan run.
-	observe func(StepRequest, view.Progress)
+	// observe sees each step's progress, for whoever is watching the plan
+	// run.
+	observe StepObserver
 	mu      sync.Mutex
 	ask     permission.AskFunc
 	askUser acphost.AskUserFunc
@@ -146,6 +146,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 	} else {
 		answer, _, err = session.Prompt(ctx, prompt, spent.wrap(a.progress(ctx, req), req.Agent))
 	}
+	a.ended(req, &spent)
 	if nodewire.IsManagedSession(session.ID()) {
 		if !acphost.PromptSettled(err) || (ctx.Err() != nil && !errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped)) {
 			key, _ := execution.KeyOf(ctx)
@@ -164,17 +165,19 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 	}, err
 }
 
-// stepSpend follows a step's progress for its cost and model.
+// stepSpend follows a step's progress for its cost and model, and for the
+// snapshot the step ends with.
 type stepSpend struct {
 	mu   sync.Mutex
 	last view.Progress
+	seen bool
 }
 
 func (s *stepSpend) wrap(next func(view.Progress), agentID string) func(view.Progress) {
 	return func(p view.Progress) {
 		p.Agent = agentID
 		s.mu.Lock()
-		s.last = p
+		s.last, s.seen = p, true
 		s.mu.Unlock()
 		next(p)
 	}
@@ -261,15 +264,32 @@ const ReportingContract = `
 - 只有当你发现**后面的步骤本身已经错了、照原计划做下去没有意义**时，才用一行 ` + "`REPLAN: <为什么>`" + `；这会停下整个计划重新规划，代价很大，不要用它报告小事
 - 其余正常写。没有就不写，不要编。`
 
+// StepObserver sees a step's progress as it streams: what the agent is
+// thinking and calling. ended marks the snapshot the step returned with,
+// sent once as the step's prompt returns, however it ended.
+type StepObserver func(req StepRequest, p view.Progress, ended bool)
+
 // SetObserver installs where step progress goes; nil discards it.
-func (a *AgentRunner) SetObserver(observe func(StepRequest, view.Progress)) { a.observe = observe }
+func (a *AgentRunner) SetObserver(observe StepObserver) { a.observe = observe }
 
 func (a *AgentRunner) progress(ctx context.Context, req StepRequest) func(view.Progress) {
 	return func(p view.Progress) {
 		agentexec.EmitProgress(ctx, p)
 		if a.observe != nil {
-			a.observe(req, p)
+			a.observe(req, p, false)
 		}
+	}
+}
+
+// ended sends the last snapshot a step's prompt reported once more, as
+// the one the step returned with. It takes no context, so a cancelled
+// step still ends with it; a step that reported nothing sends nothing.
+func (a *AgentRunner) ended(req StepRequest, spent *stepSpend) {
+	spent.mu.Lock()
+	last, seen := spent.last, spent.seen
+	spent.mu.Unlock()
+	if seen && a.observe != nil {
+		a.observe(req, last, true)
 	}
 }
 
