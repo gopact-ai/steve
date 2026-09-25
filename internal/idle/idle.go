@@ -8,14 +8,27 @@ package idle
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
 
+// errSilent is the cause of a clock that ran out.
+var errSilent = fmt.Errorf("%w: silent past the idle timeout", context.DeadlineExceeded)
+
+// Expired reports whether ctx ended because the silence clock it derives
+// from ran out, not because its parent ended, the clock was stopped or ctx
+// itself was cancelled first.
+func Expired(ctx context.Context) bool { return errors.Is(context.Cause(ctx), errSilent) }
+
 // idleContext is the context; its error on expiry is
-// context.DeadlineExceeded, like a deadline's.
+// context.DeadlineExceeded, like a deadline's. It wraps a cancel-cause
+// context that ends with it, so context.Cause of it and of every context
+// derived from it names why it ended.
 type idleContext struct {
 	context.Context
+	end       context.CancelCauseFunc
 	done      chan struct{}
 	mu        sync.Mutex
 	err       error
@@ -96,7 +109,8 @@ type Context interface {
 
 // WithTimeout wraps parent; touch resets the clock, stop ends it.
 func WithTimeout(parent context.Context, d time.Duration) (ctx Context, stop func(), touch func()) {
-	c := &idleContext{Context: parent, done: make(chan struct{}), d: d}
+	inner, end := context.WithCancelCause(parent)
+	c := &idleContext{Context: inner, end: end, done: make(chan struct{}), d: d}
 	c.mu.Lock()
 	c.arm(d)
 	c.mu.Unlock()
@@ -146,7 +160,7 @@ func (c *idleContext) arm(d time.Duration) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.err == nil && !c.stopped() && c.epoch == epoch {
-			c.finishLocked(context.DeadlineExceeded)
+			c.finishLocked(context.DeadlineExceeded, errSilent)
 		}
 	})
 }
@@ -189,14 +203,17 @@ func (c *idleContext) Resume() {
 func (c *idleContext) finish(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.finishLocked(err)
+	c.finishLocked(err, nil)
 }
 
-func (c *idleContext) finishLocked(err error) {
+// finishLocked records the cause before done closes: a context derived
+// from this one reads it when it sees done.
+func (c *idleContext) finishLocked(err, cause error) {
 	if c.err != nil {
 		return
 	}
 	c.err = err
 	c.timer.Stop()
+	c.end(cause)
 	close(c.done)
 }
