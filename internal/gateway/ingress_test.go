@@ -229,7 +229,7 @@ func TestOrdinaryTopicUnknownSeedDoesNotDispatchOrReseed(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, nil); !errors.Is(err, channel.ErrOutcomeUnknown) {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, nil); !errors.Is(err, channel.ErrOutcomeUnknown) {
 			t.Fatalf("unknown topic receipt was cleared: %v", err)
 		}
 	}

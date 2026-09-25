@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -70,7 +71,7 @@ func TestGatewayDurableInputRecoversAfterCompletionBeforeReply(t *testing.T) {
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -99,7 +100,7 @@ func TestGatewayDurableInputRecoversUnknownDispatchByOriginalReceipt(t *testing.
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_input_dispatch`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if p.calls.Load() != 1 || p.resumes.Load() != 1 || ch.results.Load() != 1 {
@@ -128,7 +129,7 @@ func TestGatewayDurableReplyUnknownStaysPendingAndVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, channel.ErrOutcomeUnknown) {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, channel.ErrOutcomeUnknown) {
 			t.Fatalf("unknown delivery hidden: %v", err)
 		}
 	}
@@ -166,7 +167,7 @@ func TestGatewayCompletedAttemptKeepsItsOriginalInputOwner(t *testing.T) {
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_owned_reply`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if ch.results.Load() != 1 {
@@ -189,4 +190,27 @@ func (g *Gateway) processAcceptedFixture(msg feishu.InboundMessage, driver Recov
 	}
 	defer claim.close()
 	return g.consumeInput(ctx, g.recoveryLedger, key, input, driver, claim)
+}
+
+// recoverQueuedFixture claims every pending input through claimQueued, as
+// ReconcileQueued does, and runs each one on the calling goroutine, oldest
+// first, waiting for conversation capacity. It wraps each input's error as
+// "gateway recovery <id>" and joins them in that order.
+func (g *Gateway) recoverQueuedFixture(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error) error {
+	inputs, err := pendingGatewayInputs(ctx, book)
+	if err != nil {
+		return err
+	}
+	var result error
+	for _, receipt := range inputs {
+		run, release, err := g.claimQueued(ctx, book, receipt, driver, revive, true)
+		if err == nil {
+			err = run()
+			release()
+		}
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("gateway recovery %s: %w", receipt.ID, err))
+		}
+	}
+	return result
 }

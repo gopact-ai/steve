@@ -140,7 +140,7 @@ func TestGatewayInputWhoseAttemptEndedWithoutANativeSessionDeliversItsFailure(t 
 		t.Fatalf("an attempt that can never resume left its input pending: %v", err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}

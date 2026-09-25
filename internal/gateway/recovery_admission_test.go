@@ -55,7 +55,7 @@ func TestGatewayResumeInputCannotBorrowLaterAuthorization(t *testing.T) {
 	if err := g.QueueTaskResume(t.Context(), book, old.ID, r, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, task.ErrResumePending) {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, task.ErrResumePending) {
 		t.Fatalf("dormant acceptance not visibly pending: %v", err)
 	}
 	if p.calls.Load() != 0 || ch.notices.Load() != 0 {
@@ -73,7 +73,7 @@ func TestGatewayResumeInputCannotBorrowLaterAuthorization(t *testing.T) {
 	if err := g.QueueTaskResume(t.Context(), book, old.ID, r, newer); !errors.Is(err, ledger.ErrConflict) {
 		t.Fatalf("accepted input rebound to a later admission: %v", err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, task.ErrExecutionStopped) {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, task.ErrExecutionStopped) {
 		t.Fatalf("obsolete input no longer visible: %v", err)
 	}
 	if p.calls.Load() != 1 || ch.notices.Load() != 1 || ch.results.Load() != 1 {
@@ -115,7 +115,7 @@ func TestGatewayConsumedResumeRecoversDispatchReceiptNotPrompt(t *testing.T) {
 		WHEN NEW.kind='gateway-recovery-dispatch' BEGIN SELECT RAISE(ABORT,'dispatch receipt unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err == nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err == nil {
 		t.Fatal("receipt failure hidden")
 	}
 	if err := tasks.CheckResumeAdmission(a); !errors.Is(err, task.ErrResumeConsumed) {
@@ -124,7 +124,7 @@ func TestGatewayConsumedResumeRecoversDispatchReceiptNotPrompt(t *testing.T) {
 	if _, err := book.DB().Exec(`DROP TRIGGER reject_resume_receipt`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if p.calls.Load() != 1 || p.resumes.Load() != 1 || ch.results.Load() != 1 {
