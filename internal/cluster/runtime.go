@@ -368,7 +368,9 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 		r.revoke(g, err)
 		return nil
 	}
-	if _, err := r.waitApplied(ctx, fence.Index, fence.AppVersion); err != nil {
+	// The runtime loop is waiting on this activation, so nothing else would
+	// end a wait for a replica that stays behind the fence it just committed.
+	if _, err := r.awaitApplied(ctx, fence.Index, fence.AppVersion); err != nil {
 		r.revoke(g, err)
 		return nil
 	}
