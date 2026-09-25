@@ -31,8 +31,8 @@ func addressInUse(address string) error {
 }
 
 // The range ends below the default ephemeral ranges and below the
-// Kubernetes NodePort default range (30000-32767), which kube-proxy
-// forwards without holding a socket, so a bind cannot find it in use.
+// Kubernetes NodePort default range (30000-32767), whose ports kube-proxy
+// forwards on a Kubernetes node, where a bind need not find one in use.
 func TestRangeEndsBelowNodePortsAndEphemeralRanges(t *testing.T) {
 	const firstDefaultNodePort = 30000
 	if first < 1024 || last >= firstDefaultNodePort || last >= lowestDefaultEphemeralPort {

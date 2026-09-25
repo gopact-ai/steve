@@ -23,10 +23,10 @@ import (
 // 32768 and up, macOS 49152 and up), so with those defaults the kernel
 // never gives one away on its own; a Linux ip_local_port_range lowered
 // into the range undoes that.
-// last also stops short of the Kubernetes NodePort default range
-// (30000-32767): kube-proxy forwards those ports on a node without holding
-// a socket, so a bind cannot find one in use, yet connections to it would
-// be forwarded away. The SSH link window, LinkFirst to LinkLast, is left
+// The range also ends below the Kubernetes NodePort default range
+// (30000-32767): on a Kubernetes node kube-proxy forwards those ports, a
+// bind there need not find one in use, and connections to it would be
+// forwarded away. The SSH link window, LinkFirst to LinkLast, is left
 // out: a link binds those on a machine's loopback, and a node there that
 // took one would shrink the window or be blocked by it while the link is
 // up.
