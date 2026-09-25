@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -110,8 +111,11 @@ func TestReachOfFollowsTheBoundAddress(t *testing.T) {
 // disagree: a name bound to loopback must be one the Host check accepts, or
 // every client using that name is refused, and an address that names
 // loopback must not have bound beyond it. The refusal names the address, the
-// bound IP and the addresses to write instead.
+// bound IP and the addresses to write instead, and writing one of those ends
+// the refusal: a loopback IP binds itself, and a name binds where the refused
+// address did.
 func TestCheckBoundRefusesAnAddressThatDisagreesWithItsBinding(t *testing.T) {
+	fixes := regexp.MustCompile(`write (\S+?)(?: or (\S+?))?,`)
 	for _, c := range []struct {
 		addr  string
 		bound net.IP
@@ -144,6 +148,23 @@ func TestCheckBoundRefusesAnAddressThatDisagreesWithItsBinding(t *testing.T) {
 		for _, part := range c.want {
 			if !strings.Contains(err.Error(), part) {
 				t.Errorf("CheckBound(%q, %s) = %q, want it to mention %s", c.addr, c.bound, err, part)
+			}
+		}
+		written := fixes.FindStringSubmatch(err.Error())
+		if written == nil {
+			t.Errorf("CheckBound(%q, %s) = %q, want it to name an address to write", c.addr, c.bound, err)
+			continue
+		}
+		for _, fix := range written[1:] {
+			if fix == "" {
+				continue
+			}
+			binds := c.bound
+			if host, _, _ := net.SplitHostPort(fix); net.ParseIP(host) != nil {
+				binds = net.ParseIP(host)
+			}
+			if err := CheckBound(fix, &net.TCPAddr{IP: binds, Port: 7710}); err != nil {
+				t.Errorf("CheckBound(%q, %s) suggests %s, which bound to %s is refused in turn: %v", c.addr, c.bound, fix, binds, err)
 			}
 		}
 	}
