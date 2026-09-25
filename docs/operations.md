@@ -181,6 +181,8 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 
 任务预算的 **0 是不限**；设置正值才施加限制，子任务从父任务剩余预算分配。`prompt_timeout`、任务预算、node 续接宽限和 e2e 客户端截止时间是不同的时钟。
 
+`prompt_timeout` 到期时，node 托管的一轮（包括 delegate 子任务）会请求节点停止原生命令，节点确认停止后按超时结束；节点无法确认停止时保留执行，须通过原任务恢复入口核实。会话接续观察节点保留的执行时，同样受这个静默超时约束。
+
 ### 默认审批策略
 
 依据：[internal/approval/approval.go](../internal/approval/approval.go)。`gateway.default_approval` 是一份意图，而不是某个 AI 工具的模式名：Codex 把审批档位叫 `read-only` / `agent` / `agent-full-access`，Claude Code 叫 `default` / `acceptEdits` / `auto` / `bypassPermissions`，同一个意图在会话打开时才被换算成该 agent 自己的说法。`ask` 是每步都要人确认，`auto` 是工作区内自行动手、越界再问，`full` 是不再打断。规划类模式（如 Claude Code 的 `plan`）不属于审批档位，任何意图都不会把 agent 放进去。
