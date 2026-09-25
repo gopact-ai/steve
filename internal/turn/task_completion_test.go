@@ -279,7 +279,7 @@ func TestTaskCompletionDurableGuardRefusesPendingFacts(t *testing.T) {
 
 func TestCompleteAliasesAreImmediateControls(t *testing.T) {
 	for _, input := range []string{"/tasks complete 1", "/tasks done", "/tasks 完成 #1", "@codex /tasks complete 1"} {
-		if !ImmediateInput(input) {
+		if _, parsed := ParseAddressedInput(input); !parsed.Immediate() {
 			t.Fatalf("completion queued behind active work: %s", input)
 		}
 	}
