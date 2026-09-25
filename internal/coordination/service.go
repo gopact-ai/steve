@@ -274,6 +274,11 @@ func (s *Service) Close() error {
 	return s.closeErr
 }
 
+// wait returns the result of future, or returns early when ctx ends, the
+// service closes or the application fails. A Raft future cannot be cancelled,
+// so after an early return the goroutine reading future.Error stays until Raft
+// resolves the future; for an entry the leader has appended, that happens on
+// commit, leadership loss or shutdown.
 func (s *Service) wait(ctx context.Context, future raft.Future) error {
 	result := make(chan error, 1)
 	go func() { result <- future.Error() }()
@@ -318,7 +323,11 @@ func (e unclassifiedRaftError) Unwrap() error { return e.err }
 // caller holds membershipMu, which serializes membership changes and makes
 // automatic demotion skip its pass; SetVoting also holds opMu, which every
 // write, coordinator transfer and automatic failover takes. An unbounded wait
-// would hold those locks for as long as the entry stays uncommitted.
+// would hold those locks for as long as the entry stays uncommitted. Raft keeps
+// at most one uncommitted configuration entry: until it commits the leader
+// takes no further change, and another request gives up at enqueueing with an
+// already resolved future, so after a timeout at most one such wait stays in
+// the background.
 func (s *Service) waitConfigurationChange(ctx context.Context, description string, change raft.IndexFuture) error {
 	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
 	defer cancel()
