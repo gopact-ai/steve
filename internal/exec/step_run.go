@@ -214,6 +214,9 @@ func (r *stepRun) resume(ctx context.Context, joined RetainedStep, replay *lifec
 	o.Spec, o.Resume, o.Replay = r.record.Spec, true, replay
 	o.Ask, o.AskUser, o.Observe = joined.Ask, joined.AskUser, joined.Observe
 	run, err := lifecycle.Reattach(ctx, o, r.record, joined.Session)
+	if joined.Ended != nil {
+		joined.Ended()
+	}
 	return r.settle(run, err)
 }
 
@@ -632,7 +635,7 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 		}
 	}
 	if r.reserved && r.record.State.Terminal() && !r.record.Unsettled {
-		if budgetErr := agentexec.SettleBudget(r.deps.Budget, r.record, err); budgetErr != nil {
+		if budgetErr := agentexec.SettleBudget(context.Background(), r.deps.Budget, r.record, err); budgetErr != nil {
 			if err == nil {
 				return r.result, agentexec.Blocked(r.record, "accounting", agentexec.Diagnosis{Attempted: i18n.ExecTriedSaveStepUsage, Problem: i18n.ExecProblemCommittedUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, budgetErr), unresolved
 			}

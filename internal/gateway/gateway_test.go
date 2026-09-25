@@ -1080,7 +1080,7 @@ func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
 	if len(p.req) != 0 || len(ch.events) != 0 {
 		t.Fatal("acceptance performed side effects before recovery dispatch")
 	}
-	if err := g.RecoverQueued(t.Context(), book, &recoveryProbe{}, func(conversationID, member string) error {
+	if err := g.recoverQueuedFixture(t.Context(), book, &recoveryProbe{}, func(conversationID, member string) error {
 		revived <- conversationID + ":" + member
 		return nil
 	}); err != nil {

@@ -1,0 +1,127 @@
+package exec
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"sync"
+	"testing"
+
+	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/view"
+)
+
+// observedStep is what a step observer saw, in order.
+type observedStep struct {
+	mu    sync.Mutex
+	calls []observedUpdate
+}
+
+type observedUpdate struct {
+	p     view.Progress
+	ended bool
+}
+
+func (o *observedStep) observe(_ StepRequest, p view.Progress, ended bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.calls = append(o.calls, observedUpdate{p, ended})
+}
+
+// requireEnded checks that the observer saw the step end exactly once,
+// last, with the snapshot reported just before it.
+func (o *observedStep) requireEnded(t *testing.T) {
+	t.Helper()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	ends := 0
+	for _, c := range o.calls {
+		if c.ended {
+			ends++
+		}
+	}
+	n := len(o.calls)
+	if ends != 1 || n < 2 || !o.calls[n-1].ended || !reflect.DeepEqual(o.calls[n-1].p, o.calls[n-2].p) || o.calls[n-1].p.Agent != "builder" {
+		t.Fatalf("observed %+v, want one end last with the snapshot before it", o.calls)
+	}
+}
+
+// reportingSessions open a session that reports its snapshots and then
+// ends its prompt the way end says.
+type reportingSessions struct {
+	reports []view.Progress
+	end     func(context.Context) (string, error)
+}
+
+func (s reportingSessions) OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error) {
+	return reportingRunner(s), nil
+}
+func (reportingSessions) CloseSession(context.Context, harness.Placement, string) error { return nil }
+
+type reportingRunner reportingSessions
+
+func (reportingRunner) ID() string { return "reporting-test" }
+func (r reportingRunner) Prompt(ctx context.Context, _ string, progress func(view.Progress)) (string, []string, error) {
+	for _, p := range r.reports {
+		progress(p)
+	}
+	answer, err := r.end(ctx)
+	return answer, nil, err
+}
+func (reportingRunner) Cancel(context.Context) error { return nil }
+func (reportingRunner) Abort()                       {}
+
+func TestAgentRunnerEndsEveryStepWithItsLastSnapshot(t *testing.T) {
+	failed := errors.New("prompt failed")
+	for name, end := range map[string]func(context.Context, context.CancelFunc) (string, error){
+		"completed": func(context.Context, context.CancelFunc) (string, error) { return "done", nil },
+		"failed":    func(context.Context, context.CancelFunc) (string, error) { return "", failed },
+		"cancelled": func(ctx context.Context, cancel context.CancelFunc) (string, error) {
+			cancel()
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			sessions := reportingSessions{
+				reports: []view.Progress{{Answer: "working"}, {Answer: "working… done"}},
+				end:     func(ctx context.Context) (string, error) { return end(ctx, cancel) },
+			}
+			runner := NewAgentRunner(sessions, nil, testRoster(t, bothNodes()))
+			var seen observedStep
+			runner.SetObserver(seen.observe)
+			_, _ = runner.RunStep(ctx, StepRequest{Agent: "builder", Workspace: t.TempDir(), Goal: "work"})
+			seen.requireEnded(t)
+		})
+	}
+}
+
+// A step whose prompt reported nothing has no snapshot to end with, and
+// sends none: an empty one would replace what the step last showed.
+func TestAgentRunnerEndsASilentStepWithNothing(t *testing.T) {
+	sessions := reportingSessions{end: func(context.Context) (string, error) { return "done", nil }}
+	runner := NewAgentRunner(sessions, nil, testRoster(t, bothNodes()))
+	var seen observedStep
+	runner.SetObserver(seen.observe)
+	if _, err := runner.RunStep(t.Context(), StepRequest{Agent: "builder", Workspace: t.TempDir(), Goal: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	seen.mu.Lock()
+	defer seen.mu.Unlock()
+	if len(seen.calls) != 0 {
+		t.Fatalf("observed %+v, want nothing from a step that reported nothing", seen.calls)
+	}
+}
+
+func TestRetainedStepEndsWithTheSnapshotItResumedTo(t *testing.T) {
+	p, work, deps, _, _ := retainedStepFixture(t)
+	var seen observedStep
+	deps.Runner.(*AgentRunner).SetObserver(seen.observe)
+	if _, err := runStepWithRecovery(t.Context(), p, work, nil, deps); err != nil {
+		t.Fatal(err)
+	}
+	seen.requireEnded(t)
+}

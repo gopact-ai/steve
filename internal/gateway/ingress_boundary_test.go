@@ -48,7 +48,7 @@ func TestOrdinaryAcceptedInputSurvivesClosedLifetimeAndRestarts(t *testing.T) {
 	g = New(p)
 	g.BindChannel(ch)
 	g.SetRecoveryLedger(book)
-	if err := g.RecoverQueued(t.Context(), book, p, nil); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, nil); err != nil {
 		t.Fatal(err)
 	}
 	if p.calls.Load() != 1 || ch.results.Load() != 1 {
@@ -221,7 +221,7 @@ func TestDurableUnknownFinalPatchNeverFallsBackToAnotherReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, nil); !errors.Is(err, channel.ErrOutcomeUnknown) {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, nil); !errors.Is(err, channel.ErrOutcomeUnknown) {
 			t.Fatal(err)
 		}
 	}
@@ -552,7 +552,7 @@ func TestDurableResultRetainsUserErrorAndCancellationRendering(t *testing.T) {
 			if _, err := book.DB().Exec(`DROP TRIGGER defer_rendering`); err != nil {
 				t.Fatal(err)
 			}
-			if err := g.RecoverQueued(t.Context(), book, nil, nil); err != nil {
+			if err := g.recoverQueuedFixture(t.Context(), book, nil, nil); err != nil {
 				t.Fatal(err)
 			}
 			if len(ch.texts) != 1 || ch.texts[0] != test.want {

@@ -352,7 +352,7 @@ func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmS
 		if records, err := c.attempts.ForTask(ctx, id); err == nil {
 			for _, record := range records {
 				if !record.Unsettled && record.StopEvidence != "" {
-					stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
+					stopErr = errors.Join(stopErr, c.resolveStoppedExecution(ctx, record))
 				}
 			}
 		} else {

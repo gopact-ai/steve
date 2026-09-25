@@ -434,7 +434,7 @@ func (a *auxiliary) settle(run lifecycle.Result, err error) (runErr, unresolved 
 		return err, nil
 	}
 	if a.reserved {
-		if budgetErr := SettleBudget(a.runner.budget, record, err); budgetErr != nil {
+		if budgetErr := SettleBudget(context.Background(), a.runner.budget, record, err); budgetErr != nil {
 			return Blocked(record, "accounting", Diagnosis{Attempted: i18n.ExecTriedSaveExecutionUsage, Problem: i18n.ExecProblemResultUnsettled, Recommendation: i18n.ExecAdviceRestoreStorageCheck}, budgetErr), nil
 		}
 	}

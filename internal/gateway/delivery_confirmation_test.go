@@ -78,7 +78,7 @@ func TestManualResumeRetainsExpectedTask(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- gateway.RecoverQueued(t.Context(), book, &recoveryProbe{}, func(string, string) error { return nil })
+		done <- gateway.recoverQueuedFixture(t.Context(), book, &recoveryProbe{}, func(string, string) error { return nil })
 	}()
 	select {
 	case request := <-processor.started:

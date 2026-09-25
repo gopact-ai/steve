@@ -62,7 +62,7 @@ func TestTaskResumeReportsRefusalWithoutDispatch(t *testing.T) {
 			if _, err := tasks.Resume(row.ID, row.ExecutionEpoch, row.State, a); err != nil {
 				t.Fatal(err)
 			}
-			err = g.RecoverQueued(t.Context(), book, &recoveryProbe{}, func(string, string) error {
+			err = g.recoverQueuedFixture(t.Context(), book, &recoveryProbe{}, func(string, string) error {
 				if scenario == "revive-failed" {
 					return failure
 				}

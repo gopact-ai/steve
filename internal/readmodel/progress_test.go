@@ -88,6 +88,38 @@ func TestStepProgressPublishesTheLastUpdateTheThrottleHeldBack(t *testing.T) {
 	}
 }
 
+// A step's end publishes its last update at once, in place of one the
+// throttle holds, and nothing held for the step is published after it.
+func TestStepEndedPublishesTheLastUpdateAtOnce(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	m.StepProgress("task", "plan", "build", "builder", "node-a", view.Progress{Answer: "compiling"})
+	<-events
+	m.StepProgress("task", "plan", "build", "builder", "node-a", view.Progress{Answer: "compiling…"})
+	m.StepEnded("task", "plan", "build", "builder", "node-a", view.Progress{Answer: "compiling… done"})
+	select {
+	case ev := <-events:
+		if ev.Kind != "step.progress" || ev.StepID != "build" || ev.Progress.Answer != "compiling… done" {
+			t.Fatalf("published %+v, want the step's last update", ev)
+		}
+	default:
+		t.Fatal("the step's last update was held back")
+	}
+	time.Sleep(2 * progressEvery)
+	select {
+	case ev := <-events:
+		t.Fatalf("published %q after the step ended", ev.Progress.Answer)
+	default:
+	}
+	m.mu.Lock()
+	kept := len(m.throttle)
+	m.mu.Unlock()
+	if kept != 0 {
+		t.Fatalf("throttling %d steps after the step ended", kept)
+	}
+}
+
 // A step's conversation is read from the task store for the updates it
 // publishes, not for each one the throttle merges into a later one.
 func TestStepProgressReadsTheTaskOnlyForWhatItPublishes(t *testing.T) {

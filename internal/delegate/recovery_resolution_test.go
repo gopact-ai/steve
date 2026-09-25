@@ -141,7 +141,7 @@ func TestRecoveredChildResolutionRequiresOriginalSettledAccounting(t *testing.T)
 		t.Fatal(err)
 	}
 	scope.Finish(errors.New("original observer lost"))
-	if err := service.finishFromRecord(record, task.OutcomeOK); err != nil {
+	if err := service.finishFromRecord(t.Context(), record, task.OutcomeOK); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.tasks.SetResult(child.ID, task.Result{Attempt: record.ID}); err != nil {
@@ -216,7 +216,7 @@ func TestRetainedSweepRetriesResolutionAfterOriginalNativeHandlerJoins(t *testin
 	waiting := service.executions.Stop(ids, task.ErrExecutionStopped)
 	<-started
 	scope.Finish(nativeErr)
-	if err := service.finishFromRecord(record, task.OutcomeOK); err != nil {
+	if err := service.finishFromRecord(t.Context(), record, task.OutcomeOK); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.tasks.SetResult(child.ID, task.Result{Attempt: record.ID}); err != nil {

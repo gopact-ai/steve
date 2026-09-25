@@ -9,6 +9,8 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -216,14 +218,14 @@ func TestGatewaySameInputJoinsNativeAndUnknownRetainedObserver(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 2)
-			go func() { done <- g.RecoverQueued(ctx, book, p, func(string, string) error { return nil }) }()
+			go func() { done <- g.recoverQueuedFixture(ctx, book, p, func(string, string) error { return nil }) }()
 			select {
 			case <-p.entered:
 			case <-time.After(time.Second):
 				cancel()
 				t.Fatal("original observer never started")
 			}
-			go func() { done <- g.RecoverQueued(ctx, book, p, func(string, string) error { return nil }) }()
+			go func() { done <- g.recoverQueuedFixture(ctx, book, p, func(string, string) error { return nil }) }()
 			select {
 			case err := <-done:
 				if err != nil && !errors.Is(err, channel.ErrDeliveryQueued) {
@@ -243,7 +245,7 @@ func TestGatewaySameInputJoinsNativeAndUnknownRetainedObserver(t *testing.T) {
 			// Cancellation must release only the in-process owner. The unknown
 			// dispatch remains fenced; retry observes its original attempt.
 			close(p.release)
-			if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+			if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
 			expectedCalls := int32(1)
@@ -284,8 +286,11 @@ func TestGatewayRuntimeRecoveryUsesBoundedSlotsAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
+	// Every pass after the first finds both slots taken.
 	for range 4 {
-		if err := g.ReconcileQueued(ctx, book, p, func(string, string) error { return nil }, &workers); err != nil {
+		if err := mustNotWaitForCapacity(t, "recovery", cancel, func() error {
+			return g.ReconcileQueued(ctx, book, p, func(string, string) error { return nil }, &workers)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -299,15 +304,8 @@ func TestGatewayRuntimeRecoveryUsesBoundedSlotsAndCancellation(t *testing.T) {
 	if p.calls.Load() != 2 || p.resumes.Load() != 0 {
 		t.Fatalf("pending inputs created unbounded observers: calls=%d resumes=%d", p.calls.Load(), p.resumes.Load())
 	}
-	waiting := make(chan error, 1)
-	go func() { waiting <- g.RecoverQueued(ctx, book, p, func(string, string) error { return nil }) }()
 	cancel()
 	workers.Wait()
-	select {
-	case <-waiting:
-	case <-time.After(time.Second):
-		t.Fatal("cancelled slot waiters did not leave")
-	}
 	g.mu.Lock()
 	inFlight := len(g.durableRunning)
 	g.mu.Unlock()
@@ -345,7 +343,7 @@ func TestGatewayClosedWorkerAdmissionReleasesClaimAndSlot(t *testing.T) {
 	if len(g.durableRunning) != 0 || len(g.slots) != 0 || p.calls.Load() != 0 {
 		t.Fatal("rejected worker leaked ownership or dispatched work")
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -385,6 +383,92 @@ func TestGatewayRuntimeRecoveryDoesNotStarveBehindUnknownReceipts(t *testing.T) 
 	}
 }
 
+// recoveryOwnership reads the claimed inputs, the messages in flight per
+// conversation and the taken conversation slots.
+func recoveryOwnership(g *Gateway) (claims int, serving map[string]int, slots int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.durableRunning), maps.Clone(g.serving), len(g.slots)
+}
+
+// pendingRecoveryIDs lists the recovery inputs not yet acknowledged, oldest
+// first.
+func pendingRecoveryIDs(t *testing.T, book *ledger.Ledger) []string {
+	t.Helper()
+	pending, err := book.PendingCommands(t.Context(), recoveryInputKind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(pending))
+	for _, receipt := range pending {
+		ids = append(ids, receipt.ID)
+	}
+	return ids
+}
+
+// ReconcileQueued claims an input before it hands the input's run to
+// workers, so heldRecoveryWorkers keep every claim of a pass in place until
+// the test runs the collected jobs.
+func TestGatewayRecoveryClaimTakesItsConversationSlot(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	p := &recoveryProbe{}
+	g := New(p)
+	g.slots = make(chan struct{}, 2)
+	g.BindChannel(&recoveryChannel{})
+	for _, key := range []string{"first", "second", "third"} {
+		input := revivalFixture()
+		input.ConversationID = key
+		if err := g.QueueRecovery(t.Context(), book, key, input, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revive := func(string, string) error { return nil }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// A pass hands at most cap(g.slots) runs to workers, so only the second
+	// pass offers "third" a claim while "first" and "second" hold both slots.
+	w := &heldRecoveryWorkers{}
+	for range 2 {
+		if err := mustNotWaitForCapacity(t, "recovery", cancel, func() error {
+			return g.ReconcileQueued(ctx, book, p, revive, w)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claims, serving, slots := recoveryOwnership(g)
+	if want := map[string]int{"first": 1, "second": 1}; len(w.jobs) != 2 || claims != 2 || slots != 2 || !maps.Equal(serving, want) {
+		t.Errorf("recovery claims did not each hold a conversation slot: jobs=%d claims=%d serving=%v slots=%d, want jobs=2 claims=2 serving=%v slots=2",
+			len(w.jobs), claims, serving, slots, want)
+	}
+	for _, run := range w.jobs {
+		run()
+	}
+	if _, found, err := book.CommandReceipt(t.Context(), "third/dispatch"); err != nil || found {
+		t.Errorf("input without a free slot acquired a dispatch receipt: found=%v err=%v", found, err)
+	}
+	if pending := pendingRecoveryIDs(t, book); !slices.Equal(pending, []string{"third"}) || p.calls.Load() != 2 {
+		t.Fatalf("held runs finished: pending=%v calls=%d, want pending=[third] calls=2", pending, p.calls.Load())
+	}
+	// Both runs returned their slots, so the next pass claims "third".
+	w = &heldRecoveryWorkers{}
+	if err := g.ReconcileQueued(ctx, book, p, revive, w); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range w.jobs {
+		run()
+	}
+	if pending := pendingRecoveryIDs(t, book); len(w.jobs) != 1 || len(pending) != 0 || p.calls.Load() != 3 {
+		t.Fatalf("returned slots did not admit third: jobs=%d pending=%v calls=%d", len(w.jobs), pending, p.calls.Load())
+	}
+	if claims, serving, slots := recoveryOwnership(g); claims != 0 || len(serving) != 0 || slots != 0 {
+		t.Fatalf("finished runs kept ownership: claims=%d serving=%v slots=%d", claims, serving, slots)
+	}
+}
+
 type recoveryControlProbe struct {
 	blockedRecoveryProbe
 	control chan struct{}
@@ -412,7 +496,9 @@ func TestGatewayRecoverySlotDoesNotBlockItsOrdinaryStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 2)
-	go func() { done <- g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }) }()
+	go func() {
+		done <- g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil })
+	}()
 	select {
 	case <-p.entered:
 	case <-time.After(time.Second):
@@ -484,5 +570,57 @@ func TestGatewaySameConversationRecoveryDefersOtherInputWithoutDispatch(t *testi
 	workers.Wait()
 	if p.calls.Load() != 2 {
 		t.Fatal("conversation ownership did not release its waiting input")
+	}
+}
+
+func TestGatewayRecoveryClaimDoesNotJoinItsServingConversation(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	p := &recoveryProbe{}
+	g := New(p)
+	g.slots = make(chan struct{}, 2)
+	g.BindChannel(&recoveryChannel{})
+	// Both inputs keep revivalFixture's conversation.
+	for _, key := range []string{"first", "second"} {
+		if err := g.QueueRecovery(t.Context(), book, key, revivalFixture(), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revive := func(string, string) error { return nil }
+	w := &heldRecoveryWorkers{}
+	if err := g.ReconcileQueued(t.Context(), book, p, revive, w); err != nil {
+		t.Fatal(err)
+	}
+	// A slot stays free, so only the conversation's owner keeps "second" out.
+	claims, serving, slots := recoveryOwnership(g)
+	if want := map[string]int{"conversation": 1}; len(w.jobs) != 1 || claims != 1 || slots != 1 || !maps.Equal(serving, want) {
+		t.Errorf("recovery claimed another input of a serving conversation: jobs=%d claims=%d serving=%v slots=%d, want jobs=1 claims=1 serving=%v slots=1",
+			len(w.jobs), claims, serving, slots, want)
+	}
+	for _, run := range w.jobs {
+		run()
+	}
+	if _, found, err := book.CommandReceipt(t.Context(), "second/dispatch"); err != nil || found {
+		t.Errorf("input behind its conversation's owner acquired a dispatch receipt: found=%v err=%v", found, err)
+	}
+	if pending := pendingRecoveryIDs(t, book); !slices.Equal(pending, []string{"second"}) || p.calls.Load() != 1 {
+		t.Fatalf("held run finished: pending=%v calls=%d, want pending=[second] calls=1", pending, p.calls.Load())
+	}
+	// The run released the conversation, so the next pass claims "second".
+	w = &heldRecoveryWorkers{}
+	if err := g.ReconcileQueued(t.Context(), book, p, revive, w); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range w.jobs {
+		run()
+	}
+	if pending := pendingRecoveryIDs(t, book); len(w.jobs) != 1 || len(pending) != 0 || p.calls.Load() != 2 {
+		t.Fatalf("released conversation did not admit second: jobs=%d pending=%v calls=%d", len(w.jobs), pending, p.calls.Load())
+	}
+	if claims, serving, slots := recoveryOwnership(g); claims != 0 || len(serving) != 0 || slots != 0 {
+		t.Fatalf("finished runs kept ownership: claims=%d serving=%v slots=%d", claims, serving, slots)
 	}
 }
