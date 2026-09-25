@@ -112,7 +112,8 @@ func PackImport(ctx context.Context, dir string) (string, error) {
 }
 
 // UnpackImport writes what PackImport sent into dest, which must not exist
-// yet. Every entry stays under dest; the stream is capped.
+// yet. Every entry stays under dest; the stream is capped and read to its
+// end, so nothing past the archive goes unread or unchecked.
 func UnpackImport(encoded, dest string) error {
 	if _, err := os.Lstat(dest); err == nil {
 		return fmt.Errorf("%s already exists", dest)
@@ -138,9 +139,19 @@ func UnpackImport(encoded, dest string) error {
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return err
 	}
-	if err := unpackEntries(tar.NewReader(&cappedReader{r: gz, left: importStreamCap}), tmp); err != nil {
-		// The unpack error is the answer; what a failed remove leaves
-		// behind is refused by the RemoveAll above at the next import.
+	capped := &cappedReader{r: gz, left: importStreamCap}
+	err = unpackEntries(tar.NewReader(capped), tmp)
+	if err == nil {
+		// The tar reader stops at the archive's end blocks. The rest of
+		// the stream goes through the same cap, and reading it to its end
+		// lets gzip check its framing and checksum.
+		if _, drainErr := io.Copy(io.Discard, capped); drainErr != nil {
+			err = fmt.Errorf("read the import stream to its end: %w", drainErr)
+		}
+	}
+	if err != nil {
+		// The error is the answer; what a failed remove leaves behind is
+		// refused by the RemoveAll above at the next import.
 		_ = os.RemoveAll(tmp)
 		return err
 	}
