@@ -109,7 +109,29 @@ func (n *clusterNode) current() *businessStores {
 	return n.business
 }
 
+// fixtureTiming is the Raft timing of the nodes a fixture builds and how
+// long their clients keep trying members while none takes a call.
+type fixtureTiming struct {
+	heartbeat, election, lease, retryWindow time.Duration
+}
+
+// fastTiming notices a lost leader within a few hundred milliseconds, so
+// tests that replace a failed leader or coordinator finish quickly.
+var fastTiming = fixtureTiming{heartbeat: 180 * time.Millisecond, election: 180 * time.Millisecond, lease: 90 * time.Millisecond}
+
+// steadyTiming is Raft's default timing, for tests that need the consensus
+// leader to stay where it is. Under fastTiming a leader that the race
+// detector and a single CPU keep busy for longer than its 90ms lease steps
+// down, and another member may take over. An election takes longer here, so
+// the clients keep trying for longer.
+var steadyTiming = fixtureTiming{heartbeat: time.Second, election: time.Second, lease: 500 * time.Millisecond, retryWindow: 15 * time.Second}
+
 func testNodes(t *testing.T, count int) []*clusterNode {
+	t.Helper()
+	return testNodesWith(t, count, fastTiming)
+}
+
+func testNodesWith(t *testing.T, count int, timing fixtureTiming) []*clusterNode {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -221,7 +243,7 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 			}
 			return false
 		}
-		n.client, err = coordination.NewClient(coordination.ClientConfig{TLS: n.options, Members: members, Timeout: time.Second, ControlHeaders: func(context.Context, string) (http.Header, error) {
+		n.client, err = coordination.NewClient(coordination.ClientConfig{TLS: n.options, Members: members, Timeout: time.Second, RetryWindow: timing.retryWindow, ControlHeaders: func(context.Context, string) (http.Header, error) {
 			return http.Header{"X-Test-Owner": []string{"owner"}}, nil
 		}})
 		if err != nil {
@@ -232,9 +254,9 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 			t.Fatal(err)
 		}
 		raftConfig := raft.DefaultConfig()
-		raftConfig.HeartbeatTimeout = 180 * time.Millisecond
-		raftConfig.ElectionTimeout = 180 * time.Millisecond
-		raftConfig.LeaderLeaseTimeout = 90 * time.Millisecond
+		raftConfig.HeartbeatTimeout = timing.heartbeat
+		raftConfig.ElectionTimeout = timing.election
+		raftConfig.LeaderLeaseTimeout = timing.lease
 		raftConfig.CommitTimeout = 10 * time.Millisecond
 		n.config = Config{LedgerDir: filepath.Join(t.TempDir(), "ledger"), Client: n.client, PollInterval: 20 * time.Millisecond, ShutdownTimeout: time.Second,
 			Coordination: coordination.Config{ClusterID: "test-cluster", NodeID: members[i].NodeID, FailureDomain: "test-domain-" + members[i].NodeID, StorageLevel: "restricted", DataDir: filepath.Join(t.TempDir(), "raft"), Bootstrap: i == 0,
@@ -421,7 +443,7 @@ func TestJoinThisMemberCannotTakeGoesToTheNextLeader(t *testing.T) {
 }
 
 func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing.T) {
-	nodes := testNodes(t, 3)
+	nodes := testNodesWith(t, 3, steadyTiming)
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	for _, n := range nodes[1:] {
@@ -432,9 +454,7 @@ func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing
 		t.Fatal(err)
 	}
 	active := ready(t, second)
-	if !first.Status().IsLeader {
-		t.Fatal("fixture no longer routes business writes through the remote consensus leader")
-	}
+	requireAnotherLeader(t, first, "node-2")
 	// node-2 stops receiving Raft traffic. node-1 and node-3 still form a
 	// quorum, so the write commits but never reaches node-2's ledger.
 	nodes[1].raft.pause()
@@ -478,7 +498,7 @@ func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing
 // its writer lock through that check, so a replica that stays behind must
 // fail the write instead of stalling every writer queued behind it.
 func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
-	nodes := testNodes(t, 3)
+	nodes := testNodesWith(t, 3, steadyTiming)
 	// node-2's application writes while its generation is being activated.
 	// The runtime then waits for Activate and does not check the replica's
 	// progress itself, so nothing but the write's own check bounds the wait.
@@ -516,10 +536,8 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatalf("node-2 did not start its business generation: %+v", second.Status())
 	}
-	if !first.Status().IsLeader {
-		t.Fatal("fixture no longer reads the cluster state from a remote consensus leader")
-	}
 	tasks := nodes[1].current().tasks
+	requireAnotherLeader(t, first, "node-2")
 	// node-2 stops receiving Raft traffic, and node-1 and node-3 commit an
 	// entry it cannot apply: a read from the leader is now ahead of node-2.
 	nodes[1].raft.pause()
@@ -865,6 +883,17 @@ func joinNode(t *testing.T, first *Runtime, n *clusterNode, voting, autoEligible
 		t.Fatal(err)
 	}
 	return r
+}
+
+// requireAnotherLeader fails the test unless a member other than paused
+// leads consensus. A test pauses that member's inbound Raft traffic next:
+// the other two members still form a quorum and commit what it cannot
+// receive. Were paused the leader, its own replication would carry on.
+func requireAnotherLeader(t *testing.T, r *Runtime, paused string) {
+	t.Helper()
+	if leader := r.service.Status().LeaderID; leader == "" || leader == paused {
+		t.Fatalf("%s is to stop receiving Raft traffic while another member leads consensus, but the leader is %q", paused, leader)
+	}
 }
 
 func ready(t *testing.T, r *Runtime) Activation {
