@@ -102,7 +102,8 @@ type Registry struct {
 
 // SetDriftObserver installs where manifest changes are reported; at is
 // when the registry took the advert that showed the change, which can be
-// well before the observer hears it.
+// well before the observer hears it. It is called the way the observer
+// SetObserver installs is, on the same goroutine.
 func (r *Registry) SetDriftObserver(drift func(node string, changes []ability.Change, at time.Time)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -163,7 +164,9 @@ func (r *Registry) noteDrift(name string, adv nodewire.Advert) {
 
 // SetObserver installs where connectivity changes are reported; at is
 // when the registry made the change, which can be well before the observer
-// hears it.
+// hears it. Observers are called one at a time on a goroutine of their own:
+// an observer must not wait for a later change to be heard, as none is
+// delivered until it returns.
 func (r *Registry) SetObserver(observe func(Status, time.Time)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

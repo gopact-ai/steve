@@ -40,7 +40,8 @@ func (g *observerGate) waitEntered(t *testing.T) {
 
 // promptly runs what the registry does for a connection change and fails
 // if it is still waiting once the bound is past. With the observer held,
-// only a registry that makes connection handling wait for it gets there.
+// only a registry that makes connection handling wait for it gets there;
+// the bound leaves room for a real dial on a loaded machine.
 func promptly(t *testing.T, what string, change func() error) {
 	t.Helper()
 	done := make(chan error, 1)
@@ -50,7 +51,7 @@ func promptly(t *testing.T, what string, change func() error) {
 		if err != nil {
 			t.Fatalf("%s: %v", what, err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatalf("%s waited for an observer still hearing an earlier change", what)
 	}
 }

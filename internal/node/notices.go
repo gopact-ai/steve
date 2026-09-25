@@ -9,9 +9,13 @@ import (
 // on a goroutine of their own, in the order they were posted. Observers
 // write history, and a history write can wait on replication for as long
 // as the ledger takes: connecting or losing any machine must not wait with
-// it. A change is posted where the registry decides it, under its lock, so
-// the order observers hear is the order the changes happened in; a
-// machine's loss is never heard before its connection.
+// it. A change of a machine's standing, its connection or its loss, is
+// posted where the registry decides it, under its lock, so observers hear
+// those in the order they happened: a loss is never heard before its
+// connection. Manifest drift is posted after the lock is let go. It is
+// heard before the connection whose advert showed it, but drift found by
+// a refresh has no set order against a loss or reconnection happening at
+// the same time.
 //
 // A history write that does not end leaves observers behind while machines
 // keep connecting and dropping. At most noticesHeld wait; past that the
