@@ -1,10 +1,13 @@
 package readmodel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -297,6 +300,45 @@ func TestLoadObservationsAfterAnUnacknowledgedSaveKeepsItOnce(t *testing.T) {
 	m.Observe("node.up", "C", "C connected", nil)
 	if got, live := subjects(restoredObservations(t, store)), subjects(m.observations); !reflect.DeepEqual(got, []string{"A", "B", "C"}) || !reflect.DeepEqual(got, live) {
 		t.Fatalf("after reload: restored=%v live=%v, want A B C once each", got, live)
+	}
+}
+
+// A record the hub cannot read, or one under an id it never writes, costs
+// that record and not every later save: the rest load in order, numbering
+// goes on past the unreadable one, and each skip is logged with its id.
+func TestLoadObservationsSkipsRecordsItCannotRead(t *testing.T) {
+	book := observationBook(t)
+	store := ledgerObservationStore(book)
+	earlier := New(Sources{Observations: store})
+	for _, name := range []string{"A", "B", "C"} {
+		earlier.Observe("node.up", name, name+" connected", nil)
+	}
+	if err := book.PutBinding(t.Context(), observationKind, observationID(2), "not an observation"); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.PutBinding(t.Context(), observationKind, "legacy", Observation{Kind: "node.up", Subject: "X"}); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+	m := New(Sources{Observations: store})
+	if err := m.LoadObservations(); err != nil {
+		t.Fatalf("one unreadable record failed the whole load: %v", err)
+	}
+	if live := subjects(m.observations); !reflect.DeepEqual(live, []string{"A", "C"}) {
+		t.Fatalf("loaded %v, want the readable A and C in order", live)
+	}
+	m.Observe("node.up", "D", "D connected", nil)
+	var saved Observation
+	if ok, err := book.GetBinding(t.Context(), observationKind, observationID(4), &saved); err != nil || !ok || saved.Subject != "D" {
+		t.Fatalf("D kept as number 4: %t, %v, %+v; want it after C's 3", ok, err, saved)
+	}
+	for _, id := range []string{observationID(2), "legacy"} {
+		if !strings.Contains(logged.String(), `"id":"`+id+`"`) {
+			t.Errorf("skipping record %s was not logged with its id: %s", id, logged.String())
+		}
 	}
 }
 
