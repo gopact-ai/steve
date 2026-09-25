@@ -77,7 +77,9 @@ func withSlots(h nodewire.Harness) string {
 // ObservedHubAdvert describes the hub machine, named nodeName, from the
 // configuration in store and what observation has seen of it. A store
 // with no configuration, a nil one included, gives an advert that names
-// nodeName and nothing else.
+// nodeName and nothing else. Without an observation the snapshot goes
+// unnumbered, its generation and sequence both 0; it checks binaries for
+// existence only and leaves skills unreported.
 func ObservedHubAdvert(nodeName string, store *ConfigStore, observation *LocalObservation) (adv nodewire.Advert) {
 	store.Read(func(cfg *config.Config) { adv = observedHubAdvert(nodeName, cfg, observation) })
 	return adv
