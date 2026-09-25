@@ -1159,23 +1159,19 @@ func TestRunFailsAManagedPromptItsSilenceClockStopped(t *testing.T) {
 // A node-owned prompt whose result arrived as its silence clock ran out
 // completes: the clock stops silent commands, not ones that answered. The
 // completion is written on a context of its own, even for a caller whose
-// cancelled runs detach.
+// cancelled runs detach. The result comes back as soon as the clock has
+// run out: the run's own context has ended with it.
 func TestRunCompletesAManagedPromptThatAnsweredAsItsSilenceClockRanOut(t *testing.T) {
 	w := newWorld("ns_1")
 	w.attempts.refusesDone = true
 	ctx, stop, _ := idle.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer stop()
 	release := idle.Hold(ctx)
-	var run context.Context
 	w.runner.during = func() {
 		release()
-		<-run.Done()
+		<-ctx.Done()
 	}
 	o := w.options()
-	o.Leased = func(ctx context.Context, _ *Execution) (context.Context, error) {
-		run = ctx
-		return ctx, nil
-	}
 	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
 	res, err := Run(ctx, o)
 	var detached *execution.RetainedObserverDetached
