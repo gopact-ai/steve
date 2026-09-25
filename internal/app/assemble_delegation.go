@@ -42,9 +42,9 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 	admin := page.Admin()
 	cons := page.Console()
 
-	// The messaging server's URL is baked into session fingerprints, so the
-	// port is remembered across restarts: losing it would ask every live
-	// conversation for /new after each deploy.
+	// The messaging server's port is remembered across restarts only so it
+	// rarely moves. A moved port is not a configuration change: session
+	// fingerprints leave it out, and a resumed session is given the new URL.
 	// The page recognises the platform's own tool calls by the messaging
 	// server's name and catalogue, whatever a harness calls them.
 	readmodel.SetPlatformTools(agentmcp.ServerName, agentmcp.ToolTitles())

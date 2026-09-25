@@ -83,8 +83,8 @@ func (s *Server) handshake(socket net.Conn, claim *hubClaim) (nodewire.Hello, bo
 		return nodewire.Hello{}, false
 	}
 	// The reverse listener is bound before the advert so its port can be
-	// reported in the same breath: the hub bakes that URL into the session
-	// fingerprint, so it has to be known before any session opens.
+	// reported in the same breath: the hub gives agents here that URL, so
+	// it has to be known before any session opens.
 	mcp, err := s.listenMCP()
 	if errors.Is(err, errMCPClosed) {
 		// The node is shutting down and serves no connection, hub or peer.
