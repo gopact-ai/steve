@@ -1,12 +1,16 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 )
 
@@ -78,4 +82,58 @@ func TestApplicationStopRetiresProjectedStopsFromCandidates(t *testing.T) {
 	if ids := stopCandidateIDs(t, f); slices.Contains(ids, current.ID) {
 		t.Fatalf("already accounted stop was not retired: %v", ids)
 	}
+}
+
+// A stop pass whose context has ended starts none of the writes that
+// finish a confirmed stop — accounting, resolution, the projection mark —
+// and the next pass finishes them.
+func TestApplicationStopProjectionStaysWithinItsPass(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mockagent")
+	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
+		t.Fatalf("build isolated ACP peer: %v %s", err, output)
+	}
+	f := newStopRegistryFixture(t, bin, false)
+	f.owner.Finish(&execution.RetainedObserverDetached{AttemptID: f.record.ID, NodeID: f.record.Node, SessionID: f.record.Session, Cause: harness.ErrStopUnconfirmed})
+	// A first pass confirms the native stop but cannot settle its accounting.
+	if _, err := f.book.DB().Exec(`CREATE TRIGGER reject_stop_settlement BEFORE INSERT ON bindings WHEN NEW.kind = 'task-attempt' BEGIN SELECT RAISE(FAIL, 'isolated accounting failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.stops.Reconcile(f.ctx); err == nil || !strings.Contains(err.Error(), "accounting remains pending") {
+		t.Fatalf("first pass = %v, want its accounting pending", err)
+	}
+	if _, err := f.book.DB().Exec(`DROP TRIGGER reject_stop_settlement`); err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := f.attempts.Get(f.ctx, f.record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.StopEvidence != "task-stop/"+confirmed.ID || confirmed.SessionSettled == nil || !*confirmed.SessionSettled || confirmed.Unsettled || confirmed.StopProjected {
+		t.Fatalf("stop is not confirmed and unprojected: %+v", confirmed)
+	}
+
+	ended, cancel := context.WithCancel(f.ctx)
+	cancel()
+	if err := f.stops.stop(ended, confirmed); !errors.Is(err, context.Canceled) {
+		t.Fatalf("stop in an ended pass = %v, want context.Canceled", err)
+	}
+	current, err := f.attempts.Get(f.ctx, f.record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.StopProjected {
+		t.Fatal("an ended pass marked the stop projected")
+	}
+	if row, _ := f.tasks.Get(current.TaskID); !row.Attempts[0].Open() {
+		t.Fatal("an ended pass settled the stop's accounting")
+	}
+	f.requireBusy(t)
+
+	if err := f.stops.Reconcile(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if current, err = f.attempts.Get(f.ctx, f.record.ID); err != nil || !current.StopProjected {
+		t.Fatalf("the next pass did not finish the stop: %+v (%v)", current, err)
+	}
+	f.requireResolved(t)
 }

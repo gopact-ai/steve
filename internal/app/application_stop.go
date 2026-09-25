@@ -105,7 +105,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 		return nil
 	}
 	if r.StopEvidence == "task-stop/"+r.ID && r.SessionSettled != nil && *r.SessionSettled && !r.Unsettled {
-		return s.projectStopped(r)
+		return s.projectStopped(ctx, r)
 	}
 	tracked, ok := s.tasks.Get(r.TaskID)
 	if !ok {
@@ -139,7 +139,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 		if err != nil {
 			return failed(err)
 		}
-		return s.projectStopped(stopped)
+		return s.projectStopped(ctx, stopped)
 	}
 	runner, err := s.sessions.AttachRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
 	if err != nil {
@@ -169,17 +169,24 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 	if err != nil {
 		return failed(err)
 	}
-	return s.projectStopped(stopped)
+	return s.projectStopped(ctx, stopped)
 }
 
 func stoppedAccounting(r attempt.Record) task.RecoveryUsage { return attempt.StoppedUsage(r) }
 
-func (s *applicationStops) projectStopped(r attempt.Record) error {
+// projectStopped finishes a confirmed stop within the stop pass's ctx: it
+// settles the accounting, resolves the execution and marks the stop
+// projected. A pass that has ended starts none of it; the next pass finds
+// the confirmed stop and finishes it.
+func (s *applicationStops) projectStopped(ctx context.Context, r attempt.Record) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("task %s attempt %s: native stop confirmed; its accounting is left to the next pass: %w", r.TaskID, r.ID, err)
+	}
 	if err := s.tasks.SettleAttempt(r.TaskID, r.ID, r.TurnID, r.EndedAt, task.OutcomeCancelled, stoppedAccounting(r)); err != nil {
 		return fmt.Errorf("task %s attempt %s: native stop confirmed; original usage accounting remains pending: %w", r.TaskID, r.ID, err)
 	}
 	s.resolveStopped(r)
-	_, err := s.attempts.MarkStopProjected(context.Background(), r.ID, "task-stop-recovery")
+	_, err := s.attempts.MarkStopProjected(ctx, r.ID, "task-stop-recovery")
 	return err
 }
 
