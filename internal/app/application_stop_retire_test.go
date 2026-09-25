@@ -226,3 +226,63 @@ func TestApplicationStopWritesWaitOnAReplicaOnlyWithinTheirPass(t *testing.T) {
 		})
 	}
 }
+
+// heldReplica holds the first write's Prepare, and with it the ledger's
+// writer, until release is closed.
+type heldReplica struct {
+	applicationMCPReplicator
+	prepares atomic.Int64
+	held     chan struct{}
+	release  chan struct{}
+}
+
+func (r *heldReplica) Prepare(ctx context.Context) (ledger.ReplicaPosition, error) {
+	if r.prepares.Add(1) == 1 {
+		close(r.held)
+		<-r.release
+	}
+	return r.applicationMCPReplicator.Prepare(ctx)
+}
+
+// A stop pass that has already ended does not queue behind a write that
+// holds the ledger: it returns before that write is let go, and writes
+// nothing.
+func TestApplicationStopEndedPassDoesNotQueueBehindAWriter(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mockagent")
+	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
+		t.Fatalf("build isolated ACP peer: %v %s", err, output)
+	}
+	f := newStopRegistryFixture(t, bin, false)
+	confirmed := confirmedUnprojectedStop(t, f)
+	replica := &heldReplica{applicationMCPReplicator: applicationMCPReplicator{f.book}, held: make(chan struct{}), release: make(chan struct{})}
+	if err := f.book.AttachReplication(replica); err != nil {
+		t.Fatal(err)
+	}
+	writer := make(chan error, 1)
+	go func() { writer <- f.book.Update(context.Background(), func(*ledger.Tx) error { return nil }) }()
+	<-replica.held
+
+	ended, cancel := context.WithCancel(f.ctx)
+	cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- f.stops.stop(ended, confirmed) }()
+	var err error
+	select {
+	case err = <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Error("an ended stop pass queued behind the held writer")
+	}
+	close(replica.release)
+	if writeErr := <-writer; writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if t.Failed() {
+		err = <-stopped
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("stop in an ended pass = %v, want context.Canceled", err)
+	}
+	if current, _ := f.tasks.Get(confirmed.TaskID); !current.Attempts[0].Open() {
+		t.Fatal("an ended pass settled the stop's accounting")
+	}
+}
