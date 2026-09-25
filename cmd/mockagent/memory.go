@@ -52,7 +52,9 @@ func writeMemory(memory fixtureMemory) error {
 	return os.WriteFile(memoryPath(acp.SessionID(memory.Session)), raw, 0o600)
 }
 
-func memoryEvent(kind string, id acp.SessionID, input string) error {
+// memoryEvent appends one fixture event. cwd is where a session was opened
+// or loaded; prompts leave it empty.
+func memoryEvent(kind string, id acp.SessionID, cwd, input string) error {
 	dir := os.Getenv("MOCKAGENT_MEMORY_DIR")
 	if dir == "" {
 		return nil
@@ -61,8 +63,9 @@ func memoryEvent(kind string, id acp.SessionID, input string) error {
 		Kind    string `json:"kind"`
 		Session string `json:"session"`
 		PID     int    `json:"pid"`
+		Cwd     string `json:"cwd,omitempty"`
 		Input   string `json:"input,omitempty"`
-	}{kind, string(id), os.Getpid(), input})
+	}{kind, string(id), os.Getpid(), cwd, input})
 	if err != nil {
 		return err
 	}
@@ -74,7 +77,7 @@ func memoryEvent(kind string, id acp.SessionID, input string) error {
 	return errors.Join(writeErr, file.Close())
 }
 
-func newMemorySession() (acp.SessionID, error) {
+func newMemorySession(cwd string) (acp.SessionID, error) {
 	dir := os.Getenv("MOCKAGENT_MEMORY_DIR")
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -89,14 +92,14 @@ func newMemorySession() (acp.SessionID, error) {
 	if err := writeMemory(fixtureMemory{Session: string(id), Model: "mock-fast", Mode: "agent"}); err != nil {
 		return "", err
 	}
-	return id, memoryEvent("new", id, "")
+	return id, memoryEvent("new", id, cwd, "")
 }
 
 func (a *agent) memoryPrompt(ctx context.Context, req *acp.PromptRequest, input string) (bool, error) {
 	if os.Getenv("MOCKAGENT_MEMORY_DIR") == "" {
 		return false, nil
 	}
-	if err := memoryEvent("prompt", req.SessionID, input); err != nil {
+	if err := memoryEvent("prompt", req.SessionID, "", input); err != nil {
 		return true, err
 	}
 	for _, line := range strings.Split(input, "\n") {
