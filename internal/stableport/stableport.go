@@ -8,6 +8,8 @@ package stableport
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"strconv"
@@ -71,6 +73,7 @@ func (p picker) listen(listen func(network, address string) (net.Listener, error
 			return listener, err
 		}
 	}
+	slog.Warn(fmt.Sprintf("stableport: %d ports in %d-%d were in use; %s takes a port the system picks, which a restart may find taken", attempts, First, Last, address), "network", network)
 	return listen(network, address)
 }
 

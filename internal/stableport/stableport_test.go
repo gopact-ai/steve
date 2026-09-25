@@ -1,11 +1,14 @@
 package stableport
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -190,8 +193,13 @@ func TestSkipsACandidateTheProbeFindsInUse(t *testing.T) {
 }
 
 // When every attempt in the range finds its port in use, the kernel picks
-// as it did before: the node still starts, at an ephemeral port.
+// as it did before: the node still starts, at an ephemeral port, and a
+// warning says so. A port found in the range is not reported.
 func TestFallsBackToTheKernelWhenAttemptsRunOut(t *testing.T) {
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	var asked []string
 	listener, err := picker{candidate: sequence(20001, 20002), probe: free}.listen(func(network, address string) (net.Listener, error) {
 		asked = append(asked, address)
@@ -205,6 +213,16 @@ func TestFallsBackToTheKernelWhenAttemptsRunOut(t *testing.T) {
 	}
 	if len(asked) != attempts+1 || asked[len(asked)-1] != "127.0.0.1:0" {
 		t.Fatalf("asked %d addresses, last %q; want %d then the kernel", len(asked), asked[len(asked)-1], attempts)
+	}
+	if text := logged.String(); strings.Count(text, "level=WARN") != 1 || !strings.Contains(text, "127.0.0.1:0") {
+		t.Fatalf("fallback warning: %q", text)
+	}
+
+	logged.Reset()
+	if _, err := (picker{candidate: sequence(20001), probe: free}).listen(func(network, address string) (net.Listener, error) {
+		return addressListener{address}, nil
+	}, "tcp", "127.0.0.1:0"); err != nil || logged.Len() != 0 {
+		t.Fatalf("a port in the range: err %v, logged %q", err, logged.String())
 	}
 }
 
