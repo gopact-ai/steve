@@ -113,18 +113,33 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 
 // nodeObserver records machines coming and going as history, and hands a
 // machine's arrival to arrived: what a connection sets going on the machine.
+// Observers hear changes late when history is slow to write; an arrival
+// heard after its connection dropped or was replaced is history only, as
+// there is nothing left on that connection to set going.
 func nodeObserver(nodes *node.Registry, record func(kind, subject, text string, data map[string]string), arrived func(node.Status)) func(node.Status) {
 	return func(s node.Status) {
 		if s.Up {
 			// Keys: host, os, arch, build.
 			record("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion),
 				map[string]string{"host": s.Advert.Hostname, "os": s.Advert.OS, "arch": s.Advert.Arch, "build": s.Advert.BuildVersion})
-			arrived(s)
+			if stillConnected(nodes, s) {
+				arrived(s)
+			}
 			return
 		}
 		// Keys: reason.
 		record("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError), map[string]string{"reason": s.LastError})
 	}
+}
+
+// stillConnected reports whether s is the machine's connection now.
+func stillConnected(nodes *node.Registry, s node.Status) bool {
+	for _, now := range nodes.Statuses() {
+		if now.Name == s.Name {
+			return now.Up && now.Generation == s.Generation
+		}
+	}
+	return false
 }
 
 type readModelAssembly interface {
