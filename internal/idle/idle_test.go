@@ -171,11 +171,12 @@ func TestExpiredIsOnlyTheSilenceRunningOut(t *testing.T) {
 		t.Fatalf("silence: expired=%v/%v err=%v", Expired(silent), Expired(derived), derived.Err())
 	}
 	lost, lose := context.WithCancel(context.Background())
+	// Lost before the clock starts, so its timer cannot run out first.
+	lose()
 	clock, stopClock, _ := WithTimeout(lost, 10*time.Millisecond)
 	defer stopClock()
 	early, cancelEarly := context.WithCancel(clock)
 	cancelEarly()
-	lose()
 	<-clock.Done()
 	time.Sleep(20 * time.Millisecond)
 	if Expired(clock) || Expired(early) {
