@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -120,5 +121,26 @@ func TestApplicationLiveSettingsPreserveNativeSessionAndExistingBudget(t *testin
 	}
 	if WaitPeerReady(t, peer).Generation != generation {
 		t.Fatal("saving runtime policy restarted the application")
+	}
+	// A saved prompt timeout reaches the running coordinator: under a saved
+	// 1ms the turn's idle clock runs out while the turn is still being
+	// prepared, before the agent is prompted. A coordinator that kept its
+	// startup timeout would let the agent answer.
+	const expiring = "console:live-timeout"
+	continuitySend(t, peer, expiring, "/project use workspace", "bind-timeout")
+	update(`{"gateway":{"prompt_timeout":"1ms"}}`)
+	started := time.Now()
+	status, body := PeerRequest(t, peer, http.MethodPost, "/console/send", consoleapi.Submission{
+		Conversation: expiring, Input: "fixture-remember expired-turn-memory", CommandID: "expired-turn",
+	})
+	var failed struct {
+		Error string `json:"error"`
+	}
+	if status != http.StatusBadGateway || json.Unmarshal(body, &failed) != nil ||
+		!strings.Contains(failed.Error, context.DeadlineExceeded.Error()) {
+		t.Fatalf("turn under a saved 1ms prompt timeout: %d after %v: %s", status, time.Since(started), body)
+	}
+	if WaitPeerReady(t, peer).Generation != generation {
+		t.Fatal("ending a turn on its prompt timeout restarted the application")
 	}
 }
