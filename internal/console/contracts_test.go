@@ -2,8 +2,8 @@ package console
 
 import "github.com/gopact-ai/steve/internal/turn"
 
-// The only production implementation of capabilities the console probes
-// for.
+// The only production implementation of capabilities console recovery
+// probes its retained-chat driver for.
 var (
 	_ neverAdmittedDriver = (*turn.Coordinator)(nil)
 	_ relocationDriver    = (*turn.Coordinator)(nil)

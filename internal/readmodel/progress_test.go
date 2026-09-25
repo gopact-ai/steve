@@ -3,12 +3,16 @@ package readmodel
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -56,6 +60,163 @@ func TestDelegateProgressPublishesAStoppedChildAtOnce(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the stopped child's final state was throttled away")
+	}
+}
+
+// A plan step's last update lands even when it follows the one before
+// within the throttle window: nothing else publishes the step again.
+func TestStepProgressPublishesTheLastUpdateTheThrottleHeldBack(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	for _, answer := range []string{"compiling", "compiling…", "compiling… done"} {
+		m.StepProgress("task", "plan", "build", "builder", "node-a", view.Progress{Answer: answer})
+	}
+	deadline := time.After(10 * progressEvery)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Kind != "step.progress" || ev.StepID != "build" {
+				t.Fatalf("unexpected event %+v", ev)
+			}
+			if ev.Progress.Answer == "compiling… done" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the step's last update was throttled away")
+		}
+	}
+}
+
+// A step's conversation is read from the task store for the updates it
+// publishes, not for each one the throttle merges into a later one.
+func TestStepProgressReadsTheTaskOnlyForWhatItPublishes(t *testing.T) {
+	m := New(Sources{})
+	var reads atomic.Int64
+	m.taskHeader = func(string) (task.Header, bool) {
+		reads.Add(1)
+		return task.Header{Task: task.Task{Channel: "console:test"}}, true
+	}
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	const updates = 50
+	for i := range updates {
+		m.StepProgress("task", "plan", "build", "builder", "node-a", view.Progress{Answer: fmt.Sprint(i)})
+	}
+	published := 0
+	deadline := time.After(10 * progressEvery)
+	for last := false; !last; {
+		select {
+		case ev := <-events:
+			if ev.Conversation != "console:test" {
+				t.Fatalf("published %+v without its conversation", ev)
+			}
+			published++
+			last = ev.Progress.Answer == fmt.Sprint(updates-1)
+		case <-deadline:
+			t.Fatal("the step's last update never landed")
+		}
+	}
+	if n := reads.Load(); n > int64(published) {
+		t.Fatalf("read the task %d times for %d updates published", n, published)
+	}
+}
+
+// A held update released after its agent went on to another step still
+// lands, but the agent's activity stays on the step it went on to.
+func TestStepProgressReleaseLeavesAnAgentThatMovedOnWhereItIs(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	m.StepProgress("task", "plan", "first", "builder", "node-a", view.Progress{Answer: "working"})
+	m.StepProgress("task", "plan", "first", "builder", "node-a", view.Progress{Answer: "done"})
+	m.StepProgress("task", "plan", "second", "builder", "node-a", view.Progress{Answer: "starting"})
+	deadline := time.After(10 * progressEvery)
+	for landed := false; !landed; {
+		select {
+		case ev := <-events:
+			landed = ev.StepID == "first" && ev.Progress.Answer == "done"
+		case <-deadline:
+			t.Fatal("the first step's last update never landed")
+		}
+	}
+	m.mu.Lock()
+	at := m.activity["builder"]
+	m.mu.Unlock()
+	if at.StepID != "second" {
+		t.Fatalf("builder's activity is on step %q, want the step it went on to", at.StepID)
+	}
+}
+
+// Several steps streaming at once, each now and then starting or
+// finishing a tool call: each step's updates reach a subscriber in the
+// order they were made, and each step's last update lands.
+func TestStepProgressKeepsEachStepsUpdatesInOrder(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	const steps, updates = 8, 1500
+	for k := range steps {
+		go func() {
+			r := rand.New(rand.NewSource(int64(k)))
+			var tools []view.Tool
+			for i := range updates {
+				if r.Intn(300) == 0 {
+					tools = make([]view.Tool, 1-len(tools))
+				}
+				m.StepProgress("task", "plan", fmt.Sprint(k), "builder", "node-a", view.Progress{Answer: strconv.Itoa(i), Tools: tools})
+				time.Sleep(time.Duration(r.Intn(1000)) * time.Microsecond)
+			}
+		}()
+	}
+	next := map[string]int{}
+	finished := 0
+	deadline := time.After(time.Minute)
+	for finished < steps {
+		select {
+		case ev, open := <-events:
+			if !open {
+				t.Fatal("the subscriber fell behind")
+			}
+			i, _ := strconv.Atoi(ev.Progress.Answer)
+			if i < next[ev.StepID] {
+				t.Fatalf("step %s published update %d after a later one", ev.StepID, i)
+			}
+			next[ev.StepID] = i + 1
+			if i == updates-1 {
+				finished++
+			}
+		case <-deadline:
+			t.Fatalf("steps' last updates never all landed: %v", next)
+		}
+	}
+}
+
+// A step whose window ended with nothing held is forgotten, and its next
+// update is published at once, as it would have been anyway.
+func TestStepProgressForgetsStepsWhoseWindowEnded(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	m.StepProgress("task", "plan", "a", "builder", "node-a", view.Progress{Answer: "a"})
+	<-events
+	time.Sleep(progressEvery)
+	m.StepProgress("task", "plan", "b", "builder", "node-a", view.Progress{Answer: "b"})
+	<-events
+	m.mu.Lock()
+	kept := len(m.throttle)
+	m.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("throttling %d steps, want only b", kept)
+	}
+	m.StepProgress("task", "plan", "a", "builder", "node-a", view.Progress{Answer: "a again"})
+	select {
+	case ev := <-events:
+		if ev.StepID != "a" || ev.Progress.Answer != "a again" {
+			t.Fatalf("published %+v, want step a's next update", ev)
+		}
+	default:
+		t.Fatal("step a's next update was held back")
 	}
 }
 
