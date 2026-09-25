@@ -25,6 +25,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/filedoc"
+	"github.com/gopact-ai/steve/internal/stableport"
 )
 
 // The MCP broker keeps the machine's MCP servers — and their credentials
@@ -437,7 +438,9 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 
 // serveProxy listens on the loopback for http/sse servers: a binding's
 // URL is /b/<id>/…, and the proxy adds the server's headers on the way
-// out. The port is remembered so a restart keeps old descriptors valid.
+// out. The port is remembered so a restart keeps old descriptors valid;
+// a new one comes from stableport, which the kernel does not hand to other
+// sockets meanwhile.
 func (b *Broker) serveProxy(ctx context.Context) error {
 	var listener net.Listener
 	var err error
@@ -455,7 +458,7 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 		}
 	}
 	if listener == nil {
-		listener, err = net.Listen("tcp", "127.0.0.1:0")
+		listener, err = stableport.Listen(net.Listen, "tcp", "127.0.0.1:0")
 	}
 	if err != nil {
 		return fmt.Errorf("mcp proxy: listen: %w", err)

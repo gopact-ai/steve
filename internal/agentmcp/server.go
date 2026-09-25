@@ -22,6 +22,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/stableport"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -190,9 +191,11 @@ type Server struct {
 //
 // The URL is part of every session's capability fingerprint and lives inside
 // resumed agent sessions, so the port must survive gateway restarts: pass
-// the previously used port to bind it again. 0 (or a port meanwhile taken)
-// falls back to an ephemeral one — existing sessions then drift and ask for
-// /new, which is the honest outcome.
+// the previously used port to bind it again. 0 picks one through
+// stableport, from a range the kernel does not hand to other sockets while
+// the gateway is down. A port meanwhile taken falls back the same way —
+// existing sessions then drift and ask for /new, which is the honest
+// outcome.
 func New(preferredPort int) (*Server, error) {
 	var listener net.Listener
 	var err error
@@ -200,7 +203,7 @@ func New(preferredPort int) (*Server, error) {
 		listener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
 	}
 	if listener == nil {
-		listener, err = net.Listen("tcp", "127.0.0.1:0")
+		listener, err = stableport.Listen(net.Listen, "tcp", "127.0.0.1:0")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("agentmcp: listen: %w", err)
