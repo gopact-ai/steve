@@ -102,12 +102,17 @@ func TestSnapshotGivesUpAndLeavesOneRequestBehind(t *testing.T) {
 		t.Fatalf("snapshot whose caller's deadline ended first returned %v", err)
 	}
 	app.resume()
+	eventually(t, 5*time.Second, func() bool {
+		node.snapshotMu.Lock()
+		defer node.snapshotMu.Unlock()
+		return node.pendingSnapshot == nil
+	})
 	if err := node.Snapshot(t.Context()); err != nil {
 		t.Fatalf("snapshot failed once the application could take one: %v", err)
 	}
-	// Raft serves snapshot requests one at a time and in order, so every
-	// request left behind has been served by now.
+	// Raft serves snapshot requests one at a time and in order, so a request
+	// any caller left queued would have been served before this last one.
 	if taken := app.taken.Load(); taken != 2 {
-		t.Fatalf("the application took %d snapshots; want the one both callers gave up on and the last", taken)
+		t.Fatalf("the application took %d snapshots; want the one every caller that gave up shared, and the last", taken)
 	}
 }
