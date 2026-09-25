@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -100,8 +101,8 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 			if err != nil || original.NativeContext == "" || original.Unsettled || original.Result == nil {
 				t.Fatalf("first execution did not settle with native context: %v", err)
 			}
-			eventsBefore := continuityEvents(t, memory)
-			business := continuityBusinessEvents(eventsBefore, discovery, "new", "")
+			eventsBefore, recorded := continuityEventsSince(t, memory, discovery, nil)
+			business := continuityBusinessEvents(recorded, "new", "")
 			if len(business) != 2 || business[1].Kind != "prompt" {
 				t.Fatalf("expected exactly new+first prompt, got %+v", eventsBefore)
 			}
@@ -136,7 +137,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 						t.Fatal("warm input replaced its native session or credential")
 					}
 				}
-				events := withoutDiscovery(continuityEvents(t, memory)[len(eventsBefore):], discovery)
+				_, events := continuityEventsSince(t, memory, discovery, eventsBefore)
 				if len(events) != 2 {
 					t.Fatalf("warm inputs reopened/replayed instead of continuing: %+v", events)
 				}
@@ -170,8 +171,8 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 				if !reflect.DeepEqual(before.Sessions["worker"], saved) {
 					t.Fatal("history did not select the original native pointer and revoked credential")
 				}
-				events := continuityEvents(t, memory)
-				replacementEvents := continuityBusinessEvents(events[len(eventsBefore):], discovery, "new", "")
+				events, recorded := continuityEventsSince(t, memory, discovery, eventsBefore)
+				replacementEvents := continuityBusinessEvents(recorded, "new", "")
 				if len(replacementEvents) != 2 || replacementEvents[1].Kind != "prompt" ||
 					replacementEvents[0].Session == native || replacementEvents[1].Session != replacementEvents[0].Session ||
 					replacementEvents[1].PID != replacementEvents[0].PID ||
@@ -186,12 +187,11 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 			if err := first.Close(); err != nil {
 				t.Fatal(err)
 			}
-			closedEvents := continuityEvents(t, memory)
-			if !reflect.DeepEqual(closedEvents, eventsBefore) {
+			// Freeze the event boundary only once all old processes have stopped.
+			closedEvents, shutdown := continuityEventsSince(t, memory, discovery, eventsBefore)
+			if len(shutdown) != 0 {
 				t.Fatalf("unexpected native events during shutdown: %+v", closedEvents)
 			}
-			// Freeze the event boundary only once all old processes have stopped.
-			base := len(closedEvents)
 			if rejectLoad {
 				if err := os.WriteFile(filepath.Join(memory, "reject-load"), []byte("fixture"), 0o600); err != nil {
 					t.Fatal(err)
@@ -218,19 +218,19 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 				if question.Kind != "recovery" {
 					t.Fatalf("native load failure not surfaced as recovery: kind=%s", question.Kind)
 				}
-				events := continuityEvents(t, memory)
-				resumed := continuityBusinessEvents(events[base:], discovery, "load", native)
+				events, recorded := continuityEventsSince(t, memory, discovery, closedEvents)
+				resumed := continuityBusinessEvents(recorded, "load", native)
 				if len(resumed) != 1 || resumed[0].PID == nativePID {
 					t.Fatalf("failed load fell back to new session or prompt: %+v", events)
 				}
 			} else {
 				recall := continuitySend(t, second, conversation, "fixture-recall", "recall-only")
-				events := continuityEvents(t, memory)
+				events, recorded := continuityEventsSince(t, memory, discovery, closedEvents)
 				if recall.Error != "" || !strings.Contains(recall.Text, "memory: "+marker) ||
 					!strings.Contains(recall.Text, "model=mock-deep mode=read-only mcp=ok") {
 					t.Fatalf("native memory/preferences/MCP did not continue: %s %s", recall.Error, recall.Text)
 				}
-				resumed := continuityBusinessEvents(events[base:], discovery, "load", native)
+				resumed := continuityBusinessEvents(recorded, "load", native)
 				if len(resumed) != 2 || resumed[1].Kind != "prompt" ||
 					resumed[1].Session != native || resumed[1].PID != resumed[0].PID ||
 					resumed[0].PID == nativePID {
@@ -353,15 +353,16 @@ func TestContinuityBusinessEvents(t *testing.T) {
 		{"prompted_probe_rejected", []continuityEvent{probe, {Kind: "prompt", Session: "probe", PID: 1}, loaded}, "load", "native", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := continuityBusinessEvents(tc.events, discovery, tc.kind, tc.native); !reflect.DeepEqual(got, tc.want) {
+			if got := continuityBusinessEvents(withoutDiscovery(tc.events, discovery), tc.kind, tc.native); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("business events = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
 }
 
-func continuityBusinessEvents(events []continuityEvent, discovery, kind, native string) []continuityEvent {
-	events = withoutDiscovery(events, discovery)
+// continuityBusinessEvents selects the business session's events from a
+// window that no longer contains unused model discovery sessions.
+func continuityBusinessEvents(events []continuityEvent, kind, native string) []continuityEvent {
 	// New sessions are identified by their first business prompt, never by
 	// the first global "new".
 	if native == "" {
@@ -411,6 +412,18 @@ func withoutDiscovery(events []continuityEvent, discovery string) []continuityEv
 		kept = append(kept, event)
 	}
 	return kept
+}
+
+// continuityEventsSince reads the fixture log, which must still begin with
+// before, and returns the whole log and the events appended after before,
+// without unused model discovery sessions.
+func continuityEventsSince(t *testing.T, dir, discovery string, before []continuityEvent) (all, since []continuityEvent) {
+	t.Helper()
+	all = continuityEvents(t, dir)
+	if len(all) < len(before) || !slices.Equal(all[:len(before)], before) {
+		t.Fatalf("native event log no longer begins with %+v: %+v", before, all)
+	}
+	return all, withoutDiscovery(all[len(before):], discovery)
 }
 
 func continuityEvents(t *testing.T, dir string) []continuityEvent {
