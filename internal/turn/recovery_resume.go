@@ -152,7 +152,14 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	if !ok {
 		return Result{}, c.retainedBlocked("runtime", "检查节点会话接续接口", "当前服务无法接续节点持有的执行。", "节点会话恢复接口尚未接入。", "建议检查节点服务后重试。", nil)
 	}
-	ctx, cancel := context.WithCancel(parent)
+	// The observer runs under the prompt timeout like the prompt it
+	// resumes: a command that stays silent ends the turn as a timeout.
+	clock, expire, touch := c.newIdleClock(parent, c.promptTimeout())
+	defer expire()
+	if c.nodes != nil {
+		defer c.nodes.RegisterIdle(record.Node, clock)()
+	}
+	ctx, cancel := context.WithCancel(clock)
 	defer cancel()
 	if !turnOwned {
 		if !c.beginTurn(req.ConversationID, record.Agent, cancel) {
@@ -197,7 +204,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	settled = observed.Command != nil && observed.Command.Settled && (observed.Command.State == nodewire.SessionCommandCompleted || observed.Command.State == nodewire.SessionCommandCancelled)
 	scope.AdoptRetained()
 	c.setRunner(req.ConversationID, record.Agent, runner)
-	spent := &turnSpend{}
+	spent := &turnSpend{resetIdle: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, record.Agent)
 	req.phase(view.PhaseRunning)
 	t := &retainedTurn{c: c, req: req, record: record, spent: spent, finishing: true, injected: &Injected{Project: record.Project, Workspace: record.Workspace.Path, Agent: record.Agent, Node: record.Node, Harness: record.Harness, Session: record.Session}}
