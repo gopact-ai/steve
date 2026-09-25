@@ -29,10 +29,11 @@ func Expired(ctx context.Context) bool { return errors.Is(context.Cause(ctx), er
 // derived from it names why it ended.
 //
 // A context derived from it directly — by context.WithCancel, WithTimeout
-// and the like — ends while it ends, before its Done closes: whoever sees
-// it ended and then reads one derived from it reads that one ended too,
-// for the same reason. One derived through a context that is not the
-// context package's own, such as one from context.WithValue, hears later.
+// and the like — before it ended, ends as it ends, before its Done closes:
+// whoever sees it ended and then reads one derived from it reads that one
+// ended too, for the same reason. One derived while it is ending, or
+// through a context that is not the context package's own, such as one
+// from context.WithValue, hears a moment later.
 type idleContext struct {
 	context.Context
 	end  context.CancelCauseFunc
