@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/acp"
@@ -63,5 +65,48 @@ func TestNativeMemoryFixtureIsOptIn(t *testing.T) {
 	}
 	if _, err := a.LoadSession(t.Context(), &acp.LoadSessionRequest{SessionID: "ordinary-native-session"}); err != nil {
 		t.Fatalf("default load behavior changed: %v", err)
+	}
+}
+
+// A session's events say where it was opened or loaded, so a reader can tell
+// sessions apart by working directory; prompts carry no directory.
+func TestNativeMemoryEventsRecordWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MOCKAGENT_MEMORY_DIR", dir)
+	a := &agent{}
+	created, err := a.NewSession(t.Context(), &acp.NewSessionRequest{Cwd: "/opened/here"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.memoryPrompt(t.Context(), &acp.PromptRequest{SessionID: created.SessionID}, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.LoadSession(t.Context(), &acp.LoadSessionRequest{SessionID: created.SessionID, Cwd: "/loaded/here"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type event struct {
+		Kind string `json:"kind"`
+		Cwd  string `json:"cwd"`
+	}
+	var got []event
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var e event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, e)
+	}
+	want := []event{{"new", "/opened/here"}, {"prompt", ""}, {"load", "/loaded/here"}}
+	if len(got) != len(want) {
+		t.Fatalf("events = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("events = %+v, want %+v", got, want)
+		}
 	}
 }
