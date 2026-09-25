@@ -246,6 +246,7 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 	deadline := time.Now().Add(c.config.RetryWindow)
 	visited := map[string]bool{}
 	pause := firstRetryPause
+	var last error // the latest retryable failure
 	for {
 		member, ok := c.nextMember(visited)
 		if !ok {
@@ -253,6 +254,9 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 			visited = map[string]bool{}
 			member, ok = c.nextMember(visited)
 			if !ok {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				return fmt.Errorf("%w: no peer HTTPS addresses are known", ErrUnavailable)
 			}
 			timer := time.NewTimer(min(pause, max(time.Until(deadline), 0)))
@@ -263,6 +267,11 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 			case <-timer.C:
 			}
 			pause = min(2*pause, maxRetryPause)
+		}
+		// No call starts once the window has ended, including after a pause
+		// the window cut short.
+		if last != nil && !time.Now().Before(deadline) {
+			return fmt.Errorf("%w: no member took %s within %s: %w", ErrUnavailable, action, c.config.RetryWindow, last)
 		}
 		visited[member.NodeID] = true
 		failure, err := c.request(ctx, member, action, body, headers, output)
@@ -287,9 +296,7 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 		if !errors.Is(err, ErrNotLeader) && !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrApplication) {
 			return err
 		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("%w: no member took %s within %s: %w", ErrUnavailable, action, c.config.RetryWindow, err)
-		}
+		last = err
 	}
 }
 
