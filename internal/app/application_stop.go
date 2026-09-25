@@ -126,42 +126,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 		}
 		return nil
 	}
-	if attempt.PendingSessionOpen(r) {
-		recovery, ok := s.sessions.(applicationOpenRecovery)
-		if !ok {
-			return failed(errors.New("node cannot reconcile the original session open"))
-		}
-		state, err := recovery.ReconcileNodeOpen(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Workspace.Path, true)
-		if err != nil {
-			return failed(err)
-		}
-		stopped, err := s.attempts.ConfirmTaskStopped(ctx, r.ID, "task-stop-recovery", attempt.RetainedEvidence{ObservedAt: time.Now().UTC(), Session: state})
-		if err != nil {
-			return failed(err)
-		}
-		return s.projectStopped(ctx, stopped)
-	}
-	runner, err := s.sessions.AttachRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
-	if err != nil {
-		return failed(err)
-	}
-	inspector, ok := runner.(harness.RetainedSessionInspector)
-	if !ok {
-		return failed(errors.New("node session cannot inspect its original input"))
-	}
-	state, err := inspector.InspectRetained(ctx)
-	if err != nil {
-		return failed(err)
-	}
-	expected := sessionBinding(r, tracked)
-	if state.ID != r.Session || state.Harness != r.Harness || state.Binding != expected || state.Command != nil && state.Command.ID != attempt.InputCommandID(r) {
-		return failed(errors.New("node observation belongs to another execution"))
-	}
-	stopper, ok := runner.(harness.RetainedStopper)
-	if !ok {
-		return failed(errors.New("node cannot stop the retained execution"))
-	}
-	state, err = stopper.StopRetained(ctx)
+	state, err := s.stopOnNode(ctx, r, tracked)
 	if err != nil {
 		return failed(err)
 	}
@@ -170,6 +135,40 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 		return failed(err)
 	}
 	return s.projectStopped(ctx, stopped)
+}
+
+// stopOnNode stops r's execution on its node and returns the session state
+// the node reports: an open the node never finished is reconciled, and a
+// retained session is stopped once it is shown to be r's.
+func (s *applicationStops) stopOnNode(ctx context.Context, r attempt.Record, tracked task.Task) (nodewire.SessionState, error) {
+	if attempt.PendingSessionOpen(r) {
+		recovery, ok := s.sessions.(applicationOpenRecovery)
+		if !ok {
+			return nodewire.SessionState{}, errors.New("node cannot reconcile the original session open")
+		}
+		return recovery.ReconcileNodeOpen(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Workspace.Path, true)
+	}
+	runner, err := s.sessions.AttachRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	inspector, ok := runner.(harness.RetainedSessionInspector)
+	if !ok {
+		return nodewire.SessionState{}, errors.New("node session cannot inspect its original input")
+	}
+	state, err := inspector.InspectRetained(ctx)
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	expected := sessionBinding(r, tracked)
+	if state.ID != r.Session || state.Harness != r.Harness || state.Binding != expected || state.Command != nil && state.Command.ID != attempt.InputCommandID(r) {
+		return nodewire.SessionState{}, errors.New("node observation belongs to another execution")
+	}
+	stopper, ok := runner.(harness.RetainedStopper)
+	if !ok {
+		return nodewire.SessionState{}, errors.New("node cannot stop the retained execution")
+	}
+	return stopper.StopRetained(ctx)
 }
 
 func stoppedAccounting(r attempt.Record) task.RecoveryUsage { return attempt.StoppedUsage(r) }
