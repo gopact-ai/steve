@@ -42,7 +42,7 @@ func (g *Gateway) acceptAndWake(key string, input gatewayInput) error {
 	if err != nil || !found {
 		return fmt.Errorf("gateway accepted input cannot be read: %w", err)
 	}
-	run, release, err := g.claimGatewayInput(ctx, g.recoveryLedger, receipt, g.ingressDriver, false)
+	run, release, err := g.claimGatewayInput(ctx, g.recoveryLedger, receipt, g.ingressDriver)
 	if errors.Is(err, channel.ErrDeliveryQueued) {
 		return nil // Acceptance is durable; the running reconciler owns retry.
 	}
@@ -91,16 +91,15 @@ func decodeGatewayInput(receipt ledger.CommandRecord) (gatewayInput, error) {
 	return input, nil
 }
 
-// claimQueued claims a pending receipt of either kind for ReconcileQueued and
-// RecoverQueued: a gatewayInputKind receipt through claimGatewayInput, any
-// other through claimRecovery, to be run by recoverAcceptedInput with driver
-// and revive.
-func (g *Gateway) claimQueued(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error, wait bool) (func() error, func(), error) {
+// claimQueued claims a pending receipt of either kind for ReconcileQueued: a
+// gatewayInputKind receipt through claimGatewayInput, any other through
+// claimRecovery, to be run by recoverAcceptedInput with driver and revive.
+func (g *Gateway) claimQueued(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error) (func() error, func(), error) {
 	if receipt.Kind != gatewayInputKind {
-		release, err := g.claimRecovery(ctx, receipt, wait)
+		release, err := g.claimRecovery(ctx, receipt)
 		return func() error { return g.recoverAcceptedInput(ctx, book, receipt, driver, revive) }, release, err
 	}
-	return g.claimGatewayInput(ctx, book, receipt, driver, wait)
+	return g.claimGatewayInput(ctx, book, receipt, driver)
 }
 
 // claimGatewayInput claims an accepted gateway input for ingress and runtime
@@ -110,7 +109,7 @@ func (g *Gateway) claimQueued(ctx context.Context, book *ledger.Ledger, receipt 
 // while its owner is busy. Topic preparation may share the original chat, but
 // must acquire its own thread before Handle. decodeGatewayInput refuses a
 // receipt of any other kind.
-func (g *Gateway) claimGatewayInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, wait bool) (func() error, func(), error) {
+func (g *Gateway) claimGatewayInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver) (func() error, func(), error) {
 	input, err := decodeGatewayInput(receipt)
 	if err != nil {
 		return nil, nil, err
@@ -131,7 +130,7 @@ func (g *Gateway) claimGatewayInput(ctx context.Context, book *ledger.Ledger, re
 			seedPending = false
 		}
 	}
-	claim, err := g.claimOrdinary(ctx, receipt.ID, conversation, wait, seedPending || g.immediateInput(input.Message.Text))
+	claim, err := g.claimOrdinary(ctx, receipt.ID, conversation, seedPending || g.immediateInput(input.Message.Text))
 	if err != nil {
 		return nil, nil, err
 	}

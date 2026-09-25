@@ -28,9 +28,10 @@ func (g *Gateway) claimInput(key string) (func(), bool) {
 	}, true
 }
 
-// Recovery shares ingress's bounded capacity. Runtime never creates a
-// goroutine to wait for a slot; it leaves that input pending for another pass.
-func (g *Gateway) claimRecovery(ctx context.Context, receipt ledger.CommandRecord, wait bool) (func(), error) {
+// Recovery shares ingress's bounded capacity and never waits for a slot:
+// without one, or while its conversation is being served, it leaves that
+// input pending for another pass.
+func (g *Gateway) claimRecovery(ctx context.Context, receipt ledger.CommandRecord) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -38,7 +39,7 @@ func (g *Gateway) claimRecovery(ctx context.Context, receipt ledger.CommandRecor
 	if json.Unmarshal(receipt.Result, &input) != nil || input.ConversationID == "" {
 		return nil, errors.New("gateway recovery has no accepted conversation")
 	}
-	claim, err := g.claimOrdinary(ctx, receipt.ID, input.ConversationID, wait, false)
+	claim, err := g.claimOrdinary(ctx, receipt.ID, input.ConversationID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -51,12 +52,12 @@ type inputClaim struct {
 	releaseInput func()
 }
 
-func (g *Gateway) claimOrdinary(ctx context.Context, key, conversation string, wait, join bool) (*inputClaim, error) {
+func (g *Gateway) claimOrdinary(ctx context.Context, key, conversation string, join bool) (*inputClaim, error) {
 	release, claimed := g.claimInput(key)
 	if !claimed {
 		return nil, channel.ErrDeliveryQueued
 	}
-	if err := g.acquireConversation(ctx, conversation, wait, join); err != nil {
+	if err := g.acquireConversation(ctx, conversation, join); err != nil {
 		release()
 		return nil, err
 	}
@@ -79,14 +80,14 @@ func (c *inputClaim) move(ctx context.Context, conversation string) error {
 	}
 	c.g.releaseConversation(c.conversation)
 	c.conversation = ""
-	if err := c.g.acquireConversation(ctx, conversation, false, false); err != nil {
+	if err := c.g.acquireConversation(ctx, conversation, false); err != nil {
 		return err
 	}
 	c.conversation = conversation
 	return nil
 }
 
-func (g *Gateway) acquireConversation(ctx context.Context, conversation string, wait, join bool) error {
+func (g *Gateway) acquireConversation(ctx context.Context, conversation string, join bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -101,18 +102,10 @@ func (g *Gateway) acquireConversation(ctx context.Context, conversation string, 
 		return channel.ErrDeliveryQueued
 	}
 	g.mu.Unlock()
-	if wait {
-		select {
-		case g.slots <- struct{}{}:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	} else {
-		select {
-		case g.slots <- struct{}{}:
-		default:
-			return channel.ErrDeliveryQueued
-		}
+	select {
+	case g.slots <- struct{}{}:
+	default:
+		return channel.ErrDeliveryQueued
 	}
 	if err := ctx.Err(); err != nil {
 		<-g.slots

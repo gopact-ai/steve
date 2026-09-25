@@ -60,7 +60,7 @@ func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 			later := New(p)
 			later.BindChannel(ch)
 			later.SetRecoveryLedger(book)
-			if err := later.RecoverQueued(t.Context(), book, p, nil); err != nil {
+			if err := later.recoverQueuedFixture(t.Context(), book, p, nil); err != nil {
 				t.Fatalf("recovery with a channel: %v", err)
 			}
 			if pendingInputs(t, book) != 0 || p.calls.Load() != 1 || ch.seeds.Load() != tc.seeds || ch.results.Load() != 1 {
@@ -89,7 +89,7 @@ func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 		}
 		without := New(p)
 		without.SetRecoveryLedger(book)
-		if err := without.RecoverQueued(t.Context(), book, p, nil); err == nil ||
+		if err := without.recoverQueuedFixture(t.Context(), book, p, nil); err == nil ||
 			!strings.Contains(err.Error(), "gateway reply channel is not available") {
 			t.Fatalf("dispatched input without a channel = %v; want the missing channel", err)
 		}
@@ -103,7 +103,7 @@ func TestNilChannelDurableInputWaitsForAChannel(t *testing.T) {
 		later := New(p)
 		later.BindChannel(ch)
 		later.SetRecoveryLedger(book)
-		if err := later.RecoverQueued(t.Context(), book, p, nil); err != nil {
+		if err := later.recoverQueuedFixture(t.Context(), book, p, nil); err != nil {
 			t.Fatalf("recovery with a channel: %v", err)
 		}
 		if pendingInputs(t, book) != 0 || p.calls.Load() != 1 || p.resumes.Load() != 1 || ch.results.Load() != 1 {
@@ -121,7 +121,7 @@ func TestNilChannelRecoveryIsRefusedBeforeRevivalOrDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	revived := false
-	err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { revived = true; return nil })
+	err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { revived = true; return nil })
 	if err == nil || !strings.Contains(err.Error(), "gateway recovery reply channel is not available") {
 		t.Fatalf("recovery without a channel = %v", err)
 	}

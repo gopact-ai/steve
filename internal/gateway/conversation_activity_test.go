@@ -11,7 +11,7 @@ func TestConversationBusyFollowsOriginalInputOwnership(t *testing.T) {
 	if g.ConversationBusy("original") {
 		t.Fatal("idle conversation was busy")
 	}
-	claim, err := g.claimOrdinary(t.Context(), "input", "original", false, false)
+	claim, err := g.claimOrdinary(t.Context(), "input", "original", false)
 	if err != nil {
 		t.Fatal(err)
 	}

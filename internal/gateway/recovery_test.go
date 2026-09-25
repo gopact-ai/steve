@@ -81,7 +81,7 @@ func TestGatewayRecoveryInputSurvivesBeforeDispatchAndDoesNotReplayCompletedComm
 	g = New(p)
 	g.BindChannel(ch)
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -109,7 +109,7 @@ func TestGatewayRecoveryBoundResultNeverSubmitsPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -132,7 +132,7 @@ func TestGatewayCompletedProcessingErrorDeliversOnceWithoutReenteringNative(t *t
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 			t.Fatalf("completed processing error stranded its result: %v", err)
 		}
 	}
@@ -158,13 +158,13 @@ func TestGatewayUnknownNoticeRemainsVisibleAndNeverReposts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err == nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err == nil {
 		t.Fatal("receipt failure hidden")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER fail_notice_receipt`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, channel.ErrOutcomeUnknown) {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); !errors.Is(err, channel.ErrOutcomeUnknown) {
 		t.Fatalf("unknown notice not visible: %v", err)
 	}
 	rows, err := book.Commands(t.Context(), "gateway-recovery-notice")
@@ -193,19 +193,19 @@ func TestGatewayUnknownDispatchUsesPersistedAttemptNotHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err == nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err == nil {
 		t.Fatal("dispatch receipt failure hidden")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER fail_dispatch_receipt`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if p.calls.Load() != 1 || p.resumes.Load() != 1 || ch.results.Load() != 1 {
 		t.Fatalf("dispatch was replayed: calls=%d resumes=%d replies=%d", p.calls.Load(), p.resumes.Load(), ch.results.Load())
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if p.calls.Load() != 1 || p.resumes.Load() != 1 || ch.results.Load() != 1 {
@@ -229,7 +229,7 @@ func TestGatewayRecoveryAckFailureRestartsWithoutRedelivering(t *testing.T) {
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_recovery_ack BEFORE UPDATE OF acknowledged_by ON commands BEGIN SELECT RAISE(ABORT,'ack unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err == nil || !strings.Contains(err.Error(), "ack unavailable") {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err == nil || !strings.Contains(err.Error(), "ack unavailable") {
 		t.Fatalf("ack persistence failure hidden: %v", err)
 	}
 	pending, err := book.PendingCommands(t.Context(), recoveryInputKind)
@@ -250,7 +250,7 @@ func TestGatewayRecoveryAckFailureRestartsWithoutRedelivering(t *testing.T) {
 	g = New(p)
 	g.BindChannel(ch)
 	for range 2 {
-		if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+		if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -280,7 +280,7 @@ func TestGatewayRecoveryReadsPendingNotCompletedHistory(t *testing.T) {
 	if err := g.QueueRecovery(t.Context(), book, "pending", revivalFixture(), "original-attempt"); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RecoverQueued(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
+	if err := g.recoverQueuedFixture(t.Context(), book, p, func(string, string) error { return nil }); err != nil {
 		t.Fatalf("runtime decoded completed history: %v", err)
 	}
 	pending, err := book.PendingCommands(t.Context(), recoveryInputKind)
