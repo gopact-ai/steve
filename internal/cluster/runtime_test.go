@@ -450,6 +450,98 @@ func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing
 	}
 }
 
+// A write checks, before it proposes anything, that this replica has caught
+// up with a linearizable read. The task store holds its lock and the ledger
+// its writer lock through that check, so a replica that stays behind must
+// fail the write instead of stalling every writer queued behind it.
+func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
+	nodes := testNodes(t, 3)
+	// node-2's application writes while its generation is being activated.
+	// The runtime then waits for Activate and does not check the replica's
+	// progress itself, so nothing but the write's own check bounds the wait.
+	activating := make(chan Activation, 1)
+	proceed := make(chan struct{})
+	release := sync.OnceFunc(func() { close(proceed) })
+	t.Cleanup(release)
+	build := nodes[1].config.Activate
+	nodes[1].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		stop, err := build(ctx, activation)
+		if err == nil {
+			select {
+			case activating <- activation:
+			default:
+			}
+			select {
+			case <-proceed:
+			case <-ctx.Done():
+			}
+		}
+		return stop, err
+	}
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		r := openNode(t, nodes[i])
+		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	var active Activation
+	select {
+	case active = <-activating:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-2 did not start its business generation: %+v", second.Status())
+	}
+	if !first.Status().IsLeader {
+		t.Fatal("fixture no longer reads the cluster state from a remote consensus leader")
+	}
+	tasks := nodes[1].current().tasks
+	// node-2 stops receiving Raft traffic, and node-1 and node-3 commit an
+	// entry it cannot apply: a read from the leader is now ahead of node-2.
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	state, err := first.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Rename(t.Context(), coordination.RenameRequest{ID: "rename-third", Actor: "owner", ExpectedRevision: state.Revision, NodeID: "node-3", Name: "third"}); err != nil {
+		t.Fatal(err)
+	}
+	stored := len(tasks.List(""))
+	pending := task.Task{Channel: "replica-wait", Member: "owner", Goal: "written once node-2 catches up"}
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	done := make(chan error, 1)
+	// Create writes without a deadline, as every task store write does.
+	go func() { _, err := tasks.Create(pending); done <- err }()
+	select {
+	case err = <-done:
+	case <-time.After(2 * applyTimeout):
+		t.Fatalf("the write kept waiting for a replica that cannot catch up; ApplyTimeout is %s", applyTimeout)
+	}
+	if !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a replica that did not catch up failed the write with %v, not as unavailable", err)
+	}
+	if active.Context.Err() != nil {
+		t.Fatalf("a write that proposed nothing revoked business generation %d: %v", active.Generation, second.Status().LastError)
+	}
+	if got := len(tasks.List("")); got != stored {
+		t.Fatalf("the task store kept a write that failed: %d tasks, had %d", got, stored)
+	}
+	nodes[1].raft.resume()
+	if _, err := tasks.Create(pending); err != nil {
+		t.Fatalf("the same write failed again after node-2 could catch up: %v", err)
+	}
+	release()
+	if published := ready(t, second); published.Generation != active.Generation {
+		t.Fatalf("generation %d was published instead of generation %d, whose write failed", published.Generation, active.Generation)
+	}
+}
+
 func TestCallerCancellationBeforeProposalSubmitsNothing(t *testing.T) {
 	nodes := testNodes(t, 1)
 	r := openNode(t, nodes[0])
