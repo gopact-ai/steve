@@ -162,13 +162,13 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `task_max_turns` | integer | `0`（不限） | 为新任务设置最大轮数 | `100` |
 | `task_max_elapsed` | Duration string | `"0s"`（不限） | 为新任务设置执行耗时预算 | `"2h"` |
 | `offline_reminder_after` | Duration string | `"15m"`；零取默认 | 长回合结束且用户期间未继续说话时，额外通知；负数关闭 | `"-1s"` |
-| `debug_addr` | string | `""`（关闭） | 调试消息/卡片回调注入接口，只允许 loopback；没有 token，本机其他用户和进程都能注入消息，仅在单用户机器上调试时开启 | `"127.0.0.1:7711"` |
+| `debug_addr` | string | `""`（关闭） | 调试消息/卡片回调注入接口，只允许 loopback 地址（按配置文本判断：loopback IP 或不区分大小写的 `localhost`）；没有 token，本机其他用户和进程都能注入消息，仅在单用户机器上调试时开启 | `"127.0.0.1:7711"` |
 | `debug_chat_id` | string | `""` | 调试注入的默认飞书 chat ID | `"oc_..."` |
 | `capabilities` | string[] | `[]` | hub 的兼容能力标签 | `["build"]` |
 | `tools` | string[] | `[]` | hub 需要观测的命令 | `["git","go","gh"]` |
 | `declares` | string[] | `[]` | 运维声明的能力，不能替代工具的实际观测 | `["network:internal"]` |
-| `read_model_addr` | string | `"127.0.0.1:7710"` | 控制台、状态快照和事件流监听地址 | `"0.0.0.0:7710"` |
-| `read_model_token` | string | `""`（loopback 监听时生成 `<状态目录>/loopback-token`） | 控制台/API 的 bearer token，拥有 owner 操作权限；非 loopback 监听必填，loopback 监听留空（或只含空白）时 Hub 首次启动生成并沿用 | `"replace-me-with-a-long-random-token"` |
+| `read_model_addr` | string | `"127.0.0.1:7710"` | 控制台、状态快照和事件流监听地址；首尾空白会去掉，只含空白时取默认值 | `"0.0.0.0:7710"` |
+| `read_model_token` | string | `""`（loopback 监听时生成 `<状态目录>/loopback-token`） | 控制台/API 的 bearer token，拥有 owner 操作权限；首尾空白会去掉，只含空白视为未设；非 loopback 监听必填，loopback 监听未设时 Hub 首次启动生成并沿用（loopback 监听的判断见[控制台与凭据](#控制台与凭据)） | `"replace-me-with-a-long-random-token"` |
 | `planner` | string | `""`（规则规划器） | `/plan` 的拆解 agent；不填时开放目标按一步处理 | `"claude"` |
 | `level` | string | 按 hub 需耐久保存的项目推导，至少 `restricted` | hub 的数据等级；默认排除 home 在远端的 sealed 项目 | `"restricted"` |
 | `region` | string | `"default"`（账本的本地区域） | 本 hub 的租约签发区域 | `"east"` |
@@ -327,7 +327,7 @@ steve run -config /home/me/steve-bin/config.json
 
 省略飞书应用凭据即可独立运行控制台，设置 `gateway.owner_id` 为稳定的部署 owner 标识；`app_id` / `app_secret` 只填写其中一个会被拒绝。两者都填写时，Steve 才验证并启动飞书/Lark 通道。控制台 owner 优先使用 `gateway.owner_id`，否则使用 `feishu.owner_open_id`；独立部署没有有效 owner 时启动失败。飞书 owner 仍使用该应用下的 open_id。身份和记忆文件在本地准备，不需要通过飞书完成首次启动。
 
-默认地址 `127.0.0.1:7710` 只在 hub 本机可访问。控制台始终需要 token：配置未设 `gateway.read_model_token` 时，Hub 首次启动在状态目录（`gateway.state_path` 所在目录）生成仅本用户可读的 `loopback-token`，重启沿用，不写回配置，也不写入日志。loopback 挡不住本机其他用户和进程，也挡不住浏览器里的其他网站，因此无论监听在哪里，浏览器代其他网站发出的写请求（按 `Sec-Fetch-Site` / `Origin` 判断）都会被拒绝；loopback 监听还只接受 loopback 主机名，防 DNS rebinding。在 loopback 控制台前挂反向代理时，代理要把 `Host` 和 `Origin` 改写为 loopback 地址；否则改为对外监听并配置 token。对外监听需要设置 `gateway.read_model_addr` 和非空 `gateway.read_model_token`。`dash` / `top` / `say` 可用显式 `-config <path>` 只读加载连接：
+默认地址 `127.0.0.1:7710` 只在 hub 本机可访问。控制台始终需要 token：`gateway.read_model_token` 未设或只含空白时，Hub 首次启动在状态目录（`gateway.state_path` 所在目录）生成仅本用户可读的 `loopback-token`，重启沿用，不写回配置，也不写入日志。只有 loopback 监听会生成 token，这按 `gateway.read_model_addr` 的文本判断：主机须是 loopback IP 或不区分大小写的 `localhost`；其他名字（如 `localhost.`、`*.localhost`）即使解析到本机，也须配置 token。loopback 挡不住本机其他用户和进程，也挡不住浏览器里的其他网站，因此无论监听在哪里，浏览器代其他网站发出的写请求（按 `Sec-Fetch-Site` / `Origin` 判断）都会被拒绝；实际绑定到 loopback IP 的控制台还只接受 loopback 主机名（`localhost`、`*.localhost` 和 loopback IP），防 DNS rebinding。这一检查按绑定后的地址判断，与配置怎么写无关，因此经解析到 loopback 的其他本机名访问会被拒绝。在 loopback 控制台前挂反向代理时，代理要把 `Host` 和 `Origin` 改写为 loopback 地址；否则改为对外监听并配置 token。对外监听需要设置 `gateway.read_model_addr` 和非空白的 `gateway.read_model_token`。`dash` / `top` / `say` 可用显式 `-config <path>` 只读加载连接：
 
 ```bash
 ./steve dash -config config.json
@@ -338,7 +338,7 @@ steve run -config /home/me/steve-bin/config.json
 连接规则：
 
 - 不传 `-config` 时不自动查找配置，使用 `http://127.0.0.1:7710`、空 token 和原命令参数默认值；Hub 总有 token，所以此时须用 `-token` 提供，否则请求返回 401。
-- 传入时读取 `gateway.read_model_addr` / `gateway.read_model_token`，地址去掉首尾空白，token 只含空白时视为空；token 为空且连接地址是 loopback（不区分大小写的 `localhost` 或 loopback IP）时读取 `gateway.state_path` 所在目录的 `loopback-token`（Hub 尚未启动过则为空），其他地址不读取该文件；显式传入 `-token`（包括 `-token ''`）时也不读取该文件；存在 `<config>.cluster.json` 时，地址改用 sidecar 的 `ui_address`，token 仍来自原配置。普通 `gateway` 的空地址使用原默认地址，其监听地址可省略 `http://`，`0.0.0.0`、`[::]` 和省略主机的 `:端口` 分别转为 `127.0.0.1`、`[::1]` 和 `127.0.0.1`。
+- 传入时按 Hub 的规则读取 `gateway.read_model_addr` / `gateway.read_model_token`：两者都去掉首尾空白，地址只含空白时使用默认地址，token 只含空白时视为空；token 为空且连接地址是 loopback（不区分大小写的 `localhost` 或 loopback IP）时读取 `gateway.state_path` 所在目录的 `loopback-token`（Hub 尚未启动过则为空），其他地址不读取该文件；显式传入 `-token`（包括 `-token ''`）时也不读取该文件；存在 `<config>.cluster.json` 时，地址改用 sidecar 的 `ui_address`，token 仍来自原配置。普通 `gateway` 的监听地址可省略 `http://`，`0.0.0.0`、`[::]` 和省略主机的 `:端口` 分别转为 `127.0.0.1`、`[::1]` 和 `127.0.0.1`。
 - 自动发现的 cluster sidecar 沿用服务的私有文件要求：必须是普通文件，不能是链接，不能授予 group/other 权限，最多 8 MiB。`ui_address` 必须有明确的 loopback IP 和端口；缺失、空值、`null`、通配或远程地址都会拒绝，不会带着配置凭据退回其他监听。普通配置可省略连接字段使用默认值，但显式 `null` 不是有效字段值。
 - 显式 `-url` / `-token` 覆盖对应配置值，`-token ''` 明确禁用凭据。同 origin（协议、主机、有效端口相同，默认端口等价）的 URL 覆盖可继承配置 token；改变 origin 且配置有 token 时，必须显式给出 `-token`，否则报错，不发送请求。`localhost` 与 `127.0.0.1` 视为不同主机，不做 DNS 等价判断。客户端也不跟随跨 origin 或含 userinfo 的重定向。
 - `-url` 必须是 HTTP(S) URL；连接地址禁止 userinfo、query 和 fragment。缺失或损坏的显式配置、损坏的已存在 sidecar、非法连接地址都会报错，显式覆盖也不会跳过配置读取和地址校验。无须让其他服务配置合法，不读取证书或初始化运行目录，不启动 Hub、探测 Agent、修改配置；`say` 仍会向正在运行的控制台发送所给命令。

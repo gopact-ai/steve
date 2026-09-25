@@ -148,7 +148,7 @@ macOS 上运行 `make desktop` 构建原生 App，构建脚本会输出 `Steve.a
    ./steve dash -config config.json
    ```
 
-   它打印带登录 token 的控制台地址（默认 `http://127.0.0.1:7710`）。配置未设 `gateway.read_model_token` 时，Hub 首次启动会在状态目录生成 `loopback-token`。在工作台发送 `/project use workspace`，再发送 `@codex 列出这个项目的文件并说明用途`。输入框里 Enter 发送、**Shift+Enter 换行**。工具需要超出 `read` 策略的权限时，可以在本轮权限请求中明确批准或拒绝，详见 [权限说明](docs/operations.md#harnessesname)。
+   它打印带登录 token 的控制台地址（默认 `http://127.0.0.1:7710`）。`gateway.read_model_token` 未设或只含空白时，Hub 首次启动会在状态目录生成 `loopback-token`。在工作台发送 `/project use workspace`，再发送 `@codex 列出这个项目的文件并说明用途`。输入框里 Enter 发送、**Shift+Enter 换行**。工具需要超出 `read` 策略的权限时，可以在本轮权限请求中明确批准或拒绝，详见 [权限说明](docs/operations.md#harnessesname)。
 
 需要飞书/Lark 时，可用 `./steve setup` 录入已有应用，或用 `./steve setup -create-app` 走官方设备流；确认应用下自己的 `open_id`。配置完成后，飞书与控制台可同时使用。远程访问、地址与 token 参数见 [控制台与凭据](docs/operations.md#控制台与凭据)。
 

@@ -77,9 +77,9 @@ func TestLoopbackListener(t *testing.T) {
 	}
 }
 
-// Host names ignore case, so LOCALHOST listens where localhost does. Only
-// letter case is ignored: Unicode folding would also match the long s in
-// "localhoſt", which does not name this machine.
+// DNS ignores ASCII letter case, so LOCALHOST is the name localhost. Only
+// ASCII case is ignored: Unicode folding would also match the long s in
+// "localhoſt", which is another name.
 func TestLoopbackListenerIgnoresTheCaseOfLocalhost(t *testing.T) {
 	for addr, want := range map[string]bool{"LOCALHOST:7710": true, "LocalHost:7710": true, "localhoſt:7710": false} {
 		if got := LoopbackListener(addr); got != want {
