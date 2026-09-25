@@ -132,3 +132,39 @@ func TestUnheardChannelConversationReadsAsNoProject(t *testing.T) {
 		})
 	}
 }
+
+// The console's setup page shows the contract a console conversation's
+// first session opens with, before any line arrives: the owner's, with
+// the bound project's memory — the same memory the first turn injects.
+func TestConsoleSetupBeforeAnyLineIsTheOwners(t *testing.T) {
+	c := unboundCoordinator(t)
+	bind(t, c, "console:bound", "beta")
+	seedFact(t, c, memory.ProjectScope("beta"), "beta fact")
+	for _, tc := range []struct {
+		id, memory string
+	}{
+		{"console:bound", "memory:project:beta"},
+		{"console:new", ""},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			setup, err := c.SessionSetup(t.Context(), tc.id, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got string
+			for _, s := range setup.Sections {
+				if strings.HasPrefix(s.Name, "memory:project:") {
+					got = s.Name
+				}
+			}
+			first := c.projectMemory(t.Context(), tc.id, Request{Channel: "console", ConversationID: tc.id, SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P})
+			want := ""
+			if len(first) == 1 {
+				want = first[0].Name
+			}
+			if setup.Mode != "owner" || got != tc.memory || got != want {
+				t.Fatalf("setup mode %q memory %q, first turn memory %q, want owner and %q", setup.Mode, got, want, tc.memory)
+			}
+		})
+	}
+}
