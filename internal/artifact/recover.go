@@ -347,7 +347,7 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 			return land, err
 		}
 	}
-	target, err := s.recoveredCanonical(ctx, p, land, onto.ID)
+	target, err := s.recoveredCanonical(ctx, p, lease, land, onto.ID)
 	if err != nil {
 		return land, fmt.Errorf("landing %s: snapshot after recovery: %w", land.ID, err)
 	}
@@ -390,9 +390,9 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 // snapshot differ in the landing's paths only. Anything else that differs
 // was written after the landing merged — by the holder that lent it the
 // lock, or by hand — and the merged snapshot would name a workspace older
-// than the one on disk: what is on disk is cut instead, under the lock the
-// recovery holds.
-func (s *Store) recoveredCanonical(ctx context.Context, p project.Project, land Landing, onto string) (string, error) {
+// than the one on disk: what is on disk is cut instead, under held, the
+// lock the recovery holds. The name moves only with the recovery's commit.
+func (s *Store) recoveredCanonical(ctx context.Context, p project.Project, held ledger.Lease, land Landing, onto string) (string, error) {
 	differs, err := s.changedBetween(ctx, p, onto, land.Merged)
 	if err != nil {
 		return "", err
@@ -400,7 +400,7 @@ func (s *Store) recoveredCanonical(ctx context.Context, p project.Project, land 
 	if len(outside(differs, land.Paths)) == 0 {
 		return land.Merged, nil
 	}
-	after, _, _, err := s.cutCanonical(ctx, p, onto, land.ID, "recovered "+short(land.Artifact))
+	after, _, _, err := s.cutCanonicalUnder(ctx, p, held, onto, land.ID, "recovered "+short(land.Artifact))
 	return after.ID, err
 }
 

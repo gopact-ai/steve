@@ -561,22 +561,28 @@ func CanonicalLease(leases []ledger.Lease, projectID string) (ledger.Lease, bool
 // snapshotCanonical is SnapshotCanonicalUnder that also names the nested
 // git repositories the snapshot left out of the canonical workspace.
 func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string) (Manifest, bool, []string, error) {
-	if held.Key != canonicalLock(p.ID) {
-		return Manifest{}, false, nil, fmt.Errorf("snapshot of %s under lock %q, not its canonical lock", p.ID, held.Key)
-	}
-	// A lock already gone leaves the workspace to its next holder, who may
-	// be writing it: nothing is cut or recorded then. The check only spares
-	// a cut bound to be thrown away; a lock that runs out while the cut
-	// runs is still caught by setCanonical, which moves no name for it.
-	if err := s.ledger.CheckAny(ctx, held); err != nil {
-		return Manifest{}, false, nil, err
-	}
-	m, changed, nested, err := s.cutCanonical(ctx, p, parent, by, message)
+	m, changed, nested, err := s.cutCanonicalUnder(ctx, p, held, parent, by, message)
 	if err != nil {
 		return m, changed, nested, err
 	}
 	// The snapshot is now the project's last known canonical state.
 	return m, changed, nested, s.setCanonical(ctx, p.ID, held, m.ID)
+}
+
+// cutCanonicalUnder is cutCanonical under held, which must be the
+// project's canonical lock. A lock already gone leaves the workspace to
+// its next holder, who may be writing it: nothing is cut or recorded
+// then. The check only spares a cut bound to be thrown away; whether the
+// lock still holds when the snapshot is named is decided there, by
+// setCanonical or by the commit of the recovery that cut it.
+func (s *Store) cutCanonicalUnder(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string) (Manifest, bool, []string, error) {
+	if held.Key != canonicalLock(p.ID) {
+		return Manifest{}, false, nil, fmt.Errorf("snapshot of %s under lock %q, not its canonical lock", p.ID, held.Key)
+	}
+	if err := s.ledger.CheckAny(ctx, held); err != nil {
+		return Manifest{}, false, nil, err
+	}
+	return s.cutCanonical(ctx, p, parent, by, message)
 }
 
 // cutCanonical snapshots the canonical workspace, brings the snapshot to

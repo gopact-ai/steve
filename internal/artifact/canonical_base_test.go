@@ -375,3 +375,41 @@ func TestSnapshotUnderAStaleLockCutsNothing(t *testing.T) {
 		t.Fatalf("canonical moved to %s under a stale lock", short(head))
 	}
 }
+
+// A recovery that finds the workspace changed outside the landing's paths
+// cuts a snapshot of it, and under a canonical lock that ran out and went
+// to another holder it cuts nothing, as any snapshot under such a lock.
+func TestRecoverySnapshotUnderAStaleLockCutsNothing(t *testing.T) {
+	ctx := t.Context()
+	store, p, node, canonical, _ := commitFixture(t)
+	held, err := store.acquireCanonical(ctx, p, "att-parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	onto := canonicalOf(t, store, "p")
+	write(t, canonical, "b", "b-by-hand")
+	merged, _, _, err := store.snapshotCanonical(ctx, p, held, onto, "att-parent", "outside the landing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ledger.Invalidate(ctx, held.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ledger.Acquire(ctx, held.Key, "next", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	before, cuts := manifestCount(t, store), 0
+	node.before = func(req ops.Request) {
+		if req.Op == ops.Snapshot {
+			cuts++
+		}
+	}
+
+	land := Landing{ID: "land-1", Paths: []string{"a"}, Merged: merged.ID}
+	if _, err := store.recoveredCanonical(ctx, p, held, land, onto); !errors.Is(err, ledger.ErrStale) {
+		t.Fatalf("recovery snapshot under a stale lock: err=%v, want ErrStale", err)
+	}
+	if cuts != 0 || manifestCount(t, store) != before {
+		t.Fatalf("cut %d snapshots and recorded %d under a stale lock", cuts, manifestCount(t, store)-before)
+	}
+}
