@@ -6,6 +6,7 @@
 package stableport
 
 import (
+	"context"
 	"errors"
 	"math/rand/v2"
 	"net"
@@ -34,22 +35,57 @@ const (
 // Listen binds address with listen. An address with a nonzero port is
 // bound as given. For port 0 it binds a random port in the range on the
 // same host, trying another only when the port is in use; any other error
-// is returned as is. If every attempt finds its port in use, it binds the
-// address unchanged and the kernel picks an ephemeral port, which a later
-// restart may find taken.
+// is returned as is. A port another socket listens on at an overlapping
+// address counts as in use, even where the platform would let both bind
+// it. If every attempt finds its port in use, it binds the address
+// unchanged and the kernel picks an ephemeral port, which a later restart
+// may find taken.
 func Listen(listen func(network, address string) (net.Listener, error), network, address string) (net.Listener, error) {
+	return picker{candidate: candidate, probe: probe}.listen(listen, network, address)
+}
+
+// picker resolves port 0 from candidate, skipping a candidate probe finds
+// in use before listen binds it.
+type picker struct {
+	candidate func() int
+	probe     func(network, address string) error
+}
+
+func (p picker) listen(listen func(network, address string) (net.Listener, error), network, address string) (net.Listener, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil || port != "0" {
 		return listen(network, address)
 	}
 	for range attempts {
-		listener, err := listen(network, net.JoinHostPort(host, strconv.Itoa(candidate())))
+		candidate := net.JoinHostPort(host, strconv.Itoa(p.candidate()))
+		if errors.Is(p.probe(network, candidate), syscall.EADDRINUSE) {
+			continue
+		}
+		listener, err := listen(network, candidate)
 		if !errors.Is(err, syscall.EADDRINUSE) {
 			return listener, err
 		}
 	}
 	return listen(network, address)
 }
+
+// probe binds address without SO_REUSEADDR and closes it again.
+// Listeners set SO_REUSEADDR, and on macOS that lets a wildcard and a
+// specific address share a port: 0.0.0.0:P binds while another socket
+// listens on 127.0.0.1:P, which then takes the loopback connections, and
+// the other way round. Without SO_REUSEADDR either bind is refused as in
+// use. The listener that is kept is bound by the caller as usual, so a
+// restart can bind its port again past connections in TIME_WAIT; the
+// probe refuses those too, which only skips a port.
+func probe(network, address string) error {
+	listener, err := exclusive.Listen(context.Background(), network, address)
+	if err != nil {
+		return err
+	}
+	return listener.Close()
+}
+
+var exclusive = net.ListenConfig{Control: clearReuseAddr}
 
 // size is how many ports the range holds without the SSH link window.
 const size = Last - First + 1 - (LinkLast - LinkFirst + 1)
