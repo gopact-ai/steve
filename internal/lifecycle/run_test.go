@@ -1179,3 +1179,30 @@ func TestRunCompletesAManagedPromptThatAnsweredAsItsSilenceClockRanOut(t *testin
 		t.Fatalf("answered as the silence ran out: %+v err=%v history=%s", res, err, w.attempts.history())
 	}
 }
+
+// A node-owned prompt that answered is not cut short by its silence clock
+// while the caller completes it: the clock times an agent that went quiet,
+// and a completion slower than the silence left is not one.
+func TestRunCompletesAManagedPromptWhoseCompletionOutlastsItsSilence(t *testing.T) {
+	w := newWorld("ns_1")
+	w.attempts.refusesDone = true
+	const silence = 20 * time.Millisecond
+	ctx, stop, _ := idle.WithTimeout(t.Context(), silence)
+	defer stop()
+	release := idle.Hold(ctx)
+	w.runner.during = release
+	o := w.options()
+	finish := o.Finish
+	o.Finish = func(ctx context.Context, e *Execution) (attempt.Completion, error) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * silence):
+		}
+		return finish(ctx, e)
+	}
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
+	res, err := Run(ctx, o)
+	if err != nil || idle.Expired(ctx) || res.Record.State != attempt.Bound || !res.Durable || res.Unsettled {
+		t.Fatalf("completed past the silence left: %+v err=%v history=%s", res, err, w.attempts.history())
+	}
+}
