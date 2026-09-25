@@ -340,3 +340,38 @@ func TestStuckSnapshotStopsRenewingTheCanonicalLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A snapshot under a canonical lock that ran out and went to another
+// holder cuts nothing: the workspace is that holder's now, and may be half
+// written, so no snapshot of it is taken or recorded, and the name stays.
+func TestSnapshotUnderAStaleLockCutsNothing(t *testing.T) {
+	ctx := t.Context()
+	store, p, node, canonical, _ := commitFixture(t)
+	held, err := store.acquireCanonical(ctx, p, "att-parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ledger.Invalidate(ctx, held.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ledger.Acquire(ctx, held.Key, "next", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	write(t, canonical, "a", "a-half")
+	name, before, cuts := canonicalOf(t, store, "p"), manifestCount(t, store), 0
+	node.before = func(req ops.Request) {
+		if req.Op == ops.Snapshot {
+			cuts++
+		}
+	}
+
+	if _, _, _, err := store.snapshotCanonical(ctx, p, held, name, "att-parent", "under a stale lock"); !errors.Is(err, ledger.ErrStale) {
+		t.Fatalf("snapshot under a stale lock: err=%v, want ErrStale", err)
+	}
+	if cuts != 0 || manifestCount(t, store) != before {
+		t.Fatalf("cut %d snapshots and recorded %d under a stale lock", cuts, manifestCount(t, store)-before)
+	}
+	if head := canonicalOf(t, store, "p"); head != name {
+		t.Fatalf("canonical moved to %s under a stale lock", short(head))
+	}
+}

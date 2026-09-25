@@ -564,6 +564,13 @@ func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, held l
 	if held.Key != canonicalLock(p.ID) {
 		return Manifest{}, false, nil, fmt.Errorf("snapshot of %s under lock %q, not its canonical lock", p.ID, held.Key)
 	}
+	// A lock already gone leaves the workspace to its next holder, who may
+	// be writing it: nothing is cut or recorded then. The check only spares
+	// a cut bound to be thrown away; a lock that runs out while the cut
+	// runs is still caught by setCanonical, which moves no name for it.
+	if err := s.ledger.CheckAny(ctx, held); err != nil {
+		return Manifest{}, false, nil, err
+	}
 	m, changed, nested, err := s.cutCanonical(ctx, p, parent, by, message)
 	if err != nil {
 		return m, changed, nested, err
