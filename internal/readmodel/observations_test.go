@@ -332,3 +332,8 @@ func TestObservePersistenceKeepsBoundedTail(t *testing.T) {
 		t.Fatal("retention did not discard exactly the oldest observation")
 	}
 }
+
+// ledgerObservationStore is where a hub keeps observations in its ledger.
+func ledgerObservationStore(book *ledger.Ledger) ledger.Doc {
+	return book.Document("observations")
+}
