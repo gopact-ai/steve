@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -166,5 +167,31 @@ func TestConsoleSetupBeforeAnyLineIsTheOwners(t *testing.T) {
 				t.Fatalf("setup mode %q memory %q, first turn memory %q, want owner and %q", setup.Mode, got, want, tc.memory)
 			}
 		})
+	}
+}
+
+// A card's restore button replays "/history 1" without saying what kind
+// of chat it was tapped in. Such a line tells nothing about how the
+// conversation reaches Steve, so the owner's private chat still reads as
+// the project its next line binds, and keeps the owner's memory.
+func TestRestoreTapKeepsHowAConversationArrives(t *testing.T) {
+	c := unboundCoordinator(t)
+	owner := Request{Channel: "feishu", ConversationID: "oc_owner", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P, Mentioned: true}
+	reset := owner
+	reset.Input = "/new"
+	if _, err := c.Handle(t.Context(), reset); err != nil {
+		t.Fatal(err)
+	}
+	tap := Request{Channel: "feishu", ConversationID: "oc_owner", SenderOpenID: memoryOwner, Mentioned: true, Input: "/history 1"}
+	// Whether there is anything to restore does not matter here.
+	_, _ = c.Handle(t.Context(), tap)
+	read := c.ProjectOf(t.Context(), "oc_owner")
+	mode := c.modeOf("oc_owner")
+	first, err := c.bindingFor(t.Context(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ProjectID != "home" || read != first.ProjectID || mode != home.ModeOwner {
+		t.Fatalf("after the restore tap: read %q mode %q, next line binds %q", read, mode, first.ProjectID)
 	}
 }
