@@ -50,10 +50,23 @@ func Guard(next http.Handler, reach Reach) http.Handler {
 	})
 }
 
+// ReachOf is the reach of a service whose listener is bound to addr. Only a
+// loopback IP keeps every connection on this machine, and the bound address
+// shows it whatever name the configuration gave: "localhost." and
+// subdomains of localhost listen on loopback too, and must refuse a rebound
+// Host as well.
+func ReachOf(addr net.Addr) Reach {
+	bound, ok := addr.(*net.TCPAddr)
+	return Reach(ok && bound.IP.IsLoopback())
+}
+
 // LoopbackListener reports whether a listen address ("host:port") only
-// accepts connections from this machine. It is stricter than a Host header:
-// a bare ":port" listens everywhere, and only "localhost", in any letter
-// case, among names is trusted to resolve to loopback.
+// accepts connections from this machine, judged from its text before it is
+// bound: whether it may serve a loopback-only endpoint, or be given a token
+// generated for this machine. It is stricter than a Host header: a bare
+// ":port" listens everywhere, and only "localhost", in any letter case,
+// among names is trusted to resolve to loopback. The Host check of a bound
+// service follows ReachOf instead.
 func LoopbackListener(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	return err == nil && LoopbackName(host)
@@ -62,7 +75,8 @@ func LoopbackListener(addr string) bool {
 // LoopbackName reports whether host, without a port, names this machine
 // for a connection: "localhost" in any letter case, or a loopback IP.
 // Subdomains of localhost and other spellings are left to the resolver, so
-// they are not.
+// they are not. Like LoopbackListener, it judges a name before anything is
+// bound and does not decide the Host check.
 func LoopbackName(host string) bool {
 	// Host names ignore letter case. strings.EqualFold would go further and
 	// match "localhoſt" (long s), which does not name this machine.

@@ -1,6 +1,7 @@
 package sameorigin
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -83,6 +84,23 @@ func TestLoopbackListenerIgnoresTheCaseOfLocalhost(t *testing.T) {
 	for addr, want := range map[string]bool{"LOCALHOST:7710": true, "LocalHost:7710": true, "localhoſt:7710": false} {
 		if got := LoopbackListener(addr); got != want {
 			t.Errorf("LoopbackListener(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+// A service only answers this machine when its listener is bound to a
+// loopback IP, whatever name the configuration gave: a host name mapped to
+// 127.0.1.1 is as local as 127.0.0.1, and a wildcard is not.
+func TestReachOfFollowsTheBoundAddress(t *testing.T) {
+	for _, c := range []struct {
+		bound net.IP
+		want  Reach
+	}{
+		{net.IPv4(127, 0, 0, 1), Loopback}, {net.IPv4(127, 0, 1, 1), Loopback}, {net.IPv6loopback, Loopback},
+		{net.IPv4zero, Network}, {net.IPv6unspecified, Network}, {net.IPv4(192, 0, 2, 10), Network},
+	} {
+		if got := ReachOf(&net.TCPAddr{IP: c.bound, Port: 7710}); got != c.want {
+			t.Errorf("ReachOf(%s) = %v, want %v", c.bound, got, c.want)
 		}
 	}
 }

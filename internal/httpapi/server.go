@@ -89,7 +89,7 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	}
 	requestContext, stopRequests := context.WithCancel(context.Background())
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
-	return &Server{model: model, token: cfg.Token, reach: sameorigin.Reach(sameorigin.LoopbackListener(addr)), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
+	return &Server{model: model, token: cfg.Token, reach: sameorigin.ReachOf(listener.Addr()), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }

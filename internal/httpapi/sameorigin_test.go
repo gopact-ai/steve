@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -61,30 +63,57 @@ func TestLoopbackConsoleRefusesOtherSites(t *testing.T) {
 	}
 }
 
-// A console on LOCALHOST listens on loopback like one on localhost, so a
-// rebound Host is refused even when the page has the owner's token.
-func TestUpperCaseLocalhostConsoleRefusesReboundHosts(t *testing.T) {
+// The Host check follows the address the console is bound to, not how the
+// configuration spells it: each of these listens on loopback, so a rebound
+// Host is refused even when the page has the owner's token.
+func TestLoopbackBoundConsoleRefusesReboundHostsHoweverItIsNamed(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
-	server := serve(t, model, ServerConfig{Addr: "LOCALHOST:0", Token: testToken})
+	for _, addr := range []string{"LOCALHOST:0", "localhost.:0", "foo.localhost:0"} {
+		t.Run(addr, func(t *testing.T) {
+			server, err := NewServer(model, ServerConfig{Addr: addr, Token: testToken})
+			var unresolved *net.DNSError
+			if errors.As(err, &unresolved) {
+				t.Skipf("this platform does not resolve %s: %v", addr, err)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			go func() { _ = server.Serve() }()
+			t.Cleanup(func() { _ = server.Close() })
+			if code := readState(t, server.URL(), "evil.example:7710"); code != http.StatusForbidden {
+				t.Errorf("rebound host read = %d, want 403", code)
+			}
+			if code := readState(t, server.URL(), ""); code != http.StatusOK {
+				t.Errorf("read on the console's own address = %d, want 200", code)
+			}
+		})
+	}
+}
 
-	read := func(host string) int {
-		t.Helper()
-		req, _ := http.NewRequest(http.MethodGet, server.URL()+"/state", nil)
-		if host != "" {
-			req.Host = host
-		}
-		req.Header.Set("Authorization", "Bearer "+testToken)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		res.Body.Close()
-		return res.StatusCode
+// A console bound beyond loopback cannot tell a rebound name from one the
+// operator gave it, so it answers any Host and its token keeps others out.
+func TestNetworkBoundConsoleAnswersAnyHostWithTheToken(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub-1"}})
+	server := serve(t, model, ServerConfig{Addr: "0.0.0.0:0", Token: testToken})
+	url := strings.NewReplacer("0.0.0.0", "127.0.0.1", "[::]", "127.0.0.1").Replace(server.URL())
+	if code := readState(t, url, "evil.example:7710"); code != http.StatusOK {
+		t.Fatalf("read through another name = %d, want 200", code)
 	}
-	if code := read("evil.example:7710"); code != http.StatusForbidden {
-		t.Fatalf("rebound host read = %d, want 403", code)
+}
+
+// readState reads /state from the console at url with the owner's token,
+// naming host in the request when it is not empty.
+func readState(t *testing.T, url, host string) int {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, url+"/state", nil)
+	if host != "" {
+		req.Host = host
 	}
-	if code := read(""); code != http.StatusOK {
-		t.Fatalf("read on the console's own address = %d, want 200", code)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
 	}
+	res.Body.Close()
+	return res.StatusCode
 }
