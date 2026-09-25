@@ -18,17 +18,19 @@ replace github.com/hashicorp/raft v1.7.3 => ./third_party/raft
    `TestRaft_AppendEntriesSnapshotBoundaryValidation`
    (`snapshot_boundary_test.go`, added locally).
 
-2. Commitment keeps a promoted nonvoter's match index (`commitment.go`).
+2. Commitment keeps a promoted server's match index (`commitment.go`).
    `appendConfigurationEntry` dispatches a configuration entry, which wakes
    replication, before it calls `commitment.setConfiguration`. When the
-   entry promotes a nonvoter, that server can acknowledge the entry while
-   it is still a nonvoter. v1.7.3 dropped the acknowledgement and started
-   the new voter at zero, so a configuration whose quorum needs the
-   promoted server did not commit until another entry was replicated to
-   it. `commitment` now records the match index of every server in the
-   configuration and computes the commit index from voters only.
-   Guarded by `TestCommitment_promotedNonvoterKeepsEarlierMatch`
-   (`commitment_test.go`); the other `TestCommitment_` tests are from v1.7.3.
+   entry promotes a nonvoter or staging server, that server can
+   acknowledge the entry before it votes. v1.7.3 dropped the
+   acknowledgement and started the new voter at zero, so a configuration
+   whose quorum needs the promoted server did not commit until another
+   entry was replicated to it. `commitment` now records the match index of
+   every server in the configuration and computes the commit index from
+   voters only; a demoted voter's match is kept but no longer counts.
+   Guarded by `TestCommitment_promotedServerKeepsEarlierMatch` and
+   `TestCommitment_demotedVoterKeepsMatch` (`commitment_test.go`); the
+   other `TestCommitment_` tests are from v1.7.3.
 
 ## Files not carried over
 
