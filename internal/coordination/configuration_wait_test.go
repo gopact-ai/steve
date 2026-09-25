@@ -101,13 +101,16 @@ func otherVoter(t *testing.T, c *testCluster, leader *Service) *Service {
 // call's last quorum write, so that neither the configuration before the
 // change nor the one after it has a quorum that acknowledges the entry, while
 // the leader keeps its lease. The call must end within ApplyTimeout instead of
-// holding the locks until the entry commits.
+// holding the locks until the entry commits, and name the change it gave up
+// waiting for.
 func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 	tests := []struct {
 		name string
-		run  func(t *testing.T) (*Service, func(context.Context) error)
+		// run returns the leader, the membership change, and how the change is
+		// named in its error.
+		run func(t *testing.T) (*Service, func(context.Context) error, string)
 	}{
-		{"vote-grant", func(t *testing.T) (*Service, func(context.Context) error) {
+		{"vote-grant", func(t *testing.T) (*Service, func(context.Context) error, string) {
 			c := newTestCluster(t, 2)
 			leader, peer := joinNonvoter(t, c)
 			pauses := []*raftLoopPause{newRaftLoopPause(t, otherVoter(t, c, leader)), newRaftLoopPause(t, peer)}
@@ -128,18 +131,18 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 				return probe(ctx, member)
 			}
 			request := VotingRequest{ID: "grant", Actor: "owner", ExpectedRevision: leader.Status().Revision, NodeID: "new-node", Voting: true}
-			return leader, func(ctx context.Context) error { _, err := leader.SetVoting(ctx, request); return err }
+			return leader, func(ctx context.Context) error { _, err := leader.SetVoting(ctx, request); return err }, "add voter new-node"
 		}},
-		{"join-voter", func(t *testing.T) (*Service, func(context.Context) error) {
+		{"join-voter", func(t *testing.T) (*Service, func(context.Context) error, string) {
 			c := newTestCluster(t, 2)
 			leader := c.leader()
 			peer := addUnjoinedTestReplica(t, c, "joining-domain")
 			pauses := []*raftLoopPause{newRaftLoopPause(t, otherVoter(t, c, leader)), newRaftLoopPause(t, peer)}
 			leader.config.ValidateJoin = func(context.Context, Member) error { return pauseAll(pauses...) }
 			request := JoinRequest{ID: "join-voter", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}}
-			return leader, func(ctx context.Context) error { _, err := leader.Join(ctx, request); return err }
+			return leader, func(ctx context.Context) error { _, err := leader.Join(ctx, request); return err }, "add voter new-node"
 		}},
-		{"address", func(t *testing.T) (*Service, func(context.Context) error) {
+		{"address", func(t *testing.T) (*Service, func(context.Context) error, string) {
 			c := newTestCluster(t, 1)
 			leader := c.leader()
 			peer := addUnjoinedTestReplica(t, c, "voter-domain")
@@ -153,12 +156,12 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 			p := newRaftLoopPause(t, peer)
 			leader.config.ValidateAddress = func(context.Context, Member) error { return p.pause() }
 			request := MemberAddressRequest{ID: "voter-address", Actor: "owner", ExpectedRevision: state.Revision, NodeID: "new-node", Address: peer.Status().Address, APIAddress: "https://127.0.0.1:12345"}
-			return leader, func(ctx context.Context) error { _, err := leader.UpdateMemberAddress(ctx, request); return err }
+			return leader, func(ctx context.Context) error { _, err := leader.UpdateMemberAddress(ctx, request); return err }, "move voter new-node to " + request.Address
 		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			leader, change := tc.run(t)
+			leader, change, description := tc.run(t)
 			finished := make(chan error, 1)
 			go func() { finished <- change(t.Context()) }()
 			var err error
@@ -167,7 +170,7 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("membership change still waiting for its configuration entry after 10s")
 			}
-			if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "configuration change") {
+			if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "configuration change to "+description+" did not commit") {
 				t.Fatalf("uncommitted configuration change returned %v", err)
 			}
 			if !leader.Status().IsLeader {
