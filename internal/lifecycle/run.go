@@ -340,6 +340,9 @@ type Execution struct {
 	Usage   *attempt.Usage
 
 	stopBeat func()
+	// releaseClock gives back the hold a settled prompt keeps on the
+	// silence clock the run is under.
+	releaseClock func()
 	// armed says the caller's arming succeeded: with KeepSession the
 	// session is the conversation's from then on.
 	armed bool
@@ -383,7 +386,7 @@ type Result struct {
 // MarkUnsettled → Close, Release, Discard. Callers choose what they
 // prepare, what they do with the answer, and how the end is read.
 func Run(ctx context.Context, o Options) (Result, error) {
-	e := &Execution{o: o, Upstream: o.Upstream, Prompt: o.Prompt, Servers: o.Servers, stopBeat: func() {}}
+	e := &Execution{o: o, Upstream: o.Upstream, Prompt: o.Prompt, Servers: o.Servers, stopBeat: func() {}, releaseClock: func() {}}
 	err := e.run(ctx)
 	return e.result(), err
 }
@@ -394,7 +397,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 // transition and cleanup are Run's; opening, admission and the session
 // are the caller's, done or recovered before.
 func Reattach(ctx context.Context, o Options, record attempt.Record, session harness.Runner) (Result, error) {
-	e := &Execution{o: o, Record: record, Session: session, Managed: Managed(session), Prompt: o.Prompt, Servers: o.Servers, stopBeat: func() {}, armed: true}
+	e := &Execution{o: o, Record: record, Session: session, Managed: Managed(session), Prompt: o.Prompt, Servers: o.Servers, stopBeat: func() {}, releaseClock: func() {}, armed: true}
 	e.bound = record.Admission != nil && len(record.Admission.Bound) > 0
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -405,6 +408,7 @@ func Reattach(ctx context.Context, o Options, record attempt.Record, session har
 		}
 	})
 	defer e.stopBeat()
+	defer func() { e.releaseClock() }()
 	var err error
 	if o.Replay != nil {
 		e.Outcome, e.Usage, e.driven = *o.Replay, record.Usage, true
@@ -440,6 +444,7 @@ func (e *Execution) run(ctx context.Context) error {
 		}
 	})
 	defer e.stopBeat()
+	defer func() { e.releaseClock() }()
 	if o.Leased != nil {
 		next, err := o.Leased(ctx, e)
 		if err != nil {
@@ -617,6 +622,12 @@ func (e *Execution) drive(ctx context.Context) error {
 // read is how the prompt's end reads under the caller's rules.
 func (e *Execution) read(ctx context.Context) error {
 	o := e.o
+	if e.settled() {
+		// The agent has answered: what is left is the caller's, and no
+		// silence of the agent's ends it. A clock that ran out first has
+		// already ended every context derived from it.
+		e.releaseClock = idle.Hold(ctx)
+	}
 	if o.Ended != nil {
 		o.Ended(e)
 	}
