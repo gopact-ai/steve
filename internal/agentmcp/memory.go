@@ -64,6 +64,10 @@ func (s *Server) steveRemember(ctx context.Context, bind binding, raw json.RawMe
 	return jsonText(out), nil
 }
 
+// maxRecallLimit is the most facts steve_recall returns from each scope
+// it searches; a larger limit is cut to it.
+const maxRecallLimit = 50
+
 func (s *Server) steveRecall(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
 	m, err := s.memorizerOr()
 	if err != nil {
@@ -79,8 +83,8 @@ func (s *Server) steveRecall(ctx context.Context, bind binding, raw json.RawMess
 	switch {
 	case args.Limit <= 0:
 		args.Limit = 10
-	case args.Limit > 50:
-		args.Limit = 50
+	case args.Limit > maxRecallLimit:
+		args.Limit = maxRecallLimit
 	}
 	hits, from, err := m.Recall(ctx, bind.conversationID, bind.agentID, args.Scope, args.Query, args.Limit)
 	if err != nil {
@@ -152,7 +156,7 @@ func memoryTools() []map[string]any {
 				"properties": map[string]any{
 					"query": map[string]any{"type": "string", "description": "What you want to know, in plain words. Empty lists facts in stored order, up to limit."},
 					"scope": map[string]any{"type": "string", "enum": []string{"", "global", "project"}, "description": "Where to look; empty is global, then the current project if there is one."},
-					"limit": map[string]any{"type": "integer", "description": "At most this many from each scope searched, 1–50. Default 10."},
+					"limit": map[string]any{"type": "integer", "description": fmt.Sprintf("At most this many from each scope searched, 1–%d. Default 10.", maxRecallLimit)},
 				},
 				"required": []string{"query"},
 			},
