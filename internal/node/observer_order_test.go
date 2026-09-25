@@ -55,6 +55,19 @@ func promptly(t *testing.T, what string, change func() error) {
 	}
 }
 
+// heardAll returns once every change posted so far has been delivered:
+// notices are delivered in order, so a marker posted now arrives last.
+func heardAll(t *testing.T, r *Registry) {
+	t.Helper()
+	delivered := make(chan struct{})
+	r.notices.post(func() { close(delivered) })
+	select {
+	case <-delivered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("posted changes were never delivered")
+	}
+}
+
 func liveConn(t *testing.T, r *Registry, name string) *conn {
 	t.Helper()
 	r.mu.Lock()

@@ -79,7 +79,6 @@ type Registry struct {
 	receiptAuthority func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error
 	pluginAuthority  func(context.Context, string, nodewire.PluginRequest) error
 
-	eventMu   sync.Mutex
 	closed    bool
 	dialing   map[string]chan struct{}
 	changed   map[string]chan struct{}
@@ -94,9 +93,11 @@ type Registry struct {
 	gens map[string]int64
 	// observe hears every change of a node's standing: up with an advert,
 	// or down with a reason. History is made of these. drift hears what
-	// changed in a node's manifest between two adverts.
+	// changed in a node's manifest between two adverts. Both hear through
+	// notices, never on the path that made the change.
 	observe func(Status)
 	drift   func(node string, changes []ability.Change)
+	notices notices
 }
 
 // SetDriftObserver installs where manifest changes are reported.
@@ -154,7 +155,7 @@ func (r *Registry) noteDrift(name string, adv nodewire.Advert) {
 	if len(changes) == 0 {
 		return
 	}
-	drift(name, changes)
+	r.notices.post(func() { drift(name, changes) })
 }
 
 // SetObserver installs where connectivity changes are reported.
@@ -162,6 +163,15 @@ func (r *Registry) SetObserver(observe func(Status)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.observe = observe
+}
+
+// noticeLocked posts a change of a node's standing to its observer. The
+// caller holds r.mu and has just made the change, so notices are posted in
+// the order the changes were made.
+func (r *Registry) noticeLocked(s Status) {
+	if observe := r.observe; observe != nil {
+		r.notices.post(func() { observe(s) })
+	}
 }
 
 // Generation is how many times the node has connected: it moves on every
@@ -444,6 +454,7 @@ func (r *Registry) Close() {
 	}
 	r.live = map[string]*conn{}
 	r.mu.Unlock()
+	r.notices.close()
 	for _, c := range live {
 		c.close()
 	}
@@ -497,7 +508,6 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 			r.accept(name, &adv)
 			c.setAdvert(adv)
 			r.noteDrift(name, adv)
-			r.eventMu.Lock()
 			r.mu.Lock()
 			if !r.currentLocked(name, configurationRevision) {
 				err = fmt.Errorf("node %q released while dialing", name)
@@ -515,13 +525,9 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 				r.last[name] = &up
 				r.signalLocked(name)
 				r.clocksLocked(name, true)
-				observe := r.observe
+				r.noticeLocked(up)
 				r.mu.Unlock()
-				if observe != nil {
-					observe(up)
-				}
 			}
-			r.eventMu.Unlock()
 		}
 		r.mu.Lock()
 		delete(r.dialing, name)
