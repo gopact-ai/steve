@@ -14,7 +14,6 @@ package readmodel
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -478,7 +477,21 @@ type Sources struct {
 	// Schedules is standing work; Observations is where connectivity
 	// facts are kept for history.
 	Schedules    ScheduleSource
-	Observations ledger.Doc
+	Observations ObservationStore
+}
+
+// ObservationStore keeps observations one record each, numbered from 1 in
+// the order they were made, so recording one writes one record rather than
+// the whole history. Observations (in ledger.go) keeps them in the ledger.
+type ObservationStore interface {
+	// Load returns every kept observation it can read, oldest first, and
+	// the number of the last one kept, read or not; 0 when none is kept.
+	// It fails only when the store cannot be read at all.
+	Load(context.Context) ([]Observation, uint64, error)
+	// Save writes list as the observations numbered first, first+1, …,
+	// replacing any already kept under those numbers, and forgets every
+	// observation numbered below keep: all of it in one write, or none.
+	Save(ctx context.Context, first uint64, list []Observation, keep uint64) error
 }
 
 // LedgerSource is what the read model needs from the ledger-backed
@@ -534,9 +547,15 @@ type Model struct {
 	activity     map[string]Activity
 	observations []Observation
 
-	// observeMu orders observation updates and document I/O. mu protects
-	// the in-memory list and event subscribers, never the slow I/O.
+	// observeMu orders observation updates and store I/O. mu protects the
+	// in-memory list and event subscribers, never the slow I/O. Under
+	// observeMu: loaded says the store's observations are in the list,
+	// saved is the number of the last one the store keeps, and unsaved
+	// counts the observations at the list's end it does not keep yet.
 	observeMu sync.Mutex
+	loaded    bool
+	saved     uint64
+	unsaved   int
 }
 
 // Event is one change worth waking a renderer for.
@@ -799,11 +818,11 @@ type HistoryEntry struct {
 }
 
 // Observation is a connectivity fact worth remembering: a machine came
-// up with a build, went down with a reason, a probe answered. Kept in a
-// ledger document so history survives the process.
+// up with a build, went down with a reason, a probe answered. Kept in the
+// ledger, one record each, so history survives the process.
 //
 // Text is one English sentence, for logs and for readers of the raw
-// document. Data carries the same facts apart, so a page can say them
+// record. Data carries the same facts apart, so a page can say them
 // in the reader's language with the machine's own name rather than
 // parsing the sentence back. The keys are per kind and documented at
 // each call site; a reader that meets an unknown kind falls back to
@@ -1243,25 +1262,42 @@ func (m *Model) publishLocked(ev Event) {
 	}
 }
 
-// Observe records a connectivity fact and tells the page. The list is
-// kept in the ledger document so a restart does not forget it. A failed
-// save leaves the fact live; the next Observe retries the retained list.
+// Observe records a connectivity fact and tells the page. The store keeps
+// each observation as its own record, so a restart does not forget it and
+// recording one writes only what the store does not have yet. A failed save
+// leaves the fact live; later Observes write it with their own, oldest
+// first and at most observationsPerSave at a time.
 func (m *Model) Observe(kind, subject, text string, data map[string]string) {
 	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text, Data: data}
 	m.observeMu.Lock()
 	defer m.observeMu.Unlock()
+	store := m.src.Observations
+	if store != nil && !m.loaded {
+		// Numbering new records before the kept ones are known would
+		// file them among the old; they wait in memory until a load works.
+		if err := m.loadObservations(); err != nil {
+			slog.Error(fmt.Sprintf("readmodel: load observations: %v", err))
+		}
+	}
 	m.mu.Lock()
 	m.observations = append(m.observations, obs)
-	if len(m.observations) > observationsKept {
-		m.observations = m.observations[len(m.observations)-observationsKept:]
-	}
-	doc, list := m.src.Observations, append([]Observation(nil), m.observations...)
+	m.unsaved++
+	m.keepObservations()
+	unsaved := m.observations[len(m.observations)-m.unsaved:]
+	pending := append([]Observation(nil), unsaved[:min(len(unsaved), observationsPerSave)]...)
 	m.mu.Unlock()
-	if doc != nil {
-		if raw, err := json.Marshal(list); err == nil {
-			if err := doc.Save(raw); err != nil {
-				slog.Error(fmt.Sprintf("readmodel: save observations: %v", err))
-			}
+	if store != nil && m.loaded {
+		first := m.saved + 1
+		last := m.saved + uint64(len(pending))
+		var keep uint64
+		if last > observationsKept {
+			keep = last - observationsKept + 1
+		}
+		if err := store.Save(context.Background(), first, pending, keep); err != nil {
+			slog.Error(fmt.Sprintf("readmodel: save observations: %v", err))
+		} else {
+			m.saved = last
+			m.unsaved -= len(pending)
 		}
 	}
 	m.Publish(Event{Kind: "observe." + kind, Detail: text, Text: subject, Data: data})
@@ -1269,24 +1305,51 @@ func (m *Model) Observe(kind, subject, text string, data map[string]string) {
 
 const observationsKept = 1000
 
-// LoadObservations brings back what an earlier process observed.
+// observationsPerSave bounds one save, which the ledger replicates as one
+// write: an observation record is under 1 KB, so a save stays near 30 KB
+// however long saving failed, instead of resending the backlog, up to the
+// whole retained history, in one write to members that may sit behind slow
+// links. Each save still drains observationsPerSave-1 more than the one
+// observed, so a full backlog is caught up within a few dozen observations.
+const observationsPerSave = 32
+
+// keepObservations forgets the oldest observations past the limit, saved
+// or not. The caller holds observeMu and mu.
+func (m *Model) keepObservations() {
+	if len(m.observations) > observationsKept {
+		m.observations = m.observations[len(m.observations)-observationsKept:]
+	}
+	m.unsaved = min(m.unsaved, len(m.observations))
+}
+
+// LoadObservations brings back what an earlier process observed. What this
+// process observed and has not saved yet stays, after them, once each.
 func (m *Model) LoadObservations() error {
 	m.observeMu.Lock()
 	defer m.observeMu.Unlock()
 	if m.src.Observations == nil {
 		return nil
 	}
-	raw, ok, err := m.src.Observations.Load()
-	if err != nil || !ok || len(raw) == 0 {
-		return err
-	}
-	var list []Observation
-	if err := json.Unmarshal(raw, &list); err != nil {
+	return m.loadObservations()
+}
+
+// loadObservations runs under observeMu.
+func (m *Model) loadObservations() error {
+	list, last, err := m.src.Observations.Load(context.Background())
+	if err != nil {
 		return err
 	}
 	m.mu.Lock()
-	m.observations = list
-	m.mu.Unlock()
+	defer m.mu.Unlock()
+	if m.loaded && last > m.saved {
+		// Once loaded, only this model writes, oldest unsaved first: numbers
+		// past the last it knows saved are saves that committed although
+		// they were reported as failed. Those observations are in list.
+		m.unsaved -= int(min(last-m.saved, uint64(m.unsaved)))
+	}
+	m.observations = append(list, m.observations[len(m.observations)-m.unsaved:]...)
+	m.keepObservations()
+	m.saved, m.loaded = last, true
 	return nil
 }
 
