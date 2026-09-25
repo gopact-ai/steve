@@ -91,7 +91,11 @@ func (c *commitment) match(server ServerID, matchIndex uint64) {
 	defer c.Unlock()
 	if prev, inConfiguration := c.matchIndexes[server]; inConfiguration && matchIndex > prev {
 		c.matchIndexes[server] = matchIndex
-		c.recalculate()
+		// Only voters count toward commitIndex, so another server's match
+		// cannot move it.
+		if _, voter := c.voters[server]; voter {
+			c.recalculate()
+		}
 	}
 }
 
