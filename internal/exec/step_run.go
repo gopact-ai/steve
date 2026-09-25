@@ -214,6 +214,9 @@ func (r *stepRun) resume(ctx context.Context, joined RetainedStep, replay *lifec
 	o.Spec, o.Resume, o.Replay = r.record.Spec, true, replay
 	o.Ask, o.AskUser, o.Observe = joined.Ask, joined.AskUser, joined.Observe
 	run, err := lifecycle.Reattach(ctx, o, r.record, joined.Session)
+	if joined.Ended != nil {
+		joined.Ended()
+	}
 	return r.settle(run, err)
 }
 

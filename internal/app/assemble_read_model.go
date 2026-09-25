@@ -109,7 +109,11 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 		// Keys: reason.
 		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError), map[string]string{"reason": s.LastError})
 	})
-	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress) {
+	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress, ended bool) {
+		if ended {
+			view.StepEnded(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
+			return
+		}
 		view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
 	})
 	return &readModelValues{repos: repos, shipper: shipper, view: view}, nil

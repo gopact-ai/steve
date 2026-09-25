@@ -1035,27 +1035,21 @@ func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleap
 // a token stream is not a change worth a page repaint each time, but a
 // tool call starting or finishing always is. An update the throttle holds
 // back is published when the step's window ends, unless a later one was
-// published first: a step reports no end of its own, so its last update
-// must not be the one dropped. What that guarantees is that the update
-// appears in the model's event stream, up to a window late; a subscriber
-// that stopped before then, such as a turn's reply that ended within the
-// window, does not receive it. A step's updates are expected one call at a
-// time, in the order its session reports them, and are published in that
-// order; calls for one step that overlap have no order the model can keep.
+// published first, so a step's last update is never the one dropped.
+// What that guarantees is that the update appears in the model's event
+// stream, up to a window late; a subscriber that stopped before then,
+// such as a turn's reply that ended within the window, does not receive
+// it. StepEnded publishes the snapshot a step's prompt returned with at
+// once. A step's updates are expected one call at a time, in the order
+// its session reports them, and are published in that order; calls for
+// one step that overlap have no order the model can keep.
 func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.Progress) {
 	key := planID + "/" + stepID
 	signature := fmt.Sprintf("%d", len(p.Tools))
 	if n := len(p.Tools); n > 0 {
 		signature += "/" + string(p.Tools[n-1].Status)
 	}
-	progress := FromProgress(p)
-	if progress.Agent == "" {
-		progress.Agent = agent
-	}
-	if progress.Node == "" {
-		progress.Node = node
-	}
-	ev := Event{Kind: "step.progress", TaskID: taskID, PlanID: planID, StepID: stepID, Progress: &progress}
+	ev := stepEvent(taskID, planID, stepID, agent, node, p)
 	// An update that only replaces one already held takes the held one's
 	// conversation: the task store is read, outside the lock, for updates
 	// that publish or start a hold, not for each one merged.
@@ -1088,6 +1082,35 @@ func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.
 	m.sweepThrottleLocked(now)
 	m.throttle[key] = throttled{at: now, signature: signature}
 	m.publishLocked(ev)
+}
+
+// StepEnded publishes the snapshot a step's prompt returned with, without
+// throttling. An update the throttle holds for the step is dropped rather
+// than published after it. It marks the end of that prompt, not always
+// of the step: a node-owned step whose observer was lost keeps running on
+// its node, and once resumed it reports progress again, in a window of
+// its own, and ends with another StepEnded when the resumed prompt
+// returns.
+func (m *Model) StepEnded(taskID, planID, stepID, agent, node string, p view.Progress) {
+	ev := stepEvent(taskID, planID, stepID, agent, node, p)
+	ev.Conversation = m.conversationOf(taskID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.throttle, planID+"/"+stepID)
+	m.publishLocked(ev)
+}
+
+// stepEvent is a step's update as the model publishes it, without its
+// conversation.
+func stepEvent(taskID, planID, stepID, agent, node string, p view.Progress) Event {
+	progress := FromProgress(p)
+	if progress.Agent == "" {
+		progress.Agent = agent
+	}
+	if progress.Node == "" {
+		progress.Node = node
+	}
+	return Event{Kind: "step.progress", TaskID: taskID, PlanID: planID, StepID: stepID, Progress: &progress}
 }
 
 // sweepThrottleLocked forgets keys whose window ended with nothing held.
