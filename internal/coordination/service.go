@@ -754,8 +754,17 @@ func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, er
 			if err != nil || progress.AppliedIndex < state.AppliedIndex || progress.AppVersion < state.AppVersion {
 				continue
 			}
-			if err := s.wait(ctx, s.raft.LeadershipTransferToServer(raft.ServerID(target), raft.ServerAddress(state.Voters[target]))); err != nil {
+			err = s.wait(ctx, s.raft.LeadershipTransferToServer(raft.ServerID(target), raft.ServerAddress(state.Voters[target])))
+			switch {
+			case err == nil:
+			case errors.Is(err, ErrNotLeader), errors.Is(err, ErrUnavailable), errors.Is(err, ErrApplication), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 				return Result{}, err
+			default:
+				// Raft reports an unfinished transfer, such as its election
+				// timeout expiring or a failed TimeoutNow RPC, without a
+				// sentinel error. The target may still take over, so the
+				// caller should retry.
+				return Result{}, fmt.Errorf("%w: consensus leadership transfer to %s: %v", ErrUnavailable, target, err)
 			}
 			return Result{}, ErrNotLeader
 		}
