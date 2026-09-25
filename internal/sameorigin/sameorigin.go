@@ -6,6 +6,7 @@ package sameorigin
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -50,20 +51,66 @@ func Guard(next http.Handler, reach Reach) http.Handler {
 	})
 }
 
+// ReachOf is the reach of a service whose listener is bound to addr. Only a
+// loopback IP keeps every connection on this machine, and the bound address
+// shows it whatever name the configuration gave: "localhost." and
+// subdomains of localhost listen on loopback too, and must refuse a rebound
+// Host as well.
+func ReachOf(addr net.Addr) Reach {
+	bound, ok := addr.(*net.TCPAddr)
+	return Reach(ok && bound.IP.IsLoopback())
+}
+
+// CheckBound refuses a service whose listen address addr and the address it
+// bound disagree about loopback. Bound to a loopback IP, the service answers
+// only the Host names a loopback service accepts, so addr must be one of them:
+// any other name would be refused to every client that uses it. And addr
+// must not have bound beyond loopback when LoopbackListener trusts it as
+// loopback, since what was granted on that judgment, such as a token
+// generated for this machine, would then face the network.
+func CheckBound(addr string, bound net.Addr) error {
+	ip, port := fmt.Sprint(bound), ""
+	if tcp, ok := bound.(*net.TCPAddr); ok {
+		ip, port = tcp.IP.String(), fmt.Sprint(tcp.Port)
+	}
+	if _, configured, err := net.SplitHostPort(addr); err == nil {
+		port = configured
+	}
+	if ReachOf(bound) == Loopback {
+		if loopbackHost(hostname(addr)) {
+			return nil
+		}
+		return fmt.Errorf("listen address %q bound to loopback IP %s, which answers only loopback Host names: write %s or %s, or bind a non-loopback address to serve the network", addr, ip, net.JoinHostPort("localhost", port), net.JoinHostPort(ip, port))
+	}
+	if LoopbackListener(addr) {
+		return fmt.Errorf("listen address %q names loopback but bound to %s, which other machines can reach: write %s, or make the name resolve to loopback", addr, ip, net.JoinHostPort("127.0.0.1", port))
+	}
+	return nil
+}
+
 // LoopbackListener reports whether a listen address ("host:port") only
-// accepts connections from this machine. It is stricter than a Host header:
-// a bare ":port" listens everywhere, and only "localhost" among names is
-// trusted to resolve to loopback.
+// accepts connections from this machine, judged from its text before it is
+// bound: whether it may serve a loopback-only endpoint, or be given a token
+// generated for this machine. It is stricter than a Host header: a bare
+// ":port" listens everywhere, and only "localhost", in any ASCII letter
+// case, among names is trusted to resolve to loopback. The Host check of a
+// bound service follows ReachOf instead.
 func LoopbackListener(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	return err == nil && LoopbackName(host)
 }
 
 // LoopbackName reports whether host, without a port, names this machine
-// for a connection: exactly "localhost" or a loopback IP. Subdomains of
-// localhost and other spellings are left to the resolver, so they are not.
+// for a connection: "localhost" in any ASCII letter case, or a loopback IP.
+// Subdomains of localhost and other spellings are left to the resolver, so
+// they are not. Like LoopbackListener, it judges a name before anything is
+// bound and does not decide the Host check.
 func LoopbackName(host string) bool {
-	if host == "localhost" {
+	// DNS ignores letter case in ASCII only. strings.EqualFold would also
+	// accept "localhoſt" (long s), which is another name. Of the letters
+	// outside ASCII, strings.ToLower maps only the Kelvin sign and "İ" into
+	// it, and "localhost" has no k or i, so only its ASCII spellings match.
+	if strings.ToLower(host) == "localhost" {
 		return true
 	}
 	ip, err := netip.ParseAddr(host)

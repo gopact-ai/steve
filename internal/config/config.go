@@ -511,8 +511,9 @@ func readConfigFile(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// applyDefaults fills what the file left out and trims the identities it
-// gave. Nothing here can fail; the checks come after.
+// applyDefaults fills what the file left out and trims the identities and the
+// console address and token it gave; a console token of blanks is none.
+// Nothing here can fail; the checks come after.
 func (c *Config) applyDefaults() {
 	c.Policies = c.Policies.WithDefaults()
 	c.Gateway.OwnerID = strings.TrimSpace(c.Gateway.OwnerID)
@@ -536,9 +537,11 @@ func (c *Config) applyDefaults() {
 	if c.Gateway.StatePath == "" {
 		c.Gateway.StatePath = DefaultStatePath
 	}
-	if c.Gateway.ReadModelAddr == "" {
-		c.Gateway.ReadModelAddr = "127.0.0.1:7710"
-	}
+	// A console token of blanks is an omitted one: loopback gets the
+	// generated token, and any other address is refused until the owner
+	// sets one.
+	c.Gateway.ReadModelAddr = ConsoleAddr(c.Gateway.ReadModelAddr)
+	c.Gateway.ReadModelToken = ConsoleToken(c.Gateway.ReadModelToken)
 	for id, item := range c.Harnesses {
 		if item.Permission == "" {
 			item.Permission = PermissionRead
@@ -825,6 +828,28 @@ func StateDir(statePath string) string {
 		statePath = DefaultStatePath
 	}
 	return filepath.Dir(absolute(statePath))
+}
+
+// DefaultConsoleAddr is where a Hub serves its console unless configured
+// otherwise.
+const DefaultConsoleAddr = "127.0.0.1:7710"
+
+// ConsoleAddr is the address a gateway.read_model_addr names, read as Load
+// reads it: without the blanks around it, and DefaultConsoleAddr when
+// nothing else is left. Clients use it and ConsoleToken to reach the console
+// without loading the whole configuration.
+func ConsoleAddr(readModelAddr string) string {
+	if addr := strings.TrimSpace(readModelAddr); addr != "" {
+		return addr
+	}
+	return DefaultConsoleAddr
+}
+
+// ConsoleToken is the token a gateway.read_model_token names, read as Load
+// reads it: without the blanks around it, since an Authorization header value
+// arrives without its outer blanks. A token of blanks is none.
+func ConsoleToken(readModelToken string) string {
+	return strings.TrimSpace(readModelToken)
 }
 
 func absolute(path string) string {

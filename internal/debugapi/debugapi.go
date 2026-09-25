@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -40,12 +41,27 @@ type Defaults struct {
 	Sender       Sender
 }
 
+// Serve binds addr and serves the endpoint until ctx is done. It refuses an
+// address that is not loopback, and one that names loopback but binds beyond
+// it, closing what it bound.
 func Serve(ctx context.Context, addr string, gw Gateway, def Defaults) error {
+	return serve(ctx, addr, gw, def, net.Listen)
+}
+
+// serve is Serve binding through listen.
+func serve(ctx context.Context, addr string, gw Gateway, def Defaults, listen func(network, address string) (net.Listener, error)) error {
 	if err := checkLoopback(addr); err != nil {
 		return err
 	}
+	listener, err := listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("debug endpoint: %w", err)
+	}
+	if sameorigin.ReachOf(listener.Addr()) != sameorigin.Loopback {
+		_ = listener.Close()
+		return fmt.Errorf("debug endpoint address %q bound to %s, which other machines can reach: write a loopback IP such as 127.0.0.1, or make the name resolve to loopback", addr, listener.Addr())
+	}
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           Handler(gw, def),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -55,8 +71,8 @@ func Serve(ctx context.Context, addr string, gw Gateway, def Defaults) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	slog.Info(fmt.Sprintf("debugapi: listening on %s", addr))
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	slog.Info(fmt.Sprintf("debugapi: listening on %s", listener.Addr()))
+	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("debug endpoint: %w", err)
 	}
 	return nil
