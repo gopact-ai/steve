@@ -97,9 +97,11 @@ func stopReceiptMatches(state nodewire.SessionState, request nodewire.SessionReq
 }
 
 // endObservation settles how an observation ended. An observer cut off by
-// the turn's silence clock stops the native command instead of detaching:
-// the turn timed out, and nobody else will come back for it. Without a stop
-// receipt the observation stays unconfirmed.
+// the silence clock it runs under — a turn's prompt timeout or a
+// delegate's MaxSilence — stops the native command: with a stop receipt it
+// settles on that receipt and wraps a settled error in
+// context.DeadlineExceeded; without one it stays unconfirmed, and the caller
+// detaches.
 func (s *managedSession) endObservation(ctx context.Context, request nodewire.SessionRequest, output *string, activity *[]string, runErr *error) {
 	silent := errors.Is(*runErr, ErrStopUnconfirmed) && idle.Expired(ctx)
 	if silent {
