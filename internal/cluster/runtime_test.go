@@ -149,7 +149,10 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 		n.listener = n.raft
 		n.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if current := n.runtime.Load(); current != nil {
-				handler := current.RPCHandler(coordination.RPCOptions{AuthorizeControl: func(*http.Request, coordination.Identity, string) (string, error) { return "test-owner", nil }})
+				// A node authorizes a forwarded control command as the owner,
+				// the actor the local caller used, so a command forwarded
+				// after a partial local attempt keeps its fingerprint.
+				handler := current.RPCHandler(coordination.RPCOptions{AuthorizeControl: func(*http.Request, coordination.Identity, string) (string, error) { return "owner", nil }})
 				if gate := n.gateApp.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"app" {
 					gate.once.Do(func() { close(gate.arrived) })
 					<-gate.release
