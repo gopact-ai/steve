@@ -191,3 +191,74 @@ func TestCappedReaderEndsCleanlyAtItsCap(t *testing.T) {
 		t.Fatalf("stream past the cap: %v", err)
 	}
 }
+
+// An import is the archive and the rest of its gzip stream. The tar reader
+// stops at the archive's end blocks, so what follows them is read through
+// the same cap, and gzip checks its framing and checksum on the way.
+func TestImportRefusesWhatTheStreamCarriesPastTheArchive(t *testing.T) {
+	archive := skillArchive(t)
+	corrupted := gzipStream(t, archive, 0)
+	corrupted[len(corrupted)-8] ^= 0xff // the member's CRC-32
+	for name, c := range map[string]struct {
+		stream  []byte
+		refusal string
+	}{
+		"data past the stream cap":    {gzipStream(t, archive, importStreamCap), "expands to more than"},
+		"bytes after the gzip member": {append(gzipStream(t, archive, 0), "this is not a gzip member"...), "invalid header"},
+		"a corrupted checksum":        {corrupted, "invalid checksum"},
+	} {
+		dest := filepath.Join(t.TempDir(), "notes")
+		if err := UnpackImport(base64.StdEncoding.EncodeToString(c.stream), dest); err == nil || !strings.Contains(err.Error(), c.refusal) {
+			t.Errorf("%s: import = %v, want a refusal with %q", name, err, c.refusal)
+		}
+		for _, left := range []string{dest, dest + ".loading"} {
+			if _, err := os.Lstat(left); err == nil {
+				t.Errorf("%s: %s left behind", name, filepath.Base(left))
+			}
+		}
+	}
+	if err := UnpackImport(base64.StdEncoding.EncodeToString(gzipStream(t, archive, 0)), filepath.Join(t.TempDir(), "notes")); err != nil {
+		t.Fatalf("the archive alone was refused: %v", err)
+	}
+}
+
+// skillArchive is the tar archive of a skill that holds only its SKILL.md.
+func skillArchive(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	body := []byte("# notes\n")
+	if err := tw.WriteHeader(&tar.Header{Name: "SKILL.md", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// gzipStream compresses archive followed by trailing bytes of 'A' into one
+// gzip member.
+func gzipStream(t *testing.T, archive []byte, trailing int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(archive); err != nil {
+		t.Fatal(err)
+	}
+	chunk := bytes.Repeat([]byte{'A'}, 1<<20)
+	for trailing > 0 {
+		n := min(trailing, len(chunk))
+		if _, err := gz.Write(chunk[:n]); err != nil {
+			t.Fatal(err)
+		}
+		trailing -= n
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
