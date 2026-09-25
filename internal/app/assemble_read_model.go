@@ -91,7 +91,7 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 		return errors.Join(remoteErr, localErr)
 	}
 	// Machines coming and going are history, not just log lines.
-	nodes.SetObserver(nodeObserver(view.Observe, func(s node.Status) {
+	nodes.SetObserver(nodeObserver(nodes, view.Observe, func(s node.Status) {
 		background.Go(func(ctx context.Context) { shipper.Ship(ctx, s.Name) })
 		// A machine that comes back may hold worktrees of attempts that
 		// died with the connection; nothing else ever returns for them.
@@ -113,7 +113,7 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 
 // nodeObserver records machines coming and going as history, and hands a
 // machine's arrival to arrived: what a connection sets going on the machine.
-func nodeObserver(record func(kind, subject, text string, data map[string]string), arrived func(node.Status)) func(node.Status) {
+func nodeObserver(nodes *node.Registry, record func(kind, subject, text string, data map[string]string), arrived func(node.Status)) func(node.Status) {
 	return func(s node.Status) {
 		if s.Up {
 			// Keys: host, os, arch, build.
