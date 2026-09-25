@@ -36,13 +36,13 @@ replace github.com/hashicorp/raft v1.7.3 => ./third_party/raft
 
 Only the Go package, its tests, `go.mod`, `go.sum` and `LICENSE` are kept.
 The upstream `.github`, `bench`, `docs`, `CHANGELOG.md`, `Makefile`,
-`README.md`, `membership.md`, `tag.sh` and dotfiles are omitted. `LICENSE`
-differs from upstream only by one trailing blank line.
+`README.md`, `membership.md`, `tag.sh` and dotfiles are omitted.
 
 ## Running the tests
 
 The root `./...` pattern does not enter this nested module. Run it through
-the replacement with the application's dependency versions:
+the replacement with the application's dependency versions, from the
+repository root:
 
 ```
 ./scripts/test-raft.sh -race -count=1 -timeout 30m
