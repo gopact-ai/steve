@@ -321,45 +321,33 @@ func TestFollowKeepsTheLastSnapshotPublishedWhileItWasBehind(t *testing.T) {
 	work := newProcess()
 	stop := s.follow(context.Background(), "console:test", work)
 	defer stop()
-	step := func(id, answer string) {
-		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:test", StepID: id, Progress: &consoleapi.Progress{Answer: answer}})
+	step := func(answer string) {
+		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:test", StepID: "A", Progress: &consoleapi.Progress{Answer: answer}})
 	}
-	collect := func(id string) {
-		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			step(id, id)
-			work.mu.Lock()
-			_, seen := work.steps[id]
-			work.mu.Unlock()
-			if seen {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("step %s was never collected", id)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	// The follower is subscribed once it has collected a step.
-	collect("before")
 
-	// Holding the collector, publish far more than its buffer: the model
-	// closes the follower before A's last snapshot, which only a resumed
-	// subscription can still deliver.
+	// Holding the collector, publish more than its buffer: the model
+	// closes the follower before A's last snapshot. Nothing is published
+	// after it, so only the subscription resumed after the last event
+	// read can still deliver it, from the events the model keeps.
 	work.mu.Lock()
 	for range 100 {
-		step("A", "early")
+		step("early")
 	}
-	step("A", "final")
+	step("final")
 	work.mu.Unlock()
-	collect("after")
 
-	work.mu.Lock()
-	got := work.steps["A"].Answer
-	work.mu.Unlock()
-	if got != "final" {
-		t.Fatalf("step A = %q after the follower fell behind; want its last snapshot %q", got, "final")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		work.mu.Lock()
+		got := work.steps["A"].Answer
+		work.mu.Unlock()
+		if got == "final" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("step A = %q after the follower fell behind; want its last snapshot %q", got, "final")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
