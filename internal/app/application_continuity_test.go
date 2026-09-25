@@ -137,7 +137,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 						t.Fatal("warm input replaced its native session or credential")
 					}
 				}
-				events := continuityEvents(t, memory)[len(eventsBefore):]
+				events := withoutDiscovery(continuityEvents(t, memory)[len(eventsBefore):], discovery)
 				if len(events) != 2 {
 					t.Fatalf("warm inputs reopened/replayed instead of continuing: %+v", events)
 				}
