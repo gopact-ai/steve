@@ -2,7 +2,8 @@
 // port picked for ":0" is written down after the first bind (a membership
 // address, a pinned console origin, a remembered MCP port) and bound again
 // on every start, so it has to be one the kernel does not hand to other
-// sockets in the meantime.
+// sockets in the meantime. On Unix, Listen picks such a port from a fixed
+// range; on other platforms the kernel still picks it.
 package stableport
 
 import (
@@ -47,8 +48,12 @@ const (
 // on at an overlapping address counts as in use, even where the platform
 // would let both bind it. If every attempt finds its port in use, it
 // binds the address unchanged and the kernel picks an ephemeral port,
-// which a later restart may find taken.
+// which a later restart may find taken. On platforms other than Unix it
+// binds every address unchanged, port 0 included; see picksPorts.
 func Listen(listen func(network, address string) (net.Listener, error), network, address string) (net.Listener, error) {
+	if !picksPorts {
+		return listen(network, address)
+	}
 	return picker{candidate: candidate, probe: probe}.listen(listen, network, address)
 }
 
