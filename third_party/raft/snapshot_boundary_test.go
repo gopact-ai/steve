@@ -15,7 +15,7 @@ import (
 // Exercise the real transport and follower with a compacted snapshot boundary.
 // The snapshot term differs from the suffix term so confusing either with the
 // current term cannot accidentally pass predecessor validation.
-func snapshotBoundaryFollower(t *testing.T, trailing uint64) (*NetworkTransport, *NetworkTransport, *InmemStore, *MockFSM, RPCHeader) {
+func snapshotBoundaryFollower(t *testing.T, trailing uint64) (*NetworkTransport, *NetworkTransport, *InmemStore, *MockFSM, RPCHeader, *Raft) {
 	t.Helper()
 	follower, err := NewTCPTransport("127.0.0.1:0", nil, 2, 2*time.Second, io.Discard)
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func snapshotBoundaryFollower(t *testing.T, trailing uint64) (*NetworkTransport,
 	require.True(t, response.Success)
 	var compacted Log
 	require.ErrorIs(t, store.GetLog(100, &compacted), ErrLogNotFound)
-	return leader, follower, store, fsm, header
+	return leader, follower, store, fsm, header, node
 }
 
 func snapshotBoundaryBatch(header RPCHeader) *AppendEntriesRequest {
@@ -73,7 +73,7 @@ func snapshotBoundaryBatch(header RPCHeader) *AppendEntriesRequest {
 func TestRaft_AppendEntriesSnapshotBoundaryLostACK(t *testing.T) {
 	for _, trailing := range []uint64{0, DefaultConfig().TrailingLogs} {
 		t.Run(fmt.Sprintf("trailing-%d", trailing), func(t *testing.T) {
-			leader, follower, store, fsm, header := snapshotBoundaryFollower(t, trailing)
+			leader, follower, store, fsm, header, _ := snapshotBoundaryFollower(t, trailing)
 			request := snapshotBoundaryBatch(header)
 			var response AppendEntriesResponse
 			require.NoError(t, leader.AppendEntries("follower", follower.LocalAddr(), request, &response))
@@ -105,7 +105,7 @@ func TestRaft_AppendEntriesSnapshotBoundaryLostACK(t *testing.T) {
 }
 
 func TestRaft_AppendEntriesSnapshotBoundaryValidation(t *testing.T) {
-	leader, follower, store, _, header := snapshotBoundaryFollower(t, 0)
+	leader, follower, store, _, header, _ := snapshotBoundaryFollower(t, 0)
 	var response AppendEntriesResponse
 	require.NoError(t, leader.AppendEntries("follower", follower.LocalAddr(), snapshotBoundaryBatch(header), &response))
 	require.True(t, response.Success)
@@ -122,7 +122,8 @@ func TestRaft_AppendEntriesSnapshotBoundaryValidation(t *testing.T) {
 		{"stored-log-wrong-term", 3, 120, 2, false},
 		{"tip-correct-term", 3, 164, 3, true},
 		{"tip-wrong-term", 3, 164, 2, false},
-		{"missing-before-snapshot", 3, 99, 2, false},
+		{"before-snapshot", 3, 99, 2, true},
+		{"before-snapshot-unchecked-term", 3, 99, 3, true},
 		{"missing-after-tip", 3, 165, 3, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -138,6 +139,68 @@ func TestRaft_AppendEntriesSnapshotBoundaryValidation(t *testing.T) {
 			last, err := store.LastIndex()
 			require.NoError(t, err)
 			require.Equal(t, uint64(164), last, "validation must not change the stored suffix")
+		})
+	}
+}
+
+// The leader resends from its last acknowledged index, which can be below the
+// follower's snapshot: the follower installed a later snapshot than the batch
+// start, or took its own snapshot after storing a batch whose response was
+// lost.
+func TestRaft_AppendEntriesSnapshotBoundaryBelowSnapshot(t *testing.T) {
+	t.Run("installed-snapshot", func(t *testing.T) {
+		leader, follower, store, fsm, header, _ := snapshotBoundaryFollower(t, 0)
+		request := snapshotBoundaryBatch(header)
+		request.PrevLogEntry, request.PrevLogTerm = 90, 2
+		var below []*Log
+		for i := uint64(91); i <= 100; i++ {
+			below = append(below, &Log{Index: i, Term: 2, Type: LogCommand, Data: []byte(fmt.Sprintf("entry-%d", i))})
+		}
+		request.Entries = append(below, request.Entries...)
+		var response AppendEntriesResponse
+		require.NoError(t, leader.AppendEntries("follower", follower.LocalAddr(), request, &response))
+		require.True(t, response.Success, "a batch that starts below the snapshot must succeed")
+
+		var compacted Log
+		require.ErrorIs(t, store.GetLog(100, &compacted), ErrLogNotFound, "entries in the snapshot must not be stored")
+		last, err := store.LastIndex()
+		require.NoError(t, err)
+		require.Equal(t, uint64(164), last)
+		require.Eventually(t, func() bool { return len(fsm.Logs()) == 64 }, 2*time.Second, time.Millisecond)
+		for i, data := range fsm.Logs() {
+			require.Equal(t, []byte(fmt.Sprintf("entry-%d", i+101)), data, "entries in the snapshot must not be applied")
+		}
+	})
+
+	for _, trailing := range []uint64{0, DefaultConfig().TrailingLogs} {
+		t.Run(fmt.Sprintf("own-snapshot-trailing-%d", trailing), func(t *testing.T) {
+			leader, follower, store, fsm, header, node := snapshotBoundaryFollower(t, trailing)
+			request := snapshotBoundaryBatch(header)
+			var response AppendEntriesResponse
+			require.NoError(t, leader.AppendEntries("follower", follower.LocalAddr(), request, &response))
+			require.True(t, response.Success)
+			require.Eventually(t, func() bool { return len(fsm.Logs()) == 64 }, 2*time.Second, time.Millisecond)
+			require.NoError(t, node.Snapshot().Error())
+			if trailing == 0 {
+				var compacted Log
+				require.ErrorIs(t, store.GetLog(164, &compacted), ErrLogNotFound)
+			}
+
+			// Treat the ACK as lost: resend the stored batch after the
+			// follower's snapshot has covered it, with the next entry.
+			request.LeaderCommitIndex = 165
+			request.Entries = append(request.Entries, &Log{Index: 165, Term: 3, Type: LogCommand, Data: []byte("entry-165")})
+			response = AppendEntriesResponse{}
+			require.NoError(t, leader.AppendEntries("follower", follower.LocalAddr(), request, &response))
+			require.True(t, response.Success, "a retry anchored below the follower's snapshot must succeed")
+
+			var next Log
+			require.NoError(t, store.GetLog(165, &next))
+			require.Equal(t, []byte("entry-165"), next.Data)
+			require.Eventually(t, func() bool { return len(fsm.Logs()) == 65 }, 2*time.Second, time.Millisecond)
+			for i, data := range fsm.Logs() {
+				require.Equal(t, []byte(fmt.Sprintf("entry-%d", i+101)), data, "retry must not reapply commands")
+			}
 		})
 	}
 }
