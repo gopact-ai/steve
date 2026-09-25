@@ -2,7 +2,7 @@ module github.com/gopact-ai/steve
 
 go 1.27
 
-// v1.7.3 with snapshot-boundary AppendEntries retry validation fixed locally.
+// v1.7.3 with local fixes; see third_party/raft/README.md.
 replace github.com/hashicorp/raft v1.7.3 => ./third_party/raft
 
 require (

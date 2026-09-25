@@ -95,5 +95,8 @@ task and attempt IDs when reporting this gate.
 CI runs gofmt, Go vet/race tests, frontend dependency checks, production builds
 and isolated browser interactions. Its fleet job runs disposable gates, not real-model live fleet gates.
 Run `make test` and `make test-console` locally; install the test browser with
-`cd web/console && npm ci && npx playwright install chromium` first. Configuration, deployment and troubleshooting are in
+`cd web/console && npm ci && npx playwright install chromium` first. `make test`
+does not cover the local Raft copy; after changing `third_party/raft`, run
+`./scripts/test-raft.sh` as described in
+[third_party/raft/README.md](third_party/raft/README.md). Configuration, deployment and troubleshooting are in
 [operations](docs/operations.md).
