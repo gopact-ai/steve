@@ -32,8 +32,12 @@ type Whereabouts struct {
 
 // rememberMode keeps how a conversation last reached Steve: the owner
 // in private, or anyone else. A tool call later has no request to read
-// it from.
+// it from. A line that does not say whether it came in private or in a
+// group, such as a replayed card tap, is no evidence and changes nothing.
 func (c *Coordinator) rememberMode(req Request) {
+	if req.ChatType != protocol.ChatP2P && req.ChatType != protocol.ChatGroup {
+		return
+	}
 	mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
 	c.mu.Lock()
 	if c.modes == nil {
