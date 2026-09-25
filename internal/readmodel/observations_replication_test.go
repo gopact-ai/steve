@@ -2,7 +2,10 @@ package readmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
+	"slices"
 	"sync"
 	"testing"
 
@@ -17,12 +20,24 @@ type payloadReplicator struct {
 	// once the write has applied; its error reports an unknown outcome
 	// for a write that did commit.
 	before, after func() error
+	// unavailable runs as a write starts, where the coordinator checks it
+	// may write at all; its error fails the write before anything is
+	// proposed, as a replica that cannot catch up does.
+	unavailable func() error
 
 	mu    sync.Mutex
 	sizes []int
 }
 
 func (r *payloadReplicator) Prepare(context.Context) (ledger.ReplicaPosition, error) {
+	r.mu.Lock()
+	unavailable := r.unavailable
+	r.mu.Unlock()
+	if unavailable != nil {
+		if err := unavailable(); err != nil {
+			return ledger.ReplicaPosition{}, err
+		}
+	}
 	v, err := r.book.ReplicaVersion()
 	return ledger.ReplicaPosition{Version: v, CoordinatorEpoch: 1}, err
 }
@@ -114,4 +129,49 @@ func TestObserveReplicatesOneObservationWhateverTheHistory(t *testing.T) {
 	if late > early+512 {
 		t.Fatalf("one observation replicated %d bytes with %d kept but %d bytes with 9 kept: the write grows with the retained history", late, observationsKept, early)
 	}
+}
+
+// A hub that could not write for a while catches up in writes no larger
+// than a few dozen observations, oldest first: one write carrying the
+// whole backlog is the resend of the full history that saturated slow
+// member links. More failed observations than are kept lose the oldest,
+// and once caught up the ledger holds exactly the newest in order.
+func TestObserveCatchesUpAfterFailuresInBoundedWrites(t *testing.T) {
+	const maxWrite = 32 << 10
+	book, r := replicatedBook(t, t.TempDir())
+	m := New(Sources{Observations: ledgerObservationStore(book)})
+	n := 0
+	for ; n < observationsKept+5; n++ {
+		observeNodeUp(m, n)
+	}
+	r.unavailable = func() error { return errors.New("replica cannot catch up") }
+	for range observationsKept + 100 {
+		observeNodeUp(m, n)
+		n++
+	}
+	r.unavailable = nil
+	mark := r.mark()
+	store := ledgerObservationStore(book)
+	for caughtUp := false; !caughtUp; {
+		if r.mark()-mark > observationsKept {
+			t.Fatalf("still behind after %d writes", r.mark()-mark)
+		}
+		observeNodeUp(m, n)
+		n++
+		caughtUp = reflect.DeepEqual(restoredObservations(t, store), m.observations)
+	}
+	r.mu.Lock()
+	sizes := append([]int(nil), r.sizes[mark:]...)
+	r.mu.Unlock()
+	for i, size := range sizes {
+		if size > maxWrite {
+			t.Fatalf("catch-up write %d of %d replicated %d bytes, want at most %d", i+1, len(sizes), size, maxWrite)
+		}
+	}
+	got := subjects(restoredObservations(t, store))
+	first, last := fmt.Sprintf("node-%04d", n-observationsKept), fmt.Sprintf("node-%04d", n-1)
+	if len(got) != observationsKept || got[0] != first || got[len(got)-1] != last {
+		t.Fatalf("caught up to %d observations, want the newest %d, %s…%s", len(got), observationsKept, first, last)
+	}
+	t.Logf("caught up in %d writes, the largest %d bytes", len(sizes), slices.Max(sizes))
 }
