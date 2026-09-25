@@ -76,6 +76,24 @@ func nextIngress(t *testing.T, p *ingressProbe) turn.Request {
 	}
 }
 
+// mustNotWaitForCapacity runs call on its own goroutine and returns its
+// error. A claim never waits for a slot, so if call has not returned within
+// ten seconds the test cancels, through stop, the context its claims would
+// wait on and fails with "<path> waited for capacity".
+func mustNotWaitForCapacity(t *testing.T, path string, stop context.CancelFunc, call func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- call() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(10 * time.Second):
+		stop()
+		t.Fatalf("%s waited for capacity", path)
+		return nil
+	}
+}
+
 func TestOrdinaryIngressReturnsAfterAcceptanceAndSharesRecoveryControlSlot(t *testing.T) {
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -121,7 +139,11 @@ func TestOrdinaryIngressReturnsAfterAcceptanceAndSharesRecoveryControlSlot(t *te
 	}
 	other := msg
 	other.MessageID, other.ConversationID = "other", "other"
-	if err := g.HandleMessage(other); err != nil {
+	// The only slot is taken, so the other conversation's input stays
+	// pending for the reconciler.
+	if err := mustNotWaitForCapacity(t, "ingress", cancel, func() error {
+		return g.HandleMessage(other)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if p.calls.Load() != 2 {
