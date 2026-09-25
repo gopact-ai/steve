@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -28,9 +29,9 @@ func (o *observedStep) observe(_ StepRequest, p view.Progress, ended bool) {
 	o.calls = append(o.calls, observedUpdate{p, ended})
 }
 
-// requireEndedWith checks that the observer saw the step end exactly once,
-// last, with the snapshot answer.
-func (o *observedStep) requireEndedWith(t *testing.T, answer string) {
+// requireEnded checks that the observer saw the step end exactly once,
+// last, with the snapshot reported just before it.
+func (o *observedStep) requireEnded(t *testing.T) {
 	t.Helper()
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -41,8 +42,8 @@ func (o *observedStep) requireEndedWith(t *testing.T, answer string) {
 		}
 	}
 	n := len(o.calls)
-	if ends != 1 || !o.calls[n-1].ended || o.calls[n-1].p.Answer != answer || o.calls[n-1].p.Agent != "builder" {
-		t.Fatalf("observed %+v, want one end last with %q", o.calls, answer)
+	if ends != 1 || n < 2 || !o.calls[n-1].ended || !reflect.DeepEqual(o.calls[n-1].p, o.calls[n-2].p) || o.calls[n-1].p.Agent != "builder" {
+		t.Fatalf("observed %+v, want one end last with the snapshot before it", o.calls)
 	}
 }
 
@@ -88,7 +89,17 @@ func TestAgentRunnerEndsEveryStepWithItsLastSnapshot(t *testing.T) {
 			var seen observedStep
 			runner.SetObserver(seen.observe)
 			_, _ = runner.RunStep(ctx, StepRequest{Agent: "builder", Workspace: t.TempDir(), Goal: "work"})
-			seen.requireEndedWith(t, "working… done")
+			seen.requireEnded(t)
 		})
 	}
+}
+
+func TestRetainedStepEndsWithTheSnapshotItResumedTo(t *testing.T) {
+	p, work, deps, _, _ := retainedStepFixture(t)
+	var seen observedStep
+	deps.Runner.(*AgentRunner).SetObserver(seen.observe)
+	if _, err := runStepWithRecovery(t.Context(), p, work, nil, deps); err != nil {
+		t.Fatal(err)
+	}
+	seen.requireEnded(t)
 }

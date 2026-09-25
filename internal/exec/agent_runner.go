@@ -308,6 +308,9 @@ type RetainedStep struct {
 	Ask     permission.AskFunc
 	AskUser acphost.AskUserFunc
 	Observe func(view.Progress)
+	// Ended sends the last snapshot Observe saw as the one the step
+	// returned with; call it once the resumed prompt returns.
+	Ended func()
 }
 
 // retainedSessions is a session manager that can join a node-owned
@@ -338,11 +341,9 @@ func (a *AgentRunner) AttachStep(ctx context.Context, req StepRequest, record at
 	a.mu.Lock()
 	ask, askUser := a.ask, a.askUser
 	a.mu.Unlock()
-	observe, agent := a.progress(ctx, req), record.Agent
-	return RetainedStep{Session: session, State: state, Ask: ask, AskUser: askUser, Observe: func(p view.Progress) {
-		p.Agent = agent
-		observe(p)
-	}}, nil
+	spent := &stepSpend{}
+	return RetainedStep{Session: session, State: state, Ask: ask, AskUser: askUser,
+		Observe: spent.wrap(a.progress(ctx, req), record.Agent), Ended: func() { a.ended(req, spent) }}, nil
 }
 func (a *AgentRunner) CloseRetainedStep(ctx context.Context, record attempt.Record) error {
 	return a.sessions.CloseSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session)
