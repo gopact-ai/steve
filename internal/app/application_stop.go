@@ -173,10 +173,14 @@ func (s *applicationStops) stopOnNode(ctx context.Context, r attempt.Record, tra
 
 func stoppedAccounting(r attempt.Record) task.RecoveryUsage { return attempt.StoppedUsage(r) }
 
-// projectStopped finishes a confirmed stop within the stop pass's ctx: it
-// settles the accounting, resolves the execution and marks the stop
-// projected. A pass that has ended starts none of it; the next pass finds
-// the confirmed stop and finishes it.
+// projectStopped finishes a confirmed stop: it settles the accounting,
+// resolves the execution and marks the stop projected. The two writes
+// wait on a lagging replica only while ctx lasts, but the ledger's writer
+// lock does not heed ctx: a write queued behind another writer waits for
+// it regardless. Entered with an ended ctx, projectStopped writes nothing.
+// A ctx that ends during a write may leave the accounting settled and the
+// stop unmarked. Either way the stop stays a candidate, and the next pass
+// settles it here or, once settled, retires it.
 func (s *applicationStops) projectStopped(ctx context.Context, r attempt.Record) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("task %s attempt %s: native stop confirmed; its accounting is left to the next pass: %w", r.TaskID, r.ID, err)
