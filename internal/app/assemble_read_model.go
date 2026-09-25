@@ -57,7 +57,7 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 		Roster: fleet, Nodes: nodes, NodeNames: memberNames(environment), Tasks: tasks, Plans: plans,
 		Ledger:       readmodel.Ledger{Book: book, Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
 		Schedules:    schedules,
-		Observations: book.Document("observations"),
+		Observations: readmodel.Observations{Book: book},
 	})
 	if err := view.LoadObservations(); err != nil {
 		slog.Error(fmt.Sprintf("steve: observations: %v", err))
