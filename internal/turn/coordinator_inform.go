@@ -62,11 +62,11 @@ func (c *Coordinator) arrivalMode(conversationID string) (mode home.Mode, known 
 	return mode, known
 }
 
+// modeOf is how a conversation reaches Steve, and guest when that is not
+// known: nothing of the owner's is lent on a guess.
 func (c *Coordinator) modeOf(conversationID string) home.Mode {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if m, ok := c.modes[conversationID]; ok {
-		return m
+	if mode, known := c.arrivalMode(conversationID); known {
+		return mode
 	}
 	return home.ModeGuest
 }
