@@ -1243,3 +1243,50 @@ func TestRunAndReattachGiveTheSilenceClockBackWhenTheyReturn(t *testing.T) {
 		stop()
 	}
 }
+
+// A completion that hangs after the prompt settled ends once the settled
+// timeout runs out: the silence clock no longer times it, and the run does
+// not wait on it for good. It ends as a completion that failed: a hub
+// session's attempt fails on it, a node-owned one is left for the observer
+// that comes back.
+func TestRunEndsAHangingCompletionWhenItsSettledTimeoutRunsOut(t *testing.T) {
+	const silence = 20 * time.Millisecond
+	for _, session := range []string{"s1", "ns_1"} {
+		w := newWorld(session)
+		ctx, stop, _ := idle.WithTimeout(t.Context(), silence)
+		release := idle.Hold(ctx)
+		w.runner.during = release
+		o := w.options()
+		o.Finish = func(ctx context.Context, _ *Execution) (attempt.Completion, error) {
+			<-ctx.Done()
+			return attempt.Completion{}, ctx.Err()
+		}
+		o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true, SettledTimeout: silence}
+		type ended struct {
+			res Result
+			err error
+		}
+		done := make(chan ended, 1)
+		go func() {
+			res, err := Run(ctx, o)
+			done <- ended{res, err}
+		}()
+		var got ended
+		select {
+		case got = <-done:
+		case <-time.After(100 * silence):
+			t.Fatalf("%s: the run still waits on a completion that hangs", session)
+		}
+		stop()
+		res, err := got.res, got.err
+		var detached *execution.RetainedObserverDetached
+		switch {
+		case !errors.Is(err, context.DeadlineExceeded) || idle.Expired(ctx):
+			t.Fatalf("%s: not the settled timeout: %+v err=%v", session, res, err)
+		case session == "s1" && (errors.As(err, &detached) || res.Record.State != attempt.Failed || !res.Durable):
+			t.Fatalf("hub session: %+v err=%v history=%s", res, err, w.attempts.history())
+		case session == "ns_1" && (!errors.As(err, &detached) || !res.Unsettled || res.Durable || res.Record.State != attempt.Running):
+			t.Fatalf("node-owned session: %+v err=%v history=%s", res, err, w.attempts.history())
+		}
+	}
+}

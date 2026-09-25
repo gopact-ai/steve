@@ -199,6 +199,14 @@ type Settlement struct {
 	// from the run's cancellation and bounded by it; zero commits on the
 	// run's own context, so a lost lease rejects the result.
 	CommitTimeout time.Duration
+	// SettledTimeout, when set, bounds what is left of the run once its
+	// prompt has settled — the caller's hooks, its completion, the terminal
+	// transition, the cleanup — on the run's own context, still cancelled
+	// as the run is. The silence clock stops timing that part once the
+	// agent has answered; a caller whose silence was its only bound keeps
+	// one this way. Unlike CommitTimeout it does not take the commit out
+	// of the run's cancellation.
+	SettledTimeout time.Duration
 	// CommitAsGiven commits the completion as the caller gave it, with
 	// Complete: the result the record carries at bind-ready is a checkpoint
 	// of the work in progress, not the candidate (plan steps). Without it
