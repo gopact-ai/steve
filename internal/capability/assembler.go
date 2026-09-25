@@ -123,7 +123,7 @@ func (a *Assembler) Assemble(selected agent.Agent) (Capabilities, error) {
 // configured set — e.g. the built-in Feishu messaging MCP server with its
 // per-session credentials. Instructions join the identity text and both feed
 // the fingerprint, so a session keeps a stable hash only while its extras
-// stay stable.
+// stay stable; the one exception is the port of a Platform server.
 type Extra struct {
 	Name   string
 	Server MCPServer
@@ -344,11 +344,7 @@ func withoutPort(raw string) string {
 	if err != nil {
 		return raw
 	}
-	host := parsed.Hostname()
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-	parsed.Host = host
+	parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port())
 	return parsed.String()
 }
 

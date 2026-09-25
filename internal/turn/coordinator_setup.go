@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/memory"
@@ -52,7 +53,7 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 	out := Setup{
 		Agent: selected.ID, Node: placeLabel(selected.Node), Harness: selected.Harness, Model: selected.Model,
 		Mode: string(mode), Instructions: capabilities.Instructions, Sections: capabilities.Sections,
-		MCPServers: append([]string{"steve"}, selected.MCPServers...),
+		MCPServers: append([]string{agentmcp.ServerName}, selected.MCPServers...),
 	}
 	saved := c.store.Conversation(conversationID).Sessions[selected.ID]
 	out.Applied = saved.InstructionsApplied && saved.CapabilityHash == capabilities.Fingerprint

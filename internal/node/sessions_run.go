@@ -513,7 +513,7 @@ func (s *SessionService) directory() string {
 // admitted with. It is kept with the record and compared when a later process
 // resumes the context, possibly after a node restart moved the messaging port.
 func sessionConfigHash(req nodewire.SessionRequest) string {
-	return configHash(req, configuredServers(req.MCPServers))
+	return configHash(req, serverIdentities(req.MCPServers))
 }
 
 // processConfigHash is sessionConfigHash with every server exactly as a
@@ -539,14 +539,21 @@ func configHash(req nodewire.SessionRequest, servers []acp.MCPServer) string {
 	}{ref, req.Harness, req.Workdir, policy, servers, req.NativeImport})
 }
 
-// configuredServers is what a native context was given. The platform
+// serverIdentities is what a native context was given. The platform
 // messaging server is reached on this node's loopback port, which this node
 // may listen on elsewhere after a restart; a context resumed with the new
 // port still has the same server. Any other change, including a host that is
 // not loopback, remains a different configuration.
-func configuredServers(servers []acp.MCPServer) []acp.MCPServer {
-	out, cloned := servers, false
-	for i, server := range servers {
+//
+// The hub leaves the same port out of its fingerprints, but it knows the
+// server by where it came from (capability.Extra.Platform) while this node
+// knows it only by its shape: named nodewire.PlatformMCPServer, HTTP, on a
+// loopback IP literal. The two must describe the same server: a session
+// resumes only when both checks accept it, so if one side keeps the port the
+// other leaves out, a moved port still asks for /new.
+func serverIdentities(servers []acp.MCPServer) []acp.MCPServer {
+	out := slices.Clone(servers)
+	for i, server := range out {
 		if server.Name != nodewire.PlatformMCPServer || server.Type != acp.MCPServerTypeHTTP {
 			continue
 		}
@@ -556,9 +563,6 @@ func configuredServers(servers []acp.MCPServer) []acp.MCPServer {
 		}
 		if ip := net.ParseIP(parsed.Hostname()); ip == nil || !ip.IsLoopback() {
 			continue
-		}
-		if !cloned {
-			out, cloned = slices.Clone(servers), true
 		}
 		parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port())
 		out[i].URL = parsed.String()
