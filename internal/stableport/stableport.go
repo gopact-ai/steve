@@ -84,10 +84,27 @@ func (p picker) listen(listen func(network, address string) (net.Listener, error
 // specific address share a port: 0.0.0.0:P binds while another socket
 // listens on 127.0.0.1:P, which then takes the loopback connections, and
 // the other way round. Without SO_REUSEADDR either bind is refused as in
-// use. The listener that is kept is bound by the caller as usual, so a
-// restart can bind its port again past connections in TIME_WAIT; the
-// probe refuses those too, which only skips a port.
+// use. A "tcp" wildcard binds one dual-stack socket, which macOS lets
+// share a port with an IPv4-only wildcard listener even without
+// SO_REUSEADDR, and that listener then takes the IPv4 connections; so for
+// a wildcard the probe also binds the IPv4 wildcard.
+// Probing and binding are two steps: a socket that binds the port in
+// between can still share it on macOS. The listener that is kept is bound
+// by the caller as usual, so a restart can bind its port again past
+// connections in TIME_WAIT; the probe refuses those too, which only skips
+// a port.
 func probe(network, address string) error {
+	if err := bindAndClose(network, address); err != nil || network != "tcp" {
+		return err
+	}
+	host, port, _ := net.SplitHostPort(address)
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		return bindAndClose("tcp4", net.JoinHostPort("0.0.0.0", port))
+	}
+	return nil
+}
+
+func bindAndClose(network, address string) error {
 	listener, err := exclusive.Listen(context.Background(), network, address)
 	if err != nil {
 		return err
