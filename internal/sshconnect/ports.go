@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/stableport"
 )
 
 // Linker is implemented by a backend whose node the coordinator reaches
@@ -23,8 +25,8 @@ type Linker interface {
 // target cannot take a port while the session is down; the target's own
 // node ports are excluded by the backend when it picks.
 const (
-	FirstLoopbackPort = 25407
-	LastLoopbackPort  = 25426
+	FirstLoopbackPort = stableport.LinkFirst
+	LastLoopbackPort  = stableport.LinkLast
 )
 
 var loopbackPortCandidates = func() []int {

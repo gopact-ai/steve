@@ -36,6 +36,7 @@ import (
 	runtimestore "github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
+	"github.com/gopact-ai/steve/internal/stableport"
 	"github.com/hashicorp/raft"
 )
 
@@ -191,7 +192,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 			peerListener.Close()
 		}
 	}()
-	uiListener, err := listenAtStablePort(options.Listen, "tcp", settings.UIAddress)
+	uiListener, err := stableport.Listen(options.Listen, "tcp", settings.UIAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -266,11 +267,11 @@ func confirmPeerIdentity(options PeerOptions, settings *PeerConfig) error {
 
 // bindPeerListeners opens the node's Raft and peer listeners.
 func bindPeerListeners(settings PeerConfig, listen func(network, address string) (net.Listener, error)) (raft, peer net.Listener, err error) {
-	raft, err = listenAtStablePort(listen, "tcp", settings.RaftBindAddress)
+	raft, err = stableport.Listen(listen, "tcp", settings.RaftBindAddress)
 	if err != nil {
 		return nil, nil, err
 	}
-	peer, err = listenAtStablePort(listen, "tcp", settings.PeerBindAddress)
+	peer, err = stableport.Listen(listen, "tcp", settings.PeerBindAddress)
 	if err != nil {
 		raft.Close()
 		return nil, nil, err
@@ -832,7 +833,7 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 	if err := requireClusterLoopback(cfg.Listen); err != nil {
 		return err
 	}
-	listener, err := listenAtStablePort(net.Listen, "tcp", cfg.Listen)
+	listener, err := stableport.Listen(net.Listen, "tcp", cfg.Listen)
 	if err != nil {
 		return err
 	}

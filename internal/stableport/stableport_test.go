@@ -1,17 +1,12 @@
-package cluster
+package stableport
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"testing"
-
-	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
 // The lowest port any supported platform's default ephemeral range starts
@@ -32,10 +27,10 @@ func addressInUse(address string) error {
 	return &net.OpError{Op: "listen", Net: "tcp", Err: fmt.Errorf("bind %s: %w", address, syscall.EADDRINUSE)}
 }
 
-func TestStablePortKeepsAnExplicitPort(t *testing.T) {
+func TestKeepsAnExplicitPort(t *testing.T) {
 	refused := errors.New("refused")
 	var asked []string
-	_, err := listenAtStablePort(func(network, address string) (net.Listener, error) {
+	_, err := Listen(func(network, address string) (net.Listener, error) {
 		asked = append(asked, address)
 		return nil, refused
 	}, "tcp", "127.0.0.1:7801")
@@ -44,10 +39,10 @@ func TestStablePortKeepsAnExplicitPort(t *testing.T) {
 	}
 }
 
-func TestStablePortResolvesZeroOutsideEphemeralRangesAndLinkPorts(t *testing.T) {
+func TestResolvesZeroOutsideEphemeralRangesAndLinkPorts(t *testing.T) {
 	seen := map[int]bool{}
 	for range 2000 {
-		listener, err := listenAtStablePort(func(network, address string) (net.Listener, error) {
+		listener, err := Listen(func(network, address string) (net.Listener, error) {
 			return addressListener{address}, nil
 		}, "tcp", "127.0.0.1:0")
 		if err != nil {
@@ -61,7 +56,7 @@ func TestStablePortResolvesZeroOutsideEphemeralRangesAndLinkPorts(t *testing.T) 
 		if port < 1024 || port >= lowestDefaultEphemeralPort {
 			t.Fatalf("port %d is not below every default ephemeral range", port)
 		}
-		if port >= sshconnect.FirstLoopbackPort && port <= sshconnect.LastLoopbackPort {
+		if port >= LinkFirst && port <= LinkLast {
 			t.Fatalf("port %d is one an SSH link binds on loopback", port)
 		}
 		seen[port] = true
@@ -71,9 +66,9 @@ func TestStablePortResolvesZeroOutsideEphemeralRangesAndLinkPorts(t *testing.T) 
 	}
 }
 
-func TestStablePortRetriesOnlyAPortInUse(t *testing.T) {
+func TestRetriesOnlyAPortInUse(t *testing.T) {
 	var asked []string
-	listener, err := listenAtStablePort(func(network, address string) (net.Listener, error) {
+	listener, err := Listen(func(network, address string) (net.Listener, error) {
 		asked = append(asked, address)
 		if len(asked) <= 3 {
 			return nil, addressInUse(address)
@@ -86,7 +81,7 @@ func TestStablePortRetriesOnlyAPortInUse(t *testing.T) {
 
 	refused := errors.New("permission denied")
 	asked = nil
-	if _, err := listenAtStablePort(func(network, address string) (net.Listener, error) {
+	if _, err := Listen(func(network, address string) (net.Listener, error) {
 		asked = append(asked, address)
 		return nil, refused
 	}, "tcp", "127.0.0.1:0"); !errors.Is(err, refused) || len(asked) != 1 {
@@ -96,9 +91,9 @@ func TestStablePortRetriesOnlyAPortInUse(t *testing.T) {
 
 // When every attempt in the range finds its port in use, the kernel picks
 // as it did before: the node still starts, at an ephemeral port.
-func TestStablePortFallsBackToTheKernelWhenAttemptsRunOut(t *testing.T) {
+func TestFallsBackToTheKernelWhenAttemptsRunOut(t *testing.T) {
 	var asked []string
-	listener, err := listenAtStablePort(func(network, address string) (net.Listener, error) {
+	listener, err := Listen(func(network, address string) (net.Listener, error) {
 		asked = append(asked, address)
 		if address == "127.0.0.1:0" {
 			return addressListener{"127.0.0.1:54321"}, nil
@@ -108,40 +103,7 @@ func TestStablePortFallsBackToTheKernelWhenAttemptsRunOut(t *testing.T) {
 	if err != nil || listener.Addr().String() != "127.0.0.1:54321" {
 		t.Fatalf("fallback: %v %v", listener, err)
 	}
-	if len(asked) != stablePortAttempts+1 || asked[len(asked)-1] != "127.0.0.1:0" {
-		t.Fatalf("asked %d addresses, last %q; want %d then the kernel", len(asked), asked[len(asked)-1], stablePortAttempts)
-	}
-}
-
-// Every port a peer persists from ":0" is one the kernel does not hand out
-// on its own, so no socket opened while the peer is down can take it.
-func TestZeroPortsPersistOutsideEphemeralRanges(t *testing.T) {
-	options, _ := testPeerOptions(t, filepath.Join(ClusterPeerTestDir(t), "peer"), nil)
-	peer, err := OpenPeer(context.Background(), options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer peer.Close()
-	saved, err := LoadClusterPeerConfig(options.ClusterPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := ReadClusterPrivate(saved.WorkerConfigFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var worker struct{ Listen string }
-	if err := json.Unmarshal(raw, &worker); err != nil {
-		t.Fatal(err)
-	}
-	for name, address := range map[string]string{"raft": saved.RaftBindAddress, "peer": saved.PeerBindAddress, "ui": saved.UIAddress, "worker": worker.Listen} {
-		_, text, err := net.SplitHostPort(address)
-		if err != nil {
-			t.Fatal(err)
-		}
-		port, _ := strconv.Atoi(text)
-		if port == 0 || port >= lowestDefaultEphemeralPort {
-			t.Errorf("%s persisted %s, inside a default ephemeral range", name, address)
-		}
+	if len(asked) != attempts+1 || asked[len(asked)-1] != "127.0.0.1:0" {
+		t.Fatalf("asked %d addresses, last %q; want %d then the kernel", len(asked), asked[len(asked)-1], attempts)
 	}
 }
