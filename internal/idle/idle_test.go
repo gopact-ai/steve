@@ -157,3 +157,38 @@ func TestNestedHoldsAndPauseKeepClockStopped(t *testing.T) {
 func TestHoldWithoutClockIsHarmless(t *testing.T) {
 	Hold(context.Background())()
 }
+
+// Expired tells the silence clock running out from every other way a
+// context under it can end, and a context derived before the end keeps the
+// reason it ended for first.
+func TestExpiredIsOnlyTheSilenceRunningOut(t *testing.T) {
+	silent, stop, _ := WithTimeout(context.Background(), 10*time.Millisecond)
+	defer stop()
+	derived, cancel := context.WithCancel(silent)
+	defer cancel()
+	<-derived.Done()
+	if !Expired(silent) || !Expired(derived) || !errors.Is(derived.Err(), context.DeadlineExceeded) {
+		t.Fatalf("silence: expired=%v/%v err=%v", Expired(silent), Expired(derived), derived.Err())
+	}
+	lost, lose := context.WithCancel(context.Background())
+	clock, stopClock, _ := WithTimeout(lost, 10*time.Millisecond)
+	defer stopClock()
+	early, cancelEarly := context.WithCancel(clock)
+	cancelEarly()
+	lose()
+	<-clock.Done()
+	time.Sleep(20 * time.Millisecond)
+	if Expired(clock) || Expired(early) {
+		t.Fatal("a lost parent or an earlier cancel read as silence")
+	}
+	deadline, cancelDeadline := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelDeadline()
+	bounded, stopBounded, _ := WithTimeout(deadline, time.Hour)
+	defer stopBounded()
+	<-bounded.Done()
+	stopped, stopNow, _ := WithTimeout(context.Background(), time.Hour)
+	stopNow()
+	if Expired(bounded) || Expired(stopped) || Expired(context.Background()) {
+		t.Fatal("a parent deadline, a stop or no clock read as silence")
+	}
+}
