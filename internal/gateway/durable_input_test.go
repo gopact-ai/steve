@@ -176,15 +176,16 @@ func TestGatewayCompletedAttemptKeepsItsOriginalInputOwner(t *testing.T) {
 }
 
 // processAcceptedFixture accepts msg and consumes it on the calling
-// goroutine. A dispatch that must be recovered from its admitted attempt
-// resumes through driver, as ingress resumes it through the driver
-// SetIngressLifetime wires.
+// goroutine. Its claim joins a conversation already being served and fails
+// with channel.ErrDeliveryQueued, without waiting, when no slot is free. A
+// dispatch that must be recovered from its admitted attempt resumes through
+// driver, as ingress resumes it through the driver SetIngressLifetime wires.
 func (g *Gateway) processAcceptedFixture(msg feishu.InboundMessage, driver RecoveryDriver) error {
 	ctx, key, input := context.Background(), "gateway-input/"+msg.MessageID, gatewayInput{Message: msg}
 	if err := g.acceptInput(ctx, key, input); err != nil {
 		return err
 	}
-	claim, err := g.claimOrdinary(ctx, key, conversationID(input.Message), true, true)
+	claim, err := g.claimOrdinary(ctx, key, conversationID(input.Message), true)
 	if err != nil {
 		return err
 	}
@@ -194,8 +195,9 @@ func (g *Gateway) processAcceptedFixture(msg feishu.InboundMessage, driver Recov
 
 // recoverQueuedFixture claims every pending input through claimQueued, as
 // ReconcileQueued does, and runs each one on the calling goroutine, oldest
-// first, waiting for conversation capacity. It wraps each input's error as
-// "gateway recovery <id>" and joins them in that order.
+// first. Claims do not wait for capacity: an input that cannot be claimed
+// contributes its claim error, such as channel.ErrDeliveryQueued. It wraps
+// each input's error as "gateway recovery <id>" and joins them in that order.
 func (g *Gateway) recoverQueuedFixture(ctx context.Context, book *ledger.Ledger, driver RecoveryDriver, revive func(string, string) error) error {
 	inputs, err := pendingGatewayInputs(ctx, book)
 	if err != nil {
@@ -203,7 +205,7 @@ func (g *Gateway) recoverQueuedFixture(ctx context.Context, book *ledger.Ledger,
 	}
 	var result error
 	for _, receipt := range inputs {
-		run, release, err := g.claimQueued(ctx, book, receipt, driver, revive, true)
+		run, release, err := g.claimQueued(ctx, book, receipt, driver, revive)
 		if err == nil {
 			err = run()
 			release()

@@ -126,7 +126,7 @@ func (g *Gateway) ReconcileQueued(ctx context.Context, book *ledger.Ledger, driv
 	scheduled := 0
 	for i := range inputs {
 		receipt := inputs[(start+i)%len(inputs)]
-		run, release, err := g.claimQueued(ctx, book, receipt, driver, revive, false)
+		run, release, err := g.claimQueued(ctx, book, receipt, driver, revive)
 		if errors.Is(err, channel.ErrDeliveryQueued) {
 			continue
 		}

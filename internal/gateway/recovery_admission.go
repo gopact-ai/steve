@@ -53,7 +53,7 @@ func (g *Gateway) DispatchResume(ctx context.Context, book *ledger.Ledger, admis
 	}
 	// Wakes are best-effort and never wait for capacity in a new goroutine.
 	// The durable accepted input remains pending for the runtime scheduler.
-	release, err := g.claimRecovery(ctx, receipt, false)
+	release, err := g.claimRecovery(ctx, receipt)
 	if err != nil {
 		return err
 	}
