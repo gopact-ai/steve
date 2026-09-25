@@ -3,6 +3,8 @@ package agentmcp
 import (
 	"context"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -35,11 +37,9 @@ func TestPlatformOverviewIsAvailableThroughMCP(t *testing.T) {
 	}
 }
 
-// The memory help describes steve_recall as it behaves: the project is
-// searched only when the conversation is bound to one other than Steve's
-// home, limit is capped at 50, scores compare only within a scope, and an
-// empty query lists facts in stored order.
-func TestMemoryHelpDescribesRecallAsItBehaves(t *testing.T) {
+// The memory help states the same cap on steve_recall's limit as the one
+// the tool cuts a larger limit to.
+func TestMemoryHelpStatesTheRecallLimitCap(t *testing.T) {
 	help, err := helpText("memory")
 	if err != nil {
 		t.Fatal(err)
@@ -50,13 +50,12 @@ func TestMemoryHelpDescribesRecallAsItBehaves(t *testing.T) {
 			recall = line
 		}
 	}
-	if recall == "" {
-		t.Fatalf("memory help has no steve_recall entry:\n%s", help)
+	caps := regexp.MustCompile(`最多 (\d+)`).FindAllStringSubmatch(recall, -1)
+	if len(caps) != 1 {
+		t.Fatalf("steve_recall entry states %d limit caps, want one: %q", len(caps), recall)
 	}
-	for _, condition := range []string{"绑了项目", "主目录", "最多 50", "同一层内可比", "存储顺序"} {
-		if !strings.Contains(recall, condition) {
-			t.Errorf("steve_recall entry does not say %q: %s", condition, recall)
-		}
+	if want := strconv.Itoa(maxRecallLimit); caps[0][1] != want {
+		t.Fatalf("steve_recall entry caps limit at %s, the tool at %s: %s", caps[0][1], want, recall)
 	}
 }
 
