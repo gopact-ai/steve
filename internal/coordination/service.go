@@ -310,15 +310,15 @@ type unclassifiedRaftError struct{ err error }
 func (e unclassifiedRaftError) Error() string { return e.err.Error() }
 func (e unclassifiedRaftError) Unwrap() error { return e.err }
 
-// waitConfigurationChange waits for a membership change, which description
-// names in the error, to commit, for at most ApplyTimeout. Raft's timeout argument bounds only enqueueing: an appended
-// configuration entry resolves on commit, leadership loss or shutdown, and a
-// leader that keeps its lease without a quorum acknowledging the entry never
-// resolves it. Every caller holds membershipMu, which serializes membership
-// changes and makes automatic demotion skip its pass; SetVoting also holds
-// opMu, which every write, coordinator transfer and automatic failover takes.
-// An unbounded wait would hold those locks for as long as the entry stays
-// uncommitted.
+// waitConfigurationChange waits for a membership change to commit, for at most
+// ApplyTimeout, and names the change by description if it gives up. Raft's
+// timeout argument bounds only enqueueing: an appended configuration entry
+// resolves on commit, leadership loss or shutdown, and a leader that keeps its
+// lease without a quorum acknowledging the entry never resolves it. Every
+// caller holds membershipMu, which serializes membership changes and makes
+// automatic demotion skip its pass; SetVoting also holds opMu, which every
+// write, coordinator transfer and automatic failover takes. An unbounded wait
+// would hold those locks for as long as the entry stays uncommitted.
 func (s *Service) waitConfigurationChange(ctx context.Context, description string, change raft.IndexFuture) error {
 	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
 	defer cancel()
