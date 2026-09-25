@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -329,5 +330,52 @@ func TestIngressRecoversAnUnsettledTurnThroughItsDriver(t *testing.T) {
 	}
 	if pending, err := book.PendingCommands(t.Context(), gatewayInputKind); err != nil || len(pending) != 0 {
 		t.Fatalf("pending inputs = %d, %v; want none", len(pending), err)
+	}
+}
+
+// Ingress claims only the gateway input it accepted. A recovery receipt,
+// whose recovery may revive a member, is refused by its kind, even when its
+// bytes are a valid gateway input from the same actor, and the refusal
+// claims neither its input nor its conversation.
+func TestIngressClaimRefusesARecoveryReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		record func(context.Context, *Gateway, *ledger.Ledger, string) error
+	}{
+		{"queued-recovery", func(ctx context.Context, g *Gateway, book *ledger.Ledger, key string) error {
+			return g.QueueRecovery(ctx, book, key, revivalFixture(), "")
+		}},
+		{"gateway-input-bytes", func(ctx context.Context, _ *Gateway, book *ledger.Ledger, key string) error {
+			msg := inboundFixture()
+			raw, err := json.Marshal(gatewayInput{Message: msg})
+			if err != nil {
+				return err
+			}
+			return book.RecordCommand(ctx, key, recoveryInputKind, msg.SenderOpenID, raw)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			book, err := ledger.Open(t.TempDir(), ledger.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer book.Close()
+			g := New(idleCoordinator{})
+			if err := tc.record(t.Context(), g, book, "restart:parent"); err != nil {
+				t.Fatal(err)
+			}
+			receipt, found, err := book.CommandReceipt(t.Context(), "restart:parent")
+			if err != nil || !found {
+				t.Fatalf("recovery receipt found = %v, %v", found, err)
+			}
+			run, release, err := g.claimGatewayInput(t.Context(), book, receipt, nil, false)
+			// acceptAndWake takes ErrDeliveryQueued as an accepted input, not a refusal.
+			if err == nil || errors.Is(err, channel.ErrDeliveryQueued) || run != nil || release != nil {
+				t.Fatalf("claimed a %s receipt: %v", receipt.Kind, err)
+			}
+			if len(g.slots) != 0 || len(g.durableRunning) != 0 || len(g.serving) != 0 {
+				t.Fatal("the refused receipt holds its conversation or input")
+			}
+		})
 	}
 }

@@ -70,7 +70,7 @@ func (c *catalogCoordinator) ParseInput(line string) (string, turn.ParsedInput) 
 // recorded but not drawn.
 func TestConsoleClassifiesALineAsItsCoordinatorParsesIt(t *testing.T) {
 	const stop = "@codex/cancel"
-	if _, parsed := turn.ParseAddressedInput(stop); parsed.Interrupt || parsed.Control() {
+	if _, parsed := turn.ParseAddressedInput(stop); parsed.Immediate() {
 		t.Fatalf("the syntax alone already reads %q as a stop", stop)
 	}
 	c := &catalogCoordinator{queueHandler{started: make(chan *queueCall, 2)}}
