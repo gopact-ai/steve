@@ -194,14 +194,18 @@ func TestExpiredIsOnlyTheSilenceRunningOut(t *testing.T) {
 	}
 }
 
-// A context derived from a clock has ended, for the clock's reason, by the
-// time anyone can see that the clock has: what is read on it after the
-// clock ran out or was stopped is not read on a context still ending.
+// A context derived from a clock before it ended has ended, for the
+// clock's reason, by the time anyone can see that the clock has: what is
+// read on it after the clock ran out or was stopped is not read on a
+// context still ending. The contexts are derived while the clock is held,
+// so they are derived before its own timer can run it out.
 func TestDerivedContextsEndWithTheClock(t *testing.T) {
 	for run := 0; run < 100; run++ {
 		silent, stop, _ := WithTimeout(context.Background(), time.Millisecond)
+		release := Hold(silent)
 		derived, cancel := context.WithCancel(silent)
 		bounded, cancelBounded := context.WithTimeout(silent, time.Hour)
+		release()
 		<-silent.Done()
 		if !Expired(derived) || !Expired(bounded) || !errors.Is(derived.Err(), context.DeadlineExceeded) {
 			t.Fatalf("run %d: the clock ran out; derived err=%v cause=%v, bounded cause=%v", run, derived.Err(), context.Cause(derived), context.Cause(bounded))
