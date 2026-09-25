@@ -410,12 +410,12 @@ func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task
 	s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, runErr, run.Last)
 }
 
-func (s *Service) finishFromRecord(record attempt.Record, outcome task.Outcome) error {
+func (s *Service) finishFromRecord(ctx context.Context, record attempt.Record, outcome task.Outcome) error {
 	id := record.TaskID
 	if tracked, ok := s.tasks.Get(id); ok {
 		for _, row := range tracked.Attempts {
 			if row.ExecutionID == record.ID {
-				return s.tasks.SettleAttempt(id, record.ID, record.TurnID, record.EndedAt, outcome, recoveredUsage(record))
+				return s.tasks.SettleAttempt(ctx, id, record.ID, record.TurnID, record.EndedAt, outcome, recoveredUsage(record))
 			}
 		}
 	}

@@ -143,7 +143,7 @@ func TestStoppedExecutionResolutionRejectsIncompleteEvidenceAndIdentity(t *testi
 				record.SessionSettled = nil
 			}
 			before, _ := c.tasks.Get(old.TaskID)
-			if err := c.resolveStoppedExecution(record); err == nil {
+			if err := c.resolveStoppedExecution(t.Context(), record); err == nil {
 				t.Fatal("invalid evidence/identity resolved the original execution")
 			}
 			after, _ := c.tasks.Get(old.TaskID)

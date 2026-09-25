@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -11,7 +12,7 @@ import (
 // resolveStoppedExecution projects an already committed physical stop before
 // resolving its local observer. Settlement names the original accounting row,
 // never the task's current turn or its replacement recovery workspace.
-func (c *Coordinator) resolveStoppedExecution(record attempt.Record) error {
+func (c *Coordinator) resolveStoppedExecution(ctx context.Context, record attempt.Record) error {
 	if record.ID == "" || record.Execution == nil || record.Execution.TaskID != record.TaskID ||
 		!record.State.Terminal() || record.Unsettled || record.StopEvidence == "" ||
 		record.SessionSettled == nil || !*record.SessionSettled {
@@ -36,7 +37,7 @@ func (c *Coordinator) resolveStoppedExecution(record attempt.Record) error {
 		if record.State == attempt.Superseded {
 			outcome = task.OutcomeError
 		}
-		if err := c.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage); err != nil {
+		if err := c.tasks.SettleAttempt(ctx, record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage); err != nil {
 			return fmt.Errorf("attempt %s: stop confirmed; original accounting remains pending: %w", record.ID, err)
 		}
 		c.executions.ResolveStopped(record.ID, *record.Execution)

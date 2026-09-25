@@ -175,7 +175,7 @@ func (r *applicationRecovery) reconcileTask(ctx context.Context, candidate task.
 		if last.After(ended) {
 			ended = last
 		}
-		return r.tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, ended, task.OutcomeInterrupted, stoppedAccounting(record))
+		return r.tasks.SettleAttempt(ctx, tracked.ID, record.ID, record.TurnID, ended, task.OutcomeInterrupted, stoppedAccounting(record))
 	}
 	_, err := r.tasks.FinishUnstarted(tracked.ID, task.OutcomeInterrupted)
 	return err

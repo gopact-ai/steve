@@ -1,6 +1,7 @@
 package agentexec
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 // accounting rows. The ledger attempt remains the authoritative result.
 type AttemptBudget interface {
 	ReserveAttempt(attempt.Record) (int, time.Time, error)
-	SettleAttempt(attempt.Record, task.Outcome) error
+	SettleAttempt(context.Context, attempt.Record, task.Outcome) error
 }
 
 func ReserveBudget(budget Budget, record attempt.Record) (int, time.Time, error) {
@@ -23,7 +24,7 @@ func ReserveBudget(budget Budget, record attempt.Record) (int, time.Time, error)
 	return budget.Reserve(record.TaskID)
 }
 
-func SettleBudget(budget Budget, record attempt.Record, cause error) error {
+func SettleBudget(ctx context.Context, budget Budget, record attempt.Record, cause error) error {
 	exact, ok := budget.(AttemptBudget)
 	if !ok {
 		return nil
@@ -35,5 +36,5 @@ func SettleBudget(budget Budget, record attempt.Record, cause error) error {
 	if outcome == task.OutcomeOK && record.State != attempt.Bound {
 		outcome = task.OutcomeError
 	}
-	return exact.SettleAttempt(record, outcome)
+	return exact.SettleAttempt(ctx, record, outcome)
 }

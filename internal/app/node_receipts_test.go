@@ -168,7 +168,7 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 			return result, errors.New("missing task accounting nevertheless sent ack RPC")
 		}
 		u := record.Usage
-		if err := tasks.SettleAttempt(tracked.ID, record.ID, record.TurnID, record.EndedAt, task.OutcomeOK,
+		if err := tasks.SettleAttempt(ctx, tracked.ID, record.ID, record.TurnID, record.EndedAt, task.OutcomeOK,
 			task.RecoveryUsage{Reported: u.Reported, Model: u.Model, Tokens: task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite}}); err != nil {
 			return result, err
 		}

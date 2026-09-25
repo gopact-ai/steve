@@ -71,7 +71,7 @@ func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
 	}
 	// A durable stop alone does not settle the task's original accounting.
 	assertBlocked("stopped execution awaiting accounting")
-	if err := c.tasks.SettleAttempt(stopped.TaskID, stopped.ID, stopped.TurnID, stopped.EndedAt, task.OutcomeCancelled, task.RecoveryUsage{}); err != nil {
+	if err := c.tasks.SettleAttempt(t.Context(), stopped.TaskID, stopped.ID, stopped.TurnID, stopped.EndedAt, task.OutcomeCancelled, task.RecoveryUsage{}); err != nil {
 		t.Fatal(err)
 	}
 	if left, err := c.attempts.Live(t.Context()); err != nil || len(left) != 0 {

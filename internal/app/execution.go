@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -59,8 +60,8 @@ func (b taskBudget) ReserveAttempt(record attempt.Record) (int, time.Time, error
 	return left, deadline, nil
 }
 
-func (b taskBudget) SettleAttempt(record attempt.Record, outcome task.Outcome) error {
-	return b.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, stoppedAccounting(record))
+func (b taskBudget) SettleAttempt(ctx context.Context, record attempt.Record, outcome task.Outcome) error {
+	return b.tasks.SettleAttempt(ctx, record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, stoppedAccounting(record))
 }
 
 func (b taskBudget) Reserve(taskID string) (int, time.Time, error) {

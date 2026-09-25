@@ -118,7 +118,7 @@ func TestChannelHistoryHTTPRetainedMessagesAndExecutionLifecycle(t *testing.T) {
 		Text: "retained final answer", AgentID: "agent", Attempt: "attempt",
 	}})
 	record("channel-message/reply", "gateway-input-reply", ledger.CommandProof{CommandID: "channel-message", Receipt: "lark-receipt"})
-	if err := tasks.SettleAttempt(work.ID, "attempt", "message", started.Add(time.Second), task.OutcomeOK, task.RecoveryUsage{}); err != nil {
+	if err := tasks.SettleAttempt(t.Context(), work.ID, "attempt", "message", started.Add(time.Second), task.OutcomeOK, task.RecoveryUsage{}); err != nil {
 		t.Fatal(err)
 	}
 	activity.busy.Store(false)
