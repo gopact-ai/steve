@@ -22,13 +22,14 @@ import (
 
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/stableport"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
 // ServerName is the MCP server name agents see; tool calls arrive as
 // channel_send / channel_recall under it.
-const ServerName = "steve"
+const ServerName = nodewire.PlatformMCPServer
 
 const (
 	maxSendsPerTurn = 8

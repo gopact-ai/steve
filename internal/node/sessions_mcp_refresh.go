@@ -20,7 +20,7 @@ func previousMCPConfigHash(req nodewire.SessionRequest) (string, error) {
 	}
 	serverIndex := -1
 	for i, server := range req.MCPServers {
-		if server.Name == "steve" {
+		if server.Name == nodewire.PlatformMCPServer {
 			if serverIndex != -1 {
 				return refuse()
 			}

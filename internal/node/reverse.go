@@ -20,9 +20,11 @@ import (
 // listener.
 var errMCPClosed = errors.New("reverse MCP listener closed for shutdown")
 
-// listenMCP belongs to the server, not a hub connection. Its port is part of
-// the ACP session fingerprint, including throughout a network interruption,
-// so it is remembered and a new one comes from stableport.
+// listenMCP belongs to the server, not a hub connection. Running agents hold
+// its URL, including throughout a network interruption, so the port is
+// remembered and a new one comes from stableport. A port taken while the
+// node was down moves; sessions resumed afterwards are given the new URL,
+// and their configuration hash leaves the port out (configuredServers).
 // Once closeMCP has run it binds nothing: shutdown waits for the goroutine
 // serving the listener, and nothing would close one bound afterwards.
 func (s *Server) listenMCP() (net.Listener, error) {

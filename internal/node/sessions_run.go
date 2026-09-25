@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -520,7 +523,34 @@ func sessionConfigHash(req nodewire.SessionRequest) string {
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
 		NativeImport                 *nativehistory.Reference `json:"native_import,omitempty"`
-	}{ref, req.Harness, req.Workdir, policy, req.MCPServers, req.NativeImport})
+	}{ref, req.Harness, req.Workdir, policy, configuredServers(req.MCPServers), req.NativeImport})
+}
+
+// configuredServers is what a native context was given. The platform
+// messaging server is reached on this node's loopback port, which this node
+// may listen on elsewhere after a restart; a context resumed with the new
+// port still has the same server. Any other change, including a host that is
+// not loopback, remains a different configuration.
+func configuredServers(servers []acp.MCPServer) []acp.MCPServer {
+	out, cloned := servers, false
+	for i, server := range servers {
+		if server.Name != nodewire.PlatformMCPServer || server.Type != acp.MCPServerTypeHTTP {
+			continue
+		}
+		parsed, err := url.Parse(server.URL)
+		if err != nil || parsed.Port() == "" {
+			continue
+		}
+		if ip := net.ParseIP(parsed.Hostname()); ip == nil || !ip.IsLoopback() {
+			continue
+		}
+		if !cloned {
+			out, cloned = slices.Clone(servers), true
+		}
+		parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port())
+		out[i].URL = parsed.String()
+	}
+	return out
 }
 
 func (s *SessionService) processesStopped() bool {
