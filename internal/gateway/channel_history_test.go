@@ -436,7 +436,7 @@ func TestChannelHistoryActualIngressOwnersAndRecovery(t *testing.T) {
 				if err := g.QueueRecovery(t.Context(), book, "recovery", revivalFixture(), ""); err != nil {
 					t.Fatal(err)
 				}
-				if err := g.RecoverQueued(t.Context(), book, &recoveryProbe{}, func(string, string) error { return nil }); err != nil {
+				if err := g.recoverQueuedFixture(t.Context(), book, &recoveryProbe{}, func(string, string) error { return nil }); err != nil {
 					t.Fatal(err)
 				}
 			default:
