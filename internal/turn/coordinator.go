@@ -420,8 +420,15 @@ func (p promptClock) limit() time.Duration {
 	return p.timeout
 }
 
-func (c *Coordinator) newIdleClock(parent context.Context, d time.Duration) (idle.Context, func(), func()) {
-	return c.promptClock.start(parent, d)
+// newIdleClock starts a prompt timeout's clock for a prompt on node; the
+// clock holds while the node is away. stop ends it and its registration.
+func (c *Coordinator) newIdleClock(parent context.Context, node string) (clock idle.Context, stop func(), touch func()) {
+	clock, expire, touch := c.promptClock.start(parent, c.promptTimeout())
+	if c.nodes == nil {
+		return clock, expire, touch
+	}
+	unregister := c.nodes.RegisterIdle(node, clock)
+	return clock, func() { unregister(); expire() }, touch
 }
 
 func (c *Coordinator) promptTimeout() time.Duration { return c.promptClock.limit() }

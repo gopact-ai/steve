@@ -154,11 +154,8 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	}
 	// The observer runs under the prompt timeout like the prompt it
 	// resumes: a command that stays silent ends the turn as a timeout.
-	clock, expire, touch := c.newIdleClock(parent, c.promptTimeout())
+	clock, expire, touch := c.newIdleClock(parent, record.Node)
 	defer expire()
-	if c.nodes != nil {
-		defer c.nodes.RegisterIdle(record.Node, clock)()
-	}
 	ctx, cancel := context.WithCancel(clock)
 	defer cancel()
 	if !turnOwned {
