@@ -565,3 +565,55 @@ func TestGatewaySameConversationRecoveryDefersOtherInputWithoutDispatch(t *testi
 		t.Fatal("conversation ownership did not release its waiting input")
 	}
 }
+
+func TestGatewayRecoveryClaimDoesNotJoinItsServingConversation(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	p := &recoveryProbe{}
+	g := New(p)
+	g.slots = make(chan struct{}, 2)
+	g.BindChannel(&recoveryChannel{})
+	// Both inputs keep revivalFixture's conversation.
+	for _, key := range []string{"first", "second"} {
+		if err := g.QueueRecovery(t.Context(), book, key, revivalFixture(), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revive := func(string, string) error { return nil }
+	w := &heldRecoveryWorkers{}
+	if err := g.ReconcileQueued(t.Context(), book, p, revive, w); err != nil {
+		t.Fatal(err)
+	}
+	// A slot stays free, so only the conversation's owner keeps "second" out.
+	claims, serving, slots := recoveryOwnership(g)
+	if want := map[string]int{"conversation": 1}; len(w.jobs) != 1 || claims != 1 || slots != 1 || !maps.Equal(serving, want) {
+		t.Errorf("recovery claimed another input of a serving conversation: jobs=%d claims=%d serving=%v slots=%d, want jobs=1 claims=1 serving=%v slots=1",
+			len(w.jobs), claims, serving, slots, want)
+	}
+	for _, run := range w.jobs {
+		run()
+	}
+	if _, found, err := book.CommandReceipt(t.Context(), "second/dispatch"); err != nil || found {
+		t.Errorf("input behind its conversation's owner acquired a dispatch receipt: found=%v err=%v", found, err)
+	}
+	if pending := pendingRecoveryIDs(t, book); !slices.Equal(pending, []string{"second"}) || p.calls.Load() != 1 {
+		t.Fatalf("held run finished: pending=%v calls=%d, want pending=[second] calls=1", pending, p.calls.Load())
+	}
+	// The run released the conversation, so the next pass claims "second".
+	w = &heldRecoveryWorkers{}
+	if err := g.ReconcileQueued(t.Context(), book, p, revive, w); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range w.jobs {
+		run()
+	}
+	if pending := pendingRecoveryIDs(t, book); len(w.jobs) != 1 || len(pending) != 0 || p.calls.Load() != 2 {
+		t.Fatalf("released conversation did not admit second: jobs=%d pending=%v calls=%d", len(w.jobs), pending, p.calls.Load())
+	}
+	if claims, serving, slots := recoveryOwnership(g); claims != 0 || len(serving) != 0 || slots != 0 {
+		t.Fatalf("finished runs kept ownership: claims=%d serving=%v slots=%d", claims, serving, slots)
+	}
+}
