@@ -261,13 +261,13 @@ func placeOf(home project.Home) string {
 // canonical lock, which lease is. It reads before it writes: every path is
 // inspected first, and a recovery that ends in a conflict writes nothing.
 //
-// A lock another region issued leaves the window commitLanding describes
-// at the commit, bounded the same way: a new holder names a snapshot
-// before it writes, which moves the name off the snapshot the recovery
-// wrote against once the recovery's writes are in the workspace. Without
-// such writes, the recovered snapshot names the workspace as it stood
-// before the new holder took the lock, and the name at most lags the
-// holder's writes until its next snapshot.
+// When another region issued the lock, the commit has the same window
+// commitLanding describes, and it is bounded the same way: a new holder
+// names a snapshot before it writes, which moves the name off the
+// snapshot the recovery wrote against once the recovery's writes are in
+// the workspace. Without such writes, the recovered snapshot names the
+// workspace as it stood before the new holder took the lock, and the name
+// at most lags the holder's writes until its next snapshot.
 func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Landing, lease ledger.Lease) (Landing, error) {
 	land.Lease = &lease
 	// Another recovery of the same landing may have finished it while this
