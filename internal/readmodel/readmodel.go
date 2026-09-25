@@ -517,6 +517,8 @@ type Model struct {
 		Questions(string) []consoleapi.PendingQuestion
 	}
 	src Sources
+	// taskHeader reads a task's header from src.Tasks; nil without one.
+	taskHeader func(id string) (task.Header, bool)
 
 	mu   sync.Mutex
 	subs map[int]chan Event
@@ -585,7 +587,11 @@ func New(src Sources) *Model {
 	if src.Plans != nil && src.Tasks != nil {
 		src.Plans.SetTaskProjection(src.Tasks.SetPlanBindings)
 	}
-	return &Model{src: src, subs: map[int]chan Event{}, epoch: strconv.FormatInt(time.Now().UnixNano(), 36)}
+	m := &Model{src: src, subs: map[int]chan Event{}, epoch: strconv.FormatInt(time.Now().UnixNano(), 36)}
+	if src.Tasks != nil {
+		m.taskHeader = src.Tasks.Header
+	}
+	return m
 }
 
 // AttemptRow is one turn of a task: who ran it, on what, for how long,
@@ -1044,16 +1050,27 @@ func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.
 	if progress.Node == "" {
 		progress.Node = node
 	}
-	ev := Event{
-		Kind: "step.progress", TaskID: taskID, PlanID: planID, StepID: stepID,
-		Conversation: m.conversationOf(taskID), Progress: &progress,
+	ev := Event{Kind: "step.progress", TaskID: taskID, PlanID: planID, StepID: stepID, Progress: &progress}
+	// An update that only replaces one already held takes the held one's
+	// conversation: the task store is read, outside the lock, for updates
+	// that publish or start a hold, not for each one merged.
+	m.mu.Lock()
+	last := m.throttle[key]
+	if last.held != nil && last.held.TaskID == taskID && last.signature == signature && time.Since(last.at) < progressEvery {
+		ev.Conversation = last.held.Conversation
+		last.held = &ev
+		m.throttle[key] = last
+		m.mu.Unlock()
+		return
 	}
+	m.mu.Unlock()
+	ev.Conversation = m.conversationOf(taskID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.throttle == nil {
 		m.throttle = map[string]throttled{}
 	}
-	last := m.throttle[key]
+	last = m.throttle[key]
 	if wait := progressEvery - time.Since(last.at); wait > 0 && last.signature == signature {
 		if last.held == nil {
 			time.AfterFunc(wait, func() { m.releaseStep(key) })
@@ -1101,10 +1118,10 @@ func (m *Model) TaskChanged(taskID string) {
 
 // conversationOf is the channel a task was asked in, "" when unknown.
 func (m *Model) conversationOf(taskID string) string {
-	if taskID == "" || m.src.Tasks == nil {
+	if taskID == "" || m.taskHeader == nil {
 		return ""
 	}
-	if t, ok := m.src.Tasks.Header(taskID); ok {
+	if t, ok := m.taskHeader(taskID); ok {
 		return t.Channel
 	}
 	return ""

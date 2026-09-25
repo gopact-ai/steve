@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -81,6 +83,40 @@ func TestStepProgressPublishesTheLastUpdateTheThrottleHeldBack(t *testing.T) {
 		case <-deadline:
 			t.Fatal("the step's last update was throttled away")
 		}
+	}
+}
+
+// A step's conversation is read from the task store for the updates it
+// publishes, not for each one the throttle merges into a later one.
+func TestStepProgressReadsTheTaskOnlyForWhatItPublishes(t *testing.T) {
+	m := New(Sources{})
+	var reads atomic.Int64
+	m.taskHeader = func(string) (task.Header, bool) {
+		reads.Add(1)
+		return task.Header{Task: task.Task{Channel: "console:test"}}, true
+	}
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	const updates = 50
+	for i := range updates {
+		m.StepProgress("task", "plan", "build", "builder", "node-a", view.Progress{Answer: fmt.Sprint(i)})
+	}
+	published := 0
+	deadline := time.After(10 * progressEvery)
+	for last := false; !last; {
+		select {
+		case ev := <-events:
+			if ev.Conversation != "console:test" {
+				t.Fatalf("published %+v without its conversation", ev)
+			}
+			published++
+			last = ev.Progress.Answer == fmt.Sprint(updates-1)
+		case <-deadline:
+			t.Fatal("the step's last update never landed")
+		}
+	}
+	if n := reads.Load(); n > int64(published) {
+		t.Fatalf("read the task %d times for %d updates published", n, published)
 	}
 }
 
