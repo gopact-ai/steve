@@ -47,8 +47,12 @@ func (c *Coordinator) rememberMode(req Request) {
 	c.mu.Unlock()
 }
 
-// consolePrefix starts every console conversation's key. The console
-// sends each of its lines as the owner, in private.
+// consolePrefix starts every console conversation's key and must stay
+// equal to console.Prefix, which this package cannot import. The console
+// sends each of its lines as the owner, in private. Only the console makes
+// keys with this prefix: a channel conversation's key is its own chat or
+// thread id, and a scheduled channel firing refuses one that has it. So
+// the key alone says a conversation is the console's.
 const consolePrefix = "console:"
 
 // arrivalMode is how a conversation reaches Steve, as far as a read with
