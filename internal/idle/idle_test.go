@@ -246,3 +246,21 @@ func runOut(ctx Context) {
 	defer c.mu.Unlock()
 	c.finishLocked(context.DeadlineExceeded, errSilent)
 }
+
+// A clock whose parent was cancelled for a reason of its own ends for that
+// reason: the clock hears of the parent the moment its Done closes, before
+// the parent has cancelled what hangs off it, and must not end on a plain
+// cancel of its own in between.
+func TestClockEndsForItsCancelledParentsCause(t *testing.T) {
+	reason := errors.New("the parent's own reason")
+	for run := 0; run < 5000; run++ {
+		parent, cancel := context.WithCancelCause(context.Background())
+		clock, stop, _ := WithTimeout(parent, time.Hour)
+		cancel(reason)
+		<-clock.Done()
+		if context.Cause(clock) != reason || clock.Err() != context.Canceled {
+			t.Fatalf("run %d: parent cancelled; clock err=%v cause=%v", run, clock.Err(), context.Cause(clock))
+		}
+		stop()
+	}
+}
