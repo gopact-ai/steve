@@ -725,6 +725,9 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	// Subscribed before follow returns, so that nothing the turn publishes
+	// once it starts comes before the subscription.
+	events, stopEvents := s.model.Subscribe(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -754,12 +757,15 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 			}
 			return events, stop
 		}
-		for ctx.Err() == nil {
-			events, stop := subscribe()
+		for {
 			for ev := range events {
 				collect(ev)
 			}
-			stop()
+			stopEvents()
+			if ctx.Err() != nil {
+				return
+			}
+			events, stopEvents = subscribe()
 		}
 	}()
 	return func() {
