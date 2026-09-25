@@ -242,3 +242,38 @@ func TestCommitment_singleVoter(t *testing.T) {
 		t.Fatalf("expected commit notify")
 	}
 }
+
+// Tests that a nonvoter's match survives its promotion to voter. The leader's
+// appendConfigurationEntry dispatches the promoting entry, which wakes
+// replication, before it calls setConfiguration, so the promoted server can
+// acknowledge that entry while it is still a nonvoter.
+func TestCommitment_promotedNonvoterKeepsEarlierMatch(t *testing.T) {
+	commitCh := make(chan struct{}, 1)
+	configuration := makeConfiguration([]string{"s1", "s2", "s3"})
+	configuration.Servers = append(configuration.Servers, Server{Suffrage: Nonvoter, ID: "s4", Address: "s4addr"})
+	c := newCommitment(commitCh, configuration, 4)
+	c.match("s1", 5)
+	c.match("s2", 5)
+	c.match("s3", 5)
+	if c.getCommitIndex() != 5 || !drainNotifyCh(commitCh) {
+		t.Fatalf("expected 5 entries committed, found %d", c.getCommitIndex())
+	}
+
+	// Entry 6 promotes s4. s1 is the leader; s3 no longer answers.
+	c.match("s1", 6)
+	c.match("s4", 6)
+	if c.getCommitIndex() != 5 {
+		t.Fatalf("a nonvoter's match must not commit, found %d", c.getCommitIndex())
+	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
+	c.setConfiguration(voters(4))
+	c.match("s2", 6)
+	if c.getCommitIndex() != 6 {
+		t.Fatalf("expected 6 entries committed with s1, s2 and s4, found %d", c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
+	}
+}
