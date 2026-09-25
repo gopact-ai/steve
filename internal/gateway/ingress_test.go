@@ -121,8 +121,16 @@ func TestOrdinaryIngressReturnsAfterAcceptanceAndSharesRecoveryControlSlot(t *te
 	}
 	other := msg
 	other.MessageID, other.ConversationID = "other", "other"
-	if err := g.HandleMessage(other); err != nil {
-		t.Fatal(err)
+	// The only slot is taken, so the other conversation's input stays
+	// pending for the reconciler; HandleMessage must not wait for capacity.
+	go func() { done <- g.HandleMessage(other) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ingress waited for capacity")
 	}
 	if p.calls.Load() != 2 {
 		t.Fatal("saturated capacity dispatched another conversation")
