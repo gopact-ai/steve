@@ -61,7 +61,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					Command: bin, Env: []string{"MOCKAGENT_MEMORY_DIR=" + memory},
 				}},
 			}
-			discovery := discoveryDir(worker.StateDir)
+			discovery := probeWorkdir(worker.StateDir)
 			if err := cluster.SaveClusterJSON(cfg.WorkerConfigFile, worker, true); err != nil {
 				t.Fatal(err)
 			}
@@ -330,7 +330,7 @@ type continuityEvent struct {
 }
 
 func TestContinuityBusinessEvents(t *testing.T) {
-	discovery := discoveryDir("/node")
+	discovery := probeWorkdir("/node")
 	probe := continuityEvent{Kind: "new", Session: "probe", PID: 1, Cwd: discovery}
 	opened := continuityEvent{Kind: "new", Session: "native", PID: 2}
 	prompt := continuityEvent{Kind: "prompt", Session: "native", PID: 2, Input: "fixture-remember marker"}
@@ -367,7 +367,7 @@ func TestContinuityBusinessEvents(t *testing.T) {
 // Only discovery sessions that nothing used are dropped; a session in the
 // probe directory that was prompted or loaded is evidence and stays.
 func TestWithoutDiscovery(t *testing.T) {
-	discovery := discoveryDir("/node")
+	discovery := probeWorkdir("/node")
 	probe := continuityEvent{Kind: "new", Session: "probe", PID: 1, Cwd: discovery}
 	probePrompt := continuityEvent{Kind: "prompt", Session: "probe", PID: 1, Input: "fixture-recall"}
 	probeLoad := continuityEvent{Kind: "load", Session: "probe", PID: 2, Cwd: discovery}
@@ -413,9 +413,10 @@ func continuityBusinessEvents(events []continuityEvent, kind, native string) []c
 		if event.Kind != kind || event.Session != native {
 			continue
 		}
-		// Only independent, unprompted discovery sessions may precede the
-		// business open. Keep the entire suffix: filtering by native ID
-		// would conceal a fresh-session fallback or a replay elsewhere.
+		// Only "new" events of other sessions from other processes may
+		// precede the business open; any prompt or load there is rejected.
+		// Keep the entire suffix: filtering by native ID would conceal a
+		// fresh-session fallback or a replay elsewhere.
 		for _, prior := range events[:i] {
 			if prior.Kind != "new" || prior.Input != "" || prior.Session == native || prior.PID == event.PID {
 				return nil
