@@ -105,7 +105,7 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 	id := acp.SessionID(fmt.Sprintf("mock-session-%d", a.counter.Add(1)))
 	if os.Getenv("MOCKAGENT_MEMORY_DIR") != "" {
 		var err error
-		id, err = newMemorySession()
+		id, err = newMemorySession(req.Cwd)
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +119,7 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 
 func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
 	if dir := os.Getenv("MOCKAGENT_MEMORY_DIR"); dir != "" {
-		if err := memoryEvent("load", req.SessionID, ""); err != nil {
+		if err := memoryEvent("load", req.SessionID, req.Cwd, ""); err != nil {
 			return nil, err
 		}
 		if _, err := os.Stat(filepath.Join(dir, "reject-load")); err == nil {
