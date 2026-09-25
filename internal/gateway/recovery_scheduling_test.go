@@ -286,8 +286,11 @@ func TestGatewayRuntimeRecoveryUsesBoundedSlotsAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers recoveryTestWorkers
 	defer func() { cancel(); workers.Wait() }()
+	// Every pass after the first finds both slots taken.
 	for range 4 {
-		if err := g.ReconcileQueued(ctx, book, p, func(string, string) error { return nil }, &workers); err != nil {
+		if err := mustNotWaitForCapacity(t, "recovery", cancel, func() error {
+			return g.ReconcileQueued(ctx, book, p, func(string, string) error { return nil }, &workers)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -424,11 +427,15 @@ func TestGatewayRecoveryClaimTakesItsConversationSlot(t *testing.T) {
 		}
 	}
 	revive := func(string, string) error { return nil }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	// A pass hands at most cap(g.slots) runs to workers, so only the second
 	// pass offers "third" a claim while "first" and "second" hold both slots.
 	w := &heldRecoveryWorkers{}
 	for range 2 {
-		if err := g.ReconcileQueued(t.Context(), book, p, revive, w); err != nil {
+		if err := mustNotWaitForCapacity(t, "recovery", cancel, func() error {
+			return g.ReconcileQueued(ctx, book, p, revive, w)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -448,7 +455,7 @@ func TestGatewayRecoveryClaimTakesItsConversationSlot(t *testing.T) {
 	}
 	// Both runs returned their slots, so the next pass claims "third".
 	w = &heldRecoveryWorkers{}
-	if err := g.ReconcileQueued(t.Context(), book, p, revive, w); err != nil {
+	if err := g.ReconcileQueued(ctx, book, p, revive, w); err != nil {
 		t.Fatal(err)
 	}
 	for _, run := range w.jobs {
