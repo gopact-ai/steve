@@ -222,6 +222,9 @@ func (h *rpcHandler) reply(w http.ResponseWriter, value any, err error) {
 		return
 	}
 	status := http.StatusConflict
+	if errorCode(err) == unclassifiedCode {
+		status = http.StatusInternalServerError
+	}
 	if errors.Is(err, ErrNotLeader) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrApplication) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		status = http.StatusServiceUnavailable
 	}
@@ -243,6 +246,11 @@ func (h *rpcHandler) failure(w http.ResponseWriter, status int, err error) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(failure)
 }
+
+// unclassifiedCode travels for an error the service did not classify. It
+// says nothing about the request, so a caller must neither retry it as a
+// transient failure nor treat it as its own invalid input.
+const unclassifiedCode = "unclassified"
 
 func errorCode(err error) string {
 	switch {
@@ -266,8 +274,10 @@ func errorCode(err error) string {
 		return "application"
 	case errors.Is(err, ErrReceiptExpired):
 		return "receipt_expired"
-	default:
+	case errors.Is(err, ErrInvalid):
 		return "invalid"
+	default:
+		return unclassifiedCode
 	}
 }
 
@@ -294,8 +304,12 @@ func (f rpcFailure) err() error {
 		kind = ErrApplication
 	case "receipt_expired":
 		kind = ErrReceiptExpired
-	default:
+	case "invalid":
 		kind = ErrInvalid
+	default:
+		// An unclassified error, or a code from a later build, is kept apart
+		// from every coordination error.
+		return fmt.Errorf("coordination: peer error: %s", f.Message)
 	}
 	return fmt.Errorf("%w: %s", kind, f.Message)
 }

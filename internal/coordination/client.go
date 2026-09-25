@@ -354,18 +354,26 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 	if err != nil {
 		return nil, fmt.Errorf("%w: read peer response: %v", ErrUnavailable, err)
 	}
+	// A reply that is not the peer's answer to the request says nothing about
+	// the request, so none of these is reported as invalid input.
 	if int64(len(data)) > c.config.MaxResponseBytes {
-		return nil, fmt.Errorf("%w: peer response exceeds size limit", ErrInvalid)
+		return nil, fmt.Errorf("coordination: peer %s response exceeds %d bytes", member.NodeID, c.config.MaxResponseBytes)
 	}
 	if response.StatusCode != http.StatusOK {
 		var failure rpcFailure
-		if err := json.Unmarshal(data, &failure); err != nil {
-			return nil, fmt.Errorf("%w: invalid peer error response", ErrInvalid)
+		if err := json.Unmarshal(data, &failure); err != nil || failure.Code == "" {
+			// Something other than the coordination handler answered, such
+			// as a proxy or a server that is stopping; a 5xx page from it
+			// is a transport failure.
+			if response.StatusCode >= http.StatusInternalServerError {
+				return nil, fmt.Errorf("%w: peer %s answered HTTP %d without a coordination error", ErrUnavailable, member.NodeID, response.StatusCode)
+			}
+			return nil, fmt.Errorf("coordination: peer %s answered HTTP %d without a coordination error", member.NodeID, response.StatusCode)
 		}
 		return &failure, failure.err()
 	}
 	if err := json.Unmarshal(data, output); err != nil {
-		return nil, fmt.Errorf("%w: invalid peer response", ErrInvalid)
+		return nil, fmt.Errorf("coordination: read peer %s response: %v", member.NodeID, err)
 	}
 	return nil, nil
 }
