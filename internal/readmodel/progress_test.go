@@ -120,6 +120,32 @@ func TestStepProgressReadsTheTaskOnlyForWhatItPublishes(t *testing.T) {
 	}
 }
 
+// A held update released after its agent went on to another step still
+// lands, but the agent's activity stays on the step it went on to.
+func TestStepProgressReleaseLeavesAnAgentThatMovedOnWhereItIs(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	m.StepProgress("task", "plan", "first", "builder", "node-a", view.Progress{Answer: "working"})
+	m.StepProgress("task", "plan", "first", "builder", "node-a", view.Progress{Answer: "done"})
+	m.StepProgress("task", "plan", "second", "builder", "node-a", view.Progress{Answer: "starting"})
+	deadline := time.After(10 * progressEvery)
+	for landed := false; !landed; {
+		select {
+		case ev := <-events:
+			landed = ev.StepID == "first" && ev.Progress.Answer == "done"
+		case <-deadline:
+			t.Fatal("the first step's last update never landed")
+		}
+	}
+	m.mu.Lock()
+	at := m.activity["builder"]
+	m.mu.Unlock()
+	if at.StepID != "second" {
+		t.Fatalf("builder's activity is on step %q, want the step it went on to", at.StepID)
+	}
+}
+
 func TestTimelineSurvivesProjectionWithEveryToolReference(t *testing.T) {
 	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	p := view.Progress{Timeline: []view.Span{{Kind: "text", Text: "first", At: at}}}

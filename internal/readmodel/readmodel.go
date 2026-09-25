@@ -1096,7 +1096,16 @@ func (m *Model) releaseStep(key string) {
 		return
 	}
 	m.throttle[key] = throttled{at: time.Now(), signature: last.signature}
-	m.publishLocked(*last.held)
+	ev := *last.held
+	agent := ev.Progress.Agent
+	current, moved := m.activity[agent]
+	moved = moved && (current.TaskID != ev.TaskID || current.StepID != ev.StepID)
+	m.publishLocked(ev)
+	if moved {
+		// The agent went on to another step while this update was held:
+		// its activity stays on that step.
+		m.activity[agent] = current
+	}
 }
 
 type throttled struct {
