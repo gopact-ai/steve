@@ -1264,7 +1264,8 @@ func (m *Model) publishLocked(ev Event) {
 // Observe records a connectivity fact and tells the page. The store keeps
 // each observation as its own record, so a restart does not forget it and
 // recording one writes only what the store does not have yet. A failed save
-// leaves the fact live; the next Observe writes it with its own.
+// leaves the fact live; later Observes write it with their own, oldest
+// first and at most observationsPerSave at a time.
 func (m *Model) Observe(kind, subject, text string, data map[string]string) {
 	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text, Data: data}
 	m.observeMu.Lock()
@@ -1281,7 +1282,8 @@ func (m *Model) Observe(kind, subject, text string, data map[string]string) {
 	m.observations = append(m.observations, obs)
 	m.unsaved++
 	m.keepObservations()
-	pending := append([]Observation(nil), m.observations[len(m.observations)-m.unsaved:]...)
+	unsaved := m.observations[len(m.observations)-m.unsaved:]
+	pending := append([]Observation(nil), unsaved[:min(len(unsaved), observationsPerSave)]...)
 	m.mu.Unlock()
 	if store != nil && m.loaded {
 		first := m.saved + 1
@@ -1293,13 +1295,22 @@ func (m *Model) Observe(kind, subject, text string, data map[string]string) {
 		if err := store.Save(context.Background(), first, pending, keep); err != nil {
 			slog.Error(fmt.Sprintf("readmodel: save observations: %v", err))
 		} else {
-			m.saved, m.unsaved = last, 0
+			m.saved = last
+			m.unsaved -= len(pending)
 		}
 	}
 	m.Publish(Event{Kind: "observe." + kind, Detail: text, Text: subject, Data: data})
 }
 
 const observationsKept = 1000
+
+// observationsPerSave bounds one save, which the ledger replicates as one
+// write: an observation record is under 1 KB, so a save stays near 30 KB
+// however long saving failed, instead of resending the backlog, up to the
+// whole retained history, in one write to members that may sit behind slow
+// links. Each save still drains observationsPerSave-1 more than the one
+// observed, so a full backlog is caught up within a few dozen observations.
+const observationsPerSave = 32
 
 // keepObservations forgets the oldest observations past the limit, saved
 // or not. The caller holds observeMu and mu.
