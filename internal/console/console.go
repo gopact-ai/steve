@@ -749,6 +749,9 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 				return s.model.Subscribe(ctx)
 			}
 			resume, events, stop := s.model.SubscribeAfter(ctx, last)
+			// A reset replays every event the model keeps. It comes only when
+			// the events right after last are no longer kept, so each event it
+			// replays came after last: none is from before this follow began.
 			if resume.Reset {
 				slog.Warn("console: fell behind the change stream further than it keeps; some step progress may be stale", "conversation", conversation)
 			}
