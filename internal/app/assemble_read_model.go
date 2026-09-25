@@ -91,24 +91,16 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 		return errors.Join(remoteErr, localErr)
 	}
 	// Machines coming and going are history, not just log lines.
-	nodes.SetObserver(func(s node.Status) {
-		if s.Up {
-			// Keys: host, os, arch, build.
-			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion),
-				map[string]string{"host": s.Advert.Hostname, "os": s.Advert.OS, "arch": s.Advert.Arch, "build": s.Advert.BuildVersion})
-			background.Go(func(ctx context.Context) { shipper.Ship(ctx, s.Name) })
-			// A machine that comes back may hold worktrees of attempts that
-			// died with the connection; nothing else ever returns for them.
-			if root := s.Advert.WorkspaceRoot; root != "" {
-				background.Go(func(ctx context.Context) {
-					sweepWorktrees(ctx, artifacts, attempts, tasks, view, boot.NodeName(), s.Name, root)
-				})
-			}
-			return
+	nodes.SetObserver(nodeObserver(view.Observe, func(s node.Status) {
+		background.Go(func(ctx context.Context) { shipper.Ship(ctx, s.Name) })
+		// A machine that comes back may hold worktrees of attempts that
+		// died with the connection; nothing else ever returns for them.
+		if root := s.Advert.WorkspaceRoot; root != "" {
+			background.Go(func(ctx context.Context) {
+				sweepWorktrees(ctx, artifacts, attempts, tasks, view, boot.NodeName(), s.Name, root)
+			})
 		}
-		// Keys: reason.
-		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError), map[string]string{"reason": s.LastError})
-	})
+	}))
 	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress, ended bool) {
 		if ended {
 			view.StepEnded(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
@@ -117,6 +109,22 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 		view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
 	})
 	return &readModelValues{repos: repos, shipper: shipper, view: view}, nil
+}
+
+// nodeObserver records machines coming and going as history, and hands a
+// machine's arrival to arrived: what a connection sets going on the machine.
+func nodeObserver(record func(kind, subject, text string, data map[string]string), arrived func(node.Status)) func(node.Status) {
+	return func(s node.Status) {
+		if s.Up {
+			// Keys: host, os, arch, build.
+			record("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion),
+				map[string]string{"host": s.Advert.Hostname, "os": s.Advert.OS, "arch": s.Advert.Arch, "build": s.Advert.BuildVersion})
+			arrived(s)
+			return
+		}
+		// Keys: reason.
+		record("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError), map[string]string{"reason": s.LastError})
+	}
 }
 
 type readModelAssembly interface {
