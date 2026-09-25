@@ -538,6 +538,14 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	if got := len(tasks.List("")); got != stored {
 		t.Fatalf("the task store kept a write that failed: %d tasks, had %d", got, stored)
 	}
+	// A caller whose own deadline ends before ApplyTimeout gets that deadline
+	// back, not a report that the replica is unavailable.
+	short, cancel := context.WithTimeout(t.Context(), applyTimeout/3)
+	err = active.Ledger.PutBinding(short, "test", "caller-deadline", "never")
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a write whose caller's deadline ended first failed with %v, not with that deadline", err)
+	}
 	nodes[1].raft.resume()
 	if _, err := tasks.Create(pending); err != nil {
 		t.Fatalf("the same write failed again after node-2 could catch up: %v", err)
