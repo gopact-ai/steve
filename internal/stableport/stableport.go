@@ -42,8 +42,8 @@ const (
 )
 
 // InRange reports whether port is one Listen may resolve port 0 to on
-// Unix: a port of the range outside the SSH link window. A port the
-// kernel picks, when Listen falls back to it, is not.
+// Unix: a port of the range outside the SSH link window. When Listen falls
+// back to the kernel, the port it returns need not be in the range.
 func InRange(port int) bool {
 	return port >= first && port <= last && (port < LinkFirst || port > LinkLast)
 }
