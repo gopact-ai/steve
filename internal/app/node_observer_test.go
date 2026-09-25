@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
 // startWorker serves one real node on loopback until the returned stop.
@@ -85,5 +87,84 @@ func TestArrivalHeardAfterItsConnectionEndedSetsNothingGoing(t *testing.T) {
 	}
 	if len(setUp) != 1 || setUp[0] != arrival.Generation {
 		t.Fatalf("set up connections %v, want only the current connection %d", setUp, arrival.Generation)
+	}
+}
+
+// While history is slow to write, a machine's loss waits in the queue and
+// the registry has already acted on it: an attempt on that machine fails
+// and the ledger says so. The history page must still show the loss first.
+func TestLossHeardLateStaysBeforeTheFailureItCaused(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	view := readmodel.New(readmodel.Sources{Ledger: readmodel.Ledger{Book: book}, Observations: readmodel.Observations{Book: book}})
+	addr, stopWorker := startWorker(t)
+	nodes := node.NewRegistry("hub", map[string]node.Config{"worker": {Addr: addr, Token: "arrival-test"}})
+	t.Cleanup(nodes.Close)
+	slow := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-slow:
+		default:
+			close(slow)
+		}
+	})
+	writing := make(chan struct{})
+	lossRecorded := make(chan struct{})
+	record := func(at time.Time, kind, subject, text string, data map[string]string) {
+		if kind == "node.up" {
+			close(writing)
+			<-slow
+		}
+		view.ObserveAt(at, kind, subject, text, data)
+		if kind == "node.down" {
+			close(lossRecorded)
+		}
+	}
+	nodes.SetObserver(nodeObserver(nodes, record, func(node.Status) {}))
+	if _, err := nodes.Advert(t.Context(), "worker"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writing:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the arrival was never recorded")
+	}
+	stopWorker()
+	deadline := time.Now().Add(10 * time.Second)
+	for stillConnected(nodes, node.Status{Name: "worker", Generation: 1}) {
+		if time.Now().After(deadline) {
+			t.Fatal("the registry never noticed the worker leave")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := book.Begin(t.Context(), "att-on-worker", "attempt", "failed", "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	close(slow)
+	select {
+	case <-lossRecorded:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the loss was never recorded")
+	}
+
+	entries, _, err := view.History(t.Context(), "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loss, failure := -1, -1
+	for i, e := range entries {
+		switch {
+		case e.Kind == "observe.node.down":
+			loss = i
+		case e.Operation == "att-on-worker":
+			failure = i
+		}
+	}
+	// History is newest first.
+	if loss < 0 || failure < 0 || failure > loss {
+		t.Fatalf("history shows the failure at %d and the loss at %d, newest first; want the loss before the failure", failure, loss)
 	}
 }

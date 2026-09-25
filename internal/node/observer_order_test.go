@@ -202,3 +202,38 @@ func TestClosedRegistryDeliversNothingStillQueued(t *testing.T) {
 		t.Fatalf("heard up=%v after close, want only the delivery already under way", heard)
 	}
 }
+
+// Observers can hear a change long after the registry acted on it; the
+// time they are handed is when the registry made the change, or history
+// would date a machine's loss after the failures it caused.
+func TestChangeHeardLateIsDatedWhenItWasMade(t *testing.T) {
+	r := NewRegistry("hub-1", map[string]Config{"n": {}})
+	t.Cleanup(r.Close)
+	r.mu.Lock()
+	r.last["n"] = &Status{Name: "n", Up: true, Advert: nodewire.Advert{Node: "n", Capabilities: []string{"gpu"}}}
+	r.mu.Unlock()
+	gate := newObserverGate(t)
+	r.notices.post(gate.hold)
+	gate.waitEntered(t)
+	dated := make(chan time.Time, 2)
+	r.SetObserver(func(_ Status, at time.Time) { dated <- at })
+	r.SetDriftObserver(func(_ string, _ []ability.Change, at time.Time) { dated <- at })
+
+	before := time.Now()
+	r.mu.Lock()
+	r.noticeLocked(Status{Name: "n"})
+	r.mu.Unlock()
+	r.noteDrift("n", nodewire.Advert{Node: "n", Capabilities: []string{"gpu", "fpga"}})
+	after := time.Now()
+	gate.open()
+	for _, what := range []string{"loss", "drift"} {
+		select {
+		case at := <-dated:
+			if at.Before(before) || at.After(after) {
+				t.Errorf("%s dated %v after it was made, want between %v and %v", what, at.Sub(after), before, after)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s was never heard", what)
+		}
+	}
+}
