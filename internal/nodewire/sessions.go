@@ -109,6 +109,11 @@ type SessionRequest struct {
 	MCPAuthorizationRefresh *MCPAuthorizationRefresh `json:"mcp_authorization_refresh,omitempty"`
 }
 
+// PlatformMCPServer names Steve's own HTTP messaging server in a session's
+// MCP configuration. Agents on a node reach it through the node's loopback
+// port, which the node may move across a restart.
+const PlatformMCPServer = "steve"
+
 // MCPAuthorizationRefresh proves only the previous built-in steve HTTP MCP
 // Authorization value. It is not execution authority or a reusable credential.
 type MCPAuthorizationRefresh struct {

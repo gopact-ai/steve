@@ -118,6 +118,13 @@ type ownedSession struct {
 	failure            error
 	pendingProgress    *view.Progress
 	progressTimer      *time.Timer
+
+	// processConfigHash is processConfigHash of the open that started this
+	// session. Only this node process holds sessions it opened, and its
+	// messaging listener never moves, so requests for them must name the
+	// exact address the native process was given. It is not persisted: a
+	// record read back after a restart is compared by ConfigHash instead.
+	processConfigHash string
 }
 
 type sessionRecord struct {
@@ -343,7 +350,7 @@ func (one *ownedSession) admitLocked(req nodewire.SessionRequest) error {
 		return sessionError("forbidden", "coordinator identity differs at the same epoch")
 	}
 	next := one.copyLocked()
-	if req.Action == nodewire.SessionActionOpen && sessionConfigHash(req) != next.ConfigHash {
+	if req.Action == nodewire.SessionActionOpen && processConfigHash(req) != one.processConfigHash {
 		return sessionError("conflict", "native session configuration changed")
 	}
 	if req.Binding != next.State.Binding {

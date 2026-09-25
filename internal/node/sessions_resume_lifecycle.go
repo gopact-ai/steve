@@ -31,6 +31,12 @@ func (s *SessionService) archiveStoppedSession(req nodewire.SessionRequest) erro
 	if err := validateResumeSource(req, one.record); err != nil {
 		return err
 	}
+	// This process opened the session, so its messaging port has not moved.
+	if same, err := sameConfig(req, one.processConfigHash, processConfigHash); err != nil {
+		return err
+	} else if !same {
+		return sessionError("forbidden", "native process was opened with a different configuration")
+	}
 	state := one.record.State.State
 	if (state != nodewire.SessionIdle && state != nodewire.SessionInterrupted) || one.runningLocked() || one.host == nil || !one.host.AllProcessesStopped() {
 		return nil

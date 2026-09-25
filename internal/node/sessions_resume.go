@@ -74,16 +74,27 @@ func validateResumeSource(req nodewire.SessionRequest, record sessionRecord) err
 		return sessionError("forbidden", "stale native context authority")
 	}
 	before, after := record.State.Binding, req.Binding
-	configMatches := record.ConfigHash == sessionConfigHash(req)
-	if req.MCPAuthorizationRefresh != nil {
-		previous, err := previousMCPConfigHash(req)
-		if err != nil {
-			return err
-		}
-		configMatches = configMatches || record.ConfigHash == previous
+	configMatches, err := sameConfig(req, record.ConfigHash, sessionConfigHash)
+	if err != nil {
+		return err
 	}
 	if before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || record.State.Harness != req.Harness || !configMatches {
 		return sessionError("forbidden", "native context differs from the admitted session or configuration")
 	}
 	return nil
+}
+
+// sameConfig reports whether req carries the configuration recorded as hash
+// computes it. A proven replacement of the built-in credential is the only
+// difference allowed.
+func sameConfig(req nodewire.SessionRequest, recorded string, hash func(nodewire.SessionRequest) string) (bool, error) {
+	matches := recorded == hash(req)
+	if req.MCPAuthorizationRefresh != nil {
+		previous, err := previousMCPRequest(req)
+		if err != nil {
+			return false, err
+		}
+		matches = matches || recorded == hash(previous)
+	}
+	return matches, nil
 }

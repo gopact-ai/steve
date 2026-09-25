@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,10 +34,11 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated agent: %v %s", err, out)
 	}
-	for _, name := range []string{"recall", "warm_rebind", "load_failure_does_not_open_fresh", "repair_archived_revoked_credential"} {
+	for _, name := range []string{"recall", "warm_rebind", "load_failure_does_not_open_fresh", "repair_archived_revoked_credential", "messaging_port_moved"} {
 		t.Run(name, func(t *testing.T) {
 			rejectLoad := name == "load_failure_does_not_open_fresh"
 			repairCredential := name == "repair_archived_revoked_credential"
+			portMoved := name == "messaging_port_moved"
 			dir := filepath.Join(root, name)
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				t.Fatal(err)
@@ -199,8 +202,47 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			remembered := ""
+			var squatted atomic.Int32
+			if portMoved {
+				// Another process takes the node's remembered reverse messaging
+				// port while it is down, so the restarted node listens elsewhere.
+				// It counts every connection, since none may reach it.
+				raw, err := os.ReadFile(filepath.Join(worker.StateDir, "mcp.port"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				remembered = strings.TrimSpace(string(raw))
+				squatter, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", remembered))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer squatter.Close()
+				go func() {
+					for {
+						conn, err := squatter.Accept()
+						if err != nil {
+							return
+						}
+						squatted.Add(1)
+						conn.Close()
+					}
+				}()
+			}
 			second := StartTestPeer(t, options)
 			WaitPeerReady(t, second)
+			if portMoved {
+				second.Mu.RLock()
+				registry := second.Application.Admin.Nodes
+				second.Mu.RUnlock()
+				endpoint, err := registry.MCPEndpoint(t.Context(), cfg.NodeID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if endpoint == "http://"+net.JoinHostPort("127.0.0.1", remembered)+"/mcp" {
+					t.Fatalf("fixture did not move the reverse messaging port %s", remembered)
+				}
+			}
 			continuityRequest(t, second, http.MethodPut, "/console/preferences", preferences)
 			afterPrefs := continuityConversation(t, second, conversation)
 			if !reflect.DeepEqual(before, afterPrefs) {
@@ -240,6 +282,9 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					t.Fatalf("restart did not load the exact native session in a new process: %+v", events)
 				}
 				continuityOpenedForWork(t, resumed[0], discovery)
+				if n := squatted.Load(); n != 0 {
+					t.Fatalf("the process on the old messaging port received %d connections", n)
+				}
 				if strings.Contains(resumed[1].Input, marker) || strings.Contains(resumed[1].Input, "fixture-remember") {
 					t.Fatal("recall prompt replayed the marker instead of using native memory")
 				}

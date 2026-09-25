@@ -123,10 +123,15 @@ func (a *Assembler) Assemble(selected agent.Agent) (Capabilities, error) {
 // configured set — e.g. the built-in Feishu messaging MCP server with its
 // per-session credentials. Instructions join the identity text and both feed
 // the fingerprint, so a session keeps a stable hash only while its extras
-// stay stable.
+// stay stable; the one exception is the port of a Platform server.
 type Extra struct {
-	Name         string
-	Server       MCPServer
+	Name   string
+	Server MCPServer
+	// Platform marks Steve's own messaging server. Steve picks its port
+	// when the listener starts, so the port can change across a restart
+	// without the session being given anything different; fingerprints
+	// identify this server without it.
+	Platform     bool
 	Instructions string
 	// Memory is remembered text to append after the home's memory: it
 	// reaches the agent but, like the home's memory, not the fingerprint.
@@ -216,36 +221,9 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 			instructions = m
 		}
 	}
-	servers := make([]acp.MCPServer, 0, len(selected.MCPServers))
-	for _, name := range selected.MCPServers {
-		// An agent on another machine uses that machine's MCP servers:
-		// they are bound there at admission and joined to the session by
-		// the caller. Nothing about them is known, or checked, here.
-		if selected.Node != "" {
-			continue
-		}
-		a.mu.RLock()
-		cfg, ok := a.servers[name]
-		a.mu.RUnlock()
-		if !ok {
-			return Capabilities{}, fmt.Errorf("unknown MCP server %q", name)
-		}
-		server, err := makeMCPServer(name, cfg)
-		if err != nil {
-			return Capabilities{}, err
-		}
-		servers = append(servers, server)
-	}
-	for _, extra := range extras {
-		if extra.Server.Type == "" {
-			// Instructions or memory only: nothing to connect.
-			continue
-		}
-		server, err := makeMCPServer(extra.Name, extra.Server)
-		if err != nil {
-			return Capabilities{}, err
-		}
-		servers = append(servers, server)
+	servers, identities, err := a.sessionServers(selected, extras)
+	if err != nil {
+		return Capabilities{}, err
 	}
 	hashMode := home.ModeNone
 	if a.home != nil {
@@ -257,15 +235,59 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 	} else if a.skills != nil {
 		skillsHash = a.skills.Fingerprint()
 	}
-	fp, err := fingerprint(identity, servers, hashMode, skillsHash)
+	fp, err := fingerprint(identity, identities, hashMode, skillsHash)
 	if err != nil {
 		return Capabilities{}, err
 	}
-	sessionFP, err := fingerprint(sessionInstructions, servers, hashMode, skillsHash)
+	sessionFP, err := fingerprint(sessionInstructions, identities, hashMode, skillsHash)
 	if err != nil {
 		return Capabilities{}, err
 	}
 	return Capabilities{SkillsFingerprint: skillsHash, Instructions: instructions, Sections: sections, MCPServers: servers, Fingerprint: fp, SessionFingerprint: sessionFP}, nil
+}
+
+// sessionServers are the MCP servers the session is given, and the same
+// servers as its fingerprints identify them.
+func (a *Assembler) sessionServers(selected agent.Agent, extras []Extra) (servers, identities []acp.MCPServer, err error) {
+	servers = make([]acp.MCPServer, 0, len(selected.MCPServers))
+	identities = make([]acp.MCPServer, 0, len(selected.MCPServers))
+	for _, name := range selected.MCPServers {
+		// An agent on another machine uses that machine's MCP servers:
+		// they are bound there at admission and joined to the session by
+		// the caller. Nothing about them is known, or checked, here.
+		if selected.Node != "" {
+			continue
+		}
+		a.mu.RLock()
+		cfg, ok := a.servers[name]
+		a.mu.RUnlock()
+		if !ok {
+			return nil, nil, fmt.Errorf("unknown MCP server %q", name)
+		}
+		server, err := makeMCPServer(name, cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		servers = append(servers, server)
+		identities = append(identities, server)
+	}
+	for _, extra := range extras {
+		if extra.Server.Type == "" {
+			// Instructions or memory only: nothing to connect.
+			continue
+		}
+		server, err := makeMCPServer(extra.Name, extra.Server)
+		if err != nil {
+			return nil, nil, err
+		}
+		servers = append(servers, server)
+		hashed := server
+		if extra.Platform {
+			hashed.URL = withoutPort(hashed.URL)
+		}
+		identities = append(identities, hashed)
+	}
+	return servers, identities, nil
 }
 
 func makeMCPServer(name string, cfg MCPServer) (acp.MCPServer, error) {
@@ -314,6 +336,16 @@ func fingerprint(instructions string, servers []acp.MCPServer, mode home.Mode, s
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// withoutPort drops the port from a URL makeMCPServer already accepted.
+func withoutPort(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port())
+	return parsed.String()
 }
 
 func sortedKeys(values map[string]string) []string {

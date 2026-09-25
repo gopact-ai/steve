@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -57,7 +58,7 @@ func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string)
 	if !ok {
 		return Whereabouts{}, fmt.Errorf("no agent %q", agentID)
 	}
-	w := Whereabouts{Agent: selected.ID, Node: placeLabel(selected.Node), Harness: selected.Harness, Model: selected.Model, Mode: string(c.modeOf(conversationID)), MCPServers: append([]string{"steve"}, selected.MCPServers...), Skills: []string{}}
+	w := Whereabouts{Agent: selected.ID, Node: placeLabel(selected.Node), Harness: selected.Harness, Model: selected.Model, Mode: string(c.modeOf(conversationID)), MCPServers: append([]string{agentmcp.ServerName}, selected.MCPServers...), Skills: []string{}}
 	if c.skills.Map != nil {
 		w.Skills = c.skills.Map.EnabledNames()
 	}
