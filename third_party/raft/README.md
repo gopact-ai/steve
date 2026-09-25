@@ -36,7 +36,8 @@ replace github.com/hashicorp/raft v1.7.3 => ./third_party/raft
 
 Only the Go package, its tests, `go.mod`, `go.sum` and `LICENSE` are kept.
 The upstream `.github`, `bench`, `docs`, `CHANGELOG.md`, `Makefile`,
-`README.md`, `membership.md`, `tag.sh` and dotfiles are omitted.
+`README.md`, `membership.md`, `tag.sh` and dotfiles are omitted; this file
+is local and replaces the upstream `README.md`.
 
 ## Running the tests
 
