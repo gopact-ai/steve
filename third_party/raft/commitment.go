@@ -12,12 +12,16 @@ import (
 // replication goroutines report in newly written entries with match(), and
 // this notifies on commitCh when the commit index has advanced.
 type commitment struct {
-	// protects matchIndexes and commitIndex
+	// protects matchIndexes, voters and commitIndex
 	sync.Mutex
 	// notified when commitIndex increases
 	commitCh chan struct{}
-	// voter ID to log index: the server stores up through this log entry
+	// server ID to log index: the server stores up through this log entry.
+	// Every server in the configuration is tracked, nonvoters included, so
+	// a match reported before a server's promotion counts once it votes.
 	matchIndexes map[ServerID]uint64
+	// the servers whose matchIndexes count toward commitIndex
+	voters map[ServerID]struct{}
 	// a quorum stores up through this log entry. monotonically increases.
 	commitIndex uint64
 	// the first index of this leader's term: this needs to be replicated to a
@@ -34,14 +38,17 @@ type commitment struct {
 // its description above).
 func newCommitment(commitCh chan struct{}, configuration Configuration, startIndex uint64) *commitment {
 	matchIndexes := make(map[ServerID]uint64)
+	voters := make(map[ServerID]struct{})
 	for _, server := range configuration.Servers {
+		matchIndexes[server.ID] = 0
 		if server.Suffrage == Voter {
-			matchIndexes[server.ID] = 0
+			voters[server.ID] = struct{}{}
 		}
 	}
 	return &commitment{
 		commitCh:     commitCh,
 		matchIndexes: matchIndexes,
+		voters:       voters,
 		commitIndex:  0,
 		startIndex:   startIndex,
 	}
@@ -55,9 +62,11 @@ func (c *commitment) setConfiguration(configuration Configuration) {
 	defer c.Unlock()
 	oldMatchIndexes := c.matchIndexes
 	c.matchIndexes = make(map[ServerID]uint64)
+	c.voters = make(map[ServerID]struct{})
 	for _, server := range configuration.Servers {
+		c.matchIndexes[server.ID] = oldMatchIndexes[server.ID] // defaults to 0
 		if server.Suffrage == Voter {
-			c.matchIndexes[server.ID] = oldMatchIndexes[server.ID] // defaults to 0
+			c.voters[server.ID] = struct{}{}
 		}
 	}
 	c.recalculate()
@@ -77,22 +86,26 @@ func (c *commitment) getCommitIndex() uint64 {
 func (c *commitment) match(server ServerID, matchIndex uint64) {
 	c.Lock()
 	defer c.Unlock()
-	if prev, hasVote := c.matchIndexes[server]; hasVote && matchIndex > prev {
+	if prev, inConfiguration := c.matchIndexes[server]; inConfiguration && matchIndex > prev {
 		c.matchIndexes[server] = matchIndex
-		c.recalculate()
+		// Only voters count toward commitIndex, so another server's match
+		// cannot move it.
+		if _, voter := c.voters[server]; voter {
+			c.recalculate()
+		}
 	}
 }
 
-// Internal helper to calculate new commitIndex from matchIndexes.
+// Internal helper to calculate new commitIndex from the voters' matchIndexes.
 // Must be called with lock held.
 func (c *commitment) recalculate() {
-	if len(c.matchIndexes) == 0 {
+	if len(c.voters) == 0 {
 		return
 	}
 
-	matched := make([]uint64, 0, len(c.matchIndexes))
-	for _, idx := range c.matchIndexes {
-		matched = append(matched, idx)
+	matched := make([]uint64, 0, len(c.voters))
+	for id := range c.voters {
+		matched = append(matched, c.matchIndexes[id])
 	}
 	sort.Sort(uint64Slice(matched))
 	quorumMatchIndex := matched[(len(matched)-1)/2]
