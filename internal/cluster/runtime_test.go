@@ -43,6 +43,7 @@ type clusterNode struct {
 	heldApp   chan coordination.AppCommand
 	gateApp   atomic.Pointer[appGate]
 	gateFence atomic.Pointer[appGate]
+	served    sync.Map // RPC path -> *atomic.Int64 requests this node's server received
 	raft      *gatedListener
 	server    *httptest.Server
 	listener  net.Listener
@@ -101,6 +102,14 @@ func (c gatedConn) Read(p []byte) (int, error) {
 		<-*gate
 	}
 	return n, err
+}
+
+// servedCount is how many requests for path this node's server received.
+func (n *clusterNode) servedCount(path string) int64 {
+	if counter, ok := n.served.Load(path); ok {
+		return counter.(*atomic.Int64).Load()
+	}
+	return 0
 }
 
 func (n *clusterNode) current() *businessStores {
@@ -170,6 +179,8 @@ func testNodesWith(t *testing.T, count int, timing fixtureTiming) []*clusterNode
 		n.raft = &gatedListener{Listener: raw}
 		n.listener = n.raft
 		n.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			counter, _ := n.served.LoadOrStore(r.URL.Path, new(atomic.Int64))
+			counter.(*atomic.Int64).Add(1)
 			if current := n.runtime.Load(); current != nil {
 				// A node authorizes a forwarded control command as the owner,
 				// the actor the local caller used, so a command forwarded
@@ -440,6 +451,80 @@ func TestJoinThisMemberCannotTakeGoesToTheNextLeader(t *testing.T) {
 	if _, ok := state.Members["node-4"]; !ok {
 		t.Fatalf("node-4 is not a member after its join: %+v", state.Members)
 	}
+}
+
+// A leader that cannot finish a control command answers with its own error.
+// The client routes a command to the leader, so forwarding it would send the
+// command back to this member again and again until the client's retry
+// window ran out, and hide what went wrong behind that window. Here node-1
+// removes itself and cannot hand its leadership to node-2, which receives no
+// Raft traffic.
+func TestControlCommandTheLeaderCannotFinishIsNotForwardedToItself(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
+	}
+	second, third := nodes[1].runtime.Load(), nodes[2].runtime.Load()
+	// A member that coordinates cannot be removed.
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-3"}); err != nil {
+		t.Fatal(err)
+	}
+	ready(t, third)
+	// node-1 hands its leadership only to a member that has applied what it
+	// has; node-2 is the first such member it tries.
+	deadline := time.Now().Add(8 * time.Second)
+	for second.service.Status().AppliedIndex < first.service.Status().AppliedIndex {
+		if time.Now().After(deadline) {
+			t.Fatalf("node-2 did not catch up with node-1: %d < %d", second.service.Status().AppliedIndex, first.service.Status().AppliedIndex)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if status := first.service.Status(); !status.IsLeader {
+		t.Fatalf("node-1 is to remove itself as the consensus leader, but the leader is %q", status.LeaderID)
+	}
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	_, err := first.Remove(t.Context(), coordination.RemoveRequest{ID: "remove-node-1", Actor: "owner", NodeID: "node-1"})
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "consensus leadership transfer to node-2") {
+		t.Fatalf("node-1 did not answer with the leadership transfer it could not finish: %v", err)
+	}
+	for _, n := range nodes {
+		if got := n.servedCount(coordination.RPCPath + "remove"); got != 0 {
+			t.Fatalf("%s received the removal %d times; the leader forwarded a command only it could take", n.config.Coordination.NodeID, got)
+		}
+	}
+}
+
+// Which answers from this member send a control command on to the member
+// the client finds leading. A member that no longer leads, because it lost
+// leadership part-way, its replica stopped or its service closed, forwards an
+// unavailable or failed-replica answer; a member that still leads answers with
+// its own. The service closes itself as soon as its replica fails, so this
+// checks the decision directly rather than racing that closure.
+func TestControlCommandForwardingDependsOnWhetherThisMemberStillLeads(t *testing.T) {
+	nodes := testNodes(t, 1)
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	check := func(situation string, want map[error]bool) {
+		t.Helper()
+		for kind, forward := range want {
+			if got := r.forwardable(fmt.Errorf("%w: from the test", kind)); got != forward {
+				t.Errorf("%s, forwarding %v is %v, want %v", situation, kind, got, forward)
+			}
+		}
+	}
+	if !r.service.Status().IsLeader {
+		t.Fatal("the single member does not lead consensus")
+	}
+	check("while this member leads", map[error]bool{coordination.ErrNotLeader: true, coordination.ErrUnavailable: false, coordination.ErrApplication: false, coordination.ErrInvalid: false, coordination.ErrConflict: false})
+	nodes[0].runtime.Store(nil)
+	t.Cleanup(func() { _ = r.Close() })
+	if err := r.service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check("once this member's service closed", map[error]bool{coordination.ErrNotLeader: true, coordination.ErrUnavailable: true, coordination.ErrApplication: true, coordination.ErrInvalid: false, coordination.ErrConflict: false})
 }
 
 func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing.T) {
