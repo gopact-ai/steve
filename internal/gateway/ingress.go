@@ -91,10 +91,10 @@ func decodeGatewayInput(receipt ledger.CommandRecord) (gatewayInput, error) {
 	return input, nil
 }
 
-// claimQueued claims a pending receipt of either kind for runtime recovery
-// and manual wakes: a gatewayInputKind receipt through claimGatewayInput,
-// any other through claimRecovery, to be run by recoverAcceptedInput with
-// driver and revive.
+// claimQueued claims a pending receipt of either kind for ReconcileQueued and
+// RecoverQueued: a gatewayInputKind receipt through claimGatewayInput, any
+// other through claimRecovery, to be run by recoverAcceptedInput with driver
+// and revive.
 func (g *Gateway) claimQueued(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, revive func(string, string) error, wait bool) (func() error, func(), error) {
 	if receipt.Kind != gatewayInputKind {
 		release, err := g.claimRecovery(ctx, receipt, wait)
@@ -103,12 +103,13 @@ func (g *Gateway) claimQueued(ctx context.Context, book *ledger.Ledger, receipt 
 	return g.claimGatewayInput(ctx, book, receipt, driver, wait)
 }
 
-// claimGatewayInput uses the same input and conversation owner for ingress,
-// runtime recovery and manual wakes. Only explicit controls/interrupts may
-// join an already serving conversation; normal input remains accepted
-// without a premature dispatch reservation while its owner is busy. Topic
-// preparation may share the original chat, but must acquire its own thread
-// before Handle. decodeGatewayInput refuses a receipt of any other kind.
+// claimGatewayInput claims an accepted gateway input for ingress and runtime
+// recovery through the input and conversation owner that manual wakes share.
+// Only explicit controls/interrupts may join an already serving conversation;
+// normal input remains accepted without a premature dispatch reservation
+// while its owner is busy. Topic preparation may share the original chat, but
+// must acquire its own thread before Handle. decodeGatewayInput refuses a
+// receipt of any other kind.
 func (g *Gateway) claimGatewayInput(ctx context.Context, book *ledger.Ledger, receipt ledger.CommandRecord, driver RecoveryDriver, wait bool) (func() error, func(), error) {
 	input, err := decodeGatewayInput(receipt)
 	if err != nil {
