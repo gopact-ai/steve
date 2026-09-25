@@ -45,10 +45,13 @@ type ReplicatedWrite struct {
 
 // Replicator is the consumer-owned consensus port. Prepare must verify that
 // this node coordinates the cluster and wait for its local application to
-// catch up with a linearizable read. Propose must not return success until
-// this ledger has applied the command. Neither method runs inside a SQLite
-// transaction. An error can mean an unknown outcome; callers must reconcile
-// the stored command or operation before repeating an external action.
+// catch up with a linearizable read. Writers queue behind the one in Prepare,
+// so that wait should be bounded; Prepare proposes nothing, and its error
+// leaves no outcome to reconcile. Propose must not return success until this
+// ledger has applied the command. Neither method runs inside a SQLite
+// transaction. A Propose error can mean an unknown outcome; callers must
+// reconcile the stored command or operation before repeating an external
+// action.
 type Replicator interface {
 	Prepare(context.Context) (ReplicaPosition, error)
 	Propose(context.Context, ReplicatedWrite) ([]byte, error)
