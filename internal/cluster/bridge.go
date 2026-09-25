@@ -88,7 +88,12 @@ func (b *replicator) Prepare(parent context.Context) (ledger.ReplicaPosition, er
 		b.runtime.revoke(b.generation, err)
 		return ledger.ReplicaPosition{}, err
 	}
-	if _, err := b.runtime.waitApplied(ctx, state.AppliedIndex, state.AppVersion); err != nil {
+	// Ledger and task store writers hold their locks through Prepare, and a
+	// caller may have no deadline. Catching up is bounded by ApplyTimeout so
+	// a replica that stays behind fails this write as unavailable instead of
+	// stalling every writer queued behind it. Nothing has been proposed, so
+	// the generation keeps its authority and the write can be retried.
+	if _, err := b.runtime.awaitApplied(ctx, state.AppliedIndex, state.AppVersion); err != nil {
 		return ledger.ReplicaPosition{}, err
 	}
 	if !b.runtime.valid(b.generation) {
@@ -128,6 +133,26 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 		return nil, err
 	}
 	return result.Data, nil
+}
+
+// awaitApplied is waitApplied bounded by ApplyTimeout. Giving up is reported
+// as coordination.ErrUnavailable naming the index and application version
+// waited for, how far this replica got and how long it waited. The caller's
+// own cancellation or deadline is returned unchanged.
+func (r *Runtime) awaitApplied(ctx context.Context, index, version uint64) (uint64, error) {
+	started := time.Now()
+	bounded, cancel := context.WithTimeout(ctx, r.config.Coordination.ApplyTimeout)
+	defer cancel()
+	local, err := r.waitApplied(bounded, index, version)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		progress := r.service.Status()
+		reached := fmt.Sprintf("applied index %d, application version %d", progress.AppliedIndex, progress.AppVersion)
+		if book, readErr := r.book.ReplicaVersion(); readErr == nil {
+			reached += fmt.Sprintf(", ledger version %d", book)
+		}
+		return 0, fmt.Errorf("%w: local replica did not reach applied index %d, application version %d within %s; it has %s", coordination.ErrUnavailable, index, version, time.Since(started).Round(time.Millisecond), reached)
+	}
+	return local, err
 }
 
 func (r *Runtime) waitApplied(ctx context.Context, index, version uint64) (uint64, error) {
