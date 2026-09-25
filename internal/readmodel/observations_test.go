@@ -1,46 +1,65 @@
 package readmodel
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-// observationDoc controls I/O boundaries without replacing the real Model.
-type observationDoc struct {
-	ledger.Doc
-	beforeSave func([]byte) error
+// observationHooks controls I/O boundaries without replacing the real Model.
+type observationHooks struct {
+	ObservationStore
+	beforeSave func(first uint64, list []Observation) error
+	beforeLoad func() error
 	afterLoad  func()
 }
 
-func (d *observationDoc) Save(raw []byte) error {
-	if d.beforeSave != nil {
-		if err := d.beforeSave(raw); err != nil {
+func (h *observationHooks) Save(ctx context.Context, first uint64, list []Observation, keep uint64) error {
+	if h.beforeSave != nil {
+		if err := h.beforeSave(first, list); err != nil {
 			return err
 		}
 	}
-	return d.Doc.Save(raw)
+	return h.ObservationStore.Save(ctx, first, list, keep)
 }
 
-func (d *observationDoc) Load() ([]byte, bool, error) {
-	raw, ok, err := d.Doc.Load()
-	if d.afterLoad != nil {
-		d.afterLoad()
+func (h *observationHooks) Load(ctx context.Context) ([]Observation, uint64, error) {
+	if h.beforeLoad != nil {
+		if err := h.beforeLoad(); err != nil {
+			return nil, 0, err
+		}
 	}
-	return raw, ok, err
+	list, last, err := h.ObservationStore.Load(ctx)
+	if h.afterLoad != nil {
+		h.afterLoad()
+	}
+	return list, last, err
 }
 
-func observationFile(t *testing.T) ledger.Doc {
+func observationBook(t *testing.T) *ledger.Ledger {
 	t.Helper()
-	return &filedoc.Document{Path: filepath.Join(t.TempDir(), "observations.json")}
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	return book
+}
+
+// ledgerObservationStore is where a hub keeps observations in its ledger.
+func ledgerObservationStore(book *ledger.Ledger) ObservationStore {
+	return Observations{Book: book}
+}
+
+func observationStore(t *testing.T) ObservationStore {
+	t.Helper()
+	return ledgerObservationStore(observationBook(t))
 }
 
 func observationGate() (entered <-chan struct{}, block, release func()) {
@@ -61,28 +80,32 @@ func waitObservation(t *testing.T, done <-chan struct{}) {
 	}
 }
 
-func restoredObservations(t *testing.T, doc ledger.Doc) []Observation {
+func restoredObservations(t *testing.T, store ObservationStore) []Observation {
 	t.Helper()
-	m := New(Sources{Observations: doc})
+	m := New(Sources{Observations: store})
 	if err := m.LoadObservations(); err != nil {
 		t.Fatal(err)
 	}
 	return m.observations
 }
 
+func subjects(list []Observation) []string {
+	out := make([]string, len(list))
+	for i, o := range list {
+		out[i] = o.Subject
+	}
+	return out
+}
+
 func TestObserveConcurrentSavesPreserveBothRecords(t *testing.T) {
 	entered, block, release := observationGate()
-	doc := &observationDoc{Doc: observationFile(t), beforeSave: func(raw []byte) error {
-		var list []Observation
-		if err := json.Unmarshal(raw, &list); err != nil {
-			return err
-		}
-		if len(list) == 1 {
+	store := &observationHooks{ObservationStore: observationStore(t), beforeSave: func(first uint64, _ []Observation) error {
+		if first == 1 {
 			block()
 		}
 		return nil
 	}}
-	m := New(Sources{Observations: doc})
+	m := New(Sources{Observations: store})
 	first, second := make(chan struct{}), make(chan struct{})
 	var workers sync.WaitGroup
 	defer func() {
@@ -107,31 +130,31 @@ func TestObserveConcurrentSavesPreserveBothRecords(t *testing.T) {
 	release()
 	waitObservation(t, first)
 	waitObservation(t, second)
-	got := restoredObservations(t, doc)
+	got := restoredObservations(t, store)
 	if len(got) != 2 || !reflect.DeepEqual(got, m.observations) {
 		t.Fatalf("successful observations lost on reload: live=%+v restored=%+v", m.observations, got)
 	}
 }
 
-func TestObserveDocumentIODoesNotBlockReadersOrEvents(t *testing.T) {
+func TestObserveStoreIODoesNotBlockReadersOrEvents(t *testing.T) {
 	for _, operation := range []string{"save", "load"} {
 		t.Run(operation, func(t *testing.T) {
 			entered, block, release := observationGate()
-			doc := &observationDoc{Doc: observationFile(t)}
-			m := New(Sources{Observations: doc})
+			store := &observationHooks{ObservationStore: observationStore(t)}
+			m := New(Sources{Observations: store})
 			run := func() { m.Observe("node.up", "A", "A connected", nil) }
 			if operation == "save" {
-				doc.beforeSave = func([]byte) error {
+				store.beforeSave = func(uint64, []Observation) error {
 					block()
 					return nil
 				}
 			} else {
 				run()
-				m = New(Sources{Observations: doc})
+				m = New(Sources{Observations: store})
 				if err := m.LoadObservations(); err != nil {
 					t.Fatal(err)
 				}
-				doc.afterLoad = block
+				store.afterLoad = block
 				run = func() {
 					if err := m.LoadObservations(); err != nil {
 						t.Errorf("load observations: %v", err)
@@ -173,12 +196,12 @@ func TestObserveDocumentIODoesNotBlockReadersOrEvents(t *testing.T) {
 }
 
 func TestLoadObservationsDoesNotOverwriteConcurrentObserve(t *testing.T) {
-	base := observationFile(t)
+	base := observationStore(t)
 	m := New(Sources{Observations: base})
 	m.Observe("node.up", "A", "A connected", nil)
 	entered, block, release := observationGate()
-	doc := &observationDoc{Doc: base, afterLoad: block}
-	m = New(Sources{Observations: doc})
+	store := &observationHooks{ObservationStore: base, afterLoad: block}
+	m = New(Sources{Observations: store})
 	loaded, observed := make(chan struct{}), make(chan struct{})
 	var workers sync.WaitGroup
 	defer func() {
@@ -209,28 +232,25 @@ func TestLoadObservationsDoesNotOverwriteConcurrentObserve(t *testing.T) {
 	}
 }
 
+// A save that fails, whether or not the ledger committed it, keeps the fact
+// live and published; the next save writes it again with its own.
 func TestObserveSaveFailureKeepsLiveStateAndRetries(t *testing.T) {
 	for _, committed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("committed=%t", committed), func(t *testing.T) {
-			base := observationFile(t)
-			fail := false
-			doc := &observationDoc{Doc: base, beforeSave: func(raw []byte) error {
-				if !fail {
-					return nil
-				}
-				if committed {
-					if err := base.Save(raw); err != nil {
-						return err
-					}
-				}
-				return errors.New("injected save failure")
-			}}
-			m := New(Sources{Observations: doc})
+			book, r := replicatedBook(t, t.TempDir())
+			store := ledgerObservationStore(book)
+			m := New(Sources{Observations: store})
 			m.Observe("node.up", "A", "A connected", nil)
 			events, stop := m.Subscribe(t.Context())
 			defer stop()
-			fail = true
+			injected := func() error { return errors.New("injected save failure") }
+			if committed {
+				r.after = injected
+			} else {
+				r.before = injected
+			}
 			m.Observe("node.down", "B", "B disconnected", map[string]string{"reason": "offline"})
+			r.before, r.after = nil, nil
 			if len(m.observations) != 2 {
 				t.Fatalf("failed save discarded live observation: %+v", m.observations)
 			}
@@ -246,15 +266,44 @@ func TestObserveSaveFailureKeepsLiveStateAndRetries(t *testing.T) {
 			if committed {
 				want = 2
 			}
-			if got := restoredObservations(t, base); !reflect.DeepEqual(got, m.observations[:want]) {
+			if got := restoredObservations(t, store); !reflect.DeepEqual(got, m.observations[:want]) {
 				t.Fatalf("failed save changed successful durable state: %+v", got)
 			}
-			fail = false
 			m.Observe("node.up", "C", "C connected", nil)
-			if got := restoredObservations(t, base); len(got) != 3 || !reflect.DeepEqual(got, m.observations) {
+			if got := restoredObservations(t, store); len(got) != 3 || !reflect.DeepEqual(got, m.observations) {
 				t.Fatalf("next successful save did not retain failed observation: %+v", got)
 			}
 		})
+	}
+}
+
+// A hub that could not read its kept observations must not number new ones
+// from the start: they would be filed among, or over, the old. They wait in
+// memory and are saved after the old ones once a load succeeds.
+func TestObserveBeforeAFailedLoadIsSavedAfterTheKeptObservations(t *testing.T) {
+	base := observationStore(t)
+	earlier := New(Sources{Observations: base})
+	earlier.Observe("node.up", "A", "A connected", nil)
+	earlier.Observe("node.up", "B", "B connected", nil)
+	failures := 2
+	store := &observationHooks{ObservationStore: base, beforeLoad: func() error {
+		if failures > 0 {
+			failures--
+			return errors.New("injected load failure")
+		}
+		return nil
+	}}
+	m := New(Sources{Observations: store})
+	if err := m.LoadObservations(); err == nil {
+		t.Fatal("injected load failure was not reported")
+	}
+	m.Observe("node.down", "C", "C disconnected", nil)
+	if got := subjects(restoredObservations(t, base)); !reflect.DeepEqual(got, []string{"A", "B"}) {
+		t.Fatalf("an observation made before the kept ones loaded was saved among them: %v", got)
+	}
+	m.Observe("node.up", "D", "D connected", nil)
+	if got, live := subjects(restoredObservations(t, base)), subjects(m.observations); !reflect.DeepEqual(got, []string{"A", "B", "C", "D"}) || !reflect.DeepEqual(got, live) {
+		t.Fatalf("after a load worked: restored=%v live=%v", got, live)
 	}
 }
 
@@ -269,7 +318,7 @@ func TestObserveConcurrentLedgerSavesSurviveReopen(t *testing.T) {
 			_ = book.Close()
 		}
 	})
-	m := New(Sources{Observations: book.Document("observations")})
+	m := New(Sources{Observations: ledgerObservationStore(book)})
 	const count = 32
 	start := make(chan struct{})
 	var writers sync.WaitGroup
@@ -291,49 +340,54 @@ func TestObserveConcurrentLedgerSavesSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	doc := reopened.Document("observations")
-	got := restoredObservations(t, doc)
+	store := ledgerObservationStore(reopened)
+	got := restoredObservations(t, store)
 	if len(got) != count || !reflect.DeepEqual(got, m.observations) {
-		t.Fatalf("ledger reopen lost successful observations: live=%d restored=%d", len(m.observations), len(got))
+		t.Fatalf("ledger reopen lost successful observations or their order: live=%v restored=%v", subjects(m.observations), subjects(got))
 	}
-	restored := New(Sources{Observations: doc})
+	restored := New(Sources{Observations: store})
 	if err := restored.LoadObservations(); err != nil {
 		t.Fatal(err)
 	}
 	restored.Observe("node.down", "node-00", "node-00 disconnected", nil)
-	if got := restoredObservations(t, doc); len(got) != count+1 || !reflect.DeepEqual(got, restored.observations) {
+	if got := restoredObservations(t, store); len(got) != count+1 || !reflect.DeepEqual(got, restored.observations) {
 		t.Fatalf("saving after recovery lost observations: %+v", got)
 	}
 }
 
+// Past the limit every save forgets exactly the oldest, in the ledger as in
+// memory, and a restart restores the same tail in order.
 func TestObservePersistenceKeepsBoundedTail(t *testing.T) {
-	doc := observationFile(t)
-	list := make([]Observation, observationsKept)
-	for i := range list {
-		list[i] = Observation{At: time.Unix(int64(i+1), 0).UTC(), Kind: "node.up", Subject: fmt.Sprint(i)}
-	}
-	raw, err := json.Marshal(list)
+	dir := t.TempDir()
+	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := doc.Save(raw); err != nil {
+	m := New(Sources{Observations: ledgerObservationStore(book)})
+	const extra = 5
+	for i := range observationsKept + extra {
+		observeNodeUp(m, i)
+	}
+	kept, err := book.Bindings(t.Context(), observationKind)
+	if err != nil {
 		t.Fatal(err)
 	}
-	m := New(Sources{Observations: doc})
-	if err := m.LoadObservations(); err != nil {
+	if len(kept) != observationsKept {
+		t.Fatalf("ledger keeps %d observations, want %d", len(kept), observationsKept)
+	}
+	if err := book.Close(); err != nil {
 		t.Fatal(err)
 	}
-	m.Observe("node.up", "new", "new connected", nil)
-	got := restoredObservations(t, doc)
+	reopened, err := ledger.Open(dir, ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	got := restoredObservations(t, ledgerObservationStore(reopened))
 	if len(got) != observationsKept || !reflect.DeepEqual(got, m.observations) {
 		t.Fatalf("retained history differs after restart: live=%d restored=%d", len(m.observations), len(got))
 	}
-	if !reflect.DeepEqual(got[:len(got)-1], list[1:]) || got[len(got)-1].Subject != "new" {
-		t.Fatal("retention did not discard exactly the oldest observation")
+	if first, last := got[0].Subject, got[len(got)-1].Subject; first != fmt.Sprintf("node-%04d", extra) || last != fmt.Sprintf("node-%04d", observationsKept+extra-1) {
+		t.Fatalf("retention kept %s…%s, want exactly the newest %d", first, last, observationsKept)
 	}
-}
-
-// ledgerObservationStore is where a hub keeps observations in its ledger.
-func ledgerObservationStore(book *ledger.Ledger) ledger.Doc {
-	return book.Document("observations")
 }

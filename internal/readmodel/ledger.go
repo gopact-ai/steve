@@ -2,9 +2,11 @@ package readmodel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -212,4 +214,60 @@ func (l Ledger) Conflicts(ctx context.Context) ([]Conflict, error) {
 		out = append(out, entry)
 	}
 	return out, err
+}
+
+// Observations keeps observations in the ledger's bindings, one binding
+// each, so a write replicates only the observations it saves. The binding
+// id is the observation's number, zero-padded so that the ids sort in
+// number order and forgetting the oldest is one range delete.
+type Observations struct{ Book *ledger.Ledger }
+
+const observationKind = "observation"
+
+func observationID(n uint64) string { return fmt.Sprintf("%020d", n) }
+
+func (o Observations) Load(ctx context.Context) ([]Observation, uint64, error) {
+	raw, err := o.Book.Bindings(ctx, observationKind)
+	if err != nil {
+		return nil, 0, err
+	}
+	type numbered struct {
+		n   uint64
+		obs Observation
+	}
+	kept := make([]numbered, 0, len(raw))
+	for id, data := range raw {
+		n, err := strconv.ParseUint(id, 10, 64)
+		if err != nil || id != observationID(n) {
+			return nil, 0, fmt.Errorf("observation %q: not a number", id)
+		}
+		var obs Observation
+		if err := json.Unmarshal(data, &obs); err != nil {
+			return nil, 0, fmt.Errorf("observation %d: %w", n, err)
+		}
+		kept = append(kept, numbered{n, obs})
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].n < kept[j].n })
+	list := make([]Observation, len(kept))
+	var last uint64
+	for i, k := range kept {
+		list[i], last = k.obs, k.n
+	}
+	return list, last, nil
+}
+
+func (o Observations) Save(ctx context.Context, first uint64, list []Observation, keep uint64) error {
+	return o.Book.Update(ctx, func(tx *ledger.Tx) error {
+		for i, obs := range list {
+			if err := tx.PutBinding(observationKind, observationID(first+uint64(i)), obs); err != nil {
+				return err
+			}
+		}
+		if keep > 1 {
+			if _, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id < ?`, observationKind, observationID(keep)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

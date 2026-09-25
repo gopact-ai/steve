@@ -107,6 +107,7 @@ func TestObserveReplicatesOneObservationWhateverTheHistory(t *testing.T) {
 		observeNodeUp(m, i)
 	}
 	lateWrites, late := measure(observationsKept + 20)
+	t.Logf("one observation replicated %d bytes with 9 kept, %d bytes with %d kept", early, late, observationsKept)
 	if earlyWrites != 1 || lateWrites != 1 {
 		t.Fatalf("one observation made %d writes with 9 kept and %d with %d kept, want one each", earlyWrites, lateWrites, observationsKept)
 	}
