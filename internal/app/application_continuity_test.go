@@ -111,6 +111,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 				!strings.Contains(business[1].Input, "fixture-remember "+marker) {
 				t.Fatal("first prompt was not delivered to its new native session")
 			}
+			continuityOpenedForWork(t, business[0], discovery)
 			if name == "warm_rebind" {
 				// No restart/load may hide a selector lost while publishing
 				// progress. Both unchanged and changed preferences must work
@@ -179,6 +180,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					!strings.Contains(replacementEvents[1].Input, "fixture-remember replacement-context") {
 					t.Fatal("historical damage fixture did not create exactly one distinct replacement context")
 				}
+				continuityOpenedForWork(t, replacementEvents[0], discovery)
 				eventsBefore = events
 			}
 
@@ -223,6 +225,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 				if len(resumed) != 1 || resumed[0].PID == nativePID {
 					t.Fatalf("failed load fell back to new session or prompt: %+v", events)
 				}
+				continuityOpenedForWork(t, resumed[0], discovery)
 			} else {
 				recall := continuitySend(t, second, conversation, "fixture-recall", "recall-only")
 				events, recorded := continuityEventsSince(t, memory, discovery, closedEvents)
@@ -236,6 +239,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					resumed[0].PID == nativePID {
 					t.Fatalf("restart did not load the exact native session in a new process: %+v", events)
 				}
+				continuityOpenedForWork(t, resumed[0], discovery)
 				if strings.Contains(resumed[1].Input, marker) || strings.Contains(resumed[1].Input, "fixture-remember") {
 					t.Fatal("recall prompt replayed the marker instead of using native memory")
 				}
@@ -441,6 +445,16 @@ func withoutDiscovery(events []continuityEvent, discovery string) []continuityEv
 		kept = append(kept, event)
 	}
 	return kept
+}
+
+// continuityOpenedForWork fails unless a business "new" or "load" names its
+// working directory and that directory is not where model discovery opens
+// its sessions.
+func continuityOpenedForWork(t *testing.T, event continuityEvent, discovery string) {
+	t.Helper()
+	if event.Cwd == "" || event.Cwd == discovery {
+		t.Fatalf("business session/%s %s opened in %q, not a working directory outside %q", event.Kind, event.Session, event.Cwd, discovery)
+	}
 }
 
 // continuityEventsSince reads the fixture log, which must still begin with
