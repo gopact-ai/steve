@@ -61,7 +61,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.failure(w, http.StatusMethodNotAllowed, ErrInvalid)
 		return
 	}
-	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "rename" && action != "voting" && action != "join" && action != "remove" && action != "address" {
+	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "rename" && action != "voting" && action != "join" && action != "remove" {
 		http.NotFound(w, r)
 		return
 	}
@@ -163,13 +163,6 @@ func (h *rpcHandler) serveCommand(w http.ResponseWriter, r *http.Request, action
 		}
 		request.Actor = actor
 		result, err = h.service.Remove(r.Context(), request)
-	case "address":
-		var request MemberAddressRequest
-		if !h.decodeCommand(w, r, &request) {
-			return result, err, true
-		}
-		request.Actor = actor
-		result, err = h.service.UpdateMemberAddress(r.Context(), request)
 	}
 	return result, err, false
 }

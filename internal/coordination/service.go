@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -734,73 +733,6 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		}
 	}
 	return s.submit(ctx, command{Kind: "join", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Member: request.Member})
-}
-
-func (s *Service) UpdateMemberAddress(ctx context.Context, request MemberAddressRequest) (Result, error) {
-	s.membershipMu.Lock()
-	defer s.membershipMu.Unlock()
-	if request.ID == "" || request.Actor == "" || request.NodeID == "" {
-		return Result{}, ErrInvalid
-	}
-	if host, port, err := net.SplitHostPort(request.Address); err != nil || host == "" || port == "" {
-		return Result{}, fmt.Errorf("%w: invalid member Raft address", ErrInvalid)
-	}
-	endpoint, err := url.Parse(request.APIAddress)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.User != nil || endpoint.Fragment != "" {
-		return Result{}, fmt.Errorf("%w: invalid member HTTPS address", ErrInvalid)
-	}
-	if err := s.barrier(ctx); err != nil {
-		return Result{}, err
-	}
-	fp := fingerprint("address", request)
-	if old, ok := s.fsm.lookup(request.ID, fp); ok {
-		return old.Result, old.err()
-	}
-	state := s.fsm.read()
-	member, ok := state.Members[request.NodeID]
-	if !ok {
-		return Result{}, ErrInvalid
-	}
-	member.Address = request.Address
-	member.APIAddress = request.APIAddress
-	if s.config.Probe == nil {
-		return Result{}, fmt.Errorf("%w: address verification is not configured", ErrNotReady)
-	}
-	progress, err := s.config.Probe(ctx, member)
-	if err != nil {
-		return Result{}, fmt.Errorf("%w: verifying new endpoint: %v", ErrNotReady, err)
-	}
-	if progress.ClusterID != state.ClusterID || progress.NodeID != member.NodeID || progress.AppliedIndex < state.AppliedIndex || progress.AppVersion < state.AppVersion || progress.FailureDomain != member.FailureDomain || progress.StorageLevel != member.StorageLevel {
-		return Result{}, fmt.Errorf("%w: new member endpoint is not a synchronized replica", ErrNotReady)
-	}
-	if _, err := s.submit(ctx, command{Kind: "address_prepare", ID: request.ID + "/prepare", Actor: request.Actor, Fingerprint: fp, Address: request}); err != nil {
-		return Result{}, err
-	}
-	prepared := s.fsm.read()
-	if prepared.Removing[request.NodeID] || prepared.PendingAddresses[request.NodeID] != request {
-		return Result{}, ErrConflict
-	}
-	if s.config.ValidateAddress != nil {
-		if err := s.config.ValidateAddress(ctx, member); err != nil {
-			return Result{}, fmt.Errorf("%w: member address network verification: %v", ErrNotReady, err)
-		}
-	}
-	configuration := s.raft.GetConfiguration()
-	if err := s.wait(ctx, configuration); err != nil {
-		return Result{}, err
-	}
-	var change raft.IndexFuture
-	description := "move voter " + request.NodeID + " to " + request.Address
-	if prepared.Voters[request.NodeID] != "" {
-		change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
-	} else {
-		description = "move nonvoter " + request.NodeID + " to " + request.Address
-		change = s.raft.AddNonvoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
-	}
-	if err := s.waitConfigurationChange(ctx, description, change); err != nil {
-		return Result{}, err
-	}
-	return s.submit(ctx, command{Kind: "address", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Address: request})
 }
 
 func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, error) {

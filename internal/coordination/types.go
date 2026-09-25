@@ -300,6 +300,11 @@ type RenameRequest struct {
 	Name             string `json:"name"`
 }
 
+// MemberAddressRequest is the payload of the address_prepare and address
+// commands. Nothing proposes them; the state machine still applies them, and
+// State keeps PendingAddresses, so that every replica replays a log or
+// snapshot holding them the same way and replicas of other builds can restore
+// this build's snapshots.
 type MemberAddressRequest struct {
 	ID               string `json:"id"`
 	Actor            string `json:"actor"`
@@ -329,9 +334,6 @@ type Config struct {
 	// ValidateJoin runs after the candidate has caught up as a nonvoter and
 	// before it can vote. A failure leaves a retryable, nonvoting member.
 	ValidateJoin func(context.Context, Member) error
-	// ValidateAddress verifies all current peers can use a proposed endpoint
-	// after its preparation is committed but before voting addresses change.
-	ValidateAddress func(context.Context, Member) error
 	// AuthorizeReplica runs before any candidate metadata or application bytes
 	// are replicated. A full replica must be authorized for the whole ledger.
 	AuthorizeReplica func(context.Context, Member) error

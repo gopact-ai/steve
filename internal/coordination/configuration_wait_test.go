@@ -142,22 +142,6 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 			request := JoinRequest{ID: "join-voter", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}}
 			return leader, func(ctx context.Context) error { _, err := leader.Join(ctx, request); return err }, "add voter new-node"
 		}},
-		{"address", func(t *testing.T) (*Service, func(context.Context) error, string) {
-			c := newTestCluster(t, 1)
-			leader := c.leader()
-			peer := addUnjoinedTestReplica(t, c, "voter-domain")
-			if _, err := leader.Join(t.Context(), JoinRequest{ID: "join-voter", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}}); err != nil {
-				t.Fatal(err)
-			}
-			state := leader.Status()
-			if err := leader.waitForProgress(t.Context(), state.Members["new-node"], state.State); err != nil {
-				t.Fatal(err)
-			}
-			p := newRaftLoopPause(t, peer)
-			leader.config.ValidateAddress = func(context.Context, Member) error { return p.pause() }
-			request := MemberAddressRequest{ID: "voter-address", Actor: "owner", ExpectedRevision: state.Revision, NodeID: "new-node", Address: peer.Status().Address, APIAddress: "https://127.0.0.1:12345"}
-			return leader, func(ctx context.Context) error { _, err := leader.UpdateMemberAddress(ctx, request); return err }, "move voter new-node to " + request.Address
-		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

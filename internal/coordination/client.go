@@ -203,12 +203,6 @@ func (c *Client) Remove(ctx context.Context, request RemoveRequest) (Result, err
 	return result, err
 }
 
-func (c *Client) UpdateMemberAddress(ctx context.Context, request MemberAddressRequest) (Result, error) {
-	var result Result
-	err := c.route(ctx, "address", request, &result)
-	return result, err
-}
-
 func (c *Client) route(ctx context.Context, action string, input, output any) error {
 	var body []byte
 	if input != nil {
