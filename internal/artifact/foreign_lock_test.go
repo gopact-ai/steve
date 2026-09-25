@@ -157,3 +157,38 @@ func TestStaleForeignRecoveryCommitLeavesTheNextHoldersWork(t *testing.T) {
 	}
 	f.keepsNextsWork(t, land)
 }
+
+// A snapshot under a lock west already took away and gave to the next
+// holder cuts nothing, as under a lock of the hub's own.
+func TestSnapshotUnderAStaleForeignLockCutsNothing(t *testing.T) {
+	ctx := t.Context()
+	f := newForeignLock(t)
+	p, _, _ := f.store.projects.Get(ctx, "p")
+	held, err := f.store.acquireCanonical(ctx, p, "att-parent")
+	if err != nil || held.Region != "west" {
+		t.Fatalf("canonical lock = %+v err=%v, want one west issued", held, err)
+	}
+	if err := f.west.Invalidate(ctx, held.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.west.Acquire(ctx, held.Key, "next", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	write(t, f.canonical, "a", "a-half")
+	name, before, cuts := canonicalOf(t, f.store, "p"), manifestCount(t, f.store), 0
+	f.node.before = func(req ops.Request) {
+		if req.Op == ops.Snapshot {
+			cuts++
+		}
+	}
+
+	if _, _, _, err := f.store.snapshotCanonical(ctx, p, held, name, "att-parent", "under a stale lock"); !errors.Is(err, ledger.ErrStale) {
+		t.Fatalf("snapshot under a stale west lock: err=%v, want ErrStale", err)
+	}
+	if cuts != 0 || manifestCount(t, f.store) != before {
+		t.Fatalf("cut %d snapshots and recorded %d under a stale west lock", cuts, manifestCount(t, f.store)-before)
+	}
+	if head := canonicalOf(t, f.store, "p"); head != name {
+		t.Fatalf("canonical moved to %s under a stale west lock", short(head))
+	}
+}
