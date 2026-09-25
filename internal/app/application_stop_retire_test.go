@@ -175,9 +175,10 @@ func (r *passEndingReplica) Prepare(ctx context.Context) (ledger.ReplicaPosition
 	}
 }
 
-// A stop pass that ends while one of its writes waits on a lagging replica
-// gets that write back with the pass's error rather than waiting for the
-// replica, and the next pass finishes the stop.
+// A stop pass that ends while one of its writes, the accounting or the
+// projection mark, waits on a lagging replica gets that write back with
+// the pass's error rather than waiting for the replica, and the next pass
+// finishes the stop.
 func TestApplicationStopWritesWaitOnAReplicaOnlyWithinTheirPass(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
@@ -189,6 +190,7 @@ func TestApplicationStopWritesWaitOnAReplicaOnlyWithinTheirPass(t *testing.T) {
 		settled bool  // whether the accounting was settled before it
 	}{
 		{name: "accounting", write: 1},
+		{name: "projection mark", write: 2, settled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStopRegistryFixture(t, bin, false)
