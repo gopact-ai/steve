@@ -281,11 +281,7 @@ func TestLateProposalCannotCommitAfterBusinessCachesAreReconstructed(t *testing.
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -318,11 +314,7 @@ func TestUnknownProposalOutcomeRevokesCachedStoresBeforeAnotherWrite(t *testing.
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -356,11 +348,7 @@ func TestCallerCancellationDuringProposalKeepsBusinessGeneration(t *testing.T) {
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -403,12 +391,8 @@ func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing
 	nodes := testNodes(t, 3)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
 	}
 	second := nodes[1].runtime.Load()
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
@@ -486,12 +470,8 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	}
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
 	}
 	second := nodes[1].runtime.Load()
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
@@ -564,12 +544,8 @@ func TestActivationWhoseWriterFenceCannotApplyGivesUpAndRetries(t *testing.T) {
 	nodes := testNodes(t, 3)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
 	}
 	second := nodes[1].runtime.Load()
 	gate := &appGate{arrived: make(chan struct{}), release: make(chan struct{})}
@@ -820,11 +796,7 @@ func TestTransferCancelsAnActivationThatHasNotFinishedStarting(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("business activation did not start")
 	}
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer-during-startup", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -846,6 +818,19 @@ func openNode(t *testing.T, n *clusterNode) *Runtime {
 		t.Fatal(err)
 	}
 	n.runtime.Store(r)
+	return r
+}
+
+// joinNode opens n and has first admit it under the command ID
+// "join-<node ID>", with or without a Raft vote and automatic coordinator
+// eligibility.
+func joinNode(t *testing.T, first *Runtime, n *clusterNode, voting, autoEligible bool) *Runtime {
+	t.Helper()
+	r := openNode(t, n)
+	member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: n.server.URL, AutoEligible: autoEligible, Voting: voting}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
+		t.Fatal(err)
+	}
 	return r
 }
 
@@ -898,12 +883,8 @@ func TestThreeNodeLedgerTransfersPreserveFactsAndFenceEveryOldGeneration(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		r := joinNode(t, first, n, true, true)
 		if version, err := r.Ledger().ReplicaVersion(); err != nil || version < before.AppVersion {
 			t.Fatalf("joining node lacks complete baseline: %d, %v", version, err)
 		}
@@ -968,12 +949,8 @@ func TestAutomaticCoordinatorFailureActivatesReconstructedLedgerOnSurvivor(t *te
 	nodes := testNodes(t, 3)
 	first := openNode(t, nodes[0])
 	initial := ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, true)
 	}
 	if err := nodes[0].current().state.SetActiveAgent("running-session", "worker"); err != nil {
 		t.Fatal(err)
@@ -1053,11 +1030,7 @@ func TestManualNonvoterHubWritesAndFencesOldHub(t *testing.T) {
 	if err := old.Ledger.Document("before-transfer").Save([]byte("preserved")); err != nil {
 		t.Fatal(err)
 	}
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-replica", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], false, false)
 	request := coordination.TransferRequest{ID: "to-nonvoter", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}
 	if _, err := second.Transfer(t.Context(), request); err != nil {
 		t.Fatal(err)
