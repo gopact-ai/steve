@@ -1027,25 +1027,16 @@ func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleap
 // StepProgress publishes what a plan step's agent is doing, stamped with
 // the conversation the plan's task came from. It is throttled per step:
 // a token stream is not a change worth a page repaint each time, but a
-// tool call starting or finishing always is.
+// tool call starting or finishing always is. An update the throttle holds
+// back is published when the step's window ends, unless a later one was
+// published first: a step reports no end of its own, so its last update
+// must not be the one dropped.
 func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.Progress) {
 	key := planID + "/" + stepID
 	signature := fmt.Sprintf("%d", len(p.Tools))
 	if n := len(p.Tools); n > 0 {
 		signature += "/" + string(p.Tools[n-1].Status)
 	}
-	m.mu.Lock()
-	if m.throttle == nil {
-		m.throttle = map[string]throttled{}
-	}
-	last := m.throttle[key]
-	now := time.Now()
-	if now.Sub(last.at) < progressEvery && last.signature == signature {
-		m.mu.Unlock()
-		return
-	}
-	m.throttle[key] = throttled{at: now, signature: signature}
-	m.mu.Unlock()
 	progress := FromProgress(p)
 	if progress.Agent == "" {
 		progress.Agent = agent
@@ -1053,15 +1044,49 @@ func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.
 	if progress.Node == "" {
 		progress.Node = node
 	}
-	m.Publish(Event{
+	ev := Event{
 		Kind: "step.progress", TaskID: taskID, PlanID: planID, StepID: stepID,
 		Conversation: m.conversationOf(taskID), Progress: &progress,
-	})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.throttle == nil {
+		m.throttle = map[string]throttled{}
+	}
+	last := m.throttle[key]
+	if wait := progressEvery - time.Since(last.at); wait > 0 && last.signature == signature {
+		if last.held == nil {
+			time.AfterFunc(wait, func() { m.releaseStep(key) })
+		}
+		last.held = &ev
+		m.throttle[key] = last
+		return
+	}
+	m.throttle[key] = throttled{at: time.Now(), signature: signature}
+	m.publishLocked(ev)
+}
+
+// releaseStep publishes the update a step's throttle held back, once the
+// window it was held in has ended. Publishing under the same lock as
+// StepProgress keeps it from landing after a later update.
+func (m *Model) releaseStep(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	last := m.throttle[key]
+	if last.held == nil || time.Since(last.at) < progressEvery {
+		// A later update was published first; a window it opened has its
+		// own release.
+		return
+	}
+	m.throttle[key] = throttled{at: time.Now(), signature: last.signature}
+	m.publishLocked(*last.held)
 }
 
 type throttled struct {
 	at        time.Time
 	signature string
+	// held is a step's latest update inside its window, still to publish.
+	held *Event
 }
 
 // progressEvery bounds how often one step's token stream repaints a page.
@@ -1120,10 +1145,16 @@ func (m *Model) Emit(_ context.Context, ev gopact.Event) error {
 }
 
 func (m *Model) Publish(ev Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.publishLocked(ev)
+}
+
+// publishLocked is Publish with m.mu held.
+func (m *Model) publishLocked(ev Event) {
 	if ev.At.IsZero() {
 		ev.At = time.Now()
 	}
-	m.mu.Lock()
 	m.published++
 	ev.Cursor = m.published
 	m.noteActivity(ev)
@@ -1145,7 +1176,6 @@ func (m *Model) Publish(ev Event) {
 			slog.Warn("readmodel: closed a subscriber that fell behind", "subscriber", id, "event", ev.Kind)
 		}
 	}
-	m.mu.Unlock()
 }
 
 // Observe records a connectivity fact and tells the page. The list is

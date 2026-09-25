@@ -59,6 +59,31 @@ func TestDelegateProgressPublishesAStoppedChildAtOnce(t *testing.T) {
 	}
 }
 
+// A plan step's last update lands even when it follows the one before
+// within the throttle window: nothing else publishes the step again.
+func TestStepProgressPublishesTheLastUpdateTheThrottleHeldBack(t *testing.T) {
+	m := New(Sources{})
+	events, stop := m.Subscribe(t.Context())
+	defer stop()
+	for _, answer := range []string{"compiling", "compiling…", "compiling… done"} {
+		m.StepProgress("task", "plan", "build", "builder", "node-a", view.Progress{Answer: answer})
+	}
+	deadline := time.After(10 * progressEvery)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Kind != "step.progress" || ev.StepID != "build" {
+				t.Fatalf("unexpected event %+v", ev)
+			}
+			if ev.Progress.Answer == "compiling… done" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the step's last update was throttled away")
+		}
+	}
+}
+
 func TestTimelineSurvivesProjectionWithEveryToolReference(t *testing.T) {
 	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	p := view.Progress{Timeline: []view.Span{{Kind: "text", Text: "first", At: at}}}
