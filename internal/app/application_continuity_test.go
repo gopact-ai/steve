@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,10 +33,11 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated agent: %v %s", err, out)
 	}
-	for _, name := range []string{"recall", "warm_rebind", "load_failure_does_not_open_fresh", "repair_archived_revoked_credential"} {
+	for _, name := range []string{"recall", "warm_rebind", "load_failure_does_not_open_fresh", "repair_archived_revoked_credential", "messaging_port_moved"} {
 		t.Run(name, func(t *testing.T) {
 			rejectLoad := name == "load_failure_does_not_open_fresh"
 			repairCredential := name == "repair_archived_revoked_credential"
+			portMoved := name == "messaging_port_moved"
 			dir := filepath.Join(root, name)
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				t.Fatal(err)
@@ -199,8 +201,35 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			remembered := ""
+			if portMoved {
+				// Another process takes the node's remembered reverse messaging
+				// port while it is down, so the restarted node listens elsewhere.
+				raw, err := os.ReadFile(filepath.Join(worker.StateDir, "mcp.port"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				remembered = strings.TrimSpace(string(raw))
+				squatter, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", remembered))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer squatter.Close()
+			}
 			second := StartTestPeer(t, options)
 			WaitPeerReady(t, second)
+			if portMoved {
+				second.Mu.RLock()
+				registry := second.Application.Admin.Nodes
+				second.Mu.RUnlock()
+				endpoint, err := registry.MCPEndpoint(t.Context(), cfg.NodeID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if endpoint == "http://"+net.JoinHostPort("127.0.0.1", remembered)+"/mcp" {
+					t.Fatalf("fixture did not move the reverse messaging port %s", remembered)
+				}
+			}
 			continuityRequest(t, second, http.MethodPut, "/console/preferences", preferences)
 			afterPrefs := continuityConversation(t, second, conversation)
 			if !reflect.DeepEqual(before, afterPrefs) {
