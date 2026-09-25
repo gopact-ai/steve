@@ -175,9 +175,10 @@ func stoppedAccounting(r attempt.Record) task.RecoveryUsage { return attempt.Sto
 
 // projectStopped finishes a confirmed stop: it settles the accounting,
 // resolves the execution and marks the stop projected. The two writes
-// wait on a lagging replica only while ctx lasts, but the ledger's writer
-// lock does not heed ctx: a write queued behind another writer waits for
-// it regardless. Entered with an ended ctx, projectStopped writes nothing.
+// wait on a lagging replica only while ctx lasts, but neither the task
+// store's lock nor the ledger's writer lock heeds ctx: a write queued
+// behind another writer waits for it regardless. Entered with an ended
+// ctx, projectStopped neither queues nor writes.
 // A ctx that ends during a write may leave the accounting settled and the
 // stop unmarked. Either way the stop stays a candidate, and the next pass
 // settles it here or, once settled, retires it.
