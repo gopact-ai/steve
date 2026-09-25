@@ -18,12 +18,16 @@ import (
 // it keeps handing to other sockets while the process is down. Ports from
 // First to Last sit below every ephemeral range (Linux hands out 32768 and
 // up, macOS 49152 and up), so the kernel never gives one away on its own.
-// The SSH link window, LinkFirst to LinkLast, is left out: a link binds
-// those on a machine's loopback, and a node there that took one would
-// shrink the window or be blocked by it while the link is up.
+// Last also stops short of the Kubernetes NodePort default range
+// (30000-32767): kube-proxy forwards those ports on a node without holding
+// a socket, so a bind cannot find one in use, yet connections to it would
+// be forwarded away. The SSH link window, LinkFirst to LinkLast, is left
+// out: a link binds those on a machine's loopback, and a node there that
+// took one would shrink the window or be blocked by it while the link is
+// up.
 const (
 	First = 20000
-	Last  = 32767
+	Last  = 29999
 
 	LinkFirst = 25407
 	LinkLast  = 25426

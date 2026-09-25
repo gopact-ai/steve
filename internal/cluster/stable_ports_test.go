@@ -7,15 +7,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/stableport"
 )
 
-// The lowest port any supported platform's default ephemeral range starts
-// at (Linux 32768; macOS 49152).
-const lowestDefaultEphemeralPort = 32768
-
-// Every port a peer persists from ":0" is one the kernel does not hand out
-// on its own, so no socket opened while the peer is down can take it.
-func TestZeroPortsPersistOutsideEphemeralRanges(t *testing.T) {
+// Every port a peer persists from ":0" comes from the stable range, which
+// the kernel does not hand out on its own, so no socket opened while the
+// peer is down can take it.
+func TestZeroPortsPersistInTheStableRange(t *testing.T) {
 	options, _ := testPeerOptions(t, filepath.Join(ClusterPeerTestDir(t), "peer"), nil)
 	peer, err := OpenPeer(context.Background(), options)
 	if err != nil {
@@ -40,8 +39,8 @@ func TestZeroPortsPersistOutsideEphemeralRanges(t *testing.T) {
 			t.Fatal(err)
 		}
 		port, _ := strconv.Atoi(text)
-		if port == 0 || port >= lowestDefaultEphemeralPort {
-			t.Errorf("%s persisted %s, inside a default ephemeral range", name, address)
+		if port < stableport.First || port > stableport.Last || port >= stableport.LinkFirst && port <= stableport.LinkLast {
+			t.Errorf("%s persisted %s, outside the stable range", name, address)
 		}
 	}
 }

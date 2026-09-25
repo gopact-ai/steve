@@ -28,6 +28,16 @@ func addressInUse(address string) error {
 	return &net.OpError{Op: "listen", Net: "tcp", Err: fmt.Errorf("bind %s: %w", address, syscall.EADDRINUSE)}
 }
 
+// The range ends below the default ephemeral ranges and below the
+// Kubernetes NodePort default range (30000-32767), which kube-proxy
+// forwards without holding a socket, so a bind cannot find it in use.
+func TestRangeEndsBelowNodePortsAndEphemeralRanges(t *testing.T) {
+	const firstDefaultNodePort = 30000
+	if First < 1024 || Last >= firstDefaultNodePort || Last >= lowestDefaultEphemeralPort {
+		t.Fatalf("range %d-%d reaches a privileged, NodePort or ephemeral port", First, Last)
+	}
+}
+
 // sequence hands out ports in order, from the first again after the last.
 func sequence(ports ...int) func() int {
 	next := 0
