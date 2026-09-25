@@ -24,7 +24,7 @@
 ./steve peer --config /home/me/steve-service/config.json
 ```
 
-默认监听端口由系统分配，首次启动后持久保存，重启继续使用。控制台始终绑定 loopback；地址见日志 `UI available at` 或输出指定的 `endpoint_file`。从另一台机器访问时，用 SSH 本地端口转发连接该地址，并使用 `token_file` 中的本地访问凭据登录。Raft 和 peer 通信沿用集群证书验证；初始化不会开启自动容灾。
+默认监听端口在首次启动时从 20000–32767 中随机选取（不含 SSH 接入使用的 25407–25426，低于 Linux 与 macOS 的系统临时端口范围），之后持久保存，重启继续使用；连续 64 次遇到端口被占用时改由系统分配。控制台始终绑定 loopback；地址见日志 `UI available at` 或输出指定的 `endpoint_file`。从另一台机器访问时，用 SSH 本地端口转发连接该地址，并使用 `token_file` 中的本地访问凭据登录。Raft 和 peer 通信沿用集群证书验证；初始化不会开启自动容灾。
 
 独立执行节点的 owner 绑定使用初始化输出的 **`cluster_id`**，不是 `node_id` 或配置文件中的 `gateway.hub_id`。为新执行节点配置 `hubs` 时使用该集群 ID，并把节点地址及其访问凭据配置到 hub 的 `nodes` 中。已有节点更换 owner 应使用现有的 `steve-node adopt` 流程，先确认旧 owner 已停止；`peer-init` 不会接管或重启它们。完整副本节点继续按[桌面多机接入流程](desktop.md)加入。
 
@@ -319,7 +319,7 @@ steve run -config /home/me/steve-bin/config.json
 
 `peer-init` 要求支持进程锁的 Unix 平台；其他平台会明确拒绝初始化。它保留原配置、项目、任务账本、owner 和 hub ID；以原 hub ID 作为 cluster ID，原来采用该 hub 的节点仍使用原凭据。命令生成独立 peer 身份、私有证书及 `<config>.cluster.json`，随后 `steve run` 自动发现此文件并激活集群应用。原本的本机 harness 和 MCP 定义写入该 peer 的私有 worker 配置；固定适配器在启动时按原版本解析。原有 harness 权限策略作为共享执行策略保留，在协调者切换和配置修改后仍生效；未配置策略的新工具仍默认为只读。已有会话和运行目录保留，新执行遵循集群会话的准入规则。输出只有配置路径和公开身份。控制台沿用原来的 token，要求至少 32 个字符且不含空白，监听地址必须为 loopback；需要调整控制台监听时可在初始化时传 `-ui-address 127.0.0.1:7710`。
 
-必须显式选择 `restricted` 或 `sealed`，表示这台机器可保存私有协作账本。默认 Raft 和 peer HTTPS 在 loopback 自动选择端口，适用于单个协调者管理远端 worker；若要加入其他完整 peer，初始化时用 `-raft-address <可达地址>:7801 -peer-address <可达地址>:7802` 指定本机可绑定且互相可达的地址。`peer-init` 只初始化第一个 peer；添加其他成员使用控制台现有的机群加入流程。
+必须显式选择 `restricted` 或 `sealed`，表示这台机器可保存私有协作账本。默认 Raft 和 peer HTTPS 在 loopback 自动选择端口（20000–32767，不含 25407–25426），适用于单个协调者管理远端 worker；若要加入其他完整 peer，初始化时用 `-raft-address <可达地址>:7801 -peer-address <可达地址>:7802` 指定本机可绑定且互相可达的地址。`peer-init` 只初始化第一个 peer；添加其他成员使用控制台现有的机群加入流程。
 
 `<config>.cluster.json` 还可包含 `routes` 与 `links`。`routes` 以成员 node ID 为键，记录本机访问该成员时实际使用的 `raft` / `api` 地址（例如隧道在本机 loopback 上的端口），优先于成员自己公布的地址；`links` 以被接入机器的 node ID 为键，记录本机为它维持的 SSH 会话：`alias` 是 SSH 别名，`remote` 是本机监听在对方 loopback 上出现的地址，`peer` 是对方监听在其自身 loopback 上的地址。启动时本机会按 `links` 重新打开会话，并把本机侧的 loopback 端口写入运行中的路由表；通过控制台 SSH 接入的机器会自动写入这两项，手动接入的独立执行节点不需要。会话本身是 `ssh <alias> 'exec "$HOME/.steve-peer/bin/steve" link --listen <remote>=<本机地址> … --allow <peer> …'`：对端的 `steve link` 在其 `127.0.0.1` 上监听 `remote` 地址，两端在会话的标准输入输出上复用多路流，不使用 sshd 的端口转发，因此与 `AllowTcpForwarding`、`GatewayPorts` 无关。本机侧的 loopback 端口由本机自己持有，会话断开期间对它的连接会立即被拒绝；对端的 `steve link` 每 15 s 探测本机、30 s 内得不到应答就自行退出并释放端口，所以本机异常退出不会留下占住端口的残留进程。
 
