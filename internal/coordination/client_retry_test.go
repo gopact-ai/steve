@@ -22,6 +22,7 @@ type electionPeers struct {
 	elected  atomic.Bool
 	answer   func(w http.ResponseWriter) // node-2's answer once elected
 	requests atomic.Int32
+	latest   atomic.Int64 // when the latest request arrived, in Unix nanoseconds
 }
 
 func newElectionPeers(t *testing.T, authority *testAuthority) *electionPeers {
@@ -31,6 +32,7 @@ func newElectionPeers(t *testing.T, authority *testAuthority) *electionPeers {
 		id := fmt.Sprintf("node-%d", i)
 		server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			p.requests.Add(1)
+			p.latest.Store(time.Now().UnixNano())
 			w.Header().Set("Content-Type", "application/json")
 			switch {
 			case !p.elected.Load():
@@ -103,6 +105,48 @@ func TestClientGivesUpWhenNoLeaderIsElectedWithinItsRetryWindow(t *testing.T) {
 	}
 	if elapsed < window || elapsed > window+time.Second {
 		t.Fatalf("a join without a leader gave up after %s; its retry window is %s", elapsed, window)
+	}
+}
+
+// A call sent before the retry window ends may take its own timeout, but no
+// call starts once the window has ended: the pause after a round in which
+// every member refused ends with the window, and the client then gives up
+// instead of asking one more member.
+func TestClientStartsNoCallAfterItsRetryWindowEnds(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	// The first round and the first pause end well inside the window, and
+	// the second pause, 100ms, would end after it.
+	const window = 150 * time.Millisecond
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: window})
+	deadline := time.Now().Add(window)
+	_, err := client.Join(t.Context(), JoinRequest{ID: "join-past-window", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if !errors.Is(err, ErrUnavailable) || !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("a join without a leader returned %v", err)
+	}
+	if latest := time.Unix(0, peers.latest.Load()); latest.After(deadline) {
+		t.Fatalf("a join started a call %s after its %s retry window ended (%d calls in all)", latest.Sub(deadline).Round(time.Microsecond), window, peers.requests.Load())
+	}
+}
+
+// A caller that has already given up gets its own context error back even
+// when no member address is known, not a report that the cluster is
+// unavailable.
+func TestClientWithoutPeersReturnsTheCallersOwnContextError(t *testing.T) {
+	authority := newTestAuthority(t)
+	client, err := NewClient(ClientConfig{
+		TLS:            authority.node(t, "cluster", "caller"),
+		ControlHeaders: func(context.Context, string) (http.Header, error) { return http.Header{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = client.Join(ctx, JoinRequest{ID: "join-canceled", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if err != context.Canceled {
+		t.Fatalf("a join whose caller had given up, with no peer address known, returned %v", err)
 	}
 }
 
