@@ -60,6 +60,8 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					Command: bin, Env: []string{"MOCKAGENT_MEMORY_DIR=" + memory},
 				}},
 			}
+			// Model discovery opens its throwaway sessions here.
+			discovery := filepath.Join(worker.StateDir, "probe")
 			if err := cluster.SaveClusterJSON(cfg.WorkerConfigFile, worker, true); err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +102,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 				t.Fatalf("first execution did not settle with native context: %v", err)
 			}
 			eventsBefore := continuityEvents(t, memory)
-			business := continuityBusinessEvents(eventsBefore, "new", "")
+			business := continuityBusinessEvents(eventsBefore, discovery, "new", "")
 			if len(business) != 2 || business[1].Kind != "prompt" {
 				t.Fatalf("expected exactly new+first prompt, got %+v", eventsBefore)
 			}
@@ -170,7 +172,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					t.Fatal("history did not select the original native pointer and revoked credential")
 				}
 				events := continuityEvents(t, memory)
-				replacementEvents := continuityBusinessEvents(events[len(eventsBefore):], "new", "")
+				replacementEvents := continuityBusinessEvents(events[len(eventsBefore):], discovery, "new", "")
 				if len(replacementEvents) != 2 || replacementEvents[1].Kind != "prompt" ||
 					replacementEvents[0].Session == native || replacementEvents[1].Session != replacementEvents[0].Session ||
 					replacementEvents[1].PID != replacementEvents[0].PID ||
@@ -218,7 +220,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					t.Fatalf("native load failure not surfaced as recovery: kind=%s", question.Kind)
 				}
 				events := continuityEvents(t, memory)
-				resumed := continuityBusinessEvents(events[base:], "load", native)
+				resumed := continuityBusinessEvents(events[base:], discovery, "load", native)
 				if len(resumed) != 1 || resumed[0].PID == nativePID {
 					t.Fatalf("failed load fell back to new session or prompt: %+v", events)
 				}
@@ -229,7 +231,7 @@ func TestApplicationRestartPreservesNativeMemory(t *testing.T) {
 					!strings.Contains(recall.Text, "model=mock-deep mode=read-only mcp=ok") {
 					t.Fatalf("native memory/preferences/MCP did not continue: %s %s", recall.Error, recall.Text)
 				}
-				resumed := continuityBusinessEvents(events[base:], "load", native)
+				resumed := continuityBusinessEvents(events[base:], discovery, "load", native)
 				if len(resumed) != 2 || resumed[1].Kind != "prompt" ||
 					resumed[1].Session != native || resumed[1].PID != resumed[0].PID ||
 					resumed[0].PID == nativePID {
@@ -320,15 +322,18 @@ type continuityEvent struct {
 	Kind    string `json:"kind"`
 	Session string `json:"session"`
 	PID     int    `json:"pid"`
+	Cwd     string `json:"cwd,omitempty"`
 	Input   string `json:"input,omitempty"`
 }
 
 func TestContinuityBusinessEvents(t *testing.T) {
-	probe := continuityEvent{Kind: "new", Session: "probe", PID: 1}
+	const discovery = "/node/probe"
+	probe := continuityEvent{Kind: "new", Session: "probe", PID: 1, Cwd: discovery}
 	opened := continuityEvent{Kind: "new", Session: "native", PID: 2}
 	prompt := continuityEvent{Kind: "prompt", Session: "native", PID: 2, Input: "fixture-remember marker"}
 	loaded := continuityEvent{Kind: "load", Session: "native", PID: 3}
 	fresh := continuityEvent{Kind: "new", Session: "fresh-fallback", PID: 3}
+	elsewhere := continuityEvent{Kind: "new", Session: "other", PID: 1, Cwd: "/workspace"}
 	for _, tc := range []struct {
 		name   string
 		events []continuityEvent
@@ -340,23 +345,26 @@ func TestContinuityBusinessEvents(t *testing.T) {
 		{"probe_before_load", []continuityEvent{probe, loaded}, "load", "native", []continuityEvent{loaded}},
 		{"fallback_after_load_remains_visible", []continuityEvent{loaded, fresh}, "load", "native", []continuityEvent{loaded, fresh}},
 		{"replay_remains_visible", []continuityEvent{opened, prompt, prompt}, "new", "", []continuityEvent{opened, prompt, prompt}},
-		{"probe_after_business_new_remains_visible", []continuityEvent{opened, probe, prompt}, "new", "", []continuityEvent{opened, probe, prompt}},
+		{"discovery_after_business_new_is_ignored", []continuityEvent{opened, probe, prompt}, "new", "", []continuityEvent{opened, prompt}},
+		{"discovery_after_load_is_ignored", []continuityEvent{loaded, probe}, "load", "native", []continuityEvent{loaded}},
+		{"unprompted_new_elsewhere_remains_visible", []continuityEvent{opened, elsewhere, prompt}, "new", "", []continuityEvent{opened, elsewhere, prompt}},
 		{"prompt_without_load_rejected", []continuityEvent{opened, prompt}, "load", "native", nil},
 		{"wrong_load_rejected", []continuityEvent{loaded}, "load", "other", nil},
 		{"same_process_new_before_load_rejected", []continuityEvent{{Kind: "new", Session: "other", PID: 3}, loaded}, "load", "native", nil},
 		{"prompted_probe_rejected", []continuityEvent{probe, {Kind: "prompt", Session: "probe", PID: 1}, loaded}, "load", "native", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := continuityBusinessEvents(tc.events, tc.kind, tc.native); !reflect.DeepEqual(got, tc.want) {
+			if got := continuityBusinessEvents(tc.events, discovery, tc.kind, tc.native); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("business events = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
 }
 
-func continuityBusinessEvents(events []continuityEvent, kind, native string) []continuityEvent {
+func continuityBusinessEvents(events []continuityEvent, discovery, kind, native string) []continuityEvent {
+	events = withoutDiscovery(events, discovery)
 	// New sessions are identified by their first business prompt, never by
-	// the first global "new": background model discovery also opens sessions.
+	// the first global "new".
 	if native == "" {
 		for _, event := range events {
 			if event.Kind == "prompt" {
@@ -383,6 +391,27 @@ func continuityBusinessEvents(events []continuityEvent, kind, native string) []c
 		return events[i:]
 	}
 	return nil
+}
+
+// withoutDiscovery drops sessions that model discovery opened in its probe
+// directory and never prompted or loaded. Discovery runs concurrently with
+// business turns, so its sessions may appear anywhere in the event log; they
+// are identified by working directory rather than by position.
+func withoutDiscovery(events []continuityEvent, discovery string) []continuityEvent {
+	used := map[string]bool{}
+	for _, event := range events {
+		if event.Kind != "new" {
+			used[event.Session] = true
+		}
+	}
+	var kept []continuityEvent
+	for _, event := range events {
+		if event.Kind == "new" && event.Cwd == discovery && !used[event.Session] {
+			continue
+		}
+		kept = append(kept, event)
+	}
+	return kept
 }
 
 func continuityEvents(t *testing.T, dir string) []continuityEvent {
