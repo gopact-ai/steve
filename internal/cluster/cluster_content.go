@@ -608,7 +608,13 @@ func (p *Peer) contentAuthority(r *http.Request) error {
 }
 
 func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	// Maintenance is worked on for less than a coordinator waits for it,
+	// so a refusal still reaches the coordinator.
+	work := 5 * time.Minute
+	if r.Method == http.MethodPost {
+		work = contentMaintenanceTimeout * 2 / 3
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), work)
 	defer cancel()
 	// Admitting the request reads the committed state once; the checks
 	// after the transfer read it again, once, to see what changed.
@@ -617,7 +623,9 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	// A context deadline alone does not interrupt a blocked HTTP body read.
 	// Bound the underlying connection so a vanished peer cannot hold a quota
 	// reservation or the store's shutdown wait indefinitely.
+	// The connection outlasts the work a little, for the answer to go out.
 	deadline, _ := ctx.Deadline()
+	deadline = deadline.Add(contentMaintenanceTimeout / 6)
 	control := http.NewResponseController(w)
 	if err := control.SetReadDeadline(deadline); err != nil {
 		p.refuseContent(w, r, fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err))

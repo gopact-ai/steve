@@ -87,9 +87,7 @@ func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 		p.refuseContent(w, r, fmt.Errorf("%w: maintenance accepts no deletion candidates", contentreplica.ErrInvalid))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), contentMaintenanceTimeout)
-	defer cancel()
-	result, err := p.collectContent(ctx)
+	result, err := p.collectContent(r.Context())
 	if err != nil {
 		p.refuseContent(w, r, err)
 		return
