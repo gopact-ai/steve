@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"testing"
@@ -209,5 +210,74 @@ func TestStartCancelsToolCallsThatOutlastTheGracePeriod(t *testing.T) {
 	case <-answered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("caller of the cancelled call never got an answer")
+	}
+}
+
+// New binds its port before anything else is assembled. When assembly
+// fails after that, the server is never started, and Close is what gives
+// the port back.
+func TestCloseReleasesThePortOfAServerNeverStarted(t *testing.T) {
+	s, err := New(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := s.Port()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("port %d still held after Close: %v", port, err)
+	}
+	l.Close()
+}
+
+// Close on a running server shuts it down the way a cancelled Start
+// does: it returns once the call in flight has finished, and Start
+// returns nil after it.
+func TestCloseDrainsARunningServer(t *testing.T) {
+	s, err := New(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &closingStore{}
+	m := newHeldMemorizer(store)
+	s.SetMemorizer(m)
+	register(s, "oc_a", "builder", "tok-a", "om_1")
+	_, stopped := serveUntilStoreCloses(t, s, store)
+	answered := make(chan error, 1)
+	go func() {
+		answered <- postToolCall(s.URL(), "tok-a", "steve_remember", map[string]any{"scope": "global", "text": "likes go"})
+	}()
+	waitEntered(t, m)
+
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	select {
+	case err := <-closed:
+		close(m.release)
+		t.Fatalf("Close returned while a tool call was running: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(m.release)
+	if err := <-answered; err != nil {
+		t.Errorf("in-flight tool call: %v", err)
+	}
+	if err := <-closed; err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Errorf("Start after Close: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start did not return after Close")
+	}
+	if writes, lost := store.counts(); writes != 1 || lost != 0 {
+		t.Fatalf("%d write(s) kept, %d written after the store closed", writes, lost)
 	}
 }
