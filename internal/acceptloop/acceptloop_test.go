@@ -154,7 +154,8 @@ func TestRunReturnsWhenCtxEndsDuringAPause(t *testing.T) {
 	}
 }
 
-// A run of failures is logged once, not once per failure.
+// A run of failures is logged once, not once per failure, and the
+// accept that ends it logs that the listener accepts again.
 func TestRunWarnsOnceForARunOfFailures(t *testing.T) {
 	var logs bytes.Buffer
 	previous := slog.Default()
@@ -190,6 +191,9 @@ func TestRunWarnsOnceForARunOfFailures(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "test listener: accept:") {
 		t.Fatalf("the warning does not name the listener:\n%s", logs.String())
+	}
+	if n := strings.Count(logs.String(), "level=INFO msg=\"test listener: accepting again after 3 failures\""); n != 1 {
+		t.Fatalf("the accept that ends the run is not logged once:\n%s", logs.String())
 	}
 }
 
