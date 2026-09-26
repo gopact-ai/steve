@@ -25,6 +25,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
@@ -913,19 +914,23 @@ func FromProgress(p view.Progress) consoleapi.Progress {
 // The platform's own tools are recognised whatever a harness calls them
 // — claude-code says mcp__steve__steve_fleet, codex mcp.steve.steve_fleet
 // — and shown by their label, as kind "platform". The catalogue comes
-// from the messaging server itself, so a new tool needs no page change.
+// from the messaging server itself, so a new tool needs no page change;
+// each label is said in the language text gives when the call is shown.
 var platform struct {
 	mu     sync.RWMutex
 	server string
-	titles map[string]string
+	titles map[string]i18n.Key
+	text   i18n.Catalog
 }
 
-// SetPlatformTools installs the messaging server's name and tool labels.
-func SetPlatformTools(server string, titles map[string]string) {
+// SetPlatformTools installs the messaging server's name and tool labels,
+// and the catalog that says the labels.
+func SetPlatformTools(server string, titles map[string]i18n.Key, text i18n.Catalog) {
 	platform.mu.Lock()
 	defer platform.mu.Unlock()
 	platform.server = strings.ToLower(server)
-	platform.titles = map[string]string{}
+	platform.text = text
+	platform.titles = map[string]i18n.Key{}
 	for name, title := range titles {
 		platform.titles[strings.ToLower(name)] = title
 	}
@@ -941,7 +946,7 @@ func platformTool(raw string) (name, title string, ok bool) {
 	}
 	lower := strings.ToLower(strings.TrimSpace(raw))
 	if title, found := platform.titles[lower]; found {
-		return lower, title, true
+		return lower, platform.text.T(title), true
 	}
 	// Split on every separator a harness uses between server and tool,
 	// but never on a single underscore: that is inside the tool's name.
@@ -954,7 +959,7 @@ func platformTool(raw string) (name, title string, ok bool) {
 		}
 		tail := strings.Join(parts[i+1:], "_")
 		if title, found := platform.titles[tail]; found {
-			return tail, title, true
+			return tail, platform.text.T(title), true
 		}
 	}
 	return "", "", false

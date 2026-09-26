@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -550,7 +549,7 @@ func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity 
 		r.asked, r.repeats = question.Message, 1
 	}
 	question.Message = r.explain(question.Message, blocked.Cause)
-	question.Choices = append(append([]view.Choice{}, question.Choices...), stopChoice(r.exchange.Locale))
+	question.Choices = append(append([]view.Choice{}, question.Choices...), stopChoice(i18n.New(i18n.FromLang(r.exchange.Locale))))
 	answer, err := r.ask(identity, question, r.s.turnQuestion)
 	if err != nil {
 		if r.ctx.Err() != nil {
@@ -584,31 +583,23 @@ func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity 
 // failure the check actually reported, whether this check said anything
 // new, and what became of a stop they already asked for.
 func (r *exchangeRecovery) explain(message string, cause error) string {
-	en := r.exchange.Locale == "en"
+	text := i18n.New(i18n.FromLang(r.exchange.Locale))
 	select {
 	case note := <-r.stopped:
 		if note != "" {
-			message += line(en, "\n\n上一次「停止并取消原执行」没有完成：", "\n\nThe last stop did not finish: ") + note
+			message += "\n\n" + text.T(i18n.ConsoleRecoveryStopUnfinished, note)
 		}
 	default:
 	}
 	if cause != nil {
 		if detail := clipDetail(strings.TrimSpace(cause.Error())); detail != "" && !strings.Contains(message, detail) {
-			message += line(en, "\n\n本次检查报告的失败：", "\n\nWhat the check reported: ") + detail
+			message += "\n\n" + text.T(i18n.ConsoleRecoveryCheckReported, detail)
 		}
 	}
 	if r.repeats > 1 {
-		message += line(en, "\n\n这已经是第 ", "\n\nThis is check number ") + strconv.Itoa(r.repeats) +
-			line(en, " 次检查，结果与上一次相同。再检查一次大概率还是同样的结果；要结束这一回合，选择「停止并取消原执行」。", ", and it came back the same as the last one. Another check is unlikely to differ; to end this turn, choose to stop and cancel the original run.")
+		message += "\n\n" + text.T(i18n.ConsoleRecoveryRepeated, r.repeats)
 	}
 	return message
-}
-
-func line(en bool, zh, english string) string {
-	if en {
-		return english
-	}
-	return zh
 }
 
 // clipDetail keeps a reported failure readable in a question card.
@@ -621,11 +612,8 @@ func clipDetail(detail string) string {
 	return string(runes[:limit]) + "…"
 }
 
-func stopChoice(locale string) view.Choice {
-	if locale == "en" {
-		return view.Choice{Value: "stop", Label: "Stop and cancel the original run", Detail: "Have the node seal the original open command, confirm the cancellation, and end this turn."}
-	}
-	return view.Choice{Value: "stop", Label: "停止并取消原执行", Detail: "让节点封存原创建指令并核实取消结果，然后结束这一回合。"}
+func stopChoice(text i18n.Catalog) view.Choice {
+	return view.Choice{Value: "stop", Label: text.T(i18n.ConsoleStopChoice), Detail: text.T(i18n.ConsoleStopChoiceDetail)}
 }
 
 // stopOriginal performs the owner's stop next to this worker and brings

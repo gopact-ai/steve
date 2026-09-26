@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -124,7 +125,7 @@ func (l Ledger) Facts(ctx context.Context) (Facts, error) {
 		for _, it := range is {
 			detail := it.Error
 			if detail == "" {
-				detail = "执行结果尚未确认"
+				detail = i18n.FromContext(ctx).T(i18n.ReadEffectUnconfirmed)
 			}
 			f.Effects = append(f.Effects, Effect{ID: it.ID, Tool: it.Tool, TaskID: it.TaskID, Attempt: it.AttemptID, Error: detail, At: it.At})
 		}

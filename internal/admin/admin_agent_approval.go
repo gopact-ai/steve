@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/approval"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/models"
 )
 
@@ -31,7 +32,7 @@ func (a *Service) SyncAgentApproval(ctx context.Context) (consoleapi.ApprovalSyn
 		out = consoleapi.ApprovalSync{}
 		intent := c.Gateway.DefaultApproval
 		if intent == "" {
-			return errors.New("还没有选择默认审批策略；先在设置里选一个，再同步给所有 Agent")
+			return errors.New(textFor(ctx).T(i18n.AdminApprovalDefaultUnset))
 		}
 		out.Intent = intent
 		for id, item := range agents {

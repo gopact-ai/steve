@@ -20,6 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -63,11 +64,11 @@ func undispatchedStopped(r attempt.Record, p *attempt.RetainedEvidence, logicalS
 
 func (c *Coordinator) relocationTarget(ctx context.Context, original attempt.Record, nodeID string) (agent.Agent, roster.Candidate, error) {
 	if c.fleet == nil {
-		return agent.Agent{}, roster.Candidate{}, errors.New("可用节点目录尚未就绪")
+		return agent.Agent{}, roster.Candidate{}, errors.New(c.text.T(i18n.RelocationNoDirectory))
 	}
 	configured, ok := c.catalog.Resolve(original.Agent)
 	if !ok {
-		return agent.Agent{}, roster.Candidate{}, errors.New("原Agent配置已不存在")
+		return agent.Agent{}, roster.Candidate{}, errors.New(c.text.T(i18n.RelocationAgentGone))
 	}
 	if original.Preferences != nil {
 		configured.Model, configured.Options = original.Preferences.Model, original.Preferences.Options
@@ -101,7 +102,7 @@ func (c *Coordinator) relocationTarget(ctx context.Context, original attempt.Rec
 				}
 			}
 			if !found {
-				reasons = append(reasons, candidate.Node+": 缺少指定模型 "+configured.Model)
+				reasons = append(reasons, c.text.T(i18n.RelocationMissingModel, candidate.Node, configured.Model))
 				continue
 			}
 		}
@@ -110,10 +111,10 @@ func (c *Coordinator) relocationTarget(ctx context.Context, original attempt.Rec
 			return agent.Agent{}, roster.Candidate{}, err
 		}
 		if !ok {
-			return agent.Agent{}, roster.Candidate{}, errors.New("项目记录缺失")
+			return agent.Agent{}, roster.Candidate{}, errors.New(c.text.T(i18n.RelocationProjectMissing))
 		}
 		if p.Level == datalevel.Sealed || !p.Level.OrDefault().Admits(candidate.Level.OrDefault()) {
-			reasons = append(reasons, candidate.Node+": 数据等级不允许")
+			reasons = append(reasons, c.text.T(i18n.RelocationLevelRefused, candidate.Node))
 			continue
 		}
 		selected := configured
@@ -122,7 +123,7 @@ func (c *Coordinator) relocationTarget(ctx context.Context, original attempt.Rec
 		return selected, candidate, nil
 	}
 	if len(reasons) == 0 {
-		reasons = append(reasons, "没有其他已注册且在线的同类Agent节点")
+		reasons = append(reasons, c.text.T(i18n.RelocationNoPeer))
 	}
 	return agent.Agent{}, roster.Candidate{}, errors.New(strings.Join(reasons, "；"))
 }
@@ -175,7 +176,7 @@ func (c *Coordinator) relocationPreparation(ctx context.Context, p attempt.Reloc
 			return nil, nil, true, nil
 		}
 		if !attempt.PreparingRelocation(existing) {
-			return nil, nil, false, c.retainedBlocked("relocation-preparation", "读取此前已确认方案的准备记录", "此前的新执行在发送输入前中断。", "需要核实已创建的原生会话与资源，不能凭重试覆盖它们。", "建议重新核对该准备记录并建立新的具体恢复方案。", nil)
+			return nil, nil, false, c.retainedBlocked("relocation-preparation", i18n.RetainedTriedReadPreparation, i18n.RetainedProblemPreparationInterrupted, c.text.T(i18n.RetainedReasonCheckCreated), i18n.RetainedAdviceRecheckPreparation, nil)
 		}
 		admitted = &existing
 	}
@@ -233,7 +234,7 @@ func (c *Coordinator) openRelocationAttempt(ctx context.Context, p attempt.Reloc
 	if admitted != nil {
 		return c.attempts.RecoverRelocationPreparation(ctx, admitted.ID)
 	}
-	r, err := c.attempts.OpenRelocation(ctx, p.ID, approval)
+	r, err := c.attempts.OpenRelocation(ctx, c.text, p.ID, approval)
 	if err != nil {
 		return attempt.Record{}, err
 	}
@@ -355,8 +356,8 @@ func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt
 	if err := c.store.SaveSession(session); err != nil {
 		return nil, r, session, true, err
 	}
-	if err := applyRecoveryPreferences(ctx, runner, r.Preferences); err != nil {
-		return nil, r, session, true, c.retainedBlocked("relocation-options", "在目标原生会话设置并读回原执行的模型和选项", "目标会话不能按原设置继续任务。", err.Error(), "建议补齐目标Agent支持的模型和选项后重新检查；尚未向它发送原任务。", err)
+	if err := applyRecoveryPreferences(ctx, c.text, runner, r.Preferences); err != nil {
+		return nil, r, session, true, c.retainedBlocked("relocation-options", i18n.RetainedTriedApplyOptions, i18n.RetainedProblemOptions, err.Error(), i18n.RetainedAdviceEquipOptions, err)
 	}
 	r, err = c.attempts.Advance(ctx, r.ID, attempt.Running, "relocation", func(next *attempt.Record) {
 		next.Session = runner.ID()

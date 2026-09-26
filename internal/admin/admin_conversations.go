@@ -7,6 +7,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -18,34 +19,34 @@ import (
 // work is the owner's decision, not a side effect of deleting a row.
 func (a *Service) DeleteConversation(ctx context.Context, conversation string) error {
 	if a.Console == nil {
-		return errors.New("会话服务没有启用")
+		return errors.New(textFor(ctx).T(i18n.AdminConversationsOff))
 	}
 	id := console.ConversationID(conversation)
 	release, err := a.Console.Seal(id)
 	if err != nil {
-		return deleteRefusal(err)
+		return deleteRefusal(textFor(ctx), err)
 	}
 	defer release()
 	if a.Coordinator != nil {
 		if err := a.Coordinator.DiscardConversation(ctx, id); err != nil {
-			return deleteRefusal(err)
+			return deleteRefusal(textFor(ctx), err)
 		}
 	}
 	if err := a.Console.Discard(id); err != nil {
-		return deleteRefusal(err)
+		return deleteRefusal(textFor(ctx), err)
 	}
 	return nil
 }
 
 // deleteRefusal says in the owner's words why a delete did not happen.
-func deleteRefusal(err error) error {
+func deleteRefusal(text i18n.Catalog, err error) error {
 	switch {
 	case errors.Is(err, task.ErrExecuting):
-		return fmt.Errorf("会话里还有任务在执行，先停止再删除（%w）", err)
+		return fmt.Errorf(text.T(i18n.AdminDeleteTaskRunning), err)
 	case errors.Is(err, turn.ErrConversationBusy), errors.Is(err, consoleapi.ErrBusy):
-		return fmt.Errorf("会话还有没跑完的回合，先停止再删除（%w）", err)
+		return fmt.Errorf(text.T(i18n.AdminDeleteTurnRunning), err)
 	case errors.Is(err, consoleapi.ErrConsoleClosing):
-		return fmt.Errorf("Hub 正在维护，稍后再删除（%w）", err)
+		return fmt.Errorf(text.T(i18n.AdminDeleteHubMaintenance), err)
 	default:
 		return err
 	}

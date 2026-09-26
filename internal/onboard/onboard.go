@@ -44,10 +44,7 @@ func PendingID(owner string) string {
 // is an instruction to the agent, not something the owner asked for, so the
 // task list shows what the work was instead of the prompt's first line.
 func TaskGoal(locale i18n.Locale) string {
-	if locale == i18n.LocaleEN {
-		return "First private introduction (onboarding)"
-	}
-	return "首次私聊自我介绍（系统引导）"
+	return i18n.New(locale).T(i18n.OnboardTaskGoal)
 }
 
 // initReporter is a home reader that knows itself whether the identity

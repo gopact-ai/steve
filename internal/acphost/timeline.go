@@ -44,7 +44,7 @@ func (c *collector) timelineSnapshot() []view.Span {
 					span.Text = c.thoughtHead[entry.start:min(entry.end, headEnd)]
 				}
 				if entry.start <= headEnd && entry.end > headEnd {
-					span.Text += fmt.Sprintf("\n[… 省略 %d 字节 …]\n", tailStart-headEnd)
+					span.Text += fmt.Sprintf(omitted, tailStart-headEnd)
 				}
 				if entry.end > tailStart {
 					span.Text += c.thought[max(entry.start-tailStart, 0) : entry.end-tailStart]

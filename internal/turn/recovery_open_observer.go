@@ -7,6 +7,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -33,7 +34,7 @@ type originalOpenRecovery interface {
 func (c *Coordinator) inspectPendingOpen(ctx context.Context, record attempt.Record) error {
 	recovery, ok := c.runtime.(originalOpenRecovery)
 	if !ok {
-		return c.retainedBlocked("native-open", "检查原节点的会话查询接口", "当前节点暂不支持查询原会话创建结果。", "没有会话标识不代表没有创建会话。", "建议升级并连接原节点后重新检查，或取消原任务并等待节点确认。", harness.ErrStopUnconfirmed)
+		return c.retainedBlocked("native-open", i18n.RetainedTriedSessionQuery, i18n.RetainedProblemOpenQueryUnsupported, c.text.T(i18n.RetainedReasonNoSessionID), i18n.RetainedAdviceUpgradeNode, harness.ErrStopUnconfirmed)
 	}
 	ctx = execution.WithProbeKey(ctx, execution.Key{TaskID: record.TaskID, InstanceID: record.TurnID, AttemptID: record.ID})
 	state, err := recovery.ReconcileNodeOpen(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Workspace.Path, false)
@@ -41,16 +42,16 @@ func (c *Coordinator) inspectPendingOpen(ctx context.Context, record attempt.Rec
 		// The node replied. It writes its record before starting anything,
 		// so no Agent is running for this open and no task input was ever
 		// sent. Sealing it is the move that ends the turn cleanly.
-		return c.retainedBlocked("native-open-absent", "已联系上原节点并查询原创建指令", "原节点在线，它上面没有这条会话的创建记录。", "节点会先落盘创建记录再启动 Agent，所以这条创建从未生效，也没有向 Agent 发出任何任务输入。", "选择「停止并取消原执行」封存这条创建指令，结束这一回合；之后重新发送同样的任务是安全的。", err)
+		return c.retainedBlocked("native-open-absent", i18n.RetainedTriedQueriedOpen, i18n.RetainedProblemOpenAbsent, c.text.T(i18n.RetainedReasonOpenNeverStarted), i18n.RetainedAdviceSealOpen, err)
 	}
 	if err != nil {
-		return c.retainedBlocked("native-open", "按原执行和会话创建指令查询原节点", "暂时无法取得原会话的创建记录。", "节点可能离线，或创建请求尚未到达；记录缺失不能证明原请求已取消。", "建议恢复原节点后重新检查；若不再继续，可点击停止，系统会封存原创建指令并核实取消结果。", err)
+		return c.retainedBlocked("native-open", i18n.RetainedTriedQueryOpen, i18n.RetainedProblemOpenUnreadable, c.text.T(i18n.RetainedReasonOpenUnreached), i18n.RetainedAdviceRestoreOrStop, err)
 	}
 	if state.OpenReceipt != nil && state.OpenReceipt.CancelledBeforeOpen {
-		return c.retainedBlocked("native-open-cancelled", "读取节点持久保存的原创建指令取消记录", "原会话创建已取消，未向 Agent 发送任务输入。", "节点已阻止原创建请求随后启动，取消结果正在核对并写回任务。", "建议点击停止完成任务取消；确认后可以重新发起任务。", nil)
+		return c.retainedBlocked("native-open-cancelled", i18n.RetainedTriedReadOpenCancel, i18n.RetainedProblemOpenCancelled, c.text.T(i18n.RetainedReasonOpenBlocked), i18n.RetainedAdviceStopToFinish, nil)
 	}
 	if state.Command == nil && state.InputAccepted == 0 {
-		return c.retainedBlocked("native-open-found", "按原创建指令找回并读取同一个节点会话", "已找到原会话，但尚未向 Agent 发送任务输入。", "创建响应中断发生在输入发送前，原准备过程没有保存可准确重放的完整输入。", "建议点击停止，安全取消原准备；收到节点停止确认后重新发起任务。", nil)
+		return c.retainedBlocked("native-open-found", i18n.RetainedTriedFindOpenSession, i18n.RetainedProblemOpenFound, c.text.T(i18n.RetainedReasonOpenNoInput), i18n.RetainedAdviceStopPreparation, nil)
 	}
-	return c.retainedBlocked("native-open-state", "按原创建指令找回原节点会话并核对输入回执", "原会话的输入状态与任务准备记录不一致。", "不能把这次查询变成新的执行，也不能重发可能已接受的输入。", "建议保留原记录继续核对，或点击停止并等待节点确认原执行停止。", harness.ErrStopUnconfirmed)
+	return c.retainedBlocked("native-open-state", i18n.RetainedTriedCheckOpenReceipt, i18n.RetainedProblemOpenMismatch, c.text.T(i18n.RetainedReasonNoReplay), i18n.RetainedAdviceKeepOrStop, harness.ErrStopUnconfirmed)
 }

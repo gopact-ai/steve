@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/checkpoint"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -26,7 +27,7 @@ func relocationFixture(t *testing.T) (*Service, *clock, Record, RelocationIntent
 
 func TestRelocationPreparationFreezesMCPConfigurationBeforeAnUncertainOpen(t *testing.T) {
 	s, _, _, plan, _, _ := relocationFixture(t)
-	r, err := s.OpenRelocation(t.Context(), plan.ID, manualRelocation(plan))
+	r, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), plan.ID, manualRelocation(plan))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,16 +70,16 @@ func manualRelocation(p RelocationIntent) RelocationApproval {
 
 func TestRelocationApprovalIsBoundToExactPlanAndKeepsLogicalTurn(t *testing.T) {
 	s, _, old, p, _, _ := relocationFixture(t)
-	if _, err := s.OpenRelocation(t.Context(), p.ID, RelocationApproval{}); err == nil {
+	if _, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, RelocationApproval{}); err == nil {
 		t.Fatal("absence of effects was treated as approval")
 	}
 	a := manualRelocation(p)
 	a.ChoiceID = "confirm-stopped-and-retry:other-plan"
-	if _, err := s.OpenRelocation(t.Context(), p.ID, a); err == nil {
+	if _, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, a); err == nil {
 		t.Fatal("another plan authorized this relocation")
 	}
 	a = manualRelocation(p)
-	created, err := s.OpenRelocation(t.Context(), p.ID, a)
+	created, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestRelocationApprovalIsBoundToExactPlanAndKeepsLogicalTurn(t *testing.T) {
 	if err := s.Renew(t.Context(), old.ID); err == nil {
 		t.Fatal("old writer can renew after relocation")
 	}
-	again, err := s.OpenRelocation(t.Context(), p.ID, a)
+	again, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, a)
 	if err != nil || again.ID != created.ID {
 		t.Fatalf("retry duplicated relocation: %+v %v", again, err)
 	}
@@ -103,7 +104,7 @@ func TestRelocationApprovalIsBoundToExactPlanAndKeepsLogicalTurn(t *testing.T) {
 
 func TestApprovedRelocationPreparationSurvivesCoordinatorLossWithoutNewAttempt(t *testing.T) {
 	s, now, _, p, _, _ := relocationFixture(t)
-	created, err := s.OpenRelocation(t.Context(), p.ID, manualRelocation(p))
+	created, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, manualRelocation(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +141,7 @@ func TestRelocationRollsBackOldRetirementWhenReplacementLeaseCannotBeAcquired(t 
 	if _, err := s.l.Acquire(t.Context(), "workspace:"+p.Target.Workspace.ID, "another-writer", time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.OpenRelocation(t.Context(), p.ID, manualRelocation(p)); !errors.Is(err, ledger.ErrHeld) {
+	if _, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, manualRelocation(p)); !errors.Is(err, ledger.ErrHeld) {
 		t.Fatalf("expected destination conflict, got %v", err)
 	}
 	current, _ := s.Get(t.Context(), old.ID)
@@ -161,7 +162,7 @@ func TestRelocationRequiresTaskAuthorizationAndRealUndispatchedProof(t *testing.
 		if _, err := tasks.SetAside(old.TaskID, task.StatePaused); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.OpenRelocation(t.Context(), p.ID, manualRelocation(p)); !errors.Is(err, task.ErrExecutionStopped) {
+		if _, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, manualRelocation(p)); !errors.Is(err, task.ErrExecutionStopped) {
 			t.Fatalf("revoked task relocated: %v", err)
 		}
 	})
@@ -180,7 +181,7 @@ func TestRelocationRequiresTaskAuthorizationAndRealUndispatchedProof(t *testing.
 			proof.Session.Command.ProcessStopped = true
 			proof.Session.Command.State = "uncertain"
 			proof.Session.Command.DispatchState = marker
-			_, err = s.OpenRelocation(t.Context(), p.ID, RelocationApproval{Node: &proof})
+			_, err = s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), p.ID, RelocationApproval{Node: &proof})
 			if (marker == "not-dispatched") != (err == nil) {
 				t.Fatalf("dispatch %q: %v", marker, err)
 			}

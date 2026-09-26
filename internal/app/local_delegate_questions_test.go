@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
@@ -88,7 +89,7 @@ func TestHubLocalChildWaitsForItsOwnerInTheParentConversation(t *testing.T) {
 		return "permission:" + string(outcome.OptionID) + " accept:" + answer.Value, nil
 	}}
 	artifacts := artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
-	delegation := delegate.New(tasks, roster.New(catalog), sessions, capability.NewAssembler(nil), artifacts, "hub")
+	delegation := delegate.New(tasks, roster.New(catalog), sessions, capability.NewAssembler(nil), artifacts, "hub", i18n.New(i18n.LocaleZH))
 	delegation.SetLedger(attempt.New(book), artifacts)
 	// Long enough that starting and finishing the child under load is
 	// not mistaken for silence; the waits below still exceed it.

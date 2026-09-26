@@ -205,7 +205,7 @@ func (t *chatTurn) arm(ctx context.Context, e *lifecycle.Execution) (func(*attem
 				options[id] = value
 			}
 		}
-		if err := applyRecoveryPreferences(ctx, runner, &attempt.SessionPreferences{Model: prefs["model"], Options: options}); err != nil {
+		if err := applyRecoveryPreferences(ctx, c.text, runner, &attempt.SessionPreferences{Model: prefs["model"], Options: options}); err != nil {
 			return nil, fmt.Errorf("apply conversation preferences without resetting context: %w", err)
 		}
 	}

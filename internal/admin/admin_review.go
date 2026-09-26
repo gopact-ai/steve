@@ -3,11 +3,11 @@ package admin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // attemptSnapshot is the snapshot an attempt is browsed at: its result
@@ -89,7 +89,7 @@ func (a *Service) Changes(ctx context.Context, attemptID string) (*consoleapi.Ch
 	}
 	summary := &consoleapi.ChangeSummary{Attempt: attemptID, Project: record.Project, Base: base, Artifact: after}
 	if record.Result != nil && record.Result.CaptureError != "" {
-		summary.Note = "改动没有记录：" + record.Result.CaptureError
+		summary.Note = textFor(ctx).T(i18n.AdminChangesUnrecorded, record.Result.CaptureError)
 		return summary, nil
 	}
 	if after == "" || after == base {
@@ -113,7 +113,7 @@ func (a *Service) Changes(ctx context.Context, attemptID string) (*consoleapi.Ch
 	summary.Added, summary.Deleted, summary.BinaryFiles = &added, &deleted, &binaryFiles
 	summary.Truncated = truncated
 	if truncated {
-		summary.Note = "只统计了前 " + fmt.Sprint(len(changes)) + " 个"
+		summary.Note = textFor(ctx).T(i18n.AdminChangesCounted, len(changes))
 	}
 	return summary, nil
 }
@@ -126,7 +126,7 @@ func (a *Service) AttemptChanges(ctx context.Context, attemptID string) (console
 	}
 	index := consoleapi.ChangeIndex{Attempt: attemptID, Project: record.Project, Base: base, Artifact: after}
 	if after == "" || after == base {
-		index.Note = "没有改动"
+		index.Note = textFor(ctx).T(i18n.AdminNoChanges)
 		return index, nil
 	}
 	changes, truncated, err := a.Artifacts.Changes(ctx, record.Project, base, after)
@@ -144,7 +144,7 @@ func (a *Service) AttemptDiff(ctx context.Context, attemptID, path string) (cons
 		return consoleapi.FileDiff{}, err
 	}
 	if after == "" {
-		return consoleapi.FileDiff{}, errors.New("没有改动")
+		return consoleapi.FileDiff{}, errors.New(textFor(ctx).T(i18n.AdminNoChanges))
 	}
 	diff, truncated, err := a.Artifacts.FileDiff(ctx, record.Project, base, after, path)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -133,7 +134,7 @@ func TestAddProjectRefusesAHomeOnAnotherMachine(t *testing.T) {
 
 func TestCheckProjectDirKeepsTheNameItAccepts(t *testing.T) {
 	for _, dir := range []string{"my-service", "team/my-service", "/my-service"} {
-		got, err := CheckProjectDir(dir)
+		got, err := CheckProjectDir(i18n.New(i18n.LocaleZH), dir)
 		if strings.HasPrefix(dir, "/") {
 			if err == nil {
 				t.Fatalf("%q was accepted as a relative directory", dir)

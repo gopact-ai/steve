@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -144,13 +145,13 @@ func newWorldWith(t *testing.T, nodes func(artifact.LocalNodes) artifact.Nodes) 
 	}
 	tasks.SetBudget(10, time.Hour)
 
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessions := &fakeSessions{}
 	art, att, home := storesWith(t, nodes)
-	service := New(tasks, r, sessions, capability.NewAssembler(nil), art, "hub")
+	service := New(tasks, r, sessions, capability.NewAssembler(nil), art, "hub", i18n.New(i18n.LocaleZH))
 	// What the owner is told once a child cannot be joined is the subject
 	// of these tests; the quiet stretch before that has its own test.
 	service.RecoveryQuiet = 0

@@ -53,12 +53,16 @@ type AuditRecord struct {
 // LedgerStore keeps memory, request receipts and audit metadata in replicated
 // transactions. It has no cached document that can outlive a coordinator.
 type LedgerStore struct {
-	book  *ledger.Ledger
-	guard func(context.Context, *ledger.Tx) error
+	book   *ledger.Ledger
+	guard  func(context.Context, *ledger.Tx) error
+	locale func() home.Locale
 }
 
 func NewLedgerStore(book *ledger.Ledger) *LedgerStore { return &LedgerStore{book: book} }
 func (*LedgerStore) Name() string                     { return "ledger" }
+
+// SetLocale names the Hub's language, which a template explains itself in.
+func (s *LedgerStore) SetLocale(source func() home.Locale) { s.locale = source }
 
 // SetWriteGuard installs the caller's execution check before this store is
 // used. Validation and every memory mutation share the same transaction.
@@ -151,7 +155,7 @@ func (s *LedgerStore) Text(ctx context.Context, scope Scope) (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(record.Text) == "" {
-		return Template(scope), nil
+		return Template(scope, hubLocale(s.locale)), nil
 	}
 	return stripIDs(record.Text), nil
 }
@@ -196,7 +200,7 @@ func (s *LedgerStore) remember(ctx context.Context, scope Scope, section, text, 
 			receipt, replayed = previous.Receipt, true
 			return nil
 		}
-		after, got, err := prepareRemember(scope, section, text, record.Text)
+		after, got, err := prepareRemember(scope, hubLocale(s.locale), section, text, record.Text)
 		if err != nil {
 			return err
 		}

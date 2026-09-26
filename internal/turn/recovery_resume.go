@@ -33,8 +33,10 @@ type RetainedChat struct {
 // retainedBlocked leaves the original attempt and exchange unresolved. The
 // question describes reconciliation work; it is not an invented native-agent
 // callback and accepting it only retries observation of the retained command.
-func (c *Coordinator) retainedBlocked(code, attempted, problem, reason, recommendation string, cause error) *agentexec.RecoveryBlocked {
-	message := c.text.T(i18n.RecoveryTried, attempted) + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation
+// reason is already in the coordinator's language: a catalog entry or the
+// text of the error that stopped the check.
+func (c *Coordinator) retainedBlocked(code string, attempted, problem i18n.Key, reason string, recommendation i18n.Key, cause error) *agentexec.RecoveryBlocked {
+	message := c.text.T(i18n.RecoveryTried, c.text.T(attempted)) + "\n\n" + c.text.T(problem) + "\n\n" + reason + "\n\n" + c.text.T(recommendation)
 	return &agentexec.RecoveryBlocked{Cause: cause, Question: agentexec.RecoveryQuestion("recovery/"+code, c.text.T(i18n.RecoveryTitleTask), message,
 		view.Choice{Label: c.text.T(i18n.RecoveryRetry), Detail: c.text.T(i18n.RecoveryRetryTask)},
 		view.Choice{Label: c.text.T(i18n.RecoveryWait), Detail: c.text.T(i18n.RecoveryWaitReconnect)})}
@@ -133,7 +135,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 		c = c.localized(i18n.FromLang(req.Locale))
 	}
 	if c.maintaining {
-		return Result{}, c.retainedBlocked("maintenance", "检查当前协调服务", "协调服务暂时不能接续执行。", "服务正在交接或维护。", "建议等待交接完成后重新检查。", nil)
+		return Result{}, c.retainedBlocked("maintenance", i18n.RetainedTriedCurrentCoordinator, i18n.RetainedProblemCoordinatorUnavailable, c.text.T(i18n.RetainedReasonHandover), i18n.RetainedAdviceAwaitHandoverRecheck, nil)
 	}
 	record, err := c.retainedChatRecord(parent, id, req)
 	if err != nil {
@@ -143,14 +145,14 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 		return delivered, err
 	}
 	if record.State != attempt.Running || record.Execution == nil {
-		return Result{}, c.retainedBlocked("state", "检查原执行状态", "原执行目前不能接续。", "它没有保留可接续的运行状态和任务授权。", "建议核对执行记录后继续。", nil)
+		return Result{}, c.retainedBlocked("state", i18n.RetainedTriedExecutionState, i18n.RetainedProblemNotResumable, c.text.T(i18n.RetainedReasonNoRunState), i18n.RetainedAdviceCheckExecution, nil)
 	}
 	if err := c.tasks.CheckExecution(*record.Execution); err != nil {
-		return Result{}, c.retainedBlocked("authorization", "检查任务的当前执行授权", "任务授权已经变化。", "任务可能已被暂停或取消，旧执行不能直接恢复。", "建议先确认任务当前状态。", err)
+		return Result{}, c.retainedBlocked("authorization", i18n.RetainedTriedTaskAuthority, i18n.RetainedProblemAuthorityChanged, c.text.T(i18n.RetainedReasonTaskStopped), i18n.RetainedAdviceCheckTaskState, err)
 	}
 	manager, ok := c.runtime.(retainedRuntime)
 	if !ok {
-		return Result{}, c.retainedBlocked("runtime", "检查节点会话接续接口", "当前服务无法接续节点持有的执行。", "节点会话恢复接口尚未接入。", "建议检查节点服务后重试。", nil)
+		return Result{}, c.retainedBlocked("runtime", i18n.RetainedTriedResumeInterface, i18n.RetainedProblemRuntime, c.text.T(i18n.RetainedReasonNoResumeInterface), i18n.RetainedAdviceCheckNodeService, nil)
 	}
 	// The observer runs under the prompt timeout like the prompt it
 	// resumes: a command that stays silent ends the turn as a timeout.
@@ -162,7 +164,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	defer cancel()
 	if !turnOwned {
 		if !c.beginTurn(req.ConversationID, record.Agent, cancel) {
-			return Result{}, c.retainedBlocked("busy", "检查原会话的执行占用", "这个会话已有另一个执行正在处理。", "不能同时附着多个会话驱动。", "建议等待当前驱动结束后重新检查。", nil)
+			return Result{}, c.retainedBlocked("busy", i18n.RetainedTriedSessionOccupancy, i18n.RetainedProblemSessionBusy, c.text.T(i18n.RetainedReasonOneDriver), i18n.RetainedAdviceAwaitDriver, nil)
 		}
 		defer c.clearActive(req.ConversationID, record.Agent)
 	}
@@ -215,7 +217,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	}
 	var detached *execution.RetainedObserverDetached
 	if errors.As(runErr, &detached) {
-		return Result{}, c.retainedBlocked("observer-detached", "接续并观察原执行的进度", "原执行的观察连接再次中断。", "无法确认它是否已经完成，因此保留原执行并等待核实。", "建议恢复连接后重新检查。", runErr)
+		return Result{}, c.retainedBlocked("observer-detached", i18n.RetainedTriedObserve, i18n.RetainedProblemObserverLost, c.text.T(i18n.RetainedReasonKeepUntilVerified), i18n.RetainedAdviceReconnect, runErr)
 	}
 	if saved := c.store.Conversation(req.ConversationID).Sessions[record.Agent]; saved.UpstreamID == record.Session {
 		saved.Tainted = false
@@ -259,7 +261,7 @@ func (c *Coordinator) retainedChatRecord(parent context.Context, id string, req 
 	}
 	tracked, ok := c.tasks.Get(record.TaskID)
 	if !ok || record.Kind != attempt.KindChat || tracked.Channel != req.ConversationID || record.TurnID != req.MessageID {
-		return attempt.Record{}, c.retainedBlocked("identity", "检查任务和原会话的执行关联", "无法确认这条会话对应的原执行。", "任务、会话或输入标识不一致。", "建议核对原任务记录后继续。", nil)
+		return attempt.Record{}, c.retainedBlocked("identity", i18n.RetainedTriedTaskSession, i18n.RetainedProblemIdentity, c.text.T(i18n.RetainedReasonIDMismatch), i18n.RetainedAdviceCheckTaskRecord, nil)
 	}
 	if tracked.Requester != "" && tracked.Requester != req.SenderOpenID {
 		return attempt.Record{}, errors.New("retained execution belongs to another requester")
@@ -269,7 +271,7 @@ func (c *Coordinator) retainedChatRecord(parent context.Context, id string, req 
 		return attempt.Record{}, c.inspectPendingOpen(parent, record)
 	}
 	if record.State != attempt.Bound && !nodewire.IsManagedSession(record.Session) && !endedBeforeSession(record) {
-		return attempt.Record{}, c.retainedBlocked("native-identity", "检查原节点会话标识", "尚未取得可接续的原生会话。", "恢复准备可能在建立会话前中断。", "建议重新检查已确认的恢复准备。", nil)
+		return attempt.Record{}, c.retainedBlocked("native-identity", i18n.RetainedTriedSessionID, i18n.RetainedProblemNoNativeSession, c.text.T(i18n.RetainedReasonPreparationBroke), i18n.RetainedAdviceRecheckRecovery, nil)
 	}
 	return record, nil
 }
@@ -290,7 +292,7 @@ func (c *Coordinator) deliverRetainedChat(parent context.Context, req Request, r
 	if record.State == attempt.Bound {
 		var result Result
 		if record.Result == nil || len(record.Result.Output) == 0 || json.Unmarshal(record.Result.Output, &result) != nil {
-			return Result{}, c.retainedBlocked("result", "读取原执行的已提交结果", "原执行已经结束，但完整回复记录不可用。", "不能为了补回复而重新执行任务。", "建议检查已保存的产物与执行记录。", nil), true
+			return Result{}, c.retainedBlocked("result", i18n.RetainedTriedReadResult, i18n.RetainedProblemReplyMissing, c.text.T(i18n.RetainedReasonNoRerunForReply), i18n.RetainedAdviceCheckArtifacts, nil), true
 		}
 		result.Attempt = record.ID
 		if err := c.SettleChatAccounting(parent, record.ID); err != nil {
@@ -301,13 +303,13 @@ func (c *Coordinator) deliverRetainedChat(parent context.Context, req Request, r
 		return result, err, true
 	}
 	if record.State.Terminal() && record.Unsettled {
-		return Result{}, c.retainedBlocked("terminal-unsettled", "检查执行结束记录和停止证据", "原执行的停止状态仍未确认。", "执行记录已经结束，但缺少原节点的明确结算或停止证明。", "建议核对原进程和外部操作后再决定恢复方式。", harness.ErrStopUnconfirmed), true
+		return Result{}, c.retainedBlocked("terminal-unsettled", i18n.RetainedTriedEndEvidence, i18n.RetainedProblemStopUnconfirmed, c.text.T(i18n.RetainedReasonNoStopProof), i18n.RetainedAdviceCheckProcess, harness.ErrStopUnconfirmed), true
 	}
 	if !record.State.Terminal() {
 		return Result{}, nil, false
 	}
 	if record.Error == "" {
-		return Result{}, c.retainedBlocked("terminal", "读取已结束的执行记录", "原执行已经结束，但没有可以补投的完整结果。", "重新发送任务可能重复已执行的操作。", "建议核对原执行记录后决定后续工作。", nil), true
+		return Result{}, c.retainedBlocked("terminal", i18n.RetainedTriedReadEnded, i18n.RetainedProblemNoResult, c.text.T(i18n.RetainedReasonResendRepeats), i18n.RetainedAdviceCheckBeforeNext, nil), true
 	}
 	result := Result{AgentID: record.Agent, Text: record.Error, Attempt: record.ID}
 	failure := errors.New(record.Error)
@@ -322,7 +324,7 @@ func (c *Coordinator) deliverRetainedChat(parent context.Context, req Request, r
 func (c *Coordinator) attachRetainedChat(ctx context.Context, manager retainedRuntime, record attempt.Record) (harness.ResumableRunner, nodewire.SessionState, attempt.Record, error) {
 	runner, err := manager.AttachRetainedSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session, record.Workspace.Path)
 	if err != nil {
-		return nil, nodewire.SessionState{}, record, c.retainedBlocked("node-attach", "使用原任务和会话标识连接执行节点", "暂时无法接回原执行。", "节点可能离线，或原生会话已不可用。已有执行不会被重放。", "建议恢复原节点连接后重新检查；仍无法解决时保留此任务等待处理。", err)
+		return nil, nodewire.SessionState{}, record, c.retainedBlocked("node-attach", i18n.RetainedTriedAttachNode, i18n.RetainedProblemAttach, c.text.T(i18n.RetainedReasonNodeUnreachable), i18n.RetainedAdviceReconnectNode, err)
 	}
 	inspector, ok := runner.(harness.RetainedSessionInspector)
 	if !ok {
@@ -330,23 +332,23 @@ func (c *Coordinator) attachRetainedChat(ctx context.Context, manager retainedRu
 	}
 	observed, err := inspector.InspectRetained(ctx)
 	if err != nil {
-		return nil, nodewire.SessionState{}, record, c.retainedBlocked("node-state", "读取节点持有的输入回执和执行状态", "暂时无法核实原执行状态。", "连接失败不能证明原执行停止。", "建议等原节点恢复后重新检查。", err)
+		return nil, nodewire.SessionState{}, record, c.retainedBlocked("node-state", i18n.RetainedTriedReadNodeState, i18n.RetainedProblemStateUnknown, c.text.T(i18n.RetainedReasonConnectNoProof), i18n.RetainedAdviceAwaitNode, err)
 	}
 	if observed.Command != nil && observed.Command.State == nodewire.SessionCommandUncertain {
-		return nil, nodewire.SessionState{}, record, c.retainedBlocked("native-interrupted", "节点返回原输入回执和中断记录", "原执行已经没有可直接接回的运行现场。", "节点服务可能重启过，部分外部操作的结果仍未确认。", "建议核对已完成操作与保存的检查点；确认恢复方式前，原任务保持待处理。", harness.ErrStopUnconfirmed)
+		return nil, nodewire.SessionState{}, record, c.retainedBlocked("native-interrupted", i18n.RetainedTriedNodeInterrupted, i18n.RetainedProblemNoLiveRun, c.text.T(i18n.RetainedReasonNodeRestarted), i18n.RetainedAdviceCheckDone, harness.ErrStopUnconfirmed)
 	}
 	refreshed, err := c.attempts.RecoverRetained(ctx, record.ID, attempt.RetainedEvidence{ObservedAt: time.Now(), Session: observed})
 	if err != nil {
-		reason := "节点返回的会话、任务或输入标识与已提交的执行记录不一致。"
+		reason := c.text.T(i18n.RetainedReasonEvidenceMismatch)
 		switch {
 		case errors.Is(err, task.ErrExecutionStopped):
-			reason = "用户对任务的暂停、取消或授权变更已经撤销原执行权限。"
+			reason = c.text.T(i18n.RetainedReasonEvidenceStopped)
 		case errors.Is(err, ledger.ErrStale):
-			reason = "原写入租约已经变更持有者或代际，不能继续使用旧执行的写入权限。"
+			reason = c.text.T(i18n.RetainedReasonEvidenceStale)
 		case errors.Is(err, ledger.ErrConflict):
-			reason = "核对期间协调账本发生变化，需要重新读取最新记录。"
+			reason = c.text.T(i18n.RetainedReasonEvidenceConflict)
 		}
-		return nil, nodewire.SessionState{}, record, c.retainedBlocked("retained-evidence", "核对节点输入回执、任务授权及原有写入租约", "原执行暂时不能安全接续。", reason, "建议核对原节点与执行记录，确认后再继续。", err)
+		return nil, nodewire.SessionState{}, record, c.retainedBlocked("retained-evidence", i18n.RetainedTriedEvidence, i18n.RetainedProblemUnsafe, reason, i18n.RetainedAdviceCheckNodeRecords, err)
 	}
 	return runner, observed, refreshed, nil
 }

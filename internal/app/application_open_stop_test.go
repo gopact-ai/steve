@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -134,7 +135,7 @@ func TestApplicationCancelsUnreceiptedOpenUsingNativeProof(t *testing.T) {
 					}
 				}
 			}
-			stops := newApplicationStops(attempts, tasks, manager)
+			stops := newApplicationStops(attempts, tasks, manager, i18n.New(i18n.LocaleZH))
 			if err := stops.Reconcile(ctx); err != nil {
 				t.Fatal(err)
 			}
