@@ -1015,6 +1015,12 @@ const (
 	// configuration projects
 	ConfigProjectionPending Key = "config_projection_pending"
 	ConfigProjectsRequired  Key = "config_projects_required"
+
+	// snapshot budget
+	SnapshotTooLarge       Key = "snapshot_too_large"
+	SnapshotLimitFiles     Key = "snapshot_limit_files"
+	SnapshotLimitBytes     Key = "snapshot_limit_bytes"
+	SnapshotLimitFileBytes Key = "snapshot_limit_file_bytes"
 )
 
 type Catalog struct {

@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
@@ -25,6 +26,8 @@ func TestAfterSnapshotFailureKeepsReplyAndCaptureError(t *testing.T) {
 	runner := &fakeRunner{reply: "done", started: make(chan struct{}), done: make(chan struct{})}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, time.Minute)
 	c.artifacts.Limits = gitrepo.Limits{MaxFiles: 1}
+	// The capture failure is recorded in the language of the turn.
+	c.text = i18n.New(i18n.LocaleEN)
 	work := workspaceOf(t, c, "codex")
 	if err := os.WriteFile(filepath.Join(work, "before"), []byte("before"), 0o600); err != nil {
 		t.Fatal(err)
@@ -56,7 +59,7 @@ func TestAfterSnapshotFailureKeepsReplyAndCaptureError(t *testing.T) {
 		t.Fatalf("capture failure lost the reply: %+v, %v", result, turnErr)
 	}
 	record, err := c.attempts.Get(t.Context(), result.Attempt)
-	want := gitrepo.TooLarge{Which: "files", Have: 2, Limit: 1}.Error()
+	want := gitrepo.TooLarge{Which: "files", Have: 2, Limit: 1}.Say(c.text)
 	if err != nil || record.State != attempt.Bound || record.Result == nil || record.Result.Artifact != "" || record.Result.CaptureError != want {
 		t.Fatalf("capture failure was not persisted: %+v, %v", record, err)
 	}

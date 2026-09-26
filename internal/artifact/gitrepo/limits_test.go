@@ -56,7 +56,7 @@ func TestSnapshotLimits(t *testing.T) {
 					if !errors.As(err, &got) || got != tc.want || sha != "" || changed {
 						t.Fatalf("snapshot: %q, %v, %v; want %+v", sha, changed, err, tc.want)
 					}
-					if !strings.Contains(err.Error(), "把大文件挪出工作区或加进 .gitignore") || !strings.Contains(err.Error(), fmt.Sprint(tc.want.Have)) || !strings.Contains(err.Error(), fmt.Sprint(tc.want.Limit)) {
+					if !strings.Contains(err.Error(), ".gitignore") || !strings.Contains(err.Error(), fmt.Sprint(tc.want.Have)) || !strings.Contains(err.Error(), fmt.Sprint(tc.want.Limit)) {
 						t.Fatalf("limit failure must explain the remedy and sizes: %v", err)
 					}
 					if out, err := repo.Git(t.Context(), nil, "count-objects"); err != nil || !strings.HasPrefix(out, "0 objects") {

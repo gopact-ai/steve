@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/text"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
@@ -45,6 +47,10 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 		if serr != nil {
 			slog.Error(fmt.Sprintf("turn: attempt %s after-snapshot: %v", record.ID, serr), "attempt", record.ID, "task", record.TaskID, "project", record.Project)
 			outcome.CaptureError = serr.Error()
+			var limit gitrepo.TooLarge
+			if errors.As(serr, &limit) {
+				outcome.CaptureError = limit.Say(c.text)
+			}
 		} else if changed {
 			outcome.Artifact = after.ID
 			name := "steve/" + record.TaskID + "/turn/" + record.TurnID

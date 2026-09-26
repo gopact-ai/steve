@@ -979,6 +979,12 @@ var zh = map[Key]string{
 	// configuration projects
 	ConfigProjectionPending: "配置已保存，项目投影尚未应用；请重试或重启恢复：%v",
 	ConfigProjectsRequired:  "至少保留一个配置项目；配置文件不接受空 projects",
+
+	// snapshot budget
+	SnapshotTooLarge:       "快照%s超出上限：%d，上限 %d；把大文件挪出工作区或加进 .gitignore",
+	SnapshotLimitFiles:     "文件数",
+	SnapshotLimitBytes:     "总字节数",
+	SnapshotLimitFileBytes: "最大单文件字节数",
 }
 
 var en = map[Key]string{
@@ -1960,4 +1966,10 @@ var en = map[Key]string{
 	// configuration projects
 	ConfigProjectionPending: "The configuration is saved but its projects are not applied yet; retry or restart to recover: %v",
 	ConfigProjectsRequired:  "Keep at least one project; the configuration file does not accept empty projects",
+
+	// snapshot budget
+	SnapshotTooLarge:       "Snapshot limit exceeded for %s: %d, limit %d; move large files out of the workspace or add them to .gitignore",
+	SnapshotLimitFiles:     "file count",
+	SnapshotLimitBytes:     "total bytes",
+	SnapshotLimitFileBytes: "largest file's bytes",
 }
