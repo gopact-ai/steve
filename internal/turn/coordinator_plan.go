@@ -56,11 +56,11 @@ func (c *Coordinator) planExecutionResult(ctx context.Context, planID string, ou
 	if runErr != nil {
 		runs, lookupErr := c.supervisor.OpenRuns(ctx)
 		if lookupErr != nil {
-			return Result{Title: title}, c.retainedBlocked("plan-state", "读取计划的执行状态", "暂时无法确认计划是否已经完成。", lookupErr.Error(), "建议恢复存储后重新检查原计划。", errors.Join(runErr, lookupErr))
+			return Result{Title: title}, c.retainedBlocked("plan-state", i18n.RetainedTriedReadPlanState, i18n.RetainedProblemPlanUnknown, lookupErr.Error(), i18n.RetainedAdviceRestoreStoragePlan, errors.Join(runErr, lookupErr))
 		}
 		for _, run := range runs {
 			if run.PlanID == planID {
-				return Result{Title: title}, c.retainedBlocked("plan-state", "读取原计划的持久执行阶段", "计划尚未完整完成。", runErr.Error(), "建议恢复执行条件后重新检查，保留已完成步骤。", runErr)
+				return Result{Title: title}, c.retainedBlocked("plan-state", i18n.RetainedTriedReadPlanStage, i18n.RetainedProblemPlanUnfinished, runErr.Error(), i18n.RetainedAdviceRestoreConditions, runErr)
 			}
 		}
 	}
