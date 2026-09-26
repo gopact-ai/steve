@@ -60,6 +60,9 @@ type LedgerStore struct {
 func NewLedgerStore(book *ledger.Ledger) *LedgerStore { return &LedgerStore{book: book} }
 func (*LedgerStore) Name() string                     { return "ledger" }
 
+// SetLocale names the Hub's language, which a template explains itself in.
+func (s *LedgerStore) SetLocale(source func() home.Locale) {}
+
 // SetWriteGuard installs the caller's execution check before this store is
 // used. Validation and every memory mutation share the same transaction.
 func (s *LedgerStore) SetWriteGuard(guard func(context.Context, *ledger.Tx) error) {

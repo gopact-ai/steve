@@ -394,6 +394,9 @@ type Markdown struct {
 	Dir      string
 }
 
+// SetLocale names the Hub's language, which a template explains itself in.
+func (m *Markdown) SetLocale(source func() home.Locale) {}
+
 // NewMarkdown makes the store; dir is where project memories go.
 func NewMarkdown(homePath, dir string) *Markdown { return &Markdown{HomePath: homePath, Dir: dir} }
 
