@@ -218,14 +218,27 @@ func (r *Runtime) awaitLog(ctx context.Context, index uint64) error {
 	}
 }
 
+// running is the business generation running here: its assignment and
+// writer generation. It is an error for none to be running, or for the
+// replica to be restoring a snapshot, which ends it.
+func (r *Runtime) running() (coordination.Assignment, uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.current
+	if r.closed || r.restoring || current == nil || current.restore != r.restores || current.Context.Err() != nil || current.WriterGeneration == 0 {
+		return coordination.Assignment{}, 0, ErrInactive
+	}
+	return current.Assignment, current.WriterGeneration, nil
+}
+
 // generationDone is closed when the business generation running for
 // assignment and writer generation writer ends. It is an error for no
-// such generation to be running here.
+// such generation to be running here, as it is for running.
 func (r *Runtime) generationDone(assignment coordination.Assignment, writer uint64) (<-chan struct{}, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	current := r.current
-	if current == nil || current.Context.Err() != nil || current.Assignment != assignment || current.WriterGeneration != writer {
+	if r.closed || r.restoring || current == nil || current.restore != r.restores || current.Context.Err() != nil || current.Assignment != assignment || current.WriterGeneration != writer {
 		return nil, ErrInactive
 	}
 	return current.Context.Done(), nil

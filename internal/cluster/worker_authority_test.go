@@ -495,3 +495,71 @@ func TestWorkerTunnelsOfAFollowerNeedQuorumConfirmations(t *testing.T) {
 		})
 	}
 }
+
+// A worker tunnel belongs to a business generation that is running: not
+// to one that has ended, nor to one whose replica is being restored from a
+// snapshot, which ends it.
+func TestWorkerTunnelsBelongToARunningGeneration(t *testing.T) {
+	assignment := coordination.Assignment{NodeID: "node-1", Epoch: 3}
+	for _, tc := range []struct {
+		name    string
+		change  func(*Runtime)
+		running bool
+	}{
+		{name: "running", running: true},
+		{name: "ended", change: func(r *Runtime) { r.current.cancel() }},
+		{name: "restoring", change: func(r *Runtime) { r.restoring = true }},
+		{name: "restored", change: func(r *Runtime) { r.restores++ }},
+		{name: "closed", change: func(r *Runtime) { r.closed = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			runtime := &Runtime{current: &generation{Activation: Activation{Assignment: assignment, WriterGeneration: 7, Context: ctx}, cancel: cancel}}
+			if tc.change != nil {
+				tc.change(runtime)
+			}
+			_, _, runningErr := runtime.running()
+			_, doneErr := runtime.generationDone(assignment, 7)
+			if tc.running && (runningErr != nil || doneErr != nil) {
+				t.Fatalf("the running generation dials no worker: %v, %v", runningErr, doneErr)
+			}
+			if !tc.running && (!errors.Is(runningErr, ErrInactive) || !errors.Is(doneErr, ErrInactive)) {
+				t.Fatalf("a generation that is not running could dial a worker: %v, %v", runningErr, doneErr)
+			}
+		})
+	}
+}
+
+// A registry dials workers for the business generation that configured
+// it: once a later generation runs, it dials nothing more.
+func TestWorkerDialerDialsForItsOwnGenerationOnly(t *testing.T) {
+	hub := startTestHub(t)
+	runtime := hub.Runtime.Load()
+	assignment, writer, err := runtime.running()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dial := hub.workerDialer(runtime, assignment, writer)
+	runtime.mu.Lock()
+	current := runtime.current
+	runtime.mu.Unlock()
+	runtime.revoke(current, fmt.Errorf("%w: revoked by the test", coordination.ErrUnavailable))
+	WaitPeerReady(t, hub)
+	if _, later, _ := runtime.running(); later == writer {
+		t.Fatalf("the generation was not rebuilt; it still runs at writer generation %d", writer)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if connection, err := dial(ctx, hub.Config.NodeID); !errors.Is(err, ErrInactive) {
+		if err == nil {
+			connection.Close()
+		}
+		t.Fatalf("the dialer of a replaced generation opened a tunnel for its successor: %v", err)
+	}
+	if connection, err := hub.DialWorker(ctx, hub.Config.NodeID); err != nil {
+		t.Fatalf("the running generation could not dial its own worker: %v", err)
+	} else {
+		connection.Close()
+	}
+}

@@ -887,10 +887,17 @@ func (p *Peer) ConfigureNodes(nodes map[string]node.Config) error {
 	if runtime == nil {
 		return coordination.ErrUnavailable
 	}
+	// The nodes are configured while a business generation starts; their
+	// tunnels belong to it.
+	assignment, writer, err := runtime.running()
+	if err != nil {
+		return err
+	}
+	dial := p.workerDialer(runtime, assignment, writer)
 	state := runtime.Status()
 	for id, cfg := range nodes {
 		if _, ok := state.Members[id]; ok {
-			cfg.DialContext = p.DialWorker
+			cfg.DialContext = dial
 			nodes[id] = cfg
 		}
 	}
@@ -898,13 +905,38 @@ func (p *Peer) ConfigureNodes(nodes map[string]node.Config) error {
 }
 
 // DialWorker establishes an authenticated stream to a peer's own loopback
-// worker. The connection's lifetime is independent of the setup context: it
-// is closed when the business generation that dialed it ends, or when this
-// node's replica stops granting it (see watchWorkerAuthority).
-func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, error) {
+// worker for the business generation running here; see workerDialer.
+func (p *Peer) DialWorker(ctx context.Context, nodeID string) (net.Conn, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return nil, coordination.ErrUnavailable
+	}
+	assignment, writer, err := runtime.running()
+	if err != nil {
+		return nil, err
+	}
+	return p.workerDialer(runtime, assignment, writer)(ctx, nodeID)
+}
+
+// workerDialer establishes authenticated streams to peers' own loopback
+// workers for the business generation of runtime that runs for assignment
+// at writer generation writer, and for no other: it dials nothing once
+// that generation has ended. A connection's lifetime is independent of the
+// setup context: it is closed when that generation ends, or when this
+// node's replica stops granting it (see watchWorkerAuthority).
+func (p *Peer) workerDialer(runtime *Runtime, assignment coordination.Assignment, writer uint64) func(context.Context, string) (net.Conn, error) {
+	return func(parent context.Context, nodeID string) (net.Conn, error) {
+		return p.dialWorker(parent, runtime, assignment, writer, nodeID)
+	}
+}
+
+func (p *Peer) dialWorker(parent context.Context, runtime *Runtime, assignment coordination.Assignment, writer uint64, nodeID string) (net.Conn, error) {
+	if p.Runtime.Load() != runtime {
+		return nil, fmt.Errorf("%w: the consensus runtime was replaced", ErrInactive)
+	}
+	ended, err := runtime.generationDone(assignment, writer)
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
@@ -916,13 +948,12 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 	if state.Coordinator.NodeID != p.Config.NodeID {
 		return nil, coordination.ErrNotCoordinator
 	}
+	if state.Coordinator != assignment || state.WriterGeneration != writer {
+		return nil, fmt.Errorf("%w: the business generation that dials has been replaced", ErrInactive)
+	}
 	member, ok := state.Members[nodeID]
 	if !ok {
 		return nil, coordination.ErrInvalid
-	}
-	ended, err := runtime.generationDone(state.Coordinator, state.WriterGeneration)
-	if err != nil {
-		return nil, err
 	}
 	grant, err := runtime.grantWorker(ctx, asked, state, nodeID)
 	if err != nil {
