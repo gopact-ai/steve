@@ -215,3 +215,42 @@ func TestContentHubTakesALaggingReceiverAsUnavailable(t *testing.T) {
 		t.Fatalf("a lagging receiver reads as %v", err)
 	}
 }
+
+// A peer says why it refused a content request — who asked, with which
+// coordinator epoch and writer generation, and the reason — once per caller
+// and code for a while, not once per request.
+func TestContentPeerLogsWhyItRefusedOncePerCallerAndCode(t *testing.T) {
+	peers, active := contentPeers(t)
+	receiver := peers[1]
+	var logs syncBuffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	object := workspaceObject(peers, []byte("content a peer refuses and says why"))
+	stale := contentHeaders(active, &object)
+	stale["X-Steve-Writer-Generation"] = strconv.FormatUint(active.WriterGeneration+1, 10)
+	for range 3 {
+		if reply := contentHTTP(t, peers[0], receiver, http.MethodGet, stale, time.Minute); reply.status != http.StatusForbidden {
+			t.Fatalf("stale writer: HTTP %d %q %v", reply.status, reply.body, reply.err)
+		}
+	}
+	if reply := contentHTTP(t, peers[0], receiver, http.MethodGet, map[string]string{}, time.Minute); reply.status != http.StatusForbidden {
+		t.Fatalf("no credentials: HTTP %d %q %v", reply.status, reply.body, reply.err)
+	}
+	var refusals []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "cluster: content refused") {
+			refusals = append(refusals, line)
+		}
+	}
+	epoch, _ := coordinatorHeaders(active)
+	caller := "caller=" + peers[0].Config.NodeID
+	switch {
+	case len(refusals) != 2:
+		t.Fatalf("want one line for the stale writer and one for the missing credentials, got %d:\n%s", len(refusals), strings.Join(refusals, "\n"))
+	case !strings.Contains(refusals[0], "level=WARN") || !strings.Contains(refusals[0], caller) || !strings.Contains(refusals[0], "code=stale") || !strings.Contains(refusals[0], "epoch="+epoch) || !strings.Contains(refusals[0], "writer="+stale["X-Steve-Writer-Generation"]) || !strings.Contains(refusals[0], "committed epoch"):
+		t.Fatalf("the stale writer's refusal does not say who, with what, and why: %s", refusals[0])
+	case !strings.Contains(refusals[1], caller) || !strings.Contains(refusals[1], "code=authority"):
+		t.Fatalf("the missing credentials' refusal does not say who and why: %s", refusals[1])
+	}
+}
