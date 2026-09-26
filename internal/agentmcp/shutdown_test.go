@@ -205,9 +205,13 @@ func TestStartCancelsToolCallsThatOutlastTheGracePeriod(t *testing.T) {
 	if writes, lost := store.counts(); writes != 1 || lost != 0 {
 		t.Fatalf("stuck call: %d write(s) kept, %d written after the store closed", writes, lost)
 	}
-	// The cut connection is the caller's to see; it only must not hang.
+	// The call was cut off, and its caller sees that rather than a
+	// result it never got.
 	select {
-	case <-answered:
+	case err := <-answered:
+		if err == nil {
+			t.Fatal("caller of the cancelled call was answered as if it had succeeded")
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("caller of the cancelled call never got an answer")
 	}
