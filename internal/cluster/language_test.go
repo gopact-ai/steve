@@ -2,13 +2,18 @@ package cluster
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"unicode"
 
+	"github.com/gopact-ai/steve/internal/cluster/clustertest"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/i18n"
 )
@@ -48,21 +53,129 @@ func TestCoordinationReasonsAreInTheReadersLanguage(t *testing.T) {
 	}
 }
 
-// A plan reviewed in one language and registered in another is one plan:
-// what it will do is said in the reader's language, and only the request
-// it was made from identifies it.
-func TestAPlanReadInTwoLanguagesIsOnePlan(t *testing.T) {
-	plan := PeerEnrollmentPlan{Request: PeerEnrollmentRequest{Name: "remote", PeerAddress: "192.0.2.10:7711", RaftAddress: "192.0.2.10:7712"}, ClusterID: "test-cluster", Effects: []string{"在目标机启动持久节点：HTTPS 192.0.2.10:7711，共识 192.0.2.10:7712"}}
-	read := plan
-	read.Effects = []string{"Start a persistent node on the target machine: HTTPS 192.0.2.10:7711, consensus 192.0.2.10:7712"}
-	if plan.reviewHash() != read.reviewHash() {
-		t.Error("the same plan read in two languages has two review IDs")
+// A plan previewed in one language is registered from another: the
+// reader's language changes how its effects read, not which plan it is.
+func TestAPlanPreviewedInOneLanguageRegistersInAnother(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var starts atomic.Int32
+	options.Activate = testPeerApplication(t, &starts)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	request := PeerEnrollmentRequest{Name: "box", PeerAddress: ports.Peer, RaftAddress: ports.Raft, Level: "restricted"}
+	chinese, err := peer.PreviewEnrollment(i18n.WithLocale(t.Context(), i18n.LocaleZH), request, true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	moved := plan
-	moved.Request.PeerAddress = "192.0.2.11:7711"
-	if plan.reviewHash() == moved.reviewHash() {
-		t.Error("a plan for another address has the same review ID")
+	english, err := peer.PreviewEnrollment(i18n.WithLocale(t.Context(), i18n.LocaleEN), request, true)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if slices.Equal(chinese.Effects, english.Effects) || chinese.ReviewID != english.ReviewID {
+		t.Fatalf("the plan read in Chinese (%s) and in English (%s) should differ only in how its effects read", chinese.ReviewID, english.ReviewID)
+	}
+	request = chinese.Request
+	request.ExpectedPlanHash = chinese.ReviewID
+	if _, err := peer.PrepareEnrollment(i18n.WithLocale(t.Context(), i18n.LocaleEN), request, "read-in-chinese", true); err != nil {
+		t.Fatalf("a plan reviewed in Chinese was refused when registered in English: %v", err)
+	}
+}
+
+// Every fact a plan is made of identifies it: changing any one gives the
+// plan another review ID, so an approval cannot carry over to a plan that
+// does something else. Only the ID itself, the ID the request expects and
+// the effect sentences, which say the request in the reader's words, are
+// left out.
+func TestEveryFactOfAPlanIsReviewed(t *testing.T) {
+	plan := PeerEnrollmentPlan{
+		Request: PeerEnrollmentRequest{Alias: "box", Name: "remote", PeerAddress: "192.0.2.10:7711", RaftAddress: "192.0.2.10:7712", Level: "restricted",
+			HubRoute: coordination.Route{Raft: "127.0.0.1:47001", API: "127.0.0.1:47002"}, WorkspaceDir: "~/steve-workspace", ExpectedPlanHash: "expected"},
+		ClusterID: "test-cluster",
+		Seeds: []coordination.Member{{NodeID: "node-a", Address: "192.0.2.1:7712", APIAddress: "https://192.0.2.1:7711", Name: "a", AutoEligible: true,
+			FailureDomain: "domain-a", StorageLevel: "restricted", Voting: true}},
+		Effects:  []string{"Start a persistent node on the target machine"},
+		ReviewID: "reviewed",
+	}
+	// A field left empty here would be left out of the walk below.
+	for _, value := range []reflect.Value{reflect.ValueOf(plan), reflect.ValueOf(plan.Request), reflect.ValueOf(plan.Request.HubRoute), reflect.ValueOf(plan.Seeds[0])} {
+		for i := range value.NumField() {
+			if value.Field(i).IsZero() {
+				t.Fatalf("give %s.%s a value here so that it is checked", value.Type().Name(), value.Type().Field(i).Name)
+			}
+		}
+	}
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var facts map[string]any
+	if err := json.Unmarshal(raw, &facts); err != nil {
+		t.Fatal(err)
+	}
+	reviewed := plan.reviewHash()
+	unreviewed := []string{"review_id", "effects", "request.expected_plan_hash"}
+	var walked []string
+	alterEach(facts, "", func(path string) {
+		walked = append(walked, path)
+		raw, err := json.Marshal(facts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var altered PeerEnrollmentPlan
+		if err := json.Unmarshal(raw, &altered); err != nil {
+			t.Fatal(err)
+		}
+		left := slices.ContainsFunc(unreviewed, func(field string) bool { return path == field || strings.HasPrefix(path, field+"[") })
+		if same := altered.reviewHash() == reviewed; same != left {
+			t.Errorf("changing %s: same review ID = %v, want %v", path, same, left)
+		}
+	})
+	for _, path := range []string{"request.hub_route.api", "seeds[0].address", "seeds[0].voting", "effects[0]"} {
+		if !slices.Contains(walked, path) {
+			t.Errorf("the walk never changed %s; it changed %v", path, walked)
+		}
+	}
+}
+
+// alterEach changes, one at a time, every string, number and boolean in a
+// decoded JSON value, calls visit with its path, and puts it back.
+func alterEach(node any, path string, visit func(path string)) {
+	at := func(old any, set func(any), where string) {
+		changed, ok := alteredLeaf(old)
+		if !ok {
+			alterEach(old, where, visit)
+			return
+		}
+		set(changed)
+		visit(where)
+		set(old)
+	}
+	switch n := node.(type) {
+	case map[string]any:
+		for key, old := range n {
+			where := key
+			if path != "" {
+				where = path + "." + key
+			}
+			at(old, func(v any) { n[key] = v }, where)
+		}
+	case []any:
+		for i, old := range n {
+			at(old, func(v any) { n[i] = v }, fmt.Sprintf("%s[%d]", path, i))
+		}
+	}
+}
+
+func alteredLeaf(value any) (any, bool) {
+	switch leaf := value.(type) {
+	case string:
+		return leaf + "-changed", true
+	case bool:
+		return !leaf, true
+	case float64:
+		return leaf + 1, true
+	}
+	return nil, false
 }
 
 // A machine being enrolled has no configuration of its own yet; it
