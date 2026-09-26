@@ -301,8 +301,15 @@ func (r *Runtime) revoke(g *generation, err error) {
 // again, so the local view never authorizes anything. A running generation is
 // kept while the local replica still names it and hears from a consensus
 // leader. It is given up when the replica names another, at once when this
-// node stops leading consensus without knowing a successor, and after
-// ApplyTimeout when a follower stops hearing from its leader.
+// node stops leading consensus without knowing a successor, after
+// ApplyTimeout when a follower stops hearing from its leader, and when an
+// entry the replica committed stays unapplied for longer than ApplyTimeout.
+// A follower learns its commit index only with entries it holds, so one
+// whose replication falls behind while heartbeats still arrive looks caught
+// up here. Its next write finds out: the quorum read it starts with gives
+// the generation up if another node was named meanwhile, and otherwise
+// fails the write as unavailable once the replica has not caught up within
+// ApplyTimeout.
 func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
@@ -321,7 +328,7 @@ func (r *Runtime) run() {
 			r.shutdown(fmt.Errorf("%w: the consensus replica is no longer healthy", coordination.ErrApplication))
 			continue
 		}
-		if err := r.step(observation{Status: status, at: time.Now()}, &state); err != nil {
+		if err := r.step(observation{Status: status, log: r.service.LogProgress(), at: time.Now()}, &state); err != nil {
 			r.invalidate(err, false)
 			r.retire()
 		}
@@ -335,7 +342,8 @@ func (r *Runtime) run() {
 // observation is what one tick reads from the local replica.
 type observation struct {
 	coordination.Status
-	at time.Time
+	log coordination.LogProgress
+	at  time.Time
 }
 
 // tickState is what the runtime loop carries from one tick to the next.
@@ -348,6 +356,12 @@ type tickState struct {
 	// node not coordinating: a replica behind it that still names this node
 	// is stale, and asking again would only repeat the answer.
 	denied uint64
+	// lagging is an entry this replica had committed but not applied when a
+	// tick first saw it behind, at laggingSince; zero while it is not behind.
+	// Under steady writes the replica is always behind the newest commit, so
+	// it is judged by how long one entry stays unapplied.
+	lagging      uint64
+	laggingSince time.Time
 }
 
 // step is one tick of run. It returns why this node has no business
@@ -356,6 +370,12 @@ type tickState struct {
 func (r *Runtime) step(seen observation, s *tickState) error {
 	if seen.LeaderID != "" {
 		s.heard, s.leading = seen.at, seen.LeaderID == r.config.Coordination.NodeID
+	}
+	if seen.log.Applied >= s.lagging {
+		s.lagging = 0
+	}
+	if s.lagging == 0 && seen.log.Applied < seen.log.Committed {
+		s.lagging, s.laggingSince = seen.log.Committed, seen.at
 	}
 	err := r.coordinates(seen.State)
 	if err == nil && seen.AppliedIndex < s.denied {
@@ -369,6 +389,11 @@ func (r *Runtime) step(seen observation, s *tickState) error {
 	}
 	if err == nil && seen.at.Sub(s.heard) > r.config.Coordination.ApplyTimeout {
 		err = fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
+	}
+	// Heartbeats name the leader whatever this replica has applied, so an
+	// assignment committed elsewhere may be waiting here unapplied.
+	if err == nil && s.lagging != 0 && seen.at.Sub(s.laggingSince) > r.config.Coordination.ApplyTimeout {
+		err = fmt.Errorf("%w: this replica has not applied committed entry %d within %s; it has applied %d", coordination.ErrUnavailable, s.lagging, r.config.Coordination.ApplyTimeout, seen.log.Applied)
 	}
 	if err == nil {
 		r.mu.Lock()

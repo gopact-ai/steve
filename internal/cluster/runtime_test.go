@@ -1220,6 +1220,97 @@ func TestCoordinatorThatStopsLeadingGivesUpItsGenerationAtOnce(t *testing.T) {
 	}
 }
 
+// A coordinator whose replica keeps hearing from its leader but does not
+// apply what it committed may already be named elsewhere by an entry it has
+// not applied. Once an entry it committed stays unapplied for longer than
+// ApplyTimeout it gives its generation up, and it keeps it again once it
+// has applied that entry. Under steady writes the replica is always a
+// little behind the newest commit, but never for long behind any one
+// entry, and it keeps its generation.
+func TestCoordinatorThatDoesNotApplyWhatItCommittedGivesUpItsGeneration(t *testing.T) {
+	nodes := testNodes(t, 1)
+	coordinator := openNode(t, nodes[0])
+	active := ready(t, coordinator)
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	base := observation{Status: coordinator.service.Status(), at: time.Now()}
+	view := func(committed, applied uint64, after time.Duration) observation {
+		seen := base
+		seen.log, seen.at = coordination.LogProgress{Committed: committed, Applied: applied}, base.at.Add(after)
+		return seen
+	}
+
+	var stuck tickState
+	for _, tick := range []struct {
+		committed, applied uint64
+		after              time.Duration
+	}{{100, 90, 0}, {110, 99, applyTimeout / 2}, {120, 99, applyTimeout}} {
+		if err := coordinator.step(view(tick.committed, tick.applied, tick.after), &stuck); err != nil {
+			t.Fatalf("a replica that had applied %d of %d, %s after it committed 100, gave up: %v", tick.applied, tick.committed, tick.after, err)
+		}
+	}
+	err := coordinator.step(view(120, 99, applyTimeout+time.Millisecond), &stuck)
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "100") {
+		t.Fatalf("a replica that had not applied entry 100 %s after committing it reported %v, want it to give up naming the entry", applyTimeout+time.Millisecond, err)
+	}
+	if err := coordinator.step(view(120, 100, applyTimeout+2*time.Millisecond), &stuck); err != nil {
+		t.Fatalf("a replica that applied the entry it was stuck on still gave up: %v", err)
+	}
+
+	var steady tickState
+	for k := range 3 * int(applyTimeout/nodes[0].config.PollInterval) {
+		committed := uint64(100 + 3*k)
+		if err := coordinator.step(view(committed, committed-3, time.Duration(k)*nodes[0].config.PollInterval), &steady); err != nil {
+			t.Fatalf("a replica applying every entry within a tick of committing it gave up after %s: %v", time.Duration(k)*nodes[0].config.PollInterval, err)
+		}
+	}
+	if active.Context.Err() != nil {
+		t.Fatal("the running generation ended although only a tick was asked")
+	}
+}
+
+// A coordinator keeps its generation for as long as its replica applies
+// what it commits: while it keeps writing, each write reading the assignment
+// from a majority and so committing a barrier as well, and while it idles
+// after a quorum read, whose barrier is the last entry and never reaches the
+// state machine.
+func TestCoordinatorThatWritesAndIdlesKeepsItsGeneration(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		joinNode(t, first, nodes[i], true, false)
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	active := ready(t, second)
+	requireAnotherLeader(t, first, "node-2")
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	kept := func(what string) {
+		t.Helper()
+		if active.Context.Err() != nil {
+			second.mu.Lock()
+			cause := second.lastError
+			second.mu.Unlock()
+			t.Fatalf("a coordinator that %s gave up business generation %d: %v", what, active.Generation, cause)
+		}
+	}
+	span := applyTimeout * 3 / 2
+	writes := 0
+	for started := time.Now(); time.Since(started) < span; writes++ {
+		if err := active.Ledger.PutBinding(t.Context(), "test", fmt.Sprintf("write-%d", writes), "written"); err != nil {
+			t.Fatalf("write %d after %s failed: %v; status=%+v", writes, time.Since(started).Round(time.Millisecond), err, second.Status())
+		}
+	}
+	kept(fmt.Sprintf("wrote %d times in %s", writes, span))
+	if _, err := second.ReadState(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(span)
+	kept(fmt.Sprintf("idled for %s after a quorum read", span))
+}
+
 // A coordinator that leads consensus and loses every member gives its
 // generation up once its lease expires, well before a follower would.
 func TestIsolatedLeadingCoordinatorGivesUpWithinItsLease(t *testing.T) {
