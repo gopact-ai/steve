@@ -245,3 +245,46 @@ func TestStopAbandonsAStartupAttemptInFlight(t *testing.T) {
 		t.Fatalf("%d attempts; want none after the stop", attempts.Load())
 	}
 }
+
+// Every retried failure is reported before Start waits: how many attempts
+// failed, when the next begins and why the last one failed.
+func TestStartReportsEachStartupRetry(t *testing.T) {
+	var attempts atomic.Int32
+	conn := newStuckConn()
+	c := startingChannel(conn, func(ctx context.Context) (Identity, error) {
+		if attempts.Add(1) <= 2 {
+			return unreachable(ctx)
+		}
+		return Identity{OpenID: "ou_bot"}, nil
+	})
+	c.delay = func(failures int) time.Duration { return time.Duration(failures) * time.Millisecond }
+	var reports []StartRetry
+	var reported []time.Time
+	c.onRetry = func(r StartRetry) {
+		reports = append(reports, r)
+		reported = append(reported, time.Now())
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Start(ctx) }()
+	select {
+	case <-conn.started:
+	case err := <-errCh:
+		t.Fatalf("Start() = %v before connecting", err)
+	case <-time.After(waitDeadline):
+		t.Fatal("the long connection never started")
+	}
+	if len(reports) != 2 {
+		t.Fatalf("%d retries reported; want 2: %+v", len(reports), reports)
+	}
+	for i, r := range reports {
+		delay := time.Duration(i+1) * time.Millisecond
+		if r.Failures != i+1 || r.Err == nil || r.Err.Error() != "dial tcp: network is unreachable" ||
+			r.Next.Before(reported[i]) || r.Next.After(reported[i].Add(delay)) {
+			t.Fatalf("retry %d reported %+v at %s; want failure %d, its error and the next attempt within %s", i+1, r, reported[i], i+1, delay)
+		}
+	}
+	cancel()
+	<-errCh
+}

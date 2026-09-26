@@ -91,6 +91,17 @@ type Options struct {
 	Access           Access
 	AllowUnmentioned bool
 	OnCardAction     func(CardAction) CardToast
+	// OnStartRetry reports each startup failure Start will retry. It runs
+	// on Start's goroutine and must not block.
+	OnStartRetry func(StartRetry)
+}
+
+// StartRetry is a startup failure Start will retry.
+type StartRetry struct {
+	// Failures counts the consecutive failed attempts.
+	Failures int
+	Next     time.Time
+	Err      error
 }
 
 type longConn interface {
@@ -107,6 +118,8 @@ type Channel struct {
 	identify func(context.Context) (Identity, error)
 	// delay is the wait before the next verification after failures.
 	delay func(failures int) time.Duration
+	// onRetry is Options.OnStartRetry.
+	onRetry func(StartRetry)
 	// botOpenID is written by Start before the long connection begins,
 	// which is the only source of inbound events that read it.
 	botOpenID string

@@ -55,6 +55,10 @@ func (s *hubChannelsService) SetRuntimeError(message string) {
 	s.runtimeError = message
 }
 
+// SetStartupRetry reports a channel startup that will be retried; nil
+// reports none.
+func (s *hubChannelsService) SetStartupRetry(retry *consoleapi.ChannelStartupRetry) {}
+
 func NewChannels(admin *Service, startup *config.Config) *hubChannelsService {
 	return &hubChannelsService{admin: admin, applied: startup.ChannelSettings(), appliedSecret: startup.Feishu.AppSecret}
 }
