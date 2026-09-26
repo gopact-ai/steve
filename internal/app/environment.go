@@ -23,7 +23,7 @@ type Environment struct {
 	HTTPConfig            *httpapi.ServerConfig
 	WriteConfig           func(string, *config.Config) error
 	WriteConfigContext    func(context.Context, string, *config.Config) error
-	ConfigureNodes        func(map[string]node.Config) error
+	ConfigureNodes        func(map[string]node.Config)
 	SessionBinder         func(context.Context, harness.Placement, string, string) (context.Context, error)
 	SessionAuthorizer     func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
 	ReceiptAuthorizer     func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error

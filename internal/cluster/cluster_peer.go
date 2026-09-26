@@ -882,25 +882,19 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 
 func (p *Peer) Worker() PeerWorkerDescriptor { return p.WorkerDescriptor }
 
-func (p *Peer) ConfigureNodes(nodes map[string]node.Config) error {
-	runtime := p.Runtime.Load()
-	if runtime == nil {
-		return coordination.ErrUnavailable
-	}
-	// The nodes are configured while a business generation starts; their
-	// tunnels belong to it. One that has already ended is being torn down
-	// with this application: its dialer, bound to no generation, dials
-	// nothing, and the activation is not failed for it.
-	assignment, writer, _ := runtime.running()
-	dial := p.workerDialer(runtime, assignment, writer)
-	state := runtime.Status()
+// ConfigureNodes has the machines among nodes that are cluster members
+// reached through worker tunnels of the business generation that activation
+// starts. A generation that has ended by then is being torn down with its
+// application; its dialer dials nothing.
+func (p *Peer) ConfigureNodes(nodes map[string]node.Config, activation Activation) {
+	dial := p.workerDialer(activation.Runtime, activation.Assignment, activation.WriterGeneration)
+	state := activation.Runtime.Status()
 	for id, cfg := range nodes {
 		if _, ok := state.Members[id]; ok {
 			cfg.DialContext = dial
 			nodes[id] = cfg
 		}
 	}
-	return nil
 }
 
 // DialWorker establishes an authenticated stream to a peer's own loopback
