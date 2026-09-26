@@ -473,12 +473,22 @@ func (n *NetworkTransport) AppendEntries(id ServerID, target ServerAddress, args
 }
 
 // appendEntriesTimeout is the I/O deadline for args: the fixed timeout plus
-// one timeout for every TimeoutScale bytes of entry data, so a batch only
-// needs the link to carry TimeoutScale bytes per timeout, as InstallSnapshot
-// does. A request without entries, such as a heartbeat, keeps the fixed
-// timeout.
+// one timeout for every TimeoutScale bytes of entry data. A batch therefore
+// only needs the link to carry TimeoutScale bytes per timeout, the lowest
+// bandwidth the transport assumes (about 51 KiB/s with the default
+// TimeoutScale and a 5s timeout). The extra fixed timeout leaves room for up
+// to TimeoutScale bytes still queued ahead of the request, as behind a
+// previous pipelined batch.
+//
+// The deadline is deliberately not capped: a cap would bring back the
+// failure this avoids, a batch that a slow link can never carry in time.
+// It is timeout * (1 + batch bytes / TimeoutScale), which for a full batch of
+// 64 entries of 426 KB each at 5s is about 9 minutes.
+//
+// A request without entries, such as a heartbeat, keeps the fixed timeout,
+// and so does a transport whose TimeoutScale is not positive.
 func (n *NetworkTransport) appendEntriesTimeout(args *AppendEntriesRequest) time.Duration {
-	if n.timeout <= 0 {
+	if n.timeout <= 0 || n.TimeoutScale <= 0 || len(args.Entries) == 0 {
 		return n.timeout
 	}
 	var size int64
