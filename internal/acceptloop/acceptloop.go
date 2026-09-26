@@ -15,8 +15,7 @@ import (
 const (
 	firstPause = 5 * time.Millisecond
 	maxPause   = time.Second
-	// warnEvery bounds how often a run of failures is logged; while they
-	// last, one comes at most every maxPause.
+	// warnEvery bounds how often a failure is logged.
 	warnEvery = time.Minute
 )
 
@@ -27,17 +26,18 @@ const (
 //
 // A temporary failure — the process or system out of descriptors or
 // buffers, or a connection that failed or went away before it was
-// accepted — pauses and accepts again. The pause starts at 5ms, doubles up to 1s, and starts
-// over once a connection is accepted. The failure is logged as a warning
-// naming what, at most once a minute. ctx ending during a pause returns
-// the failure paused on.
+// accepted — pauses and accepts again. The pause starts at 5ms, doubles
+// up to 1s, and starts over once a connection is accepted. The failure
+// is logged as a warning naming what, at most once a minute. ctx ending
+// during a pause returns the failure paused on.
 func Run(ctx context.Context, l net.Listener, what string, handle func(net.Conn)) error {
 	var pause time.Duration
-	var warned time.Time
+	w := warnings{what: what}
 	for {
 		conn, err := l.Accept()
 		if err == nil {
 			pause = 0
+			w.accepted(time.Now())
 			handle(conn)
 			continue
 		}
@@ -45,10 +45,7 @@ func Run(ctx context.Context, l net.Listener, what string, handle func(net.Conn)
 			return err
 		}
 		pause = min(max(2*pause, firstPause), maxPause)
-		if now := time.Now(); warned.IsZero() || now.Sub(warned) >= warnEvery {
-			warned = now
-			slog.Warn(fmt.Sprintf("%s: accept: %v; accepting again in %v", what, err, pause))
-		}
+		w.failed(time.Now(), err, pause)
 		timer := time.NewTimer(pause)
 		select {
 		case <-ctx.Done():
@@ -58,6 +55,24 @@ func Run(ctx context.Context, l net.Listener, what string, handle func(net.Conn)
 		}
 	}
 }
+
+// warnings logs the temporary failures of one accept loop.
+type warnings struct {
+	what   string
+	warned time.Time // when the last warning was logged
+}
+
+// failed logs err, which the loop waits out for pause, unless a warning
+// was logged less than warnEvery before now.
+func (w *warnings) failed(now time.Time, err error, pause time.Duration) {
+	if w.warned.IsZero() || now.Sub(w.warned) >= warnEvery {
+		w.warned = now
+		slog.Warn(fmt.Sprintf("%s: accept: %v; accepting again in %v", w.what, err, pause))
+	}
+}
+
+// accepted notes a connection accepted at now; it logs nothing.
+func (w *warnings) accepted(now time.Time) {}
 
 // temporaries are the errors accept(2) returns for resources that free
 // up, and for a single connection that failed or went away before it was
