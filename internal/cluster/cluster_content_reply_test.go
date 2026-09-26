@@ -330,20 +330,40 @@ func TestContentRepairWaitsOutAPlacementItCouldNotCheck(t *testing.T) {
 	}
 }
 
-// supersede makes a peer's content checks see a writer generation after
-// the caller's, and counts how often they read the committed state.
-func supersede(t *testing.T, peer *Peer) *atomic.Int64 {
+// alter makes a peer's content checks see the committed state as change
+// leaves it, and counts how often they read it.
+func alter(t *testing.T, peer *Peer, change func(*coordination.State)) *atomic.Int64 {
 	runtime := peer.Runtime.Load()
 	reads := &atomic.Int64{}
 	read := contentStateReader(func(ctx context.Context) (coordination.State, error) {
 		reads.Add(1)
 		state, err := runtime.ReadState(ctx)
-		state.WriterGeneration++
+		change(&state)
 		return state, err
 	})
 	peer.readContentState.Store(&read)
 	t.Cleanup(func() { peer.readContentState.Store(nil) })
 	return reads
+}
+
+// supersede makes a peer's content checks see a writer generation after
+// the caller's, and counts how often they read the committed state.
+func supersede(t *testing.T, peer *Peer) *atomic.Int64 {
+	return alter(t, peer, func(state *coordination.State) { state.WriterGeneration++ })
+}
+
+// removeLocalCopy loses this peer's copy of the content.
+func removeLocalCopy(t *testing.T, peer *Peer, manifest contentreplica.Manifest) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(peer.Config.DataDir, "content", "blobs", "*", manifest.Object.Blob.SHA256))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("this node's copy: %q %v", files, err)
+	}
+	for _, file := range files {
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // A repair whose peers answer that its writer generation is no longer the
@@ -368,15 +388,7 @@ func TestContentRepairStopsWhenAPeerSaysItsGenerationHasEnded(t *testing.T) {
 	}
 	// Read: this node's copy is gone, so the other copy is read from its peer.
 	reading := prepare("content read from a peer that has seen a later writer")
-	files, err := filepath.Glob(filepath.Join(peers[0].Config.DataDir, "content", "blobs", "*", reading.Object.Blob.SHA256))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("this node's copy: %q %v", files, err)
-	}
-	for _, file := range files {
-		if err := os.Remove(file); err != nil {
-			t.Fatal(err)
-		}
-	}
+	removeLocalCopy(t, peers[0], reading)
 	// Prepare: this node's copy is read, and a second one is stored on a peer.
 	storing := prepare("content stored on a peer that has seen a later writer")
 	var observations []string
@@ -461,5 +473,48 @@ func TestContentCatchUpTellsALaggingReplicaFromOneThatCannotWait(t *testing.T) {
 		if _, code := contentRefusal(err); code != c.code || !errors.Is(err, contentreplica.ErrUnavailable) || errors.Is(err, coordination.ErrUnavailable) || !errors.Is(err, c.err) && c.code != "lagging" {
 			t.Errorf("%s: %v answers %q, want %q", c.name, err, code, c.code)
 		}
+	}
+}
+
+// A repair that cannot read a copy because the peer holding it is behind
+// the committed state says so: the notice points at that peer, not at this
+// node, whose own replica is current.
+func TestContentRepairPointsAtThePeerWhoseReplicaLags(t *testing.T) {
+	peers, active := contentPeers(t)
+	client, err := peers[0].ContentReplicator(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("content held by a lagging peer")
+	ref := checkpoint.Reference(data)
+	manifest, err := client.Prepare(t.Context(), "workspace", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordRepairManifest(t, active.Ledger, manifest)
+	removeLocalCopy(t, peers[0], manifest)
+	var observations []string
+	worker, err := peers[0].newContentRepair(active, func(kind, _, message string, _ map[string]string) {
+		observations = append(observations, kind+": "+message)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	availability := map[string]bool{}
+	for _, receipt := range manifest.Receipts {
+		if receipt.NodeID != peers[0].Config.NodeID {
+			availability[receipt.NodeID] = false
+			for _, peer := range peers[1:] {
+				if peer.Config.NodeID == receipt.NodeID {
+					behind(peer)
+					t.Cleanup(func() { peer.readContentState.Store(nil) })
+				}
+			}
+		}
+	}
+	status, err := worker.repairOne(t.Context(), manifest, availability)
+	notices := strings.Join(observations, "\n")
+	if status != "degraded" || !errors.Is(err, contentreplica.ErrUnavailable) || !strings.Contains(notices, "content.degraded") || strings.Contains(notices, "本机") {
+		t.Fatalf("a copy on a lagging peer: %s %v with %q; want degraded, pointing at the peer holding the copy", status, err, observations)
 	}
 }
