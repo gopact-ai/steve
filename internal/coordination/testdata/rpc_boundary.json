@@ -92,6 +92,25 @@
     "Authorized": null
   },
   {
+    "Name": "address-not-served",
+    "Status": 404,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "text/plain; charset=utf-8"
+      ],
+      "X-Content-Type-Options": [
+        "nosniff"
+      ]
+    },
+    "Body": "404 page not found\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": null
+  },
+  {
     "Name": "owner-required-before-body",
     "Status": 403,
     "Header": {
@@ -345,24 +364,6 @@
     "Closed": true,
     "Authorized": [
       "peer:remove"
-    ]
-  },
-  {
-    "Name": "address-decode",
-    "Status": 400,
-    "Header": {
-      "Cache-Control": [
-        "no-store"
-      ],
-      "Content-Type": [
-        "application/json"
-      ]
-    },
-    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
-    "Read": true,
-    "Closed": true,
-    "Authorized": [
-      "peer:address"
     ]
   }
 ]

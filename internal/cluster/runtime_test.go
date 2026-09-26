@@ -43,6 +43,7 @@ type clusterNode struct {
 	heldApp   chan coordination.AppCommand
 	gateApp   atomic.Pointer[appGate]
 	gateFence atomic.Pointer[appGate]
+	served    sync.Map // RPC path -> *atomic.Int64 requests this node's server received
 	raft      *gatedListener
 	server    *httptest.Server
 	listener  net.Listener
@@ -103,13 +104,43 @@ func (c gatedConn) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// servedCount is how many requests for path this node's server received.
+func (n *clusterNode) servedCount(path string) int64 {
+	if counter, ok := n.served.Load(path); ok {
+		return counter.(*atomic.Int64).Load()
+	}
+	return 0
+}
+
 func (n *clusterNode) current() *businessStores {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.business
 }
 
+// fixtureTiming is the Raft timing of the nodes a fixture builds and how
+// long their clients keep trying members while none takes a call.
+type fixtureTiming struct {
+	heartbeat, election, lease, retryWindow time.Duration
+}
+
+// fastTiming notices a lost leader within a few hundred milliseconds, so
+// tests that replace a failed leader or coordinator finish quickly.
+var fastTiming = fixtureTiming{heartbeat: 180 * time.Millisecond, election: 180 * time.Millisecond, lease: 90 * time.Millisecond}
+
+// steadyTiming is Raft's default timing, for tests that need the consensus
+// leader to stay where it is. Under fastTiming a leader that the race
+// detector and a single CPU keep busy for longer than its 90ms lease steps
+// down, and another member may take over. An election takes longer here, so
+// the clients keep trying for longer.
+var steadyTiming = fixtureTiming{heartbeat: time.Second, election: time.Second, lease: 500 * time.Millisecond, retryWindow: 15 * time.Second}
+
 func testNodes(t *testing.T, count int) []*clusterNode {
+	t.Helper()
+	return testNodesWith(t, count, fastTiming)
+}
+
+func testNodesWith(t *testing.T, count int, timing fixtureTiming) []*clusterNode {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -148,8 +179,13 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 		n.raft = &gatedListener{Listener: raw}
 		n.listener = n.raft
 		n.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			counter, _ := n.served.LoadOrStore(r.URL.Path, new(atomic.Int64))
+			counter.(*atomic.Int64).Add(1)
 			if current := n.runtime.Load(); current != nil {
-				handler := current.RPCHandler(coordination.RPCOptions{AuthorizeControl: func(*http.Request, coordination.Identity, string) (string, error) { return "test-owner", nil }})
+				// A node authorizes a forwarded control command as the owner,
+				// the actor the local caller used, so a command forwarded
+				// after a partial local attempt keeps its fingerprint.
+				handler := current.RPCHandler(coordination.RPCOptions{AuthorizeControl: func(*http.Request, coordination.Identity, string) (string, error) { return "owner", nil }})
 				if gate := n.gateApp.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"app" {
 					gate.once.Do(func() { close(gate.arrived) })
 					<-gate.release
@@ -218,7 +254,7 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 			}
 			return false
 		}
-		n.client, err = coordination.NewClient(coordination.ClientConfig{TLS: n.options, Members: members, Timeout: time.Second, ControlHeaders: func(context.Context, string) (http.Header, error) {
+		n.client, err = coordination.NewClient(coordination.ClientConfig{TLS: n.options, Members: members, Timeout: time.Second, RetryWindow: timing.retryWindow, ControlHeaders: func(context.Context, string) (http.Header, error) {
 			return http.Header{"X-Test-Owner": []string{"owner"}}, nil
 		}})
 		if err != nil {
@@ -229,9 +265,9 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 			t.Fatal(err)
 		}
 		raftConfig := raft.DefaultConfig()
-		raftConfig.HeartbeatTimeout = 180 * time.Millisecond
-		raftConfig.ElectionTimeout = 180 * time.Millisecond
-		raftConfig.LeaderLeaseTimeout = 90 * time.Millisecond
+		raftConfig.HeartbeatTimeout = timing.heartbeat
+		raftConfig.ElectionTimeout = timing.election
+		raftConfig.LeaderLeaseTimeout = timing.lease
 		raftConfig.CommitTimeout = 10 * time.Millisecond
 		n.config = Config{LedgerDir: filepath.Join(t.TempDir(), "ledger"), Client: n.client, PollInterval: 20 * time.Millisecond, ShutdownTimeout: time.Second,
 			Coordination: coordination.Config{ClusterID: "test-cluster", NodeID: members[i].NodeID, FailureDomain: "test-domain-" + members[i].NodeID, StorageLevel: "restricted", DataDir: filepath.Join(t.TempDir(), "raft"), Bootstrap: i == 0,
@@ -281,11 +317,7 @@ func TestLateProposalCannotCommitAfterBusinessCachesAreReconstructed(t *testing.
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -318,11 +350,7 @@ func TestUnknownProposalOutcomeRevokesCachedStoresBeforeAnotherWrite(t *testing.
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -356,11 +384,7 @@ func TestCallerCancellationDuringProposalKeepsBusinessGeneration(t *testing.T) {
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -399,25 +423,177 @@ func TestCallerCancellationDuringProposalKeepsBusinessGeneration(t *testing.T) {
 	}
 }
 
-func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing.T) {
-	nodes := testNodes(t, 3)
+// A control command this member answers as unavailable goes to the member
+// that leads next. Here this member's consensus replica has stopped; a
+// leadership lost part-way through a command is answered the same way.
+func TestJoinThisMemberCannotTakeGoesToTheNextLeader(t *testing.T) {
+	nodes := testNodes(t, 4)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
+	for _, n := range nodes[1:3] {
+		joinNode(t, first, n, true, false)
+	}
+	if err := first.service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The runtime stops with its replica and reports that when closed.
+	nodes[0].runtime.Store(nil)
+	t.Cleanup(func() { _ = first.Close() })
+	fourth := openNode(t, nodes[3])
+	member := coordination.Member{NodeID: "node-4", Address: fourth.Status().Address, APIAddress: nodes[3].server.URL}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-node-4", Actor: "owner", Member: member}); err != nil {
+		t.Fatalf("a join this member could not take did not reach the next leader: %v", err)
+	}
+	state, err := nodes[1].runtime.Load().ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.Members["node-4"]; !ok {
+		t.Fatalf("node-4 is not a member after its join: %+v", state.Members)
+	}
+}
+
+// A leader that cannot finish a control command answers with its own error.
+// The client routes a command to the leader, so forwarding it would send the
+// command back to this member again and again until the client's retry
+// window ran out, and hide what went wrong behind that window. Here node-1
+// removes itself and cannot hand its leadership to node-2, which receives no
+// Raft traffic.
+func TestControlCommandTheLeaderCannotFinishIsNotForwardedToItself(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
+	}
+	second, third := nodes[1].runtime.Load(), nodes[2].runtime.Load()
+	// A member that coordinates cannot be removed.
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-3"}); err != nil {
+		t.Fatal(err)
+	}
+	ready(t, third)
+	// node-1 hands its leadership only to a member that has applied what it
+	// has; node-2 is the first such member it tries.
+	deadline := time.Now().Add(8 * time.Second)
+	for second.service.Status().AppliedIndex < first.service.Status().AppliedIndex {
+		if time.Now().After(deadline) {
+			t.Fatalf("node-2 did not catch up with node-1: %d < %d", second.service.Status().AppliedIndex, first.service.Status().AppliedIndex)
 		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if status := first.service.Status(); !status.IsLeader {
+		t.Fatalf("node-1 is to remove itself as the consensus leader, but the leader is %q", status.LeaderID)
+	}
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	_, err := first.Remove(t.Context(), coordination.RemoveRequest{ID: "remove-node-1", Actor: "owner", NodeID: "node-1"})
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "consensus leadership transfer to node-2") {
+		t.Fatalf("node-1 did not answer with the leadership transfer it could not finish: %v", err)
+	}
+	for _, n := range nodes {
+		if got := n.servedCount(coordination.RPCPath + "remove"); got != 0 {
+			t.Fatalf("%s received the removal %d times; the leader forwarded a command only it could take", n.config.Coordination.NodeID, got)
+		}
+	}
+}
+
+// A leader that loses its leadership while it runs a control command no
+// longer leads when the command fails, so the command goes, with its ID, to
+// the member elected next. Here node-1 stops hearing from both other members
+// once the command has started, and steps down when its lease runs out.
+func TestControlCommandWhoseLeaderStepsDownPartWayGoesToTheNextLeader(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
+	}
+	state, err := first.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := first.service.Status(); !status.IsLeader {
+		t.Fatalf("node-1 is to lose its leadership part-way, but the leader is %q", status.LeaderID)
+	}
+	for _, n := range nodes[1:] {
+		n.raft.pause()
+		t.Cleanup(n.raft.resume)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := first.Rename(t.Context(), coordination.RenameRequest{ID: "rename-node-3", Actor: "owner", ExpectedRevision: state.Revision, NodeID: "node-3", Name: "third"})
+		done <- err
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for first.service.Status().IsLeader {
+		if time.Now().After(deadline) {
+			t.Fatal("node-1 kept its leadership without hearing from a quorum")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, n := range nodes[1:] {
+		n.raft.resume()
+	}
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the rename did not finish after node-1 stepped down")
+	}
+	if err != nil {
+		t.Fatalf("a rename whose leader stepped down part-way did not reach the next leader: %v", err)
+	}
+	deadline = time.Now().Add(8 * time.Second)
+	for first.MemberNames()["node-3"] != "third" {
+		if time.Now().After(deadline) {
+			t.Fatalf("node-3 is named %q on node-1 after its rename", first.MemberNames()["node-3"])
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Which answers from this member send a control command on to the member
+// the client finds leading. A member that no longer leads, because it lost
+// leadership part-way, its replica stopped or its service closed, forwards an
+// unavailable or failed-replica answer; a member that still leads answers with
+// its own. The service closes itself as soon as its replica fails, so this
+// checks the decision directly rather than racing that closure.
+func TestControlCommandForwardingDependsOnWhetherThisMemberStillLeads(t *testing.T) {
+	nodes := testNodes(t, 1)
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	check := func(situation string, want map[error]bool) {
+		t.Helper()
+		for kind, forward := range want {
+			if got := r.forwardable(fmt.Errorf("%w: from the test", kind)); got != forward {
+				t.Errorf("%s, forwarding %v is %v, want %v", situation, kind, got, forward)
+			}
+		}
+	}
+	if !r.service.Status().IsLeader {
+		t.Fatal("the single member does not lead consensus")
+	}
+	check("while this member leads", map[error]bool{coordination.ErrNotLeader: true, coordination.ErrUnavailable: false, coordination.ErrApplication: false, coordination.ErrInvalid: false, coordination.ErrConflict: false})
+	nodes[0].runtime.Store(nil)
+	t.Cleanup(func() { _ = r.Close() })
+	if err := r.service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check("once this member's service closed", map[error]bool{coordination.ErrNotLeader: true, coordination.ErrUnavailable: true, coordination.ErrApplication: true, coordination.ErrInvalid: false, coordination.ErrConflict: false})
+}
+
+func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
 	}
 	second := nodes[1].runtime.Load()
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
 	active := ready(t, second)
-	if !first.Status().IsLeader {
-		t.Fatal("fixture no longer routes business writes through the remote consensus leader")
-	}
+	requireAnotherLeader(t, first, "node-2")
 	// node-2 stops receiving Raft traffic. node-1 and node-3 still form a
 	// quorum, so the write commits but never reaches node-2's ledger.
 	nodes[1].raft.pause()
@@ -461,7 +637,7 @@ func TestCommittedWriteWhoseLocalApplyStallsRevokesBusinessGeneration(t *testing
 // its writer lock through that check, so a replica that stays behind must
 // fail the write instead of stalling every writer queued behind it.
 func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
-	nodes := testNodes(t, 3)
+	nodes := testNodesWith(t, 3, steadyTiming)
 	// node-2's application writes while its generation is being activated.
 	// The runtime then waits for Activate and does not check the replica's
 	// progress itself, so nothing but the write's own check bounds the wait.
@@ -486,12 +662,8 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	}
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
 	}
 	second := nodes[1].runtime.Load()
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
@@ -503,10 +675,8 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatalf("node-2 did not start its business generation: %+v", second.Status())
 	}
-	if !first.Status().IsLeader {
-		t.Fatal("fixture no longer reads the cluster state from a remote consensus leader")
-	}
 	tasks := nodes[1].current().tasks
+	requireAnotherLeader(t, first, "node-2")
 	// node-2 stops receiving Raft traffic, and node-1 and node-3 commit an
 	// entry it cannot apply: a read from the leader is now ahead of node-2.
 	nodes[1].raft.pause()
@@ -564,12 +734,8 @@ func TestActivationWhoseWriterFenceCannotApplyGivesUpAndRetries(t *testing.T) {
 	nodes := testNodes(t, 3)
 	first := openNode(t, nodes[0])
 	ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
 	}
 	second := nodes[1].runtime.Load()
 	gate := &appGate{arrived: make(chan struct{}), release: make(chan struct{})}
@@ -820,11 +986,7 @@ func TestTransferCancelsAnActivationThatHasNotFinishedStarting(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("business activation did not start")
 	}
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], true, false)
 	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer-during-startup", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -847,6 +1009,30 @@ func openNode(t *testing.T, n *clusterNode) *Runtime {
 	}
 	n.runtime.Store(r)
 	return r
+}
+
+// joinNode opens n and has first admit it under the command ID
+// "join-<node ID>", with or without a Raft vote and automatic coordinator
+// eligibility.
+func joinNode(t *testing.T, first *Runtime, n *clusterNode, voting, autoEligible bool) *Runtime {
+	t.Helper()
+	r := openNode(t, n)
+	member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: n.server.URL, AutoEligible: autoEligible, Voting: voting}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// requireAnotherLeader fails the test unless a member other than paused
+// leads consensus. A test pauses that member's inbound Raft traffic next:
+// the other two members still form a quorum and commit what it cannot
+// receive. Were paused the leader, its own replication would carry on.
+func requireAnotherLeader(t *testing.T, r *Runtime, paused string) {
+	t.Helper()
+	if leader := r.service.Status().LeaderID; leader == "" || leader == paused {
+		t.Fatalf("%s is to stop receiving Raft traffic while another member leads consensus, but the leader is %q", paused, leader)
+	}
 }
 
 func ready(t *testing.T, r *Runtime) Activation {
@@ -898,12 +1084,8 @@ func TestThreeNodeLedgerTransfersPreserveFactsAndFenceEveryOldGeneration(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		r := joinNode(t, first, n, true, true)
 		if version, err := r.Ledger().ReplicaVersion(); err != nil || version < before.AppVersion {
 			t.Fatalf("joining node lacks complete baseline: %d, %v", version, err)
 		}
@@ -968,12 +1150,8 @@ func TestAutomaticCoordinatorFailureActivatesReconstructedLedgerOnSurvivor(t *te
 	nodes := testNodes(t, 3)
 	first := openNode(t, nodes[0])
 	initial := ready(t, first)
-	for i := 1; i < len(nodes); i++ {
-		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true, Voting: true}
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
-			t.Fatal(err)
-		}
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, true)
 	}
 	if err := nodes[0].current().state.SetActiveAgent("running-session", "worker"); err != nil {
 		t.Fatal(err)
@@ -1053,11 +1231,7 @@ func TestManualNonvoterHubWritesAndFencesOldHub(t *testing.T) {
 	if err := old.Ledger.Document("before-transfer").Save([]byte("preserved")); err != nil {
 		t.Fatal(err)
 	}
-	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
-	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-replica", Actor: "owner", Member: member}); err != nil {
-		t.Fatal(err)
-	}
+	second := joinNode(t, first, nodes[1], false, false)
 	request := coordination.TransferRequest{ID: "to-nonvoter", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}
 	if _, err := second.Transfer(t.Context(), request); err != nil {
 		t.Fatal(err)

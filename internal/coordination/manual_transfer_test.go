@@ -340,23 +340,6 @@ func TestPendingMembershipSurvivesSnapshotAndCannotLeakThroughStateCopy(t *testi
 	}
 }
 
-func TestNonvoterAddressUpdateDoesNotGrantVote(t *testing.T) {
-	c := newTestCluster(t, 1)
-	leader, peer := joinNonvoter(t, c)
-	state := leader.Status()
-	if err := leader.waitForProgress(t.Context(), state.Members["new-node"], state.State); err != nil {
-		t.Fatal(err)
-	}
-	// Retaining the Raft endpoint and changing its HTTPS advertisement still
-	// exercises the real configuration mutation; it must preserve suffrage.
-	if _, err := leader.UpdateMemberAddress(t.Context(), MemberAddressRequest{ID: "nonvoter-address", Actor: "owner", ExpectedRevision: state.Revision, NodeID: "new-node", Address: peer.Status().Address, APIAddress: "https://127.0.0.1:12345"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := leader.Status(); got.Voters["new-node"] != "" || got.Members["new-node"].Voting {
-		t.Fatal("address update implicitly granted a vote")
-	}
-}
-
 func TestVoteProgressTimeoutCanResumeOrBeReReviewed(t *testing.T) {
 	for _, sameID := range []bool{true, false} {
 		t.Run(map[bool]string{true: "same-id", false: "new-review"}[sameID], func(t *testing.T) {
