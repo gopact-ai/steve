@@ -299,17 +299,26 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 		plan.Seeds = append(plan.Seeds, member)
 	}
 	sort.Slice(plan.Seeds, func(i, j int) bool { return plan.Seeds[i].NodeID < plan.Seeds[j].NodeID })
-	if routed {
-		plan.Effects = append(plan.Effects, text.T(i18n.ClusterEffectTunnel, request.HubRoute.Raft, request.HubRoute.API))
-	}
-	plan.Effects = append(plan.Effects, text.T(i18n.ClusterEffectStart, request.PeerAddress, request.RaftAddress), text.T(i18n.ClusterEffectWorkspace, request.WorkspaceDir), text.T(i18n.ClusterEffectIdentity), text.T(i18n.ClusterEffectLedger), text.T(i18n.ClusterEffectVoting), text.T(i18n.ClusterEffectSuccess))
+	plan.Effects = plan.effects(text)
 	plan.ReviewID = plan.reviewHash()
 	return plan, nil
 }
 
-// reviewHash identifies what the owner reviewed. The effects are left out:
-// they are the request said in the reviewer's language, so the same plan
-// read in two languages is still the same plan.
+// effects says what the plan will do, in text's language. It reads nothing
+// but the plan, all of which its review ID covers, so the sentences can be
+// left out of that ID without leaving any effect unreviewed.
+func (plan PeerEnrollmentPlan) effects(text i18n.Catalog) []string {
+	request := plan.Request
+	var effects []string
+	if request.HubRoute != (coordination.Route{}) {
+		effects = append(effects, text.T(i18n.ClusterEffectTunnel, request.HubRoute.Raft, request.HubRoute.API))
+	}
+	return append(effects, text.T(i18n.ClusterEffectStart, request.PeerAddress, request.RaftAddress), text.T(i18n.ClusterEffectWorkspace, request.WorkspaceDir), text.T(i18n.ClusterEffectIdentity), text.T(i18n.ClusterEffectLedger), text.T(i18n.ClusterEffectVoting), text.T(i18n.ClusterEffectSuccess))
+}
+
+// reviewHash identifies what the owner reviewed: every fact of the plan.
+// The effects are left out: they are those facts said in the reviewer's
+// language, so the same plan read in two languages is still one plan.
 func (plan PeerEnrollmentPlan) reviewHash() string {
 	plan.ReviewID = ""
 	plan.Effects = nil
