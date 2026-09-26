@@ -987,7 +987,7 @@ var zh = map[Key]string{
 	SnapshotLimitFileBytes: "最大单文件字节数",
 
 	// shared application configuration
-	AppSealedShared: "sealed 项目 %s 仅支持独立单机实例；共享协调账本会复制项目正文",
+	AppSealedShared: "sealed 项目仅支持独立单机实例；共享协调账本会复制项目正文: %s",
 
 	// onboarding
 	OnboardTaskGoal: "首次私聊自我介绍（系统引导）",
@@ -1980,7 +1980,7 @@ var en = map[Key]string{
 	SnapshotLimitFileBytes: "largest file's bytes",
 
 	// shared application configuration
-	AppSealedShared: "Project %s is sealed and runs only on an independent single-machine service; a shared coordination ledger copies project content",
+	AppSealedShared: "A sealed project runs only on an independent single-machine service; a shared coordination ledger copies project content: %s",
 
 	// onboarding
 	OnboardTaskGoal: "First private introduction (onboarding)",
