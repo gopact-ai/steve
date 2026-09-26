@@ -17,9 +17,17 @@ const (
 	startupAttemptTimeout = 15 * time.Second
 	startupRetryBase      = time.Second
 	startupRetryMax       = 2 * time.Minute
-	// codeRateLimited is Feishu's request frequency limit.
-	codeRateLimited = 99991400
 )
+
+// rejectedCodes are the Feishu business codes known to repeat until the
+// application's credentials or state change. Any other code may pass by
+// waiting, whatever HTTP status carries it: an overloaded or failing
+// Feishu answers with codes of its own.
+var rejectedCodes = map[int]bool{
+	10002: true, // the application is invalid
+	10003: true, // the app ID is invalid
+	10014: true, // the app secret is invalid
+}
 
 // statusError is an HTTP status Feishu answered instead of a result.
 type statusError int
@@ -33,10 +41,12 @@ type permanentError struct{ error }
 func (e permanentError) Unwrap() error { return e.error }
 
 // retryable reports whether a failed startup may succeed by waiting.
-// Rejected credentials, missing configuration and a refused application
-// are not; network failures, timeouts, 5xx and rate limits are. A failure
-// that cannot be told apart, such as an undecodable proxy page, is retried:
-// the wait is bounded and the last error stays visible.
+// Rejected credentials, missing configuration, a refused application and a
+// 4xx other than 408 and 429 are not; network failures, timeouts, 5xx, rate
+// limits and business codes not known to be rejections are. A failure that
+// cannot be told apart, such as an undecodable proxy page or an untrusted
+// certificate, is retried: the wait is bounded and the last error stays
+// visible.
 func retryable(err error) bool {
 	var permanent permanentError
 	var illegal *larkcore.IllegalParamError
@@ -49,9 +59,9 @@ func retryable(err error) bool {
 	case errors.As(err, &status):
 		return status >= 500 || status == http.StatusTooManyRequests || status == http.StatusRequestTimeout
 	case errors.As(err, &code):
-		return code.Code == codeRateLimited
+		return !rejectedCodes[code.Code]
 	case errors.As(err, &codeRef):
-		return codeRef.Code == codeRateLimited
+		return !rejectedCodes[codeRef.Code]
 	}
 	return true
 }

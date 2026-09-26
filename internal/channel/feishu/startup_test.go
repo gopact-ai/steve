@@ -104,6 +104,7 @@ func TestStartReportsAPermanentStartupFailureWithoutRetrying(t *testing.T) {
 		handler http.HandlerFunc
 	}{
 		"invalid secret":     {"wrong-secret", token(http.StatusOK, `{"code":10014,"msg":"app secret invalid"}`)},
+		"invalid app id":     {"test-secret", token(http.StatusOK, `{"code":10003,"msg":"invalid param"}`)},
 		"missing secret":     {"", token(http.StatusOK, tokenOK)},
 		"forbidden":          {"test-secret", botInfo(http.StatusForbidden, `{"code":99991672,"msg":"access denied"}`)},
 		"bot not enabled":    {"test-secret", botInfo(http.StatusOK, `{"code":0,"bot":{}}`)},
@@ -119,16 +120,20 @@ func TestStartReportsAPermanentStartupFailureWithoutRetrying(t *testing.T) {
 }
 
 // Network failures, timeouts, server errors and rate limits pass: Start
-// tries again.
+// tries again. So does any business code not known to name rejected
+// credentials or application state, whatever status carries it.
 func TestStartRetriesATransientStartupFailure(t *testing.T) {
 	for name, handler := range map[string]http.HandlerFunc{
 		"unavailable": botInfo(http.StatusServiceUnavailable, `{"code":0}`),
 		"bad gateway page": func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "<html>bad gateway</html>", http.StatusBadGateway)
 		},
-		"gateway timeout":    botInfo(http.StatusGatewayTimeout, `{}`),
-		"too many requests":  botInfo(http.StatusTooManyRequests, `{"code":99991400,"msg":"request trigger frequency limit"}`),
-		"token rate limited": token(http.StatusOK, `{"code":99991400,"msg":"request trigger frequency limit"}`),
+		"gateway timeout":        botInfo(http.StatusGatewayTimeout, `{}`),
+		"too many requests":      botInfo(http.StatusTooManyRequests, `{"code":99991400,"msg":"request trigger frequency limit"}`),
+		"token rate limited":     token(http.StatusOK, `{"code":99991400,"msg":"request trigger frequency limit"}`),
+		"token server error":     token(http.StatusInternalServerError, `{"code":1500,"msg":"internal error"}`),
+		"token throttled":        token(http.StatusTooManyRequests, `{"code":11232,"msg":"too many requests"}`),
+		"bot query rate limited": botInfo(http.StatusOK, `{"code":99991400,"msg":"request trigger frequency limit"}`),
 		"connection dropped": func(w http.ResponseWriter, _ *http.Request) {
 			conn, _, err := w.(http.Hijacker).Hijack()
 			if err == nil {
