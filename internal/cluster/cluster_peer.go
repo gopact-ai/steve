@@ -890,7 +890,9 @@ func (p *Peer) ConfigureNodes(nodes map[string]node.Config) error {
 }
 
 // DialWorker establishes an authenticated stream to a peer's own loopback
-// worker. The connection's lifetime is independent of the setup context.
+// worker. The connection's lifetime is independent of the setup context: it
+// is closed when the business generation that dialed it ends, or when this
+// node's replica stops granting it (see watchWorkerAuthority).
 func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {
@@ -909,12 +911,20 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 	if !ok {
 		return nil, coordination.ErrInvalid
 	}
+	ended, err := runtime.generationDone(state.Coordinator, state.WriterGeneration)
+	if err != nil {
+		return nil, err
+	}
+	grant, err := runtime.grantWorker(ctx, state, nodeID)
+	if err != nil {
+		return nil, err
+	}
 	if nodeID == p.Config.NodeID {
 		connection, err := p.openLocalWorker(ctx, p.Config.NodeID)
 		if err != nil {
 			return nil, err
 		}
-		go p.watchWorkerAuthority(p.ctx, state.Coordinator, state.WriterGeneration, connection.(*authenticatedWorkerConnection).done, func() { connection.Close() })
+		go p.watchWorkerAuthority(p.ctx, grant, connection.(*authenticatedWorkerConnection).done, ended, func() { connection.Close() })
 		return connection, nil
 	}
 	origin, err := url.Parse(member.APIAddress)
@@ -953,23 +963,39 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 		return nil, err
 	}
 	if response.StatusCode != http.StatusOK {
+		var refusal struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&refusal)
 		response.Body.Close()
 		connection.Close()
+		if refusal.Error != "" {
+			return nil, fmt.Errorf("worker tunnel rejected: HTTP %d: %s", response.StatusCode, refusal.Error)
+		}
 		return nil, fmt.Errorf("worker tunnel rejected: HTTP %d", response.StatusCode)
 	}
 	if err := ctx.Err(); err != nil {
 		connection.Close()
 		return nil, err
 	}
-	return &bufferedWorkerConnection{Conn: connection, reader: reader}, nil
+	tunnel := &bufferedWorkerConnection{Conn: connection, reader: reader, done: make(chan struct{})}
+	go p.watchWorkerAuthority(p.ctx, grant, tunnel.done, ended, func() { tunnel.Close() })
+	return tunnel, nil
 }
 
 type bufferedWorkerConnection struct {
 	net.Conn
 	reader *bufio.Reader
+	once   sync.Once
+	done   chan struct{}
 }
 
 func (c *bufferedWorkerConnection) Read(buffer []byte) (int, error) { return c.reader.Read(buffer) }
+
+func (c *bufferedWorkerConnection) Close() error {
+	c.once.Do(func() { close(c.done) })
+	return c.Conn.Close()
+}
 
 func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
@@ -989,21 +1015,9 @@ func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "owner authorization denied", http.StatusForbidden)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	state, err := p.Runtime.Load().ReadState(ctx)
-	cancel()
+	grant, err := p.admitWorkerTunnel(r, identity.NodeID)
 	if err != nil {
 		HTTPError(w, err)
-		return
-	}
-	epoch, err := strconv.ParseUint(r.Header.Get("X-Steve-Coordinator-Epoch"), 10, 64)
-	if err != nil || state.Coordinator.NodeID != identity.NodeID || state.Coordinator.Epoch != epoch {
-		HTTPError(w, coordination.ErrStaleEpoch)
-		return
-	}
-	writer, err := strconv.ParseUint(r.Header.Get("X-Steve-Writer-Generation"), 10, 64)
-	if err != nil || state.WriterGeneration != writer {
-		HTTPError(w, coordination.ErrStaleEpoch)
 		return
 	}
 	worker, err := p.openLocalWorker(r.Context(), identity.NodeID)
@@ -1038,7 +1052,7 @@ func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	watchCtx, watchCancel := context.WithCancel(p.ctx)
 	defer watchCancel()
-	go p.watchWorkerAuthority(watchCtx, state.Coordinator, writer, nil, func() { connection.Close(); worker.Close() })
+	go p.watchWorkerAuthority(watchCtx, grant, nil, nil, func() { connection.Close(); worker.Close() })
 	if _, err := buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
 	}
@@ -1051,6 +1065,31 @@ func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 	connection.Close()
 	worker.Close()
 	<-done
+}
+
+// admitWorkerTunnel grants the tunnel requested by r to the coordinator
+// that authenticated as coordinator, once a quorum read confirms the
+// coordinator epoch and writer generation it presents.
+func (p *Peer) admitWorkerTunnel(r *http.Request, coordinator string) (workerGrant, error) {
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return workerGrant{}, coordination.ErrUnavailable
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	state, err := runtime.ReadState(ctx)
+	if err != nil {
+		return workerGrant{}, err
+	}
+	epoch, err := strconv.ParseUint(r.Header.Get("X-Steve-Coordinator-Epoch"), 10, 64)
+	if err != nil || state.Coordinator.NodeID != coordinator || state.Coordinator.Epoch != epoch {
+		return workerGrant{}, coordination.ErrStaleEpoch
+	}
+	writer, err := strconv.ParseUint(r.Header.Get("X-Steve-Writer-Generation"), 10, 64)
+	if err != nil || state.WriterGeneration != writer {
+		return workerGrant{}, coordination.ErrStaleEpoch
+	}
+	return runtime.grantWorker(ctx, state, p.Config.NodeID)
 }
 
 func restorePeerAdapters(cfg *node.ServerConfig) {
@@ -1118,42 +1157,6 @@ func (p *Peer) authenticatedWorkerPeer(connection net.Conn) (string, bool) {
 		return "", false
 	}
 	return principal.NodeID, true
-}
-
-func (p *Peer) watchWorkerAuthority(ctx context.Context, assignment coordination.Assignment, writer uint64, done <-chan struct{}, closeConnection func()) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	lastQuorum := time.Now()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-done:
-			return
-		case <-ticker.C:
-		}
-		runtime := p.Runtime.Load()
-		if runtime == nil {
-			closeConnection()
-			return
-		}
-		local := runtime.Status()
-		if !local.Healthy || local.Coordinator != assignment || local.WriterGeneration != writer {
-			closeConnection()
-			return
-		}
-		if time.Since(lastQuorum) < time.Second {
-			continue
-		}
-		readCtx, cancel := context.WithTimeout(ctx, time.Second)
-		state, err := runtime.ReadState(readCtx)
-		cancel()
-		if err != nil || state.Coordinator != assignment || state.WriterGeneration != writer {
-			closeConnection()
-			return
-		}
-		lastQuorum = time.Now()
-	}
 }
 
 func (p *Peer) serveWorkerDescriptor(w http.ResponseWriter, r *http.Request) {

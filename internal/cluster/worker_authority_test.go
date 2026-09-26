@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -156,9 +157,9 @@ func TestWorkerTunnelClosesWhenItsReplicaStopsHearingTheLeader(t *testing.T) {
 	WaitPeerReady(t, hub)
 	closed := openWorkerTunnel(t, hub, member).Done()
 	raft.pause()
-	// Raft's follower notices the silence within twice its heartbeat
-	// timeout, one second by default, and gives up after ApplyTimeout.
-	bound := 2*time.Second + member.Runtime.Load().config.Coordination.ApplyTimeout + 3*time.Second
+	// Raft's follower forgets its leader within a few of its one-second
+	// heartbeat timeouts, and the worker gives up ApplyTimeout later.
+	bound := 3*time.Second + member.Runtime.Load().config.Coordination.ApplyTimeout + 4*time.Second
 	select {
 	case <-closed:
 	case <-time.After(bound):
@@ -192,3 +193,60 @@ func TestRemovingAMachineClosesTheTunnelToItsWorker(t *testing.T) {
 	}
 }
 
+// A worker tunnel's grant lapses on the same judgment of the local replica
+// that gives up a business generation, and on any change to the authority
+// it was opened under. Observations carry their own times, so nothing here
+// depends on scheduling.
+func TestWorkerGrantLapsesWithTheLocalReplica(t *testing.T) {
+	const timeout = time.Second
+	runtime := &Runtime{config: Config{Coordination: coordination.Config{NodeID: "node-1", ApplyTimeout: timeout}}}
+	assignment := coordination.Assignment{NodeID: "node-3", Epoch: 4}
+	started := time.Now()
+	at := func(after time.Duration, change func(*observation)) observation {
+		seen := observation{at: started.Add(after), log: coordination.LogProgress{Committed: 10, Applied: 10}}
+		seen.Healthy, seen.LeaderID = true, "node-2"
+		seen.Coordinator, seen.WriterGeneration = assignment, 7
+		seen.Members = map[string]coordination.Member{"node-1": {NodeID: "node-1"}, "node-3": {NodeID: "node-3"}}
+		if change != nil {
+			change(&seen)
+		}
+		return seen
+	}
+	noLeader := func(seen *observation) { seen.LeaderID = "" }
+	for _, tc := range []struct {
+		name string
+		seen []observation
+		want error
+	}{
+		{name: "kept", seen: []observation{at(0, nil), at(timeout, nil), at(3*timeout, nil)}},
+		{name: "replica unhealthy", seen: []observation{at(0, nil), at(time.Millisecond, func(seen *observation) { seen.Healthy = false })}, want: coordination.ErrUnavailable},
+		{name: "another coordinator", seen: []observation{at(0, nil), at(time.Millisecond, func(seen *observation) { seen.Coordinator.Epoch++ })}, want: coordination.ErrStaleEpoch},
+		{name: "another writer generation", seen: []observation{at(0, nil), at(time.Millisecond, func(seen *observation) { seen.WriterGeneration++ })}, want: coordination.ErrStaleWriter},
+		{name: "worker's machine removed", seen: []observation{at(0, nil), at(time.Millisecond, func(seen *observation) { delete(seen.Members, "node-1") })}, want: coordination.ErrInvalid},
+		{name: "follower's leader late", seen: []observation{at(0, nil), at(timeout, noLeader)}},
+		{name: "follower hears no leader", seen: []observation{at(0, nil), at(timeout, noLeader), at(timeout+time.Millisecond, noLeader)}, want: coordination.ErrUnavailable},
+		{name: "leader steps down knowing no other", seen: []observation{at(0, func(seen *observation) { seen.LeaderID = "node-1" }), at(time.Millisecond, noLeader)}, want: coordination.ErrUnavailable},
+		{name: "committed entry stays unapplied", seen: []observation{at(0, func(seen *observation) { seen.log.Committed = 12 }), at(timeout+time.Millisecond, func(seen *observation) { seen.log.Committed = 12 })}, want: coordination.ErrUnavailable},
+		{name: "steady writes", seen: []observation{
+			at(0, func(seen *observation) { seen.log = coordination.LogProgress{Committed: 12, Applied: 10} }),
+			at(timeout, func(seen *observation) { seen.log = coordination.LogProgress{Committed: 14, Applied: 12} }),
+			at(2*timeout, func(seen *observation) { seen.log = coordination.LogProgress{Committed: 16, Applied: 14} }),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			live := liveness{started: started, heard: started}
+			var err error
+			for _, seen := range tc.seen {
+				if err = runtime.authorizesWorker(&live, seen, "node-1", assignment, 7); err != nil {
+					break
+				}
+			}
+			if tc.want == nil && err != nil {
+				t.Fatalf("grant lapsed: %v", err)
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("grant lapsed with %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
