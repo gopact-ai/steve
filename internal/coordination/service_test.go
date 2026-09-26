@@ -163,20 +163,40 @@ func TestSingleNodeStartsUsableAndKeepsStableIdentity(t *testing.T) {
 // A quorum read commits a barrier that the state machine never sees: Raft's
 // applied index covers it, so a replica that has applied everything it
 // committed reports the two indexes equal, while the state's own applied
-// index stays at the last command or membership change.
+// index stays at the last command or membership change. The check repeats
+// so that it holds for every read rather than for one lucky interleaving.
+//
+// The barrier is committed before the read returns, but Raft records an
+// entry as applied only after handing it to the state machine, which may
+// answer the barrier first. The test gives the applied index up to the
+// ApplyTimeout the runtime allows a committed entry to wait to catch up.
 func TestLogProgressCoversEntriesTheStateMachineNeverSees(t *testing.T) {
 	c := newTestCluster(t, 1)
 	n := c.leader()
-	state, err := n.ReadState(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	progress := n.LogProgress()
-	if progress.Committed < n.LastIndex() || progress.Applied != progress.Committed {
-		t.Fatalf("after a quorum read the single node has committed %d and applied %d of %d entries", progress.Committed, progress.Applied, n.LastIndex())
-	}
-	if state.AppliedIndex >= progress.Applied {
-		t.Fatalf("the state applied index %d reaches the barrier at %d: the state machine now sees barriers", state.AppliedIndex, progress.Applied)
+	applyTimeout := n.config.ApplyTimeout
+	for read := 0; read < 200; read++ {
+		// The read's barrier is the first entry after the ones the log
+		// holds now.
+		before := n.LastIndex()
+		state, err := n.ReadState(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		progress := n.LogProgress()
+		if progress.Committed <= before {
+			t.Fatalf("quorum read %d returned before the single node committed its barrier: committed %d, and the log held %d entries before the read", read, progress.Committed, before)
+		}
+		deadline := time.Now().Add(applyTimeout)
+		for progress.Applied < progress.Committed && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+			progress = n.LogProgress()
+		}
+		if progress.Applied != progress.Committed {
+			t.Fatalf("%s after quorum read %d the single node has committed %d and applied %d of %d entries", applyTimeout, read, progress.Committed, progress.Applied, n.LastIndex())
+		}
+		if state.AppliedIndex >= progress.Applied {
+			t.Fatalf("after quorum read %d the state applied index %d reaches the barrier at %d: the state machine now sees barriers", read, state.AppliedIndex, progress.Applied)
+		}
 	}
 }
 
