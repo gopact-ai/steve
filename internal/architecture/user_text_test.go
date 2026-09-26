@@ -157,3 +157,40 @@ func hanLiterals(syntax *ast.File) []string {
 }
 
 func isHan(r rune) bool { return unicode.Is(unicode.Han, r) }
+
+// An exemption covers the one declaration it names. A literal added
+// elsewhere in the same file, directory or package-level block — or in a
+// function that merely shares an exempt method's name — still counts.
+func TestUserTextExemptionsCoverOnlyTheNamedDeclaration(t *testing.T) {
+	for _, tc := range []struct {
+		name, rel, src string
+		exempt         bool
+	}{
+		{"a new function in an exempt file", "internal/schedule/spec.go", `package schedule
+import "errors"
+func probeFull() error { return errors.New("定时任务已满，请先取消一个") }`, false},
+		{"a new package-level value in an exempt file", "internal/turn/commands_tasks.go", `package turn
+import "errors"
+var probeTaskMissing = errors.New("任务不存在或已被删除")`, false},
+		{"a new file in an exempt directory", "internal/home/probe.go", `package home
+func probeSave() string { return "档案保存失败，请检查磁盘权限" }`, false},
+		{"a function named like an exempt method", "internal/turn/coordinator_inform.go", `package turn
+func Where() string { return "当前项目不可用" }`, false},
+		{"the exempt method itself", "internal/turn/coordinator_inform.go", `package turn
+func (c *Coordinator) Where() string { return "项目" }`, true},
+	} {
+		syntax, err := parser.ParseFile(token.NewFileSet(), tc.rel, tc.src, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lits := hanLiterals(syntax)
+		if len(lits) == 0 {
+			t.Fatalf("%s: no literal found", tc.name)
+		}
+		for _, lit := range lits {
+			if reason := userTextExemption(tc.rel, tc.rel+"#"+lit); (reason != "") != tc.exempt {
+				t.Errorf("%s: %s#%s exempt by %q, want exempt=%v", tc.name, tc.rel, lit, reason, tc.exempt)
+			}
+		}
+	}
+}
