@@ -79,7 +79,6 @@ type Registry struct {
 	receiptAuthority func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error
 	pluginAuthority  func(context.Context, string, nodewire.PluginRequest) error
 
-	eventMu   sync.Mutex
 	closed    bool
 	dialing   map[string]chan struct{}
 	changed   map[string]chan struct{}
@@ -94,13 +93,18 @@ type Registry struct {
 	gens map[string]int64
 	// observe hears every change of a node's standing: up with an advert,
 	// or down with a reason. History is made of these. drift hears what
-	// changed in a node's manifest between two adverts.
-	observe func(Status)
-	drift   func(node string, changes []ability.Change)
+	// changed in a node's manifest between two adverts. Both hear through
+	// notices, never on the path that made the change.
+	observe func(Status, time.Time)
+	drift   func(node string, changes []ability.Change, at time.Time)
+	notices notices
 }
 
-// SetDriftObserver installs where manifest changes are reported.
-func (r *Registry) SetDriftObserver(drift func(node string, changes []ability.Change)) {
+// SetDriftObserver installs where manifest changes are reported; at is
+// when the registry took the advert that showed the change, which can be
+// well before the observer hears it. It is called the way the observer
+// SetObserver installs is, on the same goroutine.
+func (r *Registry) SetDriftObserver(drift func(node string, changes []ability.Change, at time.Time)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.drift = drift
@@ -140,6 +144,7 @@ func (r *Registry) accept(name string, adv *nodewire.Advert) {
 // noteDrift compares a fresh advert with the last one on record and
 // reports the difference, if any, as structured changes.
 func (r *Registry) noteDrift(name string, adv nodewire.Advert) {
+	at := time.Now()
 	r.mu.Lock()
 	var before *ability.Snapshot
 	if last := r.last[name]; last != nil {
@@ -154,14 +159,28 @@ func (r *Registry) noteDrift(name string, adv nodewire.Advert) {
 	if len(changes) == 0 {
 		return
 	}
-	drift(name, changes)
+	r.notices.post(func() { drift(name, changes, at) })
 }
 
-// SetObserver installs where connectivity changes are reported.
-func (r *Registry) SetObserver(observe func(Status)) {
+// SetObserver installs where connectivity changes are reported; at is
+// when the registry made the change, which can be well before the observer
+// hears it. Observers are called one at a time on a goroutine of their own:
+// an observer must not wait for a later change to be heard, as none is
+// delivered until it returns.
+func (r *Registry) SetObserver(observe func(Status, time.Time)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.observe = observe
+}
+
+// noticeLocked posts a change of a node's standing to its observer. The
+// caller holds r.mu and has just made the change, so notices are posted in
+// the order the changes were made.
+func (r *Registry) noticeLocked(s Status) {
+	if observe := r.observe; observe != nil {
+		at := time.Now()
+		r.notices.post(func() { observe(s, at) })
+	}
 }
 
 // Generation is how many times the node has connected: it moves on every
@@ -444,6 +463,7 @@ func (r *Registry) Close() {
 	}
 	r.live = map[string]*conn{}
 	r.mu.Unlock()
+	r.notices.close()
 	for _, c := range live {
 		c.close()
 	}
@@ -497,7 +517,6 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 			r.accept(name, &adv)
 			c.setAdvert(adv)
 			r.noteDrift(name, adv)
-			r.eventMu.Lock()
 			r.mu.Lock()
 			if !r.currentLocked(name, configurationRevision) {
 				err = fmt.Errorf("node %q released while dialing", name)
@@ -515,13 +534,9 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 				r.last[name] = &up
 				r.signalLocked(name)
 				r.clocksLocked(name, true)
-				observe := r.observe
+				r.noticeLocked(up)
 				r.mu.Unlock()
-				if observe != nil {
-					observe(up)
-				}
 			}
-			r.eventMu.Unlock()
 		}
 		r.mu.Lock()
 		delete(r.dialing, name)

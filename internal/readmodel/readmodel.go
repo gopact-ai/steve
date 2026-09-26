@@ -1268,7 +1268,14 @@ func (m *Model) publishLocked(ev Event) {
 // leaves the fact live; later Observes write it with their own, oldest
 // first and at most observationsPerSave at a time.
 func (m *Model) Observe(kind, subject, text string, data map[string]string) {
-	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text, Data: data}
+	m.ObserveAt(time.Now(), kind, subject, text, data)
+}
+
+// ObserveAt records a fact that happened at at, which may be a while before
+// it is recorded: history is ordered by when facts happened, and a fact
+// dated when it was recorded would follow what it caused.
+func (m *Model) ObserveAt(at time.Time, kind, subject, text string, data map[string]string) {
+	obs := Observation{At: at.UTC(), Kind: kind, Subject: subject, Text: text, Data: data}
 	m.observeMu.Lock()
 	defer m.observeMu.Unlock()
 	store := m.src.Observations
