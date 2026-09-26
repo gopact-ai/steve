@@ -11,10 +11,25 @@ package httpdrain
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
+	"time"
 )
+
+// stuckReportAfter is how long a stop waits on handlers it has cut short
+// before it says which requests it is still waiting for.
+const stuckReportAfter = time.Second
+
+// request is a handler running: what it serves and since when.
+type request struct {
+	method, path string
+	since        time.Time
+}
 
 // Server wraps one http.Server. Its Handler is read when Serve starts, so it
 // may be set until then.
@@ -28,7 +43,11 @@ type Server struct {
 
 	mu       sync.Mutex
 	stopping bool
-	running  int
+	// addr is the address Serve listens on, for the stop to name.
+	addr string
+	next uint64
+	// running holds the handlers running, keyed in the order they started.
+	running map[uint64]request
 	// idle is closed once a stop has begun and no handler is running.
 	idle chan struct{}
 
@@ -41,7 +60,7 @@ type Server struct {
 
 func New(srv *http.Server) *Server {
 	force, abort := context.WithCancel(context.Background())
-	return &Server{srv: srv, force: force, abort: abort, idle: make(chan struct{}), stopped: make(chan struct{})}
+	return &Server{srv: srv, force: force, abort: abort, running: map[uint64]request{}, idle: make(chan struct{}), stopped: make(chan struct{})}
 }
 
 // Serve serves listener, which it closes, until the server is stopped, and
@@ -54,6 +73,9 @@ func (s *Server) Serve(listener net.Listener) error {
 		next = http.DefaultServeMux
 	}
 	s.srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handle(next, w, r) })
+	s.mu.Lock()
+	s.addr = listener.Addr().String()
+	s.mu.Unlock()
 	err := s.srv.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		<-s.stopped
@@ -65,8 +87,10 @@ func (s *Server) Serve(listener net.Listener) error {
 
 // Shutdown stops accepting, lets handlers finish until ctx ends, then
 // cancels their contexts, closes their connections and waits for them to
-// return. It reports ctx's error when handlers had to be cut short. Every
-// stop returns once the first one has finished, and reports its result.
+// return, however long that takes; handlers still running a second after
+// they were cut short are named in a warning. It reports ctx's error when
+// handlers had to be cut short. Every stop returns once the first one has
+// finished, and reports its result.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.stop(ctx)
 	return errors.Join(s.cut, s.err)
@@ -85,7 +109,7 @@ func (s *Server) stop(ctx context.Context) {
 	s.once.Do(func() {
 		s.mu.Lock()
 		s.stopping = true
-		if s.running == 0 {
+		if len(s.running) == 0 {
 			close(s.idle)
 		}
 		s.mu.Unlock()
@@ -109,6 +133,7 @@ func (s *Server) stop(ctx context.Context) {
 			s.cut = ctx.Err()
 			s.abort()
 			s.err = errors.Join(s.err, s.srv.Close())
+			s.awaitCut()
 		}
 		<-s.idle
 		s.abort()
@@ -128,12 +153,15 @@ func (s *Server) handle(next http.Handler, w http.ResponseWriter, r *http.Reques
 		http.Error(w, "server is stopping", http.StatusServiceUnavailable)
 		return
 	}
-	s.running++
+	id := s.next
+	s.next++
+	// The path without its query, which can carry credentials.
+	s.running[id] = request{method: r.Method, path: r.URL.Path, since: time.Now()}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		s.running--
-		if s.stopping && s.running == 0 {
+		delete(s.running, id)
+		if s.stopping && len(s.running) == 0 {
 			close(s.idle)
 		}
 		s.mu.Unlock()
@@ -142,4 +170,36 @@ func (s *Server) handle(next http.Handler, w http.ResponseWriter, r *http.Reques
 	defer cancel()
 	defer context.AfterFunc(s.force, cancel)()
 	next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// awaitCut waits a moment for the handlers a stop has cut short. Those
+// still running after it ignore their cancelled contexts, and the stop
+// waits for them however long they take, so it says which they are.
+func (s *Server) awaitCut() {
+	timer := time.NewTimer(stuckReportAfter)
+	defer timer.Stop()
+	select {
+	case <-s.idle:
+		return
+	case <-timer.C:
+	}
+	s.mu.Lock()
+	addr := s.addr
+	running := make([]request, 0, len(s.running))
+	for _, r := range s.running {
+		running = append(running, r)
+	}
+	s.mu.Unlock()
+	slices.SortFunc(running, func(a, b request) int { return a.since.Compare(b.since) })
+	if len(running) == 0 {
+		return
+	}
+	names := make([]string, 0, min(len(running), 10))
+	for _, r := range running[:min(len(running), 10)] {
+		names = append(names, fmt.Sprintf("%s %s (running %s)", r.method, r.path, time.Since(r.since).Round(time.Millisecond)))
+	}
+	if len(running) > len(names) {
+		names = append(names, fmt.Sprintf("and %d more", len(running)-len(names)))
+	}
+	slog.Warn(fmt.Sprintf("httpdrain: server on %s: %d request(s) still running after their contexts were cancelled; stopping waits for them: %s", addr, len(running), strings.Join(names, ", ")), "server", addr, "requests", len(running))
 }
