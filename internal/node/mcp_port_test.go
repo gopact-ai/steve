@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -68,5 +69,28 @@ func TestPluginBrokerPicksItsFirstPortFromTheStableRange(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(portFile); strings.TrimSpace(string(raw)) != strconv.Itoa(broker.proxyPort) {
 		t.Fatalf("port record changed to %q", raw)
+	}
+}
+
+// A plugin broker restarted after its proxy is done binds the remembered
+// port again under StrictPort, so a done proxy has let go of its port. A
+// broker stopped before its proxy server begins serving is the hard case,
+// and a single P makes that order common.
+func TestPluginBrokerProxyReleasesItsPortBeforeDone(t *testing.T) {
+	procs := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(procs) })
+	for i := range 200 {
+		broker := NewBroker(BrokerConfig{})
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := broker.serveProxy(ctx); err != nil {
+			t.Fatalf("round %d: %v", i, err)
+		}
+		<-broker.proxyDone
+		again, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(broker.proxyPort))
+		if err != nil {
+			t.Fatalf("round %d: port still held once the proxy is done: %v", i, err)
+		}
+		again.Close()
 	}
 }

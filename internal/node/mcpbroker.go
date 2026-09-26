@@ -94,9 +94,11 @@ type mcpBinding struct {
 // Broker holds the servers, mints bindings, launches, proxies.
 type Broker struct {
 	connections sync.WaitGroup
-	proxyDone   chan struct{}
-	ready       func(error)
-	cfg         BrokerConfig
+	// proxyDone is closed once the proxy has stopped for good: its server
+	// closed and its listener's port released.
+	proxyDone chan struct{}
+	ready     func(error)
+	cfg       BrokerConfig
 	// work is installed only by an embedded node, sharing its restart gate.
 	work func() (func(), error)
 
@@ -478,13 +480,19 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 	}
 	b.proxyDone = make(chan struct{})
 	server := &http.Server{Handler: http.HandlerFunc(b.proxy), ReadHeaderTimeout: 10 * time.Second}
+	served := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		// Shutdown; Serve reports the close as ErrServerClosed.
+		// Shutdown; Serve reports the close as ErrServerClosed. A Close that
+		// comes before Serve has taken the listener leaves the listener to
+		// Serve, which closes it on the way out: the port is free only once
+		// Serve has returned.
 		_ = server.Close()
+		<-served
 		close(b.proxyDone)
 	}()
 	go func() {
+		defer close(served)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error(fmt.Sprintf("steve-node: mcp proxy: %v", err))
 		}
