@@ -1587,10 +1587,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// leader's only up to the last index it covers, which is its predecessor
 	// when it carries no entries. Entries past that index may be an unchecked
 	// tail from a deposed leader, such as one that survived a snapshot
-	// install, so commit no further than it.
-	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
+	// install, so commit no further than it. A request that covers less than
+	// we have already committed, such as a delayed one, leaves it alone.
+	if idx := min(a.LeaderCommitIndex, a.PrevLogEntry+uint64(len(a.Entries))); idx > r.getCommitIndex() {
 		start := time.Now()
-		idx := min(a.LeaderCommitIndex, a.PrevLogEntry+uint64(len(a.Entries)))
 		r.setCommitIndex(idx)
 		if r.configurations.latestIndex <= idx {
 			r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
