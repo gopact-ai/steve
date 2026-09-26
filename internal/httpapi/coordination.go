@@ -6,6 +6,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func (s *Server) SetCoordination(service consoleapi.CoordinationService) { s.coordination = service }
@@ -31,7 +32,7 @@ func (s *Server) consoleCoordination(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) consoleCoordinationTransfer(w http.ResponseWriter, r *http.Request) {
-	if !s.coordinationAvailable(w) {
+	if !s.coordinationAvailable(w, r) {
 		return
 	}
 	var request consoleapi.CoordinatorTransfer
@@ -43,7 +44,7 @@ func (s *Server) consoleCoordinationTransfer(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) consoleCoordinationPolicy(w http.ResponseWriter, r *http.Request) {
-	if !s.coordinationAvailable(w) {
+	if !s.coordinationAvailable(w, r) {
 		return
 	}
 	var request consoleapi.CoordinatorPolicy
@@ -55,7 +56,7 @@ func (s *Server) consoleCoordinationPolicy(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) consoleCoordinationEligibility(w http.ResponseWriter, r *http.Request) {
-	if !s.coordinationAvailable(w) {
+	if !s.coordinationAvailable(w, r) {
 		return
 	}
 	var request consoleapi.CoordinatorEligibility
@@ -67,7 +68,7 @@ func (s *Server) consoleCoordinationEligibility(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) consoleCoordinationRename(w http.ResponseWriter, r *http.Request) {
-	if !s.coordinationAvailable(w) {
+	if !s.coordinationAvailable(w, r) {
 		return
 	}
 	var request consoleapi.CoordinatorRename
@@ -79,7 +80,7 @@ func (s *Server) consoleCoordinationRename(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) consoleCoordinationVoting(w http.ResponseWriter, r *http.Request) {
-	if !s.coordinationAvailable(w) {
+	if !s.coordinationAvailable(w, r) {
 		return
 	}
 	var request consoleapi.CoordinatorVoting
@@ -90,13 +91,13 @@ func (s *Server) consoleCoordinationVoting(w http.ResponseWriter, r *http.Reques
 	s.coordinationResult(w, view, err)
 }
 
-func (s *Server) coordinationAvailable(w http.ResponseWriter) bool {
+func (s *Server) coordinationAvailable(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Content-Type", "application/json")
 	if s.coordination != nil {
 		return true
 	}
 	w.WriteHeader(http.StatusNotImplemented)
-	writeJSON(w, map[string]string{"error": "当前服务尚未启用协调状态复制"})
+	writeJSON(w, map[string]string{"error": i18n.New(i18n.ContextLocale(r.Context())).T(i18n.HTTPCoordinationOff)})
 	return false
 }
 

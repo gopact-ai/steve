@@ -942,6 +942,11 @@ var zh = map[Key]string{
 	ReadEffectUnconfirmed:     "执行结果尚未确认",
 	ReadWriterExitUnconfirmed: "原执行进程是否退出尚未确认",
 	ReadWriterStillHeld:       "原执行进程是否退出尚未确认，目录与执行资源继续保留占用",
+
+	// Console routes whose service is off.
+	HTTPCoordinationOff:       "当前服务尚未启用协调状态复制",
+	HTTPNodeAgentsUnsupported: "当前服务不支持节点工具登记",
+	HTTPSSHOff:                "SSH 接入尚未启用",
 }
 
 var en = map[Key]string{
@@ -1886,4 +1891,9 @@ var en = map[Key]string{
 	ReadEffectUnconfirmed:     "Whether the call took effect is not confirmed",
 	ReadWriterExitUnconfirmed: "Whether the original execution process exited is not confirmed",
 	ReadWriterStillHeld:       "Whether the original execution process exited is not confirmed; its directory and execution resources stay held",
+
+	// Console routes whose service is off.
+	HTTPCoordinationOff:       "This service has not enabled coordination state replication",
+	HTTPNodeAgentsUnsupported: "This service does not support registering node tools",
+	HTTPSSHOff:                "SSH onboarding is not enabled",
 }

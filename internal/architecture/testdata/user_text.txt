@@ -54,9 +54,6 @@ internal/configbuild/projects.go#Error 1
 internal/desktop/workspace.go#CheckWorkspaceProject 2
 internal/desktop/workspace.go#PrepareWorkspace 7
 internal/desktop/workspace.go#checkWorkspacePlace 3
-internal/httpapi/coordination.go#coordinationAvailable 1
-internal/httpapi/node_agents.go#consoleNodeAgents 1
-internal/httpapi/ssh.go#sshAvailable 1
 internal/nodebootstrap/binary.go#OpenBinary 6
 internal/onboard/onboard.go#TaskGoal 1
 internal/platformconfig/store.go# 1

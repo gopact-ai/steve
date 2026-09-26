@@ -978,6 +978,11 @@ const (
 	ReadEffectUnconfirmed     Key = "read_effect_unconfirmed"
 	ReadWriterExitUnconfirmed Key = "read_writer_exit_unconfirmed"
 	ReadWriterStillHeld       Key = "read_writer_still_held"
+
+	// Console routes whose service is off.
+	HTTPCoordinationOff       Key = "http_coordination_off"
+	HTTPNodeAgentsUnsupported Key = "http_node_agents_unsupported"
+	HTTPSSHOff                Key = "httpssh_off"
 )
 
 type Catalog struct {

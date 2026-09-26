@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
@@ -53,7 +54,7 @@ func (s *Server) sshRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	result, err := s.ssh.SSHDiscover(r.Context())
@@ -65,7 +66,7 @@ func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sshCheck(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	var request struct {
@@ -83,7 +84,7 @@ func (s *Server) sshCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sshPlan(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	var request sshconnect.InstallRequest
@@ -103,7 +104,7 @@ func (s *Server) sshPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sshInstall(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	result, err := s.ssh.SSHCommit(r.Context(), r.PathValue("id"))
@@ -120,7 +121,7 @@ func (s *Server) sshInstall(w http.ResponseWriter, r *http.Request) {
 // sshStatus reads how an installation is going: the phase it is in and
 // what the remote has said. It never starts, resumes or repeats anything.
 func (s *Server) sshStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	result, err := s.ssh.SSHStatus(r.Context(), r.PathValue("id"))
@@ -134,7 +135,7 @@ func (s *Server) sshStatus(w http.ResponseWriter, r *http.Request) {
 // sshAbandon gives up a plan or operation that will not finish, so the
 // machine can be enrolled again. The remote machine is left as it is.
 func (s *Server) sshAbandon(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	if err := s.ssh.SSHAbandon(r.Context(), r.PathValue("id")); err != nil {
@@ -147,7 +148,7 @@ func (s *Server) sshAbandon(w http.ResponseWriter, r *http.Request) {
 // sshBrowse lists the directories under one remote path so the workspace
 // can be picked from what the machine actually has. It reads only.
 func (s *Server) sshBrowse(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	var request sshconnect.BrowseRequest
@@ -162,14 +163,14 @@ func (s *Server) sshBrowse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
-func (s *Server) sshAvailable(w http.ResponseWriter) bool {
+func (s *Server) sshAvailable(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if s.ssh != nil {
 		return true
 	}
 	w.WriteHeader(http.StatusNotImplemented)
-	writeJSON(w, map[string]string{"error": "SSH 接入尚未启用"})
+	writeJSON(w, map[string]string{"error": i18n.New(i18n.ContextLocale(r.Context())).T(i18n.HTTPSSHOff)})
 	return false
 }
 
@@ -199,7 +200,7 @@ func decodeSSH(w http.ResponseWriter, r *http.Request, value any) bool {
 }
 
 func (s *Server) sshUpgrade(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	result, err := s.ssh.SSHUpgrade(r.Context(), r.PathValue("node"))
@@ -211,7 +212,7 @@ func (s *Server) sshUpgrade(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sshUpgradeStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.sshAvailable(w) {
+	if !s.sshAvailable(w, r) {
 		return
 	}
 	result, err := s.ssh.SSHUpgradeStatus(r.Context(), r.PathValue("node"))
