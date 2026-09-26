@@ -151,12 +151,14 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("mcp broker: listen %s: %w", sock, err)
 	}
+	// Whatever ends Serve closes the socket before it returns, so no
+	// launcher is left waiting on a socket nobody accepts on.
+	defer func() { _ = listener.Close() }()
 	mode := b.cfg.SocketMode
 	if mode == 0 {
 		mode = 0o600
 	}
 	if err := os.Chmod(sock, mode); err != nil {
-		listener.Close()
 		return err
 	}
 	if testHookSocketListener != nil {
@@ -166,10 +168,9 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 		b.ready(nil)
 		announced = true
 	}
-	go func() {
-		<-ctx.Done()
-		listener.Close()
-	}()
+	// Closing unblocks Accept, which reports the end through ctx.
+	stop := context.AfterFunc(ctx, func() { _ = listener.Close() })
+	defer stop()
 	slog.Info(fmt.Sprintf("steve-node: mcp broker on %s: %d server(s)", sock, len(b.List())))
 	for {
 		conn, err := listener.Accept()
