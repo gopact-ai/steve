@@ -379,6 +379,7 @@ func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(second.Close)
 	if second.Port() != port {
 		t.Fatalf("restart lost the port: %d -> %d", port, second.Port())
 	}
@@ -387,6 +388,7 @@ func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(third.Close)
 	if third.Port() == port {
 		t.Fatalf("two servers on one port")
 	}
