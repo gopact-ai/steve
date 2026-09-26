@@ -34,7 +34,9 @@ type Server struct {
 
 	once    sync.Once
 	stopped chan struct{}
-	err     error
+	// cut is the stop's context error when handlers were cut short; err
+	// is what closing the listeners and connections reported.
+	cut, err error
 }
 
 func New(srv *http.Server) *Server {
@@ -64,8 +66,22 @@ func (s *Server) Serve(listener net.Listener) error {
 // Shutdown stops accepting, lets handlers finish until ctx ends, then
 // cancels their contexts, closes their connections and waits for them to
 // return. It reports ctx's error when handlers had to be cut short. Every
-// call returns the first call's result once that stop has finished.
+// stop returns once the first one has finished, and reports its result.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.stop(ctx)
+	return errors.Join(s.cut, s.err)
+}
+
+// Close is Shutdown without letting any handler finish on its own. Cutting
+// handlers short is what it is for, so only closing errors are reported.
+func (s *Server) Close() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.stop(ctx)
+	return s.err
+}
+
+func (s *Server) stop(ctx context.Context) {
 	s.once.Do(func() {
 		s.mu.Lock()
 		s.stopping = true
@@ -74,7 +90,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 		s.mu.Unlock()
 		err := s.srv.Shutdown(ctx)
-		if err == nil {
+		cut := ctx.Err() != nil && errors.Is(err, ctx.Err())
+		if !cut {
+			s.err = err
 			// Hijacked connections are not the server's to wait for, but
 			// their handlers are still counted here.
 			select {
@@ -83,28 +101,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				select {
 				case <-s.idle:
 				case <-ctx.Done():
-					err = ctx.Err()
+					cut = true
 				}
 			}
 		}
-		if err != nil {
+		if cut {
+			s.cut = ctx.Err()
 			s.abort()
-			err = errors.Join(err, s.srv.Close())
+			s.err = errors.Join(s.err, s.srv.Close())
 		}
 		<-s.idle
 		s.abort()
-		s.err = err
 		close(s.stopped)
 	})
 	<-s.stopped
-	return s.err
-}
-
-// Close is Shutdown without letting any handler finish on its own.
-func (s *Server) Close() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	return s.Shutdown(ctx)
 }
 
 // handle runs next unless a stop has begun. A request can still reach this

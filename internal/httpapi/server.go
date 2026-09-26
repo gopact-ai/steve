@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/httpdrain"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -71,6 +72,7 @@ type Server struct {
 	reach          sameorigin.Reach
 	listener       net.Listener
 	httpServer     *http.Server
+	drain          *httpdrain.Server
 	stopRequests   context.CancelFunc
 }
 
@@ -100,7 +102,7 @@ func newServer(model Model, cfg ServerConfig, listen func(network, address strin
 	}
 	requestContext, stopRequests := context.WithCancel(context.Background())
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
-	return &Server{model: model, token: cfg.Token, reach: sameorigin.ReachOf(listener.Addr()), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
+	return &Server{model: model, token: cfg.Token, reach: sameorigin.ReachOf(listener.Addr()), listener: listener, httpServer: server, drain: httpdrain.New(server), stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
@@ -214,19 +216,19 @@ func (s *Server) Serve() error {
 	// Around the whole mux, unguarded routes included, so a route added
 	// later cannot forget it.
 	server.Handler = sameorigin.Guard(mux, s.reach)
-	if err := server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
-		return err
-	}
-	return nil
+	// Returns once a stop has finished, with every handler returned.
+	return s.drain.Serve(s.listener)
 }
 
+// Close cancels request contexts, closes every connection and waits for the
+// handlers to return.
 func (s *Server) Close() error {
 	if s.stopRequests != nil {
 		s.stopRequests()
 	}
 	var err error
-	if s.httpServer != nil {
-		err = s.httpServer.Close()
+	if s.drain != nil {
+		err = s.drain.Close()
 	}
 	if s.listener != nil {
 		closed := s.listener.Close()
@@ -238,15 +240,18 @@ func (s *Server) Close() error {
 }
 
 // Shutdown cancels streaming request contexts, closes admission, and waits for
-// HTTP handlers. Accepted console work has a separate Service.Shutdown barrier.
+// HTTP handlers. Once ctx ends it closes their connections and goes on
+// waiting: it returns only after every handler has, with ctx's error if any
+// had to be cut short. Accepted console work has a separate Service.Shutdown
+// barrier.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.stopRequests != nil {
 		s.stopRequests()
 	}
-	if s.httpServer == nil {
+	if s.drain == nil {
 		return s.Close()
 	}
-	err := s.httpServer.Shutdown(ctx)
+	err := s.drain.Shutdown(ctx)
 	if s.listener != nil {
 		closed := s.listener.Close()
 		if closed != nil && !errors.Is(closed, net.ErrClosed) {

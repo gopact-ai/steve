@@ -127,7 +127,7 @@ func TestCloseWaitsForAHijackedHandler(t *testing.T) {
 	go func() { stopped <- server.Close() }()
 	notYet(t, stopped, "Close returned")
 	close(release)
-	if err := <-stopped; !errors.Is(err, context.Canceled) {
+	if err := <-stopped; err != nil {
 		t.Fatalf("Close returned %v", err)
 	}
 }
