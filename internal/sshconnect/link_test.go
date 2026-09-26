@@ -416,6 +416,49 @@ func TestFarEndCarriesAConnectionThatArrivedBeforeItsSession(t *testing.T) {
 	}
 }
 
+// A connection waiting on a listen address for a session that never comes
+// up is ended when the far end stops, not left hanging: here the hub is
+// gone before the far end can announce itself.
+func TestFarEndEndsAWaitingConnectionWhenItStopsBeforeItsSession(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	early, err := net.DialTimeout("tcp", listener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer early.Close()
+	if _, err := io.WriteString(early, "early\n"); err != nil {
+		t.Fatal(err)
+	}
+	farIn, _ := io.Pipe()
+	hubIn, farOut := io.Pipe()
+	hubIn.Close()
+	options := sshconnect.ServeLinkOptions{
+		Logs:    io.Discard,
+		Listens: []sshconnect.PortForward{{Listen: "127.0.0.1:7", Target: "127.0.0.1:8"}},
+		Listen:  func(string, string) (net.Listener, error) { return listener, nil },
+	}
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(t.Context(), farIn, farOut, options) }()
+	select {
+	case err := <-served:
+		if err == nil {
+			t.Fatal("the far end did not report that it could not announce itself")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end did not stop when it could not announce itself")
+	}
+	_ = early.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, err = early.Read(make([]byte, 1))
+	var timeout net.Error
+	if err == nil || errors.As(err, &timeout) && timeout.Timeout() {
+		t.Fatalf("the waiting connection was left open: %v", err)
+	}
+}
+
 // The far end binds each listen address through Listen, and the listener
 // it is given is the one it serves and closes when the session ends.
 func TestFarEndBindsItsListenAddressesThroughListen(t *testing.T) {
