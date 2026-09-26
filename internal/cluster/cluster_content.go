@@ -758,6 +758,10 @@ func contentRefusal(err error) (status int, code string) {
 // the next line logged.
 const contentRefusalLogEvery = time.Minute
 
+// contentRefusalKeys is how many callers and codes the refusal log keeps
+// track of at once.
+const contentRefusalKeys = 256
+
 // contentRefusals limits how often a peer logs refusals, per caller and code.
 type contentRefusals struct {
 	mu   sync.Mutex
@@ -783,7 +787,7 @@ func (l *contentRefusals) admit(key string, now time.Time) (bool, int) {
 		return false, 0
 	}
 	if !found {
-		if len(l.seen) >= 256 {
+		if len(l.seen) >= contentRefusalKeys {
 			for seen, old := range l.seen {
 				if now.Sub(old.logged) >= contentRefusalLogEvery {
 					delete(l.seen, seen)

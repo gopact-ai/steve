@@ -525,3 +525,29 @@ func TestContentRepairPointsAtThePeerWhoseReplicaLags(t *testing.T) {
 		t.Fatalf("a copy on a lagging peer: %s %v with %q; want degraded, pointing at the peer holding the copy", status, err, observations)
 	}
 }
+
+// The refusal log keeps track of a bounded number of callers and codes,
+// and what it held back of one it stops tracking is still said.
+func TestContentRefusalLogIsBoundedAndSaysWhatItHeldBack(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	var limit contentRefusals
+	start := time.Now()
+	limit.admit("node-a\x00stale", start)
+	limit.admit("node-a\x00stale", start.Add(time.Second))
+	limit.admit("node-a\x00stale", start.Add(2*time.Second))
+	for i := range 2 * contentRefusalKeys {
+		if logged, _ := limit.admit("node-"+strconv.Itoa(i)+"\x00lagging", start); !logged {
+			t.Fatalf("the first refusal of a new caller and code was held back")
+		}
+	}
+	if len(limit.seen) > contentRefusalKeys {
+		t.Fatalf("the refusal log tracks %d callers and codes, more than %d", len(limit.seen), contentRefusalKeys)
+	}
+	limit.admit("node-z\x00placement", start.Add(2*contentRefusalLogEvery))
+	if !strings.Contains(logs.String(), "2 not logged") || !strings.Contains(logs.String(), "node-a stale") {
+		t.Fatalf("the refusals held back for a caller no longer tracked are not said: %s", logs.String())
+	}
+}
