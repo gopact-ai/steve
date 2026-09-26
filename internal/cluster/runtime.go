@@ -38,7 +38,11 @@ type Config struct {
 	// context is canceled before Deactivate runs. Deactivate must join all
 	// users of those stores; the returned ledger is never reused by a later
 	// generation. A nil Activate enables ledger access without starting tasks.
-	Activate     func(context.Context, Activation) (Deactivate, error)
+	Activate func(context.Context, Activation) (Deactivate, error)
+	// PollInterval is how often the runtime compares its business generation
+	// with the local replica, which reads nothing from other nodes and
+	// appends nothing to the Raft log. Quorum reads happen only while a
+	// generation starts.
 	PollInterval time.Duration
 	// ShutdownTimeout is how long a business generation may take to stop
 	// before the runtime reports it as slow and records every goroutine's
