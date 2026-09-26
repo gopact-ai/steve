@@ -18,6 +18,10 @@ var (
 	ErrIncomplete = errors.New("checkpoint: content is incomplete")
 	ErrIntegrity  = errors.New("checkpoint: content integrity check failed")
 	ErrPlacement  = errors.New("checkpoint: placement refused")
+	// ErrUnavailable is a placement a PlacementPolicy could not check for
+	// now — its committed state out of reach, its replica behind. It
+	// refuses nothing: asking again can succeed.
+	ErrUnavailable = errors.New("checkpoint: placement check unavailable")
 )
 
 // Scope is the data classification of the entire package, including context.

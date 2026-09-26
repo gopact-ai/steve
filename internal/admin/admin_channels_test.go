@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
@@ -223,5 +224,35 @@ func TestChannelRuntimeStateDoesNotWaitForASave(t *testing.T) {
 	}
 	if view.RuntimeError != "connection failed" || view.ApplyMode != "mixed" || len(bound) != 1 {
 		t.Fatalf("runtime error %q, apply mode %q, %d bindings", view.RuntimeError, view.ApplyMode, len(bound))
+	}
+}
+
+// A retrying channel startup shows how many attempts failed, when the next
+// begins and why the last failed. It is replaced by a terminal runtime error
+// and withdrawn once the channel starts.
+func TestChannelsViewReportsAStartupRetry(t *testing.T) {
+	_, s := ChannelsAdminFixture(t)
+	next := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+	retry := consoleapi.ChannelStartupRetry{Attempts: 3, NextAt: next, LastError: "dial tcp: network is unreachable"}
+	reported := retry
+	s.SetStartupRetry(&reported)
+	reported.Attempts = 99
+	view, err := s.Channels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.StartupRetry == nil || *view.StartupRetry != retry || view.RuntimeError != "" {
+		t.Fatalf("startup retry %+v, runtime error %q; want %+v alone", view.StartupRetry, view.RuntimeError, retry)
+	}
+	AssertNoChannelSecrets(t, view)
+
+	s.SetRuntimeError("connection failed")
+	if view, _ = s.Channels(t.Context()); view.StartupRetry != nil || view.RuntimeError != "connection failed" {
+		t.Fatalf("after a terminal failure: startup retry %+v, runtime error %q", view.StartupRetry, view.RuntimeError)
+	}
+	s.SetStartupRetry(&retry)
+	s.SetStartupRetry(nil)
+	if view, _ = s.Channels(t.Context()); view.StartupRetry != nil {
+		t.Fatalf("a started channel still reports a startup retry: %+v", view.StartupRetry)
 	}
 }

@@ -391,7 +391,14 @@ Hub 绑定后会核对 `gateway.read_model_addr` 与实际绑定的地址，以�
 
 ### Channel 设置
 
-`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。`runtime_error` 表示适配器初始化或连接失败；已启用不等于连接正常，Console 会保留以便修正凭据。
+`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。已启用不等于连接正常。飞书/Lark 通道启动时先验证应用并读取机器人身份：
+
+- 可能自行恢复的失败会自动重试：网络不通、DNS 失败、超时、5xx、408、429 和限流，以及不属于凭据或应用错误的业务码（包括随 5xx、429 返回的业务码）。无法判断的失败也会重试，例如代理返回的非 JSON 页面、不受信任的证书；这类失败源于网络或代理配置，会一直重试，需要根据 `startup_retry.last_error` 排查。重试间隔从 1 秒起指数增长，上限 2 分钟，带随机抖动；每次尝试最长 15 秒。重试期间响应带 `startup_retry`（`attempts` 已失败次数、`next_at` 下次尝试时间、`last_error` 最近错误），设置页在每次尝试后自动刷新；验证通过后该字段消失，无需重启 Hub。
+- 不会自行恢复的失败不重试：app ID、secret 或应用无效，缺少 app ID 或 secret，除 408、429 外的 4xx，以及机器人未启用。`runtime_error` 给出原因，修正配置后重启 Hub。`startup_retry` 与 `runtime_error` 不会同时出现。
+- 验证通过前，飞书侧的工作只等待、不执行：已接收的飞书消息和待恢复的飞书任务保持待处理，到期的飞书定时任务保持待触发，Agent 发往飞书的消息直接返回通道不可用，飞书任务的手动恢复请求返回错误。验证通过后，恢复流程在下一轮（5 秒内）接手积压的消息，定时任务在下一次检查（20 秒内）触发。凭据被拒绝时这些工作一直等待，修正配置并重启 Hub 后再处理。
+- 验证通过后，长连接的建立与断线重连由飞书官方 SDK 负责，SDK 判定不可恢复的连接失败同样记为 `runtime_error`。
+
+Console 始终可用，以便修正凭据。
 
 `PUT /console/channels` 接收 `base_revision` 和 `channels` 对象，其中可修改 `default_channel` 及 `feishu` 的 `enabled`、`app_id`、`domain`、`owner_open_id`、`group_policy`、`allow_unmentioned`、`allowed_senders`、`blocked_senders`。凭据仅写入：省略 `app_secret` 保留现值；`{"action":"replace","value":"..."}` 替换；`{"action":"clear"}` 明确清除，不能清除仍启用适配器的凭据。读取仅返回 `app_secret_configured`，不回显密钥或摘要。
 
@@ -713,6 +720,9 @@ go run ./e2e/fleet -scenario autonomous
 | `coordination: unavailable: this replica has heard from no consensus leader since it started` | 节点启动（包括重启）后 5 秒内没有听到任何共识 leader，而本机副本记录自己是协调者。启动后的前 5 秒只当作等待选举，不报这条错误，也不做仲裁读；之后听到 leader，照常经仲裁读确认并激活。持续出现时检查多数派成员是否在线，以及本机到它们的 Raft 连接。 |
 | `coordination: unavailable: this replica has not applied committed entry <N> within 5s; it has applied <M>` | 协调节点本机已知条目 N 已经提交，却 5 秒内没有把它交给本机状态机应用，放弃当前业务代：这期间可能已有别的节点被任命为协调者，本机还没看到。副本追上后，先经一次仲裁读确认再重新激活。持续写入时副本总比最新提交落后一点，但不会有哪一条停留 5 秒，不会因此放弃。持续出现时检查本机磁盘和账本应用是否卡住。本机日志复制本身落后、而 leader 心跳照常到达时，这项检查看不出来，由下一次写入开头的仲裁读和本机副本等待兜住（见上面 `local replica did not reach applied index` 一行）。 |
 | `cluster: worker tunnel closed`（附 `cause`），或拨号返回 `worker tunnel rejected: HTTP <状态>: <原因>` | 协调者到某台机器 worker 的连接被关闭或被拒绝，registry 之后会重新拨号。连接打开时经仲裁读确认协调者 epoch 和业务代（writer generation），协调者拨其他机器时两端各读一次，并等本机副本追上这次读；之后两端每 100 毫秒只对照本机副本，空闲连接不产生 Raft 日志，也不向 leader 请求集群状态。以下情况会关闭连接：本机副本记录的协调者或业务代变了，或那台机器已不再是成员，本机副本应用这一变化后 100 毫秒内关闭；协调者一侧打开连接的业务代结束（被撤销、交出或重建），立即关闭，不等业务代停完；本机副本不够新，判断与协调节点放弃业务代相同（见上面几行）：本机是 leader、下台后不知道新 leader 时立即关闭，5 秒听不到 leader 或已提交条目 5 秒没有应用时关闭。副本不够新的机器在重新听到 leader 前也拒绝新连接，拨号返回 503 和上面的原因。本机日志复制落后、而 leader 心跳照常到达时，本机副本看不出协调者已经换了，连接会保持到副本追上；这期间旧协调者的每次账本写入都先经多数派核对，第一次写入就会被拒绝并撤销它的业务代，同时关闭它打开的所有连接。会话操作、回执和插件请求仍由 worker 逐个经仲裁读核对，不受这一点影响。协调交接或业务代重建时偶尔出现属正常；反复出现时按 `cause` 检查该机器到 leader 的 Raft 连接和本机磁盘。 |
+| `cluster: content refused <code> <method> from <caller>: HTTP <status>: ...` | 存放内容副本的节点拒绝了一次内容请求；同一调用方、同一 code 每分钟只记一行，其间未记的次数写在 `suppressed`。403 是拒绝：`authority` 是调用方身份、证书或集群不符，或调用方正在被移除；`stale` 是调用方带来的协调 epoch 或 writer 代不是已提交的当前值（hub 按本业务代已结束处理：补副本停止本轮，不对内容发通知，也不再逐个联系其余节点）；`placement` 是按已提交状态该节点不能存放这个项目的内容（没有平台配置、项目未声明或不归本 hub）。503 不是拒绝，可以重试：`lagging` 是该节点的账本副本在 ApplyTimeout（默认 5 秒）内没有追上集群已提交的状态；`unavailable` 是读不到已提交状态、本机副本已停止应用、项目声明尚未跟上平台配置，或本机暂时无法处理。hub 不把 503 当作放置拒绝，补副本保留已有记录、下一轮重新核对；读取副本时遇到的 503，通知会指向持有副本的节点而不是本机。持续 `lagging` 时检查该节点与共识 leader 之间的 Raft 连接。其余 code 与请求本身有关：`method`（405）、`invalid`（400，描述符无效或缺项目）、`too_large`（413）、`quota`（507，该节点存储配额不足）、`integrity`（422，内容校验不符）、`missing`（404，该节点上找不到这份内容的副本）。 |
+| `cluster: content failures of <key> since <time>: N not logged` | 上一行的限速在忘掉一个调用方与 code（或 hub 端一个节点与状态码）时，补记这段时间里没有写出的次数，计数不丢，只是迟到。限速最多同时跟踪 256 个键，超出时新键每次都记。 |
+| `cluster: content reply from <node>: HTTP <status> without a code: body "...": ...` | hub 收到的拒绝回复里没有它认识的 code，引号内是回复开头至多 64 字节；同一节点、同一状态码每分钟只记一行。此时只按 HTTP 状态判断：5xx 视为暂时不可用，下一轮重试；其余状态（包括 403）只是一次普通失败，不当作放置拒绝，也不当作暂时不可用。通常是该节点运行的版本与 hub 不一致，或请求被中间代理拦截（例如代理返回的 HTML 页面）。 |
 | `gateway.owner_id is required for a console-only hub` | 独立控制台缺少 owner。设置稳定的 `gateway.owner_id`；控制台 token 用于认证，不能代替 owner 身份。 |
 | `能力或身份文件已变化，请先发送 /new` / `Capabilities or identity files changed` | 会话保存的能力指纹与当前装配结果不同。只有身份与平台说明的变化可以原地补发；MCP、技能或可见性配置变化，以及没有会话配置基线的旧会话（在引入基线之前最后一次对话的会话），都要求 `/new` 一次，之后新会话带基线，身份/平台说明的更新不再要求 `/new`。不要为了隐藏提示跳过校验。 |
 | `Authentication required`，但资源页 harness 可用 | 可执行程序存在/能启动不等于模型认证有效；检查 node 的登录环境、认证链接和隔离 home，尤其不要用裸环境启动 node/nodectl。 |

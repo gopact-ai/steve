@@ -12,7 +12,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
@@ -38,37 +41,190 @@ type contentPlacementState struct {
 	project     project.Project
 }
 
+type contentStateReader func(context.Context) (coordination.State, error)
+
+var (
+	// errContentLagging reports a replica that did not apply what the
+	// committed state says exists within the time a content check waits.
+	errContentLagging = fmt.Errorf("%w: replica is behind the committed state", contentreplica.ErrUnavailable)
+	// errContentPeerUnchecked is a peer's answer that it could not check a
+	// content request for now: its replica behind or its committed state
+	// out of reach. It refuses nothing. Each such answer is a
+	// contentPeerUncheckedError, which names the peer.
+	errContentPeerUnchecked = errors.New("the peer could not check the request for now")
+	// errContentAuthority refuses a caller the committed state does not
+	// admit to content at all: no cluster identity, not a member, removed.
+	errContentAuthority = errors.New("content caller has no authority")
+	// errContentStale refuses a caller whose coordinator epoch or writer
+	// generation is not the committed one.
+	errContentStale = errors.New("content caller's coordinator epoch or writer generation is not current")
+	// errContentMethod refuses a request that is not a content operation.
+	errContentMethod = errors.New("content request method must be GET, PUT or POST")
+)
+
+// contentPeerUncheckedError is errContentPeerUnchecked from the peer Node,
+// with what the peer said.
+type contentPeerUncheckedError struct {
+	Node string
+	err  error
+}
+
+func (e *contentPeerUncheckedError) Error() string {
+	return fmt.Sprintf("%v: node %s: %v", errContentPeerUnchecked, e.Node, e.err)
+}
+
+func (e *contentPeerUncheckedError) Is(target error) bool { return target == errContentPeerUnchecked }
+
+func (e *contentPeerUncheckedError) Unwrap() error { return e.err }
+
+// uncheckedContentPeers is every peer, once each and in the order err
+// meets them, that answered it could not check a request. A read tries each
+// node holding a copy and joins what each said, so more than one may be
+// behind the same failure; they are all named, and there are no more of
+// them than copies of the content.
+func uncheckedContentPeers(err error) []string {
+	var nodes []string
+	var walk func(error)
+	walk = func(err error) {
+		switch e := err.(type) {
+		case nil:
+		case *contentPeerUncheckedError:
+			if !slices.Contains(nodes, e.Node) {
+				nodes = append(nodes, e.Node)
+			}
+		case interface{ Unwrap() []error }:
+			for _, inner := range e.Unwrap() {
+				walk(inner)
+			}
+		case interface{ Unwrap() error }:
+			walk(e.Unwrap())
+		}
+	}
+	walk(err)
+	return nodes
+}
+
+type contentReadsKey struct{}
+
+// contentReads is the committed state one content request judges by. It
+// is read once, through the leader, and every check the request makes
+// after that reuses it.
+type contentReads struct {
+	mu    sync.Mutex
+	state *coordination.State
+}
+
+// withContentReads starts a request's reads of the committed state afresh:
+// the checks made under the returned context share one read. That includes
+// the checks the content store makes inside Put and Get with the same
+// context: they judge by the state read when the request was admitted, not
+// by a newer one. A change made meanwhile is seen by the checks serveContent
+// makes after the transfer under a context of its own, before it answers;
+// they are what stand between that change and the answer.
+func withContentReads(ctx context.Context) context.Context {
+	return context.WithValue(ctx, contentReadsKey{}, &contentReads{})
+}
+
+// committedState is the coordination state a content check judges by, as
+// the runtime reads it through the consensus leader — once per request
+// when the request shares its reads.
+func (p *Peer) committedState(ctx context.Context, runtime *Runtime) (coordination.State, error) {
+	read := runtime.ReadState
+	if stand := p.readContentState.Load(); stand != nil {
+		read = *stand
+	}
+	// A read that fails refuses nothing: the check could not be made.
+	read = unavailableRead(read)
+	reads, _ := ctx.Value(contentReadsKey{}).(*contentReads)
+	if reads == nil {
+		return read(ctx)
+	}
+	reads.mu.Lock()
+	defer reads.mu.Unlock()
+	if reads.state == nil {
+		state, err := read(ctx)
+		if err != nil {
+			return coordination.State{}, err
+		}
+		reads.state = &state
+	}
+	return *reads.state, nil
+}
+
+func unavailableRead(read contentStateReader) contentStateReader {
+	return func(ctx context.Context) (coordination.State, error) {
+		state, err := read(ctx)
+		if err != nil {
+			return coordination.State{}, fmt.Errorf("%w: read committed state: %w", contentreplica.ErrUnavailable, err)
+		}
+		return state, nil
+	}
+}
+
+// awaitContentReplica waits for this replica to apply the committed state's
+// application version, as a write waits for its replica to catch up: for at
+// most ApplyTimeout (5s by default), and not at all once the replica has
+// stopped applying. It returns the version the replica has.
+func (p *Peer) awaitContentReplica(ctx context.Context, runtime *Runtime, version uint64) (uint64, error) {
+	local, err := runtime.awaitApplied(ctx, 0, version)
+	if err != nil {
+		return 0, contentCatchUpError(ctx, err)
+	}
+	return local, nil
+}
+
+// contentCatchUpError is what a content check makes of err, the end of its
+// wait for this replica to catch up. Past the bound the replica is lagging,
+// and the caller may try again here or elsewhere. A replica that stopped
+// applying, a runtime that stopped, or the caller's own end leaves the check
+// unmade. None of them refuses anything.
+func contentCatchUpError(ctx context.Context, err error) error {
+	if ctx.Err() == nil && errors.Is(err, coordination.ErrUnavailable) {
+		return fmt.Errorf("%w: %v", errContentLagging, err)
+	}
+	return fmt.Errorf("%w: replica catch-up: %w", contentreplica.ErrUnavailable, err)
+}
+
+// contentState is what the committed state says of a project's content. A
+// placement is refused only for what that state says: no platform
+// configuration, a project it does not declare or place, or one this hub
+// does not own. A read that fails or a project declaration still catching up
+// with the platform configuration refuses nothing: the check could not be
+// made yet.
 func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlacementState, error) {
 	runtime := p.Runtime.Load()
-	if runtime == nil || projectID == "" {
-		return contentPlacementState{}, contentreplica.ErrPlacement
+	if runtime == nil {
+		return contentPlacementState{}, fmt.Errorf("%w: %w", contentreplica.ErrUnavailable, ErrInactive)
+	}
+	if projectID == "" {
+		return contentPlacementState{}, fmt.Errorf("%w: no project", contentreplica.ErrInvalid)
+	}
+	state, err := p.committedState(ctx, runtime)
+	if err != nil {
+		return contentPlacementState{}, err
+	}
+	version, err := p.awaitContentReplica(ctx, runtime, state.AppVersion)
+	if err != nil {
+		return contentPlacementState{}, err
+	}
+	unchecked := func(what string, err error) error {
+		return fmt.Errorf("%w: %s: %w", contentreplica.ErrUnavailable, what, err)
 	}
 	for {
-		state, err := runtime.ReadState(ctx)
-		if err != nil {
-			return contentPlacementState{}, err
-		}
-		version, err := runtime.Ledger().ReplicaVersion()
-		if err != nil {
-			return contentPlacementState{}, err
-		}
-		if version < state.AppVersion {
-			if err := waitContentReplica(ctx); err != nil {
-				return contentPlacementState{}, err
-			}
-			continue
-		}
 		d, ok, err := platformconfig.New(runtime.Ledger()).Load()
-		if err != nil || !ok {
-			return contentPlacementState{}, errors.Join(contentreplica.ErrPlacement, err)
+		if err != nil {
+			return contentPlacementState{}, unchecked("read platform configuration", err)
+		}
+		if !ok {
+			return contentPlacementState{}, fmt.Errorf("%w: no platform configuration", contentreplica.ErrPlacement)
 		}
 		cfg := &config.Config{}
 		if err := d.Apply(cfg); err != nil {
-			return contentPlacementState{}, err
+			return contentPlacementState{}, unchecked("apply platform configuration", err)
 		}
 		_, declarationHash, err := configbuild.ProjectDeclarations(cfg)
 		if err != nil {
-			return contentPlacementState{}, err
+			return contentPlacementState{}, unchecked("project declarations", err)
 		}
 		projects := project.Open(runtime.Ledger())
 		projects.SetHubID(p.Config.ClusterID)
@@ -76,29 +232,26 @@ func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlace
 		item, found, lookupErr := projects.Get(ctx, projectID)
 		after, err := runtime.Ledger().ReplicaVersion()
 		if err != nil {
-			return contentPlacementState{}, err
+			return contentPlacementState{}, unchecked("read local replica version", err)
 		}
 		if after != version {
+			// The replica applied more while it was read: read it again.
+			version = after
 			continue
 		}
-		if lookupErr != nil || !found {
+		switch {
+		case errors.Is(lookupErr, project.ErrNotOwner):
 			return contentPlacementState{}, errors.Join(contentreplica.ErrPlacement, lookupErr)
-		}
-		if item.Home.Node == "" || !item.Level.OrDefault().Valid() {
-			return contentPlacementState{}, contentreplica.ErrPlacement
+		case lookupErr != nil:
+			// ErrDeclarationPending among others: the project declaration
+			// has not caught up with the platform configuration yet.
+			return contentPlacementState{}, unchecked("read project "+projectID, lookupErr)
+		case !found:
+			return contentPlacementState{}, fmt.Errorf("%w: project %s is not declared", contentreplica.ErrPlacement, projectID)
+		case item.Home.Node == "" || !item.Level.OrDefault().Valid():
+			return contentPlacementState{}, fmt.Errorf("%w: project %s has no home or level", contentreplica.ErrPlacement, projectID)
 		}
 		return contentPlacementState{state: state, declaration: d, project: item}, nil
-	}
-}
-
-func waitContentReplica(ctx context.Context) error {
-	timer := time.NewTimer(5 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
 	}
 }
 
@@ -365,34 +518,59 @@ func (transport peerContentTransport) request(ctx context.Context, method, nodeI
 	}
 	if response.StatusCode != http.StatusOK {
 		defer response.Body.Close()
-		var failure struct {
-			Code string `json:"code"`
-		}
-		if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure); err != nil {
-			// The status alone still maps to an error below; only the
-			// finer code is lost, which is worth knowing about.
-			slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d with unreadable body: %v", nodeID, response.StatusCode, err), "node", nodeID)
-		}
-		switch failure.Code {
-		case "placement":
-			return nil, contentreplica.ErrPlacement
-		case "invalid":
-			return nil, contentreplica.ErrInvalid
-		case "too_large":
-			return nil, contentreplica.ErrTooLarge
-		case "quota":
-			return nil, checkpoint.ErrQuota
-		case "integrity":
-			return nil, contentreplica.ErrIntegrity
-		case "missing":
-			return nil, contentreplica.ErrIncomplete
-		}
-		if response.StatusCode == http.StatusForbidden {
-			return nil, contentreplica.ErrPlacement
-		}
-		return nil, fmt.Errorf("content replica unavailable: HTTP %d", response.StatusCode)
+		return nil, contentReplyError(&p.contentReplies, nodeID, response)
 	}
 	return response, nil
+}
+
+// contentReplyError is what a peer's refusal of a content request means
+// here, read by its code. A reply without a code this node knows — a proxy's
+// page, a peer that did not say — is what its status says and no more: a
+// server error may pass when asked again, anything else is a plain failure
+// that neither refuses a placement nor passes by itself. The caller names
+// the node.
+func contentReplyError(logs *contentRefusals, nodeID string, response *http.Response) error {
+	raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	var failure struct {
+		Code string `json:"code"`
+	}
+	readErr := json.Unmarshal(raw, &failure)
+	switch failure.Code {
+	case "placement":
+		return contentreplica.ErrPlacement
+	case "authority":
+		return fmt.Errorf("%w: %w", contentreplica.ErrPlacement, errContentAuthority)
+	case "stale":
+		// The peer read the committed state after this generation did:
+		// this generation is no longer the one writing.
+		return fmt.Errorf("%w: %w: %w", ErrInactive, contentreplica.ErrSuperseded, errContentStale)
+	case "lagging":
+		return &contentPeerUncheckedError{Node: nodeID, err: errContentLagging}
+	case "unavailable":
+		return &contentPeerUncheckedError{Node: nodeID, err: fmt.Errorf("%w: HTTP %d", contentreplica.ErrUnavailable, response.StatusCode)}
+	case "invalid", "method":
+		return contentreplica.ErrInvalid
+	case "too_large":
+		return contentreplica.ErrTooLarge
+	case "quota":
+		return checkpoint.ErrQuota
+	case "integrity":
+		return contentreplica.ErrIntegrity
+	case "missing":
+		return contentreplica.ErrIncomplete
+	}
+	body := raw[:min(len(raw), 64)]
+	if readErr == nil {
+		readErr = fmt.Errorf("code %q", failure.Code)
+	}
+	// Only the status is left to go by, which is worth knowing about.
+	if logged, suppressed := logs.admit(nodeID+"\x00"+strconv.Itoa(response.StatusCode), time.Now()); logged {
+		slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d without a code: body %q: %v", nodeID, response.StatusCode, body, readErr), "node", nodeID, "status", response.StatusCode, "suppressed", suppressed)
+	}
+	if response.StatusCode >= 500 {
+		return &contentPeerUncheckedError{Node: nodeID, err: fmt.Errorf("%w: HTTP %d without a code: %q", contentreplica.ErrUnavailable, response.StatusCode, body)}
+	}
+	return fmt.Errorf("content reply HTTP %d without a code: %q", response.StatusCode, body)
 }
 
 func (transport peerContentTransport) Put(ctx context.Context, nodeID string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
@@ -441,135 +619,188 @@ func (transport peerContentTransport) Get(ctx context.Context, nodeID string, ob
 
 func (p *Peer) contentAuthority(r *http.Request) error {
 	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
-		return contentreplica.ErrPlacement
+		return fmt.Errorf("%w: no verified client certificate", errContentAuthority)
 	}
 	identity, err := coordination.CertificateIdentity(r.TLS.PeerCertificates[0])
-	if err != nil || identity.ClusterID != p.Config.ClusterID {
-		return contentreplica.ErrPlacement
+	if err != nil {
+		return fmt.Errorf("%w: %w", errContentAuthority, err)
+	}
+	if identity.ClusterID != p.Config.ClusterID {
+		return fmt.Errorf("%w: certificate of cluster %s", errContentAuthority, identity.ClusterID)
 	}
 	runtime := p.Runtime.Load()
 	if runtime == nil {
-		return ErrInactive
+		return fmt.Errorf("%w: %w", contentreplica.ErrUnavailable, ErrInactive)
 	}
-	state, err := runtime.ReadState(r.Context())
+	state, err := p.committedState(r.Context(), runtime)
 	if err != nil {
 		return err
 	}
 	epoch, epochErr := strconv.ParseUint(r.Header.Get("X-Steve-Coordinator-Epoch"), 10, 64)
 	writer, writerErr := strconv.ParseUint(r.Header.Get("X-Steve-Writer-Generation"), 10, 64)
-	if epochErr != nil || writerErr != nil || state.Coordinator.NodeID != identity.NodeID || state.Coordinator.Epoch != epoch || state.WriterGeneration != writer || writer == 0 || state.Removing[identity.NodeID] {
-		return contentreplica.ErrPlacement
+	// A caller whose generation has ended hears that first: it stops, and
+	// nothing it held is judged by a membership it no longer writes for.
+	switch {
+	case epochErr != nil || writerErr != nil || writer == 0:
+		return fmt.Errorf("%w: no coordinator epoch and writer generation", errContentAuthority)
+	case state.Coordinator.NodeID != identity.NodeID:
+		return fmt.Errorf("%w: %s is not the coordinator, %s is", errContentStale, identity.NodeID, state.Coordinator.NodeID)
+	case state.Coordinator.Epoch != epoch || state.WriterGeneration != writer:
+		return fmt.Errorf("%w: epoch %d, writer %d; committed epoch %d, writer %d", errContentStale, epoch, writer, state.Coordinator.Epoch, state.WriterGeneration)
+	case state.Removing[identity.NodeID]:
+		return fmt.Errorf("%w: %s is being removed", errContentAuthority, identity.NodeID)
 	}
 	if _, ok := state.Members[identity.NodeID]; !ok {
-		return contentreplica.ErrPlacement
+		return fmt.Errorf("%w: %s is not a member", errContentAuthority, identity.NodeID)
 	}
 	return nil
 }
 
 func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-	r = r.WithContext(ctx)
-	// A context deadline alone does not interrupt a blocked HTTP body read.
-	// Bound the underlying connection so a vanished peer cannot hold a quota
-	// reservation or the store's shutdown wait indefinitely.
-	deadline, _ := ctx.Deadline()
-	control := http.NewResponseController(w)
-	if err := control.SetReadDeadline(deadline); err != nil {
-		http.Error(w, "content stream deadline unavailable", http.StatusServiceUnavailable)
-		return
+	// Maintenance is worked on for less than a coordinator waits for it,
+	// so a refusal still reaches the coordinator.
+	work := 5 * time.Minute
+	if r.Method == http.MethodPost {
+		work = contentMaintenanceTimeout * 2 / 3
 	}
-	if err := control.SetWriteDeadline(deadline); err != nil {
-		http.Error(w, "content stream deadline unavailable", http.StatusServiceUnavailable)
+	ctx, cancel := context.WithTimeout(r.Context(), work)
+	defer cancel()
+	// Admitting the request reads the committed state once; the checks
+	// after the transfer read it again, once, to see what changed.
+	r = r.WithContext(withContentReads(ctx))
+	recheck := r.WithContext(withContentReads(ctx))
+	if err := boundContentStream(ctx, w); err != nil {
+		p.refuseContent(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodPost {
-		http.Error(w, "GET, PUT or POST required", http.StatusMethodNotAllowed)
+		p.refuseContent(w, r, fmt.Errorf("%w: %s", errContentMethod, r.Method))
 		return
 	}
 	if err := p.contentAuthority(r); err != nil {
-		http.Error(w, "content authority denied", http.StatusForbidden)
+		p.refuseContent(w, r, err)
 		return
 	}
 	if r.Method == http.MethodPost {
 		p.serveContentMaintenance(w, r)
 		return
 	}
+	object, err := contentDescriptor(r)
+	if err != nil {
+		p.refuseContent(w, r, err)
+		return
+	}
+	if err := p.contentRequestPlacement(r, object); err != nil {
+		p.refuseContent(w, r, err)
+		return
+	}
+	store, release, err := p.acquireContent()
+	if err != nil {
+		p.refuseContent(w, r, fmt.Errorf("%w: store: %w", contentreplica.ErrUnavailable, err))
+		return
+	}
+	defer release()
+	if r.Method == http.MethodPut {
+		p.serveContentPut(w, r, recheck, store, object)
+		return
+	}
+	p.serveContentGet(w, r, recheck, store, object)
+}
+
+// boundContentStream bounds a content request's connection by ctx's
+// deadline. A context deadline alone does not interrupt a blocked HTTP body
+// read, so a vanished peer could otherwise hold a quota reservation or the
+// store's shutdown wait indefinitely. The request is read until the
+// deadline; the answer may be written a little after it, so a refusal still
+// goes out.
+func boundContentStream(ctx context.Context, w http.ResponseWriter) error {
+	deadline, _ := ctx.Deadline()
+	control := http.NewResponseController(w)
+	if err := control.SetReadDeadline(deadline); err != nil {
+		return fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err)
+	}
+	if err := control.SetWriteDeadline(deadline.Add(contentMaintenanceTimeout / 6)); err != nil {
+		return fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err)
+	}
+	return nil
+}
+
+// contentDescriptor is the object a content request names in its header:
+// bounded, exactly one JSON object with no unknown fields, of a size a
+// replica may hold.
+func contentDescriptor(r *http.Request) (contentreplica.Object, error) {
 	header := r.Header.Get(contentObjectHeader)
 	if len(header) > 11000 {
-		http.Error(w, "content descriptor too large", http.StatusBadRequest)
-		return
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor of %d bytes", contentreplica.ErrInvalid, len(header))
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(header)
 	if err != nil {
-		http.Error(w, "invalid content descriptor", http.StatusBadRequest)
-		return
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err)
 	}
 	var object contentreplica.Object
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&object); err != nil {
-		http.Error(w, "invalid content descriptor", http.StatusBadRequest)
-		return
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF || object.Blob.Size < 0 || object.Blob.Size > contentreplica.DefaultMaxObjectBytes {
-		http.Error(w, "invalid content size", http.StatusBadRequest)
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor size %d", contentreplica.ErrInvalid, object.Blob.Size)
+	}
+	return object, nil
+}
+
+// contentStillAdmitted checks again, under recheck's fresh read of the
+// committed state, what admitted a content request: the caller's authority
+// and the object's placement. It stands between a change made during the
+// transfer and the answer.
+func (p *Peer) contentStillAdmitted(recheck *http.Request, object contentreplica.Object) error {
+	if err := p.contentAuthority(recheck); err != nil {
+		return err
+	}
+	return p.contentRequestPlacement(recheck, object)
+}
+
+// serveContentPut stores the uploaded copy and answers with its receipt once
+// the request is still admitted.
+func (p *Peer) serveContentPut(w http.ResponseWriter, r, recheck *http.Request, store *contentreplica.Store, object contentreplica.Object) {
+	if r.ContentLength != object.Blob.Size {
+		p.refuseContent(w, r, fmt.Errorf("%w: body of %d bytes for content of %d", contentreplica.ErrInvalid, r.ContentLength, object.Blob.Size))
 		return
 	}
-	if err := p.contentRequestPlacement(r, object); err != nil {
-		http.Error(w, "content placement denied", http.StatusForbidden)
-		return
-	}
-	store, release, err := p.acquireContent()
+	upload := contentreplica.Upload{ID: r.Header.Get(contentUploadHeader), Object: object}
+	receipt, err := store.Put(r.Context(), upload, http.MaxBytesReader(w, r.Body, object.Blob.Size+1))
 	if err != nil {
-		http.Error(w, "content store unavailable", http.StatusServiceUnavailable)
+		p.refuseContent(w, r, err)
 		return
 	}
-	defer release()
-	if r.Method == http.MethodPut {
-		if r.ContentLength != object.Blob.Size {
-			http.Error(w, "content length differs", http.StatusBadRequest)
-			return
-		}
-		upload := contentreplica.Upload{ID: r.Header.Get(contentUploadHeader), Object: object}
-		receipt, err := store.Put(r.Context(), upload, http.MaxBytesReader(w, r.Body, object.Blob.Size+1))
-		if err != nil {
-			writeContentError(w, err)
-			return
-		}
-		if err := p.contentAuthority(r); err != nil {
-			http.Error(w, "content authority changed", http.StatusForbidden)
-			return
-		}
-		if err := p.contentRequestPlacement(r, object); err != nil {
-			http.Error(w, "content placement changed", http.StatusForbidden)
-			return
-		}
-		WriteJSON(w, receipt)
+	if err := p.contentStillAdmitted(recheck, object); err != nil {
+		p.refuseContent(w, r, err)
 		return
 	}
+	WriteJSON(w, receipt)
+}
+
+// serveContentGet stages this node's copy and sends it once the request is
+// still admitted; nothing is sent before then.
+func (p *Peer) serveContentGet(w http.ResponseWriter, r, recheck *http.Request, store *contentreplica.Store, object contentreplica.Object) {
 	file, err := os.CreateTemp("", "steve-content-download-*")
 	if err != nil {
-		http.Error(w, "content staging unavailable", http.StatusServiceUnavailable)
+		p.refuseContent(w, r, fmt.Errorf("%w: staging: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
 	defer os.Remove(file.Name())
 	defer file.Close()
 	if err := store.Get(r.Context(), object, file); err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		http.Error(w, "content staging unavailable", http.StatusInternalServerError)
+		p.refuseContent(w, r, fmt.Errorf("%w: staging: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
-	if err := p.contentAuthority(r); err != nil {
-		http.Error(w, "content authority changed", http.StatusForbidden)
-		return
-	}
-	if err := p.contentRequestPlacement(r, object); err != nil {
-		http.Error(w, "content placement changed", http.StatusForbidden)
+	if err := p.contentStillAdmitted(recheck, object); err != nil {
+		p.refuseContent(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -577,22 +808,115 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, file)
 }
 
-func writeContentError(w http.ResponseWriter, err error) {
-	code, status := "unavailable", http.StatusServiceUnavailable
+// contentRefusal is how a content request refused for err is answered: 403
+// for a caller or a placement the committed state does not admit, 503 for
+// a check that could not be made and may succeed when asked again.
+func contentRefusal(err error) (status int, code string) {
 	switch {
+	case errors.Is(err, errContentMethod):
+		return http.StatusMethodNotAllowed, "method"
+	case errors.Is(err, errContentAuthority):
+		return http.StatusForbidden, "authority"
+	case errors.Is(err, errContentStale):
+		return http.StatusForbidden, "stale"
+	case errors.Is(err, errContentLagging):
+		return http.StatusServiceUnavailable, "lagging"
+	case errors.Is(err, contentreplica.ErrUnavailable):
+		// A check that could not be made refuses nothing, whatever else
+		// the error carries.
+		return http.StatusServiceUnavailable, "unavailable"
 	case errors.Is(err, contentreplica.ErrPlacement), errors.Is(err, checkpoint.ErrPlacement):
-		code, status = "placement", http.StatusForbidden
+		return http.StatusForbidden, "placement"
 	case errors.Is(err, contentreplica.ErrInvalid), errors.Is(err, checkpoint.ErrInvalid):
-		code, status = "invalid", http.StatusBadRequest
+		return http.StatusBadRequest, "invalid"
 	case errors.Is(err, contentreplica.ErrTooLarge):
-		code, status = "too_large", http.StatusRequestEntityTooLarge
+		return http.StatusRequestEntityTooLarge, "too_large"
 	case errors.Is(err, checkpoint.ErrQuota):
-		code, status = "quota", http.StatusInsufficientStorage
+		return http.StatusInsufficientStorage, "quota"
 	case errors.Is(err, contentreplica.ErrIntegrity), errors.Is(err, checkpoint.ErrIntegrity):
-		code, status = "integrity", http.StatusUnprocessableEntity
+		return http.StatusUnprocessableEntity, "integrity"
 	case errors.Is(err, contentreplica.ErrIncomplete), errors.Is(err, checkpoint.ErrIncomplete), errors.Is(err, os.ErrNotExist):
-		code, status = "missing", http.StatusNotFound
+		return http.StatusNotFound, "missing"
 	}
+	return http.StatusServiceUnavailable, "unavailable"
+}
+
+// contentRefusalLogEvery is how often a peer logs the refusals of one
+// caller with one code: the first at once, the ones after it counted into
+// the next line logged.
+const contentRefusalLogEvery = time.Minute
+
+// contentRefusalKeys is how many keys — callers and codes, peers and
+// statuses — one log limit keeps track of at once. Past that a new key is
+// logged every time rather than tracked.
+const contentRefusalKeys = 256
+
+// contentRefusals limits how often a content failure is logged, per key: a
+// peer's refusals per caller and code, a coordinator's replies without a
+// code per peer and status.
+type contentRefusals struct {
+	mu   sync.Mutex
+	seen map[string]*contentRefusalCount
+}
+
+type contentRefusalCount struct {
+	logged     time.Time
+	suppressed int
+}
+
+// admit says whether a failure under key is logged now, and how many were
+// not logged since the last one that was. A key whose time has passed is
+// forgotten when a new one comes; what it held back is logged then, so no
+// count is lost, only said late.
+func (l *contentRefusals) admit(key string, now time.Time) (bool, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if count, found := l.seen[key]; found {
+		if now.Sub(count.logged) < contentRefusalLogEvery {
+			count.suppressed++
+			return false, 0
+		}
+		suppressed := count.suppressed
+		count.logged, count.suppressed = now, 0
+		return true, suppressed
+	}
+	if l.seen == nil {
+		l.seen = map[string]*contentRefusalCount{}
+	}
+	for seen, old := range l.seen {
+		if now.Sub(old.logged) < contentRefusalLogEvery {
+			continue
+		}
+		if old.suppressed > 0 {
+			slog.Warn(fmt.Sprintf("cluster: content failures of %s since %s: %d not logged", strings.ReplaceAll(seen, "\x00", " "), old.logged.Format(time.RFC3339), old.suppressed), "key", strings.ReplaceAll(seen, "\x00", " "), "suppressed", old.suppressed)
+		}
+		delete(l.seen, seen)
+	}
+	if len(l.seen) < contentRefusalKeys {
+		l.seen[key] = &contentRefusalCount{logged: now}
+	}
+	return true, 0
+}
+
+// refuseContent answers a content request refused for err, and says why in
+// this peer's log: who asked, with which coordinator epoch and writer
+// generation, and the reason.
+func (p *Peer) refuseContent(w http.ResponseWriter, r *http.Request, err error) {
+	status, code := contentRefusal(err)
+	caller := "unknown"
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		if identity, idErr := coordination.CertificateIdentity(r.TLS.PeerCertificates[0]); idErr == nil {
+			caller = identity.NodeID
+		}
+	}
+	if logged, suppressed := p.contentRefusals.admit(caller+"\x00"+code, time.Now()); logged {
+		slog.Warn(fmt.Sprintf("cluster: content refused %s %s from %s: HTTP %d: %v", code, r.Method, caller, status, err), "caller", caller, "epoch", r.Header.Get("X-Steve-Coordinator-Epoch"), "writer", r.Header.Get("X-Steve-Writer-Generation"), "code", code, "status", status, "suppressed", suppressed)
+	}
+	writeContentReply(w, status, code)
+}
+
+// writeContentReply sends a content refusal: the status and a JSON code.
+func writeContentReply(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(struct {
@@ -606,11 +930,11 @@ func writeContentError(w http.ResponseWriter, err error) {
 
 func (p *Peer) contentRequestPlacement(r *http.Request, object contentreplica.Object) error {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		return contentreplica.ErrPlacement
+		return fmt.Errorf("%w: no client certificate", errContentAuthority)
 	}
 	identity, err := coordination.CertificateIdentity(r.TLS.PeerCertificates[0])
 	if err != nil {
-		return contentreplica.ErrPlacement
+		return fmt.Errorf("%w: %w", errContentAuthority, err)
 	}
 	policy := peerContentPolicy{peer: p}
 	if _, err := policy.CheckpointPlacement(r.Context(), object.Scope, identity.NodeID); err != nil {
