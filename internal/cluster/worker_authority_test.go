@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -620,5 +621,70 @@ func TestWorkerDialerDialsForItsOwnGenerationOnly(t *testing.T) {
 		t.Fatalf("the running generation could not dial its own worker: %v", err)
 	} else {
 		connection.Close()
+	}
+}
+
+// An application configures its nodes while its business generation
+// starts, and a generation can end before it gets there. Configuring the
+// nodes then does not fail the activation, which the runtime would count
+// as a build that failed and wait out; their tunnels belong to the ended
+// generation and dial nothing, not for the generation that follows it.
+func TestNodesConfiguredForAGenerationThatEndedWhileItStartedDialNothing(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	start := testPeerApplication(t, &activations)
+	var peer atomic.Pointer[Peer]
+	starting := make(chan struct{})
+	type configuration struct {
+		nodes map[string]node.Config
+		err   error
+	}
+	configured := make(chan configuration, 1)
+	var first atomic.Bool
+	options.Activate = func(ctx context.Context, activation Activation, ready func(PeerApplicationEndpoint) error) (Deactivate, error) {
+		if !first.CompareAndSwap(false, true) {
+			return start(ctx, activation, ready)
+		}
+		close(starting)
+		<-ctx.Done()
+		hub := peer.Load()
+		nodes := map[string]node.Config{hub.Config.NodeID: {}}
+		err := hub.ConfigureNodes(nodes)
+		configured <- configuration{nodes: nodes, err: err}
+		return nil, err
+	}
+	hub := StartTestPeer(t, options)
+	peer.Store(hub)
+	select {
+	case <-starting:
+	case <-time.After(12 * time.Second):
+		t.Fatal("the first business generation did not start")
+	}
+	runtime := hub.Runtime.Load()
+	runtime.mu.Lock()
+	current := runtime.current
+	runtime.mu.Unlock()
+	runtime.revoke(current, fmt.Errorf("%w: revoked by the test", coordination.ErrUnavailable))
+	var got configuration
+	select {
+	case got = <-configured:
+	case <-time.After(12 * time.Second):
+		t.Fatal("the revoked generation did not configure its nodes")
+	}
+	if got.err != nil {
+		t.Fatalf("configuring the nodes of a generation that ended while it started failed its activation: %v", got.err)
+	}
+	WaitPeerReady(t, hub)
+	dial := got.nodes[hub.Config.NodeID].DialContext
+	if dial == nil {
+		t.Fatal("the member's node was configured without a dialer")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if connection, err := dial(ctx, hub.Config.NodeID); !errors.Is(err, ErrInactive) {
+		if err == nil {
+			connection.Close()
+		}
+		t.Fatalf("a node configured for a generation that ended opened a tunnel for the generation that followed: %v", err)
 	}
 }
