@@ -1159,27 +1159,134 @@ func TestRunFailsAManagedPromptItsSilenceClockStopped(t *testing.T) {
 // A node-owned prompt whose result arrived as its silence clock ran out
 // completes: the clock stops silent commands, not ones that answered. The
 // completion is written on a context of its own, even for a caller whose
-// cancelled runs detach.
+// cancelled runs detach. The result comes back as soon as the clock has
+// run out: the run's own context has ended with it.
 func TestRunCompletesAManagedPromptThatAnsweredAsItsSilenceClockRanOut(t *testing.T) {
 	w := newWorld("ns_1")
 	w.attempts.refusesDone = true
 	ctx, stop, _ := idle.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer stop()
 	release := idle.Hold(ctx)
-	var run context.Context
 	w.runner.during = func() {
 		release()
-		<-run.Done()
+		<-ctx.Done()
 	}
 	o := w.options()
-	o.Leased = func(ctx context.Context, _ *Execution) (context.Context, error) {
-		run = ctx
-		return ctx, nil
-	}
 	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
 	res, err := Run(ctx, o)
 	var detached *execution.RetainedObserverDetached
 	if err != nil || errors.As(err, &detached) || !idle.Expired(ctx) || res.Record.State != attempt.Bound || !res.Durable || res.Unsettled {
 		t.Fatalf("answered as the silence ran out: %+v err=%v history=%s", res, err, w.attempts.history())
+	}
+}
+
+// A node-owned prompt that answered is not cut short by its silence clock
+// while the caller completes it: the clock times an agent that went quiet,
+// and a completion slower than the silence left is not one.
+func TestRunCompletesAManagedPromptWhoseCompletionOutlastsItsSilence(t *testing.T) {
+	w := newWorld("ns_1")
+	w.attempts.refusesDone = true
+	const silence = 20 * time.Millisecond
+	ctx, stop, _ := idle.WithTimeout(t.Context(), silence)
+	defer stop()
+	release := idle.Hold(ctx)
+	w.runner.during = release
+	o := w.options()
+	finish := o.Finish
+	o.Finish = func(ctx context.Context, e *Execution) (attempt.Completion, error) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * silence):
+		}
+		return finish(ctx, e)
+	}
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
+	res, err := Run(ctx, o)
+	if err != nil || idle.Expired(ctx) || res.Record.State != attempt.Bound || !res.Durable || res.Unsettled {
+		t.Fatalf("completed past the silence left: %+v err=%v history=%s", res, err, w.attempts.history())
+	}
+}
+
+// A run gives its silence clock back when it returns: the hold a settled
+// prompt keeps on it ends with the run, and the clock runs again for
+// whatever the caller does next under it.
+func TestRunAndReattachGiveTheSilenceClockBackWhenTheyReturn(t *testing.T) {
+	const silence = 20 * time.Millisecond
+	for _, reattach := range []bool{false, true} {
+		w := newWorld("ns_1")
+		ctx, stop, _ := idle.WithTimeout(t.Context(), silence)
+		release := idle.Hold(ctx)
+		w.runner.during = release
+		o := w.options()
+		o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}
+		var res Result
+		var err error
+		if reattach {
+			running := attempt.Record{Spec: o.Spec, State: attempt.Running, Session: "ns_1"}
+			w.attempts.record = running
+			o.Resume = true
+			res, err = Reattach(ctx, o, running, w.runner)
+		} else {
+			res, err = Run(ctx, o)
+		}
+		if err != nil || res.Record.State != attempt.Bound {
+			t.Fatalf("reattach=%v: %+v err=%v history=%s", reattach, res, err, w.attempts.history())
+		}
+		select {
+		case <-ctx.Done():
+			if !idle.Expired(ctx) {
+				t.Fatalf("reattach=%v: the clock ended, but not on silence: %v", reattach, context.Cause(ctx))
+			}
+		case <-time.After(100 * silence):
+			t.Fatalf("reattach=%v: the clock is still held after the run returned", reattach)
+		}
+		stop()
+	}
+}
+
+// A completion that hangs after the prompt settled ends once the settled
+// timeout runs out: the silence clock no longer times it, and the run does
+// not wait on it for good. It ends as a completion that failed: a hub
+// session's attempt fails on it, a node-owned one is left for the observer
+// that comes back.
+func TestRunEndsAHangingCompletionWhenItsSettledTimeoutRunsOut(t *testing.T) {
+	const silence = 20 * time.Millisecond
+	for _, session := range []string{"s1", "ns_1"} {
+		w := newWorld(session)
+		ctx, stop, _ := idle.WithTimeout(t.Context(), silence)
+		release := idle.Hold(ctx)
+		w.runner.during = release
+		o := w.options()
+		o.Finish = func(ctx context.Context, _ *Execution) (attempt.Completion, error) {
+			<-ctx.Done()
+			return attempt.Completion{}, ctx.Err()
+		}
+		o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true, SettledTimeout: silence}
+		type ended struct {
+			res Result
+			err error
+		}
+		done := make(chan ended, 1)
+		go func() {
+			res, err := Run(ctx, o)
+			done <- ended{res, err}
+		}()
+		var got ended
+		select {
+		case got = <-done:
+		case <-time.After(100 * silence):
+			t.Fatalf("%s: the run still waits on a completion that hangs", session)
+		}
+		stop()
+		res, err := got.res, got.err
+		var detached *execution.RetainedObserverDetached
+		switch {
+		case !errors.Is(err, context.DeadlineExceeded) || idle.Expired(ctx):
+			t.Fatalf("%s: not the settled timeout: %+v err=%v", session, res, err)
+		case session == "s1" && (errors.As(err, &detached) || res.Record.State != attempt.Failed || !res.Durable):
+			t.Fatalf("hub session: %+v err=%v history=%s", res, err, w.attempts.history())
+		case session == "ns_1" && (!errors.As(err, &detached) || !res.Unsettled || res.Durable || res.Record.State != attempt.Running):
+			t.Fatalf("node-owned session: %+v err=%v history=%s", res, err, w.attempts.history())
+		}
 	}
 }
