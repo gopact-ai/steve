@@ -164,6 +164,10 @@ func (s *Store) placement(ctx context.Context, scope Scope, node string) (Placem
 		return Placement{}, fmt.Errorf("%w: stable node identity required", ErrInvalid)
 	}
 	p, err := s.cfg.Policy.CheckpointPlacement(ctx, scope, node)
+	if errors.Is(err, ErrUnavailable) {
+		// A check that could not be made refuses nothing.
+		return Placement{}, fmt.Errorf("%s: %w", node, err)
+	}
 	if err != nil {
 		return Placement{}, fmt.Errorf("%w: %s: %w", ErrPlacement, node, err)
 	}

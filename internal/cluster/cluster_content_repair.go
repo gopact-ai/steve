@@ -171,6 +171,11 @@ func (w *contentRepairWorker) reachableDomains(ctx context.Context, manifest con
 			continue
 		}
 		where, err := (peerContentPolicy{peer: w.peer}).CheckpointPlacement(ctx, manifest.Object.Scope, receipt.NodeID)
+		if errors.Is(err, contentreplica.ErrUnavailable) {
+			// A copy whose placement could not be checked is not lost:
+			// this round cannot count the copies.
+			return 0, err
+		}
 		if err != nil || where.FailureDomain != receipt.FailureDomain {
 			continue
 		}
@@ -196,10 +201,19 @@ func (w *contentRepairWorker) reachableDomains(ctx context.Context, manifest con
 	return len(domains), nil
 }
 
+// uncheckedPlacement follows the label of content whose placement repair
+// could not check for now: the committed state out of reach or this node's
+// replica behind it. Nothing is refused; the next round checks again.
+const uncheckedPlacement = " 的存储授权暂时无法核对（集群状态不可达或本机副本落后），已有副本记录保持不变，下一轮将重新核对。"
+
 func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentreplica.Manifest, availability map[string]bool) (string, error) {
 	id := manifest.ID
 	label := fmt.Sprintf("项目 %s 的内容 %s", manifest.Object.Scope.ProjectID, id[:12])
 	scope, err := w.client.CheckLocal(ctx, manifest.Object.Scope.ProjectID)
+	if errors.Is(err, contentreplica.ErrUnavailable) {
+		w.notice(ctx, id, "degraded", label+uncheckedPlacement)
+		return "degraded", err
+	}
 	if err != nil || scope != manifest.Object.Scope || scope.Level == "sealed" && scope.HomeNodeID != w.peer.Config.NodeID {
 		w.notice(ctx, id, "placement_blocked", label+" 的当前存储授权与原记录不一致，已停止补副本。")
 		return "placement_blocked", errors.Join(contentreplica.ErrPlacement, err)
@@ -245,6 +259,9 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 			return "degraded", err
 		case errors.Is(err, checkpoint.ErrQuota):
 			w.notice(ctx, id, "degraded", label+" 暂时无法在本机保存副本，请检查存储配额；已有副本记录保持不变。")
+			return "degraded", err
+		case errors.Is(err, contentreplica.ErrUnavailable):
+			w.notice(ctx, id, "degraded", label+uncheckedPlacement)
 			return "degraded", err
 		case errors.Is(err, contentreplica.ErrPlacement):
 			w.notice(ctx, id, "placement_blocked", label+" 的存储授权已改变，等待确认可用存储位置后再复制。")

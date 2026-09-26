@@ -135,7 +135,7 @@ func (c *Client) prepare(ctx context.Context, project, kind, key, base string, r
 	}
 	current, err := c.CheckLocal(ctx, project)
 	if err != nil || current != scope {
-		return Manifest{}, errors.Join(ErrPlacement, err)
+		return Manifest{}, placementChanged(err)
 	}
 	latest, err := c.members(ctx)
 	if err != nil {
@@ -150,13 +150,23 @@ func (c *Client) prepare(ctx context.Context, project, kind, key, base string, r
 		}
 		where, err := placement(ctx, c.cfg.Policy, scope, receipt.NodeID)
 		if err != nil || where.FailureDomain != receipt.FailureDomain {
-			return Manifest{}, errors.Join(ErrPlacement, err)
+			return Manifest{}, placementChanged(err)
 		}
 	}
 	if err := c.cfg.Ledger.Update(ctx, func(tx *ledger.Tx) error { return sealUpload(tx, upload.ID, m.Receipts) }); err != nil {
 		return Manifest{}, err
 	}
 	return m, nil
+}
+
+// placementChanged is the error of a placement check that no longer admits
+// what an earlier one did, for err from that check: a refusal, unless the
+// check could not be made for now.
+func placementChanged(err error) error {
+	if errors.Is(err, ErrUnavailable) {
+		return err
+	}
+	return errors.Join(ErrPlacement, err)
 }
 
 func (c *Client) members(ctx context.Context) ([]string, error) {
@@ -188,7 +198,7 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 	}
 	scope, err := c.CheckLocal(ctx, m.Object.Scope.ProjectID)
 	if err != nil || scope != m.Object.Scope {
-		return Manifest{}, errors.Join(ErrPlacement, err)
+		return Manifest{}, placementChanged(err)
 	}
 	// This pending intent pins the object and its dependency closure until
 	// the owner records the repaired receipt. A lost response retains it.
@@ -239,7 +249,7 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 	finish := func() (Manifest, error) {
 		current, err := c.CheckLocal(ctx, m.Object.Scope.ProjectID)
 		if err != nil || current != scope {
-			return Manifest{}, errors.Join(ErrPlacement, err)
+			return Manifest{}, placementChanged(err)
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			return Manifest{}, err
@@ -249,6 +259,9 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 			return Manifest{}, err
 		}
 		local, err := placement(ctx, c.cfg.Policy, scope, c.cfg.NodeID)
+		if errors.Is(err, ErrUnavailable) {
+			return Manifest{}, err
+		}
 		if err != nil || repaired.UploadID != upload.ID || repaired.NodeID != c.cfg.NodeID || repaired.ObjectID != m.ID || repaired.FailureDomain != local.FailureDomain || repaired.StoredAt.IsZero() {
 			return Manifest{}, errors.Join(ErrIntegrity, err)
 		}
