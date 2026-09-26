@@ -117,6 +117,10 @@ func (c *Client) prepare(ctx context.Context, project, kind, key, base string, r
 		} else {
 			receipt, err = c.cfg.Remote.Put(ctx, node, upload, source)
 		}
+		if errors.Is(err, ErrSuperseded) {
+			// Every other node would answer the same.
+			return Manifest{}, fmt.Errorf("content replica %s: %w", node, err)
+		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("content replica %s: %w", node, err))
 			continue
@@ -135,7 +139,7 @@ func (c *Client) prepare(ctx context.Context, project, kind, key, base string, r
 	}
 	current, err := c.CheckLocal(ctx, project)
 	if err != nil || current != scope {
-		return Manifest{}, errors.Join(ErrPlacement, err)
+		return Manifest{}, placementChanged(err)
 	}
 	latest, err := c.members(ctx)
 	if err != nil {
@@ -150,13 +154,23 @@ func (c *Client) prepare(ctx context.Context, project, kind, key, base string, r
 		}
 		where, err := placement(ctx, c.cfg.Policy, scope, receipt.NodeID)
 		if err != nil || where.FailureDomain != receipt.FailureDomain {
-			return Manifest{}, errors.Join(ErrPlacement, err)
+			return Manifest{}, placementChanged(err)
 		}
 	}
 	if err := c.cfg.Ledger.Update(ctx, func(tx *ledger.Tx) error { return sealUpload(tx, upload.ID, m.Receipts) }); err != nil {
 		return Manifest{}, err
 	}
 	return m, nil
+}
+
+// placementChanged is the error of a placement check that no longer admits
+// what an earlier one did, for err from that check: a refusal, unless the
+// check could not be made for now.
+func placementChanged(err error) error {
+	if errors.Is(err, ErrUnavailable) {
+		return err
+	}
+	return errors.Join(ErrPlacement, err)
 }
 
 func (c *Client) members(ctx context.Context) ([]string, error) {
@@ -188,7 +202,7 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 	}
 	scope, err := c.CheckLocal(ctx, m.Object.Scope.ProjectID)
 	if err != nil || scope != m.Object.Scope {
-		return Manifest{}, errors.Join(ErrPlacement, err)
+		return Manifest{}, placementChanged(err)
 	}
 	// This pending intent pins the object and its dependency closure until
 	// the owner records the repaired receipt. A lost response retains it.
@@ -239,7 +253,7 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 	finish := func() (Manifest, error) {
 		current, err := c.CheckLocal(ctx, m.Object.Scope.ProjectID)
 		if err != nil || current != scope {
-			return Manifest{}, errors.Join(ErrPlacement, err)
+			return Manifest{}, placementChanged(err)
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			return Manifest{}, err
@@ -249,6 +263,9 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 			return Manifest{}, err
 		}
 		local, err := placement(ctx, c.cfg.Policy, scope, c.cfg.NodeID)
+		if errors.Is(err, ErrUnavailable) {
+			return Manifest{}, err
+		}
 		if err != nil || repaired.UploadID != upload.ID || repaired.NodeID != c.cfg.NodeID || repaired.ObjectID != m.ID || repaired.FailureDomain != local.FailureDomain || repaired.StoredAt.IsZero() {
 			return Manifest{}, errors.Join(ErrIntegrity, err)
 		}
@@ -267,18 +284,27 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 	if err := try(c.cfg.NodeID); err == nil {
 		return finish()
 	} else {
-		failures = append(failures, err)
+		failures = append(failures, fmt.Errorf("content replica %s: %w", c.cfg.NodeID, err))
 	}
 	for _, receipt := range m.Receipts {
 		if receipt.NodeID == c.cfg.NodeID {
 			continue
 		}
 		where, err := placement(ctx, c.cfg.Policy, scope, receipt.NodeID)
+		if errors.Is(err, ErrUnavailable) {
+			// A copy whose placement could not be checked is not missing.
+			failures = append(failures, fmt.Errorf("content replica %s: %w", receipt.NodeID, err))
+			continue
+		}
 		if err != nil || where.FailureDomain != receipt.FailureDomain {
 			continue
 		}
-		if err := try(receipt.NodeID); err != nil {
-			failures = append(failures, err)
+		if err := try(receipt.NodeID); errors.Is(err, ErrSuperseded) {
+			// The caller is no longer the writer: every other node would
+			// answer the same, and no copy is known to be missing.
+			return Manifest{}, fmt.Errorf("content replica %s: %w", receipt.NodeID, err)
+		} else if err != nil {
+			failures = append(failures, fmt.Errorf("content replica %s: %w", receipt.NodeID, err))
 			continue
 		}
 		return finish()

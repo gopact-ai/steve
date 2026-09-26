@@ -33,6 +33,16 @@ var (
 	ErrIntegrity  = errors.New("content replica integrity check failed")
 	ErrPlacement  = errors.New("content replica placement refused")
 	ErrTooLarge   = errors.New("content exceeds replication limit")
+	// ErrUnavailable is a check that could not be made for now — the
+	// committed state out of reach, a replica behind it. It refuses
+	// nothing: asking again can succeed. It is the checkpoint policy's
+	// error, so a PlacementPolicy says it once for both stores.
+	ErrUnavailable = checkpoint.ErrUnavailable
+	// ErrSuperseded is a node's answer that the caller is no longer the
+	// one writing: a later coordinator epoch or writer generation has
+	// been committed. Every other node would answer the same, so the
+	// caller stops, and nothing is said about the copies themselves.
+	ErrSuperseded = errors.New("content caller is no longer the current writer")
 )
 
 type Scope = checkpoint.Scope

@@ -3,6 +3,7 @@ package contentreplica
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -70,6 +71,10 @@ func placement(ctx context.Context, policy PlacementPolicy, scope Scope, node st
 		return Placement{}, ErrPlacement
 	}
 	p, err := policy.CheckpointPlacement(ctx, scope, node)
+	if errors.Is(err, ErrUnavailable) {
+		// A check that could not be made refuses nothing.
+		return Placement{}, err
+	}
 	if err != nil {
 		return Placement{}, fmt.Errorf("%w: %w", ErrPlacement, err)
 	}

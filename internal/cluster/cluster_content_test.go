@@ -128,7 +128,8 @@ func TestContentPeerRejectsUnclassifiedAndForgedScope(t *testing.T) {
 	}
 	data := []byte("scope-bound data")
 	ref := checkpoint.Reference(data)
-	if _, err := client.Prepare(t.Context(), "", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrPlacement) {
+	// Material without a project is not a request any placement can admit.
+	if _, err := client.Prepare(t.Context(), "", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrInvalid) {
 		t.Fatalf("unclassified material accepted: %v", err)
 	}
 	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "workspace", Level: "public", HomeNodeID: peers[0].Config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
