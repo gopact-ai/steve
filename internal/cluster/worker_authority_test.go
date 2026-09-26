@@ -168,6 +168,9 @@ func TestWorkerTunnelClosesWhenItsReplicaStopsHearingTheLeader(t *testing.T) {
 	if !hub.Runtime.Load().Status().Ready {
 		t.Fatal("the coordinator lost its business generation; the tunnel was not closed by the worker")
 	}
+	// The tunnel judged by its own observations, a new one starts from the
+	// runtime loop's, which may have seen the leader one poll later.
+	time.Sleep(10 * workerAuthorityInterval)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if connection, err := hub.DialWorker(ctx, member.Config.NodeID); err == nil {
