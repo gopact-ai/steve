@@ -960,6 +960,10 @@ func (p *Peer) dialWorker(parent context.Context, runtime *Runtime, assignment c
 		if err != nil {
 			return nil, err
 		}
+		if err := dialerEnded(ended); err != nil {
+			connection.Close()
+			return nil, err
+		}
 		go p.watchWorkerAuthority(p.ctx, grant, connection.(*authenticatedWorkerConnection).done, ended, func() { connection.Close() })
 		return connection, nil
 	}
@@ -1014,9 +1018,25 @@ func (p *Peer) dialWorker(parent context.Context, runtime *Runtime, assignment c
 		connection.Close()
 		return nil, err
 	}
+	if err := dialerEnded(ended); err != nil {
+		connection.Close()
+		return nil, err
+	}
 	tunnel := &bufferedWorkerConnection{Conn: connection, reader: reader, done: make(chan struct{})}
 	go p.watchWorkerAuthority(p.ctx, grant, tunnel.done, ended, func() { tunnel.Close() })
 	return tunnel, nil
+}
+
+// dialerEnded reports, once ended is closed, that the business
+// generation dialing a worker ended while it dialed: its tunnel is not
+// handed over, though the worker may have accepted it.
+func dialerEnded(ended <-chan struct{}) error {
+	select {
+	case <-ended:
+		return fmt.Errorf("%w: the business generation that dials ended", ErrInactive)
+	default:
+		return nil
+	}
 }
 
 type bufferedWorkerConnection struct {
