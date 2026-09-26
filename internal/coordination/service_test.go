@@ -160,6 +160,26 @@ func TestSingleNodeStartsUsableAndKeepsStableIdentity(t *testing.T) {
 	}
 }
 
+// A quorum read commits a barrier that the state machine never sees: Raft's
+// applied index covers it, so a replica that has applied everything it
+// committed reports the two indexes equal, while the state's own applied
+// index stays at the last command or membership change.
+func TestLogProgressCoversEntriesTheStateMachineNeverSees(t *testing.T) {
+	c := newTestCluster(t, 1)
+	n := c.leader()
+	state, err := n.ReadState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress := n.LogProgress()
+	if progress.Committed < n.LastIndex() || progress.Applied != progress.Committed {
+		t.Fatalf("after a quorum read the single node has committed %d and applied %d of %d entries", progress.Committed, progress.Applied, n.LastIndex())
+	}
+	if state.AppliedIndex >= progress.Applied {
+		t.Fatalf("the state applied index %d reaches the barrier at %d: the state machine now sees barriers", state.AppliedIndex, progress.Applied)
+	}
+}
+
 func TestTwoNodesOnlyManualTransferWithEpochAndDeduplication(t *testing.T) {
 	c := newTestCluster(t, 2)
 	n := c.leader()

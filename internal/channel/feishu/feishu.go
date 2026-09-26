@@ -91,6 +91,22 @@ type Options struct {
 	Access           Access
 	AllowUnmentioned bool
 	OnCardAction     func(CardAction) CardToast
+	// OnStartRetry reports each startup failure Start will retry. It runs
+	// on Start's goroutine and must not block.
+	OnStartRetry func(StartRetry)
+	// OnReady runs once Start has verified the application, before Ready
+	// is closed and before the long connection can deliver an event. It
+	// runs on Start's goroutine and is never called when verification
+	// fails or is stopped.
+	OnReady func()
+}
+
+// StartRetry is a startup failure Start will retry.
+type StartRetry struct {
+	// Failures counts the consecutive failed attempts.
+	Failures int
+	Next     time.Time
+	Err      error
 }
 
 type longConn interface {
@@ -103,6 +119,19 @@ type Channel struct {
 	ws     longConn
 	access Access
 	policy atomic.Pointer[accessPolicy]
+	// identify verifies the application and reads the bot's identity.
+	identify func(context.Context) (Identity, error)
+	// delay is the wait before the next verification after failures.
+	delay func(failures int) time.Duration
+	// onRetry is Options.OnStartRetry.
+	onRetry func(StartRetry)
+	// onReady is Options.OnReady.
+	onReady func()
+	// botOpenID is written by Start before the long connection begins,
+	// which is the only source of inbound events that read it.
+	botOpenID string
+	// ready is closed once the identity is verified.
+	ready chan struct{}
 	// journal records every outbound message as an effect: started before
 	// the API call, confirmed with the message id after. It is the only
 	// egress this version has, and the only one recovery has to reconcile.
@@ -136,16 +165,17 @@ func effectKey(target string, payload []byte) string {
 
 var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
 
-func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
+// New builds the channel without contacting Feishu; Start verifies the
+// application and connects.
+func New(opts Options, handler Handler) *Channel {
 	api := newAPI(opts.AppID, opts.AppSecret, opts.Domain)
-	identity, err := botIdentity(ctx, api)
-	if err != nil {
-		return nil, err
-	}
-	channel := &Channel{api: api}
+	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry, onReady: opts.OnReady}
+	channel.identify = func(ctx context.Context) (Identity, error) { return botIdentity(ctx, api) }
 	channel.SetAccess(opts.Access, opts.AllowUnmentioned)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
-		OnP2MessageReceiveV1(channel.messageHandler(identity.OpenID, opts.AllowUnmentioned, handler)).
+		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+			return channel.messageHandler(channel.botOpenID, opts.AllowUnmentioned, handler)(ctx, event)
+		}).
 		OnP2MessageReactionCreatedV1(func(context.Context, *larkim.P2MessageReactionCreatedV1) error {
 			// The gateway's own thinking-emoji ack comes straight back as an
 			// event; there is nothing to do with it, and leaving it without
@@ -177,7 +207,7 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 		larkws.WithDomain(BaseURL(opts.Domain)),
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
 	)
-	return channel, nil
+	return channel
 }
 
 func (channel *Channel) messageHandler(botOpenID string, allowUnmentioned bool, handler Handler) func(context.Context, *larkim.P2MessageReceiveV1) error {
@@ -208,10 +238,24 @@ func (c *Channel) EnrichInput(ctx context.Context, msg InboundMessage) InboundMe
 	return msg
 }
 
-// Start blocks and maintains the long connection until ctx is done.
-// The official WS client ends in select{} and ignores cancellation, so we
-// run it in the background and Close it when ctx is canceled.
+// Ready is closed once Start has verified the bot identity and OnReady
+// has returned, before the long connection begins.
+func (c *Channel) Ready() <-chan struct{} { return c.ready }
+
+// Start verifies the bot identity, then blocks and maintains the long
+// connection until ctx is done. The official WS client ends in select{} and
+// ignores cancellation, so we run it in the background and Close it when ctx
+// is canceled.
 func (c *Channel) Start(ctx context.Context) error {
+	identity, err := c.verify(ctx)
+	if err != nil {
+		return err
+	}
+	c.botOpenID = identity.OpenID
+	if c.onReady != nil {
+		c.onReady()
+	}
+	close(c.ready)
 	done := make(chan error, 1)
 	go func() {
 		done <- c.ws.Start(ctx)

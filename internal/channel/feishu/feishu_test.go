@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"errors"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -39,6 +40,14 @@ func (s *stuckConn) Close() {
 		close(s.closed)
 	}
 }
+
+// startingChannel is a channel whose identity is verified by identify and
+// whose long connection is conn.
+func startingChannel(conn longConn, identify func(context.Context) (Identity, error)) *Channel {
+	return &Channel{ws: conn, identify: identify, ready: make(chan struct{}), delay: func(int) time.Duration { return time.Millisecond }}
+}
+
+func knownBot(context.Context) (Identity, error) { return Identity{OpenID: "ou_bot"}, nil }
 
 type failConn struct{}
 
@@ -197,7 +206,7 @@ func TestCardRequiresIDs(t *testing.T) {
 
 func TestStartReturnsWhenContextCanceled(t *testing.T) {
 	conn := newStuckConn()
-	c := &Channel{ws: conn}
+	c := startingChannel(conn, knownBot)
 	ctx, cancel := context.WithCancel(t.Context())
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Start(ctx) }()
@@ -223,9 +232,46 @@ func TestStartReturnsWhenContextCanceled(t *testing.T) {
 }
 
 func TestStartReturnsConnectError(t *testing.T) {
-	err := (&Channel{ws: failConn{}}).Start(t.Context())
+	err := startingChannel(failConn{}, knownBot).Start(t.Context())
 	if err == nil || err.Error() != "boom" {
 		t.Fatalf("Start() = %v, want boom", err)
+	}
+}
+
+// A Hub that starts while Feishu is briefly unreachable must connect once
+// it is reachable again, without a restart.
+func TestStartRecoversFromATransientStartupFailure(t *testing.T) {
+	conn := newStuckConn()
+	var calls atomic.Int32
+	c := startingChannel(conn, func(context.Context) (Identity, error) {
+		if calls.Add(1) == 1 {
+			return Identity{}, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("network is unreachable")}
+		}
+		return Identity{OpenID: "ou_bot"}, nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Start(ctx) }()
+
+	select {
+	case <-conn.started:
+	case err := <-errCh:
+		t.Fatalf("Start gave up after a transient failure: %v", err)
+	case <-time.After(waitDeadline):
+		t.Fatal("the long connection never started after Feishu became reachable")
+	}
+	select {
+	case <-c.Ready():
+	default:
+		t.Fatal("the channel started without reporting it is ready")
+	}
+	if c.botOpenID != "ou_bot" || calls.Load() != 2 {
+		t.Fatalf("bot %q after %d attempts; want ou_bot after 2", c.botOpenID, calls.Load())
+	}
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start() = %v, want context.Canceled", err)
 	}
 }
 

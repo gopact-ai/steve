@@ -16,6 +16,10 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
+// contentMaintenanceTimeout is how long a coordinator waits for one node's
+// content maintenance.
+var contentMaintenanceTimeout = 30 * time.Second
+
 // Maintenance sends no deletion candidates. Each receiver independently
 // validates its committed owner roots and exact upload-release proofs.
 func (transport peerContentTransport) collect(ctx context.Context, node string) (checkpoint.RetentionGCResult, error) {
@@ -37,14 +41,14 @@ func (transport peerContentTransport) collect(ctx context.Context, node string) 
 	}
 	request.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(state.Coordinator.Epoch, 10))
 	request.Header.Set("X-Steve-Writer-Generation", strconv.FormatUint(state.WriterGeneration, 10))
-	client := &http.Client{Transport: clientTransport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: clientTransport, Timeout: contentMaintenanceTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
 		return checkpoint.RetentionGCResult{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return checkpoint.RetentionGCResult{}, fmt.Errorf("content maintenance %s: HTTP %d", node, response.StatusCode)
+		return checkpoint.RetentionGCResult{}, contentReplyError(&transport.peer.contentReplies, node, response)
 	}
 	var result checkpoint.RetentionGCResult
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 32769))
@@ -63,21 +67,12 @@ func (p *Peer) collectContent(ctx context.Context) (checkpoint.RetentionGCResult
 	if runtime == nil {
 		return checkpoint.RetentionGCResult{}, ErrInactive
 	}
-	for {
-		state, err := runtime.ReadState(ctx)
-		if err != nil {
-			return checkpoint.RetentionGCResult{}, err
-		}
-		version, err := runtime.Ledger().ReplicaVersion()
-		if err != nil {
-			return checkpoint.RetentionGCResult{}, err
-		}
-		if version >= state.AppVersion {
-			break
-		}
-		if err := waitContentReplica(ctx); err != nil {
-			return checkpoint.RetentionGCResult{}, err
-		}
+	state, err := p.committedState(ctx, runtime)
+	if err != nil {
+		return checkpoint.RetentionGCResult{}, err
+	}
+	if _, err := p.awaitContentReplica(ctx, runtime, state.AppVersion); err != nil {
+		return checkpoint.RetentionGCResult{}, err
 	}
 	store, release, err := p.acquireContent()
 	if err != nil {
@@ -89,18 +84,18 @@ func (p *Peer) collectContent(ctx context.Context) (checkpoint.RetentionGCResult
 
 func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 || r.Header.Get(contentObjectHeader) != "" || r.Header.Get(contentUploadHeader) != "" {
-		http.Error(w, "maintenance accepts no deletion candidates", http.StatusBadRequest)
+		p.refuseContent(w, r, fmt.Errorf("%w: maintenance accepts no deletion candidates", contentreplica.ErrInvalid))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	result, err := p.collectContent(ctx)
+	result, err := p.collectContent(r.Context())
 	if err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
-	if err := p.contentAuthority(r); err != nil {
-		http.Error(w, "content authority changed", http.StatusForbidden)
+	// Collecting may have taken a while: the caller's authority is read
+	// again, not taken from the read that admitted it.
+	if err := p.contentAuthority(r.WithContext(withContentReads(r.Context()))); err != nil {
+		p.refuseContent(w, r, err)
 		return
 	}
 	WriteJSON(w, result)
@@ -128,7 +123,7 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		if _, err := contentGenerationState(ctx, w.active); err != nil {
 			return total, errors.Join(append(failures, err)...)
 		}
-		itemCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		itemCtx, cancel := context.WithTimeout(ctx, contentMaintenanceTimeout)
 		var result checkpoint.RetentionGCResult
 		if node == w.peer.Config.NodeID {
 			result, err = w.peer.collectContent(itemCtx)

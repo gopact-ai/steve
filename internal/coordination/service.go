@@ -236,6 +236,18 @@ func (s *Service) Status() Status {
 	return Status{State: s.fsm.read(), ControlProtocol: ControlProtocolVersion, NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
 }
 
+// LastIndex is the index of the last entry in this replica's Raft log. It
+// grows with every entry appended, including the barriers of quorum reads.
+func (s *Service) LastIndex() uint64 { return s.raft.LastIndex() }
+
+// LogProgress reads how far this replica's Raft log is committed and how
+// far Raft has handed it to the state machine. It reads the commit index
+// first, so a concurrent commit can only make the replica look behind.
+func (s *Service) LogProgress() LogProgress {
+	committed := s.raft.CommitIndex()
+	return LogProgress{Committed: committed, Applied: s.raft.AppliedIndex()}
+}
+
 // TransportPeers reads Raft's durable latest membership before FSM replay has
 // caught up. Authentication cannot rely only on an older application snapshot
 // when the later Raft configuration already contains peers needed to elect.
