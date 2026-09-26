@@ -391,7 +391,7 @@ Hub 绑定后会核对 `gateway.read_model_addr` 与实际绑定的地址，以�
 
 ### Channel 设置
 
-`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。`runtime_error` 表示适配器初始化或连接失败；已启用不等于连接正常，Console 会保留以便修正凭据。
+`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。已启用不等于连接正常。飞书/Lark 通道启动时先验证应用并读取机器人身份：网络不通、超时、5xx 或限流等可能自行恢复的失败会自动重试，间隔从 1 秒起指数增长、上限 2 分钟并带随机抖动，期间响应带 `startup_retry`（`attempts` 已失败次数、`next_at` 下次尝试时间、`last_error` 最近错误），验证通过后消失，无需重启 Hub。凭据被拒绝、缺少 secret、4xx 或机器人不可用等不会自行恢复的失败不重试，`runtime_error` 给出原因；修正配置后重启 Hub。验证通过后，长连接的建立与断线重连由飞书官方 SDK 负责，SDK 判定不可恢复的连接失败同样记为 `runtime_error`。Console 始终可用，以便修正凭据。
 
 `PUT /console/channels` 接收 `base_revision` 和 `channels` 对象，其中可修改 `default_channel` 及 `feishu` 的 `enabled`、`app_id`、`domain`、`owner_open_id`、`group_policy`、`allow_unmentioned`、`allowed_senders`、`blocked_senders`。凭据仅写入：省略 `app_secret` 保留现值；`{"action":"replace","value":"..."}` 替换；`{"action":"clear"}` 明确清除，不能清除仍启用适配器的凭据。读取仅返回 `app_secret_configured`，不回显密钥或摘要。
 
