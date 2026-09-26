@@ -29,13 +29,13 @@ const workerAuthorityInterval = 100 * time.Millisecond
 // worker, so while any tunnel is open a node that does not lead consensus
 // confirms its replica with a quorum every ApplyTimeout: it asks the
 // leader for a read index and waits, at most ApplyTimeout, for the state
-// machine of its replica to have applied its log up to it. The tunnels close when a confirmation fails,
-// or when none has succeeded for three ApplyTimeouts. A confirmation
-// appends nothing to the consensus log but the barrier a leader completes
-// once in each term, which the runtime's own quorum reads have usually
-// completed already. The leader needs none: its replica
-// holds every committed entry, and it gives the tunnels up as soon as it
-// stops leading without knowing another leader.
+// machine of its replica to have applied its log up to it. The tunnels
+// close when a confirmation fails, or when none has succeeded for three
+// ApplyTimeouts. A confirmation appends nothing to the consensus log but
+// the barrier a leader completes once in each term, which the runtime's
+// own quorum reads have usually completed already. The leader needs none:
+// its replica holds every committed entry, and it gives the tunnels up as
+// soon as it stops leading without knowing another leader.
 type workerAuthority struct {
 	mu   sync.Mutex
 	live liveness
