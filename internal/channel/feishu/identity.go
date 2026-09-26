@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/config"
@@ -73,21 +74,22 @@ func botIdentity(ctx context.Context, api *lark.Client) (Identity, error) {
 		if resp != nil {
 			status = resp.StatusCode
 		}
-		return Identity{}, fmt.Errorf("get feishu bot identity: http %d", status)
+		return Identity{}, fmt.Errorf("get feishu bot identity: %w", statusError(status))
 	}
 	identity, err := parseBotIdentity(resp.RawBody)
 	if err != nil {
 		return Identity{}, err
 	}
 	if identity.OpenID == "" {
-		return Identity{}, fmt.Errorf("get feishu bot identity: empty open id")
+		return Identity{}, permanentError{errors.New("get feishu bot identity: empty open id")}
 	}
 	return identity, nil
 }
 
 func parseBotIdentity(body []byte) (Identity, error) {
 	var result struct {
-		Code int `json:"code"`
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
 		Bot  struct {
 			OpenID  string `json:"open_id"`
 			AppName string `json:"app_name"`
@@ -103,7 +105,7 @@ func parseBotIdentity(body []byte) (Identity, error) {
 		return Identity{}, fmt.Errorf("parse feishu bot identity: %w", err)
 	}
 	if result.Code != 0 {
-		return Identity{}, fmt.Errorf("get feishu bot identity: code=%d", result.Code)
+		return Identity{}, fmt.Errorf("get feishu bot identity: %w", larkcore.CodeError{Code: result.Code, Msg: result.Msg})
 	}
 	identity := Identity{OpenID: result.Bot.OpenID, Name: result.Bot.AppName}
 	if identity.OpenID == "" {

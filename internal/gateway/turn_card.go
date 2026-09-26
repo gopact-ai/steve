@@ -23,7 +23,10 @@ import (
 var cardMinInterval = 3 * time.Second
 
 type turnUI struct {
-	g          *Gateway
+	g *Gateway
+	// ch is the gateway's channel when the turn began; the turn uses it
+	// throughout, even if a channel is bound while it runs.
+	ch         Channel
 	msg        feishu.InboundMessage
 	listen     bool
 	resultOnly bool
@@ -84,10 +87,11 @@ func turnCopy(text i18n.Catalog) card.Copy {
 	}
 }
 
-func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
+func (g *Gateway) newTurnUI(ch Channel, msg feishu.InboundMessage, listen bool) *turnUI {
 	now := time.Now()
 	ui := &turnUI{
 		g:      g,
+		ch:     ch,
 		msg:    msg,
 		listen: listen,
 		copy:   turnCopy(g.text),
@@ -101,11 +105,11 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 	}
 	ui.turnID = g.registerTurn(msg)
 	ui.state.TurnID = ui.turnID
-	ui.reaction = g.ack(msg.MessageID)
-	if g.ch != nil && msg.MessageID != "" {
+	ui.reaction = ack(ch, msg.MessageID)
+	if ch != nil && msg.MessageID != "" {
 		payload := card.Render(ui.state, ui.copy)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		id, err := g.ch.ReplyCard(ctx, msg.MessageID, payload)
+		id, err := ch.ReplyCard(ctx, msg.MessageID, payload)
 		cancel()
 		if err == nil && id != "" {
 			ui.cardID = id
@@ -123,8 +127,8 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 
 // A retained result has no new live turn. Render only its final delivery,
 // without an opener, reaction or native-progress worker.
-func (g *Gateway) newResultUI(msg feishu.InboundMessage) *turnUI {
-	ui := g.newTurnUI(msg, true)
+func (g *Gateway) newResultUI(ch Channel, msg feishu.InboundMessage) *turnUI {
+	ui := g.newTurnUI(ch, msg, true)
 	ui.listen, ui.resultOnly = silentListen(msg), true
 	return ui
 }
@@ -304,7 +308,7 @@ func (u *turnUI) flushProgress(immediate bool) {
 	u.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	err := u.g.ch.PatchCard(ctx, id, payload)
+	err := u.ch.PatchCard(ctx, id, payload)
 	cancel()
 
 	u.mu.Lock()
@@ -355,7 +359,7 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 	cardID := u.cardID
 	fallback := u.fallback || cardID == ""
 	u.mu.Unlock()
-	defer u.g.unack(u.msg.MessageID, u.reaction)
+	defer unack(u.ch, u.msg.MessageID, u.reaction)
 	// Retry needs the card to keep its button, so a failed turn stays live.
 	retryable := status == card.StatusFailed || status == card.StatusCancelled
 	if !retryable {
@@ -371,14 +375,14 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 		if newID, repostErr := u.repostFinal(); repostErr == nil && newID != "" {
 			u.g.setTurnCard(u.turnID, newID)
 			u.g.finishTurn(u.turnID, retryable)
-			u.g.recall(cardID)
+			recall(u.ch, cardID)
 			return newID, nil
 		} else if errors.Is(repostErr, channel.ErrOutcomeUnknown) {
 			return "", repostErr
 		}
 	}
 	u.g.finishTurn(u.turnID, retryable)
-	if u.resultOnly && !u.listen && u.g.ch != nil {
+	if u.resultOnly && !u.listen && u.ch != nil {
 		if id, err := u.repostFinal(); err == nil {
 			return id, nil
 		} else if errors.Is(err, channel.ErrOutcomeUnknown) {
@@ -394,13 +398,13 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 		}
 	}
 	if text != "" {
-		if u.g.ch == nil {
+		if u.ch == nil {
 			return "", errors.New("gateway reply channel is not available")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if u.g.recoveryLedger != nil || u.resultOnly {
-			id, err := u.g.ch.ReplyText(ctx, u.msg.MessageID, text)
+			id, err := u.ch.ReplyText(ctx, u.msg.MessageID, text)
 			if err != nil {
 				return "", noticeError(err)
 			}
@@ -409,7 +413,7 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 			}
 			return "", channel.ErrOutcomeUnknown
 		}
-		if err := u.g.ch.Reply(ctx, u.msg.MessageID, text); err != nil {
+		if err := u.ch.Reply(ctx, u.msg.MessageID, text); err != nil {
 			return "", noticeError(err)
 		}
 		return "reply:" + u.msg.MessageID, nil
@@ -430,7 +434,7 @@ func (u *turnUI) repostFinal() (string, error) {
 	u.g.rememberCard(payload)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	id, err := u.g.ch.ReplyCard(ctx, u.msg.MessageID, payload)
+	id, err := u.ch.ReplyCard(ctx, u.msg.MessageID, payload)
 	if err != nil || id == "" {
 		slog.Error(fmt.Sprintf("gateway: final card repost failed: %v", err), "conversation", conversationID(u.msg), "message", u.msg.MessageID)
 		if err == nil {
@@ -456,7 +460,7 @@ func (u *turnUI) patchFinal() error {
 	u.g.rememberCard(payload)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := u.g.ch.PatchCard(ctx, id, payload); err != nil {
+	if err := u.ch.PatchCard(ctx, id, payload); err != nil {
 		slog.Error(fmt.Sprintf("gateway: card finish failed: %v", err), "conversation", conversationID(u.msg), "card", id)
 		return noticeError(err)
 	}

@@ -38,7 +38,8 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 	// dispatch and recording a silent-listen outcome need no channel, but they
 	// wait too: the input stays pending at this one point for a gateway that
 	// has a channel, as recoverInput leaves recovery input.
-	if g.ch == nil {
+	ch := g.channel()
+	if ch == nil {
 		return errors.New("gateway reply channel is not available")
 	}
 	msg := input.Message
@@ -49,13 +50,13 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 		return err
 	}
 	if !dispatched {
-		msg = g.ch.EnrichInput(ctx, msg)
+		msg = ch.EnrichInput(ctx, msg)
 	}
 	input.Message = msg
 	guard := g.topicGuard(msg)
 	if guard == "" {
 		var err error
-		msg, err = g.prepareTopic(ctx, book, key, input)
+		msg, err = g.prepareTopic(ctx, ch, book, key, input)
 		if err != nil {
 			return err
 		}
@@ -63,20 +64,20 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 			return err
 		}
 	}
-	output, ui, err := g.dispatchInput(ctx, book, key, input, msg, guard, driver)
+	output, ui, err := g.dispatchInput(ctx, ch, book, key, input, msg, guard, driver)
 	if ui != nil {
 		defer ui.closeProgress()
 	}
 	if err != nil {
 		return err
 	}
-	if err := g.deliverInput(ctx, book, key, msg, output, ui); err != nil {
+	if err := g.deliverInput(ctx, ch, book, key, msg, output, ui); err != nil {
 		return err
 	}
 	return ack()
 }
 
-func (g *Gateway) dispatchInput(ctx context.Context, book *ledger.Ledger, key string, input gatewayInput, msg feishu.InboundMessage, guard string, driver RecoveryDriver) (recoveredOutput, *turnUI, error) {
+func (g *Gateway) dispatchInput(ctx context.Context, ch Channel, book *ledger.Ledger, key string, input gatewayInput, msg feishu.InboundMessage, guard string, driver RecoveryDriver) (recoveredOutput, *turnUI, error) {
 	actor := input.Message.SenderOpenID
 	request := g.taskRequest(msg, input.ExpectedTask, nil)
 	var output recoveredOutput
@@ -101,9 +102,9 @@ func (g *Gateway) dispatchInput(ctx context.Context, book *ledger.Ledger, key st
 			g.gate.Anchor(conversationID(msg), channel.Address{Channel: "feishu", Conversation: conversationID(msg), Message: msg.MessageID})
 		}
 		if input.Action != nil && input.Action.Action == "turn_retry" {
-			g.recall(input.Action.MessageID)
+			recall(ch, input.Action.MessageID)
 		}
-		ui = g.newTurnUI(msg, silentListen(msg))
+		ui = g.newTurnUI(ch, msg, silentListen(msg))
 		request = g.taskRequest(msg, input.ExpectedTask, ui)
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -136,7 +137,7 @@ func (g *Gateway) dispatchInput(ctx context.Context, book *ledger.Ledger, key st
 	return output, ui, err
 }
 
-func (g *Gateway) deliverInput(ctx context.Context, book *ledger.Ledger, key string, msg feishu.InboundMessage, output recoveredOutput, ui *turnUI) error {
+func (g *Gateway) deliverInput(ctx context.Context, ch Channel, book *ledger.Ledger, key string, msg feishu.InboundMessage, output recoveredOutput, ui *turnUI) error {
 	// Listening policy can intentionally produce no external message. Record
 	// that local disposition separately; it is never a fabricated /reply or
 	// evidence that Feishu received a final message.
@@ -150,7 +151,7 @@ func (g *Gateway) deliverInput(ctx context.Context, book *ledger.Ledger, key str
 	runErr := output.runError()
 	_, _, err := book.Command(ctx, key+"/reply", "gateway-input-reply", msg.SenderOpenID, func(context.Context) (json.RawMessage, error) {
 		if ui == nil {
-			ui = g.newResultUI(msg)
+			ui = g.newResultUI(ch, msg)
 		}
 		id, err := ui.finish(output.Result, runErr)
 		if err != nil {

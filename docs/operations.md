@@ -391,7 +391,14 @@ Hub 绑定后会核对 `gateway.read_model_addr` 与实际绑定的地址，以�
 
 ### Channel 设置
 
-`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。`runtime_error` 表示适配器初始化或连接失败；已启用不等于连接正常，Console 会保留以便修正凭据。
+`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。已启用不等于连接正常。飞书/Lark 通道启动时先验证应用并读取机器人身份：
+
+- 可能自行恢复的失败会自动重试：网络不通、DNS 失败、超时、5xx、408、429 和限流，以及不属于凭据或应用错误的业务码（包括随 5xx、429 返回的业务码）。无法判断的失败也会重试，例如代理返回的非 JSON 页面、不受信任的证书；这类失败源于网络或代理配置，会一直重试，需要根据 `startup_retry.last_error` 排查。重试间隔从 1 秒起指数增长，上限 2 分钟，带随机抖动；每次尝试最长 15 秒。重试期间响应带 `startup_retry`（`attempts` 已失败次数、`next_at` 下次尝试时间、`last_error` 最近错误），设置页在每次尝试后自动刷新；验证通过后该字段消失，无需重启 Hub。
+- 不会自行恢复的失败不重试：app ID、secret 或应用无效，缺少 app ID 或 secret，除 408、429 外的 4xx，以及机器人未启用。`runtime_error` 给出原因，修正配置后重启 Hub。`startup_retry` 与 `runtime_error` 不会同时出现。
+- 验证通过前，飞书侧的工作只等待、不执行：已接收的飞书消息和待恢复的飞书任务保持待处理，到期的飞书定时任务保持待触发，Agent 发往飞书的消息直接返回通道不可用，飞书任务的手动恢复请求返回错误。验证通过后，恢复流程在下一轮（5 秒内）接手积压的消息，定时任务在下一次检查（20 秒内）触发。凭据被拒绝时这些工作一直等待，修正配置并重启 Hub 后再处理。
+- 验证通过后，长连接的建立与断线重连由飞书官方 SDK 负责，SDK 判定不可恢复的连接失败同样记为 `runtime_error`。
+
+Console 始终可用，以便修正凭据。
 
 `PUT /console/channels` 接收 `base_revision` 和 `channels` 对象，其中可修改 `default_channel` 及 `feishu` 的 `enabled`、`app_id`、`domain`、`owner_open_id`、`group_policy`、`allow_unmentioned`、`allowed_senders`、`blocked_senders`。凭据仅写入：省略 `app_secret` 保留现值；`{"action":"replace","value":"..."}` 替换；`{"action":"clear"}` 明确清除，不能清除仍启用适配器的凭据。读取仅返回 `app_secret_configured`，不回显密钥或摘要。
 
