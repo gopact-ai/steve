@@ -105,6 +105,8 @@ type Channel struct {
 	policy atomic.Pointer[accessPolicy]
 	// identify verifies the application and reads the bot's identity.
 	identify func(context.Context) (Identity, error)
+	// delay is the wait before the next verification after failures.
+	delay func(failures int) time.Duration
 	// botOpenID is written by Start before the long connection begins,
 	// which is the only source of inbound events that read it.
 	botOpenID string
@@ -146,7 +148,7 @@ var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
 // application and connects.
 func New(opts Options, handler Handler) *Channel {
 	api := newAPI(opts.AppID, opts.AppSecret, opts.Domain)
-	channel := &Channel{api: api, ready: make(chan struct{})}
+	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay}
 	channel.identify = func(ctx context.Context) (Identity, error) { return botIdentity(ctx, api) }
 	channel.SetAccess(opts.Access, opts.AllowUnmentioned)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
@@ -215,9 +217,6 @@ func (c *Channel) EnrichInput(ctx context.Context, msg InboundMessage) InboundMe
 	return msg
 }
 
-// startupAttemptTimeout bounds one identity verification.
-const startupAttemptTimeout = 15 * time.Second
-
 // Ready is closed once Start has verified the bot identity and begins the
 // long connection. Outbound calls made earlier are unlikely to succeed.
 func (c *Channel) Ready() <-chan struct{} { return c.ready }
@@ -227,13 +226,8 @@ func (c *Channel) Ready() <-chan struct{} { return c.ready }
 // ignores cancellation, so we run it in the background and Close it when ctx
 // is canceled.
 func (c *Channel) Start(ctx context.Context) error {
-	attempt, cancel := context.WithTimeout(ctx, startupAttemptTimeout)
-	identity, err := c.identify(attempt)
-	cancel()
+	identity, err := c.verify(ctx)
 	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
 		return err
 	}
 	c.botOpenID = identity.OpenID

@@ -44,7 +44,7 @@ func (s *stuckConn) Close() {
 // startingChannel is a channel whose identity is verified by identify and
 // whose long connection is conn.
 func startingChannel(conn longConn, identify func(context.Context) (Identity, error)) *Channel {
-	return &Channel{ws: conn, identify: identify, ready: make(chan struct{})}
+	return &Channel{ws: conn, identify: identify, ready: make(chan struct{}), delay: func(int) time.Duration { return time.Millisecond }}
 }
 
 func knownBot(context.Context) (Identity, error) { return Identity{OpenID: "ou_bot"}, nil }
