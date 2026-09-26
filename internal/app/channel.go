@@ -39,7 +39,6 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 		case <-ctx.Done():
 			return
 		}
-		channelSettings.SetStartupRetry(nil)
 		timeout := startup.timeout
 		if settings := boot.Settings(); settings != nil {
 			timeout = time.Duration(settings.Load().Gateway.PromptTimeout)

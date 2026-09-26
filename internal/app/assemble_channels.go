@@ -5,6 +5,7 @@ import (
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
@@ -39,7 +40,9 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	}
 	var channel *feishu.Channel
 	if cfg.FeishuEnabled() {
-		// The channel is bound before it connects; runChannel starts it.
+		// runChannel starts the channel. Until its identity is verified
+		// nothing answers or sends through it: Feishu input, recovery and
+		// schedules wait instead of running work whose answer cannot be sent.
 		channel = feishu.New(feishu.Options{
 			AppID:            cfg.Feishu.AppID,
 			AppSecret:        cfg.Feishu.AppSecret,
@@ -53,8 +56,8 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 					LastError: adminsvc.RedactChannelError(r.Err, cfg.Feishu.AppSecret).Error(),
 				})
 			},
+			OnReady: func() { connectFeishu(gw, gate, channelSettings, channel) },
 		}, gw.HandleMessage)
-		gw.BindChannel(channel)
 		channel.SetJournal(book.Journal())
 		channelSettings.BindAccessUpdater(func(f config.Feishu) {
 			channel.SetAccess(feishu.AccessFrom(f), f.AllowUnmentioned)
@@ -63,9 +66,6 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	if gate != nil {
 		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
 		gate.SetScheduler(work.Scheduler())
-		if channel != nil {
-			gate.BindChannel("feishu", feishu.Messenger{API: channel})
-		}
 		gate.BindChannel("console", console.MessageSender{Console: cons})
 		cons.SetAnchorer(func(conversation, _ string, message string) {
 			gate.Anchor(conversation, messagechannel.Address{Channel: "console", Conversation: conversation, Message: message})
@@ -109,6 +109,17 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	return &channelsValues{channel: channel, routes: routes, startup: channelStartup{
 		owner: cfg.Feishu.OwnerOpenID, home: cfg.Gateway.HomePath, timeout: time.Duration(cfg.Gateway.PromptTimeout),
 	}}, nil
+}
+
+// connectFeishu makes a verified Feishu channel the one the gateway answers
+// through and agents send through, and clears the startup retry shown in the
+// console.
+func connectFeishu(gw *gateway.Gateway, gate *agentmcp.Server, settings channelRuntime, ch gateway.Channel) {
+	gw.BindChannel(ch)
+	if gate != nil {
+		gate.BindChannel("feishu", feishu.Messenger{API: ch})
+	}
+	settings.SetStartupRetry(nil)
 }
 
 type channelsAssembly interface {
