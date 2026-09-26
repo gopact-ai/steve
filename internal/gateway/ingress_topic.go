@@ -55,8 +55,8 @@ func topicMessage(input gatewayInput, receipt ledger.CommandRecord, key string) 
 
 // prepareTopic derives a new address from one input's external seed receipt.
 // Unknown seed effects stay fenced, including a missing response after success.
-// consumeInput calls it only when there is a channel.
-func (g *Gateway) prepareTopic(ctx context.Context, book *ledger.Ledger, key string, input gatewayInput) (feishu.InboundMessage, error) {
+// consumeInput calls it only with a channel.
+func (g *Gateway) prepareTopic(ctx context.Context, ch Channel, book *ledger.Ledger, key string, input gatewayInput) (feishu.InboundMessage, error) {
 	text, topic := topicTask(input.Message)
 	if !topic {
 		return input.Message, nil
@@ -69,7 +69,7 @@ func (g *Gateway) prepareTopic(ctx context.Context, book *ledger.Ledger, key str
 		return topicMessage(input, receipt, key)
 	}
 	_, _, err = book.Command(ctx, key+"/topic", "gateway-input-topic", input.Message.SenderOpenID, func(ctx context.Context) (json.RawMessage, error) {
-		anchor, thread, err := g.ch.ReplyThread(ctx, input.Message.MessageID, text)
+		anchor, thread, err := ch.ReplyThread(ctx, input.Message.MessageID, text)
 		if err != nil {
 			return nil, noticeError(err)
 		}

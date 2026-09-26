@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -47,11 +48,11 @@ const maxLiveTurns = 64
 // approvalTimeout caps how long a turn waits for a human to tap the card.
 const approvalTimeout = 3 * time.Minute
 
-// Channel is the Feishu transport the gateway replies through. When Feishu
-// is not configured or fails to start, the gateway has no channel at all,
-// never a partial one: accepted input and queued recovery stay pending for a
-// gateway that has one, Notify posts nothing, and child result delivery,
-// schedule fires and task resumes return an error.
+// Channel is the Feishu transport the gateway replies through. Until Feishu
+// is bound, and when it is not configured or never verifies, the gateway has
+// no channel at all, never a partial one: accepted input and queued recovery
+// stay pending until it has one, Notify posts nothing, and child result
+// delivery, schedule fires and task resumes return an error.
 type Channel interface {
 	// Reply posts text without reporting the new message's id.
 	Reply(ctx context.Context, messageID, text string) error
@@ -98,9 +99,10 @@ type Gateway struct {
 	ingressWorkers RecoveryWorkers
 	ingressDriver  RecoveryDriver
 	coordinator    Coordinator
-	ch             Channel
-	text           i18n.Catalog
-	gate           agentAnchor
+	// bound is the channel BindChannel set; read it through channel.
+	bound atomic.Pointer[boundChannel]
+	text  i18n.Catalog
+	gate  agentAnchor
 
 	// slots bounds how many conversations are served at once. A turn spends
 	// almost all of its time waiting on an agent subprocess rather than on
@@ -145,12 +147,26 @@ func New(coordinator Coordinator) *Gateway {
 	}
 }
 
-// BindChannel sets the channel the gateway replies through. Bind once,
-// before Feishu delivers messages and before recovery runs; the channel is
-// read without a lock. ch must be usable, never a nil *feishu.Channel: any
-// non-nil value counts as a channel. It is not called when Feishu is not
-// configured or fails to start, and the gateway then has no channel.
-func (g *Gateway) BindChannel(ch Channel) { g.ch = ch }
+// boundChannel lets an interface value live behind an atomic pointer.
+type boundChannel struct{ Channel }
+
+// BindChannel sets the channel the gateway replies through. Bind once, when
+// the channel can deliver: Feishu binds after its identity is verified,
+// which may be while recovery, schedules and notices are already running.
+// ch must be usable, never a nil *feishu.Channel: any non-nil value counts
+// as a channel. It is not called when Feishu is not configured or never
+// verifies, and the gateway then has no channel.
+func (g *Gateway) BindChannel(ch Channel) { g.bound.Store(&boundChannel{ch}) }
+
+// channel is the bound channel, or nil before BindChannel. Each flow reads
+// it once and uses that value for all its steps, so a bind that lands
+// midway cannot give the flow a channel for only its later steps.
+func (g *Gateway) channel() Channel {
+	if b := g.bound.Load(); b != nil {
+		return b.Channel
+	}
+	return nil
+}
 
 // SetAgentGate wires the messaging MCP server; call before Start.
 func (g *Gateway) SetAgentGate(gate agentAnchor) { g.gate = gate }
@@ -230,27 +246,27 @@ func silentListen(msg feishu.InboundMessage) bool {
 // the task text so the topic's preview says what it is about; the task then
 // runs as if it had been sent inside the new thread, so its card, answer and
 // session all live there, isolated from the flat chat's own session.
-func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
-	if g.ch == nil {
-		g.reply(msg.MessageID, g.text.T(i18n.TopicFailed))
+func (g *Gateway) seedTopic(ch Channel, msg feishu.InboundMessage, task string) {
+	if ch == nil {
+		postReply(ch, msg.MessageID, g.text.T(i18n.TopicFailed))
 		return
 	}
 	if strings.TrimSpace(task) == "" {
-		g.reply(msg.MessageID, g.text.T(i18n.TopicNeedsTask, protocol.CommandTopic, protocol.CommandTopic))
+		postReply(ch, msg.MessageID, g.text.T(i18n.TopicNeedsTask, protocol.CommandTopic, protocol.CommandTopic))
 		return
 	}
 	if msg.ConversationID != "" && msg.ConversationID != msg.ChatID {
 		// Already inside a thread; a topic within a topic is not a thing
 		// Feishu has, and the session here is already isolated.
-		g.reply(msg.MessageID, g.text.T(i18n.TopicAlready))
+		postReply(ch, msg.MessageID, g.text.T(i18n.TopicAlready))
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	anchor, thread, err := g.ch.ReplyThread(ctx, msg.MessageID, task)
+	anchor, thread, err := ch.ReplyThread(ctx, msg.MessageID, task)
 	cancel()
 	if err != nil || anchor == "" || thread == "" {
 		slog.Error(fmt.Sprintf("gateway: seed topic failed: %v", err), "conversation", conversationID(msg), "message", msg.MessageID)
-		g.reply(msg.MessageID, g.text.T(i18n.TopicFailed))
+		postReply(ch, msg.MessageID, g.text.T(i18n.TopicFailed))
 		return
 	}
 	seeded := msg
@@ -268,15 +284,16 @@ func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) er
 	if conversationID == "" {
 		conversationID = msg.ChatID
 	}
+	ch := g.channel()
 	listen := silentListen(msg)
 	if cmd, rest := protocol.ParseCommand(strings.TrimSpace(msg.Text)); cmd == protocol.CommandTopic && !listen {
-		g.seedTopic(msg, rest)
+		g.seedTopic(ch, msg, rest)
 		return nil
 	}
 	if g.gate != nil && msg.MessageID != "" && !g.scheduleControl(msg.Text) {
 		g.gate.Anchor(conversationID, channel.Address{Channel: "feishu", Conversation: conversationID, Message: msg.MessageID})
 	}
-	ui := g.newTurnUI(msg, listen)
+	ui := g.newTurnUI(ch, msg, listen)
 	result, err := g.coordinator.Handle(context.Background(), g.taskRequest(msg, expectedTask, ui))
 	if err != nil {
 		slog.Error(fmt.Sprintf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err), "conversation", conversationID, "chat", msg.ChatID, "message", msg.MessageID)
@@ -325,14 +342,14 @@ func (g *Gateway) truncateRunes(text string, max int) string {
 	return string(runes[:max]) + "\n\n" + g.text.T(i18n.Truncated)
 }
 
-func (g *Gateway) reply(messageID, text string) {
-	if g.ch == nil {
+func postReply(ch Channel, messageID, text string) {
+	if ch == nil {
 		slog.Warn("gateway: no channel bound, dropping reply", "message", messageID)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := g.ch.Reply(ctx, messageID, text); err != nil {
+	if err := ch.Reply(ctx, messageID, text); err != nil {
 		slog.Error(fmt.Sprintf("gateway: reply failed: %v", err), "message", messageID)
 	}
 }
@@ -572,19 +589,19 @@ func (g *Gateway) handleRetryAction(action feishu.CardAction) feishu.CardToast {
 	g.mu.Unlock()
 	go func() {
 		// Recall first so the failed card does not linger next to its replacement.
-		g.recall(current.cardID)
+		recall(g.channel(), current.cardID)
 		g.process(current.msg)
 	}()
 	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnRetryStarted)}
 }
 
-func (g *Gateway) recall(cardID string) {
-	if cardID == "" || g.ch == nil {
+func recall(ch Channel, cardID string) {
+	if cardID == "" || ch == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := g.ch.DeleteMessage(ctx, cardID); err != nil {
+	if err := ch.DeleteMessage(ctx, cardID); err != nil {
 		slog.Error(fmt.Sprintf("gateway: recall card failed: %v", err), "card", cardID)
 	}
 }
@@ -621,13 +638,13 @@ func newRequestID() string {
 	return hex.EncodeToString(b[:])
 }
 
-func (g *Gateway) ack(messageID string) string {
-	if g.ch == nil || messageID == "" {
+func ack(ch Channel, messageID string) string {
+	if ch == nil || messageID == "" {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	id, err := g.ch.AddReaction(ctx, messageID, thinkingEmoji)
+	id, err := ch.AddReaction(ctx, messageID, thinkingEmoji)
 	if err != nil {
 		slog.Error(fmt.Sprintf("gateway: ack reaction failed: %v", err), "message", messageID)
 		return ""
@@ -635,13 +652,13 @@ func (g *Gateway) ack(messageID string) string {
 	return id
 }
 
-func (g *Gateway) unack(messageID, reactionID string) {
-	if reactionID == "" || g.ch == nil {
+func unack(ch Channel, messageID, reactionID string) {
+	if reactionID == "" || ch == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := g.ch.RemoveReaction(ctx, messageID, reactionID); err != nil {
+	if err := ch.RemoveReaction(ctx, messageID, reactionID); err != nil {
 		slog.Error(fmt.Sprintf("gateway: clear reaction failed: %v", err), "message", messageID)
 	}
 }
