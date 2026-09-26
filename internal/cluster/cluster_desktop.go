@@ -395,6 +395,7 @@ func (p *Peer) applicationJSON(ctx context.Context, method, endpoint string, inp
 		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+p.UIToken)
+	askIn(ctx, request.Header)
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

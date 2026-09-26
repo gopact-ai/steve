@@ -676,6 +676,7 @@ func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, pr
 		request.Out.Header.Del("Origin")
 		request.Out.Header.Set("Authorization", "Bearer "+token)
 		request.Out.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(epoch, 10))
+		askIn(request.In.Context(), request.Out.Header)
 	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
 		http.Error(w, p.text.For(r.Context()).T(i18n.ClusterCoordinatorUnavailable), http.StatusServiceUnavailable)
 	}, ModifyResponse: func(response *http.Response) error {
@@ -686,6 +687,15 @@ func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, pr
 		return nil
 	}}
 	proxy.ServeHTTP(w, r)
+}
+
+// askIn names, on a request made for someone, the language this node
+// chose for them, so whoever answers says it in that language. A request
+// made for no one is left as it is.
+func askIn(ctx context.Context, header http.Header) {
+	if locale := i18n.ContextLocale(ctx); locale != "" {
+		header.Set("Accept-Language", string(locale))
+	}
 }
 
 func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *url.URL, error) {

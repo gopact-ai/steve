@@ -816,10 +816,7 @@ func (p *Peer) peerJSON(ctx context.Context, member coordination.Member, method,
 	}
 	request.Header.Set("Authorization", "Bearer "+p.OwnerToken)
 	request.Header.Set("Content-Type", "application/json")
-	if locale := i18n.ContextLocale(ctx); locale != "" {
-		// Asked on someone's behalf: the answer is theirs to read.
-		request.Header.Set("Accept-Language", string(locale))
-	}
+	askIn(ctx, request.Header)
 	response, err := (&http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
 	if err != nil {
 		return err
