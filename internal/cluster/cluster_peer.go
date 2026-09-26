@@ -30,6 +30,7 @@ import (
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/httpdrain"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	webassets "github.com/gopact-ai/steve/internal/readmodel/web"
@@ -99,8 +100,8 @@ type Peer struct {
 	OwnerToken     string
 	UIToken        string
 	UiURL          string
-	peerServer     *http.Server
-	uiServer       *http.Server
+	peerServer     *httpdrain.Server
+	uiServer       *httpdrain.Server
 	localTransport *http.Transport
 	Mu             sync.RWMutex
 	Application    *PeerApplicationEndpoint
@@ -317,8 +318,10 @@ func (p *Peer) startPeerServers(runtime *Runtime, peerListener, uiListener net.L
 	mux.HandleFunc("/cluster/network/check", p.serveNetworkCheck)
 	mux.HandleFunc("/cluster/enrollment/", p.servePeerEnrollment)
 	mux.HandleFunc(clusterContentPath, p.serveContent)
-	p.peerServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, TLSConfig: serverTLS, BaseContext: func(net.Listener) context.Context { return p.ctx }}
-	p.uiServer = &http.Server{Handler: http.HandlerFunc(p.serveUI), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return p.ctx }}
+	// Close waits for their handlers, which run under p.ctx, before it
+	// closes what they use.
+	p.peerServer = httpdrain.New(&http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, TLSConfig: serverTLS, BaseContext: func(net.Listener) context.Context { return p.ctx }})
+	p.uiServer = httpdrain.New(&http.Server{Handler: http.HandlerFunc(p.serveUI), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return p.ctx }})
 	go p.serve(p.peerServer, tls.NewListener(peerListener, serverTLS))
 	go p.serve(p.uiServer, uiListener)
 	return nil
@@ -341,8 +344,8 @@ func (p *Peer) watchRuntime(runtime *Runtime) {
 	}
 }
 
-func (p *Peer) serve(server *http.Server, listener net.Listener) {
-	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+func (p *Peer) serve(server *httpdrain.Server, listener net.Listener) {
+	if err := server.Serve(listener); err != nil {
 		select {
 		case p.Errors <- err:
 		default:
