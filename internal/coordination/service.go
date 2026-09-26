@@ -42,11 +42,15 @@ type Service struct {
 	snapshotMu      sync.Mutex
 	pendingSnapshot *snapshotRequest
 	closed          atomic.Bool
-	closeOnce       sync.Once
-	closeErr        error
-	ctx             context.Context
-	cancel          context.CancelFunc
-	workers         sync.WaitGroup
+	// established is the latest term in which a barrier of this node's
+	// completed while it led consensus: from then on its commit index
+	// covers every entry committed before that term. See ReadIndex.
+	established atomic.Uint64
+	closeOnce   sync.Once
+	closeErr    error
+	ctx         context.Context
+	cancel      context.CancelFunc
+	workers     sync.WaitGroup
 }
 
 // addressTransport keeps RPC source addresses consistent with live listener
@@ -425,7 +429,59 @@ func (s *Service) barrier(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
 	defer cancel()
-	return s.wait(ctx, s.raft.Barrier(s.config.ApplyTimeout))
+	term := s.raft.CurrentTerm()
+	if err := s.wait(ctx, s.raft.Barrier(s.config.ApplyTimeout)); err != nil {
+		return err
+	}
+	if s.raft.CurrentTerm() == term {
+		s.established.Store(term)
+	}
+	return nil
+}
+
+// ReadIndex returns, once a majority confirms that this node still leads
+// consensus, an index at or beyond every entry committed before the call:
+// a replica that has applied its log up to that index holds everything a
+// quorum read would have returned. Unlike ReadState it appends nothing to
+// the log, except for one barrier when this node has not yet completed one
+// in its current term, since until an entry of its own term commits a new
+// leader's commit index may miss entries its predecessor committed. It
+// fails with ErrNotLeader on a node that does not lead consensus.
+//
+// Raft counts toward the confirmation a follower's answer to a heartbeat
+// already in flight when it was asked, so the majority it relies on may
+// be up to one heartbeat old: should another leader commit an entry in
+// that interval, the index may miss it. A caller that asks again later
+// finds it then.
+func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
+	if s.closed.Load() {
+		return 0, ErrUnavailable
+	}
+	if !s.fsm.healthy() {
+		return 0, ErrApplication
+	}
+	if s.raft.State() != raft.Leader {
+		return 0, fmt.Errorf("%w: leader is %s", ErrNotLeader, s.Status().LeaderID)
+	}
+	term := s.raft.CurrentTerm()
+	if s.established.Load() != term {
+		if err := s.barrier(ctx); err != nil {
+			return 0, err
+		}
+		if s.established.Load() != term {
+			return 0, fmt.Errorf("%w: leadership changed while it was being established", ErrNotLeader)
+		}
+	}
+	index := s.raft.CommitIndex()
+	ctx, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	defer cancel()
+	if err := s.wait(ctx, s.raft.VerifyLeader()); err != nil {
+		return 0, err
+	}
+	if s.raft.CurrentTerm() != term {
+		return 0, fmt.Errorf("%w: leadership changed while it was being confirmed", ErrNotLeader)
+	}
+	return index, nil
 }
 
 // fingerprint identifies a command's input so a reused command ID with

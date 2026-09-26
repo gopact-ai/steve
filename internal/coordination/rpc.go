@@ -52,7 +52,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if action == "status" || action == "state" {
+	if action == "status" || action == "state" || action == "readindex" {
 		h.serveRead(w, r, action)
 		return
 	}
@@ -177,8 +177,18 @@ func (h *rpcHandler) serveRead(w http.ResponseWriter, r *http.Request, action st
 		json.NewEncoder(w).Encode(h.service.Status())
 		return
 	}
+	if action == "readindex" {
+		index, err := h.service.ReadIndex(r.Context())
+		h.reply(w, readIndexReply{Index: index}, err)
+		return
+	}
 	state, err := h.service.ReadState(r.Context())
 	h.reply(w, state, err)
+}
+
+// readIndexReply answers a read index request; see Service.ReadIndex.
+type readIndexReply struct {
+	Index uint64 `json:"index"`
 }
 
 func (h *rpcHandler) decodeCommand(w http.ResponseWriter, r *http.Request, target any) bool {
