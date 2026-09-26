@@ -49,6 +49,9 @@ type ServerConfig struct {
 	// operations, and loopback keeps out other machines, not other local
 	// users or processes.
 	Token string
+	// Text is the Hub's catalog: a request whose Accept-Language names no
+	// language Steve speaks is answered in its language.
+	Text i18n.Catalog
 }
 
 // Server exposes the snapshot, the change stream and the dashboard.

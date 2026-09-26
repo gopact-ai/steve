@@ -35,3 +35,15 @@ func LocaleFromHeader(header string) Locale {
 	}
 	return ""
 }
+
+// For is c in the language ctx carries, and c itself when ctx carries
+// none: whoever holds the Hub's catalog answers a person who named no
+// language in the Hub's.
+func (c Catalog) For(ctx context.Context) Catalog {
+	return c
+}
+
+// FromContext is the catalog in the language ctx carries. Every entry — a
+// console request, a turn, an agent tool call, startup and doctor — puts
+// one there, the Hub's when the person named none.
+func FromContext(ctx context.Context) Catalog { return Catalog{}.For(ctx) }
