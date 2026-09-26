@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -114,6 +115,12 @@ type world struct {
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
+	return newWorldWith(t, localNodes)
+}
+
+// newWorldWith is newWorld whose artifact operations run on nodes.
+func newWorldWith(t *testing.T, nodes func(artifact.LocalNodes) artifact.Nodes) *world {
+	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex":   {Harness: "mock", Default: true},
 		"builder": {Harness: "mock", Node: "node-a"},
@@ -142,7 +149,7 @@ func newWorld(t *testing.T) *world {
 		t.Fatal(err)
 	}
 	sessions := &fakeSessions{}
-	art, att, home := stores(t)
+	art, att, home := storesWith(t, nodes)
 	service := New(tasks, r, sessions, capability.NewAssembler(nil), art, "hub")
 	// What the owner is told once a child cannot be joined is the subject
 	// of these tests; the quiet stretch before that has its own test.
@@ -414,6 +421,13 @@ func TestStartAndAwaitOutliveTheRequest(t *testing.T) {
 // whose node side runs on this machine.
 func stores(t *testing.T) (*artifact.Store, *attempt.Service, string) {
 	t.Helper()
+	return storesWith(t, localNodes)
+}
+
+func localNodes(n artifact.LocalNodes) artifact.Nodes { return n }
+
+func storesWith(t *testing.T, nodes func(artifact.LocalNodes) artifact.Nodes) (*artifact.Store, *attempt.Service, string) {
+	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -424,7 +438,7 @@ func stores(t *testing.T) (*artifact.Store, *attempt.Service, string) {
 	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Home: project.Home{Path: home}}}); err != nil {
 		t.Fatal(err)
 	}
-	return artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}), attempt.New(book), home
+	return artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, nodes(artifact.LocalNodes{Dir: t.TempDir()})), attempt.New(book), home
 }
 
 // A child is cut for silence, not for taking long: one that keeps
@@ -472,6 +486,71 @@ func TestAChildIsCutForSilenceNotForWork(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "deadline") {
 		t.Fatalf("err = %v, want the idle deadline", err)
+	}
+}
+
+// hangingSnapshot takes a node's snapshot only once the context that asked
+// for it ends: the child has answered, and taking its result hangs.
+type hangingSnapshot struct {
+	artifact.LocalNodes
+	reached chan struct{}
+	once    sync.Once
+}
+
+func (h *hangingSnapshot) Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
+	if req.Op == ops.Snapshot {
+		h.once.Do(func() { close(h.reached) })
+		<-ctx.Done()
+		return ops.Result{}, ctx.Err()
+	}
+	return h.LocalNodes.Artifact(ctx, node, req)
+}
+
+// What follows a child's answer — taking its result — is bounded by the
+// child's silence, as it was while the silence clock timed it: a result
+// that hangs fails the child within about one silence, instead of keeping
+// it running for good.
+func TestAChildWhoseResultHangsFailsWithinItsSilence(t *testing.T) {
+	hang := &hangingSnapshot{reached: make(chan struct{})}
+	w := newWorldWith(t, func(n artifact.LocalNodes) artifact.Nodes {
+		hang.LocalNodes = n
+		return hang
+	})
+	w.running(t, "codex")
+	// Room for the setup under the race detector, as in the test above;
+	// the answer comes at once.
+	const silence = 3 * time.Second
+	w.service.MaxSilence = silence
+
+	type ended struct {
+		res agentmcp.DelegateResult
+		err error
+	}
+	done := make(chan ended, 1)
+	go func() {
+		res, err := w.service.Delegate(t.Context(), "chat", "codex", agentmcp.DelegateRequest{Goal: "build it", Requires: []string{"gpu"}})
+		done <- ended{res, err}
+	}()
+	select {
+	case <-hang.reached:
+	case got := <-done:
+		t.Fatalf("the child ended before its result was taken: res=%+v err=%v", got.res, got.err)
+	}
+	var got ended
+	select {
+	case got = <-done:
+	case <-time.After(3 * silence):
+		t.Fatal("the child still runs on a result that hangs")
+	}
+	if got.err == nil || got.res.State != "failed" || !errors.Is(got.err, context.DeadlineExceeded) {
+		t.Fatalf("res=%+v err=%v, want a failed child cut at the deadline", got.res, got.err)
+	}
+	if child, ok := w.tasks.Get(got.res.TaskID); !ok || child.State != task.StateFailed {
+		t.Fatalf("child task = %+v", child)
+	}
+	records, err := w.attempts.ForTask(context.Background(), got.res.TaskID)
+	if err != nil || len(records) != 1 || records[0].State != attempt.Failed || records[0].Unsettled {
+		t.Fatalf("attempts = %+v err=%v, want one that failed", records, err)
 	}
 }
 

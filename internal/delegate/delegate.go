@@ -767,8 +767,12 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Arm: d.arm, Started: d.started, Finish: d.finish, Failed: d.failed, Wrap: d.wrap,
 		// A hub session's close decides whether its stop is confirmed; a
 		// node-owned session this process stops observing is the node's,
-		// and stays recoverable unless the run itself was cancelled.
-		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantinesUnlessCancelled, CancelDetaches: true},
+		// and stays recoverable unless the run itself was cancelled. Within
+		// the run, what follows the answer — publishing it, the terminal
+		// transition — is bounded by one silence; cleanup is bounded by
+		// lifecycle.CleanupTimeout, and landing the result for the parent,
+		// after the run returns, by the silence clock again.
+		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantinesUnlessCancelled, CancelDetaches: true, SettledTimeout: silence},
 	})
 	return d.settle(ctx, run, err)
 }

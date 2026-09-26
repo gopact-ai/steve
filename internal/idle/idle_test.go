@@ -193,3 +193,74 @@ func TestExpiredIsOnlyTheSilenceRunningOut(t *testing.T) {
 		t.Fatal("a parent deadline, a stop or no clock read as silence")
 	}
 }
+
+// A context derived from a clock before it ended has ended, for the
+// clock's reason, by the time anyone can see that the clock has: what is
+// read on it after the clock ran out or was stopped is not read on a
+// context still ending. The contexts are derived while the clock is held,
+// so they are derived before its own timer can run it out.
+func TestDerivedContextsEndWithTheClock(t *testing.T) {
+	for run := 0; run < 100; run++ {
+		silent, stop, _ := WithTimeout(context.Background(), time.Millisecond)
+		release := Hold(silent)
+		derived, cancel := context.WithCancel(silent)
+		bounded, cancelBounded := context.WithTimeout(silent, time.Hour)
+		release()
+		<-silent.Done()
+		if !Expired(derived) || !Expired(bounded) || !errors.Is(derived.Err(), context.DeadlineExceeded) {
+			t.Fatalf("run %d: the clock ran out; derived err=%v cause=%v, bounded cause=%v", run, derived.Err(), context.Cause(derived), context.Cause(bounded))
+		}
+		stop()
+		cancel()
+		cancelBounded()
+
+		stopped, stopNow, _ := WithTimeout(context.Background(), time.Hour)
+		derived, cancel = context.WithCancel(stopped)
+		stopNow()
+		if !errors.Is(context.Cause(derived), context.Canceled) {
+			t.Fatalf("run %d: the clock was stopped; derived cause=%v", run, context.Cause(derived))
+		}
+		cancel()
+	}
+}
+
+// A clock whose parent clock was stopped ends for that reason, even when its
+// own silence runs out before it has heard: the parent's end is not silence.
+func TestNestedClockEndsForItsParentsReason(t *testing.T) {
+	for run := 0; run < 100; run++ {
+		outer, stopOuter, _ := WithTimeout(context.Background(), time.Hour)
+		inner, stopInner, _ := WithTimeout(outer, time.Hour)
+		stopOuter()
+		runOut(inner)
+		if Expired(inner) || !errors.Is(inner.Err(), context.Canceled) {
+			t.Fatalf("run %d: parent stopped; inner err=%v cause=%v", run, inner.Err(), context.Cause(inner))
+		}
+		stopInner()
+	}
+}
+
+// runOut does what the clock's timer does when its silence runs out.
+func runOut(ctx Context) {
+	c := ctx.(*idleContext)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.finishLocked(context.DeadlineExceeded, errSilent)
+}
+
+// A clock whose parent was cancelled for a reason of its own ends for that
+// reason: the clock hears of the parent the moment its Done closes, before
+// the parent has cancelled what hangs off it, and must not end on a plain
+// cancel of its own in between.
+func TestClockEndsForItsCancelledParentsCause(t *testing.T) {
+	reason := errors.New("the parent's own reason")
+	for run := 0; run < 5000; run++ {
+		parent, cancel := context.WithCancelCause(context.Background())
+		clock, stop, _ := WithTimeout(parent, time.Hour)
+		cancel(reason)
+		<-clock.Done()
+		if context.Cause(clock) != reason || clock.Err() != context.Canceled {
+			t.Fatalf("run %d: parent cancelled; clock err=%v cause=%v", run, clock.Err(), context.Cause(clock))
+		}
+		stop()
+	}
+}
