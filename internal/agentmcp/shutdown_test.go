@@ -165,3 +165,49 @@ func TestStartReturnsOnlyAfterInFlightToolCallsFinish(t *testing.T) {
 		t.Fatalf("Start returned while a tool call was running (early=%v): %d write(s) kept, %d written after the store closed", returnedEarly, writes, lost)
 	}
 }
+
+// A tool call that would outlast the grace period has its request
+// cancelled, and Start still waits for it to return before it does.
+func TestStartCancelsToolCallsThatOutlastTheGracePeriod(t *testing.T) {
+	s, err := New(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.grace = 50 * time.Millisecond
+	store := &closingStore{}
+	m := newHeldMemorizer(store)
+	t.Cleanup(func() {
+		select {
+		case <-m.release:
+		default:
+			close(m.release)
+		}
+	})
+	s.SetMemorizer(m)
+	register(s, "oc_a", "builder", "tok-a", "om_1")
+	cancel, stopped := serveUntilStoreCloses(t, s, store)
+	answered := make(chan error, 1)
+	go func() {
+		answered <- postToolCall(s.URL(), "tok-a", "steve_remember", map[string]any{"scope": "global", "text": "likes go"})
+	}()
+	waitEntered(t, m)
+
+	cancel()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Errorf("Start: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start did not return after cancelling the stuck call")
+	}
+	if writes, lost := store.counts(); writes != 1 || lost != 0 {
+		t.Fatalf("stuck call: %d write(s) kept, %d written after the store closed", writes, lost)
+	}
+	// The cut connection is the caller's to see; it only must not hang.
+	select {
+	case <-answered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("caller of the cancelled call never got an answer")
+	}
+}
