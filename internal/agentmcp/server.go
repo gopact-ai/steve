@@ -794,6 +794,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 	if err := json.Unmarshal(params, &call); err != nil {
 		return toolError("bad tools/call params")
 	}
+	// What the services behind a tool say back is in the server's language.
+	ctx = i18n.WithLocale(ctx, s.text.Locale())
 	var out string
 	var err error
 	switch call.Name {

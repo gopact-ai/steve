@@ -2,12 +2,14 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
@@ -83,34 +85,34 @@ func (b sshNodeBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		}
 	}
 	template := sshconnect.Template{Steps: []sshconnect.Step{}, Effects: []string{
-		"登记这台机器的节点名称、服务地址和数据等级",
-		"通过 SSH 上传并校验节点安装包，写入仅当前账号可读的 ~/steve-bin/node.json",
-		"创建 ~/steve-work，启动节点后台服务，日志保存在 ~/steve-node.log",
-		"使用已有节点协议验证协调节点能否直接连接；SSH 连接不承担常驻隧道",
+		textFor(ctx).T(i18n.AdminSSHEffectRegister),
+		textFor(ctx).T(i18n.AdminSSHEffectUpload),
+		textFor(ctx).T(i18n.AdminSSHEffectStart),
+		textFor(ctx).T(i18n.AdminSSHEffectVerify),
 	}}
 	blocked := func(id, message, suggestion string) {
 		template.Steps = append(template.Steps, sshconnect.Step{ID: id, Status: "blocked", Message: message, Suggestion: suggestion})
 	}
 	if exists || req.Name == a.NodeName {
-		blocked("node_name", "这个节点名称已被使用", "使用其他名称，已有节点通过其管理入口调整")
+		blocked("node_name", textFor(ctx).T(i18n.AdminSSHNameTaken), textFor(ctx).T(i18n.AdminSSHNameTakenFix))
 	}
 	if binary == "" {
-		blocked("binary", "尚未配置可验证的节点安装包", "提供与目标平台匹配的 steve-node，并设置 gateway.node_binary")
+		blocked("binary", textFor(ctx).T(i18n.AdminSSHNoBinary), textFor(ctx).T(i18n.AdminSSHNoBinaryFix))
 		return template, nodebootstrap.Spec{}, nil
 	}
 	metadata, err := nodebootstrap.InspectBinary(binary)
 	if err != nil {
-		blocked("binary", err.Error(), "提供 Linux 或 macOS 的 amd64/arm64 节点安装包")
+		blocked("binary", err.Error(), textFor(ctx).T(i18n.AdminSSHBinaryUnsupportedFix))
 		return template, nodebootstrap.Spec{}, nil
 	}
 	template.Binary, template.BinaryPath = &metadata, binary
 	if metadata.OS != check.OS || metadata.Arch != check.Arch {
-		blocked("binary", "节点安装包平台为 "+metadata.OS+"/"+metadata.Arch+"，与目标机器不匹配", "提供 "+check.OS+"/"+check.Arch+" 的 steve-node 安装包")
+		blocked("binary", textFor(ctx).T(i18n.AdminSSHBinaryMismatch, metadata.OS+"/"+metadata.Arch), textFor(ctx).T(i18n.AdminSSHBinaryMismatchFix, check.OS+"/"+check.Arch))
 	} else {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "ready", Message: "安装包平台已匹配，SHA-256: " + metadata.SHA256})
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "ready", Message: textFor(ctx).T(i18n.AdminSSHBinaryMatched, metadata.SHA256)})
 	}
 	if !check.HasTool("sha256sum") && !check.HasTool("shasum") {
-		blocked("tool_checksum", "远端缺少 SHA-256 校验工具", "安装 sha256sum 或 shasum 后重新检查")
+		blocked("tool_checksum", textFor(ctx).T(i18n.AdminSSHNoChecksum), textFor(ctx).T(i18n.AdminSSHNoChecksumFix))
 	}
 	_, port, _ := net.SplitHostPort(req.Addr)
 	spec := nodebootstrap.Spec{Name: req.Name, Port: port, Token: sshconnect.PreviewToken, Harnesses: map[string]nodebootstrap.Harness{},
@@ -118,10 +120,10 @@ func (b sshNodeBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		OS:       metadata.OS, Arch: metadata.Arch, SHA256: metadata.SHA256}
 	script, err := nodebootstrap.Build(spec)
 	if err != nil {
-		return template, nodebootstrap.Spec{}, fmt.Errorf("无法生成节点安装脚本：%w", err)
+		return template, nodebootstrap.Spec{}, fmt.Errorf(textFor(ctx).T(i18n.AdminSSHScriptFailed), err)
 	}
 	template.Script = script
-	template.Steps = append(template.Steps, sshconnect.Step{ID: "node_address", Status: "ready", Message: "节点服务将使用 " + req.Addr, Suggestion: "安装后将实际验证此地址；请确保协调节点与其他节点可以直接访问"})
+	template.Steps = append(template.Steps, sshconnect.Step{ID: "node_address", Status: "ready", Message: textFor(ctx).T(i18n.AdminSSHNodeAddress, req.Addr), Suggestion: textFor(ctx).T(i18n.AdminSSHNodeAddressFix)})
 	return template, spec, nil
 }
 
@@ -147,7 +149,7 @@ func (b sshNodeBackend) Register(ctx context.Context, req sshconnect.InstallRequ
 
 func (b sshNodeBackend) Verify(ctx context.Context, name string) error {
 	if b.admin.Nodes == nil {
-		return fmt.Errorf("节点注册服务不可用")
+		return errors.New(textFor(ctx).T(i18n.AdminNodeRegistrationOff))
 	}
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()

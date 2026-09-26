@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -93,13 +94,13 @@ func (f FleetTools) AddNode(ctx context.Context, name, addr, level, hubURL strin
 		f.Admin.Mu.Unlock()
 	}
 	if hubURL == "" {
-		return "", errors.New("需要 hub_url：那台机器怎么访问 hub 的控制台，如 http://10.0.0.1:7710")
+		return "", errors.New(textFor(ctx).T(i18n.AdminFleetHubURLNeeded))
 	}
 	res, err := f.Admin.AddNode(ctx, consoleapi.AddNodeRequest{Name: name, Addr: addr, Level: level, HubURL: hubURL})
 	if err != nil {
 		return "", err
 	}
-	text := fmt.Sprintf("机器 %s 已登记（%s）。在那台机器上以登录 shell 跑这一条，它会装好 steve-node 并连上来：\n\n%s", res.Name, addr, res.Command)
+	text := fmt.Sprintf(textFor(ctx).T(i18n.AdminFleetNodeAdded), res.Name, addr, res.Command)
 	if res.Note != "" {
 		text += "\n\n" + res.Note
 	}
@@ -113,7 +114,7 @@ func (f FleetTools) RemoveNode(ctx context.Context, name string) error {
 func (f FleetTools) RefreshNode(ctx context.Context, name string) (string, error) {
 	key := f.Admin.nodeKey(name)
 	if key == "" {
-		return "", errors.New("hub 自己不用刷新，它的申报是现算的")
+		return "", errors.New(textFor(ctx).T(i18n.AdminFleetHubNoRefresh))
 	}
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()

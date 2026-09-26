@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -15,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -62,7 +64,7 @@ func (a *Service) DesktopSetup(ctx context.Context, req consoleapi.DesktopSetupR
 		return consoleapi.DesktopStatus{}, err
 	}
 	if !desktop.IsManagedConfig(a.Path) {
-		return consoleapi.DesktopStatus{}, fmt.Errorf("新手引导仅在桌面 App 中提供")
+		return consoleapi.DesktopStatus{}, errors.New(textFor(ctx).T(i18n.AdminDesktopOnlySetup))
 	}
 	if err := desktop.SaveSetup(filepath.Dir(a.Path), desktop.SetupProgress{Step: req.Step, Done: req.Done}); err != nil {
 		return consoleapi.DesktopStatus{}, err
@@ -77,7 +79,7 @@ func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWo
 		return consoleapi.DesktopStatus{}, err
 	}
 	if !desktop.IsManagedConfig(a.Path) {
-		return consoleapi.DesktopStatus{}, fmt.Errorf("工作目录设置仅在桌面 App 中提供")
+		return consoleapi.DesktopStatus{}, errors.New(textFor(ctx).T(i18n.AdminDesktopOnlyWorkspace))
 	}
 	a.ConfigStore.rlock()
 	id := config.DefaultProjectID(a.cfg().Gateway.DefaultProject, a.cfg().Projects)
@@ -102,7 +104,7 @@ func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscov
 		return consoleapi.DesktopDiscovery{}, err
 	}
 	if !desktop.IsManagedConfig(a.Path) {
-		return consoleapi.DesktopDiscovery{}, fmt.Errorf("本机 Agent 发现仅在桌面 App 中提供")
+		return consoleapi.DesktopDiscovery{}, errors.New(textFor(ctx).T(i18n.AdminDesktopOnlyDiscover))
 	}
 	candidates := desktop.DiscoverAgents(desktop.DiscoveryOptions{})
 	offers := a.harnessOffers(ctx, "")
@@ -163,7 +165,7 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 		return consoleapi.DesktopStatus{}, err
 	}
 	if !desktop.IsManagedConfig(a.Path) {
-		return consoleapi.DesktopStatus{}, fmt.Errorf("本机 Agent 注册仅在桌面 App 中提供")
+		return consoleapi.DesktopStatus{}, errors.New(textFor(ctx).T(i18n.AdminDesktopOnlyEnroll))
 	}
 	requested := req.Agents
 	if len(requested) == 0 {
@@ -172,10 +174,10 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 		}
 	}
 	if len(requested) == 0 {
-		return consoleapi.DesktopStatus{}, fmt.Errorf("请选择要注册的本机 Agent")
+		return consoleapi.DesktopStatus{}, errors.New(textFor(ctx).T(i18n.AdminDesktopChooseAgent))
 	}
 	if a.Manager == nil || a.Catalog == nil {
-		return consoleapi.DesktopStatus{}, fmt.Errorf("本机 Agent 服务尚未就绪，请稍后重试")
+		return consoleapi.DesktopStatus{}, errors.New(textFor(ctx).T(i18n.AdminDesktopAgentsNotReady))
 	}
 	// Only identifiers cross the API. Re-discover paths on this machine so
 	// a stale selection or a client-supplied command cannot be registered.
@@ -189,7 +191,7 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	harnesses := maps.Clone(a.cfg().Harnesses)
 	statePath := a.cfg().Gateway.StatePath
 	a.ConfigStore.runlock()
-	plan, err := planDesktopAgents(requested, candidates, agents, harnesses)
+	plan, err := planDesktopAgents(textFor(ctx), requested, candidates, agents, harnesses)
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
@@ -223,7 +225,7 @@ type desktopAgentPlan struct {
 // planDesktopAgents validates the selection against what this machine
 // actually has, before anything is installed or saved. It reads the current
 // agents and tools; it does not change them.
-func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map[string]desktop.AgentCandidate, agents map[string]config.Agent, harnesses map[string]config.Harness) (desktopAgentPlan, error) {
+func planDesktopAgents(text i18n.Catalog, requested []consoleapi.DesktopEnrollAgent, candidates map[string]desktop.AgentCandidate, agents map[string]config.Agent, harnesses map[string]config.Harness) (desktopAgentPlan, error) {
 	plan := desktopAgentPlan{agents: map[string]config.Agent{}, harnesses: map[string]config.Harness{}}
 	seen := make(map[string]bool, len(requested))
 	taken := make(map[string]bool, len(requested))
@@ -235,20 +237,20 @@ func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map
 		seen[candidateID] = true
 		item, ok := candidates[candidateID]
 		if !ok {
-			return desktopAgentPlan{}, fmt.Errorf("不支持的本机 Agent %q，请刷新后重新选择", candidateID)
+			return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminDesktopUnsupportedAgent), candidateID)
 		}
 		name := strings.ToLower(strings.TrimSpace(want.AgentID))
 		if name == "" {
 			name = candidateID
 		}
 		if !NameShape.MatchString(name) {
-			return desktopAgentPlan{}, fmt.Errorf("Agent 名 %q 只能是小写字母、数字、点、下划线、连字符", name)
+			return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameInvalidQuoted), name)
 		}
 		if localHarnessRegistered(agents, item.Harness) {
 			continue
 		}
 		if _, exists := agents[name]; exists || taken[name] {
-			return desktopAgentPlan{}, fmt.Errorf("Agent 名称 %s 已被占用，请换一个名字", name)
+			return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameTakenRename), name)
 		}
 		taken[name] = true
 		registered, tool, err := desktop.Registration(item)
@@ -257,7 +259,7 @@ func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map
 		}
 		if configured, exists := harnesses[item.Harness]; exists {
 			if configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) {
-				return desktopAgentPlan{}, fmt.Errorf("%s 的现有工具配置与本次发现不同，请先在资源中检查配置", item.Name)
+				return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminDesktopHarnessDiffers), item.Name)
 			}
 		} else {
 			plan.harnesses[item.Harness] = tool
@@ -329,15 +331,15 @@ func (a *Service) prepareDesktopAgents(ctx context.Context, statePath string, se
 	// configuration lock. Existing requests and status reads remain usable.
 	stateDir := filepath.Dir(statePath)
 	if err := runtime.PrepareSelected(stateDir, selected); err != nil {
-		return fmt.Errorf("准备所选 Agent 运行环境：%w", err)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminDesktopPrepareEnv), err)
 	}
 	install := &config.Config{Gateway: config.Gateway{StatePath: statePath}, Harnesses: harnesses}
 	if err := configbuild.PrepareAdapters(ctx, install); err != nil {
-		return fmt.Errorf("安装所选 Agent 适配器：%w", err)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminDesktopInstallAdapter), err)
 	}
 	if a.LiveSkills != nil {
 		if err := a.LiveSkills.AddDests(runtime.SelectedSkillDests(stateDir, selected)...); err != nil {
-			return fmt.Errorf("准备所选 Agent skills：%w", err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminDesktopPrepareSkills), err)
 		}
 	}
 	return nil

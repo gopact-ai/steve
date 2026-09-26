@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -49,23 +50,23 @@ func (a *Service) SetNodeSettings(ctx context.Context, name string, set nodewire
 }
 
 // setNodeSettingsLocked is SetNodeSettings for the hub with a.mu held.
-func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
+func (a *Service) setNodeSettingsLocked(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
 	if set.Revision == "" || set.Revision != a.hubSettings().Revision {
 		return nodewire.Settings{}, nodewire.ErrSettingsRevisionConflict
 	}
 	set = nodewire.CloneSettings(set)
-	harnesses, err := a.hubHarnessSettings(set.Harnesses)
+	harnesses, err := a.hubHarnessSettings(textFor(ctx), set.Harnesses)
 	if err != nil {
 		return nodewire.Settings{}, err
 	}
-	servers, err := a.hubMCPSettings(set.MCPServers)
+	servers, err := a.hubMCPSettings(textFor(ctx), set.MCPServers)
 	if err != nil {
 		return nodewire.Settings{}, err
 	}
 
 	for _, d := range set.Declares {
 		if !strings.Contains(d, ":") {
-			return nodewire.Settings{}, fmt.Errorf("声明 %q 要写成 kind:id，如 network:office", d)
+			return nodewire.Settings{}, fmt.Errorf(textFor(ctx).T(i18n.AdminDeclarationForm), d)
 		}
 	}
 	var previous map[string]config.Harness
@@ -75,11 +76,11 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 		for id, ag := range c.Agents {
 			if ag.Node == "" {
 				if _, ok := harnesses[ag.Harness]; !ok {
-					return fmt.Errorf("Agent %s 还在用 AI 工具 %s，不能删", id, ag.Harness)
+					return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentUsesHarness), id, ag.Harness)
 				}
 				for _, srv := range ag.MCPServers {
 					if _, ok := servers[srv]; !ok {
-						return fmt.Errorf("Agent %s 还在用 MCP 服务器 %s，不能删", id, srv)
+						return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentUsesMCPServer), id, srv)
 					}
 				}
 			}
@@ -128,20 +129,20 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 	return a.hubSettings(), saveErr
 }
 
-func (a *Service) hubHarnessSettings(settings map[string]nodewire.HarnessSetting) (map[string]config.Harness, error) {
+func (a *Service) hubHarnessSettings(text i18n.Catalog, settings map[string]nodewire.HarnessSetting) (map[string]config.Harness, error) {
 	harnesses := make(map[string]config.Harness, len(settings))
 	for id, h := range settings {
 		if !NameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
-			return nil, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
+			return nil, fmt.Errorf(text.T(i18n.AdminHarnessInvalid), id)
 		}
 		a.ConfigStore.rlock()
 		item := a.cfg().Harnesses[id]
 		a.ConfigStore.runlock()
 		if h.Adapter != nil && *h.Adapter != item.Adapter {
-			return nil, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
+			return nil, fmt.Errorf(text.T(i18n.AdminHarnessAdapterRestart), id)
 		}
 		if item.Adapter != "" && h.Command != item.Command {
-			return nil, fmt.Errorf("%s 使用固定 adapter，不能直接更换生成的启动命令", id)
+			return nil, fmt.Errorf(text.T(i18n.AdminHarnessFixedAdapter), id)
 		}
 		item.Command, item.Args, item.ProcessDir = h.Command, h.Args, h.ProcessDir
 		if h.Env != nil {
@@ -167,7 +168,7 @@ func (a *Service) hubHarnessSettings(settings map[string]nodewire.HarnessSetting
 	return harnesses, nil
 }
 
-func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[string]config.MCPServer, error) {
+func (a *Service) hubMCPSettings(text i18n.Catalog, settings map[string]nodewire.MCPSetting) (map[string]config.MCPServer, error) {
 
 	servers := make(map[string]config.MCPServer, len(settings))
 	for id, m := range settings {
@@ -181,20 +182,20 @@ func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[s
 			m.Headers = old.Headers
 		}
 		if !NameShape.MatchString(strings.ToLower(id)) {
-			return nil, fmt.Errorf("MCP 服务器 %q 的名字不合法", id)
+			return nil, fmt.Errorf(text.T(i18n.AdminMCPServerNameInvalid), id)
 		}
 		switch m.Type {
 		case "", "stdio":
 			if strings.TrimSpace(m.Command) == "" {
-				return nil, fmt.Errorf("MCP 服务器 %q 需要启动命令", id)
+				return nil, fmt.Errorf(text.T(i18n.AdminMCPServerNeedsCommand), id)
 			}
 			m.Type = "stdio"
 		case "http", "sse":
 			if !strings.HasPrefix(m.URL, "http://") && !strings.HasPrefix(m.URL, "https://") {
-				return nil, fmt.Errorf("MCP 服务器 %q 需要 http(s) 地址", id)
+				return nil, fmt.Errorf(text.T(i18n.AdminMCPServerNeedsURL), id)
 			}
 		default:
-			return nil, fmt.Errorf("MCP 服务器 %q：不认识的类型 %q", id, m.Type)
+			return nil, fmt.Errorf(text.T(i18n.AdminMCPServerUnknownType), id, m.Type)
 		}
 		servers[id] = config.MCPServer{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
 	}
@@ -219,15 +220,15 @@ func (a *Service) hubSettings() nodewire.Settings {
 func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (consoleapi.AddNodeResult, error) {
 	name := strings.TrimSpace(req.Name)
 	if !NameShape.MatchString(name) {
-		return consoleapi.AddNodeResult{}, fmt.Errorf("机器名只能是小写字母、数字、点、下划线、连字符，如 node-c")
+		return consoleapi.AddNodeResult{}, errors.New(textFor(ctx).T(i18n.AdminNodeNameInvalid))
 	}
 	addr := strings.TrimSpace(req.Addr)
 	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return consoleapi.AddNodeResult{}, fmt.Errorf("地址要写成 ip:端口，如 10.0.0.5:7701")
+		return consoleapi.AddNodeResult{}, errors.New(textFor(ctx).T(i18n.AdminNodeAddressForm))
 	}
 	level := datalevel.Level(strings.TrimSpace(req.Level)).OrDefault()
 	if _, ok := map[datalevel.Level]bool{datalevel.Public: true, datalevel.Internal: true, datalevel.Restricted: true, datalevel.Sealed: true}[level]; !ok {
-		return consoleapi.AddNodeResult{}, fmt.Errorf("数据等级只能是 public / internal / restricted / sealed")
+		return consoleapi.AddNodeResult{}, errors.New(textFor(ctx).T(i18n.AdminNodeLevelInvalid))
 	}
 	var raw [24]byte
 	rand.Read(raw[:])
@@ -239,10 +240,10 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	var binary string
 	saveErr := a.updateConfig(ctx, func(c *config.Config) error {
 		if _, exists := c.Nodes[name]; exists {
-			return fmt.Errorf("机器 %s 已经存在", name)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeExists), name)
 		}
 		if name == a.NodeName {
-			return fmt.Errorf("%s 是 hub 自己", name)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeIsHub), name)
 		}
 		if c.Nodes == nil {
 			c.Nodes = map[string]config.Node{}
@@ -262,7 +263,7 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	out := consoleapi.AddNodeResult{Name: name, Token: token,
 		Command: fmt.Sprintf("curl -fsSL '%s/bootstrap/%s?token=%s' | bash -l", req.HubURL, name, token)}
 	if binary == "" {
-		out.Note = "协调节点尚未配置手动安装包。请先将 steve-node 放到目标机器的 ~/steve-bin/steve-node。如需改用 SSH 自动安装，请先移除此未接入的机器登记，再从“通过 SSH 接入”重新添加。"
+		out.Note = textFor(ctx).T(i18n.AdminNodeBinaryMissingNote)
 	}
 	return out, saveErr
 }
@@ -320,7 +321,7 @@ func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Co
 func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || name == a.NodeName || name == "hub" {
-		return fmt.Errorf("%q 是 hub 自己，不能移除", name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminHubNotRemovable), name)
 	}
 	// Placement checks and removal share the same administration boundary as
 	// agent/project updates; no new owner can arrive between check and delete.
@@ -329,23 +330,23 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	if a.Catalog != nil {
 		for _, ag := range a.Catalog.List() {
 			if ag.Node == name {
-				return fmt.Errorf("Agent %s 还在 %s 上；先把它移到别的机器或删掉", ag.ID, name)
+				return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentStillOnNode), ag.ID, name)
 			}
 		}
 	}
 	if a.Projects != nil {
 		list, err := a.Projects.List(ctx)
 		if err != nil {
-			return fmt.Errorf("检查机器 %s 的项目占用失败：%w", name, err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeProjectCheckFailed), name, err)
 		}
 		for _, p := range list {
 			for _, ws := range p.Workspaces() {
 				if ws.Node == name {
-					kind := "主目录"
+					still := i18n.AdminProjectHomeStillOn
 					if ws.Kind == project.KindCopy {
-						kind = "副本"
+						still = i18n.AdminProjectCopyStillOn
 					}
-					return fmt.Errorf("项目 %s 的%s还在 %s 上；先移除它", p.ID, kind, name)
+					return errors.New(textFor(ctx).T(still, p.ID, name))
 				}
 			}
 		}
@@ -354,14 +355,14 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	_, inConfig := a.cfg().Nodes[name]
 	a.ConfigStore.runlock()
 	if !inConfig {
-		return fmt.Errorf("没有叫 %q 的机器", name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminNoNode), name)
 	}
 	// Leaving the cluster can take a consensus round; readers of the
 	// configuration need not wait for it, the administration lock already
 	// keeps the machine from gaining new occupants meanwhile.
 	if a.Members != nil {
 		if err := a.Members.RemoveMember(ctx, name); err != nil {
-			return fmt.Errorf("机器 %s 尚未退出集群：%w", name, err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeNotLeft), name, err)
 		}
 	}
 	var levels map[string]datalevel.Level

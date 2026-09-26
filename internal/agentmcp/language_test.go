@@ -108,9 +108,33 @@ func TestToolTitlesAreCatalogEntries(t *testing.T) {
 	}
 }
 
-type removingFleeter struct{ Fleeter }
+type removingFleeter struct {
+	Fleeter
+	locale chan i18n.Locale
+}
 
-func (removingFleeter) RemoveNode(context.Context, string) error { return nil }
+func (f removingFleeter) RemoveNode(ctx context.Context, _ string) error {
+	if f.locale != nil {
+		f.locale <- i18n.ContextLocale(ctx)
+	}
+	return nil
+}
+
+// The services behind a tool are told the server's language, so what
+// they say back reaches the agent in it.
+func TestToolServicesHearTheServerLanguage(t *testing.T) {
+	s, _ := startServerIn(t, i18n.New(i18n.LocaleEN))
+	heard := make(chan i18n.Locale, 1)
+	s.SetFleeter(removingFleeter{locale: heard})
+	s.SetInformer(&taskInformer{})
+	s.Extras("chat", "agent", "token", "")
+	if out, bad := callTool(t, s.URL(), "token", "steve_node_remove", map[string]any{"name": "worker"}); bad {
+		t.Fatal(out)
+	}
+	if got := <-heard; got != i18n.LocaleEN {
+		t.Fatalf("fleet service heard locale %q, want en", got)
+	}
+}
 
 type fullMemorizer struct{ Memorizer }
 
