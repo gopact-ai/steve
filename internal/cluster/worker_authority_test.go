@@ -50,19 +50,34 @@ func openWorkerTunnel(t *testing.T, coordinator, worker *Peer) *nodewire.Mux {
 // non-nil raft wraps the listener of the member's inbound Raft connections.
 func joinNonvoter(t *testing.T, hub *Peer, raft func(net.Listener) net.Listener) *Peer {
 	t.Helper()
+	return joinNonvoterListening(t, hub, raft, nil)
+}
+
+// joinNonvoterListening is joinNonvoter that also wraps the listener of
+// the member's peer API, which worker tunnels reach, when peer is non-nil.
+func joinNonvoterListening(t *testing.T, hub *Peer, raft, peer func(net.Listener) net.Listener) *Peer {
+	t.Helper()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), hub)
 	var activations atomic.Int32
 	options.Activate = testPeerApplication(t, &activations)
-	if raft != nil {
-		var bound atomic.Bool
-		options.Listen = func(network, address string) (net.Listener, error) {
-			listener, err := net.Listen(network, address)
-			// The Raft listener is the first the peer binds.
-			if err != nil || !bound.CompareAndSwap(false, true) {
-				return listener, err
-			}
-			return raft(listener), nil
+	var bound atomic.Int32
+	options.Listen = func(network, address string) (net.Listener, error) {
+		listener, err := net.Listen(network, address)
+		if err != nil {
+			return listener, err
 		}
+		// The peer binds its Raft listener first and its peer API second.
+		switch bound.Add(1) {
+		case 1:
+			if raft != nil {
+				return raft(listener), nil
+			}
+		case 2:
+			if peer != nil {
+				return peer(listener), nil
+			}
+		}
+		return listener, nil
 	}
 	member := StartTestPeer(t, options)
 	if _, err := hub.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: member.Config.NodeID, Name: member.Config.Name, Address: member.Config.RaftAddress, APIAddress: member.Config.PeerURL, Voting: false}}); err != nil {
@@ -661,6 +676,106 @@ func TestWorkerTunnelsBelongToARunningGeneration(t *testing.T) {
 				t.Fatalf("a generation that is not running could dial a worker: %v, %v", runningErr, doneErr)
 			}
 		})
+	}
+}
+
+// acceptGate wraps a listener. Once armed it holds every connection it
+// accepts until released, and reports the first.
+type acceptGate struct {
+	net.Listener
+	armed     atomic.Bool
+	arrived   chan struct{}
+	arriving  sync.Once
+	hold      chan struct{}
+	releasing sync.Once
+}
+
+func newAcceptGate() *acceptGate {
+	return &acceptGate{arrived: make(chan struct{}), hold: make(chan struct{})}
+}
+
+func (g *acceptGate) release() { g.releasing.Do(func() { close(g.hold) }) }
+
+func (g *acceptGate) wrap(listener net.Listener) net.Listener {
+	g.Listener = listener
+	return g
+}
+
+func (g *acceptGate) Accept() (net.Conn, error) {
+	conn, err := g.Listener.Accept()
+	if err == nil && g.armed.Load() {
+		g.arriving.Do(func() { close(g.arrived) })
+		<-g.hold
+	}
+	return conn, err
+}
+
+// A business generation that ends while it dials a worker gets no tunnel:
+// the tunnel belongs to it, so the dial fails rather than hand the ended
+// generation a connection that is closed only afterwards.
+func TestWorkerDialOfAGenerationThatEndsMeanwhileOpensNoTunnel(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	start := testPeerApplication(t, &activations)
+	// The ended generation stops only when the test lets it, so no later
+	// one moves the writer generation on and the worker still admits the
+	// tunnel the dial asked for.
+	stopping := make(chan struct{})
+	var stopOnce sync.Once
+	letStop := func() { stopOnce.Do(func() { close(stopping) }) }
+	options.Activate = func(ctx context.Context, activation Activation, ready func(PeerApplicationEndpoint) error) (Deactivate, error) {
+		deactivate, err := start(ctx, activation, ready)
+		if err != nil {
+			return nil, err
+		}
+		return func(stop context.Context) error {
+			<-stopping
+			return deactivate(stop)
+		}, nil
+	}
+	hub := StartTestPeer(t, options)
+	t.Cleanup(letStop)
+	WaitPeerReady(t, hub)
+	gate := newAcceptGate()
+	member := joinNonvoterListening(t, hub, nil, gate.wrap)
+	t.Cleanup(gate.release)
+	WaitPeerReady(t, hub)
+	runtime := hub.Runtime.Load()
+	runtime.mu.Lock()
+	current := runtime.current
+	runtime.mu.Unlock()
+	type dialed struct {
+		connection net.Conn
+		err        error
+	}
+	result := make(chan dialed, 1)
+	gate.armed.Store(true)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		connection, err := hub.DialWorker(ctx, member.Config.NodeID)
+		result <- dialed{connection, err}
+	}()
+	select {
+	case <-gate.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the dial did not reach the worker's machine")
+	}
+	runtime.revoke(current, fmt.Errorf("%w: revoked by the test", coordination.ErrUnavailable))
+	gate.armed.Store(false)
+	gate.release()
+	var got dialed
+	select {
+	case got = <-result:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the dial did not return")
+	}
+	if got.err == nil {
+		got.connection.Close()
+		t.Fatal("a generation that ended while it dialed was handed a worker tunnel")
+	}
+	if !errors.Is(got.err, ErrInactive) {
+		t.Fatalf("the dial of a generation that ended meanwhile failed for another reason: %v", got.err)
 	}
 }
 
