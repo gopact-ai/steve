@@ -62,11 +62,23 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 		slog.Warn(fmt.Sprintf("steve: agent messaging disabled: %v", err))
 		gate = nil
 	} else {
-		// The port is bound from here on. Closing drains the tool calls in
-		// flight, so it is registered after the ledger and the services the
-		// tools reach, and runs before they close; it also gives the port
-		// back when a later assembly step fails before serving starts.
-		life.Defer(gate.Close)
+		// The port is bound from here on, so closing is registered now: a
+		// later assembly step that fails before serving starts still gets
+		// the port back.
+		//
+		// Closing drains the tool calls in flight, and those calls reach
+		// the console, the executions, the materials and the ledger. The
+		// gate must therefore close before any of them does, which is why
+		// this is registered after all of them; moving it earlier lets a
+		// call write into something already closed.
+		//
+		// The application is cancelled first. A requested stop has already
+		// done so, but an error exit, a failed assembly or a close without
+		// Run has not; without it, work a call started under the
+		// application's lifetime rather than its request would hold the
+		// drain until it finished on its own.
+		stop := boot.Stop()
+		life.Defer(func() { stop(); gate.Close() })
 		if environment != nil {
 			if err := gate.SetStore(newApplicationMCPStore(book), environment.Fail); err != nil {
 				return nil, fmt.Errorf("configure shared collaboration tools: %w", err)
