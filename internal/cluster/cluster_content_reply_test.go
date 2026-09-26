@@ -254,3 +254,52 @@ func TestContentPeerLogsWhyItRefusedOncePerCallerAndCode(t *testing.T) {
 		t.Fatalf("the missing credentials' refusal does not say who and why: %s", refusals[1])
 	}
 }
+
+// A repair that cannot check a placement for now — the committed state out
+// of reach — leaves the content for its next round: it neither declares the
+// placement blocked nor counts the copies it could not check as lost, and
+// it copies nothing.
+func TestContentRepairWaitsOutAPlacementItCouldNotCheck(t *testing.T) {
+	peers, active := contentPeers(t)
+	client, err := peers[0].ContentReplicator(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("placement checked next round")
+	ref := checkpoint.Reference(data)
+	manifest, err := client.Prepare(t.Context(), "workspace", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordRepairManifest(t, active.Ledger, manifest)
+	var observations []string
+	worker, err := peers[0].newContentRepair(active, func(kind, _, message string, _ map[string]string) {
+		observations = append(observations, kind+": "+message)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := &countedContentRepair{Replicator: worker.client}
+	worker.client = counted
+	unreachable := contentStateReader(func(context.Context) (coordination.State, error) {
+		return coordination.State{}, errors.New("leader out of reach")
+	})
+	peers[0].readContentState.Store(&unreachable)
+	t.Cleanup(func() { peers[0].readContentState.Store(nil) })
+
+	if live, err := worker.reachableDomains(t.Context(), manifest, map[string]bool{}); !errors.Is(err, contentreplica.ErrUnavailable) {
+		t.Fatalf("copies whose placement could not be checked: %d live, err=%v; want unavailable", live, err)
+	}
+	report, err := worker.sweep(t.Context())
+	if err != nil || report.Degraded != 1 || report.Skipped != 0 || counted.reads != 0 || counted.prepares != 0 {
+		t.Fatalf("repair without a placement check: %+v read=%d prepare=%d %v; want degraded, nothing copied", report, counted.reads, counted.prepares, err)
+	}
+	if strings.Contains(strings.Join(observations, "\n"), "content.placement_blocked") {
+		t.Fatalf("an unchecked placement was reported blocked: %q", observations)
+	}
+
+	peers[0].readContentState.Store(nil)
+	if report, err := worker.sweep(t.Context()); err != nil || report.Healthy != 1 {
+		t.Fatalf("repair once the placement can be checked: %+v %v", report, err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,9 +22,14 @@ type places struct {
 	scope   contentreplica.Scope
 	domains map[string]string
 	denied  map[string]bool
+	// unsure are the nodes whose placement cannot be checked for now.
+	unsure map[string]bool
 }
 
 func (p *places) CheckpointPlacement(_ context.Context, scope contentreplica.Scope, node string) (contentreplica.Placement, error) {
+	if p.unsure[node] {
+		return contentreplica.Placement{}, fmt.Errorf("%w: committed state out of reach", contentreplica.ErrUnavailable)
+	}
 	if scope != p.scope || p.denied[node] || p.domains[node] == "" || scope.Level == "sealed" && node != scope.HomeNodeID {
 		return contentreplica.Placement{}, contentreplica.ErrPlacement
 	}
@@ -55,7 +61,7 @@ func (r *transport) Get(ctx context.Context, node string, object contentreplica.
 
 func newCluster(t *testing.T, book *ledger.Ledger, level string, names ...string) (*places, *transport, func(string) *contentreplica.Client) {
 	t.Helper()
-	p := &places{scope: contentreplica.Scope{ProjectID: "p", Level: level, HomeNodeID: "a"}, domains: map[string]string{}, denied: map[string]bool{}}
+	p := &places{scope: contentreplica.Scope{ProjectID: "p", Level: level, HomeNodeID: "a"}, domains: map[string]string{}, denied: map[string]bool{}, unsure: map[string]bool{}}
 	r := &transport{book: book, stores: map[string]*contentreplica.Store{}, offline: map[string]bool{}}
 	for _, name := range names {
 		p.domains[name] = "machine-" + name
