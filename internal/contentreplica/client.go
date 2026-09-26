@@ -117,6 +117,10 @@ func (c *Client) prepare(ctx context.Context, project, kind, key, base string, r
 		} else {
 			receipt, err = c.cfg.Remote.Put(ctx, node, upload, source)
 		}
+		if errors.Is(err, ErrSuperseded) {
+			// Every other node would answer the same.
+			return Manifest{}, fmt.Errorf("content replica %s: %w", node, err)
+		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("content replica %s: %w", node, err))
 			continue
@@ -290,7 +294,11 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 		if err != nil || where.FailureDomain != receipt.FailureDomain {
 			continue
 		}
-		if err := try(receipt.NodeID); err != nil {
+		if err := try(receipt.NodeID); errors.Is(err, ErrSuperseded) {
+			// The caller is no longer the writer: every other node would
+			// answer the same, and no copy is known to be missing.
+			return Manifest{}, err
+		} else if err != nil {
 			failures = append(failures, err)
 			continue
 		}

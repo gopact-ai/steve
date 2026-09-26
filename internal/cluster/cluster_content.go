@@ -483,7 +483,7 @@ func contentReplyError(nodeID string, response *http.Response) error {
 	case "stale":
 		// The peer read the committed state after this generation did:
 		// this generation is no longer the one writing.
-		return fmt.Errorf("content replica %s: %w: %w", nodeID, ErrInactive, errContentStale)
+		return fmt.Errorf("content replica %s: %w: %w: %w", nodeID, ErrInactive, contentreplica.ErrSuperseded, errContentStale)
 	case "lagging":
 		return fmt.Errorf("content replica %s: %w", nodeID, errContentLagging)
 	case "unavailable":

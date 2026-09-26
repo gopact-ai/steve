@@ -142,7 +142,7 @@ func (w *contentRepairWorker) sweep(ctx context.Context) (contentRepairReport, e
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
-		if err != nil && (errors.Is(err, ErrInactive) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)) {
+		if generationEnded(err) {
 			return report, err
 		}
 		if err != nil && w.noticeSequence == beforeNotice {
@@ -154,6 +154,13 @@ func (w *contentRepairWorker) sweep(ctx context.Context) (contentRepairReport, e
 		}
 	}
 	return report, nil
+}
+
+// generationEnded says err is the end of the business generation a repair
+// belongs to — its own or as a peer answered it. Nothing is said about the
+// content: the repair stops, and the next generation checks it again.
+func generationEnded(err error) bool {
+	return errors.Is(err, ErrInactive) || errors.Is(err, contentreplica.ErrSuperseded) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)
 }
 
 func (w *contentRepairWorker) reachableDomains(ctx context.Context, manifest contentreplica.Manifest, cache map[string]bool) (int, error) {
@@ -210,6 +217,9 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 	id := manifest.ID
 	label := fmt.Sprintf("项目 %s 的内容 %s", manifest.Object.Scope.ProjectID, id[:12])
 	scope, err := w.client.CheckLocal(ctx, manifest.Object.Scope.ProjectID)
+	if generationEnded(err) {
+		return "degraded", err
+	}
 	if errors.Is(err, contentreplica.ErrUnavailable) {
 		w.notice(ctx, id, "degraded", label+uncheckedPlacement)
 		return "degraded", err
@@ -255,7 +265,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 	available, err := w.client.Read(ctx, manifest, file)
 	if err != nil {
 		switch {
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		case generationEnded(err), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return "degraded", err
 		case errors.Is(err, checkpoint.ErrQuota):
 			w.notice(ctx, id, "degraded", label+" 暂时无法在本机保存副本，请检查存储配额；已有副本记录保持不变。")
@@ -294,6 +304,9 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 			prepared, prepareErr = w.client.PrepareBundle(ctx, scope.ProjectID, manifest.Object.Key, manifest.Object.Base, manifest.Object.Blob, file)
 		} else {
 			prepared, prepareErr = w.client.Prepare(ctx, scope.ProjectID, manifest.Object.Kind, manifest.Object.Key, manifest.Object.Blob, file)
+		}
+		if generationEnded(prepareErr) {
+			return "degraded", prepareErr
 		}
 		if prepareErr != nil {
 			// Persist a newly recovered local receipt even when no second target
