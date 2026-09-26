@@ -386,10 +386,11 @@ func TestFarEndCarriesAConnectionThatArrivedBeforeItsSession(t *testing.T) {
 		t.Fatalf("the connection that arrived before the session never reached the hub (%v); the far end ended it with %v", err, dropped)
 	}
 	_ = stream.SetDeadline(time.Now().Add(3 * time.Second))
-	if got, err := bufio.NewReader(stream).ReadString('\n'); err != nil || got != "127.0.0.1:8\n" {
+	carried := bufio.NewReader(stream)
+	if got, err := carried.ReadString('\n'); err != nil || got != "127.0.0.1:8\n" {
 		t.Fatalf("the stream named %q: %v", got, err)
 	}
-	if got, err := bufio.NewReader(stream).ReadString('\n'); err != nil || got != "early\n" {
+	if got, err := carried.ReadString('\n'); err != nil || got != "early\n" {
 		t.Fatalf("the stream carried %q: %v", got, err)
 	}
 	if _, err := io.WriteString(stream, "carried\n"); err != nil {
