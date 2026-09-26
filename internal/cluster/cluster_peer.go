@@ -129,6 +129,10 @@ type Peer struct {
 	contentOnce       sync.Once
 	contentErr        error
 	contentOps        sync.WaitGroup
+	// readContentState, when set, stands in for the runtime's read of the
+	// committed state in content checks; tests use it to put a replica
+	// behind that state or to make the read fail.
+	readContentState atomic.Pointer[contentStateReader]
 	// duplexWarning reports once that the server's response writer cannot
 	// read a request while answering it; each proxied request would say so.
 	duplexWarning sync.Once

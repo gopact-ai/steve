@@ -38,13 +38,24 @@ type contentPlacementState struct {
 	project     project.Project
 }
 
+type contentStateReader func(context.Context) (coordination.State, error)
+
+// committedState is the coordination state a content check judges by, as
+// the runtime reads it through the consensus leader.
+func (p *Peer) committedState(ctx context.Context, runtime *Runtime) (coordination.State, error) {
+	if read := p.readContentState.Load(); read != nil {
+		return (*read)(ctx)
+	}
+	return runtime.ReadState(ctx)
+}
+
 func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlacementState, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil || projectID == "" {
 		return contentPlacementState{}, contentreplica.ErrPlacement
 	}
 	for {
-		state, err := runtime.ReadState(ctx)
+		state, err := p.committedState(ctx, runtime)
 		if err != nil {
 			return contentPlacementState{}, err
 		}
@@ -451,7 +462,7 @@ func (p *Peer) contentAuthority(r *http.Request) error {
 	if runtime == nil {
 		return ErrInactive
 	}
-	state, err := runtime.ReadState(r.Context())
+	state, err := p.committedState(r.Context(), runtime)
 	if err != nil {
 		return err
 	}

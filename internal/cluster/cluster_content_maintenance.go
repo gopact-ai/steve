@@ -64,7 +64,7 @@ func (p *Peer) collectContent(ctx context.Context) (checkpoint.RetentionGCResult
 		return checkpoint.RetentionGCResult{}, ErrInactive
 	}
 	for {
-		state, err := runtime.ReadState(ctx)
+		state, err := p.committedState(ctx, runtime)
 		if err != nil {
 			return checkpoint.RetentionGCResult{}, err
 		}
