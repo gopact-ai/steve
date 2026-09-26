@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,12 +37,16 @@ type Service struct {
 	// admissionMu serializes Join preparation with new-control capability
 	// checks and activation. Never acquire opMu while holding this lock.
 	admissionMu sync.Mutex
-	closed      atomic.Bool
-	closeOnce   sync.Once
-	closeErr    error
-	ctx         context.Context
-	cancel      context.CancelFunc
-	workers     sync.WaitGroup
+	// snapshotMu guards pendingSnapshot, the one Raft snapshot request this
+	// service has outstanding; see snapshot.
+	snapshotMu      sync.Mutex
+	pendingSnapshot *snapshotRequest
+	closed          atomic.Bool
+	closeOnce       sync.Once
+	closeErr        error
+	ctx             context.Context
+	cancel          context.CancelFunc
+	workers         sync.WaitGroup
 }
 
 // addressTransport keeps RPC source addresses consistent with live listener
@@ -261,7 +264,58 @@ func (s *Service) Snapshot(ctx context.Context) error {
 	if s.closed.Load() || !s.fsm.healthy() {
 		return ErrUnavailable
 	}
-	return s.wait(ctx, s.raft.Snapshot())
+	return s.snapshot(ctx, "of the replica")
+}
+
+// snapshotRequest is a Raft snapshot request and, once done is closed, its
+// result.
+type snapshotRequest struct {
+	done chan struct{}
+	err  error
+}
+
+// snapshot takes a Raft snapshot, waiting for it at most ApplyTimeout, and
+// names it by description if it gives up. Raft takes snapshots one at a time
+// on a single goroutine, and the FSM goroutine produces the application's
+// part, so a slow or held application snapshot holds every request queued
+// behind it. Raft.Snapshot itself blocks until that goroutine takes the
+// request, and neither it nor the future can be cancelled, so the request
+// runs on a goroutine of its own that ends when Raft resolves it: when the
+// snapshot finishes or fails, or when Raft shuts down before taking it.
+// Callers share the request outstanding instead of queueing another, so
+// however many give up, at most one such goroutine stays in the background.
+// A shared snapshot serves Join as well as a new one: what Join needs is that
+// a snapshot compacts the log prefix, whenever it was requested.
+func (s *Service) snapshot(ctx context.Context, description string) error {
+	s.snapshotMu.Lock()
+	request := s.pendingSnapshot
+	if request == nil {
+		request = &snapshotRequest{done: make(chan struct{})}
+		s.pendingSnapshot = request
+		go func() {
+			request.err = s.raft.Snapshot().Error()
+			s.snapshotMu.Lock()
+			s.pendingSnapshot = nil
+			s.snapshotMu.Unlock()
+			close(request.done)
+		}()
+	}
+	s.snapshotMu.Unlock()
+	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	defer cancel()
+	select {
+	case <-request.done:
+		return s.raftError(request.err)
+	case <-bounded.Done():
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: snapshot %s did not finish within %s; it may still finish later", ErrUnavailable, description, s.config.ApplyTimeout)
+	case <-s.ctx.Done():
+		return ErrUnavailable
+	case <-s.fsm.failed:
+		return ErrApplication
+	}
 }
 
 func (s *Service) Close() error {
@@ -289,9 +343,9 @@ func (s *Service) Close() error {
 func (s *Service) wait(ctx context.Context, future raft.Future) error {
 	result := make(chan error, 1)
 	go func() { result <- future.Error() }()
-	var err error
 	select {
-	case err = <-result:
+	case err := <-result:
+		return s.raftError(err)
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.ctx.Done():
@@ -299,6 +353,11 @@ func (s *Service) wait(ctx context.Context, future raft.Future) error {
 	case <-s.fsm.failed:
 		return ErrApplication
 	}
+}
+
+// raftError maps the error Raft resolved a future with to a coordination
+// error.
+func (s *Service) raftError(err error) error {
 	switch {
 	case err == nil:
 		return nil
@@ -313,7 +372,7 @@ func (s *Service) wait(ctx context.Context, future raft.Future) error {
 	}
 }
 
-// unclassifiedRaftError is a Raft error that wait could not map to a
+// unclassifiedRaftError is a Raft error that raftError could not map to a
 // coordination error because Raft reports it without a sentinel. It reads and
 // unwraps as the original error; a caller that knows what such an error means
 // for its request can recognize it with errors.As.
@@ -634,7 +693,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		return Result{}, err
 	}
 	if s.config.Application != nil {
-		if err := s.wait(ctx, s.raft.Snapshot()); err != nil && !errors.Is(err, raft.ErrNothingNewToSnapshot) {
+		if err := s.snapshot(ctx, "of the application baseline for "+request.Member.NodeID); err != nil && !errors.Is(err, raft.ErrNothingNewToSnapshot) {
 			return Result{}, err
 		}
 	}
@@ -681,73 +740,6 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		}
 	}
 	return s.submit(ctx, command{Kind: "join", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Member: request.Member})
-}
-
-func (s *Service) UpdateMemberAddress(ctx context.Context, request MemberAddressRequest) (Result, error) {
-	s.membershipMu.Lock()
-	defer s.membershipMu.Unlock()
-	if request.ID == "" || request.Actor == "" || request.NodeID == "" {
-		return Result{}, ErrInvalid
-	}
-	if host, port, err := net.SplitHostPort(request.Address); err != nil || host == "" || port == "" {
-		return Result{}, fmt.Errorf("%w: invalid member Raft address", ErrInvalid)
-	}
-	endpoint, err := url.Parse(request.APIAddress)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.User != nil || endpoint.Fragment != "" {
-		return Result{}, fmt.Errorf("%w: invalid member HTTPS address", ErrInvalid)
-	}
-	if err := s.barrier(ctx); err != nil {
-		return Result{}, err
-	}
-	fp := fingerprint("address", request)
-	if old, ok := s.fsm.lookup(request.ID, fp); ok {
-		return old.Result, old.err()
-	}
-	state := s.fsm.read()
-	member, ok := state.Members[request.NodeID]
-	if !ok {
-		return Result{}, ErrInvalid
-	}
-	member.Address = request.Address
-	member.APIAddress = request.APIAddress
-	if s.config.Probe == nil {
-		return Result{}, fmt.Errorf("%w: address verification is not configured", ErrNotReady)
-	}
-	progress, err := s.config.Probe(ctx, member)
-	if err != nil {
-		return Result{}, fmt.Errorf("%w: verifying new endpoint: %v", ErrNotReady, err)
-	}
-	if progress.ClusterID != state.ClusterID || progress.NodeID != member.NodeID || progress.AppliedIndex < state.AppliedIndex || progress.AppVersion < state.AppVersion || progress.FailureDomain != member.FailureDomain || progress.StorageLevel != member.StorageLevel {
-		return Result{}, fmt.Errorf("%w: new member endpoint is not a synchronized replica", ErrNotReady)
-	}
-	if _, err := s.submit(ctx, command{Kind: "address_prepare", ID: request.ID + "/prepare", Actor: request.Actor, Fingerprint: fp, Address: request}); err != nil {
-		return Result{}, err
-	}
-	prepared := s.fsm.read()
-	if prepared.Removing[request.NodeID] || prepared.PendingAddresses[request.NodeID] != request {
-		return Result{}, ErrConflict
-	}
-	if s.config.ValidateAddress != nil {
-		if err := s.config.ValidateAddress(ctx, member); err != nil {
-			return Result{}, fmt.Errorf("%w: member address network verification: %v", ErrNotReady, err)
-		}
-	}
-	configuration := s.raft.GetConfiguration()
-	if err := s.wait(ctx, configuration); err != nil {
-		return Result{}, err
-	}
-	var change raft.IndexFuture
-	description := "move voter " + request.NodeID + " to " + request.Address
-	if prepared.Voters[request.NodeID] != "" {
-		change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
-	} else {
-		description = "move nonvoter " + request.NodeID + " to " + request.Address
-		change = s.raft.AddNonvoter(raft.ServerID(request.NodeID), raft.ServerAddress(request.Address), configuration.Index(), s.config.ApplyTimeout)
-	}
-	if err := s.waitConfigurationChange(ctx, description, change); err != nil {
-		return Result{}, err
-	}
-	return s.submit(ctx, command{Kind: "address", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Address: request})
 }
 
 func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, error) {
