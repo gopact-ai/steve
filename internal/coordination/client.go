@@ -397,6 +397,12 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 	if int64(len(data)) > c.config.MaxResponseBytes {
 		return nil, fmt.Errorf("coordination: peer %s response exceeds %d bytes", member.NodeID, c.config.MaxResponseBytes)
 	}
+	if response.StatusCode == http.StatusMethodNotAllowed {
+		// This build sends every action by the method its own handler
+		// serves it by, so a peer that refuses the method does not serve
+		// the action: it runs another build.
+		return nil, fmt.Errorf("%w: peer %s does not serve %s requests by %s; it may run another build", ErrInvalid, member.NodeID, action, method)
+	}
 	if response.StatusCode != http.StatusOK {
 		var failure rpcFailure
 		if err := json.Unmarshal(data, &failure); err != nil || failure.Code == "" {
