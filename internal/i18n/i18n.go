@@ -1024,6 +1024,9 @@ const (
 
 	// shared application configuration
 	AppSealedShared Key = "app_sealed_shared"
+
+	// onboarding
+	OnboardTaskGoal Key = "onboard_task_goal"
 )
 
 type Catalog struct {
