@@ -33,6 +33,10 @@ var (
 	ErrIntegrity  = errors.New("content replica integrity check failed")
 	ErrPlacement  = errors.New("content replica placement refused")
 	ErrTooLarge   = errors.New("content exceeds replication limit")
+	// ErrUnavailable is a check that could not be made for now — the
+	// committed state out of reach, a replica behind it. It refuses
+	// nothing: asking again can succeed.
+	ErrUnavailable = errors.New("content replica temporarily unavailable")
 )
 
 type Scope = checkpoint.Scope

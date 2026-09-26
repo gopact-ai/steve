@@ -1,12 +1,16 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,8 +29,8 @@ type contentReply struct {
 }
 
 // contentHTTP sends a content request from one peer to another over the
-// cluster's mutual TLS, with the coordinator headers the caller chooses.
-func contentHTTP(t *testing.T, from, to *Peer, method string, object *contentreplica.Object, epoch, writer string, timeout time.Duration) contentReply {
+// cluster's mutual TLS, with the headers the caller chooses.
+func contentHTTP(t *testing.T, from, to *Peer, method string, headers map[string]string, timeout time.Duration) contentReply {
 	t.Helper()
 	state, err := from.Runtime.Load().ReadState(t.Context())
 	if err != nil {
@@ -40,15 +44,8 @@ func contentHTTP(t *testing.T, from, to *Peer, method string, object *contentrep
 	if err != nil {
 		t.Fatal(err)
 	}
-	if object != nil {
-		raw, _ := json.Marshal(object)
-		request.Header.Set(contentObjectHeader, base64.RawURLEncoding.EncodeToString(raw))
-	}
-	if epoch != "" {
-		request.Header.Set("X-Steve-Coordinator-Epoch", epoch)
-	}
-	if writer != "" {
-		request.Header.Set("X-Steve-Writer-Generation", writer)
+	for name, value := range headers {
+		request.Header.Set(name, value)
 	}
 	started := time.Now()
 	response, err := (&http.Client{Transport: transport, Timeout: timeout}).Do(request)
@@ -58,6 +55,18 @@ func contentHTTP(t *testing.T, from, to *Peer, method string, object *contentrep
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
 	return contentReply{status: response.StatusCode, body: body, elapsed: time.Since(started), err: err}
+}
+
+// contentHeaders are the headers of a content request for object from the
+// activation's coordinator.
+func contentHeaders(active Activation, object *contentreplica.Object) map[string]string {
+	epoch, writer := coordinatorHeaders(active)
+	headers := map[string]string{"X-Steve-Coordinator-Epoch": epoch, "X-Steve-Writer-Generation": writer}
+	if object != nil {
+		raw, _ := json.Marshal(object)
+		headers[contentObjectHeader] = base64.RawURLEncoding.EncodeToString(raw)
+	}
+	return headers
 }
 
 func coordinatorHeaders(active Activation) (string, string) {
@@ -94,8 +103,7 @@ func TestContentPeerAnswersWithinABoundWhenItsReplicaLags(t *testing.T) {
 	bound := receiver.Runtime.Load().config.Coordination.ApplyTimeout
 	reads := behind(receiver)
 	object := workspaceObject(peers, []byte("content on a lagging replica"))
-	epoch, writer := coordinatorHeaders(active)
-	reply := contentHTTP(t, peers[0], receiver, http.MethodGet, &object, epoch, writer, 3*bound)
+	reply := contentHTTP(t, peers[0], receiver, http.MethodGet, contentHeaders(active, &object), 3*bound)
 	switch {
 	case reply.err != nil || reply.elapsed > bound+2*time.Second:
 		t.Fatalf("the request did not end within %s of waiting for the replica: took %s, %d reads of the committed state, err=%v", bound, reply.elapsed.Round(time.Millisecond), reads.Load(), reply.err)
@@ -103,5 +111,107 @@ func TestContentPeerAnswersWithinABoundWhenItsReplicaLags(t *testing.T) {
 		t.Fatalf("a lagging replica served content: %q", reply.body)
 	case reads.Load() != 1:
 		t.Fatalf("the request read the committed state %d times, want once", reads.Load())
+	}
+}
+
+// Every refusal a peer sends is JSON with a code, and its status says
+// whether asking again can help: 403 for a caller or a placement the
+// committed state does not admit, 503 for a check that could not be made.
+func TestContentPeerRefusesInJSONWithACodeAndAStatusThatSaysWhetherToRetry(t *testing.T) {
+	peers, active := contentPeers(t)
+	receiver := peers[1]
+	object := workspaceObject(peers, []byte("content a peer refuses"))
+	forged := object
+	forged.Scope.Level = "public"
+	epoch, _ := coordinatorHeaders(active)
+	staleWriter := contentHeaders(active, &object)
+	staleWriter["X-Steve-Writer-Generation"] = strconv.FormatUint(active.WriterGeneration+1, 10)
+	undescribed := contentHeaders(active, nil)
+	undescribed[contentObjectHeader] = "not a descriptor!"
+	failing := contentStateReader(func(context.Context) (coordination.State, error) {
+		return coordination.State{}, errors.New("the leader is out of reach")
+	})
+	cases := []struct {
+		name    string
+		method  string
+		headers map[string]string
+		arrange func()
+		status  int
+		code    string
+	}{
+		{name: "method", method: http.MethodDelete, headers: contentHeaders(active, &object), status: http.StatusMethodNotAllowed, code: "method"},
+		{name: "no coordinator credentials", method: http.MethodGet, headers: map[string]string{}, status: http.StatusForbidden, code: "authority"},
+		{name: "a writer generation that is not current", method: http.MethodGet, headers: staleWriter, status: http.StatusForbidden, code: "stale"},
+		{name: "maintenance from a writer generation that is not current", method: http.MethodPost, headers: map[string]string{"X-Steve-Coordinator-Epoch": epoch, "X-Steve-Writer-Generation": staleWriter["X-Steve-Writer-Generation"]}, status: http.StatusForbidden, code: "stale"},
+		{name: "descriptor", method: http.MethodGet, headers: undescribed, status: http.StatusBadRequest, code: "invalid"},
+		{name: "placement", method: http.MethodGet, headers: contentHeaders(active, &forged), status: http.StatusForbidden, code: "placement"},
+		{name: "committed state out of reach", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() { receiver.readContentState.Store(&failing) }, status: http.StatusServiceUnavailable, code: "unavailable"},
+		{name: "replica behind", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() { behind(receiver) }, status: http.StatusServiceUnavailable, code: "lagging"},
+	}
+	for _, c := range cases {
+		receiver.readContentState.Store(nil)
+		if c.arrange != nil {
+			c.arrange()
+		}
+		reply := contentHTTP(t, peers[0], receiver, c.method, c.headers, time.Minute)
+		var body struct {
+			Code string `json:"code"`
+		}
+		if reply.err != nil || reply.status != c.status || json.Unmarshal(reply.body, &body) != nil || body.Code != c.code {
+			t.Errorf("%s: HTTP %d %q err=%v, want HTTP %d with code %q", c.name, reply.status, reply.body, reply.err, c.status, c.code)
+		}
+	}
+	receiver.readContentState.Store(nil)
+}
+
+// The hub reads a peer's refusal by its code: a replica that is behind or a
+// check that could not be made is a temporary unavailability, not a
+// placement refusal; a writer generation the peer does not know as current
+// is this generation's end.
+func TestContentReplyKeepsTemporaryRefusalsApartFromPlacement(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	reply := func(status int, body string) *http.Response {
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}
+	}
+	type want struct{ transient, placement, inactive bool }
+	cases := []struct {
+		name     string
+		response *http.Response
+		want     want
+	}{
+		{"lagging", reply(http.StatusServiceUnavailable, `{"code":"lagging"}`), want{transient: true}},
+		{"unavailable", reply(http.StatusServiceUnavailable, `{"code":"unavailable"}`), want{transient: true}},
+		{"stale", reply(http.StatusForbidden, `{"code":"stale"}`), want{inactive: true}},
+		{"authority", reply(http.StatusForbidden, `{"code":"authority"}`), want{placement: true}},
+		{"placement", reply(http.StatusForbidden, `{"code":"placement"}`), want{placement: true}},
+	}
+	for _, c := range cases {
+		err := contentReplyError("node-b", c.response)
+		got := want{transient: errors.Is(err, contentreplica.ErrUnavailable), placement: errors.Is(err, contentreplica.ErrPlacement), inactive: errors.Is(err, ErrInactive)}
+		if got != c.want {
+			t.Errorf("%s: %v reads as %+v, want %+v", c.name, err, got, c.want)
+		}
+	}
+	unreadable := strings.Repeat("x", 64) + "beyond the first 64 bytes"
+	contentReplyError("node-b", reply(http.StatusBadGateway, unreadable))
+	if !strings.Contains(logs.String(), strings.Repeat("x", 64)) || strings.Contains(logs.String(), "beyond") {
+		t.Errorf("an unreadable reply is not logged with its first 64 bytes: %s", logs.String())
+	}
+}
+
+// A coordinator storing content on a peer whose replica is behind gets a
+// temporary unavailability back, not a placement refusal: the copy it did
+// not get does not say the peer may not hold it.
+func TestContentHubTakesALaggingReceiverAsUnavailable(t *testing.T) {
+	peers, active := contentPeers(t)
+	behind(peers[1])
+	data := []byte("content for a lagging receiver")
+	object := workspaceObject(peers, data)
+	_, err := (peerContentTransport{peer: peers[0], active: active}).Put(t.Context(), peers[1].Config.NodeID, contentreplica.Upload{ID: strings.Repeat("b", 64), Object: object}, bytes.NewReader(data))
+	if !errors.Is(err, contentreplica.ErrUnavailable) || errors.Is(err, contentreplica.ErrPlacement) {
+		t.Fatalf("a lagging receiver reads as %v", err)
 	}
 }
