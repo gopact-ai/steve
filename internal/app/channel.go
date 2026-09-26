@@ -32,6 +32,12 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 		return nil
 	}
 	background.Go(func(ctx context.Context) {
+		// Onboarding writes to the owner, so it waits for a verified channel.
+		select {
+		case <-channel.Ready():
+		case <-ctx.Done():
+			return
+		}
 		timeout := startup.timeout
 		if settings := boot.Settings(); settings != nil {
 			timeout = time.Duration(settings.Load().Gateway.PromptTimeout)

@@ -40,6 +40,14 @@ func (s *stuckConn) Close() {
 	}
 }
 
+// startingChannel is a channel whose identity is verified by identify and
+// whose long connection is conn.
+func startingChannel(conn longConn, identify func(context.Context) (Identity, error)) *Channel {
+	return &Channel{ws: conn, identify: identify, ready: make(chan struct{})}
+}
+
+func knownBot(context.Context) (Identity, error) { return Identity{OpenID: "ou_bot"}, nil }
+
 type failConn struct{}
 
 func (failConn) Start(context.Context) error { return errors.New("boom") }
@@ -197,7 +205,7 @@ func TestCardRequiresIDs(t *testing.T) {
 
 func TestStartReturnsWhenContextCanceled(t *testing.T) {
 	conn := newStuckConn()
-	c := &Channel{ws: conn}
+	c := startingChannel(conn, knownBot)
 	ctx, cancel := context.WithCancel(t.Context())
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Start(ctx) }()
@@ -223,7 +231,7 @@ func TestStartReturnsWhenContextCanceled(t *testing.T) {
 }
 
 func TestStartReturnsConnectError(t *testing.T) {
-	err := (&Channel{ws: failConn{}}).Start(t.Context())
+	err := startingChannel(failConn{}, knownBot).Start(t.Context())
 	if err == nil || err.Error() != "boom" {
 		t.Fatalf("Start() = %v, want boom", err)
 	}

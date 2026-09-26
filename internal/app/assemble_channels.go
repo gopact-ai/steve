@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"log/slog"
 	"time"
 
@@ -38,10 +37,9 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		gate.SetMemorizer(coordinator)
 	}
 	var channel *feishu.Channel
-	var err error
 	if cfg.FeishuEnabled() {
-		connect, cancelConnect := context.WithTimeout(ctx, 15*time.Second)
-		channel, err = feishu.New(connect, feishu.Options{
+		// The channel is bound before it connects; runChannel starts it.
+		channel = feishu.New(feishu.Options{
 			AppID:            cfg.Feishu.AppID,
 			AppSecret:        cfg.Feishu.AppSecret,
 			Domain:           cfg.Feishu.Domain,
@@ -49,18 +47,11 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 			AllowUnmentioned: cfg.Feishu.AllowUnmentioned,
 			OnCardAction:     gw.HandleCardAction,
 		}, gw.HandleMessage)
-		cancelConnect()
-		if err != nil {
-			slog.Error("steve: Feishu initialization failed; Console remains available")
-			channelSettings.SetRuntimeError("Feishu initialization failed; check the application credentials and restart the Hub")
-			channel = nil
-		} else {
-			gw.BindChannel(channel)
-			channel.SetJournal(book.Journal())
-			channelSettings.BindAccessUpdater(func(f config.Feishu) {
-				channel.SetAccess(feishu.AccessFrom(f), f.AllowUnmentioned)
-			})
-		}
+		gw.BindChannel(channel)
+		channel.SetJournal(book.Journal())
+		channelSettings.BindAccessUpdater(func(f config.Feishu) {
+			channel.SetAccess(feishu.AccessFrom(f), f.AllowUnmentioned)
+		})
 	}
 	if gate != nil {
 		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
