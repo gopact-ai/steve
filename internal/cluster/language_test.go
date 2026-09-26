@@ -208,3 +208,27 @@ func TestContentRepairSpeaksTheHubsLanguageOnce(t *testing.T) {
 		t.Errorf("repair said %q, want one English finding and then its recovery", said)
 	}
 }
+
+// A node asked by another on someone's behalf answers in that person's
+// language, so a check it fails reads as one sentence in the language of
+// whoever is enrolling the machine.
+func TestANodeAnswersAnotherInTheLanguageOfWhoeverAsked(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var starts atomic.Int32
+	options.Activate = testPeerApplication(t, &starts)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	self := peer.Runtime.Load().Status().State.Members[peer.Config.NodeID]
+	// A member the node does not know yet: it answers that it is still
+	// learning the address.
+	stranger := coordination.Member{NodeID: "node-stranger", Address: "192.0.2.9:7712", APIAddress: "https://192.0.2.9:7711"}
+	for _, locale := range []i18n.Locale{i18n.LocaleEN, i18n.LocaleZH} {
+		var result networkCheckResult
+		if err := peer.peerJSON(i18n.WithLocale(t.Context(), locale), self, http.MethodPost, "/cluster/network/check", networkCheckRequest{Peers: []coordination.Member{stranger}}, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Error == "" || hasHan(result.Error) == (locale == i18n.LocaleEN) {
+			t.Errorf("asked in %s, the node answered %q", locale, result.Error)
+		}
+	}
+}
