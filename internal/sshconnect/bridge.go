@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acceptloop"
 	"github.com/hashicorp/yamux"
 )
 
@@ -74,14 +75,12 @@ func (b *bridge) open(i int, forward PortForward) (net.Listener, error) {
 	return listener, nil
 }
 
+// accept carries listener's connections until the listener closes or
+// fails in a way accepting again would not cure.
 func (b *bridge) accept(listener net.Listener, target string) {
-	for {
-		connection, err := listener.Accept()
-		if err != nil {
-			return
-		}
+	_ = acceptloop.Run(context.Background(), listener, "sshconnect: forward on "+listener.Addr().String(), func(connection net.Conn) {
 		go b.carry(connection, target)
-	}
+	})
 }
 
 // carry sends an accepted connection to target on the other end. With no

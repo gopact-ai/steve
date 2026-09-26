@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/acceptloop"
 	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/stableport"
 )
@@ -123,7 +124,8 @@ var testHookSocketListener func(net.Listener) net.Listener
 // Serve listens on the socket and the loopback proxy until ctx ends. It
 // returns only once the proxy has stopped and released its port, whether
 // ctx ended or the socket failed; from then on Bind refuses with
-// ErrBrokerStopped and the reason.
+// ErrBrokerStopped and the reason. An Accept failure the process recovers
+// from, such as running out of descriptors for a moment, does not end it.
 func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	announced := false
 	defer func() {
@@ -185,16 +187,13 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	stop := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stop()
 	slog.Info(fmt.Sprintf("steve-node: mcp broker on %s: %d server(s)", sock, len(b.List())))
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return fmt.Errorf("mcp broker: accept: %w", err)
-		}
+	err = acceptloop.Run(ctx, listener, "steve-node: mcp broker on "+sock, func(conn net.Conn) {
 		b.connections.Go(func() { b.conn(ctx, conn) })
+	})
+	if ctx.Err() != nil {
+		return nil
 	}
+	return fmt.Errorf("mcp broker: accept: %w", err)
 }
 
 // SetServers replaces what the broker offers; bindings already made keep
