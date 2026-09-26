@@ -259,9 +259,11 @@ func TestStopAbandonsAStartupAttemptInFlight(t *testing.T) {
 // failed, when the next begins and why the last one failed.
 func TestStartReportsEachStartupRetry(t *testing.T) {
 	var attempts atomic.Int32
+	var failed []time.Time
 	conn := newStuckConn()
 	c := startingChannel(conn, func(ctx context.Context) (Identity, error) {
 		if attempts.Add(1) <= 2 {
+			failed = append(failed, time.Now())
 			return unreachable(ctx)
 		}
 		return Identity{OpenID: "ou_bot"}, nil
@@ -287,11 +289,13 @@ func TestStartReportsEachStartupRetry(t *testing.T) {
 	if len(reports) != 2 {
 		t.Fatalf("%d retries reported; want 2: %+v", len(reports), reports)
 	}
+	// The next attempt is one delay after some moment between the failure
+	// and its report; how long logging takes in between does not matter.
 	for i, r := range reports {
 		delay := time.Duration(i+1) * time.Millisecond
 		if r.Failures != i+1 || r.Err == nil || r.Err.Error() != "dial tcp: network is unreachable" ||
-			r.Next.Before(reported[i]) || r.Next.After(reported[i].Add(delay)) {
-			t.Fatalf("retry %d reported %+v at %s; want failure %d, its error and the next attempt within %s", i+1, r, reported[i], i+1, delay)
+			r.Next.Before(failed[i].Add(delay)) || r.Next.After(reported[i].Add(delay)) {
+			t.Fatalf("retry %d failed at %s, reported %+v at %s; want failure %d, its error and the next attempt %s after it", i+1, failed[i], r, reported[i], i+1, delay)
 		}
 	}
 	cancel()
