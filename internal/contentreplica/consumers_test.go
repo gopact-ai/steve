@@ -41,20 +41,32 @@ type transport struct {
 	stores  map[string]*contentreplica.Store
 	offline map[string]bool
 	before  func(string, contentreplica.Object)
+	// refused are the nodes that answer with an error instead of storing or
+	// reading; asked are the remote nodes contacted, in order.
+	refused map[string]error
+	asked   []string
 }
 
 func (r *transport) Put(ctx context.Context, node string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
 	if r.before != nil {
 		r.before(node, upload.Object)
 	}
+	r.asked = append(r.asked, node)
 	if r.offline[node] {
 		return contentreplica.Receipt{}, errors.New("node offline")
+	}
+	if err := r.refused[node]; err != nil {
+		return contentreplica.Receipt{}, err
 	}
 	return r.stores[node].Put(ctx, upload, source)
 }
 func (r *transport) Get(ctx context.Context, node string, object contentreplica.Object, into io.Writer) error {
+	r.asked = append(r.asked, node)
 	if r.offline[node] {
 		return errors.New("node offline")
+	}
+	if err := r.refused[node]; err != nil {
+		return err
 	}
 	return r.stores[node].Get(ctx, object, into)
 }

@@ -38,6 +38,11 @@ var (
 	// nothing: asking again can succeed. It is the checkpoint policy's
 	// error, so a PlacementPolicy says it once for both stores.
 	ErrUnavailable = checkpoint.ErrUnavailable
+	// ErrSuperseded is a node's answer that the caller is no longer the
+	// one writing: a later coordinator epoch or writer generation has
+	// been committed. Every other node would answer the same, so the
+	// caller stops, and nothing is said about the copies themselves.
+	ErrSuperseded = errors.New("content caller is no longer the current writer")
 )
 
 type Scope = checkpoint.Scope
