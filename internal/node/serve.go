@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acceptloop"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -223,7 +224,9 @@ func nextGeneration() int64 {
 // conf is the configuration in force.
 func (s *Server) conf() ServerConfig { return *s.cfg.Load() }
 
-// Serve blocks until ctx ends or the listener fails.
+// Serve blocks until ctx ends or the listener fails. An Accept failure the
+// process recovers from, such as running out of descriptors for a moment,
+// is waited out rather than ending it.
 func (s *Server) Serve(ctx context.Context) error {
 	if s.conf().StateDir != "" {
 		unlock, err := steveruntime.AcquireLock(filepath.Join(s.conf().StateDir, "instance-control"))
@@ -302,23 +305,20 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err := s.startRestartControl(cancel); err != nil {
 		return err
 	}
-	for {
-		socket, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				s.restart.mu.Lock()
-				requested := s.restart.requested
-				s.restart.mu.Unlock()
-				if requested {
-					return ErrRestartRequested
-				}
-				return nil
-			}
-			return fmt.Errorf("accept: %w", err)
-		}
+	err := acceptloop.Run(ctx, listener, "steve-node: "+name, func(socket net.Conn) {
 		handlers.Add(1)
 		go func() { defer handlers.Done(); s.handle(ctx, socket) }()
+	})
+	if ctx.Err() != nil {
+		s.restart.mu.Lock()
+		requested := s.restart.requested
+		s.restart.mu.Unlock()
+		if requested {
+			return ErrRestartRequested
+		}
+		return nil
 	}
+	return fmt.Errorf("accept: %w", err)
 }
 
 // Addr is the bound address, useful once Listen was ":0".
