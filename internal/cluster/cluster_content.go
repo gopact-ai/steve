@@ -433,34 +433,40 @@ func (transport peerContentTransport) request(ctx context.Context, method, nodeI
 	}
 	if response.StatusCode != http.StatusOK {
 		defer response.Body.Close()
-		var failure struct {
-			Code string `json:"code"`
-		}
-		if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure); err != nil {
-			// The status alone still maps to an error below; only the
-			// finer code is lost, which is worth knowing about.
-			slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d with unreadable body: %v", nodeID, response.StatusCode, err), "node", nodeID)
-		}
-		switch failure.Code {
-		case "placement":
-			return nil, contentreplica.ErrPlacement
-		case "invalid":
-			return nil, contentreplica.ErrInvalid
-		case "too_large":
-			return nil, contentreplica.ErrTooLarge
-		case "quota":
-			return nil, checkpoint.ErrQuota
-		case "integrity":
-			return nil, contentreplica.ErrIntegrity
-		case "missing":
-			return nil, contentreplica.ErrIncomplete
-		}
-		if response.StatusCode == http.StatusForbidden {
-			return nil, contentreplica.ErrPlacement
-		}
-		return nil, fmt.Errorf("content replica unavailable: HTTP %d", response.StatusCode)
+		return nil, contentReplyError(nodeID, response)
 	}
 	return response, nil
+}
+
+// contentReplyError is what a peer's refusal of a content request means
+// here: its code when it sent one, its status otherwise.
+func contentReplyError(nodeID string, response *http.Response) error {
+	var failure struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure); err != nil {
+		// The status alone still maps to an error below; only the
+		// finer code is lost, which is worth knowing about.
+		slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d with unreadable body: %v", nodeID, response.StatusCode, err), "node", nodeID)
+	}
+	switch failure.Code {
+	case "placement":
+		return contentreplica.ErrPlacement
+	case "invalid":
+		return contentreplica.ErrInvalid
+	case "too_large":
+		return contentreplica.ErrTooLarge
+	case "quota":
+		return checkpoint.ErrQuota
+	case "integrity":
+		return contentreplica.ErrIntegrity
+	case "missing":
+		return contentreplica.ErrIncomplete
+	}
+	if response.StatusCode == http.StatusForbidden {
+		return contentreplica.ErrPlacement
+	}
+	return fmt.Errorf("content replica unavailable: HTTP %d", response.StatusCode)
 }
 
 func (transport peerContentTransport) Put(ctx context.Context, nodeID string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
