@@ -95,7 +95,7 @@ type mcpBinding struct {
 type Broker struct {
 	connections sync.WaitGroup
 	// proxyDone is closed once the proxy has stopped for good: its server
-	// closed and its listener's port released.
+	// closed and its listener's port released. Serve waits for it.
 	proxyDone chan struct{}
 	ready     func(error)
 	cfg       BrokerConfig
@@ -111,7 +111,9 @@ func NewBroker(cfg BrokerConfig) *Broker {
 	return &Broker{cfg: cfg, bindings: map[string]mcpBinding{}}
 }
 
-// Serve listens on the socket and the loopback proxy until ctx ends.
+// Serve listens on the socket and the loopback proxy until ctx ends. It
+// returns only once the proxy has stopped and released its port, whether
+// ctx ended or the socket failed.
 func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	announced := false
 	defer func() {
@@ -119,7 +121,16 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 			b.ready(serveErr)
 		}
 	}()
-	if err := b.serveProxy(ctx); err != nil {
+	// Deferred after the ready report, so it runs first: a failed start is
+	// reported with its proxy already gone. Socket connections keep ctx.
+	proxyCtx, stopProxy := context.WithCancel(ctx)
+	defer func() {
+		stopProxy()
+		if b.proxyDone != nil {
+			<-b.proxyDone
+		}
+	}()
+	if err := b.serveProxy(proxyCtx); err != nil {
 		if b.cfg.StrictPort {
 			return err
 		}

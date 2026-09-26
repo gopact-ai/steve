@@ -201,9 +201,6 @@ func (p *PluginRuntimePool) Close() error {
 		entry.broker.Release(id)
 		errs = append(errs, <-entry.done)
 		entry.broker.connections.Wait()
-		if entry.broker.proxyDone != nil {
-			<-entry.broker.proxyDone
-		}
 	}
 	return errors.Join(errs...)
 }
@@ -220,9 +217,6 @@ func (p *PluginRuntimePool) Drop(id string) error {
 	entry.cancel()
 	err := <-entry.done
 	entry.broker.connections.Wait()
-	if entry.broker.proxyDone != nil {
-		<-entry.broker.proxyDone
-	}
 	return err
 }
 
