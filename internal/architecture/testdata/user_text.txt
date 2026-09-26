@@ -1,9 +1,13 @@
 internal/cluster/cluster_config.go#LoadClusterPeerConfig 1
 internal/cluster/cluster_content_maintenance.go#runMaintenance 2
+internal/cluster/cluster_content_repair.go# 1
 internal/cluster/cluster_content_repair.go#StartContentRepair 1
 internal/cluster/cluster_content_repair.go#notice 1
-internal/cluster/cluster_content_repair.go#repairOne 13
+internal/cluster/cluster_content_repair.go#prepareFailed 3
+internal/cluster/cluster_content_repair.go#readFailed 4
+internal/cluster/cluster_content_repair.go#repairOne 6
 internal/cluster/cluster_content_repair.go#sweep 3
+internal/cluster/cluster_content_repair.go#uncheckedCopy 3
 internal/cluster/cluster_desktop.go#enrollDesktopAgent 1
 internal/cluster/cluster_desktop.go#serveDesktopLocal 1
 internal/cluster/cluster_enrollment.go# 2
