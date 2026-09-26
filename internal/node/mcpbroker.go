@@ -122,7 +122,8 @@ var testHookSocketListener func(net.Listener) net.Listener
 
 // Serve listens on the socket and the loopback proxy until ctx ends. It
 // returns only once the proxy has stopped and released its port, whether
-// ctx ended or the socket failed.
+// ctx ended or the socket failed; from then on Bind refuses with
+// ErrBrokerStopped and the reason.
 func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	announced := false
 	defer func() {
