@@ -44,7 +44,7 @@ func (transport peerContentTransport) collect(ctx context.Context, node string) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return checkpoint.RetentionGCResult{}, fmt.Errorf("content maintenance %s: HTTP %d", node, response.StatusCode)
+		return checkpoint.RetentionGCResult{}, fmt.Errorf("content maintenance: %w", contentReplyError(node, response))
 	}
 	var result checkpoint.RetentionGCResult
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 32769))
@@ -80,7 +80,7 @@ func (p *Peer) collectContent(ctx context.Context) (checkpoint.RetentionGCResult
 
 func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 || r.Header.Get(contentObjectHeader) != "" || r.Header.Get(contentUploadHeader) != "" {
-		http.Error(w, "maintenance accepts no deletion candidates", http.StatusBadRequest)
+		writeContentReply(w, http.StatusBadRequest, "invalid")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -93,7 +93,7 @@ func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 	// Collecting may have taken a while: the caller's authority is read
 	// again, not taken from the read that admitted it.
 	if err := p.contentAuthority(r.WithContext(withContentReads(r.Context()))); err != nil {
-		http.Error(w, "content authority changed", http.StatusForbidden)
+		writeContentError(w, err)
 		return
 	}
 	WriteJSON(w, result)
