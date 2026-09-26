@@ -21,8 +21,9 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 )
 
-// failingListener fails Accept once fail is closed, the way a listener
-// does when the process has run out of descriptors.
+// failingListener fails Accept once fail is closed with an error accepting
+// again would not cure, the way a listener whose socket stopped listening
+// does.
 type failingListener struct {
 	net.Listener
 	fail   <-chan struct{}
@@ -37,7 +38,7 @@ func failAccepting(l net.Listener, fail <-chan struct{}) *failingListener {
 func (l *failingListener) Accept() (net.Conn, error) {
 	select {
 	case <-l.fail:
-		return nil, fmt.Errorf("accept: %w", syscall.EMFILE)
+		return nil, fmt.Errorf("accept: %w", syscall.EINVAL)
 	case <-l.closed:
 		return nil, net.ErrClosed
 	}
@@ -58,7 +59,7 @@ func TestBrokerClosesItsSocketWhenAcceptFails(t *testing.T) {
 	t.Cleanup(func() { testHookSocketListener = nil })
 	socket := filepath.Join(t.TempDir(), "mcp.sock")
 	err := NewBroker(BrokerConfig{Socket: socket}).Serve(t.Context())
-	if !errors.Is(err, syscall.EMFILE) {
+	if !errors.Is(err, syscall.EINVAL) {
 		t.Fatalf("Serve returned %v, want the accept failure", err)
 	}
 	if conn, err := net.Dial("unix", socket); err == nil {
@@ -107,6 +108,45 @@ func TestAStoppedBrokerRefusesBinds(t *testing.T) {
 		}
 		refused(t, broker, context.Canceled.Error())
 	})
+}
+
+// A broker out of descriptors for a moment keeps its socket: accepting
+// resumes once descriptors free up, instead of Serve returning and every
+// runtime on the broker losing its launcher.
+func TestBrokerKeepsAcceptingThroughATemporaryAcceptFailure(t *testing.T) {
+	var listener *flakyListener
+	testHookSocketListener = func(l net.Listener) net.Listener {
+		listener = flaky(l, 3)
+		return listener
+	}
+	t.Cleanup(func() { testHookSocketListener = nil })
+	// This test's name makes t.TempDir too long for a socket path.
+	dir, err := os.MkdirTemp("", "broker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "mcp.sock")
+	broker := NewBroker(BrokerConfig{Socket: socket})
+	started := make(chan error, 1)
+	broker.ready = func(err error) { started <- err }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	served := make(chan error, 1)
+	go func() { served <- broker.Serve(ctx) }()
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.waitAccepted(t, served)
+	conn.Close()
+	cancel()
+	if err := <-served; err != nil {
+		t.Fatal(err)
+	}
 }
 
 // A plugin runtime whose broker stops on its own is not served from the
@@ -201,7 +241,7 @@ func stoppedRuntime(t *testing.T) (*PluginRuntimePool, string) {
 // before Drop was called.
 func TestPluginRuntimeDropReportsABrokerThatStoppedOnItsOwn(t *testing.T) {
 	pool, id := stoppedRuntime(t)
-	if err := pool.Drop(id); !errors.Is(err, syscall.EMFILE) {
+	if err := pool.Drop(id); !errors.Is(err, syscall.EINVAL) {
 		t.Fatalf("Drop returned %v, want the accept failure that stopped the broker", err)
 	}
 }
@@ -209,7 +249,7 @@ func TestPluginRuntimeDropReportsABrokerThatStoppedOnItsOwn(t *testing.T) {
 // Close, likewise, still finds a broker that stopped on its own.
 func TestPluginRuntimeCloseReportsABrokerThatStoppedOnItsOwn(t *testing.T) {
 	pool, _ := stoppedRuntime(t)
-	if err := pool.Close(); !errors.Is(err, syscall.EMFILE) {
+	if err := pool.Close(); !errors.Is(err, syscall.EINVAL) {
 		t.Fatalf("Close returned %v, want the accept failure that stopped the broker", err)
 	}
 }
