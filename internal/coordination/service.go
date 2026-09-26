@@ -85,6 +85,13 @@ func Open(config Config) (*Service, error) {
 	if err := checkIdentity(config); err != nil {
 		return nil, err
 	}
+	// The transport's I/O timeout is ApplyTimeout. AppendEntries gets one
+	// more timeout per TimeoutScale bytes of entries and InstallSnapshot one
+	// per TimeoutScale bytes of snapshot, so the slowest link that can still
+	// replicate carries TimeoutScale (256 KiB by default) per ApplyTimeout,
+	// about 51 KiB/s at 5s.
+	// ApplyTimeout also bounds applies and failover steps; shortening it for
+	// those raises that floor in proportion.
 	var transport *raft.NetworkTransport
 	if config.StreamLayer != nil {
 		transport = raft.NewNetworkTransport(config.StreamLayer, 3, config.ApplyTimeout, config.LogOutput)
