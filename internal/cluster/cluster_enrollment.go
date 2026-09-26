@@ -665,21 +665,6 @@ func (p *Peer) authorizeLedgerReplica(ctx context.Context, candidate coordinatio
 	return nil
 }
 
-func (p *Peer) validateMemberAddress(ctx context.Context, proposed coordination.Member) error {
-	state := p.Runtime.Load().Status().State
-	var peers []coordination.Member
-	for id, member := range state.Members {
-		if state.Voters[id] == "" {
-			continue
-		}
-		if id == proposed.NodeID {
-			member = proposed
-		}
-		peers = append(peers, member)
-	}
-	return p.validatePeerMesh(ctx, peers)
-}
-
 func (p *Peer) validatePeerMesh(ctx context.Context, peers []coordination.Member) error {
 	for _, source := range peers {
 		for {
@@ -729,9 +714,7 @@ func (p *Peer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) {
 	transportPeers := p.Runtime.Load().TransportPeers()
 	for _, member := range request.Peers {
 		known, ok := state.Members[member.NodeID]
-		pending, preparing := state.PendingAddresses[member.NodeID]
-		proposed := preparing && pending.Address == member.Address && pending.APIAddress == member.APIAddress
-		if !ok || !proposed && (known.Address != member.Address || known.APIAddress != member.APIAddress || transportPeers[member.NodeID] != member.Address) {
+		if !ok || known.Address != member.Address || known.APIAddress != member.APIAddress || transportPeers[member.NodeID] != member.Address {
 			WriteJSON(w, networkCheckResult{Error: "成员地址尚未同步", Synchronizing: true})
 			return
 		}
