@@ -232,3 +232,52 @@ func TestANodeAnswersAnotherInTheLanguageOfWhoeverAsked(t *testing.T) {
 		}
 	}
 }
+
+// The application behind this console answers in the language the
+// console chose: the one the request names, or else the Hub's. That holds
+// for a request the console passes on and for one it makes itself on the
+// person's behalf.
+func TestTheApplicationAnswersInTheLanguageTheConsoleChose(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	options.Text = i18n.New(i18n.LocaleEN)
+	var starts atomic.Int32
+	options.Activate = testPeerApplication(t, &starts)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	var heard struct {
+		Language string `json:"language"`
+	}
+	for _, tc := range []struct {
+		header string
+		want   i18n.Locale
+	}{{"zh-CN,zh;q=0.9", i18n.LocaleZH}, {"en-US", i18n.LocaleEN}, {"", i18n.LocaleEN}, {"fr-FR", i18n.LocaleEN}} {
+		request, err := http.NewRequest(http.MethodGet, peer.UiURL+"/console/test", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+peer.UIToken)
+		if tc.header != "" {
+			request.Header.Set("Accept-Language", tc.header)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = json.NewDecoder(response.Body).Decode(&heard)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("%q: %d %v", tc.header, response.StatusCode, err)
+		}
+		if got := i18n.LocaleFromHeader(heard.Language); got != tc.want {
+			t.Errorf("passed on with Accept-Language %q, the application was asked in %q, want %s", tc.header, heard.Language, tc.want)
+		}
+	}
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		if err := peer.applicationJSON(i18n.WithLocale(t.Context(), locale), http.MethodGet, "/console/test", nil, &heard); err != nil {
+			t.Fatal(err)
+		}
+		if got := i18n.LocaleFromHeader(heard.Language); got != locale {
+			t.Errorf("asking for someone who reads %s, the console asked the application in %q", locale, heard.Language)
+		}
+	}
+}
