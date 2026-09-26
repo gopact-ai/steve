@@ -43,16 +43,18 @@ type clusterNode struct {
 	heldApp   chan coordination.AppCommand
 	gateApp   atomic.Pointer[appGate]
 	gateFence atomic.Pointer[appGate]
-	raft      *gatedListener
-	server    *httptest.Server
-	listener  net.Listener
-	options   coordination.TLSOptions
-	client    *coordination.Client
-	config    Config
-	mu        sync.Mutex
-	business  *businessStores
-	stopped   int
-	activated []*businessStores
+	// stateReads counts quorum reads other nodes ask this node to serve.
+	stateReads atomic.Int32
+	raft       *gatedListener
+	server     *httptest.Server
+	listener   net.Listener
+	options    coordination.TLSOptions
+	client     *coordination.Client
+	config     Config
+	mu         sync.Mutex
+	business   *businessStores
+	stopped    int
+	activated  []*businessStores
 }
 
 // appGate stops application commands (gateApp) or writer fences (gateFence)
@@ -148,6 +150,9 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 		n.raft = &gatedListener{Listener: raw}
 		n.listener = n.raft
 		n.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == coordination.RPCPath+"state" {
+				n.stateReads.Add(1)
+			}
 			if current := n.runtime.Load(); current != nil {
 				handler := current.RPCHandler(coordination.RPCOptions{AuthorizeControl: func(*http.Request, coordination.Identity, string) (string, error) { return "test-owner", nil }})
 				if gate := n.gateApp.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"app" {
@@ -858,6 +863,78 @@ func ready(t *testing.T, r *Runtime) Activation {
 		t.Fatalf("runtime did not activate: %v, status=%+v", err, r.Status())
 	}
 	return activation
+}
+
+// A quorum read appends a barrier entry to the Raft log, and from a member
+// that does not lead it is a request to the leader, over what may be a slow
+// link, for the whole cluster state. Once the business generation is ready
+// and nothing changes, no node's runtime keeps reading the state that way:
+// the log stops growing and no member asks the leader for the state.
+func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
+	nodes := testNodes(t, 2)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	second := openNode(t, nodes[1])
+	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-replica", Actor: "owner", Member: member}); err != nil {
+		t.Fatal(err)
+	}
+	ready(t, first)
+	idle := 25 * nodes[0].config.PollInterval
+	index, reads := first.service.LastIndex(), nodes[0].stateReads.Load()
+	time.Sleep(idle)
+	if grown := first.service.LastIndex() - index; grown != 0 {
+		t.Errorf("the Raft log grew by %d entries while the cluster was idle for %s", grown, idle)
+	}
+	if asked := nodes[0].stateReads.Load() - reads; asked != 0 {
+		t.Errorf("the leader was asked for the cluster state %d times while the cluster was idle for %s", asked, idle)
+	}
+	if status := first.Status(); !status.Ready {
+		t.Fatalf("the coordinator stopped being ready while idle: %+v", status)
+	}
+}
+
+// A coordinator that hears from no consensus leader for longer than
+// ApplyTimeout gives up its business generation, although nothing is
+// written: it can no longer tell whether it still holds its role.
+func TestCoordinatorThatHearsFromNoLeaderGivesUpItsGeneration(t *testing.T) {
+	nodes := testNodes(t, 3)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		r := openNode(t, nodes[i])
+		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	active := ready(t, second)
+	if !first.Status().IsLeader {
+		t.Fatal("fixture no longer keeps the consensus leader away from the coordinator")
+	}
+	// node-2 stops receiving Raft traffic, so it hears from no leader.
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	select {
+	case <-active.Context.Done():
+	case <-time.After(3 * applyTimeout):
+		t.Fatalf("a coordinator that heard from no leader for %s kept business generation %d: %+v", 3*applyTimeout, active.Generation, second.Status())
+	}
+	second.mu.Lock()
+	cause := second.lastError
+	second.mu.Unlock()
+	if !errors.Is(cause, coordination.ErrUnavailable) {
+		t.Fatalf("the generation was given up without reporting that no leader was heard from: %v", cause)
+	}
+	nodes[1].raft.resume()
+	if fresh := ready(t, second); fresh.Generation <= active.Generation {
+		t.Fatalf("generation %d was published, not a new one after generation %d", fresh.Generation, active.Generation)
+	}
 }
 
 func TestThreeNodeLedgerTransfersPreserveFactsAndFenceEveryOldGeneration(t *testing.T) {
