@@ -42,6 +42,8 @@ var userTextExempt = map[string]string{
 	"internal/delegate/delegate.go#expectLine":            textModel,
 	"internal/delegate/deliver.go#Prompt":                 textModel,
 	"internal/delegate/deliver.go#writeChild":             textModel,
+	"internal/delegate/deliver.go#stateWord":              textModel,
+	"internal/delegate/deliver.go#landFor":                textModel,
 	"internal/delegate/preface.go#Preface":                textModel,
 	"internal/app/titler.go#titlePrompt":                  textModel,
 	"internal/onboard/onboard.go#Prompt":                  textModel,

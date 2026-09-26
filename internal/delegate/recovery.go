@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -201,7 +202,7 @@ func (s *Service) recoverableRecords(ctx context.Context) ([]attempt.Record, err
 
 // recoveryPending reports one way a child could not be joined: a question
 // to the parent's conversation, and the child left detached.
-type recoveryPending func(code, attempted, problem, reason, recommendation string, cause error)
+type recoveryPending func(code string, attempted, problem, reason, recommendation i18n.Key, cause error)
 
 // recoverChild joins a delegated child's node-owned execution again. What
 // the attempt already committed is delivered from the record; a running
@@ -210,17 +211,17 @@ type recoveryPending func(code, attempted, problem, reason, recommendation strin
 // to the parent, never a second prompt.
 func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, record attempt.Record, entry *child) {
 	binding := questionBinding(parent, tracked, record)
-	pending := func(code, attempted, problem, reason, recommendation string, cause error) {
+	pending := func(code string, attempted, problem, reason, recommendation i18n.Key, cause error) {
 		s.reportRecovery(ctx, binding, code, attempted, problem, reason, recommendation)
 		s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, entry.result, retainedDetached(record, cause), view.Progress{})
 	}
 	if record.Execution == nil || record.Execution.TaskID != tracked.ID || record.Project != tracked.ProjectID || record.Agent != tracked.Member || record.Node != tracked.Node {
-		pending("identity", "核对已提交的子任务与执行身份", "无法确认原子任务的执行归属。", "任务、节点或授权标识不一致，不能从该会话继续提交结果。", "建议核对原任务记录后重新检查。", nil)
+		pending("identity", i18n.DelegateRecoveryTriedIdentity, i18n.DelegateRecoveryProblemIdentity, i18n.DelegateRecoveryReasonIdentity, i18n.DelegateRecoveryAdviceIdentity, nil)
 		return
 	}
 	scope, err := s.executions.BeginAccepted(ctx, execution.Key{TaskID: tracked.ID, InstanceID: record.TurnID, AttemptID: record.ID}, record.Execution)
 	if err != nil {
-		pending("authorization", "核对子任务的执行授权", "当前不能接续这个子任务。", "原任务或其父任务的授权可能已经改变。", "建议确认任务状态后重新检查。", err)
+		pending("authorization", i18n.DelegateRecoveryTriedAuthorization, i18n.DelegateRecoveryProblemAuthorization, i18n.DelegateRecoveryReasonAuthorization, i18n.DelegateRecoveryAdviceAuthorization, err)
 		return
 	}
 	entry.scope = scope
@@ -258,13 +259,13 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 	if record.State == attempt.Bound {
 		var result agentmcp.DelegateResult
 		if record.Result == nil || len(record.Result.Output) == 0 || json.Unmarshal(record.Result.Output, &result) != nil || result.TaskID != tracked.ID || result.Agent != record.Agent || result.Node != record.Node {
-			pending("result", "读取原子任务已提交的完整结果", "原执行已完成，但完整回复记录不可用。", "重新执行可能重复已完成的操作。", "建议核对已保存的产物和原执行记录。", nil)
+			pending("result", i18n.DelegateRecoveryTriedResult, i18n.DelegateRecoveryProblemResult, i18n.DelegateRecoveryReasonResult, i18n.DelegateRecoveryAdviceResult, nil)
 			return true
 		}
 		s.clearRecovery(record.ID)
 		if record.Result.Artifact != "" && slices.Contains(result.Refs, "artifact "+record.Result.Artifact) {
 			if err := s.artifacts.Defer(ctx, record.Project, record.Result.Artifact, "task #"+tracked.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
-				pending("landing", "恢复已提交产物的落地记录", "子任务的回复已保存，但产物落地尚未恢复。", "项目可能暂时不可用，不能声称文件已经落地。", "建议恢复项目连接后重新检查。", err)
+				pending("landing", i18n.DelegateRecoveryTriedLanding, i18n.DelegateRecoveryProblemLanding, i18n.DelegateRecoveryReasonLanding, i18n.DelegateRecoveryAdviceLanding, err)
 				return true
 			}
 		}
@@ -275,7 +276,7 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 		result := agentmcp.DelegateResult{TaskID: tracked.ID, Agent: record.Agent, Node: record.Node, Answer: record.Error}
 		if record.Result != nil && len(record.Result.Output) > 0 {
 			if json.Unmarshal(record.Result.Output, &result) != nil || result.TaskID != tracked.ID || result.Agent != record.Agent || result.Node != record.Node {
-				pending("failed-output", "读取已结束子任务的完整答复", "执行已结束，但答复记录不完整。", "不能通过重新执行来补一份失败答复。", "建议核对原执行记录后继续。", nil)
+				pending("failed-output", i18n.DelegateRecoveryTriedFailedOutput, i18n.DelegateRecoveryProblemFailedOutput, i18n.DelegateRecoveryReasonFailedOutput, i18n.DelegateRecoveryAdviceFailedOutput, nil)
 				return true
 			}
 		}
@@ -287,7 +288,7 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 		return true
 	}
 	if record.State != attempt.Running {
-		pending("state", "核对原子任务的持久执行阶段", "原执行目前不能直接接续。", "它没有停留在可核对的运行阶段，或仍缺少明确的停止证据。", "建议检查原节点、产物与执行记录后再决定恢复方式。", nil)
+		pending("state", i18n.DelegateRecoveryTriedState, i18n.DelegateRecoveryProblemState, i18n.DelegateRecoveryReasonState, i18n.DelegateRecoveryAdviceState, nil)
 		return true
 	}
 	return false
@@ -300,22 +301,22 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, record *attempt.Record, entry *child, scope *execution.Scope, binding QuestionBinding, pending recoveryPending) (harness.ResumableRunner, permission.AskFunc, acphost.AskUserFunc, bool) {
 	manager, ok := s.sessions.(retainedRuntime)
 	if !ok {
-		pending("runtime", "检查保留会话的接续接口", "当前服务无法接回原执行。", "节点会话接续接口不可用。", "建议更新并恢复原节点连接后重试。", nil)
+		pending("runtime", i18n.DelegateRecoveryTriedRuntime, i18n.DelegateRecoveryProblemRuntime, i18n.DelegateRecoveryReasonRuntime, i18n.DelegateRecoveryAdviceRuntime, nil)
 		return nil, nil, nil, false
 	}
 	runner, err := manager.AttachRetainedSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session, record.Workspace.Path)
 	if err != nil {
-		pending("attach", "按原任务和会话标识连接执行节点", "暂时无法接回原子任务。", "节点可能离线；连接失败不能证明原执行已停止。", "建议恢复该节点连接后重新检查，保留原任务和已有进度。", err)
+		pending("attach", i18n.DelegateRecoveryTriedAttach, i18n.DelegateRecoveryProblemAttach, i18n.DelegateRecoveryReasonAttach, i18n.DelegateRecoveryAdviceAttach, err)
 		return nil, nil, nil, false
 	}
 	inspector, ok := runner.(harness.RetainedSessionInspector)
 	if !ok {
-		pending("evidence", "读取原节点的执行回执", "节点没有提供可验证的执行状态。", "没有绑定及输入回执就不能继续结算该执行。", "建议核对节点服务后重新检查。", nil)
+		pending("evidence", i18n.DelegateRecoveryTriedEvidence, i18n.DelegateRecoveryProblemEvidence, i18n.DelegateRecoveryReasonEvidence, i18n.DelegateRecoveryAdviceEvidence, nil)
 		return nil, nil, nil, false
 	}
 	state, err := inspector.InspectRetained(ctx)
 	if err != nil {
-		pending("inspect", "读取原节点持有的命令与执行状态", "暂时无法核实原子任务。", "原节点当前不可达，执行不能被重放。", "建议恢复原节点后重新检查。", err)
+		pending("inspect", i18n.DelegateRecoveryTriedInspect, i18n.DelegateRecoveryProblemInspect, i18n.DelegateRecoveryReasonInspect, i18n.DelegateRecoveryAdviceInspect, err)
 		return nil, nil, nil, false
 	}
 	recovered, err := s.attempts.RecoverRetained(ctx, record.ID, attempt.RetainedEvidence{ObservedAt: time.Now(), Session: state})
@@ -323,19 +324,19 @@ func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, re
 		if s.endStoppedChild(ctx, parent, tracked, *record, entry, state, pending) {
 			return nil, nil, nil, false
 		}
-		pending("reconcile", "核对原命令回执、任务授权和同一持有者的写入租约", "原子任务暂时不能安全接续。", "节点证据不匹配、原授权已改变，或原生执行状态仍不确定。", "建议核对原节点和执行记录，明确后再继续。", err)
+		pending("reconcile", i18n.DelegateRecoveryTriedReconcile, i18n.DelegateRecoveryProblemReconcile, i18n.DelegateRecoveryReasonReconcile, i18n.DelegateRecoveryAdviceReconcile, err)
 		return nil, nil, nil, false
 	}
 	*record = recovered
 	if err := s.bindDelegatedExecution(ctx, parent, tracked, *record); err != nil {
-		pending("messaging", "核对原子任务的工具授权", "原工具授权暂时无法恢复。", "只能使用同一任务和原生会话的授权，不能悄悄换一个工具 token。", "建议恢复原协作服务后重新检查。", err)
+		pending("messaging", i18n.DelegateRecoveryTriedMessaging, i18n.DelegateRecoveryProblemMessaging, i18n.DelegateRecoveryReasonMessaging, i18n.DelegateRecoveryAdviceMessaging, err)
 		return nil, nil, nil, false
 	}
 	scope.AdoptRetained()
 	ask, askUser := s.ownerHandlers(binding)
 	for _, q := range state.Questions {
 		if q.State == "pending" && ((q.Permission != nil && ask == nil) || (q.Permission == nil && askUser == nil)) {
-			pending("question", "读取原节点保留的待答问题", "原子任务正在等待一个真实的 Agent 问题。", "当前服务尚未接通该原生问答，平台恢复问题不能替代工具授权。", "建议接通原会话问答后继续，原执行会保持等待。", nil)
+			pending("question", i18n.DelegateRecoveryTriedQuestion, i18n.DelegateRecoveryProblemQuestion, i18n.DelegateRecoveryReasonQuestion, i18n.DelegateRecoveryAdviceQuestion, nil)
 			return nil, nil, nil, false
 		}
 	}
@@ -373,15 +374,15 @@ func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task
 		finished := d.publishErr != nil || d.published.result.TaskID != ""
 		switch {
 		case step != nil && step.Step == lifecycle.StepSettle:
-			pending("settlement", "保存节点的原命令结算回执", "节点已给出结果，但协调记录尚未保存。", "保留同一命令，避免重新执行。", "建议恢复协调服务后重新核对。", runErr)
+			pending("settlement", i18n.DelegateRecoveryTriedSettlement, i18n.DelegateRecoveryProblemSettlement, i18n.DelegateRecoveryReasonSettlement, i18n.DelegateRecoveryAdviceSettlement, runErr)
 		case step != nil && step.Step == lifecycle.StepFinish && !finished:
 			s.spent(tracked.ID, run.Last)
-			pending("failed-result", "保存原执行的错误与完整答复", "失败结果尚未完整保存。", "原命令已经结束，但不能提前向父任务结算。", "建议恢复存储后重新核对原结果。", runErr)
+			pending("failed-result", i18n.DelegateRecoveryTriedFailedResult, i18n.DelegateRecoveryProblemFailedResult, i18n.DelegateRecoveryReasonFailedResult, i18n.DelegateRecoveryAdviceFailedResult, runErr)
 		case step != nil && step.Step == lifecycle.StepFinish:
 			s.spent(tracked.ID, run.Last)
-			pending("completion", "保存原子任务的产物和结算记录", "原命令已经返回，但产物或结果尚未完整提交。", "节点或存储可能暂时不可用，不能重复执行原任务来补结果。", "建议恢复节点与存储后重新核对原命令和产物。", runErr)
+			pending("completion", i18n.DelegateRecoveryTriedCompletion, i18n.DelegateRecoveryProblemCompletion, i18n.DelegateRecoveryReasonCompletion, i18n.DelegateRecoveryAdviceCompletion, runErr)
 		default:
-			pending("observer", "接续并观察原子任务的进度", "观察连接再次中断。", "尚未确认原执行的最终结果，原任务和预算保持未决。", "建议恢复连接后重新检查同一次执行。", errors.Join(runErr, ctx.Err()))
+			pending("observer", i18n.DelegateRecoveryTriedObserver, i18n.DelegateRecoveryProblemObserver, i18n.DelegateRecoveryReasonObserver, i18n.DelegateRecoveryAdviceObserver, errors.Join(runErr, ctx.Err()))
 		}
 		return
 	}
@@ -397,11 +398,11 @@ func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task
 	if runErr != nil {
 		s.finish(tracked.ID, remoteOutcomeOf(runErr))
 	} else if result, runErr = s.land(ctx, parent, tracked, record, d.published); errors.As(runErr, &detached) {
-		pending("completion", "保存原子任务的产物和结算记录", "原命令已经返回，但产物或结果尚未完整提交。", "节点或存储可能暂时不可用，不能重复执行原任务来补结果。", "建议恢复节点与存储后重新核对原命令和产物。", runErr)
+		pending("completion", i18n.DelegateRecoveryTriedCompletion, i18n.DelegateRecoveryProblemCompletion, i18n.DelegateRecoveryReasonCompletion, i18n.DelegateRecoveryAdviceCompletion, runErr)
 		return
 	}
 	if ctx.Err() != nil {
-		pending("commit", "保存原子任务的执行结果", "协调连接在结果保存期间中断。", "已保存的节点结果仍属于原命令，不能重发任务。", "建议恢复连接后核对同一次执行。", errors.Join(runErr, ctx.Err()))
+		pending("commit", i18n.DelegateRecoveryTriedCommit, i18n.DelegateRecoveryProblemCommit, i18n.DelegateRecoveryReasonCommit, i18n.DelegateRecoveryAdviceCommit, errors.Join(runErr, ctx.Err()))
 		return
 	}
 	if run.CleanupErr != nil {
@@ -430,7 +431,7 @@ func (s *Service) clearRecovery(id string) {
 	}
 	delete(s.recoveryQuestions, id)
 }
-func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, code, attempted, problem, reason, recommendation string) {
+func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, code string, attempted, problem, reason, recommendation i18n.Key) {
 	s.mu.Lock()
 	if s.recoveryQuestions == nil {
 		s.recoveryQuestions = map[string]*recoveryNotice{}
@@ -455,7 +456,7 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 		s.mu.Unlock()
 		slog.Info(fmt.Sprintf("delegate: recovery retrying task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code),
 			"parent", binding.ParentTask, "conversation", binding.Conversation)
-		s.markRecoveryUnsettled(ctx, binding, code, diagnosticOf(attempted, problem, reason, recommendation))
+		s.markRecoveryUnsettled(ctx, binding, code, diagnosticOf(s.text, attempted, problem, reason, recommendation))
 		return
 	}
 	questionCtx, cancel := context.WithCancel(s.executions.Detached(ctx))
@@ -465,12 +466,12 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 	s.mu.Unlock()
 	slog.Warn(fmt.Sprintf("delegate: recovery pending task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code),
 		"parent", binding.ParentTask, "conversation", binding.Conversation)
-	diagnostic := diagnosticOf(attempted, problem, reason, recommendation)
+	diagnostic := diagnosticOf(s.text, attempted, problem, reason, recommendation)
 	s.markRecoveryUnsettled(ctx, binding, code, diagnostic)
 	if handler == nil {
 		return
 	}
-	q := RecoveryQuestion{QuestionBinding: binding, Question: view.Question{RequestID: "delegate-recovery/" + binding.Attempt + "/" + code, Kind: "recovery", Title: "子任务继续执行需要你的处理", Message: diagnostic, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "核对原节点和命令，不重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留子任务和进度。Steve 会继续自己重连，节点回来后自动接着跑。"}}}}
+	q := RecoveryQuestion{QuestionBinding: binding, Question: view.Question{RequestID: "delegate-recovery/" + binding.Attempt + "/" + code, Kind: "recovery", Title: s.text.T(i18n.DelegateRecoveryTitle), Message: diagnostic, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: s.text.T(i18n.RecoveryRetry), Detail: s.text.T(i18n.DelegateRecoveryRetryDetail)}, {Value: "wait", Label: s.text.T(i18n.RecoveryWait), Detail: s.text.T(i18n.DelegateRecoveryWaitDetail)}}}}
 	go func() {
 		answer, err := handler(questionCtx, q)
 		if err != nil {
@@ -498,8 +499,10 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 	}()
 }
 
-func diagnosticOf(attempted, problem, reason, recommendation string) string {
-	return fmt.Sprintf("已尝试：%s。\n\n%s\n\n%s\n\n%s", attempted, problem, reason, recommendation)
+// diagnosticOf is what the owner reads about one way a child could not be
+// joined, and what the attempt keeps saying in the ledger.
+func diagnosticOf(text i18n.Catalog, attempted, problem, reason, recommendation i18n.Key) string {
+	return text.T(i18n.DelegateRecoveryDiagnostic, text.T(attempted), text.T(problem), text.T(reason), text.T(recommendation))
 }
 
 // markRecoveryUnsettled records on the attempt why it could not be

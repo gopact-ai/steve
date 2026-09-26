@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
@@ -171,7 +172,13 @@ func TestManagedDelegateDetachKeepsOriginalTaskBudgetAndAttemptOpen(t *testing.T
 
 func recoveredDelegateService(t *testing.T, w *world, sessions Sessions) *Service {
 	t.Helper()
-	s := New(w.tasks, w.service.roster, sessions, w.service.assembler, w.service.workspaces, "hub-b")
+	return recoveredDelegateServiceIn(t, w, sessions, i18n.New(i18n.LocaleZH))
+}
+
+// recoveredDelegateServiceIn is the next process's service, speaking text.
+func recoveredDelegateServiceIn(t *testing.T, w *world, sessions Sessions, text i18n.Catalog) *Service {
+	t.Helper()
+	s := New(w.tasks, w.service.roster, sessions, w.service.assembler, w.service.workspaces, "hub-b", text)
 	// These tests are about what the owner is told once a child cannot be
 	// joined. The quiet stretch before that has its own test.
 	s.RecoveryQuiet = 0

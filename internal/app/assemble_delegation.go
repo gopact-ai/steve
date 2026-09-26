@@ -74,7 +74,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		// in the tree, funded from the caller's remainder, with its own
 		// token. It is offered only when the messaging server exists,
 		// because that is where the tool lives.
-		delegation := delegate.New(tasks, fleet, manager, assembler, artifacts, boot.NodeName())
+		delegation := delegate.New(tasks, fleet, manager, assembler, artifacts, boot.NodeName(), work.CatalogText())
 		delegation.SetExecution(executions)
 		delegation.SetLedger(attempts, artifacts)
 		delegation.SetGate(gate)
