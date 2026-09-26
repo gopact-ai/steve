@@ -120,7 +120,17 @@ func (p *PluginRuntimePool) servers(ctx context.Context, ref plugins.RuntimeRef)
 		}
 	}
 	if entry := p.brokers[ref.ID]; entry != nil {
-		return clonePluginServers(entry.servers), nil
+		select {
+		case <-entry.stopped:
+			// Only a broker that stopped on its own is still cached once
+			// stopped. Its launcher connections were cancelled when it
+			// stopped; they finish before a new broker takes its socket
+			// and port. It stays cached if that start fails, so Drop and
+			// Close still report it.
+			entry.broker.connections.Wait()
+		default:
+			return clonePluginServers(entry.servers), nil
+		}
 	}
 	if len(specs) == 0 {
 		return nil, nil
@@ -195,19 +205,16 @@ func (p *PluginRuntimePool) startBroker(ctx context.Context, ref plugins.Runtime
 }
 
 // watch waits for a started broker's Serve. One that returns while its
-// owner still wants it has stopped on its own: it leaves the cache, so the
-// next load starts it again on the remembered port and the routes
-// sessions hold work again.
+// owner still wants it has stopped on its own: its launcher connections
+// are cancelled and it stays cached, marked stopped. The next load starts
+// it again on the remembered port, so the routes sessions hold work
+// again; until then Drop and Close find it, wait for it and report why it
+// stopped.
 func (p *PluginRuntimePool) watch(id string, entry *runtimeBroker, owner context.Context, done <-chan error) {
 	entry.err = <-done
 	if owner.Err() == nil {
 		slog.Warn(fmt.Sprintf("steve-node: plugin runtime %s: MCP broker stopped: %v; the next load starts it again", id, entry.err), "runtime", id)
 		entry.cancel()
-		p.mu.Lock()
-		if p.brokers[id] == entry {
-			delete(p.brokers, id)
-		}
-		p.mu.Unlock()
 	}
 	close(entry.stopped)
 }
