@@ -21,7 +21,7 @@ func TestDelegateProgressPreservesReasoningPlanAndModel(t *testing.T) {
 	m := New(Sources{})
 	events, stop := m.Subscribe(t.Context())
 	defer stop()
-	reasoning := "开头\n" + strings.Repeat("完整的思考摘要\n", 2000) + "\n[… 省略 123 字节 …]\n结尾"
+	reasoning := "开头\n" + strings.Repeat("完整的思考摘要\n", 2000) + "\n[… 123 B …]\n结尾"
 	p := view.Progress{Reasoning: reasoning, Settings: view.Settings{Model: "reported-model"},
 		Plan: []view.Step{{Text: "verify", Status: view.StepCompleted}}}
 	m.DelegateProgress("59", "builder", "node-a", consoleapi.StepInfo{State: "done", Answer: "verified"}, p)

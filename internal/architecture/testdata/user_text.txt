@@ -1,5 +1,3 @@
-internal/acphost/host.go#reasoning 1
-internal/acphost/timeline.go#timelineSnapshot 1
 internal/app/application_config.go#SaveContext 1
 internal/app/application_stop.go#stop 1
 internal/artifact/gitrepo/limits.go#Error 4
