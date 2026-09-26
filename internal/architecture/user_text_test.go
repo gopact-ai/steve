@@ -58,7 +58,6 @@ var userTextExempt = map[string]string{
 	"internal/console/rewind.go#rewindHistory":                      textModel,
 	"internal/console/relocation.go#Service.relocationInput":        textModel,
 	"internal/material/types.go#Frozen.PromptText":                  textModel,
-	"internal/memory/memory.go#Template":                            textModel,
 	"internal/agentmcp/inform.go#Server.steveContext":               textModel,
 	"internal/agentmcp/memory.go#memoryTools":                       textModel,
 	"internal/agentmcp/memory.go#Server.steveRecall":                textModel,
@@ -81,6 +80,7 @@ var userTextExempt = map[string]string{
 	"internal/memory/memory.go#Sections":               textInput,
 	"internal/app/titler.go#cleanTitle":                textInput,
 
+	"internal/memory/memory.go#Template":                                      textLocale,
 	"internal/home/reader.go#Reader.Load":                                     textLocale,
 	"internal/home/templates.go#UserLabelNameZH":                              textLocale,
 	"internal/home/templates.go#UserLabelTimezoneZH":                          textLocale,

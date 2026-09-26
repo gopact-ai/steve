@@ -25,7 +25,7 @@ func stageRemember(t *testing.T, m *Markdown, scope Scope, key, text, stage stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, r, err := prepareRemember(scope, "", text, before)
+	after, r, err := prepareRemember(scope, home.LocaleZH, "", text, before)
 	if err != nil {
 		t.Fatal(err)
 	}

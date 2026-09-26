@@ -392,10 +392,11 @@ func errText(err error) string {
 type Markdown struct {
 	HomePath string
 	Dir      string
+	locale   func() home.Locale
 }
 
 // SetLocale names the Hub's language, which a template explains itself in.
-func (m *Markdown) SetLocale(source func() home.Locale) {}
+func (m *Markdown) SetLocale(source func() home.Locale) { m.locale = source }
 
 // NewMarkdown makes the store; dir is where project memories go.
 func NewMarkdown(homePath, dir string) *Markdown { return &Markdown{HomePath: homePath, Dir: dir} }
@@ -560,7 +561,7 @@ func (m *Markdown) Text(_ context.Context, scope Scope) (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(body) == "" {
-		return Template(scope), nil
+		return Template(scope, hubLocale(m.locale)), nil
 	}
 	return stripIDs(body), nil
 }
@@ -588,7 +589,7 @@ func (m *Markdown) Remember(_ context.Context, scope Scope, section, text string
 	if err != nil {
 		return Receipt{}, err
 	}
-	after, r, err := prepareRemember(scope, section, text, body)
+	after, r, err := prepareRemember(scope, hubLocale(m.locale), section, text, body)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -600,7 +601,7 @@ func (m *Markdown) Remember(_ context.Context, scope Scope, section, text string
 	return r, nil
 }
 
-func prepareRemember(scope Scope, section, text, body string) (string, Receipt, error) {
+func prepareRemember(scope Scope, locale home.Locale, section, text, body string) (string, Receipt, error) {
 	text = strings.TrimSpace(spaces.ReplaceAllString(text, " "))
 	if text == "" {
 		return "", Receipt{}, errors.New("nothing to remember")
@@ -613,7 +614,7 @@ func prepareRemember(scope Scope, section, text, body string) (string, Receipt, 
 	}
 	section = normalizeSection(scope, section)
 	if strings.TrimSpace(body) == "" || (scope.Kind == KindGlobal && home.IsTemplate(body) && !hasFacts(body)) {
-		body = Template(scope)
+		body = Template(scope, locale)
 	}
 	key := hashOf(text)
 	for _, it := range parse(scope, body) {
@@ -697,18 +698,33 @@ func (m *Markdown) Forget(_ context.Context, scope Scope, id string) (Item, erro
 
 // ---------------------------------------------------------------- markdown shape
 
-// Template is the file a scope starts from.
-func Template(scope Scope) string {
+// Template is the file a scope starts from. The owner reads and edits it,
+// so it explains itself in the Hub's language; its section headings are
+// where facts are filed and are the same in every language.
+func Template(scope Scope, locale home.Locale) string {
 	var b strings.Builder
-	if scope.Kind == KindProject {
+	switch {
+	case scope.Kind == KindProject && locale == home.LocaleEN:
+		fmt.Fprintf(&b, "# Memory · %s\n\nWhat stays true about this project for the long run: conventions, decisions, pitfalls. Short. Most important first.\n", scope.Project)
+	case scope.Kind == KindProject:
 		fmt.Fprintf(&b, "# Memory · %s\n\n这个项目长期仍然为真的事：约定、决策、踩过的坑。短。重要的放上面。\n", scope.Project)
-	} else {
+	case locale == home.LocaleEN:
+		b.WriteString("# Memory\n\nOnly long-lived facts that are still true. Short. Most important first.\n")
+	default:
 		b.WriteString("# Memory\n\n只写仍然为真的长期事实。短。重要的放上面。\n")
 	}
 	for _, s := range Sections(scope) {
 		b.WriteString("\n## " + s + "\n")
 	}
 	return b.String()
+}
+
+// hubLocale is the language source's current language, Chinese without one.
+func hubLocale(source func() home.Locale) home.Locale {
+	if source != nil && source() == home.LocaleEN {
+		return home.LocaleEN
+	}
+	return home.LocaleZH
 }
 
 var sectionAliases = map[string]string{
