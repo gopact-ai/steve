@@ -908,6 +908,7 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
+	asked := time.Now()
 	state, err := runtime.ReadState(ctx)
 	if err != nil {
 		return nil, err
@@ -923,7 +924,7 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 	if err != nil {
 		return nil, err
 	}
-	grant, err := runtime.grantWorker(ctx, state, nodeID)
+	grant, err := runtime.grantWorker(ctx, asked, state, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -1085,6 +1086,7 @@ func (p *Peer) admitWorkerTunnel(r *http.Request, coordinator string) (workerGra
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	asked := time.Now()
 	state, err := runtime.ReadState(ctx)
 	if err != nil {
 		return workerGrant{}, err
@@ -1097,7 +1099,7 @@ func (p *Peer) admitWorkerTunnel(r *http.Request, coordinator string) (workerGra
 	if err != nil || state.WriterGeneration != writer {
 		return workerGrant{}, coordination.ErrStaleEpoch
 	}
-	return runtime.grantWorker(ctx, state, p.Config.NodeID)
+	return runtime.grantWorker(ctx, asked, state, p.Config.NodeID)
 }
 
 func restorePeerAdapters(cfg *node.ServerConfig) {

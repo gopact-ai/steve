@@ -111,9 +111,8 @@ type Runtime struct {
 	closeError   error
 	cleanupError error
 	failure      error
-	// live is what the runtime loop has seen of the replica's contact
-	// with a consensus leader, as of its latest tick.
-	live       liveness
+	// workers is what keeps this node's worker tunnels; see workerAuthority.
+	workers    workerAuthority
 	changed    chan struct{}
 	workerDone chan struct{}
 	closeDone  chan struct{}
@@ -150,7 +149,8 @@ func Open(config Config) (*Runtime, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Runtime{config: config, book: book, ctx: ctx, cancel: cancel, live: liveness{started: time.Now()}, changed: make(chan struct{}), workerDone: make(chan struct{}), closeDone: make(chan struct{})}
+	started := time.Now()
+	r := &Runtime{config: config, book: book, ctx: ctx, cancel: cancel, workers: workerAuthority{live: liveness{started: started}}, changed: make(chan struct{}), workerDone: make(chan struct{}), closeDone: make(chan struct{})}
 	// Attach before opening Raft (which can replay immediately), and before
 	// creating any business store. The FSM handle never authorizes writes.
 	if err := book.AttachReplication(replicaOnly{}); err != nil {
@@ -312,15 +312,12 @@ func (r *Runtime) revoke(g *generation, err error) {
 // up here. Its next write finds out: the quorum read it starts with gives
 // the generation up if another node was named meanwhile, and otherwise
 // fails the write as unavailable once the replica has not caught up within
-// ApplyTimeout. What the loop has seen of the consensus leader is kept in
-// r.live, where each worker tunnel starts its own judgment from.
+// ApplyTimeout.
 func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
 	defer ticker.Stop()
-	r.mu.Lock()
-	state := tickState{liveness: r.live}
-	r.mu.Unlock()
+	state := tickState{liveness: liveness{started: time.Now()}}
 	for {
 		if r.ctx.Err() != nil {
 			err := r.retire()
@@ -338,9 +335,6 @@ func (r *Runtime) run() {
 			r.invalidate(err, false)
 			r.retire()
 		}
-		r.mu.Lock()
-		r.live = state.liveness
-		r.mu.Unlock()
 		select {
 		case <-r.ctx.Done():
 		case <-ticker.C:
@@ -366,8 +360,8 @@ type tickState struct {
 
 // liveness is what a series of observations has shown of the local
 // replica's contact with a consensus leader. The runtime loop judges its
-// business generation by it, and each worker tunnel its authority,
-// starting from what the loop has seen.
+// business generation by one; the worker tunnels of the node share
+// another (see workerAuthority).
 type liveness struct {
 	// started is when the observations began. heard is when the replica
 	// last knew a consensus leader, and leading whether that leader was
@@ -834,6 +828,7 @@ func (r *Runtime) shutdown(reason error) {
 			serviceDone := make(chan error, 1)
 			go func() { serviceDone <- r.service.Close() }()
 			<-r.workerDone
+			r.workers.stop()
 			serviceErr := <-serviceDone
 			bookErr := r.book.Close()
 			r.mu.Lock()

@@ -68,6 +68,20 @@ func (r *Runtime) ReadState(ctx context.Context) (coordination.State, error) {
 	return state, err
 }
 
+// readIndex asks the consensus leader for a read index; see
+// coordination.Service.ReadIndex.
+func (r *Runtime) readIndex(ctx context.Context) (uint64, error) {
+	if r.ctx.Err() != nil {
+		return 0, ErrInactive
+	}
+	r.rememberMembers()
+	index, err := r.service.ReadIndex(ctx)
+	if errors.Is(err, coordination.ErrNotLeader) && r.config.Client != nil {
+		return r.config.Client.ReadIndex(ctx)
+	}
+	return index, err
+}
+
 func (r *Runtime) propose(ctx context.Context, command coordination.AppCommand) (coordination.Result, error) {
 	r.rememberMembers()
 	result, err := r.service.ApplyApp(ctx, command)

@@ -163,37 +163,51 @@ func TestReplacedCoordinatorLosesItsOwnWorkerTunnelWhileItsReplicationLags(t *te
 		if seen := old.Runtime.Load().Status().Coordinator; seen.NodeID != old.Config.NodeID {
 			t.Fatalf("the tunnel closed once the replica caught up with the transfer, not while it lagged")
 		}
+		t.Logf("the tunnel closed %s after the coordinator was replaced", time.Since(replaced).Round(time.Millisecond))
 	case <-time.After(bound - time.Since(replaced)):
 		t.Fatalf("the replaced coordinator kept the tunnel to its own worker %s after it was replaced, while its replication lagged", bound)
 	}
 }
 
-// An idle worker tunnel costs the cluster nothing. Every quorum read the
-// consensus leader serves appends a barrier to its log, whether it is its
-// own or a member's request for the leader's state, so a log that does not
-// grow also shows that no member asked the leader for its state.
+// An idle worker tunnel appends nothing to the consensus log. Every quorum
+// read the consensus leader serves appends a barrier to it, whether it is
+// its own or a member's request for the leader's state, so a log that does
+// not grow also shows that no member asked the leader for its state. The
+// member confirms its replica with a read index instead, which the
+// measurement spans.
 func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	WaitPeerReady(t, hub)
 	service := hub.Runtime.Load().service
+	span := hub.Runtime.Load().config.Coordination.ApplyTimeout + time.Second
 	growth := func() uint64 {
 		time.Sleep(time.Second)
 		before := service.LastIndex()
-		time.Sleep(3 * time.Second)
+		time.Sleep(span)
 		return service.LastIndex() - before
 	}
+	confirmed := func() time.Time {
+		workers := &member.Runtime.Load().workers
+		workers.mu.Lock()
+		defer workers.mu.Unlock()
+		return workers.confirmed
+	}
 	if grew := growth(); grew != 0 {
-		t.Fatalf("with no worker tunnel open the leader's log grew by %d entries in 3s; the measurement needs an idle cluster", grew)
+		t.Fatalf("with no worker tunnel open the leader's log grew by %d entries in %s; the measurement needs an idle cluster", grew, span)
 	}
 	own := openWorkerTunnel(t, hub, hub)
 	if grew := growth(); grew != 0 {
-		t.Errorf("an idle tunnel to the coordinator's own worker grew the leader's log by %d entries in 3s; its authority is being confirmed by quorum reads", grew)
+		t.Errorf("an idle tunnel to the coordinator's own worker grew the leader's log by %d entries in %s; its authority is being confirmed by quorum reads", grew, span)
 	}
 	own.Close()
 	openWorkerTunnel(t, hub, member)
+	opened := confirmed()
 	if grew := growth(); grew != 0 {
-		t.Errorf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries in 3s; the member is asking the leader for its state", grew)
+		t.Errorf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries in %s; the member is asking the leader for its state", grew, span)
+	}
+	if !confirmed().After(opened) {
+		t.Errorf("the member kept its worker tunnel %s without confirming its replica with a quorum", span+time.Second)
 	}
 }
 
@@ -269,9 +283,6 @@ func TestWorkerTunnelClosesWhenItsReplicaStopsHearingTheLeader(t *testing.T) {
 	if !hub.Runtime.Load().Status().Ready {
 		t.Fatal("the coordinator lost its business generation; the tunnel was not closed by the worker")
 	}
-	// The tunnel judged by its own observations, a new one starts from the
-	// runtime loop's, which may have seen the leader one poll later.
-	time.Sleep(10 * workerAuthorityInterval)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if connection, err := hub.DialWorker(ctx, member.Config.NodeID); err == nil {
@@ -303,7 +314,7 @@ func TestRemovingAMachineClosesTheTunnelToItsWorker(t *testing.T) {
 // depends on scheduling.
 func TestWorkerGrantLapsesWithTheLocalReplica(t *testing.T) {
 	const timeout = time.Second
-	runtime := &Runtime{config: Config{Coordination: coordination.Config{NodeID: "node-1", ApplyTimeout: timeout}}}
+	config := Config{Coordination: coordination.Config{NodeID: "node-1", ApplyTimeout: timeout}}
 	assignment := coordination.Assignment{NodeID: "node-3", Epoch: 4}
 	started := time.Now()
 	at := func(after time.Duration, change func(*observation)) observation {
@@ -338,10 +349,13 @@ func TestWorkerGrantLapsesWithTheLocalReplica(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			live := liveness{started: started, heard: started}
+			runtime := &Runtime{config: config, workers: workerAuthority{live: liveness{started: started, heard: started}}}
 			var err error
 			for _, seen := range tc.seen {
-				if err = runtime.authorizesWorker(&live, seen, "node-1", assignment, 7); err != nil {
+				// Each observation here follows a quorum confirmation; see
+				// TestWorkerTunnelsOfAFollowerNeedQuorumConfirmations.
+				runtime.workers.confirmed = seen.at
+				if _, err = runtime.authorizesWorker(seen, "node-1", assignment, 7); err != nil {
 					break
 				}
 			}
@@ -350,6 +364,133 @@ func TestWorkerGrantLapsesWithTheLocalReplica(t *testing.T) {
 			}
 			if tc.want != nil && !errors.Is(err, tc.want) {
 				t.Fatalf("grant lapsed with %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// The worker tunnels of a node share one judgment of its replica, which
+// also admits new ones: once a tunnel lapses because the replica stopped
+// hearing the consensus leader, a tunnel asked for a moment later is
+// refused on the same grounds, not admitted on a view that has yet to
+// notice.
+func TestWorkerTunnelIsAdmittedOnTheJudgmentThatClosedAnother(t *testing.T) {
+	const timeout = time.Second
+	runtime := &Runtime{config: Config{Coordination: coordination.Config{NodeID: "node-1", ApplyTimeout: timeout}}}
+	started := time.Now()
+	runtime.workers = workerAuthority{live: liveness{started: started}}
+	assignment := coordination.Assignment{NodeID: "node-3", Epoch: 4}
+	at := func(after time.Duration, leader string) observation {
+		seen := observation{at: started.Add(after), log: coordination.LogProgress{Committed: 10, Applied: 10}}
+		seen.Healthy, seen.LeaderID = true, leader
+		seen.Coordinator, seen.WriterGeneration = assignment, 7
+		seen.Members = map[string]coordination.Member{"node-1": {NodeID: "node-1"}, "node-3": {NodeID: "node-3"}}
+		runtime.workers.confirmed = seen.at
+		return seen
+	}
+	// The open tunnel last saw the leader at 0; another observer, the one
+	// admitting the next tunnel, saw it 50ms later.
+	if _, err := runtime.authorizesWorker(at(0, "node-2"), "node-1", assignment, 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.authorizesWorker(at(50*time.Millisecond, "node-2"), "node-1", assignment, 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.authorizesWorker(at(timeout+60*time.Millisecond, ""), "node-1", assignment, 7); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("the open tunnel was kept %s after the replica last heard a leader: %v", timeout+10*time.Millisecond, err)
+	}
+	if _, err := runtime.authorizesWorker(at(timeout+70*time.Millisecond, ""), "node-1", assignment, 7); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a tunnel was admitted just after another closed because the replica stopped hearing the leader: %v", err)
+	}
+}
+
+// A node that does not lead consensus keeps its worker tunnels only while a
+// quorum keeps confirming its replica: every ApplyTimeout it starts a
+// confirmation, one at a time, and its tunnels lapse when one fails or
+// none has succeeded for three ApplyTimeouts. A leader needs none.
+func TestWorkerTunnelsOfAFollowerNeedQuorumConfirmations(t *testing.T) {
+	const timeout = time.Second
+	started := time.Now()
+	failed := fmt.Errorf("%w: the read index could not be reached", coordination.ErrUnavailable)
+	type step struct {
+		// Either an observation at after, by a node that hears leader...
+		after  time.Duration
+		leader string
+		// ...expecting a confirmation to start and err, or the result of a
+		// confirmation that started at after.
+		confirm bool
+		err     error
+		settle  bool
+		result  error
+	}
+	observe := func(after time.Duration, leader string, confirm bool, err error) step {
+		return step{after: after, leader: leader, confirm: confirm, err: err}
+	}
+	settle := func(after time.Duration, result error) step {
+		return step{after: after, settle: true, result: result}
+	}
+	const follower, leader = "node-2", "node-1"
+	for _, tc := range []struct {
+		name  string
+		steps []step
+	}{
+		{name: "leader needs none", steps: []step{
+			observe(0, leader, false, nil),
+			observe(10*timeout, leader, false, nil),
+		}},
+		{name: "follower confirms every ApplyTimeout, one at a time", steps: []step{
+			observe(timeout-time.Millisecond, follower, false, nil),
+			observe(timeout, follower, true, nil),
+			observe(timeout+time.Millisecond, follower, false, nil),
+			settle(timeout, nil),
+			observe(2*timeout-time.Millisecond, follower, false, nil),
+			observe(2*timeout, follower, true, nil),
+		}},
+		{name: "failed confirmation", steps: []step{
+			observe(timeout, follower, true, nil),
+			settle(timeout, failed),
+			observe(timeout+time.Millisecond, follower, false, coordination.ErrUnavailable),
+		}},
+		{name: "a failure older than the latest confirmation", steps: []step{
+			observe(timeout, follower, true, nil),
+			settle(timeout+time.Millisecond, nil),
+			settle(timeout, failed),
+			observe(timeout+2*time.Millisecond, follower, false, nil),
+		}},
+		{name: "confirmation that never finishes", steps: []step{
+			observe(timeout, follower, true, nil),
+			observe(3*timeout, follower, false, nil),
+			observe(3*timeout+time.Millisecond, follower, false, coordination.ErrUnavailable),
+		}},
+		{name: "leading counts as confirmed", steps: []step{
+			observe(5*timeout/2, leader, false, nil),
+			observe(3*timeout, follower, false, nil),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := &Runtime{config: Config{Coordination: coordination.Config{NodeID: leader, ApplyTimeout: timeout}}}
+			// Opening a tunnel confirmed the replica at 0.
+			runtime.workers = workerAuthority{live: liveness{started: started, heard: started}, confirmed: started}
+			for i, s := range tc.steps {
+				if s.settle {
+					runtime.workers.mu.Lock()
+					runtime.workers.confirming = false
+					runtime.workers.mu.Unlock()
+					runtime.workers.settle(started.Add(s.after), s.result)
+					continue
+				}
+				seen := observation{at: started.Add(s.after), log: coordination.LogProgress{Committed: 10, Applied: 10}}
+				seen.Healthy, seen.LeaderID = true, s.leader
+				confirm, err := runtime.keepsWorkers(seen)
+				if confirm != s.confirm {
+					t.Fatalf("step %d, at %s: started a confirmation: %v, want %v", i, s.after, confirm, s.confirm)
+				}
+				if s.err == nil && err != nil {
+					t.Fatalf("step %d, at %s: tunnels lapsed: %v", i, s.after, err)
+				}
+				if s.err != nil && !errors.Is(err, s.err) {
+					t.Fatalf("step %d, at %s: tunnels lapsed with %v, want %v", i, s.after, err, s.err)
+				}
 			}
 		})
 	}
