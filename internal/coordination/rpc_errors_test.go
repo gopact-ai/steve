@@ -103,3 +103,46 @@ func TestClientDoesNotReportUnreadablePeerRepliesAsInvalid(t *testing.T) {
 		})
 	}
 }
+
+// A peer running a build without an action answers it as it answers any
+// action it serves only by POST: HTTP 405 and an invalid request. The
+// caller learns that the peer does not serve the action, so an operator
+// can tell a cluster running mixed builds from a request this build got
+// wrong; it is still not a transient failure to retry.
+func TestClientNamesAnActionAPeerDoesNotServe(t *testing.T) {
+	authority := newTestAuthority(t)
+	server := authority.node(t, "cluster", "old")
+	caller := authority.node(t, "cluster", "caller")
+	peer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("the read index request was sent by POST")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Allow", http.MethodPost)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(rpcFailure{Code: "invalid", Message: ErrInvalid.Error()})
+	}))
+	config, err := server.ServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.TLS = config
+	peer.StartTLS()
+	defer peer.Close()
+	client, err := NewClient(ClientConfig{TLS: caller, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	client.RememberMembers([]Member{{NodeID: "old", APIAddress: peer.URL}})
+	_, err = client.ReadIndex(context.Background())
+	if err == nil {
+		t.Fatal("a peer that does not serve read index requests answered one")
+	}
+	if errors.Is(err, ErrUnavailable) || errors.Is(err, ErrNotLeader) {
+		t.Errorf("a peer that does not serve read index requests reached the caller as a transient failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), "peer old does not serve readindex requests") {
+		t.Errorf("a peer that does not serve read index requests reached the caller as %q, which does not name the action", err)
+	}
+}
