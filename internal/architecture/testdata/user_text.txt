@@ -125,15 +125,6 @@ internal/cluster/cluster_upgrade.go#awaitBuildWithin 5
 internal/cluster/coordination_view.go#coordinationNode 5
 internal/configbuild/projects.go#Commit 1
 internal/configbuild/projects.go#Error 1
-internal/console/recovery.go#explain 4
-internal/console/recovery.go#stopChoice 2
-internal/console/recovery_admission.go#neverAdmittedMessage 1
-internal/console/recovery_conversation.go#EnsureRecoveryConversation 3
-internal/console/recovery_stop.go#ask 5
-internal/console/recovery_stop.go#messageLocked 5
-internal/console/rewind.go#beginRewind 1
-internal/console/rewind.go#planRewindLocked 1
-internal/console/schedule.go#EnqueueScheduled 1
 internal/desktop/workspace.go#CheckWorkspaceProject 2
 internal/desktop/workspace.go#PrepareWorkspace 7
 internal/desktop/workspace.go#checkWorkspacePlace 3

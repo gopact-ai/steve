@@ -767,6 +767,29 @@ const (
 	ResumeProblemCapabilityMissing     Key = "resume_problem_capability_missing"
 	ResumeReasonStillMissing           Key = "resume_reason_still_missing"
 	ResumeAdviceMeetOrChoose           Key = "resume_advice_meet_or_choose"
+
+	// Console recovery, rewind and scheduled lines.
+	ConsoleRecoveryStopUnfinished Key = "console_recovery_stop_unfinished"
+	ConsoleRecoveryCheckReported  Key = "console_recovery_check_reported"
+	ConsoleRecoveryRepeated       Key = "console_recovery_repeated"
+	ConsoleStopChoice             Key = "console_stop_choice"
+	ConsoleStopChoiceDetail       Key = "console_stop_choice_detail"
+	ConsoleNeverAdmitted          Key = "console_never_admitted"
+	ConsoleStopWaitTitle          Key = "console_stop_wait_title"
+	ConsoleStopRecheckNow         Key = "console_stop_recheck_now"
+	ConsoleStopRecheckNowDetail   Key = "console_stop_recheck_now_detail"
+	ConsoleStopLetItCheck         Key = "console_stop_let_it_check"
+	ConsoleStopLetItCheckDetail   Key = "console_stop_let_it_check_detail"
+	ConsoleStopRecorded           Key = "console_stop_recorded"
+	ConsoleStopUnconfirmed        Key = "console_stop_unconfirmed"
+	ConsoleStopChecked            Key = "console_stop_checked"
+	ConsoleStopPreserved          Key = "console_stop_preserved"
+	ConsoleRecoveryFeishu         Key = "console_recovery_feishu"
+	ConsoleRecoveryTitle          Key = "console_recovery_title"
+	ConsoleRecoveryBody           Key = "console_recovery_body"
+	ConsoleRewindRelayed          Key = "console_rewind_relayed"
+	ConsoleRewindResetFailed      Key = "console_rewind_reset_failed"
+	ConsoleScheduledLine          Key = "console_scheduled_line"
 )
 
 type Catalog struct {
