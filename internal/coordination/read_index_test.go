@@ -113,3 +113,27 @@ func TestConcurrentReadIndexesEstablishATermWithOneBarrier(t *testing.T) {
 		t.Fatalf("%d read index requests establishing a term together appended %d entries, want one barrier", callers, grew)
 	}
 }
+
+// A replica's state machine holds the barriers and the entry each term
+// starts with once it has applied the commands before them, although
+// none of them reaches it; it does not hold an index past its commit
+// index.
+func TestStateHoldsEntriesThatNeverReachTheStateMachine(t *testing.T) {
+	c := newTestCluster(t, 1)
+	leader := c.leader()
+	for range 3 {
+		if err := leader.barrier(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	last := leader.LastIndex()
+	if applied := leader.Status().AppliedIndex; applied >= last {
+		t.Fatalf("the state machine applied %d, want it short of the barrier at %d", applied, last)
+	}
+	if !leader.StateHolds(last) {
+		t.Fatalf("the state machine does not hold barrier %d it has passed", last)
+	}
+	if leader.StateHolds(leader.raft.CommitIndex() + 1) {
+		t.Fatal("the state machine holds an index past the commit index")
+	}
+}

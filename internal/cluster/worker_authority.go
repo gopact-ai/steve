@@ -198,18 +198,16 @@ func (w *workerAuthority) settleLocked(started time.Time, err error) {
 	}
 }
 
-// awaitLog waits for Raft on the local replica to have handed its log up
-// to index to the state machine, in order. The state machine may still be
-// applying the last entries it was handed, as LogProgress describes, so an
-// observation of the replica just after awaitLog returns can still miss
-// them; it holds them once the state machine has applied what it was
-// handed, which it does in memory.
+// awaitLog waits for the state machine of the local replica to have
+// applied its log up to index, so an observation of the replica once
+// awaitLog returns sees every entry committed by then. Raft hands entries
+// to the state machine before it applies them; awaitLog waits for the
+// state machine, however long it takes to apply them.
 func (r *Runtime) awaitLog(ctx context.Context, index uint64) error {
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		applied := r.service.LogProgress().Applied
-		if applied >= index {
+		if r.service.StateHolds(index) {
 			return nil
 		}
 		select {
@@ -217,7 +215,7 @@ func (r *Runtime) awaitLog(ctx context.Context, index uint64) error {
 			if r.ctx.Err() != nil {
 				return ErrInactive
 			}
-			return fmt.Errorf("%w: this replica did not apply its log up to read index %d within %s; it has applied %d", coordination.ErrUnavailable, index, r.config.Coordination.ApplyTimeout, applied)
+			return fmt.Errorf("%w: this replica did not apply its log up to read index %d within %s; it has applied %d", coordination.ErrUnavailable, index, r.config.Coordination.ApplyTimeout, r.service.Status().AppliedIndex)
 		case <-ticker.C:
 		}
 	}

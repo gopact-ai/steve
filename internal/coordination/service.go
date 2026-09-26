@@ -46,6 +46,9 @@ type Service struct {
 	// completed while it led consensus: from then on its commit index
 	// covers every entry committed before that term. See ReadIndex.
 	established atomic.Uint64
+	// held is an index up to which the state machine is known to hold the
+	// log, found by StateHolds past the last entry it applied.
+	held atomic.Uint64
 	// establishing is held by the read index request completing a barrier
 	// to establish the term, so requests arriving together append one.
 	establishing chan struct{}
@@ -241,6 +244,57 @@ func (s *Service) Status() Status {
 	address, id := s.raft.LeaderWithID()
 	healthy := !s.closed.Load() && s.fsm.healthy() && s.raft.State() != raft.Shutdown
 	return Status{State: s.fsm.read(), ControlProtocol: ControlProtocolVersion, NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
+}
+
+// StateHolds reports whether this replica's state machine holds every
+// entry of its log up to index: whether that much is committed and the
+// state machine has finished applying each of those entries that reach it.
+// Barriers and the entry each leader starts its term with never reach it,
+// so State.AppliedIndex can stay short of an index the state machine
+// holds; the log tells those entries apart. Unlike LogProgress.Applied,
+// which advances once Raft hands entries over, it does not run ahead of
+// the state machine, and it does not wait for an entry being applied.
+func (s *Service) StateHolds(index uint64) bool {
+	from := max(s.fsm.applied.Load(), s.held.Load())
+	if from >= index {
+		return true
+	}
+	if s.raft.CommitIndex() < index {
+		return false
+	}
+	for i := from + 1; i <= index; i++ {
+		var entry raft.Log
+		if err := s.store.GetLog(i, &entry); err != nil {
+			// A committed entry missing from the log was compacted away
+			// into a snapshot the state machine took, or restored, so it
+			// holds that entry. The log is empty once every entry is.
+			first, ferr := s.store.FirstIndex()
+			if ferr != nil || (first != 0 && i >= first) {
+				return false
+			}
+			if first == 0 {
+				first = index + 1
+			}
+			i = min(first-1, index)
+			s.raiseHeld(i)
+			continue
+		}
+		if entry.Type == raft.LogCommand || entry.Type == raft.LogConfiguration {
+			return false
+		}
+		s.raiseHeld(i)
+	}
+	return true
+}
+
+// raiseHeld records that the state machine holds the log up to index.
+func (s *Service) raiseHeld(index uint64) {
+	for {
+		held := s.held.Load()
+		if held >= index || s.held.CompareAndSwap(held, index) {
+			return
+		}
+	}
 }
 
 // LastIndex is the index of the last entry in this replica's Raft log. It
