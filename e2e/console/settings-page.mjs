@@ -82,7 +82,7 @@ if (process.env.PURE_ONLY !== "1") {
         const page = await context.newPage(); page.setDefaultTimeout(7000);
         let state = fixtureView(), channels = channelView(), configRevision = "revision-a", conflict = false, loseRestart = true, restartUnknown = true;
         const writes = [], errors = [], external = [], operations = new Map(), restartPosts = [], queries = [], approvalSyncs = [];
-        let settingsReads = 0, versionsReads = 0;
+        let settingsReads = 0, versionsReads = 0, channelReads = 0;
         await page.addInitScript(() => {
             localStorage.setItem("steve.ui.locale", "zh");
             window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
@@ -111,7 +111,7 @@ if (process.env.PURE_ONLY !== "1") {
                 return route.fulfill({ json: state });
             }
             if (url.pathname === "/console/channels") {
-                if (request.method() === "GET") return route.fulfill({ json: { ...channels, revision: configRevision } });
+                if (request.method() === "GET") { channelReads++; return route.fulfill({ json: { ...channels, revision: configRevision } }); }
                 const body = request.postDataJSON(); writes.push({ group: "channels", ...body });
                 if (body.base_revision !== configRevision) return route.fulfill({ status: 409, json: { error: "channel revision conflict" } });
                 configRevision = `revision-${writes.length}`;
@@ -516,13 +516,26 @@ if (process.env.PURE_ONLY !== "1") {
         assert.equal(await page.locator('[data-channel-apply]').filter({ hasText: "no restart" }).count(), 0);
         // A startup that may still succeed is shown as retrying, with its last error.
         delete channels.runtime_error;
-        channels.startup_retry = { attempts: 3, next_at: new Date(Date.now() + 60_000).toISOString(), last_error: "dial tcp: network is unreachable" };
+        channels.startup_retry = { attempts: 3, next_at: new Date(Date.now() + 1_000).toISOString(), last_error: "dial tcp: network is unreachable" };
         await page.getByRole("button", { name: "Reload", exact: true }).click();
-        const retrying = page.getByRole("status").filter({ hasText: "retrying on its own: 3 failed attempts" });
-        await retrying.waitFor();
+        const retrying = page.getByRole("status").filter({ hasText: "retrying on its own" });
+        await retrying.filter({ hasText: "Failed attempts: 3;" }).waitFor();
         await retrying.getByText("Error details", { exact: true }).click();
         await retrying.getByText("dial tcp: network is unreachable", { exact: true }).waitFor();
         assert.equal(await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).count(), 0);
+        // The page follows the retry on its own, keeping drafts: each attempt's
+        // outcome appears without a reload, and the notice goes once connected.
+        const readsBefore = channelReads;
+        await page.getByRole("textbox", { name: "App ID", exact: true }).fill("draft-app-fixture");
+        channels.startup_retry = { attempts: 4, next_at: new Date(Date.now() + 1_000).toISOString(), last_error: "dial tcp: i/o timeout" };
+        await retrying.filter({ hasText: "Failed attempts: 4;" }).waitFor({ timeout: 10_000 });
+        delete channels.startup_retry;
+        await retrying.waitFor({ state: "detached", timeout: 10_000 });
+        assert.ok(channelReads > readsBefore, "the retry status was not read again");
+        assert.equal(await page.getByRole("textbox", { name: "App ID", exact: true }).inputValue(), "draft-app-fixture");
+        const readsAfter = channelReads;
+        await page.waitForTimeout(2_500);
+        assert.equal(channelReads, readsAfter, "a connected channel is still being polled");
         assert.deepEqual(errors, []); assert.deepEqual(external, []);
         console.log("PASS settings center browser: drafts/CAS, next-operation/task modes, zero budgets, landing schema, mixed/restart channel capabilities, restart receipts, English and narrow layout");
         await context.close();

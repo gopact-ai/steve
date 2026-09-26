@@ -24,6 +24,8 @@ type Group = "hub" | "channels";
 type Section = "approval" | "appearance" | "general" | "channels" | "policies" | "services";
 const sections = ["general", "appearance", "approval", "channels", "policies", "services"] as const;
 const servicesHref = "#/settings?section=services";
+// An attempt takes a moment after its scheduled time; polls stay between the bounds.
+const retryPollSettle = 1500, retryPollMin = 2000, retryPollMax = 30000;
 const icons = { approval: Shield01, appearance: Palette, general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
 
 export function SettingsPage() {
@@ -101,6 +103,24 @@ export function SettingsPage() {
         loadedServerSettings.current = true;
         void read("hub"); void read("channels");
     }, [section]);
+    // A retrying channel changes on its own. Follow its status after each
+    // attempt until it connects or fails, without touching drafts.
+    const retryAt = section === "channels" ? channels?.startup_retry?.next_at : undefined;
+    const [retryPolls, setRetryPolls] = useState(0);
+    useEffect(() => {
+        if (!retryAt) return;
+        let cancelled = false;
+        const due = Date.parse(retryAt) - Date.now();
+        const timer = window.setTimeout(async () => {
+            try {
+                const next = await fetchChannels();
+                if (cancelled || !alive.current) return;
+                setChannels((current) => current && { ...current, runtime_error: next.runtime_error, startup_retry: next.startup_retry });
+            } catch { /* The next poll tries again. */ }
+            if (!cancelled && alive.current) setRetryPolls((count) => count + 1);
+        }, Number.isNaN(due) ? retryPollMax : Math.min(Math.max(due + retryPollSettle, retryPollMin), retryPollMax));
+        return () => { cancelled = true; window.clearTimeout(timer); };
+    }, [retryAt, retryPolls]);
     async function save(group: Group) {
         if (sending.current || loading[group] || stale[group]) return;
         sending.current = true; setSaving(group); setErrors((all) => ({ ...all, [group]: null }));
