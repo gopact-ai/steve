@@ -26,8 +26,8 @@ const (
 // tells a stop it asked for from a failure.
 //
 // A temporary failure — the process or system out of descriptors or
-// buffers, or a connection aborted before it was accepted — pauses and
-// accepts again. The pause starts at 5ms, doubles up to 1s, and starts
+// buffers, or a connection that failed or went away before it was
+// accepted — pauses and accepts again. The pause starts at 5ms, doubles up to 1s, and starts
 // over once a connection is accepted. The failure is logged as a warning
 // naming what, at most once a minute. ctx ending during a pause returns
 // the failure paused on.
@@ -59,11 +59,25 @@ func Run(ctx context.Context, l net.Listener, what string, handle func(net.Conn)
 	}
 }
 
-// temporary reports whether accepting again may succeed after err. These
-// are the errors accept(2) returns for resources that free up, and for a
-// connection that went away before it was accepted.
+// temporaries are the errors accept(2) returns for resources that free
+// up, and for a single connection that failed or went away before it was
+// accepted: net/http waits out ECONNRESET and ECONNABORTED (Go's accept
+// retries the latter itself on Unix) and ETIMEDOUT, and Linux passes on a
+// pending connection's network error, the rest of the list and
+// platformTemporaries, for the caller to retry. The listeners here are
+// all stream sockets, so EOPNOTSUPP cannot mean the socket does not
+// accept. On Windows these are Go's own values rather than what Winsock
+// reports, so none matches and every failure ends the loop.
+var temporaries = append([]syscall.Errno{
+	syscall.EMFILE, syscall.ENFILE, syscall.ENOBUFS, syscall.ENOMEM,
+	syscall.ECONNABORTED, syscall.ECONNRESET, syscall.ETIMEDOUT,
+	syscall.ENETDOWN, syscall.EPROTO, syscall.ENOPROTOOPT, syscall.EHOSTDOWN,
+	syscall.EHOSTUNREACH, syscall.EOPNOTSUPP, syscall.ENETUNREACH,
+}, platformTemporaries...)
+
+// temporary reports whether accepting again may succeed after err.
 func temporary(err error) bool {
-	for _, errno := range []syscall.Errno{syscall.EMFILE, syscall.ENFILE, syscall.ENOBUFS, syscall.ENOMEM, syscall.ECONNABORTED} {
+	for _, errno := range temporaries {
 		if errors.Is(err, errno) {
 			return true
 		}
