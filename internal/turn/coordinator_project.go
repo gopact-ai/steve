@@ -26,10 +26,7 @@ func (c *Coordinator) bindingFor(ctx context.Context, req Request) (project.Bind
 	if ok {
 		return binding, nil
 	}
-	id := c.defaultProject
-	if c.homeProject != "" && injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) == home.ModeOwner {
-		id = c.homeProject
-	}
+	id := c.unboundProject(injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID))
 	if id == "" {
 		return project.Binding{}, UserError{Text: c.text.T(i18n.ProjectUnbound, protocol.CommandProject)}
 	}
@@ -39,6 +36,17 @@ func (c *Coordinator) bindingFor(ctx context.Context, req Request) (project.Bind
 	}
 	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s by default", req.ConversationID, id), "conversation", req.ConversationID, "project", id)
 	return binding, nil
+}
+
+// unboundProject is the project a conversation with no binding gets on
+// its first turn, by how it reaches Steve: home for the owner in private,
+// the default for anyone else. The first turn binds it and every read of
+// an unbound conversation shows it, so the two cannot disagree.
+func (c *Coordinator) unboundProject(mode home.Mode) string {
+	if c.homeProject != "" && mode == home.ModeOwner {
+		return c.homeProject
+	}
+	return c.defaultProject
 }
 
 // resolveWorkspace is where an interactive turn learns its directory: the

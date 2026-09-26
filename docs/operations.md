@@ -176,7 +176,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `issuer_addr` | string | `""`（关闭） | 对其他区域提供本地租约签发 HTTP 服务 | `"0.0.0.0:7720"` |
 | `issuer_token` | string | `""` | 本地租约签发服务认证 token | `"replace-me-with-an-issuer-token"` |
 | `direct_transfer` | boolean | `false` | 允许持有产物的 node 在 hub 授权下直传给另一 node；关闭时经过 hub | `true` |
-| `default_project` | string | 只有一个项目时自动选它，否则 `""` | 新会话未选择项目时的绑定；owner 飞书私聊默认使用保留项目 home | `"work"` |
+| `default_project` | string | 只有一个项目时自动选它，否则 `""` | 新会话未选择项目时的绑定；owner 私聊（飞书私聊和控制台）默认使用保留项目 home。绑定前，控制台和内置工具按同一规则显示会话将绑定的项目；本进程还没收到消息的飞书会话分不出群聊或私聊，显示为未绑定 | `"work"` |
 | `default_approval` | string | `""`（不设置） | 全局默认审批策略：`ask`、`auto`、`full`，见下文 | `"auto"` |
 
 任务预算的 **0 是不限**；设置正值才施加限制，子任务从父任务剩余预算分配。`prompt_timeout`、任务预算、node 续接宽限和 e2e 客户端截止时间是不同的时钟。

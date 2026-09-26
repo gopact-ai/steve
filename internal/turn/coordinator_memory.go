@@ -14,8 +14,8 @@ import (
 )
 
 // memoryProject is the project whose memory a conversation gets: the
-// one it is bound to, or the default, never Steve's own home (its memory
-// is the global one).
+// one it is bound to, or the one its first turn will bind, never Steve's
+// own home (its memory is the global one).
 func (c *Coordinator) memoryProject(ctx context.Context, conversationID string) string {
 	attemptID := ""
 	if scope, ok := agentmcp.ScopeFromContext(ctx); ok {

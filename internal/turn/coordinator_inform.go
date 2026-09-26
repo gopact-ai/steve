@@ -32,8 +32,12 @@ type Whereabouts struct {
 
 // rememberMode keeps how a conversation last reached Steve: the owner
 // in private, or anyone else. A tool call later has no request to read
-// it from.
+// it from. A line that does not say whether it came in private or in a
+// group, such as a replayed card tap, is no evidence and changes nothing.
 func (c *Coordinator) rememberMode(req Request) {
+	if req.ChatType != protocol.ChatP2P && req.ChatType != protocol.ChatGroup {
+		return
+	}
 	mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
 	c.mu.Lock()
 	if c.modes == nil {
@@ -43,11 +47,34 @@ func (c *Coordinator) rememberMode(req Request) {
 	c.mu.Unlock()
 }
 
-func (c *Coordinator) modeOf(conversationID string) home.Mode {
+// consolePrefix starts every console conversation's key and must stay
+// equal to console.Prefix, which this package cannot import. The console
+// sends each of its lines as the owner, in private. Only the console makes
+// keys with this prefix: a channel conversation's key is its own chat or
+// thread id, and a scheduled channel firing refuses one that has it. So
+// the key alone says a conversation is the console's.
+const consolePrefix = "console:"
+
+// arrivalMode is how a conversation reaches Steve, as far as a read with
+// no request in hand can know: a console conversation as the owner in
+// private, any other as its last line did. known is false for a channel
+// conversation not heard from since this process started — a group, a
+// guest and the owner in private look alike by their key.
+func (c *Coordinator) arrivalMode(conversationID string) (mode home.Mode, known bool) {
+	if strings.HasPrefix(conversationID, consolePrefix) {
+		return injectionMode(protocol.ChatP2P, c.owners.baseline, c.owners.baseline), true
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if m, ok := c.modes[conversationID]; ok {
-		return m
+	mode, known = c.modes[conversationID]
+	return mode, known
+}
+
+// modeOf is how a conversation reaches Steve, and guest when that is not
+// known: nothing of the owner's is lent on a guess.
+func (c *Coordinator) modeOf(conversationID string) home.Mode {
+	if mode, known := c.arrivalMode(conversationID); known {
+		return mode
 	}
 	return home.ModeGuest
 }

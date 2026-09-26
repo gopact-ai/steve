@@ -231,6 +231,7 @@ func TestMemoryProjectScopeInsideAnExecutionIsTheAttemptsProject(t *testing.T) {
 func TestProjectMemoryOfAnUnboundConversationWithoutAHomeProjectIsTheDefaultProjects(t *testing.T) {
 	c := memoryCoordinator(t)
 	seedFact(t, c, memory.ProjectScope("alpha"), "tests run with -race")
+	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
 	owner := Request{ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}
 	if got := c.projectMemory(t.Context(), "chat", owner); len(got) != 1 || got[0].Name != "memory:project:alpha" {
 		t.Fatalf("unbound conversation got %+v", got)
