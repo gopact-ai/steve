@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -33,7 +34,10 @@ type runtimeBroker struct {
 	broker  *Broker
 	servers []acp.MCPServer
 	cancel  context.CancelFunc
-	done    chan error
+	// stopped is closed once the broker's Serve has returned, with err
+	// what it returned.
+	stopped chan struct{}
+	err     error
 }
 
 type PluginRuntime struct {
@@ -158,7 +162,7 @@ func (p *PluginRuntimePool) startBroker(ctx context.Context, ref plugins.Runtime
 		<-done
 		return nil, ctx.Err()
 	}
-	entry := &runtimeBroker{broker: broker, cancel: cancel, done: done}
+	entry := &runtimeBroker{broker: broker, cancel: cancel, stopped: make(chan struct{})}
 	names := make([]string, 0, len(specs))
 	for name := range specs {
 		names = append(names, name)
@@ -186,7 +190,26 @@ func (p *PluginRuntimePool) startBroker(ctx context.Context, ref plugins.Runtime
 		}
 		entry.servers = append(entry.servers, server)
 	}
+	go p.watch(ref.ID, entry, owner, done)
 	return entry, nil
+}
+
+// watch waits for a started broker's Serve. One that returns while its
+// owner still wants it has stopped on its own: it leaves the cache, so the
+// next load starts it again on the remembered port and the routes
+// sessions hold work again.
+func (p *PluginRuntimePool) watch(id string, entry *runtimeBroker, owner context.Context, done <-chan error) {
+	entry.err = <-done
+	if owner.Err() == nil {
+		slog.Warn(fmt.Sprintf("steve-node: plugin runtime %s: MCP broker stopped: %v; the next load starts it again", id, entry.err), "runtime", id)
+		entry.cancel()
+		p.mu.Lock()
+		if p.brokers[id] == entry {
+			delete(p.brokers, id)
+		}
+		p.mu.Unlock()
+	}
+	close(entry.stopped)
 }
 
 func (p *PluginRuntimePool) Close() error {
@@ -199,7 +222,8 @@ func (p *PluginRuntimePool) Close() error {
 	for id, entry := range entries {
 		entry.cancel()
 		entry.broker.Release(id)
-		errs = append(errs, <-entry.done)
+		<-entry.stopped
+		errs = append(errs, entry.err)
 		entry.broker.connections.Wait()
 	}
 	return errors.Join(errs...)
@@ -215,9 +239,9 @@ func (p *PluginRuntimePool) Drop(id string) error {
 	}
 	entry.broker.Release(id)
 	entry.cancel()
-	err := <-entry.done
+	<-entry.stopped
 	entry.broker.connections.Wait()
-	return err
+	return entry.err
 }
 
 func (p *PluginRuntimePool) MarshalJSON() ([]byte, error) {
