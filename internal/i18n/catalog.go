@@ -975,6 +975,10 @@ var zh = map[Key]string{
 	NodeBinaryUnverifiable:       "无法校验节点安装包",
 	NodeBinaryChanging:           "无法校验节点安装包或安装包正在改变",
 	NodeBinaryVerifiedUnreadable: "无法读取已校验的节点安装包",
+
+	// configuration projects
+	ConfigProjectionPending: "配置已保存，项目投影尚未应用；请重试或重启恢复：%v",
+	ConfigProjectsRequired:  "至少保留一个配置项目；配置文件不接受空 projects",
 }
 
 var en = map[Key]string{
@@ -1952,4 +1956,8 @@ var en = map[Key]string{
 	NodeBinaryUnverifiable:       "Cannot verify the node installer",
 	NodeBinaryChanging:           "Cannot verify the node installer, or it is changing",
 	NodeBinaryVerifiedUnreadable: "Cannot read the verified node installer",
+
+	// configuration projects
+	ConfigProjectionPending: "The configuration is saved but its projects are not applied yet; retry or restart to recover: %v",
+	ConfigProjectsRequired:  "Keep at least one project; the configuration file does not accept empty projects",
 }

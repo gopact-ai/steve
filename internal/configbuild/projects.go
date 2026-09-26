@@ -11,6 +11,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -67,13 +68,16 @@ func GrantList(c *config.Config) []project.Grant {
 // with the projection, so a failed second write never creates two authorities.
 type ProjectController struct{ Store *project.Store }
 
+// ProjectionPendingError says in the language of the change's author that
+// the file is saved but its projects are not applied yet.
 type ProjectionPendingError struct {
 	Hash string
 	Err  error
+	text i18n.Catalog
 }
 
 func (e *ProjectionPendingError) Error() string {
-	return "配置已保存，项目投影尚未应用；请重试或重启恢复：" + e.Err.Error()
+	return e.text.T(i18n.ConfigProjectionPending, e.Err)
 }
 func (e *ProjectionPendingError) Unwrap() error { return e.Err }
 
@@ -140,7 +144,7 @@ func (c ProjectController) Reconcile(ctx context.Context, cfg *config.Config) er
 	}
 	c.Store.RequireDeclaration(hash)
 	if err := c.Store.Reconcile(ctx, desired, hash); err != nil {
-		return &ProjectionPendingError{Hash: hash, Err: err}
+		return &ProjectionPendingError{Hash: hash, Err: err, text: i18n.New(i18n.ContextLocale(ctx))}
 	}
 	return nil
 }
@@ -165,7 +169,7 @@ func (c ProjectController) Ensure(ctx context.Context, cfg *config.Config) error
 // the same candidate to the live config after a successful/committed save.
 func (c ProjectController) Commit(ctx context.Context, candidate *config.Config, commit func() error) error {
 	if len(candidate.Projects) == 0 {
-		return errors.New("至少保留一个配置项目；配置文件不接受空 projects")
+		return errors.New(i18n.New(i18n.ContextLocale(ctx)).T(i18n.ConfigProjectsRequired))
 	}
 	desired, hash, err := ProjectDeclarations(candidate)
 	if err != nil {
@@ -187,7 +191,7 @@ func (c ProjectController) Commit(ctx context.Context, candidate *config.Config,
 		return saveErr
 	}
 	if err := c.Store.Reconcile(ctx, desired, hash); err != nil {
-		return errors.Join(saveErr, &ProjectionPendingError{Hash: hash, Err: err})
+		return errors.Join(saveErr, &ProjectionPendingError{Hash: hash, Err: err, text: i18n.New(i18n.ContextLocale(ctx))})
 	}
 	return saveErr
 }

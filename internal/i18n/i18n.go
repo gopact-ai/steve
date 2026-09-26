@@ -1011,6 +1011,10 @@ const (
 	NodeBinaryUnverifiable       Key = "node_binary_unverifiable"
 	NodeBinaryChanging           Key = "node_binary_changing"
 	NodeBinaryVerifiedUnreadable Key = "node_binary_verified_unreadable"
+
+	// configuration projects
+	ConfigProjectionPending Key = "config_projection_pending"
+	ConfigProjectsRequired  Key = "config_projects_required"
 )
 
 type Catalog struct {
