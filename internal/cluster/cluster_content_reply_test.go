@@ -551,3 +551,25 @@ func TestContentRefusalLogIsBoundedAndSaysWhatItHeldBack(t *testing.T) {
 		t.Fatalf("the refusals held back for a caller no longer tracked are not said: %s", logs.String())
 	}
 }
+
+// A check that could not be made refuses nothing, whatever else its error
+// carries: a placement refusal joined to it is answered 503, not 403. A
+// caller the committed state does not admit is refused before that.
+func TestContentRefusalPutsAnUncheckedPlacementBeforeARefusedOne(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"placement and unchecked", errors.Join(contentreplica.ErrPlacement, contentreplica.ErrUnavailable), http.StatusServiceUnavailable, "unavailable"},
+		{"checkpoint placement and unchecked", errors.Join(checkpoint.ErrPlacement, fmt.Errorf("%w: read project", contentreplica.ErrUnavailable)), http.StatusServiceUnavailable, "unavailable"},
+		{"lagging and placement", errors.Join(contentreplica.ErrPlacement, errContentLagging), http.StatusServiceUnavailable, "lagging"},
+		{"stale and unchecked", errors.Join(errContentStale, contentreplica.ErrUnavailable), http.StatusForbidden, "stale"},
+	}
+	for _, c := range cases {
+		if status, code := contentRefusal(c.err); status != c.status || code != c.code {
+			t.Errorf("%s: HTTP %d %q, want HTTP %d %q", c.name, status, code, c.status, c.code)
+		}
+	}
+}
