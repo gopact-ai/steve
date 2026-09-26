@@ -86,7 +86,9 @@ func (b *bridge) accept(listener net.Listener, target string) {
 
 // carry sends an accepted connection to target on the other end. With no
 // session up the connection is closed at once, which the dialer sees as
-// a refused connection rather than a stall.
+// a refused connection rather than a stall. Only the hub's listeners get
+// here between sessions: the far end takes connections only once its
+// session is attached.
 func (b *bridge) carry(connection net.Conn, target string) {
 	b.mu.Lock()
 	session := b.session
