@@ -168,21 +168,23 @@ func TestSingleNodeStartsUsableAndKeepsStableIdentity(t *testing.T) {
 //
 // The barrier is committed before the read returns, but Raft records an
 // entry as applied only after handing it to the state machine, which may
-// answer the barrier first; the applied index then catches up within the
-// ApplyTimeout the runtime allows a committed entry to wait.
+// answer the barrier first. The test gives the applied index up to the
+// ApplyTimeout the runtime allows a committed entry to wait to catch up.
 func TestLogProgressCoversEntriesTheStateMachineNeverSees(t *testing.T) {
 	c := newTestCluster(t, 1)
 	n := c.leader()
-	applyTimeout := c.configs["node-1"].ApplyTimeout
+	applyTimeout := n.config.ApplyTimeout
 	for read := 0; read < 200; read++ {
+		// The read's barrier is the first entry after the ones the log
+		// holds now.
+		before := n.LastIndex()
 		state, err := n.ReadState(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		barrier := n.LastIndex()
 		progress := n.LogProgress()
-		if progress.Committed < barrier {
-			t.Fatalf("quorum read %d returned before the single node committed its barrier: committed %d of %d entries", read, progress.Committed, barrier)
+		if progress.Committed <= before {
+			t.Fatalf("quorum read %d returned before the single node committed its barrier: committed %d, and the log held %d entries before the read", read, progress.Committed, before)
 		}
 		deadline := time.Now().Add(applyTimeout)
 		for progress.Applied < progress.Committed && time.Now().Before(deadline) {
@@ -193,7 +195,7 @@ func TestLogProgressCoversEntriesTheStateMachineNeverSees(t *testing.T) {
 			t.Fatalf("%s after quorum read %d the single node has committed %d and applied %d of %d entries", applyTimeout, read, progress.Committed, progress.Applied, n.LastIndex())
 		}
 		if state.AppliedIndex >= progress.Applied {
-			t.Fatalf("the state applied index %d reaches the barrier at %d: the state machine now sees barriers", state.AppliedIndex, progress.Applied)
+			t.Fatalf("after quorum read %d the state applied index %d reaches the barrier at %d: the state machine now sees barriers", read, state.AppliedIndex, progress.Applied)
 		}
 	}
 }
