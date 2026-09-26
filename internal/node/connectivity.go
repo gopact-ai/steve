@@ -54,11 +54,9 @@ func (r *Registry) signalLocked(name string) {
 }
 
 // down rejects an old socket's late notification before it can change either
-// the roster, an idle clock, or connectivity history. eventMu also orders
-// observer callbacks, which are invoked without holding the registry lock.
+// the roster, an idle clock, or connectivity history. The loss is posted to
+// the observer under the registry lock, after any connection it follows.
 func (r *Registry) down(c *conn) {
-	r.eventMu.Lock()
-	defer r.eventMu.Unlock()
 	r.mu.Lock()
 	if r.live[c.name] != c || c.released.Load() {
 		r.mu.Unlock()
@@ -70,12 +68,9 @@ func (r *Registry) down(c *conn) {
 	r.last[c.name] = &down
 	r.signalLocked(c.name)
 	r.clocksLocked(c.name, false)
-	observe := r.observe
+	r.noticeLocked(down)
 	r.mu.Unlock()
 	slog.Warn(fmt.Sprintf("node: %s disconnected (connection %d)", c.name, c.generation), "node", c.name)
-	if observe != nil {
-		observe(down)
-	}
 }
 
 // awaitConnection is driven by registry changes. The retry is also useful
