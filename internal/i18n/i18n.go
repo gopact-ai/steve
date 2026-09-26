@@ -1021,6 +1021,9 @@ const (
 	SnapshotLimitFiles     Key = "snapshot_limit_files"
 	SnapshotLimitBytes     Key = "snapshot_limit_bytes"
 	SnapshotLimitFileBytes Key = "snapshot_limit_file_bytes"
+
+	// shared application configuration
+	AppSealedShared Key = "app_sealed_shared"
 )
 
 type Catalog struct {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -90,6 +91,9 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 		}
 	}
 	candidate, err := s.value.WithCandidate(cfg)
+	if sealed := (*platformconfig.SealedError)(nil); errors.As(err, &sealed) {
+		return sealedRefusal{message: i18n.New(i18n.ContextLocale(ctx)).T(i18n.AppSealedShared, sealed.Project), cause: sealed}
+	}
 	if err != nil {
 		return err
 	}
@@ -100,3 +104,13 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 	s.value = next
 	return nil
 }
+
+// sealedRefusal says in the saver's language why a sealed project stays
+// out of the shared ledger, and is still the ledger's refusal to errors.Is.
+type sealedRefusal struct {
+	message string
+	cause   error
+}
+
+func (e sealedRefusal) Error() string { return e.message }
+func (e sealedRefusal) Unwrap() error { return e.cause }

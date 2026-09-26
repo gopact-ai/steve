@@ -985,6 +985,9 @@ var zh = map[Key]string{
 	SnapshotLimitFiles:     "文件数",
 	SnapshotLimitBytes:     "总字节数",
 	SnapshotLimitFileBytes: "最大单文件字节数",
+
+	// shared application configuration
+	AppSealedShared: "sealed 项目 %s 仅支持独立单机实例；共享协调账本会复制项目正文",
 }
 
 var en = map[Key]string{
@@ -1972,4 +1975,7 @@ var en = map[Key]string{
 	SnapshotLimitFiles:     "file count",
 	SnapshotLimitBytes:     "total bytes",
 	SnapshotLimitFileBytes: "largest file's bytes",
+
+	// shared application configuration
+	AppSealedShared: "Project %s is sealed and runs only on an independent single-machine service; a shared coordination ledger copies project content",
 }

@@ -43,7 +43,6 @@ internal/cluster/cluster_upgrade.go#askBuild 2
 internal/cluster/cluster_upgrade.go#awaitBuildWithin 5
 internal/cluster/coordination_view.go#coordinationNode 5
 internal/onboard/onboard.go#TaskGoal 1
-internal/platformconfig/store.go# 1
 internal/sshconnect/bridge.go#ServeLink 2
 internal/sshconnect/browse.go#Browse 1
 internal/sshconnect/browse.go#browseAlias 5
