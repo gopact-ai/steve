@@ -114,6 +114,40 @@ func TestConcurrentReadIndexesEstablishATermWithOneBarrier(t *testing.T) {
 	}
 }
 
+// A read index request that waited for its turn to establish a term the
+// node has since left fails at once, as not led by it: it appends no
+// barrier for the term the node leads now, which it would not use.
+func TestReadIndexWaitingOutATermAppendsNoBarrier(t *testing.T) {
+	c := newTestCluster(t, 3)
+	leader := c.leader()
+	left := leader.raft.CurrentTerm()
+	if err := leader.raft.LeadershipTransfer().Error(); err != nil {
+		t.Fatal(err)
+	}
+	other := c.leader()
+	if err := other.raft.LeadershipTransferToServer(raft.ServerID(leader.config.NodeID), leader.transport.LocalAddr()).Error(); err != nil {
+		t.Fatal(err)
+	}
+	// Leading again once the entry that starts its new term is committed.
+	eventually(t, 5*time.Second, func() bool {
+		var entry raft.Log
+		last := leader.LastIndex()
+		return leader.raft.State() == raft.Leader && leader.store.GetLog(last, &entry) == nil && entry.Term == leader.raft.CurrentTerm() && leader.raft.CommitIndex() >= last
+	})
+	if now := leader.raft.CurrentTerm(); now == left {
+		t.Fatalf("the node leads term %d again, want a later one", now)
+	}
+	// It found term left not yet established when it started waiting.
+	leader.established.Store(0)
+	before := leader.LastIndex()
+	if err := leader.establish(t.Context(), left); !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("establishing term %d the node has left: %v, want %v", left, err, ErrNotLeader)
+	}
+	if grew := leader.LastIndex() - before; grew != 0 {
+		t.Fatalf("establishing term %d the node has left appended %d entries", left, grew)
+	}
+}
+
 // A replica's state machine holds the barriers and the entry each term
 // starts with once it has applied the commands before them, although
 // none of them reaches it; it does not hold an index past its commit
