@@ -1046,6 +1046,356 @@ func ready(t *testing.T, r *Runtime) Activation {
 	return activation
 }
 
+// A quorum read appends a barrier entry to the Raft log, and from a member
+// that does not lead it is a request to the leader, over what may be a slow
+// link, for the whole cluster state. Once the business generation is ready
+// and nothing changes, no node's runtime keeps reading the state that way:
+// the log stops growing and no member asks the leader for the state.
+func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
+	nodes := testNodes(t, 2)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	second := openNode(t, nodes[1])
+	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
+	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-replica", Actor: "owner", Member: member}); err != nil {
+		t.Fatal(err)
+	}
+	ready(t, first)
+	idle := 25 * nodes[0].config.PollInterval
+	index, reads := first.service.LastIndex(), nodes[0].servedCount(coordination.RPCPath+"state")
+	time.Sleep(idle)
+	if grown := first.service.LastIndex() - index; grown != 0 {
+		t.Errorf("the Raft log grew by %d entries while the cluster was idle for %s", grown, idle)
+	}
+	if asked := nodes[0].servedCount(coordination.RPCPath+"state") - reads; asked != 0 {
+		t.Errorf("the leader was asked for the cluster state %d times while the cluster was idle for %s", asked, idle)
+	}
+	if status := first.Status(); !status.Ready {
+		t.Fatalf("the coordinator stopped being ready while idle: %+v", status)
+	}
+}
+
+// staleView is status as a replica behind the transfer that made another
+// node the coordinator might read it: it still names node and has applied
+// less than the leader has.
+func staleView(t *testing.T, r *Runtime, node string) observation {
+	t.Helper()
+	status := r.service.Status()
+	if status.AppliedIndex == 0 || status.LeaderID == "" {
+		t.Fatalf("the replica has nothing applied or knows no leader: %+v", status)
+	}
+	status.Coordinator.NodeID = node
+	status.AppliedIndex--
+	if err := r.coordinates(status.State); err != nil {
+		t.Fatalf("the stale view does not name %s the coordinator: %v", node, err)
+	}
+	return observation{Status: status, at: time.Now()}
+}
+
+// A replica that names this node the coordinator only because it has not
+// applied a later assignment asks a majority once. It does not ask again
+// until it has applied what that answer covered.
+func TestStaleReplicaAsksOnceUntilItAppliesTheAnswer(t *testing.T) {
+	nodes := testNodes(t, 2)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	second := joinNode(t, first, nodes[1], false, false)
+	waitFor(t, 8*time.Second, "node-2 to apply its own admission and hear from the leader", func() bool {
+		status := second.service.Status()
+		return status.IsActiveReplica("node-2") && status.LeaderID != ""
+	})
+	stale := staleView(t, second, "node-2")
+	var state tickState
+	asks := func(seen observation) int64 {
+		t.Helper()
+		before := nodes[0].servedCount(coordination.RPCPath + "state")
+		if err := second.step(seen, &state); !errors.Is(err, coordination.ErrNotCoordinator) {
+			t.Fatalf("a stale replica that a majority does not name the coordinator reported %v", err)
+		}
+		return nodes[0].servedCount(coordination.RPCPath+"state") - before
+	}
+	if n := asks(stale); n != 1 {
+		t.Fatalf("a stale view naming this node asked the leader for the state %d times, want once", n)
+	}
+	if state.denied <= stale.AppliedIndex {
+		t.Fatalf("the answer at applied index %d is not ahead of the stale view at %d", state.denied, stale.AppliedIndex)
+	}
+	if n := asks(stale); n != 0 {
+		t.Fatalf("the same stale view asked the leader again %d times after a majority denied it", n)
+	}
+	caught := stale
+	caught.AppliedIndex = state.denied
+	if n := asks(caught); n != 1 {
+		t.Fatalf("a view that applied the denying answer and still names this node asked %d times, want once", n)
+	}
+}
+
+// A coordinator that hears from no consensus leader for longer than
+// ApplyTimeout gives up its business generation, although nothing is
+// written: it can no longer tell whether it still holds its role.
+func TestCoordinatorThatHearsFromNoLeaderGivesUpItsGeneration(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		r := openNode(t, nodes[i])
+		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, Voting: true}
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	active := ready(t, second)
+	requireAnotherLeader(t, first, "node-2")
+	// node-2 stops receiving Raft traffic, so it hears from no leader.
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	select {
+	case <-active.Context.Done():
+	case <-time.After(3 * applyTimeout):
+		t.Fatalf("a coordinator that heard from no leader for %s kept business generation %d: %+v", 3*applyTimeout, active.Generation, second.Status())
+	}
+	second.mu.Lock()
+	cause := second.lastError
+	second.mu.Unlock()
+	if !errors.Is(cause, coordination.ErrUnavailable) {
+		t.Fatalf("the generation was given up without reporting that no leader was heard from: %v", cause)
+	}
+	nodes[1].raft.resume()
+	if fresh := ready(t, second); fresh.Generation <= active.Generation {
+		t.Fatalf("generation %d was published, not a new one after generation %d", fresh.Generation, active.Generation)
+	}
+}
+
+// A consensus leader forgets itself only when it steps down, and it steps
+// down on its own once its lease finds no majority, so a coordinator that
+// led and now knows no leader cannot tell whether a majority still names
+// it. It gives its generation up at once. A follower that stops hearing
+// from a leader waits ApplyTimeout first: a heartbeat may be merely late.
+// A leader that hands over to another member it hears from keeps its
+// generation.
+func TestCoordinatorThatStopsLeadingGivesUpItsGenerationAtOnce(t *testing.T) {
+	nodes := testNodes(t, 1)
+	coordinator := openNode(t, nodes[0])
+	active := ready(t, coordinator)
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	leading := observation{Status: coordinator.service.Status(), at: time.Now()}
+	if !leading.IsLeader || leading.LeaderID != "node-1" {
+		t.Fatalf("a single node does not lead its own consensus: %+v", leading.Status)
+	}
+	view := func(leader string, after time.Duration) observation {
+		seen := leading
+		seen.LeaderID, seen.IsLeader, seen.at = leader, leader == "node-1", leading.at.Add(after)
+		return seen
+	}
+	var led tickState
+	if err := coordinator.step(leading, &led); err != nil {
+		t.Fatalf("the leading coordinator did not keep generation %d: %v", active.Generation, err)
+	}
+	if err := coordinator.step(view("", 20*time.Millisecond), &led); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a coordinator that led and knows no leader 20ms later reported %v, want it to give up", err)
+	}
+	if err := coordinator.step(view("", 40*time.Millisecond), &led); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a coordinator that led and still knows no leader reported %v, want it to stay given up", err)
+	}
+
+	var handed tickState
+	for _, tick := range []struct {
+		leader string
+		after  time.Duration
+	}{{"node-1", 0}, {"node-9", 20 * time.Millisecond}, {"", 40 * time.Millisecond}, {"", applyTimeout}} {
+		if err := coordinator.step(view(tick.leader, tick.after), &handed); err != nil {
+			t.Fatalf("a coordinator that handed leadership to node-9 gave up %s later, knowing leader %q: %v", tick.after, tick.leader, err)
+		}
+	}
+	if err := coordinator.step(view("", 20*time.Millisecond+applyTimeout+time.Millisecond), &handed); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a coordinator that heard from no leader for longer than %s reported %v, want it to give up", applyTimeout, err)
+	}
+	if active.Context.Err() != nil {
+		t.Fatal("the running generation ended although only a tick was asked")
+	}
+}
+
+// A coordinator whose replica keeps hearing from its leader but does not
+// apply what it committed may already be named elsewhere by an entry it has
+// not applied. Once an entry it committed stays unapplied for longer than
+// ApplyTimeout it gives its generation up, and it keeps it again once it
+// has applied that entry. Under steady writes the replica is always a
+// little behind the newest commit, but never for long behind any one
+// entry, and it keeps its generation.
+func TestCoordinatorThatDoesNotApplyWhatItCommittedGivesUpItsGeneration(t *testing.T) {
+	nodes := testNodes(t, 1)
+	coordinator := openNode(t, nodes[0])
+	active := ready(t, coordinator)
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	base := observation{Status: coordinator.service.Status(), at: time.Now()}
+	view := func(committed, applied uint64, after time.Duration) observation {
+		seen := base
+		seen.log, seen.at = coordination.LogProgress{Committed: committed, Applied: applied}, base.at.Add(after)
+		return seen
+	}
+
+	var stuck tickState
+	for _, tick := range []struct {
+		committed, applied uint64
+		after              time.Duration
+	}{{100, 90, 0}, {110, 99, applyTimeout / 2}, {120, 99, applyTimeout}} {
+		if err := coordinator.step(view(tick.committed, tick.applied, tick.after), &stuck); err != nil {
+			t.Fatalf("a replica that had applied %d of %d, %s after it committed 100, gave up: %v", tick.applied, tick.committed, tick.after, err)
+		}
+	}
+	err := coordinator.step(view(120, 99, applyTimeout+time.Millisecond), &stuck)
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "100") {
+		t.Fatalf("a replica that had not applied entry 100 %s after committing it reported %v, want it to give up naming the entry", applyTimeout+time.Millisecond, err)
+	}
+	if err := coordinator.step(view(120, 100, applyTimeout+2*time.Millisecond), &stuck); err != nil {
+		t.Fatalf("a replica that applied the entry it was stuck on still gave up: %v", err)
+	}
+
+	var steady tickState
+	for k := range 3 * int(applyTimeout/nodes[0].config.PollInterval) {
+		committed := uint64(100 + 3*k)
+		if err := coordinator.step(view(committed, committed-3, time.Duration(k)*nodes[0].config.PollInterval), &steady); err != nil {
+			t.Fatalf("a replica applying every entry within a tick of committing it gave up after %s: %v", time.Duration(k)*nodes[0].config.PollInterval, err)
+		}
+	}
+	if active.Context.Err() != nil {
+		t.Fatal("the running generation ended although only a tick was asked")
+	}
+}
+
+// A coordinator keeps its generation for as long as its replica applies
+// what it commits: while it keeps writing, each write reading the assignment
+// from a majority and so committing a barrier as well, and while it idles
+// after a quorum read, whose barrier is the last entry and never reaches the
+// state machine.
+func TestCoordinatorThatWritesAndIdlesKeepsItsGeneration(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		joinNode(t, first, nodes[i], true, false)
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	active := ready(t, second)
+	requireAnotherLeader(t, first, "node-2")
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	kept := func(what string) {
+		t.Helper()
+		if active.Context.Err() != nil {
+			second.mu.Lock()
+			cause := second.lastError
+			second.mu.Unlock()
+			t.Fatalf("a coordinator that %s gave up business generation %d: %v", what, active.Generation, cause)
+		}
+	}
+	span := applyTimeout * 3 / 2
+	writes := 0
+	for started := time.Now(); time.Since(started) < span; writes++ {
+		if err := active.Ledger.PutBinding(t.Context(), "test", fmt.Sprintf("write-%d", writes), "written"); err != nil {
+			t.Fatalf("write %d after %s failed: %v; status=%+v", writes, time.Since(started).Round(time.Millisecond), err, second.Status())
+		}
+	}
+	kept(fmt.Sprintf("wrote %d times in %s", writes, span))
+	if _, err := second.ReadState(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(span)
+	kept(fmt.Sprintf("idled for %s after a quorum read", span))
+}
+
+// A replica that has not heard from a consensus leader since it started is
+// waiting for an election, not cut off from a leader it had: for
+// ApplyTimeout it waits without reporting anything, and then it says it has
+// heard from none since it started.
+func TestStartingCoordinatorWaitsForItsFirstLeader(t *testing.T) {
+	nodes := testNodes(t, 1)
+	coordinator := openNode(t, nodes[0])
+	ready(t, coordinator)
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	started := time.Now()
+	electing := observation{Status: coordinator.service.Status(), log: coordinator.service.LogProgress(), at: started}
+	electing.LeaderID, electing.LeaderAddress, electing.IsLeader = "", "", false
+	state := tickState{started: started}
+	for _, after := range []time.Duration{0, applyTimeout / 2, applyTimeout} {
+		seen := electing
+		seen.at = started.Add(after)
+		if err := coordinator.step(seen, &state); err != nil {
+			t.Fatalf("a starting replica that knew no leader %s after it started reported %v", after, err)
+		}
+	}
+	seen := electing
+	seen.at = started.Add(applyTimeout + time.Millisecond)
+	err := coordinator.step(seen, &state)
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "since it started") {
+		t.Fatalf("a replica that heard from no leader in the %s since it started reported %v", applyTimeout, err)
+	}
+}
+
+// A coordinator that restarts from a snapshot names itself before Raft has
+// elected anyone. It waits for the election without reporting that it lost
+// a leader.
+func TestRestartedCoordinatorReportsNoLostLeader(t *testing.T) {
+	nodes := testNodes(t, 1)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	if err := first.service.Snapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	nodes[0].runtime.Store(nil)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := captureRuntimeLog(t)
+	again := openNode(t, nodes[0])
+	ready(t, again)
+	if logged := output.String(); strings.Contains(logged, "leader") {
+		t.Fatalf("a restarting coordinator reported a lost leader:\n%s", logged)
+	}
+}
+
+// A coordinator that leads consensus and loses every member gives its
+// generation up once its lease expires, well before a follower would.
+func TestIsolatedLeadingCoordinatorGivesUpWithinItsLease(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		joinNode(t, first, nodes[i], true, false)
+	}
+	active := ready(t, first)
+	if leader := first.service.Status().LeaderID; leader != "node-1" {
+		t.Fatalf("the coordinator node-1 is to lead consensus, but the leader is %q", leader)
+	}
+	for _, n := range nodes {
+		n.raft.pause()
+		t.Cleanup(n.raft.resume)
+	}
+	paused := time.Now()
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	select {
+	case <-active.Context.Done():
+	case <-time.After(3 * applyTimeout):
+		t.Fatalf("an isolated leading coordinator kept business generation %d for %s: %+v", active.Generation, 3*applyTimeout, first.Status())
+	}
+	if took := time.Since(paused); took >= applyTimeout {
+		t.Fatalf("an isolated leading coordinator gave up its generation after %s, not within its %s lease: a follower would have waited %s", took.Round(time.Millisecond), steadyTiming.lease, applyTimeout)
+	}
+	first.mu.Lock()
+	cause := first.lastError
+	first.mu.Unlock()
+	if !errors.Is(cause, coordination.ErrUnavailable) {
+		t.Fatalf("the generation was given up without reporting that leadership was lost: %v", cause)
+	}
+}
+
 func TestThreeNodeLedgerTransfersPreserveFactsAndFenceEveryOldGeneration(t *testing.T) {
 	nodes := testNodes(t, 3)
 	// Existing version-zero facts are absent from the Raft log. A new node

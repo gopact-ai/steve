@@ -38,7 +38,11 @@ type Config struct {
 	// context is canceled before Deactivate runs. Deactivate must join all
 	// users of those stores; the returned ledger is never reused by a later
 	// generation. A nil Activate enables ledger access without starting tasks.
-	Activate     func(context.Context, Activation) (Deactivate, error)
+	Activate func(context.Context, Activation) (Deactivate, error)
+	// PollInterval is how often the runtime compares its business generation
+	// with the local replica, which reads nothing from other nodes and
+	// appends nothing to the Raft log. The poll itself makes quorum reads
+	// only while a generation starts; writes make their own.
 	PollInterval time.Duration
 	// ShutdownTimeout is how long a business generation may take to stop
 	// before the runtime reports it as slow and records every goroutine's
@@ -288,10 +292,29 @@ func (r *Runtime) revoke(g *generation, err error) {
 	}
 }
 
+// run keeps this node's business generation in step with the coordinator
+// assignment. Each tick reads the local replica, which costs nothing: a quorum
+// read appends a barrier to the Raft log and, on a member that does not lead,
+// asks the leader for the whole state. The local view only decides whether
+// this node looks like the coordinator. A generation starts on a quorum read
+// that confirms it, and every write verifies the assignment against a majority
+// again, so the local view never authorizes anything. A running generation is
+// kept while the local replica still names it and hears from a consensus
+// leader. It is given up when the replica names another, at once when this
+// node stops leading consensus without knowing a successor, after
+// ApplyTimeout when a follower stops hearing from its leader, and when an
+// entry the replica committed stays unapplied for longer than ApplyTimeout.
+// A follower learns its commit index only with entries it holds, so one
+// whose replication falls behind while heartbeats still arrive looks caught
+// up here. Its next write finds out: the quorum read it starts with gives
+// the generation up if another node was named meanwhile, and otherwise
+// fails the write as unavailable once the replica has not caught up within
+// ApplyTimeout.
 func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
 	defer ticker.Stop()
+	state := tickState{started: time.Now()}
 	for {
 		if r.ctx.Err() != nil {
 			err := r.retire()
@@ -300,49 +323,151 @@ func (r *Runtime) run() {
 			r.mu.Unlock()
 			return
 		}
-		if !r.service.Status().Healthy {
+		status := r.service.Status()
+		if !status.Healthy {
 			r.shutdown(fmt.Errorf("%w: the consensus replica is no longer healthy", coordination.ErrApplication))
 			continue
 		}
-		ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
-		state, err := r.ReadState(ctx)
-		if err == nil && (state.Coordinator.NodeID != r.config.Coordination.NodeID || state.Coordinator.Epoch == 0 || !state.IsActiveReplica(r.config.Coordination.NodeID) || (state.AutoFailover && state.Voters[r.config.Coordination.NodeID] == "")) {
-			err = coordination.ErrNotCoordinator
-		}
-		var version uint64
-		if err == nil {
-			r.mu.Lock()
-			if r.restoring {
-				err = coordination.ErrNotReady
-			}
-			r.mu.Unlock()
-		}
-		if err == nil {
-			version, err = r.waitApplied(ctx, state.AppliedIndex, state.AppVersion)
-		}
-		cancel()
-		if err != nil {
+		if err := r.step(observation{Status: status, log: r.service.LogProgress(), at: time.Now()}, &state); err != nil {
 			r.invalidate(err, false)
 			r.retire()
-		} else {
-			r.mu.Lock()
-			current := r.current
-			keep := current != nil && current.Assignment == state.Coordinator && current.WriterGeneration == state.WriterGeneration && current.restore == r.restores && current.Context.Err() == nil
-			r.mu.Unlock()
-			if !keep {
-				r.retire()
-				if r.ctx.Err() == nil {
-					if err := r.activate(state.Coordinator, version, state.WriterGeneration); err != nil {
-						r.holdActivation(err)
-					}
-				}
-			}
 		}
 		select {
 		case <-r.ctx.Done():
 		case <-ticker.C:
 		}
 	}
+}
+
+// observation is what one tick reads from the local replica.
+type observation struct {
+	coordination.Status
+	log coordination.LogProgress
+	at  time.Time
+}
+
+// tickState is what the runtime loop carries from one tick to the next.
+type tickState struct {
+	// started is when the loop began. heard is when this replica last knew
+	// a consensus leader, and leading whether that leader was this node.
+	started time.Time
+	heard   time.Time
+	leading bool
+	// denied is the applied index of the latest quorum read that found this
+	// node not coordinating: a replica behind it that still names this node
+	// is stale, and asking again would only repeat the answer.
+	denied uint64
+	// lagging is an entry this replica had committed but not applied when a
+	// tick first saw it behind, at laggingSince; zero while it is not behind.
+	// Under steady writes the replica is always behind the newest commit, so
+	// it is judged by how long one entry stays unapplied.
+	lagging      uint64
+	laggingSince time.Time
+}
+
+// step is one tick of run. It returns why this node has no business
+// generation to keep, or nil once the generation the local replica names
+// is running, and while a replica that just started waits for its first
+// consensus leader.
+func (r *Runtime) step(seen observation, s *tickState) error {
+	if seen.LeaderID != "" {
+		s.heard, s.leading = seen.at, seen.LeaderID == r.config.Coordination.NodeID
+	}
+	if seen.log.Applied >= s.lagging {
+		s.lagging = 0
+	}
+	if s.lagging == 0 && seen.log.Applied < seen.log.Committed {
+		s.lagging, s.laggingSince = seen.log.Committed, seen.at
+	}
+	err := r.coordinates(seen.State)
+	if err == nil && seen.AppliedIndex < s.denied {
+		err = coordination.ErrNotCoordinator
+	}
+	// A replica that has known no leader since it started is waiting for an
+	// election; it has nothing running to give up.
+	if err == nil && s.heard.IsZero() {
+		if seen.at.Sub(s.started) <= r.config.Coordination.ApplyTimeout {
+			return nil
+		}
+		err = fmt.Errorf("%w: this replica has heard from no consensus leader since it started", coordination.ErrUnavailable)
+	}
+	// A leader forgets itself when it steps down without learning who
+	// follows it: on its own once its lease finds no majority, when a
+	// majority may already follow another leader, or when a higher term
+	// reaches it before the new leader's first entry does. It cannot tell
+	// these apart, so it gives up at once. A leadership transfer steps a
+	// leader down the second way, but the only one starts from a leader
+	// removing itself, and the coordinator cannot be removed. A follower's
+	// leader is merely late until ApplyTimeout.
+	if err == nil && seen.LeaderID == "" && s.leading {
+		err = fmt.Errorf("%w: this replica stopped leading consensus and knows no other leader", coordination.ErrUnavailable)
+	}
+	if err == nil && seen.at.Sub(s.heard) > r.config.Coordination.ApplyTimeout {
+		err = fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
+	}
+	// Heartbeats name the leader whatever this replica has applied, so an
+	// assignment committed elsewhere may be waiting here unapplied.
+	if err == nil && s.lagging != 0 && seen.at.Sub(s.laggingSince) > r.config.Coordination.ApplyTimeout {
+		err = fmt.Errorf("%w: this replica has not applied committed entry %d within %s; it has applied %d", coordination.ErrUnavailable, s.lagging, r.config.Coordination.ApplyTimeout, seen.log.Applied)
+	}
+	if err == nil {
+		r.mu.Lock()
+		if r.restoring {
+			err = coordination.ErrNotReady
+		}
+		r.mu.Unlock()
+	}
+	if err == nil && !r.keeps(seen.State) {
+		err = r.start(s)
+	}
+	return err
+}
+
+// coordinates reports why state does not make this node the coordinator, or
+// nil if it does.
+func (r *Runtime) coordinates(state coordination.State) error {
+	id := r.config.Coordination.NodeID
+	if state.Coordinator.NodeID != id || state.Coordinator.Epoch == 0 || !state.IsActiveReplica(id) || (state.AutoFailover && state.Voters[id] == "") {
+		return coordination.ErrNotCoordinator
+	}
+	return nil
+}
+
+// keeps reports whether the current generation runs for state's assignment
+// and writer generation.
+func (r *Runtime) keeps(state coordination.State) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.current
+	return current != nil && current.Assignment == state.Coordinator && current.WriterGeneration == state.WriterGeneration && current.restore == r.restores && current.Context.Err() == nil
+}
+
+// start replaces the current generation with one for the assignment a quorum
+// read confirms, once the local replica has caught up with that read. A read
+// that finds this node not coordinating is recorded in s.denied.
+func (r *Runtime) start(s *tickState) error {
+	ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
+	state, err := r.ReadState(ctx)
+	if err == nil {
+		if err = r.coordinates(state); err != nil {
+			s.denied = state.AppliedIndex
+		}
+	}
+	var version uint64
+	if err == nil {
+		version, err = r.waitApplied(ctx, state.AppliedIndex, state.AppVersion)
+	}
+	cancel()
+	if err != nil || r.keeps(state) {
+		return err
+	}
+	r.retire()
+	if r.ctx.Err() == nil {
+		if err := r.activate(state.Coordinator, version, state.WriterGeneration); err != nil {
+			r.holdActivation(err)
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) activate(assignment coordination.Assignment, version, expectedWriter uint64) error {
