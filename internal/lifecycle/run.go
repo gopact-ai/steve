@@ -201,11 +201,14 @@ type Settlement struct {
 	CommitTimeout time.Duration
 	// SettledTimeout, when set, bounds what is left of the run once its
 	// prompt has settled — the caller's hooks, its completion, the terminal
-	// transition, the cleanup — on the run's own context, still cancelled
-	// as the run is. The silence clock stops timing that part once the
-	// agent has answered; a caller whose silence was its only bound keeps
-	// one this way. Unlike CommitTimeout it does not take the commit out
-	// of the run's cancellation.
+	// transition — on the run's own context, still cancelled as the run
+	// is. Cleanup — closing the session, giving the bindings and the
+	// workspace back, a quarantine — runs on Cleanup, detached from it and
+	// bounded by CleanupTimeout instead. The silence clock stops timing the
+	// run once the agent has answered and restarts a whole silence as the
+	// run returns; this bounds the part in between, and nothing after the
+	// run. Unlike CommitTimeout it does not take the commit out of the
+	// run's cancellation.
 	SettledTimeout time.Duration
 	// CommitAsGiven commits the completion as the caller gave it, with
 	// Complete: the result the record carries at bind-ready is a checkpoint
