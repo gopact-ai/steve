@@ -63,6 +63,8 @@ var (
 	// ErrUnbindable is a bind for a server the broker cannot hand out: an
 	// unknown transport, or an HTTP server with no proxy listening.
 	ErrUnbindable = errors.New("MCP server cannot be bound")
+	// ErrBrokerStopped is a bind on a broker whose Serve has returned.
+	ErrBrokerStopped = errors.New("MCP broker stopped")
 )
 
 // BrokerConfig is what a broker process reads: the servers, the socket,
@@ -94,22 +96,34 @@ type mcpBinding struct {
 // Broker holds the servers, mints bindings, launches, proxies.
 type Broker struct {
 	connections sync.WaitGroup
-	proxyDone   chan struct{}
-	ready       func(error)
-	cfg         BrokerConfig
+	// proxyDone is closed once the proxy has stopped for good: its server
+	// closed and its listener's port released. Serve waits for it.
+	proxyDone chan struct{}
+	ready     func(error)
+	cfg       BrokerConfig
 	// work is installed only by an embedded node, sharing its restart gate.
 	work func() (func(), error)
 
 	mu        sync.Mutex
 	bindings  map[string]mcpBinding
 	proxyPort int
+	// stopped is why Serve returned, wrapping ErrBrokerStopped; nil while
+	// it serves.
+	stopped error
 }
 
 func NewBroker(cfg BrokerConfig) *Broker {
 	return &Broker{cfg: cfg, bindings: map[string]mcpBinding{}}
 }
 
-// Serve listens on the socket and the loopback proxy until ctx ends.
+// testHookSocketListener, when set, wraps the listener Serve accepts
+// launchers on; tests use it to make Accept fail.
+var testHookSocketListener func(net.Listener) net.Listener
+
+// Serve listens on the socket and the loopback proxy until ctx ends. It
+// returns only once the proxy has stopped and released its port, whether
+// ctx ended or the socket failed; from then on Bind refuses with
+// ErrBrokerStopped and the reason.
 func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	announced := false
 	defer func() {
@@ -117,7 +131,23 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 			b.ready(serveErr)
 		}
 	}()
-	if err := b.serveProxy(ctx); err != nil {
+	// Deferred after the ready report, so it runs first: a failed start is
+	// reported with its proxy already gone. Socket connections keep ctx.
+	proxyCtx, stopProxy := context.WithCancel(ctx)
+	defer func() {
+		why := serveErr
+		if why == nil {
+			why = context.Cause(ctx)
+		}
+		b.mu.Lock()
+		b.stopped = fmt.Errorf("%w: %w", ErrBrokerStopped, why)
+		b.mu.Unlock()
+		stopProxy()
+		if b.proxyDone != nil {
+			<-b.proxyDone
+		}
+	}()
+	if err := b.serveProxy(proxyCtx); err != nil {
 		if b.cfg.StrictPort {
 			return err
 		}
@@ -134,22 +164,26 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("mcp broker: listen %s: %w", sock, err)
 	}
+	// Whatever ends Serve closes the socket before it returns, so no
+	// launcher is left waiting on a socket nobody accepts on.
+	defer func() { _ = listener.Close() }()
 	mode := b.cfg.SocketMode
 	if mode == 0 {
 		mode = 0o600
 	}
 	if err := os.Chmod(sock, mode); err != nil {
-		listener.Close()
 		return err
+	}
+	if testHookSocketListener != nil {
+		listener = testHookSocketListener(listener)
 	}
 	if b.ready != nil {
 		b.ready(nil)
 		announced = true
 	}
-	go func() {
-		<-ctx.Done()
-		listener.Close()
-	}()
+	// Closing unblocks Accept, which reports the end through ctx.
+	stop := context.AfterFunc(ctx, func() { _ = listener.Close() })
+	defer stop()
 	slog.Info(fmt.Sprintf("steve-node: mcp broker on %s: %d server(s)", sock, len(b.List())))
 	for {
 		conn, err := listener.Accept()
@@ -214,6 +248,12 @@ func (b *Broker) List() map[string]string {
 
 // Bind mints a binding and describes how a session reaches it.
 func (b *Broker) Bind(mcp, attempt, harness string) (ability.Binding, error) {
+	b.mu.Lock()
+	stopped := b.stopped
+	b.mu.Unlock()
+	if stopped != nil {
+		return ability.Binding{}, stopped
+	}
 	spec, ok := b.server(mcp)
 	if !ok {
 		return ability.Binding{}, ErrNoSuchServer
@@ -478,13 +518,19 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 	}
 	b.proxyDone = make(chan struct{})
 	server := &http.Server{Handler: http.HandlerFunc(b.proxy), ReadHeaderTimeout: 10 * time.Second}
+	served := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		// Shutdown; Serve reports the close as ErrServerClosed.
+		// Shutdown; Serve reports the close as ErrServerClosed. A Close that
+		// comes before Serve has taken the listener leaves the listener to
+		// Serve, which closes it on the way out: the port is free only once
+		// Serve has returned.
 		_ = server.Close()
+		<-served
 		close(b.proxyDone)
 	}()
 	go func() {
+		defer close(served)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error(fmt.Sprintf("steve-node: mcp proxy: %v", err))
 		}
