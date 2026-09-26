@@ -2,13 +2,14 @@ package sshconnect
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // Installation phases, in the order an installation runs them. The plan
@@ -50,13 +51,15 @@ func (s *Service) phasesFor(plan InstallPlan) []string {
 
 // Status reports how an installation is going without touching it: the
 // phase it is in, the steps it has settled, and what the remote has said
-// so far. A plan that was never committed is "planned".
-func (s *Service) Status(id string) (InstallResult, error) {
+// so far. A plan that was never committed is "planned". The log reads
+// back in the language it was written in, that of whoever started it.
+func (s *Service) Status(ctx context.Context, id string) (InstallResult, error) {
+	_, text := s.speak(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored, ok := s.plans[id]
 	if !ok {
-		return InstallResult{}, fail("planning", "unknown_plan", "安装计划不存在或已过期", "重新检查机器并生成计划")
+		return InstallResult{}, Fail(text, "planning", "unknown_plan", text.T(i18n.SSHPlanUnknown), text.T(i18n.SSHPlanUnknownFix))
 	}
 	if !stored.running && !stored.done {
 		return InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "planned", Steps: []Step{}, Phases: s.phasesFor(stored.plan)}, nil
@@ -80,8 +83,9 @@ func (s *Service) note(result *InstallResult, message string) {
 // output records what the remote wrote, with the credential the script
 // carried replaced wherever it shows up. Output the runner cut at its
 // limit loses its last line too: a credential split at the cut would not
-// match, and a partial line says nothing a person needs.
-func (s *Service) output(result *InstallResult, out Output, secret string) {
+// match, and a partial line says nothing a person needs. Steve's own note
+// of the cut is in text's language.
+func (s *Service) output(text i18n.Catalog, result *InstallResult, out Output, secret string) {
 	at := s.now()
 	for _, stream := range []struct{ name, text string }{{"stdout", out.Stdout}, {"stderr", out.Stderr}} {
 		lines := strings.Split(strings.TrimRight(stream.text, "\n"), "\n")
@@ -100,7 +104,7 @@ func (s *Service) output(result *InstallResult, out Output, secret string) {
 			result.appendLog(at, stream.name, line)
 		}
 		if truncated {
-			result.appendLog(at, "steve", stream.name+" 输出超过上限，其余已省略")
+			result.appendLog(at, "steve", text.T(i18n.SSHOutputTruncated, stream.name))
 		}
 	}
 	s.progress(*result)
@@ -208,6 +212,7 @@ func mib(n int64) float64 { return float64(n) / (1 << 20) }
 // whether a stall, rather than anything else, ended the upload. Until
 // settle returns, the watch is the only writer of result.
 func (s *Service) watchUpload(ctx context.Context, cancel context.CancelFunc, result *InstallResult, metered *meteredReader, size int64) (settle func() bool) {
+	text := i18n.FromContext(ctx)
 	stop, done := make(chan struct{}), make(chan struct{})
 	var stalled atomic.Bool
 	go func() {
@@ -234,7 +239,7 @@ func (s *Service) watchUpload(ctx context.Context, cancel context.CancelFunc, re
 				if now.Sub(reportedAt) < s.uploadReport {
 					continue
 				}
-				s.note(result, uploadProgress(read, size, read-reported, now.Sub(reportedAt)))
+				s.note(result, uploadProgress(text, read, size, read-reported, now.Sub(reportedAt)))
 				reportedAt, reported = now, read
 			}
 		}
@@ -246,14 +251,14 @@ func (s *Service) watchUpload(ctx context.Context, cancel context.CancelFunc, re
 	}
 }
 
-func uploadProgress(read, size, delta int64, window time.Duration) string {
+func uploadProgress(text i18n.Catalog, read, size, delta int64, window time.Duration) string {
 	if window <= 0 || delta <= 0 {
-		return fmt.Sprintf("已上传 %.1f / %.1f MiB，等待远端接收…", mib(read), mib(size))
+		return text.T(i18n.SSHUploadedWaiting, mib(read), mib(size))
 	}
 	rate := float64(delta) / window.Seconds()
 	remaining := time.Duration(float64(size-read) / rate * float64(time.Second)).Round(time.Second)
 	if remaining < 0 {
 		remaining = 0
 	}
-	return fmt.Sprintf("已上传 %.1f / %.1f MiB（%.2f MiB/s，预计还需 %s）", mib(read), mib(size), rate/(1<<20), remaining)
+	return text.T(i18n.SSHUploadedRate, mib(read), mib(size), rate/(1<<20), remaining)
 }

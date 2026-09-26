@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -26,16 +27,19 @@ func LinkCommand(args []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("unexpected link arguments")
 	}
+	// This end has no Hub configuration of its own to take a language
+	// from; it speaks the language of the account the Hub logs in as.
+	text := i18n.New(i18n.FromLang(os.Getenv("LANG")))
 	forwards := make([]sshconnect.PortForward, 0, len(listens))
-	for _, text := range listens {
-		forward, err := sshconnect.ParseForward(text)
+	for _, pair := range listens {
+		forward, err := sshconnect.ParseForward(text, pair)
 		if err != nil {
 			return err
 		}
 		forwards = append(forwards, forward)
 	}
 	for _, target := range allowed {
-		if err := sshconnect.CheckAddress(target); err != nil {
+		if err := sshconnect.CheckAddress(text, target); err != nil {
 			return err
 		}
 	}
@@ -44,7 +48,7 @@ func LinkCommand(args []string) error {
 	log.SetFlags(0)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	return sshconnect.ServeLink(ctx, os.Stdin, os.Stdout, sshconnect.ServeLinkOptions{Logs: os.Stderr, Listens: forwards, Allowed: allowed})
+	return sshconnect.ServeLink(ctx, os.Stdin, os.Stdout, sshconnect.ServeLinkOptions{Logs: os.Stderr, Listens: forwards, Allowed: allowed, Text: text})
 }
 
 type repeatedFlag []string

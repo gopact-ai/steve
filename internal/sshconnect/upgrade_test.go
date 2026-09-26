@@ -87,7 +87,7 @@ func TestUpgradeSendsTheProgramSwapsItAndConfirmsTheMachineIsBack(t *testing.T) 
 	if uploads != 1 || swaps != 1 || len(backend.upgraded) != 1 || backend.upgraded[0] != "node-1" {
 		t.Fatalf("uploads=%d swaps=%d upgraded=%v", uploads, swaps, backend.upgraded)
 	}
-	status, err := svc.UpgradeStatus("node-1")
+	status, err := svc.UpgradeStatus(t.Context(), "node-1")
 	if err != nil || status.PlanID != result.PlanID || status.Phase != "" || len(status.Phases) != 4 {
 		t.Fatalf("status = %#v %v", status, err)
 	}
@@ -98,7 +98,7 @@ func TestUpgradeSendsTheProgramSwapsItAndConfirmsTheMachineIsBack(t *testing.T) 
 	if !narrated {
 		t.Fatal("what the backend reported while confirming is missing from the log")
 	}
-	if _, err := svc.UpgradeStatus("node-2"); err == nil {
+	if _, err := svc.UpgradeStatus(t.Context(), "node-2"); err == nil {
 		t.Fatal("a machine that was never upgraded has no status")
 	}
 }
@@ -180,12 +180,12 @@ func TestUpgradeRunsOncePerMachineAndItsRecordExpires(t *testing.T) {
 	if err := <-first; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UpgradeStatus("node-1"); err != nil {
+	if _, err := svc.UpgradeStatus(t.Context(), "node-1"); err != nil {
 		t.Fatalf("a finished upgrade is readable: %v", err)
 	}
 	deadline = time.Now().Add(5 * time.Second)
 	for {
-		if _, err := svc.UpgradeStatus("node-1"); err != nil {
+		if _, err := svc.UpgradeStatus(t.Context(), "node-1"); err != nil {
 			break
 		}
 		if time.Now().After(deadline) {

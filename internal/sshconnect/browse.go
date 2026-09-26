@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // BrowseRequest names a directory on a machine: one behind an SSH alias
@@ -56,7 +58,8 @@ const (
 // Browse lists the directories under one path on the remote machine so a
 // person can pick a workspace instead of typing it blind. It reads only.
 func (s *Service) Browse(ctx context.Context, req BrowseRequest) (Listing, error) {
-	alias, err := s.browseAlias(req)
+	ctx, text := s.speak(ctx)
+	alias, err := s.browseAlias(text, req)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -68,8 +71,8 @@ func (s *Service) Browse(ctx context.Context, req BrowseRequest) (Listing, error
 	if target == "" {
 		target = "~"
 	}
-	if err := validBrowsePath(target); err != nil {
-		return Listing{}, fail("configuration", "invalid_path", err.Error(), "填写目标机上的绝对路径，或以 ~/ 开头的路径")
+	if problem := validBrowsePath(text, target); problem != "" {
+		return Listing{}, Fail(text, "configuration", "invalid_path", problem, text.T(i18n.SSHBrowsePathFix))
 	}
 	connection, err := s.bind(ctx, c)
 	if err != nil {
@@ -82,44 +85,46 @@ func (s *Service) Browse(ctx context.Context, req BrowseRequest) (Listing, error
 	if err != nil {
 		return Listing{}, connectionError(ctx, output.Stderr)
 	}
-	return parseListing(output.Stdout, target)
+	return parseListing(text, output.Stdout, target)
 }
 
 // browseAlias is the alias to reach the machine the request names: its own
 // when the machine is being enrolled, or the one the backend keeps for a
 // machine already in the cluster.
-func (s *Service) browseAlias(req BrowseRequest) (string, error) {
+func (s *Service) browseAlias(text i18n.Catalog, req BrowseRequest) (string, error) {
 	node := strings.TrimSpace(req.Node)
 	if node == "" {
 		return req.Alias, nil
 	}
 	if strings.TrimSpace(req.Alias) != "" {
-		return "", fail("configuration", "browse_ambiguous", "一次只能指定一台机器", "只填 SSH 别名，或只填节点 ID")
+		return "", Fail(text, "configuration", "browse_ambiguous", text.T(i18n.SSHBrowseAmbiguous), text.T(i18n.SSHBrowseAmbiguousFix))
 	}
 	backend, ok := s.backend.(AliasBackend)
 	if !ok {
-		return "", fail("configuration", "browse_unsupported", "这类接入的机器无法从这里浏览目录", "直接填写目标机上的绝对路径")
+		return "", Fail(text, "configuration", "browse_unsupported", text.T(i18n.SSHBrowseUnsupported), text.T(i18n.SSHBrowseTypePathFix))
 	}
 	alias, err := backend.MachineAlias(node)
 	if err != nil {
-		return "", fail("configuration", "browse_target", err.Error(), "直接填写目标机上的绝对路径")
+		return "", Fail(text, "configuration", "browse_target", err.Error(), text.T(i18n.SSHBrowseTypePathFix))
 	}
 	return alias, nil
 }
 
-func validBrowsePath(dir string) error {
+// validBrowsePath says what is wrong with dir, in text's language, or
+// nothing when it may be listed.
+func validBrowsePath(text i18n.Catalog, dir string) string {
 	if len(dir) > 512 || strings.ContainsAny(dir, "\r\n\x00\t") || !utf8.ValidString(dir) {
-		return fmt.Errorf("目录路径包含无效字符")
+		return text.T(i18n.SSHBrowsePathChars)
 	}
 	if !strings.HasPrefix(dir, "/") && dir != "~" && !strings.HasPrefix(dir, "~/") {
-		return fmt.Errorf("目录要写目标机上的绝对路径，或以 ~/ 开头")
+		return text.T(i18n.SSHBrowsePathAbsolute)
 	}
 	for _, part := range strings.Split(dir, "/") {
 		if part == ".." {
-			return fmt.Errorf("目录路径不能包含 ..")
+			return text.T(i18n.SSHBrowsePathParent)
 		}
 	}
-	return nil
+	return ""
 }
 
 // browseScript lists one directory in a single round trip. The path travels
@@ -165,7 +170,7 @@ printf 'STEVE_BROWSE\tend\t1\n'
 `
 }
 
-func parseListing(output, requested string) (Listing, error) {
+func parseListing(text i18n.Catalog, output, requested string) (Listing, error) {
 	listing := Listing{Entries: []Entry{}}
 	var missing, ended bool
 	for _, line := range strings.Split(output, "\n") {
@@ -195,10 +200,10 @@ func parseListing(output, requested string) (Listing, error) {
 		}
 	}
 	if !ended {
-		return Listing{}, fail("environment", "invalid_listing", "SSH 已连接，但未收到完整的目录列表", "确认该账号允许运行标准 POSIX shell 后重试")
+		return Listing{}, Fail(text, "environment", "invalid_listing", text.T(i18n.SSHBrowseIncomplete), text.T(i18n.SSHBrowseIncompleteFix))
 	}
 	if missing || listing.Path == "" {
-		return Listing{}, fail("environment", "directory_unavailable", "当前账号进不了目标机上 "+requested+" 及其任何上级目录", "换一个这个账号能进入的目录")
+		return Listing{}, Fail(text, "environment", "directory_unavailable", text.T(i18n.SSHBrowseUnreachable, requested), text.T(i18n.SSHBrowseUnreachableFix))
 	}
 	sort.Slice(listing.Entries, func(i, j int) bool {
 		return strings.ToLower(listing.Entries[i].Name) < strings.ToLower(listing.Entries[j].Name)

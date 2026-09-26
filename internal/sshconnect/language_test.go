@@ -43,7 +43,7 @@ func TestAnInstallationSpeaksTheLanguageOfWhoeverStartedIt(t *testing.T) {
 			t.Errorf("log line is in Chinese: %q", line.Text)
 		}
 	}
-	status, err := svc.Status(plan.ID)
+	status, err := svc.Status(i18n.WithLocale(t.Context(), i18n.LocaleZH), plan.ID)
 	if err != nil || logText(status) != logText(result) {
 		t.Fatalf("the log read back = %q %v, want it as written: %q", logText(status), err, logText(result))
 	}

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // PortForward is one forwarded port: a connection accepted at Listen is
@@ -78,6 +80,9 @@ type LinkOptions struct {
 	// OnChange is told about every change of status, on the link's own
 	// goroutine.
 	OnChange func(LinkStatus)
+	// Text is the Hub's language: the link's status is the Hub's own
+	// record, read by whoever looks, and says why it is down in it.
+	Text i18n.Catalog
 }
 
 // Link keeps one SSH session to a machine open and reopens it whenever it
@@ -146,7 +151,7 @@ func (l *Link) bind() error {
 		}
 		address, err := l.bridge.listen(i, l.status.Outbound[i])
 		if err != nil {
-			return fmt.Errorf("本机监听 %s 失败：%w", l.status.Outbound[i].Listen, err)
+			return fmt.Errorf(l.options.Text.T(i18n.SSHLinkLocalListenFailed), l.status.Outbound[i].Listen, err)
 		}
 		l.status.Outbound[i].Listen = address
 	}
@@ -162,8 +167,9 @@ func (l *Link) Status() LinkStatus {
 }
 
 // WaitConnected returns once the session is up, or with why it is not when
-// ctx ends first.
+// ctx ends first, in the language ctx carries.
 func (l *Link) WaitConnected(ctx context.Context) error {
+	text := l.options.Text.For(ctx)
 	for {
 		l.mu.Lock()
 		status, changed := l.status, l.changed
@@ -175,11 +181,11 @@ func (l *Link) WaitConnected(ctx context.Context) error {
 		case <-changed:
 		case <-ctx.Done():
 			if status.LastError != "" {
-				return fmt.Errorf("SSH 隧道未建立：%s", status.LastError)
+				return errors.New(text.T(i18n.SSHLinkDownBecause, status.LastError))
 			}
-			return errors.New("SSH 隧道未建立")
+			return errors.New(text.T(i18n.SSHLinkDown))
 		case <-l.done:
-			return errors.New("SSH 隧道已关闭")
+			return errors.New(text.T(i18n.SSHLinkClosed))
 		}
 	}
 }
@@ -284,17 +290,18 @@ func (l *Link) session(ctx context.Context) error {
 	case exitErr != nil:
 		return exitErr
 	}
-	return errors.New("SSH 会话已结束")
+	return errors.New(l.options.Text.T(i18n.SSHSessionEnded))
 }
 
 // ready waits for the far end's banner on the session's stdout, then
 // opens the multiplexer over the session and pings through it. Anything
 // the machine's shell prints before the banner is skipped.
 func (l *Link) ready(ctx context.Context, process *Session, ended <-chan struct{}) (*yamux.Session, error) {
+	text := l.options.Text
 	reader := bufio.NewReaderSize(process.Stdout, 64<<10)
 	result := make(chan readyOutcome, 1)
 	go func() {
-		if err := awaitBanner(reader); err != nil {
+		if err := awaitBanner(text, reader); err != nil {
 			result <- readyOutcome{err: err}
 			return
 		}
@@ -305,7 +312,7 @@ func (l *Link) ready(ctx context.Context, process *Session, ended <-chan struct{
 		}
 		if _, err := mux.Ping(); err != nil {
 			_ = mux.Close()
-			result <- readyOutcome{err: fmt.Errorf("远端链路程序没有应答：%w", err)}
+			result <- readyOutcome{err: fmt.Errorf(text.T(i18n.SSHLinkNoAnswer), err)}
 			return
 		}
 		result <- readyOutcome{mux: mux}
@@ -315,14 +322,14 @@ func (l *Link) ready(ctx context.Context, process *Session, ended <-chan struct{
 		return got.mux, got.err
 	case <-ended:
 		go discardLate(result)
-		return nil, errors.New("SSH 会话在就绪前已结束")
+		return nil, errors.New(text.T(i18n.SSHSessionEndedEarly))
 	case <-ctx.Done():
 		go discardLate(result)
 		return nil, ctx.Err()
 	case <-time.After(linkReadyTimeout):
 		process.Kill()
 		go discardLate(result)
-		return nil, fmt.Errorf("SSH 会话在 %s 内没有就绪", linkReadyTimeout)
+		return nil, errors.New(text.T(i18n.SSHSessionNotReady, linkReadyTimeout))
 	}
 }
 
@@ -342,21 +349,21 @@ type readyOutcome struct {
 // awaitBanner reads lines until the far end announces itself. The
 // reader's buffer bounds how much shell chatter is tolerated before it,
 // whether as many lines or as one line without end.
-func awaitBanner(reader *bufio.Reader) error {
+func awaitBanner(text i18n.Catalog, reader *bufio.Reader) error {
 	read := 0
 	for {
 		line, err := reader.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
-			return errors.New("远端在链路程序启动前输出过多")
+			return errors.New(text.T(i18n.SSHLinkChatter))
 		}
 		if strings.TrimSpace(string(line)) == linkBanner {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("远端链路程序没有启动：%w", err)
+			return fmt.Errorf(text.T(i18n.SSHLinkNotStarted), err)
 		}
 		if read += len(line); read > reader.Size() {
-			return errors.New("远端在链路程序启动前输出过多")
+			return errors.New(text.T(i18n.SSHLinkChatter))
 		}
 	}
 }
@@ -405,15 +412,16 @@ func (l *Link) remoteCommand() string {
 
 func shellQuote(text string) string { return "'" + strings.ReplaceAll(text, "'", "'\"'\"'") + "'" }
 
-// ParseForward reads a "listen=target" pair of TCP addresses.
-func ParseForward(text string) (PortForward, error) {
-	listen, target, ok := strings.Cut(text, "=")
+// ParseForward reads a "listen=target" pair of TCP addresses; what is
+// wrong with one is said in text's language.
+func ParseForward(text i18n.Catalog, pair string) (PortForward, error) {
+	listen, target, ok := strings.Cut(pair, "=")
 	if !ok {
-		return PortForward{}, fmt.Errorf("%q 需要写成 listen=target", text)
+		return PortForward{}, errors.New(text.T(i18n.SSHForwardShape, pair))
 	}
 	forward := PortForward{Listen: listen, Target: target}
 	for _, address := range []string{listen, target} {
-		if err := CheckAddress(address); err != nil {
+		if err := CheckAddress(text, address); err != nil {
 			return PortForward{}, err
 		}
 	}
@@ -421,13 +429,13 @@ func ParseForward(text string) (PortForward, error) {
 }
 
 // CheckAddress accepts a fixed host:port.
-func CheckAddress(address string) error {
+func CheckAddress(text i18n.Catalog, address string) error {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
-		return fmt.Errorf("%q 需要写成 host:port", address)
+		return errors.New(text.T(i18n.SSHAddressShape, address))
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || host == "" {
-		return fmt.Errorf("%q 不是可用的 host:port", address)
+		return errors.New(text.T(i18n.SSHAddressUnusable, address))
 	}
 	return nil
 }

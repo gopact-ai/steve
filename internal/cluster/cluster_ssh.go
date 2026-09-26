@@ -50,8 +50,8 @@ func (s peerSSHService) SSHCheck(ctx context.Context, alias string) (sshconnect.
 func (s peerSSHService) SSHPlan(ctx context.Context, req sshconnect.InstallRequest) (sshconnect.InstallPlan, error) {
 	return s.service.Plan(ctx, req)
 }
-func (s peerSSHService) SSHStatus(_ context.Context, id string) (sshconnect.InstallResult, error) {
-	return s.service.Status(id)
+func (s peerSSHService) SSHStatus(ctx context.Context, id string) (sshconnect.InstallResult, error) {
+	return s.service.Status(ctx, id)
 }
 func (s peerSSHService) SSHCommit(ctx context.Context, id string) (sshconnect.InstallResult, error) {
 	return s.service.Commit(ctx, id)
@@ -65,8 +65,8 @@ func (s peerSSHService) SSHBrowse(ctx context.Context, req sshconnect.BrowseRequ
 func (s peerSSHService) SSHUpgrade(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
 	return s.service.Upgrade(ctx, nodeID)
 }
-func (s peerSSHService) SSHUpgradeStatus(_ context.Context, nodeID string) (sshconnect.InstallResult, error) {
-	return s.service.UpgradeStatus(nodeID)
+func (s peerSSHService) SSHUpgradeStatus(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return s.service.UpgradeStatus(ctx, nodeID)
 }
 
 type peerEnrollmentService interface {

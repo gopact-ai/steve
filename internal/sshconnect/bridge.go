@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // bridge is one end of a link. It holds the listeners whose connections
@@ -195,6 +197,9 @@ type ServeLinkOptions struct {
 	// Listen binds each listen address; net.Listen when nil. The far end
 	// closes the listeners it returns when the session ends.
 	Listen func(network, address string) (net.Listener, error)
+	// Text is the language a failure to listen is said in; it reaches the
+	// hub as the reason its link is down.
+	Text i18n.Catalog
 }
 
 // ServeLink is the far end of a link, run on the machine by `steve link`
@@ -215,10 +220,10 @@ func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, opti
 	defer b.close()
 	for i, forward := range listens {
 		if forward.Listen == "" {
-			return errors.New("每个 --listen 都需要指定监听地址")
+			return errors.New(options.Text.T(i18n.SSHListenMissing))
 		}
 		if _, err := b.listen(i, forward); err != nil {
-			return fmt.Errorf("监听 %s 失败：%w", forward.Listen, err)
+			return fmt.Errorf(options.Text.T(i18n.SSHListenFailed), forward.Listen, err)
 		}
 	}
 	if _, err := io.WriteString(stdout, linkBanner+"\n"); err != nil {
