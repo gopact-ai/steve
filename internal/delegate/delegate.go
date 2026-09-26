@@ -32,6 +32,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
@@ -75,6 +76,8 @@ type Service struct {
 	gate       Gate
 	endpoints  Endpoints
 	node       string
+	// text speaks to the person: recovery questions and delivery notices.
+	text i18n.Catalog
 	// MaxSilence is how long a child may go without a sign of life — no
 	// tool call, no text — before it is cancelled. It is an idle clock,
 	// not a cap: a child that builds and tests for twenty minutes while
@@ -170,9 +173,9 @@ func (s *Service) SetLedger(attempts *attempt.Service, artifacts *artifact.Store
 	s.artifacts = artifacts
 }
 
-func New(tasks *task.Store, r *roster.Roster, sessions Sessions, assembler *capability.Assembler, workspaces project.Workspaces, node string) *Service {
+func New(tasks *task.Store, r *roster.Roster, sessions Sessions, assembler *capability.Assembler, workspaces project.Workspaces, node string, text i18n.Catalog) *Service {
 	return &Service{
-		tasks: tasks, roster: r, sessions: sessions, assembler: assembler, workspaces: workspaces, node: node,
+		tasks: tasks, roster: r, sessions: sessions, assembler: assembler, workspaces: workspaces, node: node, text: text,
 		InlineWait: defaultInlineWait, RecoveryQuiet: defaultRecoveryQuiet, pending: map[string]*child{},
 		inherited: inherited{rows: inheritedRows(tasks)},
 	}
@@ -538,7 +541,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		}
 		if err != nil {
 			binding := QuestionBinding{Conversation: conversationID, Transport: parent.Transport, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
-			s.reportRecovery(ctx, binding, "task-bookkeeping", "核对已提交的子任务结果和预算", "原执行结果尚未完整写入任务记录。", "预算或任务状态的持久化失败，不能提前宣布完成。", "建议恢复存储后核对同一次执行。")
+			s.reportRecovery(ctx, binding, "task-bookkeeping", i18n.DelegateRecoveryTriedTaskBookkeeping, i18n.DelegateRecoveryProblemTaskBookkeeping, i18n.DelegateRecoveryReasonTaskBookkeeping, i18n.DelegateRecoveryAdviceTaskBookkeeping)
 			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: binding.Attempt, NodeID: binding.Node, SessionID: binding.Session, Cause: err})
 			return
 		}
@@ -567,7 +570,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateFailed); err != nil {
 			slog.Error(fmt.Sprintf("delegate: mark task #%s failed: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
 			if nodewire.IsManagedSession(managedSession) {
-				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
+				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", i18n.DelegateRecoveryTriedTaskState, i18n.DelegateRecoveryProblemTaskState, i18n.DelegateRecoveryReasonTaskState, i18n.DelegateRecoveryAdviceTaskBookkeeping)
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 				return
 			}
@@ -578,7 +581,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateDone); err != nil {
 			slog.Error(fmt.Sprintf("delegate: mark task #%s done: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
 			if nodewire.IsManagedSession(managedSession) {
-				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
+				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", i18n.DelegateRecoveryTriedTaskState, i18n.DelegateRecoveryProblemTaskState, i18n.DelegateRecoveryReasonTaskState, i18n.DelegateRecoveryAdviceTaskBookkeeping)
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 				return
 			}
@@ -592,7 +595,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	if err := s.tasks.SetResult(spawned.ID, task.Result{Outcome: result.Outcome, Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}); err != nil {
 		slog.Error(fmt.Sprintf("delegate: record result of task #%s: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
 		if nodewire.IsManagedSession(managedSession) {
-			s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-result", "保存原执行的完整答复到子任务记录", "答复尚未完整写入任务。", "已提交的执行结果仍保留，不能提前向父任务宣布完成。", "建议恢复存储后重新核对。")
+			s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-result", i18n.DelegateRecoveryTriedTaskResult, i18n.DelegateRecoveryProblemTaskResult, i18n.DelegateRecoveryReasonTaskResult, i18n.DelegateRecoveryAdviceTaskResult)
 			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
 			return
 		}

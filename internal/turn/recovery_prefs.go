@@ -9,6 +9,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -39,30 +40,30 @@ func sessionPreferences(runner harness.Runner) *attempt.SessionPreferences {
 
 // Recovery requires every frozen selector to be supported and confirmed by
 // the new native session before a user prompt can be sent.
-func applyRecoveryPreferences(ctx context.Context, runner harness.Runner, preferences *attempt.SessionPreferences) error {
+func applyRecoveryPreferences(ctx context.Context, text i18n.Catalog, runner harness.Runner, preferences *attempt.SessionPreferences) error {
 	if preferences == nil || preferences.Model == "" && len(preferences.Options) == 0 {
 		return nil
 	}
 	configurable, ok := runner.(harness.Configurable)
 	if !ok {
-		return errors.New("目标Agent不能确认原执行的模型和选项")
+		return errors.New(text.T(i18n.PrefsUnconfirmable))
 	}
 	if preferences.Model != "" {
 		id, choices := configurable.ModelChoices()
 		picked, ok := harness.MatchChoice(choices, preferences.Model)
 		if !ok || id == "" {
 			if configurable.Settings().Model != preferences.Model {
-				return fmt.Errorf("目标Agent不支持原执行模型 %s", preferences.Model)
+				return errors.New(text.T(i18n.PrefsModelUnsupported, preferences.Model))
 			}
 		} else {
 			if current := configurable.Settings().Model; current != picked.Value && current != picked.Label {
 				if err := configurable.SetModel(ctx, id, picked.Value); err != nil {
-					return fmt.Errorf("设置原执行模型 %s: %w", preferences.Model, err)
+					return fmt.Errorf("%s: %w", text.T(i18n.PrefsModelSet, preferences.Model), err)
 				}
 			}
 			actual := configurable.Settings().Model
 			if actual != picked.Value && actual != picked.Label {
-				return fmt.Errorf("目标Agent未确认使用模型 %s", preferences.Model)
+				return errors.New(text.T(i18n.PrefsModelUnconfirmed, preferences.Model))
 			}
 		}
 	}
@@ -81,15 +82,15 @@ func applyRecoveryPreferences(ctx context.Context, runner harness.Runner, prefer
 			}
 		}
 		if option == nil {
-			return fmt.Errorf("目标Agent缺少原执行选项 %s", id)
+			return errors.New(text.T(i18n.PrefsOptionMissing, id))
 		}
 		picked, ok := harness.MatchChoice(option.Choices, want)
 		if !ok {
-			return fmt.Errorf("目标Agent不支持原执行选项 %s=%s", id, want)
+			return errors.New(text.T(i18n.PrefsOptionUnsupported, id, want))
 		}
 		if option.Current != picked.Value {
 			if err := configurable.SetOption(ctx, id, picked.Value); err != nil {
-				return fmt.Errorf("设置原执行选项 %s: %w", id, err)
+				return fmt.Errorf("%s: %w", text.T(i18n.PrefsOptionSet, id), err)
 			}
 		}
 		confirmed := false
@@ -99,7 +100,7 @@ func applyRecoveryPreferences(ctx context.Context, runner harness.Runner, prefer
 			}
 		}
 		if !confirmed {
-			return fmt.Errorf("目标Agent未确认选项 %s=%s", id, want)
+			return errors.New(text.T(i18n.PrefsOptionUnconfirmed, id, want))
 		}
 	}
 	return nil

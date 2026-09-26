@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func sample() Spec {
@@ -90,14 +92,14 @@ func TestInspectBinaryUsesHeadersRatherThanExecuting(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := InspectBinary(path)
+	got, err := InspectBinary(i18n.New(i18n.LocaleZH), path)
 	if err != nil || got.OS != "linux" || got.Arch != "amd64" || len(got.SHA256) != 64 {
 		t.Fatalf("binary metadata = %#v, %v", got, err)
 	}
 	if err := os.WriteFile(path, bytes.Repeat([]byte("not a binary"), 10), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InspectBinary(path); err == nil {
+	if _, err := InspectBinary(i18n.New(i18n.LocaleZH), path); err == nil {
 		t.Fatal("accepted unknown executable format")
 	}
 }

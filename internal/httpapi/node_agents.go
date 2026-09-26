@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gopact-ai/steve/internal/agenttools"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
@@ -11,7 +12,7 @@ func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if s.admin == nil {
 		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, map[string]string{"error": "当前服务不支持节点工具登记"})
+		writeJSON(w, map[string]string{"error": i18n.FromContext(r.Context()).T(i18n.HTTPNodeAgentsUnsupported)})
 		return
 	}
 	if r.Method == http.MethodGet {

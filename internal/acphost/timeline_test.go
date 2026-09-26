@@ -93,7 +93,7 @@ func TestTimelineSharesTextAndThoughtRetentionLimits(t *testing.T) {
 			text += span.Text
 		}
 	}
-	if thought != got.Reasoning || len(thought) > maxThoughtBytes || !strings.HasSuffix(thought, "结尾") || strings.Count(thought, "省略") != 1 {
+	if thought != got.Reasoning || len(thought) > maxThoughtBytes || !strings.HasSuffix(thought, "结尾") || strings.Count(thought, " B …]") != 1 {
 		t.Fatal("timeline bypassed thought retention or lost its omission marker")
 	}
 	if text != got.Answer || len(text) > maxCollectBytes || !strings.HasSuffix(text, truncationMarker) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -289,13 +290,13 @@ func TestNativeHistoryImportRevisionSharesAtomicOwnerBoundary(t *testing.T) {
 func TestNativeHistoryRevisionRelocationAndSessionWrites(t *testing.T) {
 	s, _, old, plan, _, _ := relocationFixture(t)
 	before := historyToken(t, s.l, old.TaskID)
-	if _, err := s.OpenRelocation(t.Context(), plan.ID, RelocationApproval{}); err == nil {
+	if _, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), plan.ID, RelocationApproval{}); err == nil {
 		t.Fatal("invalid relocation accepted")
 	}
 	if historyToken(t, s.l, old.TaskID) != before {
 		t.Fatal("rejected relocation changed revision")
 	}
-	replacement, err := s.OpenRelocation(t.Context(), plan.ID, manualRelocation(plan))
+	replacement, err := s.OpenRelocation(t.Context(), i18n.New(i18n.LocaleZH), plan.ID, manualRelocation(plan))
 	if err != nil {
 		t.Fatal(err)
 	}

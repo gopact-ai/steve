@@ -7,6 +7,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -29,8 +30,8 @@ func pendingDelegatePreparation(record attempt.Record) bool {
 
 func (s *Service) reportDelegatePreparation(ctx context.Context, parent, tracked task.Task, record attempt.Record) {
 	s.reportRecovery(ctx, questionBinding(parent, tracked, record), "native-open",
-		"核对原子任务的创建记录和执行节点",
-		"原生会话的创建回执尚未确认。",
-		"节点可能已经创建了原会话，但当前没有可靠的会话标识；不能把连接中断当作没有执行，也不能重新创建来补回执。",
-		"建议核对原节点服务及创建回执后重新检查；原任务、输入和预算继续保留，暂不发送新任务。")
+		i18n.DelegateRecoveryTriedNativeOpen,
+		i18n.DelegateRecoveryProblemNativeOpen,
+		i18n.DelegateRecoveryReasonNativeOpen,
+		i18n.DelegateRecoveryAdviceNativeOpen)
 }

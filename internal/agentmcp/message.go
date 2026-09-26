@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
 )
 
@@ -213,7 +214,7 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 		st.count++
 		attribution := s.styles[bind.conversationID]
 		if bind.delegatedBy != "" {
-			attribution = bind.agentID + " · 受 " + bind.delegatedBy + " 委派"
+			attribution = s.text.T(i18n.MCPDelegatedBy, bind.agentID, bind.delegatedBy)
 		}
 		record = sentMsg{format: call.args.Format, seq: st.count, progress: call.args.Progress, attribution: attribution, messenger: call.messenger}
 	} else {
@@ -265,7 +266,7 @@ func (d messageDelivery) deliver(ctx context.Context, tool string) (string, chan
 	s, bind, call, st, record := d.server, d.bind, d.call, d.state, d.record
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	msg := channel.Message{Content: call.args.Content, Format: record.format, Attribution: milestoneTail(record.attribution, bind.agentID, record.seq, call.args.Progress)}
+	msg := channel.Message{Content: call.args.Content, Format: record.format, Attribution: milestoneTail(s.text, record.attribution, bind.agentID, record.seq, call.args.Progress)}
 	receipt := call.address
 	var id string
 	var err error

@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -225,7 +226,13 @@ func TestApplicationStopsRecoverDurableRevocationWithoutReplayingNativeInput(t *
 			})
 			defer next.Stop()
 			link := &applicationStopConnection{manager: next, offline: mode == "offline-then-returned"}
-			consumer := newApplicationStops(attempts, tasks, link)
+			// A stop that goes offline is followed in English, to see the
+			// pending note and the ending both said in the stops' language.
+			text := i18n.New(i18n.LocaleZH)
+			if link.offline {
+				text = i18n.New(i18n.LocaleEN)
+			}
+			consumer := newApplicationStops(attempts, tasks, link, text)
 			if mode == "accounting-retry" {
 				if _, err := book.DB().Exec(`CREATE TRIGGER reject_stop_accounting BEFORE UPDATE OF data ON bindings WHEN NEW.kind = 'task-store' AND NEW.id = 'state' BEGIN SELECT RAISE(FAIL, 'task accounting unavailable'); END`); err != nil {
 					t.Fatal(err)
@@ -260,7 +267,7 @@ func TestApplicationStopsRecoverDurableRevocationWithoutReplayingNativeInput(t *
 			}
 			if link.offline {
 				pending, err := attempts.Get(bounded, record.ID)
-				if err != nil || !pending.Unsettled || !strings.Contains(pending.Error, "尚未收到原节点的停止确认") || pending.StopEvidence != "" {
+				if err != nil || !pending.Unsettled || !strings.Contains(pending.Error, "has not confirmed the stop") || pending.StopEvidence != "" {
 					t.Fatalf("offline stop was not visibly pending: %+v %v", pending, err)
 				}
 				before, err := book.Events(bounded, record.ID)
@@ -286,6 +293,9 @@ func TestApplicationStopsRecoverDurableRevocationWithoutReplayingNativeInput(t *
 			stored, err := attempts.Get(bounded, record.ID)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if wantStop && mode == "offline-then-returned" && !strings.Contains(stored.Error, "pause or cancel") {
+				t.Fatalf("stop ending not said in the stops' language: %q", stored.Error)
 			}
 			if wantStop {
 				receipt, ok, err := attempts.TaskStopReceipt(bounded, record.ID)

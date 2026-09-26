@@ -10,12 +10,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/channelsettings"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/project"
@@ -239,5 +241,31 @@ func TestSharedApplicationRejectsAuthoritativeRevisionConflict(t *testing.T) {
 	d, ok, err := platformconfig.New(book).Load()
 	if err != nil || !ok || d.Settings.Gateway.TaskMaxTurns != 77 || staleConfig.Gateway.TaskMaxTurns != 3 {
 		t.Fatalf("rejected save published state: turns=%d stale=%d err=%v", d.Settings.Gateway.TaskMaxTurns, staleConfig.Gateway.TaskMaxTurns, err)
+	}
+}
+
+// A sealed project refused by the shared ledger is explained in the
+// language of the person who saved it, naming the project.
+func TestSharedApplicationRefusesASealedProjectInTheSaversLanguage(t *testing.T) {
+	for _, tc := range []struct {
+		locale i18n.Locale
+		wantEN bool
+	}{{i18n.LocaleEN, true}, {i18n.LocaleZH, false}} {
+		t.Run(string(tc.locale), func(t *testing.T) {
+			a, shared, _, _ := sharedSettingsFixture(t)
+			candidate := config.CloneProjects(configOf(a))
+			for id, item := range candidate.Projects {
+				item.Level = "sealed"
+				candidate.Projects[id] = item
+			}
+			err := shared.SaveContext(i18n.WithLocale(t.Context(), tc.locale), a.Path, candidate)
+			if !errors.Is(err, platformconfig.ErrSealedShared) {
+				t.Fatalf("sealed project was not refused: %v", err)
+			}
+			hasHan := strings.IndexFunc(err.Error(), func(r rune) bool { return unicode.Is(unicode.Han, r) }) >= 0
+			if hasHan == tc.wantEN || strings.Contains(err.Error(), platformconfig.ErrSealedShared.Error()) {
+				t.Fatalf("refusal %q is not said in %s", err, tc.locale)
+			}
+		})
 	}
 }

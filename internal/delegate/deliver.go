@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/text"
@@ -38,6 +39,8 @@ type Delivery struct {
 	// Key names the delivery for good: the first child's key. A channel
 	// that keeps keys can refuse a second copy.
 	Key string
+	// text is the service's catalog, for the line the person sees.
+	text i18n.Catalog
 }
 
 // Delivered is one child in a delivery, or in a turn's preface.
@@ -59,11 +62,11 @@ type Delivered struct {
 	Stopping bool
 }
 
-// Notice is the line the person sees.
+// Notice is the line the person sees, in the service's language.
 func (d Delivery) Notice() string {
 	var lines []string
 	for _, c := range d.Children {
-		lines = append(lines, fmt.Sprintf("⤵ 子任务 #%s %s · %s@%s · %s", c.Task, stateWord(c.State), c.Agent, nodeLabel(c.Node), c.Elapsed.Round(time.Second)))
+		lines = append(lines, d.text.T(i18n.DelegateNoticeLine, c.Task, noticeState(d.text, c.State), c.Agent, nodeLabel(c.Node), c.Elapsed.Round(time.Second)))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -101,6 +104,18 @@ func writeChild(b *strings.Builder, c Delivered) {
 	}
 }
 
+// noticeState is how a child ended, for the person.
+func noticeState(text i18n.Catalog, state task.State) string {
+	switch state {
+	case task.StateFailed:
+		return text.T(i18n.DelegateStateFailed)
+	case task.StateCancelled:
+		return text.T(i18n.DelegateStateCancelled)
+	}
+	return text.T(i18n.DelegateStateDone)
+}
+
+// stateWord is how a child ended, for the parent agent.
 func stateWord(state task.State) string {
 	switch state {
 	case task.StateFailed:
@@ -260,7 +275,7 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 
 func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context, Delivery) error, parent task.Task, waiting []task.Task, landing func(task.Task) string, replaySafe bool) {
 	d := Delivery{Transport: parent.Transport, Conversation: parent.Channel, ParentTask: parent.ID, Member: parent.Member, ChatID: parent.ChatID,
-		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType, Key: waiting[0].Delivery.Key}
+		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType, Key: waiting[0].Delivery.Key, text: s.text}
 	ids := make([]string, 0, len(waiting))
 	for _, c := range waiting {
 		d.Children = append(d.Children, Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: c.State,

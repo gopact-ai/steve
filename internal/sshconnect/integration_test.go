@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 )
 
@@ -38,7 +39,7 @@ func (r isolatedShellRunner) Bind(_ context.Context, _ string, args []string) (C
 }
 
 func (b shellBackend) spec(req InstallRequest, token, id string) (nodebootstrap.Spec, nodebootstrap.Binary, error) {
-	metadata, err := nodebootstrap.InspectBinary(b.path)
+	metadata, err := nodebootstrap.InspectBinary(i18n.Catalog{}, b.path)
 	_, port, _ := net.SplitHostPort(req.Addr)
 	return nodebootstrap.Spec{Name: req.Name, Port: port, Token: token, UploadID: id, OS: metadata.OS, Arch: metadata.Arch, SHA256: metadata.SHA256, Harnesses: map[string]nodebootstrap.Harness{}}, metadata, err
 }

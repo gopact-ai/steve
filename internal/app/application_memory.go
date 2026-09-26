@@ -35,11 +35,20 @@ func prepareApplicationMemoryWithSettings(ctx context.Context, cfg *config.Confi
 	if settings != nil {
 		localeSource = func() home.Locale { return home.Locale(settings.Load().Gateway.Locale) }
 	}
+	// An unwritten memory is offered from a template the owner reads, in
+	// the Hub's language.
+	hubLocale := localeSource
+	if hubLocale == nil {
+		hubLocale = func() home.Locale { return locale }
+	}
 	memoryDir := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "memory")
 	if book == nil {
-		return applicationMemory{Service: memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl")), Home: home.Dir{Path: cfg.Gateway.HomePath, Locale: locale, LocaleSource: localeSource}, Locale: locale}, nil
+		files := memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir)
+		files.SetLocale(hubLocale)
+		return applicationMemory{Service: memory.NewService(files, filepath.Join(memoryDir, "audit.jsonl")), Home: home.Dir{Path: cfg.Gateway.HomePath, Locale: locale, LocaleSource: localeSource}, Locale: locale}, nil
 	}
 	shared := memory.NewLedgerStore(book)
+	shared.SetLocale(hubLocale)
 	shared.SetWriteGuard(func(ctx context.Context, tx *ledger.Tx) error {
 		return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx})
 	})

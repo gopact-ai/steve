@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -80,13 +81,13 @@ func (s *Service) markRelayedLocked() {
 }
 
 // planRewind reads what a rewind would need without changing anything.
-func (s *Service) planRewind(conversation, replyID string) (rewindPlan, error) {
+func (s *Service) planRewind(conversation, replyID string, text i18n.Catalog) (rewindPlan, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.planRewindLocked(conversation, replyID)
+	return s.planRewindLocked(conversation, replyID, text)
 }
 
-func (s *Service) planRewindLocked(conversation, replyID string) (rewindPlan, error) {
+func (s *Service) planRewindLocked(conversation, replyID string, text i18n.Catalog) (rewindPlan, error) {
 	if s.closing || s.maintenance {
 		return rewindPlan{}, consoleapi.ErrConsoleClosing
 	}
@@ -110,7 +111,7 @@ func (s *Service) planRewindLocked(conversation, replyID string) (rewindPlan, er
 		return rewindPlan{}, ErrRewindTargetGone
 	}
 	if list[at].Relayed {
-		return rewindPlan{}, errors.New("这条消息是 Steve 代你发的，不能改写")
+		return rewindPlan{}, errors.New(text.T(i18n.ConsoleRewindRelayed))
 	}
 	plan := rewindPlan{conversation: conversation, line: at, exchange: list[at].ExchangeID, history: rewindHistory(list[:at])}
 	for _, r := range list[at:] {
@@ -218,7 +219,7 @@ func (s *Service) applyRewindLocked(plan rewindPlan) func() {
 // no reader sees a thread missing its tail with nothing said in its
 // place, and a refusal to accept puts the thread back as it was.
 func (s *Service) acceptRewoundLocked(e *queuedExchange, target string, front bool) (*queuedExchange, Exchange, error) {
-	plan, err := s.planRewindLocked(e.Conversation, target)
+	plan, err := s.planRewindLocked(e.Conversation, target, s.localeTextLocked(e.ctx, e.Locale))
 	if err != nil {
 		return nil, Exchange{}, err
 	}
@@ -257,9 +258,12 @@ func (s *Service) publishRewoundLocked(plan rewindPlan) {
 // A retry of a submission that already rewound finds its target gone.
 // That is not a failure — the exchange it created is proof the rewind
 // happened — so the retry is let through to be recognised as a duplicate.
-func (s *Service) beginRewind(ctx context.Context, conversation, replyID, key string) (string, error) {
+func (s *Service) beginRewind(ctx context.Context, conversation, replyID, key, locale string) (string, error) {
 	conversation = ConversationID(conversation)
-	_, err := s.planRewind(conversation, replyID)
+	s.mu.Lock()
+	text := s.localeTextLocked(ctx, locale)
+	s.mu.Unlock()
+	_, err := s.planRewind(conversation, replyID, text)
 	if errors.Is(err, ErrRewindTargetGone) && key != "" && s.submittedKey(conversation, key) {
 		return "", nil
 	}
@@ -267,7 +271,7 @@ func (s *Service) beginRewind(ctx context.Context, conversation, replyID, key st
 		return "", err
 	}
 	if err := s.coordinator.ResetConversationSessions(ctx, conversation); err != nil {
-		return "", fmt.Errorf("结束这个会话的 agent 会话失败，没有改动任何记录：%w", err)
+		return "", fmt.Errorf("%s%w", text.T(i18n.ConsoleRewindResetFailed), err)
 	}
 	return replyID, nil
 }

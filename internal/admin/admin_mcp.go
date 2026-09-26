@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/mcpprobe"
 	"github.com/gopact-ai/steve/internal/mcpregistry"
 	"github.com/gopact-ai/steve/internal/mcpscan"
@@ -169,7 +170,7 @@ func (a *Service) MCP(ctx context.Context) (consoleapi.MCPView, error) {
 	for _, t := range agentmcp.PlatformTools(true) {
 		tools = append(tools, consoleapi.PlatformTool{Name: t.Name, Description: t.Description})
 	}
-	view.Platform = append(view.Platform, consoleapi.MCPPlatform{Name: agentmcp.ServerName, Description: "hub 为每个会话现场生成：你在哪（steve_context）、项目在哪（steve_projects）、做法（steve_help）、进度卡，以及（接了委派时）看机器、委派、等结果", Tools: tools})
+	view.Platform = append(view.Platform, consoleapi.MCPPlatform{Name: agentmcp.ServerName, Description: textFor(ctx).T(i18n.AdminPlatformMCPDescription), Tools: tools})
 	return view, nil
 }
 
@@ -195,7 +196,7 @@ func (a *Service) ProbeMCP(ctx context.Context, machine, name string) (consoleap
 	}
 	set, ok := settings[name]
 	if !ok {
-		return consoleapi.MCPProbeView{}, fmt.Errorf("%s 上没有叫 %q 的 MCP 服务器", place, name)
+		return consoleapi.MCPProbeView{}, fmt.Errorf(textFor(ctx).T(i18n.AdminNoMCPOn), place, name)
 	}
 	view := consoleapi.MCPProbeView{At: time.Now().UTC(), Tools: []nodewire.MCPTool{}}
 	pctx, cancel := context.WithTimeout(ctx, 25*time.Second)
@@ -259,7 +260,7 @@ func (a *Service) remember(place, name, where string) {
 func (a *Service) AdoptMCP(ctx context.Context, machine, source, name string) error {
 	nodeKey := a.nodeKey(machine)
 	if reservedMCP(name) {
-		return fmt.Errorf("%q 是平台自己用的名字，换个名字再纳入", name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminMCPReservedAdopt), name)
 	}
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
@@ -276,11 +277,11 @@ func (a *Service) AdoptMCP(ctx context.Context, machine, source, name string) er
 	}
 	full, ok := mcpscan.Lookup(home, source, name)
 	if !ok {
-		return fmt.Errorf("hub 这个用户的 %s 配置里没有 %q", source, name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminHubUserConfigMissing), source, name)
 	}
 	set := a.hubSettings()
 	if _, exists := set.MCPServers[name]; exists {
-		return fmt.Errorf("hub 上已经有叫 %q 的 MCP 服务器；先删掉它，或换个名字", name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminHubMCPExists), name)
 	}
 	if set.MCPServers == nil {
 		set.MCPServers = map[string]nodewire.MCPSetting{}
@@ -302,7 +303,7 @@ func (a *Service) RemoveMCP(ctx context.Context, machine, name string) error {
 	if a.Catalog != nil {
 		for _, ag := range a.Catalog.List() {
 			if a.place(ag.Node) == place && slices.Contains(ag.MCPServers, name) {
-				return fmt.Errorf("Agent %s 还在用 %s 上的 %q；先在资源页把它从 Agent 的 MCP 列表里去掉", ag.ID, place, name)
+				return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentUsesMCP), ag.ID, place, name)
 			}
 		}
 	}
@@ -316,7 +317,7 @@ func (a *Service) RemoveMCP(ctx context.Context, machine, name string) error {
 		return err
 	}
 	if _, ok := set.MCPServers[name]; !ok {
-		return fmt.Errorf("%s 上没有叫 %q 的 MCP 服务器", place, name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminNoMCPOn), place, name)
 	}
 	delete(set.MCPServers, name)
 	if nodeKey == "" {
@@ -371,10 +372,10 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 	place := a.place(nodeKey)
 	name := strings.TrimSpace(req.Name)
 	if !NameShape.MatchString(strings.ToLower(name)) {
-		return fmt.Errorf("名字 %q 不合规：小写字母、数字、点、下划线、连字符", name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminMCPNameInvalid), name)
 	}
 	if reservedMCP(name) {
-		return fmt.Errorf("%q 是平台自己用的名字", name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminMCPReserved), name)
 	}
 	entries, err := mcpregistry.Search(ctx, req.Entry, 50)
 	if err != nil {
@@ -388,7 +389,7 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 		}
 	}
 	if entry == nil {
-		return fmt.Errorf("注册表里找不到 %q", req.Entry)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminRegistryMissing), req.Entry)
 	}
 	var setting mcpregistry.Setting
 	var wants []mcpregistry.EnvVar
@@ -396,7 +397,7 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 	switch {
 	case req.Package != nil:
 		if *req.Package < 0 || *req.Package >= len(entry.Packages) {
-			return errors.New("没有这个包")
+			return errors.New(textFor(ctx).T(i18n.AdminNoSuchPackage))
 		}
 		pkg := entry.Packages[*req.Package]
 		setting, err = mcpregistry.Plan(pkg)
@@ -405,7 +406,7 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 		}
 		wants = pkg.Env
 		if pkg.Needs != "" && !a.machineHasTool(ctx, nodeKey, pkg.Needs) {
-			return fmt.Errorf("%s 上没有 %s，装不了这个包；先在那台机器上装好 %s", place, pkg.Needs, pkg.Needs)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminPackageRuntimeMissing), place, pkg.Needs, pkg.Needs)
 		}
 		provenance = "registry:" + entry.Name + " " + pkg.RegistryType + ":" + pkg.Identifier
 		if pkg.Version != "" {
@@ -419,7 +420,7 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 			}
 			if val == "" {
 				if v.Required {
-					return fmt.Errorf("%s 是必填的", v.Name)
+					return fmt.Errorf(textFor(ctx).T(i18n.AdminFieldRequired), v.Name)
 				}
 				continue
 			}
@@ -427,7 +428,7 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 		}
 	case req.Remote != nil:
 		if *req.Remote < 0 || *req.Remote >= len(entry.Remotes) {
-			return errors.New("没有这个远端")
+			return errors.New(textFor(ctx).T(i18n.AdminNoSuchRemote))
 		}
 		remote := entry.Remotes[*req.Remote]
 		setting, err = mcpregistry.PlanRemote(remote)
@@ -447,14 +448,14 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 			}
 			if val == "" {
 				if v.Required {
-					return fmt.Errorf("%s 是必填的", v.Name)
+					return fmt.Errorf(textFor(ctx).T(i18n.AdminFieldRequired), v.Name)
 				}
 				continue
 			}
 			setting.Headers[v.Name] = val
 		}
 	default:
-		return errors.New("要选一个包或一个远端")
+		return errors.New(textFor(ctx).T(i18n.AdminChoosePackageOrRemote))
 	}
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
@@ -465,7 +466,7 @@ func (a *Service) InstallMCP(ctx context.Context, req consoleapi.InstallMCPReque
 		return err
 	}
 	if _, exists := set.MCPServers[name]; exists {
-		return fmt.Errorf("%s 上已经有叫 %q 的 MCP 服务器", place, name)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminMCPExistsOn), place, name)
 	}
 	if set.MCPServers == nil {
 		set.MCPServers = map[string]nodewire.MCPSetting{}
@@ -504,7 +505,7 @@ func (a *Service) machineHasTool(ctx context.Context, nodeKey, tool string) bool
 func refusePrivate(ctx context.Context, raw string) error {
 	u, err := neturl.Parse(raw)
 	if err != nil || u.Hostname() == "" {
-		return fmt.Errorf("地址 %q 不合规", raw)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminAddressInvalid), raw)
 	}
 	host := u.Hostname()
 	var ips []net.IP
@@ -515,7 +516,7 @@ func refusePrivate(ctx context.Context, raw string) error {
 		defer cancel()
 		addrs, err := net.DefaultResolver.LookupIPAddr(lctx, host)
 		if err != nil {
-			return fmt.Errorf("解析 %s 失败：%v", host, err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminResolveFailed), host, err)
 		}
 		for _, a := range addrs {
 			ips = append(ips, a.IP)
@@ -523,7 +524,7 @@ func refusePrivate(ctx context.Context, raw string) error {
 	}
 	for _, ip := range ips {
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.Equal(net.ParseIP("169.254.169.254")) || (ip.To4() != nil && ip.To4()[0] == 100 && ip.To4()[1]&0xc0 == 64) {
-			return fmt.Errorf("%s 指向本机或内网（%s），默认不允许从注册表装到这样的地址", host, ip)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminPrivateAddress), host, ip)
 		}
 	}
 	return nil

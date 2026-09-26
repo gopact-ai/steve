@@ -11,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 )
 
@@ -131,7 +132,8 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 	if !ok {
 		return reject(fail("preflight", "binary_unavailable", "App 内没有适合 "+check.OS+"/"+check.Arch+" 的节点程序", "使用包含这个平台节点程序的桌面安装包"))
 	}
-	binary, metadata, err := nodebootstrap.OpenBinary(path)
+	// The failed step below says what went wrong; the reason is not shown.
+	binary, metadata, err := nodebootstrap.OpenBinary(i18n.Catalog{}, path)
 	if err != nil {
 		return reject(fail("preflight", "binary_unavailable", "无法读取待发送的节点程序", "重新安装 App 后再升级"))
 	}

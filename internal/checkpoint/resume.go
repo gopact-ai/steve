@@ -1,9 +1,10 @@
 package checkpoint
 
 import (
-	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 type ResumeAction string
@@ -139,10 +140,10 @@ type RecoveryQuestion struct {
 
 // Message renders the same structured explanation for existing Ask User
 // consumers that accept text and choices rather than separate diagnostic fields.
-func (q RecoveryQuestion) Message() string {
+func (q RecoveryQuestion) Message(text i18n.Catalog) string {
 	var parts []string
 	if len(q.Attempted) > 0 {
-		parts = append(parts, "已尝试："+strings.Join(q.Attempted, "；"))
+		parts = append(parts, text.T(i18n.RecoveryTried, strings.Join(q.Attempted, text.T(i18n.ResumeAttemptedSeparator))))
 	}
 	parts = append(parts, q.Problem, q.Reason, q.Recommendation)
 	return strings.Join(parts, "\n\n")
@@ -169,42 +170,42 @@ type ResumeDecision struct {
 // ResumePlan is a conservative, side-effect-free recovery decision. It cannot
 // stop a process, revoke a writer or grant a new attempt's leases. Those facts
 // must come from their enforcing services and are checked again on execution.
-func ResumePlan(req ResumeRequest) ResumeDecision {
+func ResumePlan(text i18n.Catalog, req ResumeRequest) ResumeDecision {
 	source := req.Source
 	decision := ResumeDecision{TaskID: source.TaskID, SessionID: source.SessionID, TurnID: source.TurnID, PreviousAttemptID: source.AttemptID, TaskEpoch: source.TaskEpoch}
 	attempted := slices.Clone(req.Attempted)
 	ask := func(code, problem, reason, recommendation string, options ...RecoveryOption) ResumeDecision {
 		if len(options) == 0 {
-			options = []RecoveryOption{{ID: "retry-checks", Label: "重新检查", Recommended: true}, {ID: "wait", Label: "暂时等待"}}
+			options = []RecoveryOption{{ID: "retry-checks", Label: text.T(i18n.ResumeOptionRecheck), Recommended: true}, {ID: "wait", Label: text.T(i18n.ResumeOptionWait)}}
 		}
 		decision.Action = ResumeAskUser
-		decision.Question = &RecoveryQuestion{Code: code, TaskID: source.TaskID, SessionID: source.SessionID, AttemptID: source.AttemptID, Title: "继续任务需要你的决定", Attempted: slices.Clone(attempted), Problem: problem, Reason: reason, Recommendation: recommendation, Options: slices.Clone(options), AllowFreeText: true}
+		decision.Question = &RecoveryQuestion{Code: code, TaskID: source.TaskID, SessionID: source.SessionID, AttemptID: source.AttemptID, Title: text.T(i18n.ResumeTitle), Attempted: slices.Clone(attempted), Problem: problem, Reason: reason, Recommendation: recommendation, Options: slices.Clone(options), AllowFreeText: true}
 		return decision
 	}
 	if err := validateSource(source); err != nil {
-		attempted = append(attempted, "检查任务、会话与原执行的关联记录")
-		return ask("source-incomplete", "原执行的身份记录不完整。", "无法安全判断应接续哪个执行。", "建议先恢复原节点的执行记录，再继续这个任务。")
+		attempted = append(attempted, text.T(i18n.ResumeTriedSourceLinks))
+		return ask("source-incomplete", text.T(i18n.ResumeProblemSourceIncomplete), text.T(i18n.ResumeReasonSourceAmbiguous), text.T(i18n.ResumeAdviceRestoreSourceRecord))
 	}
 	if req.Live != nil {
-		attempted = append(attempted, "检查原执行的会话接续结果和当前执行授权")
+		attempted = append(attempted, text.T(i18n.ResumeTriedLiveAttempt))
 		if req.Live.Source == source && req.Live.Attached && req.Live.AuthorityValid {
 			decision.Action, decision.AttemptID, decision.NodeID = ResumeReattach, source.AttemptID, source.NodeID
 			decision.ExecutionEpoch, decision.Cursors = source.ExecutionEpoch, req.Live.Cursors
 			return decision
 		}
 	}
-	attempted = append(attempted, "检查完整检查点和目标节点上的内容校验结果")
+	attempted = append(attempted, text.T(i18n.ResumeTriedCheckpoint))
 	if req.Checkpoint == nil || req.Checkpoint.manifest.ID == "" {
-		return ask("checkpoint-unavailable", "暂时没有可用的完整恢复检查点。", "未完成传输的材料或工作区不能用于恢复；原执行的进度仍保留在已有记录中。", "建议让原节点恢复连接，或提供其他已完整保存的检查点。", RecoveryOption{ID: "wait-source", Label: "等待原机器恢复", Recommended: true}, RecoveryOption{ID: "locate-checkpoint", Label: "查找其他检查点"})
+		return ask("checkpoint-unavailable", text.T(i18n.ResumeProblemNoCheckpoint), text.T(i18n.ResumeReasonPartialCopy), text.T(i18n.ResumeAdviceReconnectOrCheckpoint), RecoveryOption{ID: "wait-source", Label: text.T(i18n.ResumeOptionWaitSource), Recommended: true}, RecoveryOption{ID: "locate-checkpoint", Label: text.T(i18n.ResumeOptionLocateCheckpoint)})
 	}
 	m := req.Checkpoint.manifest
 	if m.Snapshot.Source != source {
-		return ask("checkpoint-mismatch", "检查点与这个任务的原执行不匹配。", "不同任务、会话或执行代际的数据不能相互替代。", "建议重新定位这个执行已提交的检查点。")
+		return ask("checkpoint-mismatch", text.T(i18n.ResumeProblemCheckpointMismatch), text.T(i18n.ResumeReasonNotInterchangeable), text.T(i18n.ResumeAdviceLocateCheckpoint))
 	}
 	if req.Checkpoint.nodeID != req.Target.NodeID || !validID(req.Target.NodeID) {
-		return ask("checkpoint-not-local", "目标节点上尚未验证完整恢复内容。", "只有文件摘要不足以启动新执行，需要获取并校验实际内容。", "建议先将检查点同步到目标节点，再继续这个任务。")
+		return ask("checkpoint-not-local", text.T(i18n.ResumeProblemNotLocal), text.T(i18n.ResumeReasonDigestOnly), text.T(i18n.ResumeAdviceSyncCheckpoint))
 	}
-	decision = CheckReplacement(ReplacementRequest{PlanID: m.ID, Source: source, Isolation: req.Isolation, Reconciliation: req.Reconciliation, Target: req.Target, UnknownActions: m.Snapshot.UnknownActions, Attempted: attempted})
+	decision = CheckReplacement(text, ReplacementRequest{PlanID: m.ID, Source: source, Isolation: req.Isolation, Reconciliation: req.Reconciliation, Target: req.Target, UnknownActions: m.Snapshot.UnknownActions, Attempted: attempted})
 	if decision.Action == ResumeStartAttempt {
 		decision.CheckpointID, decision.Cursors = m.ID, m.Snapshot.Cursors
 	}
@@ -227,37 +228,37 @@ type ReplacementRequest struct {
 
 // CheckReplacement applies the same isolation, reconciliation and authorization
 // boundary regardless of the verified recovery content's storage format.
-func CheckReplacement(req ReplacementRequest) ResumeDecision {
+func CheckReplacement(text i18n.Catalog, req ReplacementRequest) ResumeDecision {
 	source := req.Source
 	decision := ResumeDecision{TaskID: source.TaskID, SessionID: source.SessionID, TurnID: source.TurnID, PreviousAttemptID: source.AttemptID, TaskEpoch: source.TaskEpoch}
 	attempted := slices.Clone(req.Attempted)
 	ask := func(code, problem, reason, recommendation string, options ...RecoveryOption) ResumeDecision {
 		if len(options) == 0 {
-			options = []RecoveryOption{{ID: "retry-checks", Label: "重新检查", Recommended: true}, {ID: "wait", Label: "暂时等待"}}
+			options = []RecoveryOption{{ID: "retry-checks", Label: text.T(i18n.ResumeOptionRecheck), Recommended: true}, {ID: "wait", Label: text.T(i18n.ResumeOptionWait)}}
 		}
 		decision.Action = ResumeAskUser
-		decision.Question = &RecoveryQuestion{Code: code, TaskID: source.TaskID, SessionID: source.SessionID, AttemptID: source.AttemptID, Title: "继续任务需要你的决定", Attempted: slices.Clone(attempted), Problem: problem, Reason: reason, Recommendation: recommendation, Options: slices.Clone(options), AllowFreeText: true}
+		decision.Question = &RecoveryQuestion{Code: code, TaskID: source.TaskID, SessionID: source.SessionID, AttemptID: source.AttemptID, Title: text.T(i18n.ResumeTitle), Attempted: slices.Clone(attempted), Problem: problem, Reason: reason, Recommendation: recommendation, Options: slices.Clone(options), AllowFreeText: true}
 		return decision
 	}
 	if err := validateSource(source); err != nil {
-		return ask("source-incomplete", "原执行的身份记录不完整。", "无法核对这个执行的权限和来源。", "建议先核对原执行记录。")
+		return ask("source-incomplete", text.T(i18n.ResumeProblemSourceIncomplete), text.T(i18n.ResumeReasonSourceUnverifiable), text.T(i18n.ResumeAdviceCheckSourceRecord))
 	}
-	attempted = append(attempted, "核对原执行的停止或写入隔离证据")
+	attempted = append(attempted, text.T(i18n.ResumeTriedIsolation))
 	fence := req.Isolation
 	isolated := fence.AttemptID == source.AttemptID && fence.ExecutionEpoch == source.ExecutionEpoch && strings.TrimSpace(fence.Reference) != "" && (fence.Kind == IsolationProcessStopped || (fence.Kind == IsolationResourcesFenced && fence.AllEffectsFenced))
 	if !isolated {
-		return ask("writer-not-isolated", "还无法确认原执行已经停止写入。", "连接中断、心跳超时或协调节点切换都不能证明原进程已停止；直接重跑可能产生重复操作。", "建议先恢复原机器连接以接续执行，或由执行服务验证原进程停止后再恢复。", RecoveryOption{ID: "reconnect-source", Label: "重连原机器", Recommended: true}, RecoveryOption{ID: "verify-stop", Label: "检查原执行是否停止"}, RecoveryOption{ID: "wait", Label: "暂时等待"})
+		return ask("writer-not-isolated", text.T(i18n.ResumeProblemWriterLive), text.T(i18n.ResumeReasonNoStopProof), text.T(i18n.ResumeAdviceReconnectOrVerifyStop), RecoveryOption{ID: "reconnect-source", Label: text.T(i18n.ResumeOptionReconnectSource), Recommended: true}, RecoveryOption{ID: "verify-stop", Label: text.T(i18n.ResumeOptionVerifyStop)}, RecoveryOption{ID: "wait", Label: text.T(i18n.ResumeOptionWait)})
 	}
-	attempted = append(attempted, "核对检查点之后的外部操作及其结果")
+	attempted = append(attempted, text.T(i18n.ResumeTriedActions))
 	reconciliation := req.Reconciliation
 	if !reconciliation.Checked || reconciliation.AttemptID != source.AttemptID || reconciliation.ExecutionEpoch != source.ExecutionEpoch || reconciliation.IsolationReference != fence.Reference {
-		return ask("actions-not-reconciled", "尚未完成原执行的外部操作对账。", "检查点之后可能已经发出操作；需要在原执行被隔离后确认结果，才能决定哪些工作可以继续。", "建议检查原执行的操作记录，再从检查点恢复。", RecoveryOption{ID: "reconcile-actions", Label: "检查操作结果", Recommended: true}, RecoveryOption{ID: "wait", Label: "暂时等待"})
+		return ask("actions-not-reconciled", text.T(i18n.ResumeProblemActionsUnreconciled), text.T(i18n.ResumeReasonActionsAfterCheckpoint), text.T(i18n.ResumeAdviceCheckActions), RecoveryOption{ID: "reconcile-actions", Label: text.T(i18n.ResumeOptionReconcileActions), Recommended: true}, RecoveryOption{ID: "wait", Label: text.T(i18n.ResumeOptionWait)})
 	}
 	unknown := slices.Concat(req.UnknownActions, reconciliation.AdditionalUnknown)
 	resolved := map[string]ActionResolution{}
 	for _, result := range reconciliation.Results {
 		if previous, ok := resolved[result.ActionID]; ok && previous != result {
-			return ask("action-result-conflict", "同一个外部操作存在不一致的结果记录。", "无法确定这个操作是否已经成功，直接继续可能重复执行。", "建议先核对冲突的操作记录。")
+			return ask("action-result-conflict", text.T(i18n.ResumeProblemActionConflict), text.T(i18n.ResumeReasonActionMayHaveRun), text.T(i18n.ResumeAdviceCheckConflict))
 		}
 		authorizedRetry := false
 		if authorization := reconciliation.RetryAuthorization; authorization != nil {
@@ -269,31 +270,31 @@ func CheckReplacement(req ReplacementRequest) ResumeDecision {
 	}
 	for _, action := range unknown {
 		if _, ok := resolved[action.ID]; !ok {
-			return ask("action-result-unknown", "尚无法确认外部操作的结果："+action.Description, "这个操作可能已经执行成功，不能在新节点上直接重放。", "建议根据操作记录查询实际结果，确认后继续后续工作。", RecoveryOption{ID: "reconcile-actions", Label: "核对这个操作", Recommended: true}, RecoveryOption{ID: "wait", Label: "暂时等待"})
+			return ask("action-result-unknown", text.T(i18n.ResumeProblemActionUnknown, action.Description), text.T(i18n.ResumeReasonNoReplay), text.T(i18n.ResumeAdviceQueryActual), RecoveryOption{ID: "reconcile-actions", Label: text.T(i18n.ResumeOptionReconcileAction), Recommended: true}, RecoveryOption{ID: "wait", Label: text.T(i18n.ResumeOptionWait)})
 		}
 	}
-	attempted = append(attempted, "检查目标节点的任务授权、执行代际和所需能力")
+	attempted = append(attempted, text.T(i18n.ResumeTriedTarget))
 	if !req.Target.Authorized || req.Target.TaskEpoch != source.TaskEpoch || req.Target.ExecutionEpoch <= source.ExecutionEpoch {
-		return ask("execution-not-authorized", "还没有有效的新执行授权。", "新执行必须使用递增的写入代际，并继续遵守用户当前的任务授权。", "建议重新检查任务状态与执行授权；若任务已暂停，请先决定是否恢复。")
+		return ask("execution-not-authorized", text.T(i18n.ResumeProblemUnauthorized), text.T(i18n.ResumeReasonEpochAndGrant), text.T(i18n.ResumeAdviceRecheckAuthorization))
 	}
 	if !req.Target.AdmissionChecked {
-		return ask("capabilities-unchecked", "目标节点尚未完成执行能力检查。", "目标节点的 Agent、模型、工具、网络、工作区及登录状态可能与原节点不同。", "建议完成目标节点的能力检查后再继续任务。")
+		return ask("capabilities-unchecked", text.T(i18n.ResumeProblemCapabilitiesUnchecked), text.T(i18n.ResumeReasonTargetDiffers), text.T(i18n.ResumeAdviceCheckCapabilities))
 	}
 	if len(req.Target.Missing) > 0 {
 		issue := req.Target.Missing[0]
 		attempted = append(attempted, issue.Attempted...)
 		problem, reason, recommendation := issue.Problem, issue.Reason, issue.Recommendation
 		if strings.TrimSpace(problem) == "" {
-			problem = fmt.Sprintf("目标节点暂时无法满足 %s。", issue.Name)
+			problem = text.T(i18n.ResumeProblemCapabilityMissing, issue.Name)
 		}
 		if strings.TrimSpace(reason) == "" {
-			reason = "重新检查后仍缺少执行所需条件，已有进度已保存在同一个任务中。"
+			reason = text.T(i18n.ResumeReasonStillMissing)
 		}
 		if strings.TrimSpace(recommendation) == "" {
-			recommendation = "建议补齐这个条件，或选择具备所需条件的节点。"
+			recommendation = text.T(i18n.ResumeAdviceMeetOrChoose)
 		}
 		if len(issue.Options) == 0 {
-			issue.Options = []RecoveryOption{{ID: "choose-node", Label: "选择其他机器", Recommended: true}, {ID: "retry-checks", Label: "补齐条件后重试"}, {ID: "wait", Label: "暂时等待"}}
+			issue.Options = []RecoveryOption{{ID: "choose-node", Label: text.T(i18n.ResumeOptionChooseNode), Recommended: true}, {ID: "retry-checks", Label: text.T(i18n.ResumeOptionRetryAfterFix)}, {ID: "wait", Label: text.T(i18n.ResumeOptionWait)}}
 		}
 		return ask("capability-missing", problem, reason, recommendation, issue.Options...)
 	}

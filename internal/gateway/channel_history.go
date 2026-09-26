@@ -295,7 +295,7 @@ func channelRepliesTx(ctx context.Context, tx *ledger.ReadTx, id, conversation s
 		reply.Text, reply.Title, reply.AttemptID = output.Result.Text, output.Result.Title, output.Result.Attempt
 		// Match finalText's disclosure boundary: Error is internal diagnostic
 		// evidence, not user-facing text. Only UserError is explicitly public.
-		text := i18n.New(i18n.ContextLocale(ctx))
+		text := i18n.FromContext(ctx)
 		switch {
 		case output.Canceled:
 			reply.Error = text.T(i18n.TurnCanceled)

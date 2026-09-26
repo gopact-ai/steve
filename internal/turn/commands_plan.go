@@ -74,7 +74,7 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 	proposed.ProjectID, proposed.Execution = tracked.ProjectID, execution.Token(ctx)
 	stored, err := c.plans.Create(proposed)
 	if err != nil {
-		return Result{Title: title}, c.retainedBlocked("plan-store", "保存已生成的计划", "规划结果尚未保存到任务。", err.Error(), "建议恢复存储后重新核对已提交的规划结果。", err)
+		return Result{Title: title}, c.retainedBlocked("plan-store", i18n.RetainedTriedSavePlan, i18n.RetainedProblemPlanUnsaved, err.Error(), i18n.RetainedAdviceRecheckPlanResult, err)
 	}
 	outcome, runErr := c.supervisor.Execute(ctx, stored)
 	if runErr == nil {

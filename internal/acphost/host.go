@@ -526,12 +526,17 @@ func (c *collector) writeThought(chunk string) {
 	c.thought = strings.Clone(c.thought[start:])
 }
 
+// omitted marks where an overflowing thought lost its middle, and how
+// many bytes. It carries no words: the collector runs wherever the agent
+// does, and the marker reaches readers of every language unchanged.
+const omitted = "\n[… %d B …]\n"
+
 func (c *collector) reasoning() string {
 	if c.thoughtHead == "" {
 		return c.thought
 	}
 	skipped := c.thoughtBytes - len(c.thoughtHead) - len(c.thought)
-	return fmt.Sprintf("%s\n[… 省略 %d 字节 …]\n%s", c.thoughtHead, skipped, c.thought)
+	return c.thoughtHead + fmt.Sprintf(omitted, skipped) + c.thought
 }
 
 func (c *collector) result() (string, []string) {

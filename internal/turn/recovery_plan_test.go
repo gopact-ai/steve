@@ -20,6 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type retainedPlanSupervisor struct {
@@ -207,7 +208,7 @@ func TestPlanRecoveryErrorMarksOnlyExecutionQuestionsStopUnconfirmed(t *testing.
 	if again := c.planRecoveryError(err); again != err {
 		t.Fatalf("a surfaced question was wrapped again: %v", again)
 	}
-	own := c.retainedBlocked("plan-conditions", "检查", "问题", "原因", "建议", errors.New("no machine"))
+	own := c.retainedBlocked("plan-conditions", i18n.RetainedTriedNodeState, i18n.RetainedProblemAccounting, "no machine", i18n.RetainedAdviceCheckLater, errors.New("no machine"))
 	if got := c.planRecoveryError(fmt.Errorf("plan: %w", own)); got != own || errors.Is(got, harness.ErrStopUnconfirmed) {
 		t.Fatalf("coordinator question changed: %v", got)
 	}
@@ -235,15 +236,22 @@ func TestPlanRecoveryErrorAsksExecutionQuestionsInTheExchangeLanguage(t *testing
 
 func TestRetainedBlockedAsksInTheCoordinatorLanguage(t *testing.T) {
 	c, _, _, _, _ := retainedChatFixture(t)
-	q := c.localized(i18n.LocaleEN).retainedBlocked("offline", "检查原节点", "问题", "原因", "建议", nil).Question
-	if q.RequestID != "recovery/offline" || q.Title != "Continuing this task needs your decision" || !strings.HasPrefix(q.Message, "Tried: 检查原节点\n\n") {
+	ask := func(locale i18n.Locale) view.Question {
+		return c.localized(locale).retainedBlocked("offline", i18n.RetainedTriedNodeState, i18n.RetainedProblemAccounting, "node unreachable", i18n.RetainedAdviceCheckLater, nil).Question
+	}
+	q := ask(i18n.LocaleEN)
+	en := i18n.New(i18n.LocaleEN)
+	want := "Tried: " + en.T(i18n.RetainedTriedNodeState) + "\n\n" + en.T(i18n.RetainedProblemAccounting) + "\n\nnode unreachable\n\n" + en.T(i18n.RetainedAdviceCheckLater)
+	if q.RequestID != "recovery/offline" || q.Title != "Continuing this task needs your decision" || q.Message != want || containsHan(q.Message) {
 		t.Fatalf("question = %+v", q)
 	}
 	if len(q.Choices) != 2 || q.Choices[0].Label != "Recheck the original execution" || q.Choices[1].Label != "Wait for now" {
 		t.Fatalf("choices = %+v", q.Choices)
 	}
-	zh := c.localized(i18n.LocaleZH).retainedBlocked("offline", "检查原节点", "问题", "原因", "建议", nil).Question
-	if zh.Title != "继续任务需要你的处理" || zh.Message != "已尝试：检查原节点\n\n问题\n\n原因\n\n建议" || zh.Choices[1].Label != "暂时等待" {
+	zh := ask(i18n.LocaleZH)
+	cn := i18n.New(i18n.LocaleZH)
+	want = "已尝试：" + cn.T(i18n.RetainedTriedNodeState) + "\n\n" + cn.T(i18n.RetainedProblemAccounting) + "\n\nnode unreachable\n\n" + cn.T(i18n.RetainedAdviceCheckLater)
+	if zh.Title != "继续任务需要你的处理" || zh.Message != want || zh.Choices[1].Label != "暂时等待" {
 		t.Fatalf("zh question = %+v", zh)
 	}
 }

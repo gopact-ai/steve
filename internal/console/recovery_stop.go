@@ -3,13 +3,13 @@ package console
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -415,20 +415,20 @@ func (w *recoveryStopWait) quiet() bool {
 // ask reports the stop's state and offers the two moves that mean anything
 // here: check right now, or let the recheck run itself.
 func (w *recoveryStopWait) ask() (string, bool) {
-	en := w.base.Locale == "en"
+	text := i18n.New(i18n.FromLang(w.base.Locale))
 	w.mu.Lock()
 	w.asked = w.reason
-	message := w.messageLocked(en)
+	message := w.messageLocked(text)
 	w.mu.Unlock()
 	question := view.Question{
 		Kind:          "recovery",
 		Required:      true,
 		AllowFreeText: true,
-		Title:         line(en, "正在核实任务是否已停止", "Confirming the task has stopped"),
+		Title:         text.T(i18n.ConsoleStopWaitTitle),
 		Message:       message,
 		Choices: []view.Choice{
-			{Value: "recheck", Label: line(en, "立刻再核实一次", "Check again now"), Detail: line(en, "马上重新联系原节点核对这次执行。", "Contact the original node again right now.")},
-			{Value: "wait", Label: line(en, "交给它自己核实", "Let it keep checking"), Detail: line(en, "到点自动核实，确认后这一回合会自己结束。", "It rechecks on its own and ends this turn once the stop is confirmed.")},
+			{Value: "recheck", Label: text.T(i18n.ConsoleStopRecheckNow), Detail: text.T(i18n.ConsoleStopRecheckNowDetail)},
+			{Value: "wait", Label: text.T(i18n.ConsoleStopLetItCheck), Detail: text.T(i18n.ConsoleStopLetItCheckDetail)},
 		},
 	}
 	answer, err := w.s.askUser(w.ctx, w.base, question, false)
@@ -442,20 +442,14 @@ func (w *recoveryStopWait) ask() (string, bool) {
 	return answer.Value, true
 }
 
-func (w *recoveryStopWait) messageLocked(en bool) string {
-	message := line(en,
-		"停止要求已经记录，正在核对原任务和它的子任务是否真的停下来了。",
-		"The stop request is recorded and the original task and its children are being checked.")
+func (w *recoveryStopWait) messageLocked(text i18n.Catalog) string {
+	message := text.T(i18n.ConsoleStopRecorded)
 	if w.reason != "" {
-		message += line(en, "\n\n目前还没确认停止的是：\n", "\n\nStill unconfirmed:\n") + w.reason
+		message += "\n\n" + text.T(i18n.ConsoleStopUnconfirmed, w.reason)
 	}
+	message += "\n\n"
 	if w.checks > 0 {
-		message += line(en, "\n\n已经核对 ", "\n\nChecked ") + strconv.Itoa(w.checks) + line(en, " 次。", " times so far.")
-	} else {
-		message += line(en, "\n\n", "\n\n")
+		message += text.T(i18n.ConsoleStopChecked, w.checks)
 	}
-	message += line(en,
-		"任务和待发指令都保留着，不会丢。系统会按固定间隔自己再核对一次，确认停止后这一回合会自动结束，你不需要一直守着。",
-		"The task and its queued instructions are preserved. Steve rechecks at a fixed interval on its own and ends this turn once the stop is confirmed, so you do not need to watch it.")
-	return message
+	return message + text.T(i18n.ConsoleStopPreserved)
 }

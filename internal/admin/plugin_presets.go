@@ -156,7 +156,7 @@ func (s *PluginService) ApplyPluginPreset(ctx context.Context, id string, req co
 				return errors.New("preset harness is not registered")
 			}
 		} else {
-			if err := checkAgentNodeTarget(c, current.Proposed.Node, target); err != nil {
+			if err := checkAgentNodeTarget(textFor(ctx), c, current.Proposed.Node, target); err != nil {
 				return err
 			}
 		}

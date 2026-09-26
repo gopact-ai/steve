@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
@@ -140,7 +141,7 @@ func (p *Peer) serveDesktopWorkspace(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, err)
 		return
 	}
-	path, err := desktop.PrepareWorkspace(request.Path, filepath.Dir(p.Options.ConfigPath))
+	path, err := desktop.PrepareWorkspace(i18n.New(i18n.LocaleFromHeader(r.Header.Get("Accept-Language"))), request.Path, filepath.Dir(p.Options.ConfigPath))
 	if err != nil {
 		desktopError(w, err)
 		return

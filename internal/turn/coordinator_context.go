@@ -411,7 +411,7 @@ type Verb struct {
 func (c *Coordinator) verbs() []Verb {
 	t := c.text.T
 	return []Verb{
-		{string(protocol.CommandPlan), "目标", t(i18n.VerbPlan)},
+		{string(protocol.CommandPlan), t(i18n.VerbPlanArgs), t(i18n.VerbPlan)},
 		{string(protocol.CommandProject), "use <id>", t(i18n.VerbProject)},
 		{string(protocol.CommandTasks), "[id | pause id | resume id | cancel id]", t(i18n.VerbTasks)},
 		{string(protocol.CommandPlans), "[id]", t(i18n.VerbPlans)},

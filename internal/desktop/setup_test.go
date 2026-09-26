@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func TestSetupProgressStartsAtTheFirstStepAndSurvivesRestarts(t *testing.T) {
@@ -81,7 +83,7 @@ func TestSetupProgressTreatsACorruptFileAsAFreshStart(t *testing.T) {
 func TestPrepareWorkspaceCreatesAPrivateDirectoryUnderTheHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	path, err := PrepareWorkspace("~/Steve", filepath.Join(home, "Library", "Application Support", "Steve"))
+	path, err := PrepareWorkspace(i18n.New(i18n.LocaleZH), "~/Steve", filepath.Join(home, "Library", "Application Support", "Steve"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +97,7 @@ func TestPrepareWorkspaceCreatesAPrivateDirectoryUnderTheHome(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("a created workspace is private to its owner, got %#o", info.Mode().Perm())
 	}
-	again, err := PrepareWorkspace(path+"/", "")
+	again, err := PrepareWorkspace(i18n.New(i18n.LocaleZH), path+"/", "")
 	if err != nil || again != path {
 		t.Fatalf("an existing directory is accepted as is: %s %v", again, err)
 	}
@@ -118,7 +120,7 @@ func TestPrepareWorkspaceRefusesUnsafePlaces(t *testing.T) {
 	}
 	for _, path := range []string{"", "relative/dir", "~", home, "/", "/usr/local/steve", "/System/Steve", "/etc/steve", file, string([]byte{'/', 'a', 0}),
 		state, filepath.Join(state, "work"), filepath.Dir(state), filepath.Join(home, "Library"), link, filepath.Join(link, "steve")} {
-		_, err := PrepareWorkspace(path, state)
+		_, err := PrepareWorkspace(i18n.New(i18n.LocaleZH), path, state)
 		if err == nil {
 			t.Errorf("%q should be refused", path)
 		} else if !IsInputError(err) {

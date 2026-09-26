@@ -20,7 +20,7 @@ import (
 func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Command, rest string) Result {
 	title := c.text.T(i18n.CardSchedules)
 	if req.Origin != "" {
-		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：自动触发的任务不能再创建定时任务。"}
+		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreatedAutomatic)}
 	}
 	if strings.TrimSpace(rest) == "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleUsage, cmd)}
@@ -40,14 +40,14 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleUsage, cmd)}
 	}
 	if req.Channel == "" {
-		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：当前会话没有明确的通道。"}
+		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreatedNoChannel)}
 	}
 	binding, err := c.bindingFor(context.Background(), req)
 	if err != nil {
-		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：" + err.Error()}
+		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreated, err.Error())}
 	}
 	if err := checkScheduledProject(req.ExpectedProject, binding.ProjectID); err != nil {
-		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：" + err.Error()}
+		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreated, err.Error())}
 	}
 	created, err := c.schedules.Create(schedule.Job{
 		Channel: req.Channel, ProjectID: binding.ProjectID,
@@ -75,26 +75,22 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 func (c commands) schedulesCmd(req Request, rest string) Result {
 	title := c.text.T(i18n.CardSchedules)
 	fields := strings.Fields(rest)
-	if len(fields) == 2 && (fields[0] == "confirm" || fields[0] == "retry" || fields[0] == "确认" || fields[0] == "重试") {
+	if verdict, ok := firingVerdict(fields); ok {
 		id := strings.TrimPrefix(fields[1], "#")
 		job, ok := c.schedules.Get(id)
 		if !ok || job.ConversationID != req.ConversationID {
 			return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
 		}
 		if req.SenderOpenID == "" || (req.SenderOpenID != job.Requester && req.SenderOpenID != c.ownerOpenID) {
-			return Result{Title: title, Text: "只有创建这项定时任务的人或 owner 可以确认执行结果或授权重试。"}
-		}
-		verdict := "confirm"
-		if fields[0] == "retry" || fields[0] == "重试" {
-			verdict = "retry"
+			return Result{Title: title, Text: c.text.T(i18n.ScheduleResolveForbidden)}
 		}
 		if err := c.schedules.ResolveFiring(id, verdict, req.SenderOpenID); err != nil {
 			return Result{Title: title, Text: err.Error()}
 		}
 		if verdict == "retry" {
-			return Result{Title: title, Text: "定时任务 #" + id + " 已获准重试本次触发。"}
+			return Result{Title: title, Text: c.text.T(i18n.ScheduleRetryGranted, id)}
 		}
-		return Result{Title: title, Text: "已确认定时任务 #" + id + " 本次已执行，不会重复运行。"}
+		return Result{Title: title, Text: c.text.T(i18n.ScheduleRunConfirmed, id)}
 	}
 	verb, id, ok := parseTaskArgs(rest)
 	if !ok {
@@ -119,16 +115,30 @@ func (c commands) schedulesCmd(req Request, rest string) Result {
 		}
 		fmt.Fprintf(&b, " · %s\n%s", job.Member, job.Prompt)
 		if job.PendingKey != "" {
-			fmt.Fprintf(&b, "\n状态：%s", job.State)
+			b.WriteString("\n" + c.text.T(i18n.ScheduleStateLabel, job.State))
 			if job.Error != "" {
 				fmt.Fprintf(&b, " · %s", job.Error)
 			}
 			if job.State == schedule.FiringUnknown {
-				fmt.Fprintf(&b, "\n检查本次是否已执行：已执行用 /schedules confirm %s；确认可以再次执行用 /schedules retry %s。", job.ID, job.ID)
+				b.WriteString("\n" + c.text.T(i18n.ScheduleCheckFiring, job.ID, job.ID))
 			}
 		}
 	}
 	return Result{Title: title, Text: b.String()}
+}
+
+// firingVerdict reads "confirm <id>" or "retry <id>", in either language.
+func firingVerdict(fields []string) (string, bool) {
+	if len(fields) != 2 {
+		return "", false
+	}
+	switch fields[0] {
+	case "confirm", "确认":
+		return "confirm", true
+	case "retry", "重试":
+		return "retry", true
+	}
+	return "", false
 }
 
 func (c commands) cancelSchedule(conversationID, id, title string) Result {
@@ -142,7 +152,7 @@ func (c commands) cancelSchedule(conversationID, id, title string) Result {
 	}
 	removed, ok, err := c.schedules.Delete(id)
 	if err != nil {
-		return Result{Title: title, Text: fmt.Sprintf("定时任务 #%s 未取消：%v", id, err)}
+		return Result{Title: title, Text: c.text.T(i18n.ScheduleCancelFailed, id, err)}
 	}
 	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
