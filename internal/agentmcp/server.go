@@ -291,15 +291,17 @@ func (s *Server) shutdown() {
 		drain, cancel := context.WithTimeout(context.Background(), s.grace)
 		defer cancel()
 		if err := s.srv.Shutdown(drain); err != nil {
-			// A stuck tool call is what this points to; it is cancelled
-			// rather than left writing after its storage is gone.
+			// A stuck tool call is what this points to; its connection
+			// is cut here and its request cancelled below, rather than
+			// left writing after its storage is gone.
 			slog.Warn(fmt.Sprintf("agentmcp: shutdown: %v; cancelling the tool calls still running", err))
-			s.abort()
 			_ = s.srv.Close()
 		}
 		// Serve closes the listener it was given; one it was never given
 		// is still bound, and closing it again after Serve is harmless.
 		_ = s.listener.Close()
+		// Cancels the calls that outlived the grace period; with none
+		// left it only releases the context.
 		s.abort()
 		s.calls.Wait()
 	})
