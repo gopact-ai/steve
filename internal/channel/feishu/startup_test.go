@@ -148,10 +148,100 @@ func TestStartupRetryDelayIsBoundedExponentialWithJitter(t *testing.T) {
 		1: startupRetryBase, 2: 2 * startupRetryBase, 3: 4 * startupRetryBase,
 		8: startupRetryMax, 64: startupRetryMax, 1 << 20: startupRetryMax,
 	} {
+		seen := map[time.Duration]bool{}
 		for range 200 {
-			if d := startupRetryDelay(failures); d < step/2 || d > step {
+			d := startupRetryDelay(failures)
+			if d < step/2 || d > step {
 				t.Fatalf("delay after %d failures = %s; want within [%s, %s]", failures, d, step/2, step)
 			}
+			seen[d] = true
 		}
+		if len(seen) < 2 {
+			t.Fatalf("delay after %d failures is always %v; want jitter", failures, seen)
+		}
+	}
+}
+
+// unreachable is a verification failure Start retries.
+func unreachable(context.Context) (Identity, error) {
+	return Identity{}, errors.New("dial tcp: network is unreachable")
+}
+
+// Stopping the Hub while Start waits to retry ends the wait: Start returns
+// at once, and no later attempt runs. Retrying happens on Start's own
+// goroutine, so its return is the end of the retry.
+func TestStopEndsAStartupRetryWait(t *testing.T) {
+	var attempts atomic.Int32
+	waiting := make(chan struct{})
+	conn := newStuckConn()
+	c := startingChannel(conn, func(ctx context.Context) (Identity, error) {
+		attempts.Add(1)
+		return unreachable(ctx)
+	})
+	c.delay = func(int) time.Duration {
+		close(waiting)
+		return time.Hour
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Start(ctx) }()
+	select {
+	case <-waiting:
+	case <-time.After(waitDeadline):
+		t.Fatal("Start never scheduled a retry")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start() = %v, want context.Canceled", err)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("stopping did not end the retry wait")
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("%d attempts; want none after the stop", attempts.Load())
+	}
+	select {
+	case <-conn.started:
+		t.Fatal("a stopped channel connected")
+	case <-c.Ready():
+		t.Fatal("a stopped channel reported ready")
+	default:
+	}
+}
+
+// Connection settings apply by restarting the Hub, which stops the channel.
+// A verification in flight at that moment is abandoned rather than awaited
+// for its full timeout, and is not followed by another.
+func TestStopAbandonsAStartupAttemptInFlight(t *testing.T) {
+	var attempts atomic.Int32
+	inFlight := make(chan struct{})
+	c := startingChannel(newStuckConn(), func(ctx context.Context) (Identity, error) {
+		if attempts.Add(1) == 1 {
+			close(inFlight)
+		}
+		<-ctx.Done()
+		return Identity{}, ctx.Err()
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Start(ctx) }()
+	select {
+	case <-inFlight:
+	case <-time.After(waitDeadline):
+		t.Fatal("Start never verified")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start() = %v, want context.Canceled", err)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("stopping did not abandon the verification in flight")
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("%d attempts; want none after the stop", attempts.Load())
 	}
 }
