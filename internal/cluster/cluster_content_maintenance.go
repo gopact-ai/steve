@@ -63,21 +63,12 @@ func (p *Peer) collectContent(ctx context.Context) (checkpoint.RetentionGCResult
 	if runtime == nil {
 		return checkpoint.RetentionGCResult{}, ErrInactive
 	}
-	for {
-		state, err := p.committedState(ctx, runtime)
-		if err != nil {
-			return checkpoint.RetentionGCResult{}, err
-		}
-		version, err := runtime.Ledger().ReplicaVersion()
-		if err != nil {
-			return checkpoint.RetentionGCResult{}, err
-		}
-		if version >= state.AppVersion {
-			break
-		}
-		if err := waitContentReplica(ctx); err != nil {
-			return checkpoint.RetentionGCResult{}, err
-		}
+	state, err := p.committedState(ctx, runtime)
+	if err != nil {
+		return checkpoint.RetentionGCResult{}, err
+	}
+	if _, err := p.awaitContentReplica(ctx, runtime, state.AppVersion); err != nil {
+		return checkpoint.RetentionGCResult{}, err
 	}
 	store, release, err := p.acquireContent()
 	if err != nil {
@@ -99,7 +90,9 @@ func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 		writeContentError(w, err)
 		return
 	}
-	if err := p.contentAuthority(r); err != nil {
+	// Collecting may have taken a while: the caller's authority is read
+	// again, not taken from the read that admitted it.
+	if err := p.contentAuthority(r.WithContext(withContentReads(r.Context()))); err != nil {
 		http.Error(w, "content authority changed", http.StatusForbidden)
 		return
 	}

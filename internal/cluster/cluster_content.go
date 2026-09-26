@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
@@ -40,13 +41,84 @@ type contentPlacementState struct {
 
 type contentStateReader func(context.Context) (coordination.State, error)
 
+// errContentLagging reports a replica that did not apply what the committed
+// state says exists within the time a content check waits for it.
+var errContentLagging = errors.New("content replica is behind the committed state")
+
+// contentCatchUpPoll is how often a content check looks at how far its own
+// replica has applied while it waits: a local read, nothing is asked of the
+// leader.
+const contentCatchUpPoll = 5 * time.Millisecond
+
+type contentReadsKey struct{}
+
+// contentReads is the committed state one content request judges by. It
+// is read once, through the leader, and every check the request makes
+// after that reuses it.
+type contentReads struct {
+	mu    sync.Mutex
+	state *coordination.State
+}
+
+// withContentReads starts a request's reads of the committed state afresh:
+// the checks made under the returned context share one read.
+func withContentReads(ctx context.Context) context.Context {
+	return context.WithValue(ctx, contentReadsKey{}, &contentReads{})
+}
+
 // committedState is the coordination state a content check judges by, as
-// the runtime reads it through the consensus leader.
+// the runtime reads it through the consensus leader — once per request
+// when the request shares its reads.
 func (p *Peer) committedState(ctx context.Context, runtime *Runtime) (coordination.State, error) {
-	if read := p.readContentState.Load(); read != nil {
-		return (*read)(ctx)
+	read := runtime.ReadState
+	if stand := p.readContentState.Load(); stand != nil {
+		read = *stand
 	}
-	return runtime.ReadState(ctx)
+	reads, _ := ctx.Value(contentReadsKey{}).(*contentReads)
+	if reads == nil {
+		return read(ctx)
+	}
+	reads.mu.Lock()
+	defer reads.mu.Unlock()
+	if reads.state == nil {
+		state, err := read(ctx)
+		if err != nil {
+			return coordination.State{}, err
+		}
+		reads.state = &state
+	}
+	return *reads.state, nil
+}
+
+// awaitContentReplica waits for this replica to apply the committed state's
+// application version, for as long as a write waits for its replica to
+// catch up (ApplyTimeout, 5s by default): past that the replica is taken to
+// be lagging, and the caller may try again here or elsewhere. It returns
+// the version the replica has.
+func (p *Peer) awaitContentReplica(ctx context.Context, runtime *Runtime, version uint64) (uint64, error) {
+	started := time.Now()
+	bound := time.NewTimer(runtime.config.Coordination.ApplyTimeout)
+	defer bound.Stop()
+	poll := time.NewTicker(contentCatchUpPoll)
+	defer poll.Stop()
+	for {
+		local, err := runtime.Ledger().ReplicaVersion()
+		if err != nil {
+			return 0, fmt.Errorf("read local replica version: %w", err)
+		}
+		if local >= version {
+			return local, nil
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-runtime.ctx.Done():
+			return 0, ErrInactive
+		case <-bound.C:
+			return 0, fmt.Errorf("%w: at version %d, committed state at %d after %s", errContentLagging, local, version, time.Since(started).Round(time.Millisecond))
+		case <-poll.C:
+		}
+	}
 }
 
 func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlacementState, error) {
@@ -54,21 +126,15 @@ func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlace
 	if runtime == nil || projectID == "" {
 		return contentPlacementState{}, contentreplica.ErrPlacement
 	}
+	state, err := p.committedState(ctx, runtime)
+	if err != nil {
+		return contentPlacementState{}, err
+	}
+	version, err := p.awaitContentReplica(ctx, runtime, state.AppVersion)
+	if err != nil {
+		return contentPlacementState{}, err
+	}
 	for {
-		state, err := p.committedState(ctx, runtime)
-		if err != nil {
-			return contentPlacementState{}, err
-		}
-		version, err := runtime.Ledger().ReplicaVersion()
-		if err != nil {
-			return contentPlacementState{}, err
-		}
-		if version < state.AppVersion {
-			if err := waitContentReplica(ctx); err != nil {
-				return contentPlacementState{}, err
-			}
-			continue
-		}
 		d, ok, err := platformconfig.New(runtime.Ledger()).Load()
 		if err != nil || !ok {
 			return contentPlacementState{}, errors.Join(contentreplica.ErrPlacement, err)
@@ -90,6 +156,8 @@ func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlace
 			return contentPlacementState{}, err
 		}
 		if after != version {
+			// The replica applied more while it was read: read it again.
+			version = after
 			continue
 		}
 		if lookupErr != nil || !found {
@@ -99,17 +167,6 @@ func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlace
 			return contentPlacementState{}, contentreplica.ErrPlacement
 		}
 		return contentPlacementState{state: state, declaration: d, project: item}, nil
-	}
-}
-
-func waitContentReplica(ctx context.Context) error {
-	timer := time.NewTimer(5 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
 	}
 }
 
@@ -480,7 +537,10 @@ func (p *Peer) contentAuthority(r *http.Request) error {
 func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	r = r.WithContext(ctx)
+	// Admitting the request reads the committed state once; the checks
+	// after the transfer read it again, once, to see what changed.
+	r = r.WithContext(withContentReads(ctx))
+	recheck := r.WithContext(withContentReads(ctx))
 	// A context deadline alone does not interrupt a blocked HTTP body read.
 	// Bound the underlying connection so a vanished peer cannot hold a quota
 	// reservation or the store's shutdown wait indefinitely.
@@ -549,11 +609,11 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 			writeContentError(w, err)
 			return
 		}
-		if err := p.contentAuthority(r); err != nil {
+		if err := p.contentAuthority(recheck); err != nil {
 			http.Error(w, "content authority changed", http.StatusForbidden)
 			return
 		}
-		if err := p.contentRequestPlacement(r, object); err != nil {
+		if err := p.contentRequestPlacement(recheck, object); err != nil {
 			http.Error(w, "content placement changed", http.StatusForbidden)
 			return
 		}
@@ -575,11 +635,11 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "content staging unavailable", http.StatusInternalServerError)
 		return
 	}
-	if err := p.contentAuthority(r); err != nil {
+	if err := p.contentAuthority(recheck); err != nil {
 		http.Error(w, "content authority changed", http.StatusForbidden)
 		return
 	}
-	if err := p.contentRequestPlacement(r, object); err != nil {
+	if err := p.contentRequestPlacement(recheck, object); err != nil {
 		http.Error(w, "content placement changed", http.StatusForbidden)
 		return
 	}
