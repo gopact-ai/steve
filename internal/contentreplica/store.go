@@ -65,6 +65,9 @@ func (s *Store) Put(ctx context.Context, upload Upload, content io.Reader) (Rece
 		return Receipt{}, err
 	}
 	current, err := placement(ctx, s.policy, object.Scope, s.node)
+	if errors.Is(err, ErrUnavailable) {
+		return Receipt{}, err
+	}
 	if err != nil || current.FailureDomain != where.FailureDomain {
 		return Receipt{}, fmt.Errorf("%w: placement changed: %v", ErrPlacement, err)
 	}

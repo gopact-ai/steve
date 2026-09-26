@@ -16,6 +16,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/material"
 )
 
@@ -261,5 +262,29 @@ func waitOnlyCurrentContentUpload(t *testing.T, active Activation) error {
 			return fmt.Errorf("live uploads=%d unfinished releases=%d", uploads, uncollected)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A peer that cannot check a maintenance request for now answers before the
+// coordinator stops waiting for it, so the coordinator hears why instead of
+// only that it heard nothing.
+func TestContentMaintenanceRefusalReachesTheCoordinatorInTime(t *testing.T) {
+	previous := contentMaintenanceTimeout
+	contentMaintenanceTimeout = 3 * time.Second
+	t.Cleanup(func() { contentMaintenanceTimeout = previous })
+	peers, active := contentPeers(t)
+	stuck := contentStateReader(func(ctx context.Context) (coordination.State, error) {
+		select {
+		case <-ctx.Done():
+			return coordination.State{}, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return coordination.State{}, errors.New("the leader never answered")
+		}
+	})
+	peers[1].readContentState.Store(&stuck)
+	t.Cleanup(func() { peers[1].readContentState.Store(nil) })
+	_, err := (peerContentTransport{peer: peers[0], active: active}).collect(t.Context(), peers[1].Config.NodeID)
+	if !errors.Is(err, contentreplica.ErrUnavailable) {
+		t.Fatalf("maintenance on a peer that cannot check it: %v; want the peer's answer that it could not", err)
 	}
 }
