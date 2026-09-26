@@ -28,8 +28,8 @@ const workerAuthorityInterval = 100 * time.Millisecond
 // Its commands, file writes and agents need no check of their own on the
 // worker, so while any tunnel is open a node that does not lead consensus
 // confirms its replica with a quorum every ApplyTimeout: it asks the
-// leader for a read index and waits, at most ApplyTimeout, for its replica
-// to apply its log up to it. The tunnels close when a confirmation fails,
+// leader for a read index and waits, at most ApplyTimeout, for the state
+// machine of its replica to have applied its log up to it. The tunnels close when a confirmation fails,
 // or when none has succeeded for three ApplyTimeouts. A confirmation
 // appends nothing to the consensus log but the barrier a leader completes
 // once in each term, which the runtime's own quorum reads have usually
