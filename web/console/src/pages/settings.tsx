@@ -12,7 +12,7 @@ import { Toggle } from "@/components/base/toggle/toggle";
 import { SettingsServices } from "@/components/steve/settings-services";
 import { fetchChannels, fetchHubSettings, saveChannels, saveHubSettings, syncApproval, type ApprovalSync, type ChannelSettings, type HubSettings, type SettingsField } from "@/lib/api/settings";
 import { channelInputs, channelPatch, changedInputs, type ChannelDraft } from "@/lib/settings-channels";
-import { number } from "@/lib/format";
+import { number, when } from "@/lib/format";
 import { HTTPError } from "@/lib/http";
 import { errorText, type LocalePreference } from "@/lib/i18n";
 import { registerBackNavigationGuard } from "@/lib/navigation-guard";
@@ -231,13 +231,14 @@ function ApprovalSyncRow({ disabled, dirty, intent, onBusyChange, onSynced }: { 
 }
 
 function ChannelForm({ view, draft, disabled, onChange }: { view: ChannelSettings; draft: ChannelDraft; disabled: boolean; onChange: (value: ChannelDraft) => void }) {
-    const { t } = useI18n();
+    const { t, locale } = useI18n();
     const update = (patch: Partial<ChannelDraft>) => onChange({ ...draft, ...patch });
     const applyHint = (path: string) => <p className="settings-field-description" data-channel-apply={path}>{t(view.live_fields?.includes(path) ? "settingsPage.channelLiveHint" : "settingsPage.channelRestartHint")}</p>;
     const field = (name: "app_id" | "owner_open_id" | "allowed_senders" | "blocked_senders") => <div className="settings-field"><div><label className="settings-field-label" htmlFor={`channel-${name}`}>{t(`settingsPage.channel.${name}`)}</label>{name.endsWith("senders") && <p className="settings-field-description">{t("settingsPage.senderHint")}</p>}{applyHint(`feishu.${name}`)}</div>{name.endsWith("senders") ? <TextArea id={`channel-${name}`} aria-label={t(`settingsPage.channel.${name}`)} value={draft[name]} onChange={(value) => update({ [name]: value })} rows={3} isDisabled={disabled} /> : <Input id={`channel-${name}`} aria-label={t(`settingsPage.channel.${name}`)} value={draft[name]} onChange={(value) => update({ [name]: value })} size="sm" isDisabled={disabled} autoComplete="off" />}</div>;
     return <>
         <div className="settings-channel-summary"><div><strong>Console</strong><p>{t("settingsPage.consoleAlways")}</p></div><Badge size="sm" color="gray">{t("settingsPage.enabled")}</Badge></div>
         {view.runtime_error && <div className="settings-conflict" role="alert"><p>{t("settingsPage.channelStartupFailed")}</p><details><summary>{t("settingsPage.errorDetails")}</summary><p>{view.runtime_error}</p></details></div>}
+        {view.startup_retry && <div className="settings-conflict" role="status"><p>{t("settingsPage.channelStartupRetrying", { attempts: view.startup_retry.attempts, time: when(view.startup_retry.next_at, locale) })}</p><details><summary>{t("settingsPage.errorDetails")}</summary><p>{view.startup_retry.last_error}</p></details></div>}
         <div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.defaultChannel")}</label><p className="settings-field-description">{t("settingsPage.defaultChannelHint")}</p>{applyHint("default_channel")}</div><Select size="sm" aria-label={t("settingsPage.defaultChannel")} selectedKey={draft.default_channel} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ default_channel: String(key) as "console" | "feishu" }); }} items={[{ id: "console", label: "Console" }, { id: "feishu", label: "Feishu / Lark" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
         <section className="settings-subsection"><div className="settings-channel-summary"><div><h3>Feishu / Lark</h3><p>{t(view.effective.feishu.enabled ? "settingsPage.channelEffectiveEnabled" : "settingsPage.channelEffectiveDisabled")}{view.pending_restart && view.desired.feishu.enabled !== view.effective.feishu.enabled && " · " + t("settingsPage.pendingRestart")}</p>{applyHint("feishu.enabled")}</div><Toggle size="sm" aria-label={t("settingsPage.enableFeishu")} isSelected={draft.enabled} isDisabled={disabled} onChange={(enabled) => update({ enabled })} /></div>
         <div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.channel.domain")}</label>{applyHint("feishu.domain")}</div><Select size="sm" aria-label={t("settingsPage.channel.domain")} selectedKey={draft.domain} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ domain: String(key) as "feishu" | "lark" }); }} items={[{ id: "feishu", label: "Feishu · open.feishu.cn" }, { id: "lark", label: "Lark · open.larksuite.com" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>

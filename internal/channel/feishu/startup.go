@@ -77,6 +77,9 @@ func (c *Channel) verify(ctx context.Context) (Identity, error) {
 		delay := c.delay(failures)
 		slog.Warn(fmt.Sprintf("feishu: startup failed; retrying in %s: %v", delay.Round(time.Millisecond), err),
 			"attempt", failures, "retry_in", delay)
+		if c.onRetry != nil {
+			c.onRetry(StartRetry{Failures: failures, Next: time.Now().Add(delay), Err: err})
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

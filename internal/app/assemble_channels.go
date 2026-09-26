@@ -9,6 +9,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
@@ -46,6 +47,12 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 			Access:           feishu.AccessFrom(cfg.Feishu),
 			AllowUnmentioned: cfg.Feishu.AllowUnmentioned,
 			OnCardAction:     gw.HandleCardAction,
+			OnStartRetry: func(r feishu.StartRetry) {
+				channelSettings.SetStartupRetry(&consoleapi.ChannelStartupRetry{
+					Attempts: r.Failures, NextAt: r.Next,
+					LastError: adminsvc.RedactChannelError(r.Err, cfg.Feishu.AppSecret).Error(),
+				})
+			},
 		}, gw.HandleMessage)
 		gw.BindChannel(channel)
 		channel.SetJournal(book.Journal())

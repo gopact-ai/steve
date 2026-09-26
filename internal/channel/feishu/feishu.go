@@ -161,7 +161,7 @@ var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
 // application and connects.
 func New(opts Options, handler Handler) *Channel {
 	api := newAPI(opts.AppID, opts.AppSecret, opts.Domain)
-	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay}
+	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry}
 	channel.identify = func(ctx context.Context) (Identity, error) { return botIdentity(ctx, api) }
 	channel.SetAccess(opts.Access, opts.AllowUnmentioned)
 	eventHandler := dispatcher.NewEventDispatcher("", "").

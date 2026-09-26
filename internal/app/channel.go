@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -38,6 +39,7 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 		case <-ctx.Done():
 			return
 		}
+		channelSettings.SetStartupRetry(nil)
 		timeout := startup.timeout
 		if settings := boot.Settings(); settings != nil {
 			timeout = time.Duration(settings.Load().Gateway.PromptTimeout)
@@ -79,10 +81,13 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 	err := channel.Start(ctx)
 	channelSettings.BindAccessUpdater(nil)
 	if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
-		slog.Error(fmt.Sprintf("steve: Feishu connection failed; Console remains available: %v", err))
+		// Only a failure that waiting will not fix reaches here; one that
+		// may pass is retried inside Start.
+		cause := adminsvc.RedactChannelError(err, boot.Config().Feishu.AppSecret)
+		slog.Error(fmt.Sprintf("steve: Feishu connection failed; Console remains available: %v", cause))
 		// Keys: channel.
 		view.Observe("channel.error", "feishu", "Feishu connection failed; check channel credentials and restart the Hub", map[string]string{"channel": "feishu"})
-		channelSettings.SetRuntimeError("Feishu connection failed; check the channel configuration and restart the Hub")
+		channelSettings.SetRuntimeError(fmt.Sprintf("Feishu connection failed: %v; check the channel configuration and restart the Hub", cause))
 		<-ctx.Done()
 	}
 	return nil

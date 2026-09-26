@@ -514,6 +514,15 @@ if (process.env.PURE_ONLY !== "1") {
         await channelHint("feishu.group_policy").filter({ hasText: restartHint }).waitFor();
         await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).waitFor();
         assert.equal(await page.locator('[data-channel-apply]').filter({ hasText: "no restart" }).count(), 0);
+        // A startup that may still succeed is shown as retrying, with its last error.
+        delete channels.runtime_error;
+        channels.startup_retry = { attempts: 3, next_at: new Date(Date.now() + 60_000).toISOString(), last_error: "dial tcp: network is unreachable" };
+        await page.getByRole("button", { name: "Reload", exact: true }).click();
+        const retrying = page.getByRole("status").filter({ hasText: "retrying on its own: 3 failed attempts" });
+        await retrying.waitFor();
+        await retrying.getByText("Error details", { exact: true }).click();
+        await retrying.getByText("dial tcp: network is unreachable", { exact: true }).waitFor();
+        assert.equal(await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).count(), 0);
         assert.deepEqual(errors, []); assert.deepEqual(external, []);
         console.log("PASS settings center browser: drafts/CAS, next-operation/task modes, zero budgets, landing schema, mixed/restart channel capabilities, restart receipts, English and narrow layout");
         await context.close();
