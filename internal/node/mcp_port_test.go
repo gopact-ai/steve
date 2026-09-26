@@ -77,11 +77,8 @@ func TestPluginBrokerPicksItsFirstPortFromTheStableRange(t *testing.T) {
 
 // A plugin broker restarted after its proxy is done binds the remembered
 // port again under StrictPort, so a done proxy has let go of its port. A
-// broker stopped before its proxy server begins serving is the hard case,
-// and a single P makes that order common.
+// broker stopped before its proxy server begins serving is the hard case.
 func TestPluginBrokerProxyReleasesItsPortBeforeDone(t *testing.T) {
-	procs := runtime.GOMAXPROCS(1)
-	t.Cleanup(func() { runtime.GOMAXPROCS(procs) })
 	for i := range 200 {
 		broker := NewBroker(BrokerConfig{})
 		ctx, cancel := context.WithCancel(t.Context())
@@ -122,9 +119,13 @@ func TestBrokerServeFailureReleasesTheProxyPort(t *testing.T) {
 }
 
 // A plugin broker that fails to start has already let go of its remembered
-// proxy port, so loading the runtime again binds that port under StrictPort.
-// The port is checked straight after the failed load, before anything else
-// gets the one P.
+// proxy port, so loading the runtime again binds that port under StrictPort;
+// so has one that was dropped.
+//
+// The port is checked straight after the failed load. A proxy still running
+// then would be stopped by another goroutine; with a single P that goroutine
+// has not run yet when the check does, where with several it often has and
+// the check would pass by luck.
 func TestPluginRuntimeLoadRetriesOnItsPortAfterAFailedStart(t *testing.T) {
 	procs := runtime.GOMAXPROCS(1)
 	t.Cleanup(func() { runtime.GOMAXPROCS(procs) })
@@ -142,24 +143,35 @@ func TestPluginRuntimeLoadRetriesOnItsPortAfterAFailedStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := ""
+	port := 0
+	released := func(round int, after string) {
+		t.Helper()
+		free, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+		if err != nil {
+			t.Fatalf("round %d: proxy port still held after %s: %v", round, after, err)
+		}
+		free.Close()
+	}
 	for i := range 10 {
 		// A non-empty directory where the socket goes: the broker's proxy
 		// is up by the time its socket fails.
 		if err := os.MkdirAll(filepath.Join(socket, "blocked"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Load(t.Context(), prepared.Ref); err == nil {
+		_, err := pool.Load(t.Context(), prepared.Ref)
+		if err == nil {
 			t.Fatalf("round %d: loaded with its socket blocked", i)
 		}
-		if address == "" {
-			address = "127.0.0.1:" + strconv.Itoa(rememberedPortIn(filepath.Join(s.pluginStore().RuntimeDir(prepared.Ref.ID), "mcp.port")))
+		if !strings.Contains(err.Error(), "mcp broker: listen") {
+			t.Fatalf("round %d: load failed before its socket did: %v", i, err)
 		}
-		free, err := net.Listen("tcp", address)
-		if err != nil {
-			t.Fatalf("round %d: proxy port still held after a failed load: %v", i, err)
+		if port == 0 {
+			port = rememberedPortIn(filepath.Join(s.pluginStore().RuntimeDir(prepared.Ref.ID), "mcp.port"))
+			if port == 0 {
+				t.Fatal("the failed load never started its proxy")
+			}
 		}
-		free.Close()
+		released(i, "a failed load")
 		if err := os.RemoveAll(socket); err != nil {
 			t.Fatal(err)
 		}
@@ -169,5 +181,6 @@ func TestPluginRuntimeLoadRetriesOnItsPortAfterAFailedStart(t *testing.T) {
 		if err := pool.Drop(prepared.Ref.ID); err != nil {
 			t.Fatal(err)
 		}
+		released(i, "the runtime was dropped")
 	}
 }
