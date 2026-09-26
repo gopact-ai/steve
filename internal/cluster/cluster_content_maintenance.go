@@ -16,6 +16,10 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
+// contentMaintenanceTimeout is how long a coordinator waits for one node's
+// content maintenance.
+var contentMaintenanceTimeout = 30 * time.Second
+
 // Maintenance sends no deletion candidates. Each receiver independently
 // validates its committed owner roots and exact upload-release proofs.
 func (transport peerContentTransport) collect(ctx context.Context, node string) (checkpoint.RetentionGCResult, error) {
@@ -37,7 +41,7 @@ func (transport peerContentTransport) collect(ctx context.Context, node string) 
 	}
 	request.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(state.Coordinator.Epoch, 10))
 	request.Header.Set("X-Steve-Writer-Generation", strconv.FormatUint(state.WriterGeneration, 10))
-	client := &http.Client{Transport: clientTransport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: clientTransport, Timeout: contentMaintenanceTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
 		return checkpoint.RetentionGCResult{}, err
@@ -83,7 +87,7 @@ func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 		p.refuseContent(w, r, fmt.Errorf("%w: maintenance accepts no deletion candidates", contentreplica.ErrInvalid))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), contentMaintenanceTimeout)
 	defer cancel()
 	result, err := p.collectContent(ctx)
 	if err != nil {
@@ -121,7 +125,7 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		if _, err := contentGenerationState(ctx, w.active); err != nil {
 			return total, errors.Join(append(failures, err)...)
 		}
-		itemCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		itemCtx, cancel := context.WithTimeout(ctx, contentMaintenanceTimeout)
 		var result checkpoint.RetentionGCResult
 		if node == w.peer.Config.NodeID {
 			result, err = w.peer.collectContent(itemCtx)
