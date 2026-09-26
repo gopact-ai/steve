@@ -1079,7 +1079,7 @@ func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
 // ApplyTimeout gives up its business generation, although nothing is
 // written: it can no longer tell whether it still holds its role.
 func TestCoordinatorThatHearsFromNoLeaderGivesUpItsGeneration(t *testing.T) {
-	nodes := testNodes(t, 3)
+	nodes := testNodesWith(t, 3, steadyTiming)
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	for i := 1; i < len(nodes); i++ {
@@ -1094,9 +1094,7 @@ func TestCoordinatorThatHearsFromNoLeaderGivesUpItsGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	active := ready(t, second)
-	if !first.Status().IsLeader {
-		t.Fatal("fixture no longer keeps the consensus leader away from the coordinator")
-	}
+	requireAnotherLeader(t, first, "node-2")
 	// node-2 stops receiving Raft traffic, so it hears from no leader.
 	nodes[1].raft.pause()
 	t.Cleanup(nodes[1].raft.resume)
