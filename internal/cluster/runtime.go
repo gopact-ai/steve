@@ -314,7 +314,7 @@ func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
 	defer ticker.Stop()
-	state := tickState{started: time.Now()}
+	state := tickState{liveness: liveness{started: time.Now()}}
 	for {
 		if r.ctx.Err() != nil {
 			err := r.retire()
@@ -348,48 +348,50 @@ type observation struct {
 
 // tickState is what the runtime loop carries from one tick to the next.
 type tickState struct {
-	// started is when the loop began. heard is when this replica last knew
-	// a consensus leader, and leading whether that leader was this node.
-	started time.Time
-	heard   time.Time
-	leading bool
+	liveness
 	// denied is the applied index of the latest quorum read that found this
 	// node not coordinating: a replica behind it that still names this node
 	// is stale, and asking again would only repeat the answer.
 	denied uint64
-	// lagging is an entry this replica had committed but not applied when a
-	// tick first saw it behind, at laggingSince; zero while it is not behind.
-	// Under steady writes the replica is always behind the newest commit, so
-	// it is judged by how long one entry stays unapplied.
+}
+
+// liveness is what a series of observations has shown of the local
+// replica's contact with a consensus leader.
+type liveness struct {
+	// started is when the observations began. heard is when the replica
+	// last knew a consensus leader, and leading whether that leader was
+	// this node.
+	started time.Time
+	heard   time.Time
+	leading bool
+	// lagging is an entry the replica had committed but not applied when
+	// an observation first saw it behind, at laggingSince; zero while it is
+	// not behind. Under steady writes the replica is always behind the
+	// newest commit, so it is judged by how long one entry stays unapplied.
 	lagging      uint64
 	laggingSince time.Time
 }
 
-// step is one tick of run. It returns why this node has no business
-// generation to keep, or nil once the generation the local replica names
-// is running, and while a replica that just started waits for its first
+// judge records seen in l and reports whether the local replica is recent
+// enough for this node to act on what it names: an error when it is not,
+// and waiting while a replica that just started has yet to hear its first
 // consensus leader.
-func (r *Runtime) step(seen observation, s *tickState) error {
+func (r *Runtime) judge(l *liveness, seen observation) (waiting bool, err error) {
+	timeout := r.config.Coordination.ApplyTimeout
 	if seen.LeaderID != "" {
-		s.heard, s.leading = seen.at, seen.LeaderID == r.config.Coordination.NodeID
+		l.heard, l.leading = seen.at, seen.LeaderID == r.config.Coordination.NodeID
 	}
-	if seen.log.Applied >= s.lagging {
-		s.lagging = 0
+	if seen.log.Applied >= l.lagging {
+		l.lagging = 0
 	}
-	if s.lagging == 0 && seen.log.Applied < seen.log.Committed {
-		s.lagging, s.laggingSince = seen.log.Committed, seen.at
+	if l.lagging == 0 && seen.log.Applied < seen.log.Committed {
+		l.lagging, l.laggingSince = seen.log.Committed, seen.at
 	}
-	err := r.coordinates(seen.State)
-	if err == nil && seen.AppliedIndex < s.denied {
-		err = coordination.ErrNotCoordinator
-	}
-	// A replica that has known no leader since it started is waiting for an
-	// election; it has nothing running to give up.
-	if err == nil && s.heard.IsZero() {
-		if seen.at.Sub(s.started) <= r.config.Coordination.ApplyTimeout {
-			return nil
+	if l.heard.IsZero() {
+		if seen.at.Sub(l.started) <= timeout {
+			return true, nil
 		}
-		err = fmt.Errorf("%w: this replica has heard from no consensus leader since it started", coordination.ErrUnavailable)
+		return false, fmt.Errorf("%w: this replica has heard from no consensus leader since it started", coordination.ErrUnavailable)
 	}
 	// A leader forgets itself when it steps down without learning who
 	// follows it: on its own once its lease finds no majority, when a
@@ -399,16 +401,37 @@ func (r *Runtime) step(seen observation, s *tickState) error {
 	// leader down the second way, but the only one starts from a leader
 	// removing itself, and the coordinator cannot be removed. A follower's
 	// leader is merely late until ApplyTimeout.
-	if err == nil && seen.LeaderID == "" && s.leading {
-		err = fmt.Errorf("%w: this replica stopped leading consensus and knows no other leader", coordination.ErrUnavailable)
+	if seen.LeaderID == "" && l.leading {
+		return false, fmt.Errorf("%w: this replica stopped leading consensus and knows no other leader", coordination.ErrUnavailable)
 	}
-	if err == nil && seen.at.Sub(s.heard) > r.config.Coordination.ApplyTimeout {
-		err = fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
+	if seen.at.Sub(l.heard) > timeout {
+		return false, fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, timeout)
 	}
 	// Heartbeats name the leader whatever this replica has applied, so an
-	// assignment committed elsewhere may be waiting here unapplied.
-	if err == nil && s.lagging != 0 && seen.at.Sub(s.laggingSince) > r.config.Coordination.ApplyTimeout {
-		err = fmt.Errorf("%w: this replica has not applied committed entry %d within %s; it has applied %d", coordination.ErrUnavailable, s.lagging, r.config.Coordination.ApplyTimeout, seen.log.Applied)
+	// entry committed elsewhere may be waiting here unapplied.
+	if l.lagging != 0 && seen.at.Sub(l.laggingSince) > timeout {
+		return false, fmt.Errorf("%w: this replica has not applied committed entry %d within %s; it has applied %d", coordination.ErrUnavailable, l.lagging, timeout, seen.log.Applied)
+	}
+	return false, nil
+}
+
+// step is one tick of run. It returns why this node has no business
+// generation to keep, or nil once the generation the local replica names
+// is running, and while a replica that just started waits for its first
+// consensus leader.
+func (r *Runtime) step(seen observation, s *tickState) error {
+	waiting, stale := r.judge(&s.liveness, seen)
+	err := r.coordinates(seen.State)
+	if err == nil && seen.AppliedIndex < s.denied {
+		err = coordination.ErrNotCoordinator
+	}
+	// A replica that has known no leader since it started is waiting for an
+	// election; it has nothing running to give up.
+	if err == nil && waiting {
+		return nil
+	}
+	if err == nil {
+		err = stale
 	}
 	if err == nil {
 		r.mu.Lock()

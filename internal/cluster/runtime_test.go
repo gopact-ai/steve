@@ -1323,7 +1323,7 @@ func TestStartingCoordinatorWaitsForItsFirstLeader(t *testing.T) {
 	started := time.Now()
 	electing := observation{Status: coordinator.service.Status(), log: coordinator.service.LogProgress(), at: started}
 	electing.LeaderID, electing.LeaderAddress, electing.IsLeader = "", "", false
-	state := tickState{started: started}
+	state := tickState{liveness: liveness{started: started}}
 	for _, after := range []time.Duration{0, applyTimeout / 2, applyTimeout} {
 		seen := electing
 		seen.at = started.Add(after)
