@@ -238,7 +238,11 @@ type Status struct {
 // Raft handed to the state machine, including the barriers of quorum reads
 // and the entry each new leader starts with, which never reach it and
 // leave State.AppliedIndex behind; the state machine may still be applying
-// the entries it was handed last.
+// the entries it was handed last. Raft records the hand-off only after
+// making it, so the state machine can already have answered an entry, a
+// quorum read's barrier among them, while Applied still names an earlier
+// one: a reader must allow Applied a moment to reach Committed rather than
+// expect them equal once a read returns.
 type LogProgress struct {
 	Committed uint64
 	Applied   uint64
