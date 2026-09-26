@@ -284,6 +284,46 @@ func TestNetworkTransport_AppendEntriesScaledTimeout(t *testing.T) {
 	})
 }
 
+// The deadline grows by one timeout per TimeoutScale bytes of entry data. A
+// transport without a positive TimeoutScale keeps the fixed timeout instead
+// of dividing by it.
+func TestNetworkTransport_AppendEntriesScaledTimeoutValue(t *testing.T) {
+	const timeout = time.Second
+	entries := func(sizes ...int) *AppendEntriesRequest {
+		request := &AppendEntriesRequest{}
+		for _, size := range sizes {
+			request.Entries = append(request.Entries, &Log{Data: make([]byte, size)})
+		}
+		return request
+	}
+	extensions := &AppendEntriesRequest{Entries: []*Log{{Data: make([]byte, 600), Extensions: make([]byte, 424)}}}
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+		scale   int
+		request *AppendEntriesRequest
+		want    time.Duration
+	}{
+		{"heartbeat", timeout, 1024, entries(), timeout},
+		{"empty-entry", timeout, 1024, entries(0), timeout},
+		{"half-scale", timeout, 1024, entries(512), timeout + timeout/2},
+		{"scale", timeout, 1024, entries(1024), 2 * timeout},
+		{"scale-plus-one", timeout, 1024, entries(1024, 1), 2*timeout + timeout/1024},
+		{"extensions-count", timeout, 1024, extensions, 2 * timeout},
+		{"no-timeout", 0, 1024, entries(4096), 0},
+		{"zero-scale", timeout, 0, entries(4096), timeout},
+		{"zero-scale-heartbeat", timeout, 0, entries(), timeout},
+		{"negative-scale", timeout, -1024, entries(4096), timeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			trans := &NetworkTransport{timeout: tc.timeout, TimeoutScale: tc.scale}
+			var got time.Duration
+			require.NotPanics(t, func() { got = trans.appendEntriesTimeout(tc.request) })
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func slowLinkRaft(t *testing.T, id ServerID, trans *NetworkTransport) *Raft {
 	t.Helper()
 	config := DefaultConfig()
