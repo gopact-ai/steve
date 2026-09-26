@@ -30,6 +30,7 @@ import (
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	webassets "github.com/gopact-ai/steve/internal/readmodel/web"
@@ -85,6 +86,10 @@ type PeerOptions struct {
 	// Listen binds the Raft, peer and UI addresses; net.Listen when nil.
 	// A listener it returns belongs to the peer, which closes it.
 	Listen func(network, address string) (net.Listener, error)
+	// Text is the Hub's language, for what this node says with no one
+	// asking: tunnel status, content repair notices, answers to other
+	// nodes. Zero means the language the node's configuration sets.
+	Text i18n.Catalog
 }
 
 type Peer struct {
@@ -140,6 +145,9 @@ type Peer struct {
 	// duplexWarning reports once that the server's response writer cannot
 	// read a request while answering it; each proxied request would say so.
 	duplexWarning sync.Once
+	// text is the Hub's language; a request that names its own is
+	// answered in that one through text.For.
+	text i18n.Catalog
 }
 
 func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr error) {
@@ -153,12 +161,15 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err != nil {
 		return nil, err
 	}
-	if err := confirmPeerIdentity(options, &settings); err != nil {
-		return nil, err
-	}
-
 	application, err := config.Load(options.ConfigPath)
 	if err != nil {
+		return nil, err
+	}
+	text := options.Text
+	if text.IsZero() {
+		text = i18n.New(i18n.FromLang(application.EffectiveLocale()))
+	}
+	if err := confirmPeerIdentity(options, text, &settings); err != nil {
 		return nil, err
 	}
 	if err := requireClusterLoopback(settings.UIAddress); err != nil {
@@ -180,7 +191,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	}
 	ctx, cancel := context.WithCancel(parent)
 	linkCtx, linkCancel := context.WithCancel(parent)
-	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, linkCtx: linkCtx, linkCancel: linkCancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]peerTransport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
+	p := &Peer{Options: options, text: text, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, linkCtx: linkCtx, linkCancel: linkCancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]peerTransport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
 	p.workerPrincipals = map[string]*workerPrincipal{}
 	defer func() {
 		if runErr != nil {
@@ -257,17 +268,17 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	return p, nil
 }
 
-func confirmPeerIdentity(options PeerOptions, settings *PeerConfig) error {
+func confirmPeerIdentity(options PeerOptions, text i18n.Catalog, settings *PeerConfig) error {
 	identitySource := physicalFailureDomain
 	if options.TestFailureDomain != nil {
 		identitySource = options.TestFailureDomain
 	}
 	failureDomain, identityErr := identitySource()
 	if identityErr != nil && settings.FailureDomain != "" {
-		return errors.New("无法确认已登记节点的物理身份")
+		return errors.New(text.T(i18n.ClusterIdentityUnconfirmed))
 	}
 	if settings.FailureDomain != "" && failureDomain != settings.FailureDomain {
-		return errors.New("节点数据的物理身份已改变，请重新确认接入身份")
+		return errors.New(text.T(i18n.ClusterIdentityChanged))
 	}
 	settings.FailureDomain = failureDomain
 	return nil
@@ -526,6 +537,13 @@ func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Everything below answers the person at this console, in the
+	// language their request names or else the Hub's.
+	locale := i18n.LocaleFromHeader(r.Header.Get("Accept-Language"))
+	if locale == "" {
+		locale = p.text.Locale()
+	}
+	r = r.WithContext(i18n.WithLocale(r.Context(), locale))
 	if r.URL.Path == "/console/versions" && r.Method == http.MethodGet {
 		WriteJSON(w, consoleapi.Versions{Hub: nodewire.Version(), HubID: p.Config.NodeID, ProtocolMin: nodewire.ProtocolMin, ProtocolMax: nodewire.ProtocolVersion, Nodes: []consoleapi.VersionNode{}, Peers: []consoleapi.HubPeerInfo{}})
 		return
@@ -655,8 +673,8 @@ func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, pr
 		request.Out.Header.Del("Origin")
 		request.Out.Header.Set("Authorization", "Bearer "+token)
 		request.Out.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(epoch, 10))
-	}, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-		http.Error(w, "协调节点暂时不可用，请稍后重试。", http.StatusServiceUnavailable)
+	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+		http.Error(w, p.text.For(r.Context()).T(i18n.ClusterCoordinatorUnavailable), http.StatusServiceUnavailable)
 	}, ModifyResponse: func(response *http.Response) error {
 		if response.StatusCode >= 300 && response.StatusCode < 400 {
 			return errors.New("application redirects are not forwarded")
@@ -765,6 +783,8 @@ func (p *Peer) Coordination(ctx context.Context) (consoleapi.CoordinationView, e
 	if runtime == nil {
 		return consoleapi.CoordinationView{}, coordination.ErrUnavailable
 	}
+	text := p.text.For(ctx)
+	ctx = i18n.WithLocale(ctx, text.Locale())
 	state, err := runtime.ReadState(ctx)
 	authoritative := err == nil
 	if err != nil {
@@ -772,7 +792,7 @@ func (p *Peer) Coordination(ctx context.Context) (consoleapi.CoordinationView, e
 	}
 	view := consoleapi.CoordinationView{Enabled: true, ClusterID: state.ClusterID, NodeID: p.Config.NodeID, CoordinatorID: state.Coordinator.NodeID, Epoch: state.Coordinator.Epoch, Revision: state.Revision, Authoritative: authoritative, ObservedAt: time.Now().UTC(), AutoFailover: state.AutoFailover, Nodes: []consoleapi.CoordinatorNode{}, Events: []consoleapi.CoordinatorEvent{}}
 	if !authoritative {
-		view.Reason = "暂时无法与多数节点确认状态，显示本机最后同步的记录。"
+		view.Reason = text.T(i18n.ClusterStateUnconfirmed)
 	}
 	view.Nodes = coordinationNodes(ctx, state, p.Config.NodeID, runtime.Status(), p.client.Probe)
 	live := 0
@@ -789,7 +809,7 @@ func (p *Peer) Coordination(ctx context.Context) (consoleapi.CoordinationView, e
 	if !p.Options.AllowAutoFailover {
 		view.Ready = false
 		if view.Reason == "" {
-			view.Reason = "任务续跑准备尚未完成，自动容灾暂不可用。"
+			view.Reason = text.T(i18n.ClusterFailoverNotReady)
 		}
 	}
 	for _, record := range state.Audit {
@@ -808,7 +828,7 @@ func (p *Peer) TransferCoordinator(ctx context.Context, request consoleapi.Coord
 
 func (p *Peer) SetAutoFailover(ctx context.Context, request consoleapi.CoordinatorPolicy) (consoleapi.CoordinationView, error) {
 	if request.Enabled && !p.Options.AllowAutoFailover {
-		return consoleapi.CoordinationView{}, fmt.Errorf("%w: 任务续跑准备尚未完成", coordination.ErrNotReady)
+		return consoleapi.CoordinationView{}, fmt.Errorf(p.text.For(ctx).T(i18n.ClusterFailoverNotReadyError), coordination.ErrNotReady)
 	}
 	_, err := p.Runtime.Load().SetAutoFailover(ctx, coordination.PolicyRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, Enabled: request.Enabled})
 	if err != nil {

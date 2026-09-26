@@ -141,7 +141,7 @@ func (p *Peer) serveDesktopWorkspace(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, err)
 		return
 	}
-	path, err := desktop.PrepareWorkspace(i18n.New(i18n.LocaleFromHeader(r.Header.Get("Accept-Language"))), request.Path, filepath.Dir(p.Options.ConfigPath))
+	path, err := desktop.PrepareWorkspace(p.text.For(r.Context()), request.Path, filepath.Dir(p.Options.ConfigPath))
 	if err != nil {
 		desktopError(w, err)
 		return
@@ -294,7 +294,7 @@ func (p *Peer) serveDesktopLocal(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(requested) == 0 {
-			http.Error(w, "请选择要注册的本机 Agent", http.StatusBadRequest)
+			http.Error(w, p.text.For(r.Context()).T(i18n.AdminDesktopChooseAgent), http.StatusBadRequest)
 			return
 		}
 		seen := make(map[string]bool, len(requested))
@@ -350,7 +350,7 @@ func (p *Peer) enrollDesktopAgent(ctx context.Context, want consoleapi.DesktopEn
 	}
 	if _, exists := d.Agents[agentID]; exists {
 		if named {
-			return fmt.Errorf("Agent 名称 %s 已被占用，请换一个名字", agentID)
+			return errors.New(p.text.For(ctx).T(i18n.AdminAgentNameTakenRename, agentID))
 		}
 		suffix := p.Config.NodeID
 		if len(suffix) > 10 {

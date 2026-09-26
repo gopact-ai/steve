@@ -25,7 +25,7 @@ type BrowseRequest struct {
 // AliasBackend is offered by a backend that knows which SSH alias an
 // enrolled machine is reached through.
 type AliasBackend interface {
-	MachineAlias(nodeID string) (string, error)
+	MachineAlias(ctx context.Context, nodeID string) (string, error)
 }
 
 // Listing is what the machine reported about one directory: where it is,
@@ -59,7 +59,7 @@ const (
 // person can pick a workspace instead of typing it blind. It reads only.
 func (s *Service) Browse(ctx context.Context, req BrowseRequest) (Listing, error) {
 	ctx, text := s.speak(ctx)
-	alias, err := s.browseAlias(text, req)
+	alias, err := s.browseAlias(ctx, text, req)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -91,7 +91,7 @@ func (s *Service) Browse(ctx context.Context, req BrowseRequest) (Listing, error
 // browseAlias is the alias to reach the machine the request names: its own
 // when the machine is being enrolled, or the one the backend keeps for a
 // machine already in the cluster.
-func (s *Service) browseAlias(text i18n.Catalog, req BrowseRequest) (string, error) {
+func (s *Service) browseAlias(ctx context.Context, text i18n.Catalog, req BrowseRequest) (string, error) {
 	node := strings.TrimSpace(req.Node)
 	if node == "" {
 		return req.Alias, nil
@@ -103,7 +103,7 @@ func (s *Service) browseAlias(text i18n.Catalog, req BrowseRequest) (string, err
 	if !ok {
 		return "", Fail(text, "configuration", "browse_unsupported", text.T(i18n.SSHBrowseUnsupported), text.T(i18n.SSHBrowseTypePathFix))
 	}
-	alias, err := backend.MachineAlias(node)
+	alias, err := backend.MachineAlias(ctx, node)
 	if err != nil {
 		return "", Fail(text, "configuration", "browse_target", err.Error(), text.T(i18n.SSHBrowseTypePathFix))
 	}

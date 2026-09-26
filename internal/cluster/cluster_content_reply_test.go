@@ -23,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
@@ -258,7 +259,9 @@ func TestContentPeersThatCouldNotCheckAreAllNamed(t *testing.T) {
 	if nodes := uncheckedContentPeers(err); !slices.Equal(nodes, []string{"node-b", "node-d"}) {
 		t.Fatalf("%v names %q as unable to check, want node-b and node-d", err, nodes)
 	}
-	notice := uncheckedCopy(uncheckedContentPeers(err))
+	var text i18n.Catalog
+	key, args := uncheckedCopy(text, []any{"project", "content"}, uncheckedContentPeers(err))
+	notice := text.T(key, args...)
 	if !strings.Contains(notice, "node-b、node-d") || strings.Contains(notice, "node-c") {
 		t.Fatalf("the notice %q does not name the peers that could not check, and only them", notice)
 	}

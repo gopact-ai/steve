@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -56,7 +57,7 @@ func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObserv
 		defer close(done)
 		for {
 			if _, err := worker.sweep(ctx); err != nil && ctx.Err() == nil {
-				worker.notice(ctx, "scan", "scan_failed", "协作内容副本检查暂时无法完成；恢复协调连接后会继续检查。")
+				worker.notice(ctx, "scan", "scan_failed", i18n.ClusterContentScanFailed)
 			}
 			worker.runMaintenance(ctx)
 			timer := time.NewTimer(interval)
@@ -71,24 +72,30 @@ func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObserv
 	return func() { cancel(); <-done }
 }
 
-func (w *contentRepairWorker) notice(ctx context.Context, id, status, message string) {
+// notice tells the owner, in the Hub's language, what repair found for
+// one object. What was said is remembered by its key and arguments, not by
+// its wording, so the same finding is said once.
+func (w *contentRepairWorker) notice(ctx context.Context, id, status string, key i18n.Key, args ...any) {
 	if ctx.Err() != nil || w.active.Context == nil || w.active.Context.Err() != nil {
 		return
 	}
 	w.noticeSequence++
-	key := status + "\x00" + message
-	if w.previous[id] == key {
+	said := status + "\x00" + string(key)
+	for _, arg := range args {
+		said += "\x00" + fmt.Sprint(arg)
+	}
+	if w.previous[id] == said {
 		return
 	}
 	previous := w.previous[id]
-	w.previous[id] = key
+	w.previous[id] = said
 	if status == "healthy" {
 		if previous == "" || strings.HasPrefix(previous, "repaired\x00") || strings.HasPrefix(previous, "healthy\x00") {
 			return
 		}
-		status = "recovered"
-		message = "此前等待的协作内容副本已恢复可用。"
+		status, key, args = "recovered", i18n.ClusterContentRecovered, nil
 	}
+	message := w.peer.text.T(key, args...)
 	slog.Info(fmt.Sprintf("content repair: object=%s status=%s %s", id, status, message), "object", id, "status", status)
 	if w.observe != nil {
 		// Keys: object.
@@ -121,7 +128,7 @@ func (w *contentRepairWorker) sweep(ctx context.Context) (contentRepairReport, e
 		var manifest contentreplica.Manifest
 		if err := json.Unmarshal(records[id], &manifest); err != nil || manifest.ID != id || !manifest.Complete() {
 			report.Skipped++
-			w.notice(ctx, id, "invalid", "协作内容的副本记录无法验证，需要恢复有效记录后再继续复制。")
+			w.notice(ctx, id, "invalid", i18n.ClusterContentInvalid)
 			continue
 		}
 		itemCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -147,11 +154,11 @@ func (w *contentRepairWorker) sweep(ctx context.Context) (contentRepairReport, e
 			return report, err
 		}
 		if err != nil && w.noticeSequence == beforeNotice {
-			message := "此项协作内容的补副本未完成，请检查本机存储与节点连接；其他独立内容继续处理。"
+			key := i18n.ClusterContentItemFailed
 			if errors.Is(err, context.DeadlineExceeded) {
-				message = "此项协作内容的补副本超过本次等待时间，其他内容继续处理，下一轮将重新核对。"
+				key = i18n.ClusterContentItemTimeout
 			}
-			w.notice(ctx, id, "degraded", message)
+			w.notice(ctx, id, "degraded", key)
 		}
 	}
 	return report, nil
@@ -209,35 +216,31 @@ func (w *contentRepairWorker) reachableDomains(ctx context.Context, manifest con
 	return len(domains), nil
 }
 
-// uncheckedPlacement follows the label of content whose placement repair
-// could not check for now: the committed state out of reach or this node's
-// replica behind it. Nothing is refused; the next round checks again.
-const uncheckedPlacement = " 的存储授权暂时无法核对（集群状态不可达或本机副本落后），已有副本记录保持不变，下一轮将重新核对。"
-
-// uncheckedCopy follows the label of content whose copy the peers holding
+// uncheckedCopy is what to say about content whose copy the peers holding
 // it could not check for now: their replica behind or their committed
-// state out of reach. It names those peers.
-func uncheckedCopy(nodes []string) string {
-	which := "该节点"
+// state out of reach. It names those peers after the content's subject.
+func uncheckedCopy(text i18n.Catalog, subject []any, nodes []string) (i18n.Key, []any) {
+	key := i18n.ClusterContentCopyUncheckedOne
 	if len(nodes) > 1 {
-		which = "这些节点"
+		key = i18n.ClusterContentCopyUncheckedMany
 	}
-	return fmt.Sprintf(" 的副本所在节点 %s 暂时无法核对存储授权（%s副本落后或无法读取集群状态），已有副本记录保持不变，请检查%s与集群的连接；下一轮将重新核对。", strings.Join(nodes, "、"), which, which)
+	return key, append(subject[:len(subject):len(subject)], strings.Join(nodes, text.T(i18n.ListSeparator)))
 }
 
 func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentreplica.Manifest, availability map[string]bool) (string, error) {
 	id := manifest.ID
-	label := fmt.Sprintf("项目 %s 的内容 %s", manifest.Object.Scope.ProjectID, id[:12])
+	// subject names the content in every notice: its project, then its ID.
+	subject := []any{manifest.Object.Scope.ProjectID, id[:12]}
 	scope, err := w.client.CheckLocal(ctx, manifest.Object.Scope.ProjectID)
 	if generationEnded(err) {
 		return "degraded", err
 	}
 	if errors.Is(err, contentreplica.ErrUnavailable) {
-		w.notice(ctx, id, "degraded", label+uncheckedPlacement)
+		w.notice(ctx, id, "degraded", i18n.ClusterContentPlacementUnchecked, subject...)
 		return "degraded", err
 	}
 	if err != nil || scope != manifest.Object.Scope || scope.Level == "sealed" && scope.HomeNodeID != w.peer.Config.NodeID {
-		w.notice(ctx, id, "placement_blocked", label+" 的当前存储授权与原记录不一致，已停止补副本。")
+		w.notice(ctx, id, "placement_blocked", i18n.ClusterContentPlacementMismatch, subject...)
 		return "placement_blocked", errors.Join(contentreplica.ErrPlacement, err)
 	}
 	state, err := contentGenerationState(ctx, w.active)
@@ -259,7 +262,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 			if err := w.record(ctx, manifest); err != nil {
 				return "degraded", err
 			}
-			w.notice(ctx, id, "repaired", label+" 已具备两个独立节点的副本。")
+			w.notice(ctx, id, "repaired", i18n.ClusterContentReplicated, subject...)
 			return "repaired", nil
 		}
 		w.notice(ctx, id, "healthy", "")
@@ -276,7 +279,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 	defer file.Close()
 	available, err := w.client.Read(ctx, manifest, file)
 	if err != nil {
-		return w.readFailed(ctx, id, label, err)
+		return w.readFailed(ctx, id, subject, err)
 	}
 	availability[w.peer.Config.NodeID] = true
 	// Persist this exact local upload before a separate preparation can
@@ -294,7 +297,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 		}
 		prepared, prepareErr := w.prepareCopy(ctx, scope, manifest, file)
 		if prepareErr != nil {
-			return w.prepareFailed(ctx, id, label, available, prepareErr, live, required)
+			return w.prepareFailed(ctx, id, subject, available, prepareErr, live, required)
 		}
 		available = prepared
 		for _, receipt := range prepared.Receipts {
@@ -306,7 +309,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 		}
 	}
 	if live < required {
-		w.notice(ctx, id, "degraded", label+" 尚未恢复所需的独立副本，原保护要求保持不变。")
+		w.notice(ctx, id, "degraded", i18n.ClusterContentShort, subject...)
 		return "degraded", contentreplica.ErrIncomplete
 	}
 	if required == 2 {
@@ -314,10 +317,10 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 		available.Protection = contentreplica.Replicated
 	}
 	if err := w.record(ctx, available); err != nil {
-		w.notice(ctx, id, "degraded", label+" 的新副本已保存，但协作账本尚未确认；后续会重新核对。")
+		w.notice(ctx, id, "degraded", i18n.ClusterContentUnconfirmed, subject...)
 		return "degraded", err
 	}
-	w.notice(ctx, id, "repaired", label+" 已在可用节点补齐独立副本。")
+	w.notice(ctx, id, "repaired", i18n.ClusterContentRepaired, subject...)
 	return "repaired", nil
 }
 
@@ -325,27 +328,28 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 // into this node: the status it reports and the notice it gives, by what
 // stopped the read. A generation that ended or a repair that ran out of
 // time says nothing about the content.
-func (w *contentRepairWorker) readFailed(ctx context.Context, id, label string, err error) (string, error) {
+func (w *contentRepairWorker) readFailed(ctx context.Context, id string, subject []any, err error) (string, error) {
 	switch {
 	case generationEnded(err), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return "degraded", err
 	case errors.Is(err, checkpoint.ErrQuota):
-		w.notice(ctx, id, "degraded", label+" 暂时无法在本机保存副本，请检查存储配额；已有副本记录保持不变。")
+		w.notice(ctx, id, "degraded", i18n.ClusterContentLocalQuota, subject...)
 		return "degraded", err
 	case errors.Is(err, errContentPeerUnchecked):
-		w.notice(ctx, id, "degraded", label+uncheckedCopy(uncheckedContentPeers(err)))
+		key, args := uncheckedCopy(w.peer.text, subject, uncheckedContentPeers(err))
+		w.notice(ctx, id, "degraded", key, args...)
 		return "degraded", err
 	case errors.Is(err, contentreplica.ErrUnavailable):
-		w.notice(ctx, id, "degraded", label+uncheckedPlacement)
+		w.notice(ctx, id, "degraded", i18n.ClusterContentPlacementUnchecked, subject...)
 		return "degraded", err
 	case errors.Is(err, contentreplica.ErrPlacement):
-		w.notice(ctx, id, "placement_blocked", label+" 的存储授权已改变，等待确认可用存储位置后再复制。")
+		w.notice(ctx, id, "placement_blocked", i18n.ClusterContentPlacementChanged, subject...)
 		return "placement_blocked", err
 	case errors.Is(err, contentreplica.ErrIncomplete):
-		w.notice(ctx, id, "unavailable", label+" 当前无法取得已验证副本，请检查原节点连接与内容状态；恢复后会重新核对。")
+		w.notice(ctx, id, "unavailable", i18n.ClusterContentNoVerifiedCopy, subject...)
 		return "unavailable", err
 	default:
-		w.notice(ctx, id, "degraded", label+" 的读取或本机保存尚未完成，已有副本记录保持不变，请检查存储和连接。")
+		w.notice(ctx, id, "degraded", i18n.ClusterContentReadIncomplete, subject...)
 		return "degraded", err
 	}
 }
@@ -362,21 +366,21 @@ func (w *contentRepairWorker) prepareCopy(ctx context.Context, scope contentrepl
 // prepareFailed is how a repair ends when it recovered this node's copy but
 // could not store another: the recovered receipt is still recorded, and the
 // notice says what is short. A generation that ended says nothing.
-func (w *contentRepairWorker) prepareFailed(ctx context.Context, id, label string, available contentreplica.Manifest, prepareErr error, live, required int) (string, error) {
+func (w *contentRepairWorker) prepareFailed(ctx context.Context, id string, subject []any, available contentreplica.Manifest, prepareErr error, live, required int) (string, error) {
 	if generationEnded(prepareErr) {
 		return "degraded", prepareErr
 	}
 	// Persist a newly recovered local receipt even when no second target
 	// is currently available; Record never reduces existing protection.
 	recordErr := w.record(ctx, available)
-	message := fmt.Sprintf("%s 当前只有 %d 个独立可达副本，需要 %d 个；等待符合存储授权的节点恢复后继续补齐。", label, live, required)
+	key, args := i18n.ClusterContentFewCopies, append(subject[:len(subject):len(subject)], live, required)
 	if errors.Is(prepareErr, checkpoint.ErrQuota) {
-		message = label + " 暂时无法增加独立副本，请检查可用节点的存储配额。"
+		key, args = i18n.ClusterContentRemoteQuota, subject
 	}
 	if recordErr != nil {
-		message = label + " 的本机内容已恢复，但副本记录尚未提交，后续会重新核对。"
+		key, args = i18n.ClusterContentRecordPending, subject
 	}
-	w.notice(ctx, id, "degraded", message)
+	w.notice(ctx, id, "degraded", key, args...)
 	return "degraded", errors.Join(prepareErr, recordErr)
 }
 

@@ -279,12 +279,13 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// requestLocale is the language the request names, else the Hub's.
+// requestLocale is the language the request names, else the one the front
+// it came through already chose (the cluster's own console), else the Hub's.
 func (s *Server) requestLocale(r *http.Request) i18n.Locale {
 	if locale := i18n.LocaleFromHeader(r.Header.Get("Accept-Language")); locale != "" {
 		return locale
 	}
-	return s.text.Locale()
+	return s.text.For(r.Context()).Locale()
 }
 
 func (s *Server) authorized(r *http.Request) bool {

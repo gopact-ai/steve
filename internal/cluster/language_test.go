@@ -79,3 +79,19 @@ func TestAnImportedMachineRefusesInTheHubsLanguage(t *testing.T) {
 		}
 	}
 }
+
+// Content repair tells the owner what it found in the Hub's language, and
+// says one finding once however many rounds find it again.
+func TestContentRepairSpeaksTheHubsLanguageOnce(t *testing.T) {
+	var said []string
+	worker := &contentRepairWorker{peer: &Peer{text: i18n.New(i18n.LocaleEN)}, active: Activation{Context: t.Context()}, previous: map[string]string{}, observe: func(kind, _, text string, _ map[string]string) {
+		said = append(said, kind+": "+text)
+	}}
+	for range 2 {
+		worker.notice(t.Context(), "object", "degraded", i18n.ClusterContentShort, "project", "content")
+	}
+	worker.notice(t.Context(), "object", "healthy", "")
+	if len(said) != 2 || hasHan(said[0]) || hasHan(said[1]) || !strings.HasPrefix(said[1], "content.recovered: ") {
+		t.Errorf("repair said %q, want one English finding and then its recovery", said)
+	}
+}

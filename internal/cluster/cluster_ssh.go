@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"reflect"
@@ -23,11 +22,11 @@ func (p *Peer) serveSSHLocal(w http.ResponseWriter, r *http.Request) {
 	p.Mu.Lock()
 	if p.closing {
 		p.Mu.Unlock()
-		http.Error(w, "本机节点正在关闭", http.StatusServiceUnavailable)
+		http.Error(w, p.text.For(r.Context()).T(i18n.ClusterNodeClosing), http.StatusServiceUnavailable)
 		return
 	}
 	if p.localSSH == nil {
-		p.localSSH = sshconnect.New(sshconnect.Options{Backend: peerSSHBackend{peer: p}, InstallationMode: sshconnect.InstallPeer})
+		p.localSSH = sshconnect.New(sshconnect.Options{Backend: peerSSHBackend{peer: p}, InstallationMode: sshconnect.InstallPeer, Text: p.text})
 	}
 	service := p.localSSH
 	p.Mu.Unlock()
@@ -78,6 +77,9 @@ type peerEnrollmentService interface {
 	OpenEnrollmentLink(context.Context, string) error
 }
 
+// peerSSHBackend is called by sshconnect.Service, which has put the
+// language of whoever started the enrollment on every ctx it passes; what
+// the backend says goes into that person's installation record.
 type peerSSHBackend struct {
 	peer *Peer
 	// Tests supply a bounded enrollment fixture and a local verified package.
@@ -108,7 +110,7 @@ func sshPeerEnrollmentRequest(req sshconnect.InstallRequest, hubRoute coordinati
 // machine's own node will listen on are passed over, since that node
 // binds every interface. The choice is a function of the check alone, so
 // the plan a user reviews and the one that is registered agree.
-func hubRouteFor(req sshconnect.InstallRequest, check sshconnect.CheckResult) (coordination.Route, *sshconnect.Step) {
+func hubRouteFor(text i18n.Catalog, req sshconnect.InstallRequest, check sshconnect.CheckResult) (coordination.Route, *sshconnect.Step) {
 	taken := map[string]bool{}
 	if _, port, err := net.SplitHostPort(req.Addr); err == nil {
 		taken[port] = true
@@ -121,17 +123,17 @@ func hubRouteFor(req sshconnect.InstallRequest, check sshconnect.CheckResult) (c
 	}
 	var picked []string
 	for _, port := range check.FreeLoopbackPorts {
-		if text := strconv.Itoa(port); !taken[text] {
-			picked = append(picked, net.JoinHostPort("127.0.0.1", text))
+		if number := strconv.Itoa(port); !taken[number] {
+			picked = append(picked, net.JoinHostPort("127.0.0.1", number))
 		}
 		if len(picked) == 2 {
 			return coordination.Route{Raft: picked[0], API: picked[1]}, nil
 		}
 	}
 	if check.FreeLoopbackPorts == nil {
-		return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: "未能确认目标机上可供 SSH 隧道使用的回环端口", Suggestion: "确认目标机有 bash 且能通过这个别名执行命令后重新检查"}
+		return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: text.T(i18n.ClusterTunnelPortsUnknown), Suggestion: text.T(i18n.ClusterTunnelPortsUnknownFix)}
 	}
-	return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: fmt.Sprintf("目标机回环地址上 %d–%d 之间没有两个空闲端口供 SSH 隧道使用", sshconnect.FirstLoopbackPort, sshconnect.LastLoopbackPort), Suggestion: "释放这段端口，或为目标节点换一组端口后重新检查"}
+	return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: text.T(i18n.ClusterTunnelPortsBusy, sshconnect.FirstLoopbackPort, sshconnect.LastLoopbackPort), Suggestion: text.T(i18n.ClusterTunnelPortsBusyFix)}
 }
 
 func peerPlanHash(plan PeerEnrollmentPlan) string {
@@ -139,49 +141,50 @@ func peerPlanHash(plan PeerEnrollmentPlan) string {
 }
 
 func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallRequest, check sshconnect.CheckResult) (sshconnect.Template, nodebootstrap.PeerSpec, PeerEnrollmentPlan, error) {
+	text := i18n.FromContext(ctx)
 	template := sshconnect.Template{Steps: []sshconnect.Step{}, Effects: []string{}}
-	hubRoute, blocked := hubRouteFor(req, check)
+	hubRoute, blocked := hubRouteFor(text, req, check)
 	if blocked != nil {
 		template.Steps = append(template.Steps, *blocked)
 		return template, nodebootstrap.PeerSpec{}, PeerEnrollmentPlan{}, nil
 	}
 	plan, err := b.service().PreviewPeerEnrollment(ctx, sshPeerEnrollmentRequest(req, hubRoute))
 	if err != nil {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "blocked", Message: err.Error(), Suggestion: "检查目标节点地址后重新生成计划"})
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "blocked", Message: err.Error(), Suggestion: text.T(i18n.ClusterPlanAddressFix)})
 		return template, nodebootstrap.PeerSpec{}, plan, nil
 	}
 	template.ReviewID = plan.ReviewID
 	if template.ReviewID == "" || template.ReviewID != peerPlanHash(plan) {
-		return template, nodebootstrap.PeerSpec{}, plan, errors.New("接入计划缺少有效审阅标识")
+		return template, nodebootstrap.PeerSpec{}, plan, errors.New(text.T(i18n.ClusterPlanReviewMissing))
 	}
 	template.Effects = append(template.Effects, plan.Effects...)
-	template.Effects = append(template.Effects, "通过 SSH 上传完整节点程序，校验后导入私有身份包到 ~/.steve-peer；执行日志保存到 ~/.steve-peer/peer.log")
-	template.Steps = append(template.Steps, sshconnect.Step{ID: "workspace", Status: "ready", Message: "工作目录 " + plan.Request.WorkspaceDir + "；目标机会在安装时创建，并拒绝系统目录或家目录本身"})
+	template.Effects = append(template.Effects, text.T(i18n.ClusterPlanUploadEffect))
+	template.Steps = append(template.Steps, sshconnect.Step{ID: "workspace", Status: "ready", Message: text.T(i18n.ClusterPlanWorkspace, plan.Request.WorkspaceDir)})
 	find := b.findBinary
 	if find == nil {
 		find = desktop.BundledPeerBinary
 	}
 	path, ok := find(check.OS + "/" + check.Arch)
 	if !ok {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "blocked", Message: "App 内没有适合目标平台的完整节点安装包", Suggestion: "使用包含 " + check.OS + "/" + check.Arch + " 节点程序的桌面安装包"})
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "blocked", Message: text.T(i18n.ClusterPlanNoPackage), Suggestion: text.T(i18n.ClusterPlanNoPackageFix, check.OS+"/"+check.Arch)})
 		return template, nodebootstrap.PeerSpec{}, plan, nil
 	}
-	metadata, err := nodebootstrap.InspectBinary(i18n.FromContext(ctx), path)
+	metadata, err := nodebootstrap.InspectBinary(text, path)
 	if err != nil {
 		return template, nodebootstrap.PeerSpec{}, plan, err
 	}
 	if metadata.OS != check.OS || metadata.Arch != check.Arch {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "blocked", Message: "完整节点安装包的平台不匹配", Suggestion: "更换为目标平台的安装包"})
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "blocked", Message: text.T(i18n.ClusterPlanPackageMismatch), Suggestion: text.T(i18n.ClusterPlanPackageMismatchFix)})
 	}
 	if !check.HasTool("sha256sum") && !check.HasTool("shasum") {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "checksum", Status: "blocked", Message: "远端缺少 SHA-256 校验工具", Suggestion: "安装 sha256sum 或 shasum 后重新检查"})
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "checksum", Status: "blocked", Message: text.T(i18n.AdminSSHNoChecksum), Suggestion: text.T(i18n.AdminSSHNoChecksumFix)})
 	}
 	if !check.HasTool("base64") {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "base64", Status: "blocked", Message: "远端缺少 base64 工具", Suggestion: "安装系统基础工具后重新检查"})
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "base64", Status: "blocked", Message: text.T(i18n.ClusterPlanNoBase64), Suggestion: text.T(i18n.ClusterPlanNoBase64Fix)})
 	}
 	template.Binary, template.BinaryPath = &metadata, path
-	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "ready", Message: fmt.Sprintf("目标 HTTPS %s；共识连接 %s", plan.Request.PeerAddress, plan.Request.RaftAddress)})
-	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_link", Status: "ready", Message: fmt.Sprintf("两台机器经由 SSH 会话互联：本机在目标机上以 %s 和 %s 出现", hubRoute.Raft, hubRoute.API), Suggestion: "本机换网络或开关 VPN 都不影响；只要这个 SSH 别名能连上并执行命令，隧道会自动重连，不需要 sshd 允许端口转发"})
+	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "ready", Message: text.T(i18n.ClusterPlanPorts, plan.Request.PeerAddress, plan.Request.RaftAddress)})
+	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_link", Status: "ready", Message: text.T(i18n.ClusterPlanTunnel, hubRoute.Raft, hubRoute.API), Suggestion: text.T(i18n.ClusterPlanTunnelHint)})
 	spec := nodebootstrap.PeerSpec{OS: metadata.OS, Arch: metadata.Arch, SHA256: metadata.SHA256, UploadID: nodebootstrap.PreviewUploadID, JoinPackage: nodebootstrap.PreviewJoinPackage}
 	template.Script, err = nodebootstrap.BuildPeer(spec)
 	return template, spec, plan, err
@@ -198,7 +201,7 @@ func (b peerSSHBackend) Register(ctx context.Context, req sshconnect.InstallRequ
 		return sshconnect.Registration{}, err
 	}
 	if req.ApprovedReviewID == "" || template.ReviewID != req.ApprovedReviewID {
-		return sshconnect.Registration{}, errors.New("接入计划已在审阅后改变；请重新审阅，尚未准备身份或修改网络")
+		return sshconnect.Registration{}, errors.New(i18n.FromContext(ctx).T(i18n.ClusterPlanChanged))
 	}
 	for _, step := range template.Steps {
 		if step.Status == "blocked" {
@@ -217,7 +220,7 @@ func (b peerSSHBackend) Register(ctx context.Context, req sshconnect.InstallRequ
 	}
 	var bundle PeerJoinPackage
 	if registered.Plan.ReviewID != plan.ReviewID || peerPlanHash(registered.Plan) != plan.ReviewID || json.Unmarshal(registered.Payload, &bundle) != nil || bundle.OperationID != installID || bundle.NodeID != registered.NodeID || bundle.ClusterID != plan.ClusterID || bundle.Name != plan.Request.Name || bundle.WorkspaceDir != plan.Request.WorkspaceDir || bundle.StorageLevel != plan.Request.Level || bundle.PeerAdvertise != plan.Request.PeerAddress || bundle.RaftAdvertise != plan.Request.RaftAddress || !reflect.DeepEqual(bundle.Seeds, plan.Seeds) || !routesToOneOf(bundle.Routes, plan.Seeds, plan.Request.HubRoute) {
-		return result, errors.New("私有入组包与已审阅网络计划不同，安装已停止")
+		return result, errors.New(i18n.FromContext(ctx).T(i18n.ClusterPackageMismatch))
 	}
 	result.Token = base64.StdEncoding.EncodeToString(registered.Payload)
 	spec.JoinPackage, spec.UploadID = result.Token, installID
@@ -251,10 +254,11 @@ func (b peerSSHBackend) Link(ctx context.Context, installID string, _ sshconnect
 }
 
 func (b peerSSHBackend) Verify(ctx context.Context, name string) error {
-	return errors.New("集群接入需要原始操作 ID 才能确认")
+	return errors.New(i18n.FromContext(ctx).T(i18n.ClusterVerifyNeedsOperation))
 }
 
 func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string) error {
+	text := i18n.FromContext(ctx)
 	limit := b.stallLimit
 	if limit <= 0 {
 		limit = peerStallLimit
@@ -265,41 +269,41 @@ func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string)
 	advanced, reported := time.Now(), map[string]bool{}
 	for {
 		if ctx.Err() != nil {
-			why := "接入等待已到上限"
+			why := text.T(i18n.ClusterInstalledWaitLimit)
 			if errors.Is(ctx.Err(), context.Canceled) {
-				why = "接入等待被中断"
+				why = text.T(i18n.ClusterInstalledWaitInterrupted)
 			}
-			return peerWaitStopped(last, why)
+			return peerWaitStopped(text, last, why)
 		}
 		result, err := b.service().CompletePeerEnrollment(ctx, id)
 		// Progress is a new phase or something new said within one; the same
 		// failures repeating, however many of them alternate, is a stall.
 		if result.Phase != "" && result.Phase != last.Phase {
 			advanced, reported = time.Now(), map[string]bool{}
-			sshconnect.Report(ctx, "集群接入阶段："+peerPhaseText(result.Phase))
+			sshconnect.Report(ctx, text.T(i18n.ClusterPhaseLog, peerPhaseText(text, result.Phase)))
 		}
 		if result.Error != "" && !reported[result.Error] {
 			reported[result.Error], advanced = true, time.Now()
-			sshconnect.Report(ctx, "当前问题："+result.Error)
+			sshconnect.Report(ctx, text.T(i18n.ClusterProblemLog, result.Error))
 		}
 		last = result
 		if err == nil && result.OperationID == id && result.Name == name && result.Ready && result.Phase == "ready" {
 			return nil
 		}
 		if result.OperationID != "" && result.OperationID != id {
-			return errors.New("接入验证返回了其他操作的结果")
+			return errors.New(text.T(i18n.ClusterVerifyOtherOperation))
 		}
 		if result.Name != "" && result.Name != name {
-			return errors.New("接入验证返回了其他节点的结果")
+			return errors.New(text.T(i18n.ClusterVerifyOtherNode))
 		}
 		if err == nil && result.Ready {
-			return errors.New("接入验证缺少完成状态")
+			return errors.New(text.T(i18n.ClusterVerifyNoReady))
 		}
 		if result.Phase != "awaiting_peer" && result.Phase != "synchronizing" && result.Phase != "registering_worker" && result.Phase != "joined" {
-			return &sshconnect.StepError{Stage: "peer_membership", Code: "peer_not_ready", Message: "节点已安装，但集群接入未完成", Suggestion: "检查原操作记录和 ~/.steve-peer/peer.log，处理网络或状态同步问题后继续确认"}
+			return sshconnect.Fail(text, "peer_membership", "peer_not_ready", text.T(i18n.ClusterJoinIncomplete), text.T(i18n.ClusterJoinIncompleteFix))
 		}
 		if time.Since(advanced) > limit {
-			return peerWaitStopped(last, fmt.Sprintf("集群接入停在「%s」超过 %s 没有进展", peerPhaseText(last.Phase), limit))
+			return peerWaitStopped(text, last, text.T(i18n.ClusterInstalledStalled, peerPhaseText(text, last.Phase), limit))
 		}
 		select {
 		case <-ctx.Done():
@@ -309,29 +313,30 @@ func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string)
 	}
 }
 
-// peerWaitStopped explains a wait that ended without the node joining: the
-// phase it stopped in, and the last thing that went wrong there.
-func peerWaitStopped(last PeerEnrollmentResult, why string) *sshconnect.StepError {
-	suggestion := "检查 ~/.steve-peer/peer.log 与节点间 HTTPS/共识端口；原操作记录已保留，处理后点「继续核对接入结果」，不会重新安装"
+// peerWaitStopped explains a wait that ended without the node joining:
+// why, which names the phase it stopped in, and the last thing that went
+// wrong there.
+func peerWaitStopped(text i18n.Catalog, last PeerEnrollmentResult, why string) *sshconnect.StepError {
+	suggestion := text.T(i18n.ClusterWaitStoppedFix)
 	if last.Error != "" {
-		suggestion = "最近一次失败：" + last.Error + "。处理后点「继续核对接入结果」，不会重新安装"
+		suggestion = text.T(i18n.ClusterWaitStoppedLastFix, last.Error)
 	}
-	return &sshconnect.StepError{Stage: "peer_membership", Code: "peer_not_ready", Message: "节点已安装，但" + why, Suggestion: suggestion}
+	return sshconnect.Fail(text, "peer_membership", "peer_not_ready", why, suggestion)
 }
 
 // peerPhaseText names an enrollment phase for the installation log.
-func peerPhaseText(phase string) string {
+func peerPhaseText(text i18n.Catalog, phase string) string {
 	switch phase {
 	case "awaiting_peer":
-		return "等待节点进程首次连上协调节点"
+		return text.T(i18n.ClusterPhaseAwaitingPeer)
 	case "synchronizing":
-		return "节点已连上，正在校验双向连接并同步集群状态"
+		return text.T(i18n.ClusterPhaseSynchronizing)
 	case "registering_worker":
-		return "状态已同步，正在登记执行服务"
+		return text.T(i18n.ClusterPhaseRegisteringWorker)
 	case "joined":
-		return "已加入集群，正在做独立连接验证"
+		return text.T(i18n.ClusterPhaseJoined)
 	case "ready":
-		return "接入完成"
+		return text.T(i18n.ClusterPhaseReady)
 	default:
 		return phase
 	}
@@ -340,20 +345,22 @@ func peerPhaseText(phase string) string {
 // AbandonRegistration withdraws an enrollment; the two refusals a user can
 // act on are reported as findings rather than service failures.
 func (b peerSSHBackend) AbandonRegistration(ctx context.Context, id string) error {
+	text := i18n.FromContext(ctx)
 	err := b.service().AbandonPeerEnrollment(ctx, id)
 	switch {
 	case errors.Is(err, ErrEnrollmentGone):
-		return &sshconnect.StepError{Stage: "planning", Code: "unknown_plan", Message: err.Error(), Suggestion: "刷新接入记录；这次接入没有留下需要撤回的东西"}
+		return sshconnect.Fail(text, "planning", "unknown_plan", text.T(i18n.ClusterEnrollmentGone), text.T(i18n.ClusterAbandonGoneFix))
 	case errors.Is(err, ErrEnrollmentJoined):
-		return &sshconnect.StepError{Stage: "peer_membership", Code: "already_joined", Message: err.Error(), Suggestion: "在资源页的机群成员里移除这台机器；接入对话框不能撤销已完成的接入"}
+		return sshconnect.Fail(text, "peer_membership", "already_joined", text.T(i18n.ClusterEnrollmentJoined), text.T(i18n.ClusterAbandonJoinedFix))
 	}
 	return err
 }
 
 func (b peerSSHBackend) ResumeRegistration(ctx context.Context, id string) (sshconnect.InstallResult, error) {
+	text := i18n.FromContext(ctx)
 	record, err := b.service().PeerEnrollmentStatus(ctx, id)
 	if err != nil {
-		return sshconnect.InstallResult{}, &sshconnect.StepError{Stage: "planning", Code: "unknown_plan", Message: "未找到已确认的接入操作", Suggestion: "请刷新接入记录；不会重新上传或安装"}
+		return sshconnect.InstallResult{}, sshconnect.Fail(text, "planning", "unknown_plan", text.T(i18n.ClusterResumeUnknown), text.T(i18n.ClusterResumeUnknownFix))
 	}
 	result := sshconnect.InstallResult{PlanID: id, Name: record.Name, NodeID: record.NodeID, Registered: true, Status: "needs_attention", Steps: []sshconnect.Step{}}
 	err = b.VerifyRegistration(ctx, record.Name, id)
@@ -365,7 +372,7 @@ func (b peerSSHBackend) ResumeRegistration(ctx context.Context, id string) (sshc
 		return result, err
 	}
 	result.Connected, result.Status = true, "connected"
-	result.Steps = append(result.Steps, sshconnect.Step{ID: "peer_membership", Status: "ready", Message: "原接入操作已确认完成；节点成员、协作副本和执行服务就绪"})
+	result.Steps = append(result.Steps, sshconnect.Step{ID: "peer_membership", Status: "ready", Message: text.T(i18n.ClusterResumeReady)})
 	return result, nil
 }
 
