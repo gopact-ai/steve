@@ -3,8 +3,11 @@ package coordination
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/raft"
 )
 
 // A read index is confirmed by a majority's answer to the leader, not by an
@@ -49,37 +52,36 @@ func TestReadIndexConfirmsLeadershipWithoutGrowingTheLog(t *testing.T) {
 	}
 }
 
-// A leader cut off from its majority stops confirming read indexes within
-// its lease.
+// A leader cut off from its majority confirms no read index, not even
+// while its lease still has it take itself for the leader: each is
+// confirmed by a majority's answer to the request itself.
 func TestReadIndexNeedsAMajority(t *testing.T) {
 	c := newTestCluster(t, 3)
 	leader := c.leader()
 	if _, err := leader.ReadIndex(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	// Raft stops on the followers at once; their transports stay open and
+	// hold the leader's requests unanswered. Answers they sent before, still
+	// on their way, may count toward a confirmation: the leader is asked
+	// once those have arrived, two heartbeat intervals later, and still
+	// within its lease.
+	var stopped sync.WaitGroup
 	c.mu.RLock()
-	var followers []string
-	for id, n := range c.nodes {
+	for _, n := range c.nodes {
 		if n != leader {
-			followers = append(followers, id)
+			stopped.Go(func() { n.raft.Shutdown().Error() })
 		}
 	}
 	c.mu.RUnlock()
-	for _, id := range followers {
-		c.stop(id)
+	stopped.Wait()
+	time.Sleep(2 * leader.config.RaftConfig.HeartbeatTimeout / 10)
+	if leader.raft.State() != raft.Leader {
+		t.Fatalf("the leader stepped down before it was asked; the test asks within its lease of %s", leader.config.RaftConfig.LeaderLeaseTimeout)
 	}
-	stopped := time.Now()
-	bound := leader.config.RaftConfig.LeaderLeaseTimeout + leader.config.ApplyTimeout
-	for {
-		ctx, cancel := context.WithTimeout(t.Context(), leader.config.ApplyTimeout)
-		index, err := leader.ReadIndex(ctx)
-		cancel()
-		if err != nil {
-			return
-		}
-		if time.Since(stopped) > bound {
-			t.Fatalf("a leader without a majority still confirmed read index %d %s after losing it", index, bound)
-		}
-		time.Sleep(10 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), leader.config.ApplyTimeout)
+	defer cancel()
+	if index, err := leader.ReadIndex(ctx); err == nil {
+		t.Fatalf("a leader without a majority confirmed read index %d", index)
 	}
 }
