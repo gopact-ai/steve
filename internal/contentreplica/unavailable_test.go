@@ -56,6 +56,17 @@ func TestAPlacementThatCouldNotBeCheckedIsNotARefusal(t *testing.T) {
 			_, err = client("c").Read(t.Context(), m, &bytes.Buffer{})
 			return err
 		}},
+		{name: "copies' nodes when reading", run: func(p *places, _ *transport, client func(string) *contentreplica.Client) error {
+			m, err := prepare(client("a"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, receipt := range m.Receipts {
+				p.unsure[receipt.NodeID] = true
+			}
+			_, err = client("c").Read(t.Context(), m, &bytes.Buffer{})
+			return err
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
