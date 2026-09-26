@@ -97,3 +97,21 @@ func TestUnrecordedChildAnswersInTheServiceLanguage(t *testing.T) {
 		t.Fatalf("result = %+v", stored.Result)
 	}
 }
+
+// A child whose node process stopped is ended with an explanation in the
+// service's language.
+func TestStoppedChildIsExplainedInTheServiceLanguage(t *testing.T) {
+	w, sessions, _, child := detachedDelegateFixture(t)
+	sessions.mu.Lock()
+	sessions.processStopped = true
+	sessions.mu.Unlock()
+	service := recoveredDelegateServiceIn(t, w, sessions, i18n.New(i18n.LocaleEN))
+	service.SetDeliverer(func(context.Context, Delivery) error { return nil })
+	if err := service.RecoverRetained(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stored := awaitDelegateResult(t, w.tasks, child.TaskID)
+	if stored.Result.Answer == "" || containsHan(stored.Result.Answer) {
+		t.Fatalf("stopped child explained as %q, want English", stored.Result.Answer)
+	}
+}

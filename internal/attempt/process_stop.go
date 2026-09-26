@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -64,7 +65,7 @@ func (s *Service) ConfirmProcessStopped(ctx context.Context, id, actor string, p
 		next.Unsettled, next.SessionSettled = false, &settled
 		next.StopEvidence = "process-stop/" + next.ID
 		next.State, next.Revision = to, op.Revision+1
-		next.Error = "原执行的进程已在节点上停止，这次执行没有留下完成回执，需要时可以重新执行。"
+		next.Error = i18n.New(i18n.ContextLocale(ctx)).T(i18n.AttemptProcessStopped)
 		if next.EndedAt.IsZero() {
 			next.EndedAt = s.now().UTC()
 		}

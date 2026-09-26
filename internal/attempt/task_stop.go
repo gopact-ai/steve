@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
@@ -87,7 +88,7 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		next.Unsettled, next.SessionSettled = false, &settled
 		next.StopEvidence = "task-stop/" + next.ID
 		next.State, next.Revision = to, op.Revision+1
-		next.Error = "已按用户的暂停或取消要求结束原执行。"
+		next.Error = i18n.New(i18n.ContextLocale(ctx)).T(i18n.AttemptTaskStopped)
 		if next.EndedAt.IsZero() {
 			next.EndedAt = s.now().UTC()
 		}

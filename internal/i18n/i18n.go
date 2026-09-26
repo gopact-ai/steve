@@ -983,6 +983,12 @@ const (
 	HTTPCoordinationOff       Key = "http_coordination_off"
 	HTTPNodeAgentsUnsupported Key = "http_node_agents_unsupported"
 	HTTPSSHOff                Key = "httpssh_off"
+
+	// How a stopped execution ended, and configuration a coordinator refuses.
+	AttemptProcessStopped Key = "attempt_process_stopped"
+	AttemptTaskStopped    Key = "attempt_task_stopped"
+	AppStopPending        Key = "app_stop_pending"
+	AppLedgerNodeLevel    Key = "app_ledger_node_level"
 )
 
 type Catalog struct {

@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -31,10 +32,12 @@ type applicationStops struct {
 	sessions   applicationStopSessions
 	executions *execution.Registry
 	after      string
+	// text says, in the configured language, how a stop stands.
+	text i18n.Catalog
 }
 
-func newApplicationStops(attempts *attempt.Service, tasks *task.Store, sessions applicationStopSessions) *applicationStops {
-	return &applicationStops{attempts: attempts, tasks: tasks, sessions: sessions}
+func newApplicationStops(attempts *attempt.Service, tasks *task.Store, sessions applicationStopSessions, text i18n.Catalog) *applicationStops {
+	return &applicationStops{attempts: attempts, tasks: tasks, sessions: sessions, text: text}
 }
 
 // Reconcile consumes SetAside's durable revocation of original task tokens.
@@ -99,6 +102,7 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 }
 
 func (s *applicationStops) stop(parent context.Context, r attempt.Record) error {
+	parent = i18n.WithLocale(parent, s.text.Locale())
 	ctx, cancel := context.WithTimeout(parent, 17*time.Second)
 	defer cancel()
 	if !errors.Is(s.tasks.CheckExecution(*r.Execution), task.ErrExecutionStopped) {
@@ -116,7 +120,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 		if parent.Err() != nil {
 			return cause
 		}
-		message := "暂停或取消已记录，但尚未收到原节点的停止确认。已尝试联系原执行；节点恢复后会继续核对并停止同一次执行。"
+		message := s.text.T(i18n.AppStopPending)
 		err := s.attempts.TaskStopPending(parent, r.ID, "task-stop-recovery", message)
 		if err != nil {
 			return errors.Join(fmt.Errorf("task %s attempt %s on %s: native stop remains pending: %w", r.TaskID, r.ID, r.Node, cause), err)

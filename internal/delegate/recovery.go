@@ -354,7 +354,8 @@ func (s *Service) endStoppedChild(ctx context.Context, parent, tracked task.Task
 	if !state.ProcessStopped || command == nil || command.ID != attempt.InputCommandID(record) || !command.ProcessStopped || command.Settled {
 		return false
 	}
-	stopped, err := s.attempts.ConfirmProcessStopped(ctx, record.ID, "delegate-recovery", attempt.RetainedEvidence{ObservedAt: time.Now(), Session: state})
+	// The ending is recorded, and later delivered, in the service's language.
+	stopped, err := s.attempts.ConfirmProcessStopped(i18n.WithLocale(ctx, s.text.Locale()), record.ID, "delegate-recovery", attempt.RetainedEvidence{ObservedAt: time.Now(), Session: state})
 	if err != nil {
 		slog.Error(fmt.Sprintf("delegate: stopped child not settled task=%s attempt=%s error=%v", tracked.ID, record.ID, err), "parent", parent.ID, "node", record.Node)
 		return false

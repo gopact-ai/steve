@@ -1,8 +1,4 @@
-internal/app/application_config.go#SaveContext 1
-internal/app/application_stop.go#stop 1
 internal/artifact/gitrepo/limits.go#Error 4
-internal/attempt/process_stop.go#ConfirmProcessStopped 1
-internal/attempt/task_stop.go#ConfirmTaskStopped 1
 internal/cluster/cluster_config.go#LoadClusterPeerConfig 1
 internal/cluster/cluster_content_maintenance.go#runMaintenance 2
 internal/cluster/cluster_content_repair.go#StartContentRepair 1

@@ -947,6 +947,12 @@ var zh = map[Key]string{
 	HTTPCoordinationOff:       "当前服务尚未启用协调状态复制",
 	HTTPNodeAgentsUnsupported: "当前服务不支持节点工具登记",
 	HTTPSSHOff:                "SSH 接入尚未启用",
+
+	// How a stopped execution ended, and configuration a coordinator refuses.
+	AttemptProcessStopped: "原执行的进程已在节点上停止，这次执行没有留下完成回执，需要时可以重新执行。",
+	AttemptTaskStopped:    "已按用户的暂停或取消要求结束原执行。",
+	AppStopPending:        "暂停或取消已记录，但尚未收到原节点的停止确认。已尝试联系原执行；节点恢复后会继续核对并停止同一次执行。",
+	AppLedgerNodeLevel:    "节点 %s 保存完整协作账本，数据等级不能低于 restricted；低等级机器只能作为执行节点接入",
 }
 
 var en = map[Key]string{
@@ -1896,4 +1902,10 @@ var en = map[Key]string{
 	HTTPCoordinationOff:       "This service has not enabled coordination state replication",
 	HTTPNodeAgentsUnsupported: "This service does not support registering node tools",
 	HTTPSSHOff:                "SSH onboarding is not enabled",
+
+	// How a stopped execution ended, and configuration a coordinator refuses.
+	AttemptProcessStopped: "The original execution's process stopped on its node without leaving a completion receipt; run it again if needed.",
+	AttemptTaskStopped:    "The original execution was ended as the user asked to pause or cancel.",
+	AppStopPending:        "The pause or cancel is recorded, but the original node has not confirmed the stop. The original execution was contacted; once the node recovers, the same execution is checked again and stopped.",
+	AppLedgerNodeLevel:    "Node %s keeps the full coordination ledger, so its data level cannot be below restricted; lower-level machines can only join as execution nodes",
 }

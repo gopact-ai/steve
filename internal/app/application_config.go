@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 )
@@ -84,7 +85,7 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 		}
 		for id := range state.Members {
 			if node, ok := cfg.Nodes[id]; ok && !datalevel.Restricted.Admits(datalevel.Level(node.Level).OrDefault()) {
-				return fmt.Errorf("节点 %s 保存完整协作账本，数据等级不能低于 restricted；低等级机器只能作为执行节点接入", id)
+				return fmt.Errorf(i18n.New(i18n.ContextLocale(ctx)).T(i18n.AppLedgerNodeLevel), id)
 			}
 		}
 	}
