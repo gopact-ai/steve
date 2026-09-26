@@ -137,3 +137,38 @@ func TestStateHoldsEntriesThatNeverReachTheStateMachine(t *testing.T) {
 		t.Fatal("the state machine holds an index past the commit index")
 	}
 }
+
+// Entries a snapshot compacted away are held by the state machine that
+// took the snapshot, even those that never reached it: with an
+// application no log is kept behind a snapshot, so the entries after the
+// last command it applied can be gone, and the whole log with them.
+func TestStateHoldsEntriesCompactedIntoASnapshot(t *testing.T) {
+	c := newTestCluster(t, 1, func(_ string, dir string) Application { return openCounter(t, dir) })
+	leader := c.leader()
+	barriers := func() uint64 {
+		for range 3 {
+			if err := leader.barrier(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return leader.LastIndex()
+	}
+	compacted := barriers()
+	if err := leader.Snapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if first, err := leader.store.FirstIndex(); err != nil || first != 0 {
+		t.Fatalf("the log starts at %d after the snapshot (%v), want it empty", first, err)
+	}
+	if !leader.StateHolds(compacted) {
+		t.Fatalf("the state machine does not hold barrier %d its snapshot compacted away", compacted)
+	}
+	leader.held.Store(0)
+	last := barriers()
+	if first, err := leader.store.FirstIndex(); err != nil || first <= leader.Status().AppliedIndex+1 {
+		t.Fatalf("the log starts at %d (%v), want entries after the last command applied compacted away", first, err)
+	}
+	if !leader.StateHolds(last) {
+		t.Fatalf("the state machine does not hold barrier %d past the entries compacted away", last)
+	}
+}
