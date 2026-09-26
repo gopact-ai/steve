@@ -167,3 +167,49 @@ func TestPluginRuntimeLoadRestartsABrokerThatStoppedOnItsOwn(t *testing.T) {
 		}
 	}
 }
+
+// stoppedRuntime loads a plugin runtime whose broker then stops on its own,
+// and returns once its Serve has returned.
+func stoppedRuntime(t *testing.T) (*PluginRuntimePool, string) {
+	t.Helper()
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(upstream.Close)
+	fail := make(chan struct{})
+	testHookSocketListener = func(l net.Listener) net.Listener { return failAccepting(l, fail) }
+	t.Cleanup(func() { testHookSocketListener = nil })
+	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir()})
+	selection := nodeRuntimeFixture(t, s, upstream.URL)
+	pool := s.pluginRuntimePool()
+	t.Cleanup(func() { _ = pool.Close() })
+	prepared, err := pool.Prepare(t.Context(), "runtime", selection, harness.Config{Command: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Load(t.Context(), prepared.Ref); err != nil {
+		t.Fatal(err)
+	}
+	pool.mu.Lock()
+	entry := pool.brokers[prepared.Ref.ID]
+	pool.mu.Unlock()
+	close(fail)
+	<-entry.stopped
+	return pool, prepared.Ref.ID
+}
+
+// Drop waits for a runtime's broker and its launcher connections and
+// reports why the broker stopped, including when it stopped on its own
+// before Drop was called.
+func TestPluginRuntimeDropReportsABrokerThatStoppedOnItsOwn(t *testing.T) {
+	pool, id := stoppedRuntime(t)
+	if err := pool.Drop(id); !errors.Is(err, syscall.EMFILE) {
+		t.Fatalf("Drop returned %v, want the accept failure that stopped the broker", err)
+	}
+}
+
+// Close, likewise, still finds a broker that stopped on its own.
+func TestPluginRuntimeCloseReportsABrokerThatStoppedOnItsOwn(t *testing.T) {
+	pool, _ := stoppedRuntime(t)
+	if err := pool.Close(); !errors.Is(err, syscall.EMFILE) {
+		t.Fatalf("Close returned %v, want the accept failure that stopped the broker", err)
+	}
+}
