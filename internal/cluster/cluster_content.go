@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -758,11 +759,14 @@ func contentRefusal(err error) (status int, code string) {
 // the next line logged.
 const contentRefusalLogEvery = time.Minute
 
-// contentRefusalKeys is how many callers and codes the refusal log keeps
-// track of at once.
+// contentRefusalKeys is how many keys — callers and codes, peers and
+// statuses — one log limit keeps track of at once. Past that a new key is
+// logged every time rather than tracked.
 const contentRefusalKeys = 256
 
-// contentRefusals limits how often a peer logs refusals, per caller and code.
+// contentRefusals limits how often a content failure is logged, per key: a
+// peer's refusals per caller and code, a coordinator's replies without a
+// code per peer and status.
 type contentRefusals struct {
 	mu   sync.Mutex
 	seen map[string]*contentRefusalCount
@@ -773,33 +777,38 @@ type contentRefusalCount struct {
 	suppressed int
 }
 
-// admit says whether a refusal under key is logged now, and how many were
-// not logged since the last one that was.
+// admit says whether a failure under key is logged now, and how many were
+// not logged since the last one that was. A key whose time has passed is
+// forgotten when a new one comes; what it held back is logged then, so no
+// count is lost, only said late.
 func (l *contentRefusals) admit(key string, now time.Time) (bool, int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if count, found := l.seen[key]; found {
+		if now.Sub(count.logged) < contentRefusalLogEvery {
+			count.suppressed++
+			return false, 0
+		}
+		suppressed := count.suppressed
+		count.logged, count.suppressed = now, 0
+		return true, suppressed
+	}
 	if l.seen == nil {
 		l.seen = map[string]*contentRefusalCount{}
 	}
-	count, found := l.seen[key]
-	if found && now.Sub(count.logged) < contentRefusalLogEvery {
-		count.suppressed++
-		return false, 0
-	}
-	if !found {
-		if len(l.seen) >= contentRefusalKeys {
-			for seen, old := range l.seen {
-				if now.Sub(old.logged) >= contentRefusalLogEvery {
-					delete(l.seen, seen)
-				}
-			}
+	for seen, old := range l.seen {
+		if now.Sub(old.logged) < contentRefusalLogEvery {
+			continue
 		}
-		count = &contentRefusalCount{}
-		l.seen[key] = count
+		if old.suppressed > 0 {
+			slog.Warn(fmt.Sprintf("cluster: content failures of %s since %s: %d not logged", strings.ReplaceAll(seen, "\x00", " "), old.logged.Format(time.RFC3339), old.suppressed), "key", strings.ReplaceAll(seen, "\x00", " "), "suppressed", old.suppressed)
+		}
+		delete(l.seen, seen)
 	}
-	suppressed := count.suppressed
-	count.logged, count.suppressed = now, 0
-	return true, suppressed
+	if len(l.seen) < contentRefusalKeys {
+		l.seen[key] = &contentRefusalCount{logged: now}
+	}
+	return true, 0
 }
 
 // refuseContent answers a content request refused for err, and says why in
