@@ -201,7 +201,8 @@ type Server struct {
 }
 
 // New binds the loopback listener immediately so the URL is known before any
-// capability is assembled. Serving starts with Start.
+// capability is assembled. Serving starts with Start; Close gives the port
+// back whether or not the server ever started.
 //
 // Pass the previously used port to bind it again, so agents that still hold
 // the old URL keep reaching this server across gateway restarts. 0 picks
@@ -271,6 +272,14 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
+// Close shuts the server down the way a cancelled Start does and releases
+// its port, also when Start never ran. It returns once no tool call is
+// running; a running Start returns nil after it. Close may be called more
+// than once.
+func (s *Server) Close() {
+	s.shutdown()
+}
+
 // shutdown stops accepting, lets the calls in flight finish for the grace
 // period, cancels the ones still running and waits until every handler
 // has returned. Concurrent callers all return after that.
@@ -288,6 +297,9 @@ func (s *Server) shutdown() {
 			s.abort()
 			_ = s.srv.Close()
 		}
+		// Serve closes the listener it was given; one it was never given
+		// is still bound, and closing it again after Serve is harmless.
+		_ = s.listener.Close()
 		s.abort()
 		s.calls.Wait()
 	})

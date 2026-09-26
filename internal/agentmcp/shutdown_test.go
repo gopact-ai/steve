@@ -222,12 +222,8 @@ func TestCloseReleasesThePortOfAServerNeverStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := s.Port()
-	if err := s.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatalf("second Close: %v", err)
-	}
+	s.Close()
+	s.Close()
 	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		t.Fatalf("port %d still held after Close: %v", port, err)
@@ -254,21 +250,19 @@ func TestCloseDrainsARunningServer(t *testing.T) {
 	}()
 	waitEntered(t, m)
 
-	closed := make(chan error, 1)
-	go func() { closed <- s.Close() }()
+	closed := make(chan struct{})
+	go func() { s.Close(); close(closed) }()
 	select {
-	case err := <-closed:
+	case <-closed:
 		close(m.release)
-		t.Fatalf("Close returned while a tool call was running: %v", err)
+		t.Fatal("Close returned while a tool call was running")
 	case <-time.After(300 * time.Millisecond):
 	}
 	close(m.release)
 	if err := <-answered; err != nil {
 		t.Errorf("in-flight tool call: %v", err)
 	}
-	if err := <-closed; err != nil {
-		t.Errorf("Close: %v", err)
-	}
+	<-closed
 	select {
 	case err := <-stopped:
 		if err != nil {

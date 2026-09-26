@@ -24,7 +24,7 @@ import (
 	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
-func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, projection readModelAssembly, page consoleAssembly) (delegationAssembly, error) {
+func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, projection readModelAssembly, page consoleAssembly) (delegationAssembly, error) {
 	environment := input.Environment()
 	book := boot.Book()
 	cfg := boot.Config()
@@ -62,6 +62,11 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		slog.Warn(fmt.Sprintf("steve: agent messaging disabled: %v", err))
 		gate = nil
 	} else {
+		// The port is bound from here on. Closing drains the tool calls in
+		// flight, so it is registered after the ledger and the services the
+		// tools reach, and runs before they close; it also gives the port
+		// back when a later assembly step fails before serving starts.
+		life.Defer(gate.Close)
 		if environment != nil {
 			if err := gate.SetStore(newApplicationMCPStore(book), environment.Fail); err != nil {
 				return nil, fmt.Errorf("configure shared collaboration tools: %w", err)
