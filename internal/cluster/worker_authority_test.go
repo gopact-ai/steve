@@ -13,9 +13,9 @@ import (
 )
 
 // openWorkerTunnel opens coordinator's tunnel to worker's machine and
-// completes the handshake a registry makes over it. The channel closes once
+// completes the handshake a registry makes over it. The mux is done once
 // either side drops the tunnel.
-func openWorkerTunnel(t *testing.T, coordinator, worker *Peer) <-chan struct{} {
+func openWorkerTunnel(t *testing.T, coordinator, worker *Peer) *nodewire.Mux {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -37,7 +37,7 @@ func openWorkerTunnel(t *testing.T, coordinator, worker *Peer) <-chan struct{} {
 	}
 	mux := nodewire.NewMux(connection, true)
 	t.Cleanup(func() { mux.Close() })
-	return mux.Done()
+	return mux
 }
 
 // joinNonvoter starts a peer that joins hub as a non-voting member. A
@@ -97,13 +97,14 @@ func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 	if grew := growth(); grew != 0 {
 		t.Fatalf("with no worker tunnel open the leader's log grew by %d entries in 3s; the measurement needs an idle cluster", grew)
 	}
-	openWorkerTunnel(t, hub, hub)
+	own := openWorkerTunnel(t, hub, hub)
 	if grew := growth(); grew != 0 {
-		t.Fatalf("an idle tunnel to the coordinator's own worker grew the leader's log by %d entries in 3s; its authority is being confirmed by quorum reads", grew)
+		t.Errorf("an idle tunnel to the coordinator's own worker grew the leader's log by %d entries in 3s; its authority is being confirmed by quorum reads", grew)
 	}
+	own.Close()
 	openWorkerTunnel(t, hub, member)
 	if grew := growth(); grew != 0 {
-		t.Fatalf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries in 3s; the member is asking the leader for its state", grew)
+		t.Errorf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries in 3s; the member is asking the leader for its state", grew)
 	}
 }
 
@@ -130,7 +131,7 @@ func TestRevokedGenerationClosesItsWorkerTunnelsWhileItStops(t *testing.T) {
 	}
 	t.Cleanup(unblock)
 	WaitPeerReady(t, hub)
-	closed := openWorkerTunnel(t, hub, hub)
+	closed := openWorkerTunnel(t, hub, hub).Done()
 	runtime := hub.Runtime.Load()
 	runtime.mu.Lock()
 	current := runtime.current
@@ -153,7 +154,7 @@ func TestWorkerTunnelClosesWhenItsReplicaStopsHearingTheLeader(t *testing.T) {
 	raft := &gatedListener{}
 	member := joinNonvoter(t, hub, raft)
 	WaitPeerReady(t, hub)
-	closed := openWorkerTunnel(t, hub, member)
+	closed := openWorkerTunnel(t, hub, member).Done()
 	raft.pause()
 	// Raft's follower notices the silence within twice its heartbeat
 	// timeout, one second by default, and gives up after ApplyTimeout.
@@ -180,7 +181,7 @@ func TestRemovingAMachineClosesTheTunnelToItsWorker(t *testing.T) {
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	WaitPeerReady(t, hub)
-	closed := openWorkerTunnel(t, hub, member)
+	closed := openWorkerTunnel(t, hub, member).Done()
 	if _, err := hub.Runtime.Load().Remove(t.Context(), coordination.RemoveRequest{ID: "remove-member", Actor: "owner", NodeID: member.Config.NodeID}); err != nil {
 		t.Fatal(err)
 	}
@@ -190,3 +191,4 @@ func TestRemovingAMachineClosesTheTunnelToItsWorker(t *testing.T) {
 		t.Fatal("the tunnel to a removed machine's worker stayed open")
 	}
 }
+
