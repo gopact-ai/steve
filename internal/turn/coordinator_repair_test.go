@@ -323,7 +323,7 @@ func TestRepairReportsFailureHonestly(t *testing.T) {
 // roster's reason, and the current agent is marked.
 func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	c, _, _, _, _ := repairCoordinator(t)
-	got, err := c.Context(t.Context(), "chat")
+	got, err := c.Context(t.Context(), "console:chat")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	if err := c.projects.Declare(t.Context(), []project.Project{sealed}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err = c.Context(t.Context(), "chat"); err != nil {
+	if got, err = c.Context(t.Context(), "console:chat"); err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range got.Agents {

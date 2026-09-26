@@ -17,7 +17,7 @@ func (c *Coordinator) ConfirmNeverAdmitted(ctx context.Context, req Request) (bo
 	if c.maintaining {
 		return false, errors.New("never-admitted recovery proof is unavailable")
 	}
-	if req.Channel != "console" || !strings.HasPrefix(req.ConversationID, "console:") ||
+	if req.Channel != "console" || !strings.HasPrefix(req.ConversationID, consolePrefix) ||
 		req.ExchangeID == "" || req.MessageID != "web-"+req.ExchangeID ||
 		c.ownerOpenID == "" || req.SenderOpenID != c.ownerOpenID {
 		return false, errors.New("never-admitted proof requires the original console input and owner")

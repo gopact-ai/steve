@@ -45,6 +45,8 @@ func TestRPCRequestBoundaryGolden(t *testing.T) {
 		{name: "read-method", action: "state", method: "POST"},
 		{name: "mutation-method-before-route", action: "missing", method: "GET"},
 		{name: "unknown-mutation", action: "missing", method: "POST"},
+		// Member addresses are not changed over RPC.
+		{name: "address-not-served", action: "address", method: "POST", body: `{}`, owner: "allow"},
 		{name: "owner-required-before-body", action: "transfer", method: "POST", body: "{"},
 		{name: "owner-denied", action: "policy", method: "POST", body: "{", owner: "deny"},
 		{name: "owner-blank", action: "join", method: "POST", owner: "blank"},
@@ -55,7 +57,7 @@ func TestRPCRequestBoundaryGolden(t *testing.T) {
 		{name: "writer-spoof", action: "writer", method: "POST", body: `{"caller_node_id":"other"}`},
 		{name: "app-spoof", action: "app", method: "POST", body: `{"caller_node_id":"other"}`},
 	}
-	for _, action := range []string{"transfer", "policy", "eligibility", "rename", "join", "remove", "address"} {
+	for _, action := range []string{"transfer", "policy", "eligibility", "rename", "join", "remove"} {
 		cases = append(cases, struct {
 			name, action, method, body, owner string
 			plain                             bool

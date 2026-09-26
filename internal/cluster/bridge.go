@@ -113,9 +113,11 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 	// Submission and the wait for local apply do not observe the caller's
 	// cancellation. Submission on this node is bounded by coordination's
 	// barrier and apply timeouts; submission routed to the leader by the
-	// client's per-attempt timeout and attempt count. The wait for local
-	// apply stops polling after ApplyTimeout. The generation's context
-	// bounds both. Any failure after submission revokes the generation.
+	// client's retry window plus one attempt's timeout, since an attempt
+	// started before the window ends runs to its own timeout (with the
+	// defaults, about ten seconds). The wait for local apply stops polling
+	// after ApplyTimeout. The generation's context bounds both. Any failure
+	// after submission revokes the generation.
 	ctx, cancel := b.boundContext(context.WithoutCancel(parent))
 	defer cancel()
 	command := coordination.AppCommand{ID: write.ID, CallerNodeID: b.generation.NodeID, CoordinatorEpoch: write.CoordinatorEpoch, ExpectedVersion: write.ExpectedVersion, WriterGeneration: b.generation.WriterGeneration, Payload: write.Payload}

@@ -237,7 +237,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := Open(Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.Config.ClusterID, NodeID: p.Config.NodeID, Build: nodewire.Version(), FailureDomain: p.Config.FailureDomain, StorageLevel: p.Config.StorageLevel, DataDir: filepath.Join(p.Config.DataDir, "raft"), APIAddress: p.Config.PeerURL, Name: p.Config.Name, Bootstrap: p.Config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, ValidateAddress: p.validateMemberAddress, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig, LogOutput: raftLogOutput(options)}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
+	runtime, err := Open(Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.Config.ClusterID, NodeID: p.Config.NodeID, Build: nodewire.Version(), FailureDomain: p.Config.FailureDomain, StorageLevel: p.Config.StorageLevel, DataDir: filepath.Join(p.Config.DataDir, "raft"), APIAddress: p.Config.PeerURL, Name: p.Config.Name, Bootstrap: p.Config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig, LogOutput: raftLogOutput(options)}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
 	if err != nil {
 		return nil, err
 	}

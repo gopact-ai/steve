@@ -31,11 +31,31 @@ type ClientConfig struct {
 	// Routes is where this node connects to nodes it cannot reach at what
 	// they advertise; nil means every node is dialed at its advertised
 	// address.
-	Routes           *RouteTable
-	Timeout          time.Duration
-	MaxAttempts      int
+	Routes  *RouteTable
+	Timeout time.Duration
+	// RetryWindow is how long a routed call keeps trying members while none
+	// takes it: no member is the consensus leader, one is unavailable or in
+	// a leadership transfer, or its replica stopped. It has to outlast a
+	// leader election; zero means DefaultRetryWindow. A call sent before the
+	// window ends may still take up to Timeout.
+	RetryWindow      time.Duration
 	MaxResponseBytes int64
 }
+
+// DefaultRetryWindow outlasts one leader election under Raft's default
+// timings, which Service uses unless Config.RaftConfig changes them: with a
+// one-second heartbeat and election timeout, followers notice a lost leader
+// within two seconds and an election round ends within two more. An election
+// that needs further rounds after split votes can outlast it; the call then
+// fails as unavailable and can be retried.
+const DefaultRetryWindow = 5 * time.Second
+
+// Once every known member has refused a routed call, it pauses before the
+// next round: firstRetryPause at first, doubling up to maxRetryPause.
+const (
+	firstRetryPause = 50 * time.Millisecond
+	maxRetryPause   = 500 * time.Millisecond
+)
 
 type Client struct {
 	config  ClientConfig
@@ -62,8 +82,8 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if config.Timeout <= 0 {
 		config.Timeout = 5 * time.Second
 	}
-	if config.MaxAttempts <= 0 {
-		config.MaxAttempts = 6
+	if config.RetryWindow <= 0 {
+		config.RetryWindow = DefaultRetryWindow
 	}
 	if config.MaxResponseBytes <= 0 {
 		config.MaxResponseBytes = 64 << 20
@@ -203,12 +223,6 @@ func (c *Client) Remove(ctx context.Context, request RemoveRequest) (Result, err
 	return result, err
 }
 
-func (c *Client) UpdateMemberAddress(ctx context.Context, request MemberAddressRequest) (Result, error) {
-	var result Result
-	err := c.route(ctx, "address", request, &result)
-	return result, err
-}
-
 func (c *Client) route(ctx context.Context, action string, input, output any) error {
 	var body []byte
 	if input != nil {
@@ -229,23 +243,35 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 			return err
 		}
 	}
+	deadline := time.Now().Add(c.config.RetryWindow)
 	visited := map[string]bool{}
-	var last error = ErrUnavailable
-	for attempt := 0; attempt < c.config.MaxAttempts; attempt++ {
+	pause := firstRetryPause
+	var last error // the latest retryable failure
+	for {
 		member, ok := c.nextMember(visited)
 		if !ok {
+			// Every known member refused the call in this round.
 			visited = map[string]bool{}
 			member, ok = c.nextMember(visited)
 			if !ok {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				return fmt.Errorf("%w: no peer HTTPS addresses are known", ErrUnavailable)
 			}
-			timer := time.NewTimer(50 * time.Millisecond)
+			timer := time.NewTimer(min(pause, max(time.Until(deadline), 0)))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
 				return ctx.Err()
 			case <-timer.C:
 			}
+			pause = min(2*pause, maxRetryPause)
+		}
+		// No call starts once the window has ended, including after a pause
+		// the window cut short.
+		if last != nil && !time.Now().Before(deadline) {
+			return fmt.Errorf("%w: no member took %s within %s: %w", ErrUnavailable, action, c.config.RetryWindow, last)
 		}
 		visited[member.NodeID] = true
 		failure, err := c.request(ctx, member, action, body, headers, output)
@@ -255,7 +281,6 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 			c.mu.Unlock()
 			return nil
 		}
-		last = err
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -265,11 +290,14 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 			c.leader = failure.LeaderID
 			c.mu.Unlock()
 		}
+		// A member whose application replica failed stops its Raft node, so
+		// another member takes over, as after a lost leader. A retried
+		// command keeps its ID, which the leader deduplicates.
 		if !errors.Is(err, ErrNotLeader) && !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrApplication) {
 			return err
 		}
+		last = err
 	}
-	return last
 }
 
 func (c *Client) nextMember(visited map[string]bool) (Member, bool) {
@@ -354,18 +382,26 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 	if err != nil {
 		return nil, fmt.Errorf("%w: read peer response: %v", ErrUnavailable, err)
 	}
+	// A reply that is not the peer's answer to the request says nothing about
+	// the request, so none of these is reported as invalid input.
 	if int64(len(data)) > c.config.MaxResponseBytes {
-		return nil, fmt.Errorf("%w: peer response exceeds size limit", ErrInvalid)
+		return nil, fmt.Errorf("coordination: peer %s response exceeds %d bytes", member.NodeID, c.config.MaxResponseBytes)
 	}
 	if response.StatusCode != http.StatusOK {
 		var failure rpcFailure
-		if err := json.Unmarshal(data, &failure); err != nil {
-			return nil, fmt.Errorf("%w: invalid peer error response", ErrInvalid)
+		if err := json.Unmarshal(data, &failure); err != nil || failure.Code == "" {
+			// Something other than the coordination handler answered, such
+			// as a proxy or a server that is stopping; a 5xx page from it
+			// is a transport failure.
+			if response.StatusCode >= http.StatusInternalServerError {
+				return nil, fmt.Errorf("%w: peer %s answered HTTP %d without a coordination error", ErrUnavailable, member.NodeID, response.StatusCode)
+			}
+			return nil, fmt.Errorf("coordination: peer %s answered HTTP %d without a coordination error", member.NodeID, response.StatusCode)
 		}
 		return &failure, failure.err()
 	}
 	if err := json.Unmarshal(data, output); err != nil {
-		return nil, fmt.Errorf("%w: invalid peer response", ErrInvalid)
+		return nil, fmt.Errorf("coordination: read peer %s response: %v", member.NodeID, err)
 	}
 	return nil, nil
 }
