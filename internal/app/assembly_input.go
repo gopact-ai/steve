@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 )
 
 // Assembly interfaces carry completed construction results between subsystem
@@ -25,5 +26,6 @@ func (v *assemblyInput) Environment() *Environment { return v.environment }
 
 type channelRuntime interface {
 	SetRuntimeError(string)
+	SetStartupRetry(*consoleapi.ChannelStartupRetry)
 	BindAccessUpdater(func(config.Feishu))
 }

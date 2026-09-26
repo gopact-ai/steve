@@ -1,15 +1,16 @@
 package app
 
 import (
-	"context"
 	"log/slog"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
@@ -38,36 +39,33 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		gate.SetMemorizer(coordinator)
 	}
 	var channel *feishu.Channel
-	var err error
 	if cfg.FeishuEnabled() {
-		connect, cancelConnect := context.WithTimeout(ctx, 15*time.Second)
-		channel, err = feishu.New(connect, feishu.Options{
+		// runChannel starts the channel. Until its identity is verified
+		// nothing answers or sends through it: Feishu input, recovery and
+		// schedules wait instead of running work whose answer cannot be sent.
+		channel = feishu.New(feishu.Options{
 			AppID:            cfg.Feishu.AppID,
 			AppSecret:        cfg.Feishu.AppSecret,
 			Domain:           cfg.Feishu.Domain,
 			Access:           feishu.AccessFrom(cfg.Feishu),
 			AllowUnmentioned: cfg.Feishu.AllowUnmentioned,
 			OnCardAction:     gw.HandleCardAction,
+			OnStartRetry: func(r feishu.StartRetry) {
+				channelSettings.SetStartupRetry(&consoleapi.ChannelStartupRetry{
+					Attempts: r.Failures, NextAt: r.Next,
+					LastError: adminsvc.RedactChannelError(r.Err, cfg.Feishu.AppSecret).Error(),
+				})
+			},
+			OnReady: func() { connectFeishu(gw, gate, channelSettings, channel) },
 		}, gw.HandleMessage)
-		cancelConnect()
-		if err != nil {
-			slog.Error("steve: Feishu initialization failed; Console remains available")
-			channelSettings.SetRuntimeError("Feishu initialization failed; check the application credentials and restart the Hub")
-			channel = nil
-		} else {
-			gw.BindChannel(channel)
-			channel.SetJournal(book.Journal())
-			channelSettings.BindAccessUpdater(func(f config.Feishu) {
-				channel.SetAccess(feishu.AccessFrom(f), f.AllowUnmentioned)
-			})
-		}
+		channel.SetJournal(book.Journal())
+		channelSettings.BindAccessUpdater(func(f config.Feishu) {
+			channel.SetAccess(feishu.AccessFrom(f), f.AllowUnmentioned)
+		})
 	}
 	if gate != nil {
 		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
 		gate.SetScheduler(work.Scheduler())
-		if channel != nil {
-			gate.BindChannel("feishu", feishu.Messenger{API: channel})
-		}
 		gate.BindChannel("console", console.MessageSender{Console: cons})
 		cons.SetAnchorer(func(conversation, _ string, message string) {
 			gate.Anchor(conversation, messagechannel.Address{Channel: "console", Conversation: conversation, Message: message})
@@ -111,6 +109,17 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	return &channelsValues{channel: channel, routes: routes, startup: channelStartup{
 		owner: cfg.Feishu.OwnerOpenID, home: cfg.Gateway.HomePath, timeout: time.Duration(cfg.Gateway.PromptTimeout),
 	}}, nil
+}
+
+// connectFeishu makes a verified Feishu channel the one the gateway answers
+// through and agents send through, and clears the startup retry shown in the
+// console.
+func connectFeishu(gw *gateway.Gateway, gate *agentmcp.Server, settings channelRuntime, ch gateway.Channel) {
+	gw.BindChannel(ch)
+	if gate != nil {
+		gate.BindChannel("feishu", feishu.Messenger{API: ch})
+	}
+	settings.SetStartupRetry(nil)
 }
 
 type channelsAssembly interface {
