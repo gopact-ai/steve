@@ -588,15 +588,17 @@ func (p *Peer) contentAuthority(r *http.Request) error {
 	}
 	epoch, epochErr := strconv.ParseUint(r.Header.Get("X-Steve-Coordinator-Epoch"), 10, 64)
 	writer, writerErr := strconv.ParseUint(r.Header.Get("X-Steve-Writer-Generation"), 10, 64)
+	// A caller whose generation has ended hears that first: it stops, and
+	// nothing it held is judged by a membership it no longer writes for.
 	switch {
 	case epochErr != nil || writerErr != nil || writer == 0:
 		return fmt.Errorf("%w: no coordinator epoch and writer generation", errContentAuthority)
-	case state.Removing[identity.NodeID]:
-		return fmt.Errorf("%w: %s is being removed", errContentAuthority, identity.NodeID)
 	case state.Coordinator.NodeID != identity.NodeID:
 		return fmt.Errorf("%w: %s is not the coordinator, %s is", errContentStale, identity.NodeID, state.Coordinator.NodeID)
 	case state.Coordinator.Epoch != epoch || state.WriterGeneration != writer:
 		return fmt.Errorf("%w: epoch %d, writer %d; committed epoch %d, writer %d", errContentStale, epoch, writer, state.Coordinator.Epoch, state.WriterGeneration)
+	case state.Removing[identity.NodeID]:
+		return fmt.Errorf("%w: %s is being removed", errContentAuthority, identity.NodeID)
 	}
 	if _, ok := state.Members[identity.NodeID]; !ok {
 		return fmt.Errorf("%w: %s is not a member", errContentAuthority, identity.NodeID)
