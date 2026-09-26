@@ -51,6 +51,8 @@ var (
 	// errContentStale refuses a caller whose coordinator epoch or writer
 	// generation is not the committed one.
 	errContentStale = errors.New("content caller's coordinator epoch or writer generation is not current")
+	// errContentMethod refuses a request that is not a content operation.
+	errContentMethod = errors.New("content request method must be GET, PUT or POST")
 )
 
 // contentCatchUpPoll is how often a content check looks at how far its own
@@ -597,20 +599,20 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	deadline, _ := ctx.Deadline()
 	control := http.NewResponseController(w)
 	if err := control.SetReadDeadline(deadline); err != nil {
-		writeContentReply(w, http.StatusServiceUnavailable, "unavailable")
+		p.refuseContent(w, r, fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
 	if err := control.SetWriteDeadline(deadline); err != nil {
-		writeContentReply(w, http.StatusServiceUnavailable, "unavailable")
+		p.refuseContent(w, r, fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodPost {
-		writeContentReply(w, http.StatusMethodNotAllowed, "method")
+		p.refuseContent(w, r, fmt.Errorf("%w: %s", errContentMethod, r.Method))
 		return
 	}
 	if err := p.contentAuthority(r); err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -619,52 +621,52 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	}
 	header := r.Header.Get(contentObjectHeader)
 	if len(header) > 11000 {
-		writeContentReply(w, http.StatusBadRequest, "invalid")
+		p.refuseContent(w, r, fmt.Errorf("%w: descriptor of %d bytes", contentreplica.ErrInvalid, len(header)))
 		return
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(header)
 	if err != nil {
-		writeContentReply(w, http.StatusBadRequest, "invalid")
+		p.refuseContent(w, r, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err))
 		return
 	}
 	var object contentreplica.Object
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&object); err != nil {
-		writeContentReply(w, http.StatusBadRequest, "invalid")
+		p.refuseContent(w, r, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err))
 		return
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF || object.Blob.Size < 0 || object.Blob.Size > contentreplica.DefaultMaxObjectBytes {
-		writeContentReply(w, http.StatusBadRequest, "invalid")
+		p.refuseContent(w, r, fmt.Errorf("%w: descriptor size %d", contentreplica.ErrInvalid, object.Blob.Size))
 		return
 	}
 	if err := p.contentRequestPlacement(r, object); err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	store, release, err := p.acquireContent()
 	if err != nil {
-		writeContentReply(w, http.StatusServiceUnavailable, "unavailable")
+		p.refuseContent(w, r, fmt.Errorf("%w: store: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
 	defer release()
 	if r.Method == http.MethodPut {
 		if r.ContentLength != object.Blob.Size {
-			writeContentReply(w, http.StatusBadRequest, "invalid")
+			p.refuseContent(w, r, fmt.Errorf("%w: body of %d bytes for content of %d", contentreplica.ErrInvalid, r.ContentLength, object.Blob.Size))
 			return
 		}
 		upload := contentreplica.Upload{ID: r.Header.Get(contentUploadHeader), Object: object}
 		receipt, err := store.Put(r.Context(), upload, http.MaxBytesReader(w, r.Body, object.Blob.Size+1))
 		if err != nil {
-			writeContentError(w, err)
+			p.refuseContent(w, r, err)
 			return
 		}
 		if err := p.contentAuthority(recheck); err != nil {
-			writeContentError(w, err)
+			p.refuseContent(w, r, err)
 			return
 		}
 		if err := p.contentRequestPlacement(recheck, object); err != nil {
-			writeContentError(w, err)
+			p.refuseContent(w, r, err)
 			return
 		}
 		WriteJSON(w, receipt)
@@ -672,25 +674,25 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	}
 	file, err := os.CreateTemp("", "steve-content-download-*")
 	if err != nil {
-		writeContentReply(w, http.StatusServiceUnavailable, "unavailable")
+		p.refuseContent(w, r, fmt.Errorf("%w: staging: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
 	defer os.Remove(file.Name())
 	defer file.Close()
 	if err := store.Get(r.Context(), object, file); err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		writeContentReply(w, http.StatusServiceUnavailable, "unavailable")
+		p.refuseContent(w, r, fmt.Errorf("%w: staging: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
 	if err := p.contentAuthority(recheck); err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	if err := p.contentRequestPlacement(recheck, object); err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -698,33 +700,97 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, file)
 }
 
-// writeContentError refuses a content request for err: 403 for a caller or
-// a placement the committed state does not admit, 503 for a check that
-// could not be made and may succeed when asked again.
-func writeContentError(w http.ResponseWriter, err error) {
-	code, status := "unavailable", http.StatusServiceUnavailable
+// contentRefusal is how a content request refused for err is answered: 403
+// for a caller or a placement the committed state does not admit, 503 for
+// a check that could not be made and may succeed when asked again.
+func contentRefusal(err error) (status int, code string) {
 	switch {
+	case errors.Is(err, errContentMethod):
+		return http.StatusMethodNotAllowed, "method"
 	case errors.Is(err, errContentAuthority):
-		code, status = "authority", http.StatusForbidden
+		return http.StatusForbidden, "authority"
 	case errors.Is(err, errContentStale):
-		code, status = "stale", http.StatusForbidden
+		return http.StatusForbidden, "stale"
 	case errors.Is(err, errContentLagging):
-		code = "lagging"
+		return http.StatusServiceUnavailable, "lagging"
 	case errors.Is(err, contentreplica.ErrUnavailable):
 		// A check that could not be made refuses nothing, whatever else
 		// the error carries.
+		return http.StatusServiceUnavailable, "unavailable"
 	case errors.Is(err, contentreplica.ErrPlacement), errors.Is(err, checkpoint.ErrPlacement):
-		code, status = "placement", http.StatusForbidden
+		return http.StatusForbidden, "placement"
 	case errors.Is(err, contentreplica.ErrInvalid), errors.Is(err, checkpoint.ErrInvalid):
-		code, status = "invalid", http.StatusBadRequest
+		return http.StatusBadRequest, "invalid"
 	case errors.Is(err, contentreplica.ErrTooLarge):
-		code, status = "too_large", http.StatusRequestEntityTooLarge
+		return http.StatusRequestEntityTooLarge, "too_large"
 	case errors.Is(err, checkpoint.ErrQuota):
-		code, status = "quota", http.StatusInsufficientStorage
+		return http.StatusInsufficientStorage, "quota"
 	case errors.Is(err, contentreplica.ErrIntegrity), errors.Is(err, checkpoint.ErrIntegrity):
-		code, status = "integrity", http.StatusUnprocessableEntity
+		return http.StatusUnprocessableEntity, "integrity"
 	case errors.Is(err, contentreplica.ErrIncomplete), errors.Is(err, checkpoint.ErrIncomplete), errors.Is(err, os.ErrNotExist):
-		code, status = "missing", http.StatusNotFound
+		return http.StatusNotFound, "missing"
+	}
+	return http.StatusServiceUnavailable, "unavailable"
+}
+
+// contentRefusalLogEvery is how often a peer logs the refusals of one
+// caller with one code: the first at once, the ones after it counted into
+// the next line logged.
+const contentRefusalLogEvery = time.Minute
+
+// contentRefusals limits how often a peer logs refusals, per caller and code.
+type contentRefusals struct {
+	mu   sync.Mutex
+	seen map[string]*contentRefusalCount
+}
+
+type contentRefusalCount struct {
+	logged     time.Time
+	suppressed int
+}
+
+// admit says whether a refusal under key is logged now, and how many were
+// not logged since the last one that was.
+func (l *contentRefusals) admit(key string, now time.Time) (bool, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.seen == nil {
+		l.seen = map[string]*contentRefusalCount{}
+	}
+	count, found := l.seen[key]
+	if found && now.Sub(count.logged) < contentRefusalLogEvery {
+		count.suppressed++
+		return false, 0
+	}
+	if !found {
+		if len(l.seen) >= 256 {
+			for seen, old := range l.seen {
+				if now.Sub(old.logged) >= contentRefusalLogEvery {
+					delete(l.seen, seen)
+				}
+			}
+		}
+		count = &contentRefusalCount{}
+		l.seen[key] = count
+	}
+	suppressed := count.suppressed
+	count.logged, count.suppressed = now, 0
+	return true, suppressed
+}
+
+// refuseContent answers a content request refused for err, and says why in
+// this peer's log: who asked, with which coordinator epoch and writer
+// generation, and the reason.
+func (p *Peer) refuseContent(w http.ResponseWriter, r *http.Request, err error) {
+	status, code := contentRefusal(err)
+	caller := "unknown"
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		if identity, idErr := coordination.CertificateIdentity(r.TLS.PeerCertificates[0]); idErr == nil {
+			caller = identity.NodeID
+		}
+	}
+	if logged, suppressed := p.contentRefusals.admit(caller+"\x00"+code, time.Now()); logged {
+		slog.Warn(fmt.Sprintf("cluster: content refused %s %s from %s: HTTP %d: %v", code, r.Method, caller, status, err), "caller", caller, "epoch", r.Header.Get("X-Steve-Coordinator-Epoch"), "writer", r.Header.Get("X-Steve-Writer-Generation"), "code", code, "status", status, "suppressed", suppressed)
 	}
 	writeContentReply(w, status, code)
 }

@@ -80,20 +80,20 @@ func (p *Peer) collectContent(ctx context.Context) (checkpoint.RetentionGCResult
 
 func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 || r.Header.Get(contentObjectHeader) != "" || r.Header.Get(contentUploadHeader) != "" {
-		writeContentReply(w, http.StatusBadRequest, "invalid")
+		p.refuseContent(w, r, fmt.Errorf("%w: maintenance accepts no deletion candidates", contentreplica.ErrInvalid))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	result, err := p.collectContent(ctx)
 	if err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	// Collecting may have taken a while: the caller's authority is read
 	// again, not taken from the read that admitted it.
 	if err := p.contentAuthority(r.WithContext(withContentReads(r.Context()))); err != nil {
-		writeContentError(w, err)
+		p.refuseContent(w, r, err)
 		return
 	}
 	WriteJSON(w, result)
