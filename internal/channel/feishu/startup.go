@@ -57,9 +57,10 @@ func retryable(err error) bool {
 }
 
 // verify reads the bot identity, retrying retryable failures until it
-// succeeds or ctx ends. The official long-connection client retries its own connection,
-// before and after it is first established; this covers only the step
-// before it. Retrying runs on the caller's goroutine, so returning ends it.
+// succeeds or ctx ends. The official long-connection client retries its
+// own connection, before and after it is first established; this covers
+// only the step before it. Retrying runs on the caller's goroutine, so
+// returning ends it.
 func (c *Channel) verify(ctx context.Context) (Identity, error) {
 	for failures := 1; ; failures++ {
 		attempt, cancel := context.WithTimeout(ctx, startupAttemptTimeout)

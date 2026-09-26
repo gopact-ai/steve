@@ -123,7 +123,8 @@ type Channel struct {
 	// botOpenID is written by Start before the long connection begins,
 	// which is the only source of inbound events that read it.
 	botOpenID string
-	ready     chan struct{}
+	// ready is closed once the identity is verified.
+	ready chan struct{}
 	// journal records every outbound message as an effect: started before
 	// the API call, confirmed with the message id after. It is the only
 	// egress this version has, and the only one recovery has to reconcile.
@@ -230,8 +231,8 @@ func (c *Channel) EnrichInput(ctx context.Context, msg InboundMessage) InboundMe
 	return msg
 }
 
-// Ready is closed once Start has verified the bot identity and begins the
-// long connection. Outbound calls made earlier are unlikely to succeed.
+// Ready is closed once Start has verified the bot identity, before the
+// long connection begins.
 func (c *Channel) Ready() <-chan struct{} { return c.ready }
 
 // Start verifies the bot identity, then blocks and maintains the long
