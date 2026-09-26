@@ -299,8 +299,8 @@ func TestFarEndStopsWithItsContextWhileTheHubIsSilent(t *testing.T) {
 	}
 }
 
-// noticing is a listener that closes closed once the far end closes a
-// connection it handed over.
+// noticing is a listener that signals, by closing its closed channel,
+// the first time the far end closes a connection it handed over.
 type noticing struct {
 	net.Listener
 	once   sync.Once
