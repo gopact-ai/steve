@@ -138,6 +138,32 @@ func TestStateHoldsEntriesThatNeverReachTheStateMachine(t *testing.T) {
 	}
 }
 
+// A configuration change reaches the state machine as a command does: it
+// is held once the state machine has stored it, and not before, even when
+// it is the last entry of the log and no command follows it.
+func TestStateHoldsAConfigurationOnceTheStateMachineStoresIt(t *testing.T) {
+	c := newTestCluster(t, 1)
+	leader := c.leader()
+	if err := leader.raft.AddNonvoter("absent", "127.0.0.1:1", 0, time.Second).Error(); err != nil {
+		t.Fatal(err)
+	}
+	last := leader.LastIndex()
+	var entry raft.Log
+	if err := leader.store.GetLog(last, &entry); err != nil || entry.Type != raft.LogConfiguration {
+		t.Fatalf("the last entry %d is %v (%v), want the configuration change", last, entry.Type, err)
+	}
+	eventually(t, 5*time.Second, func() bool { return leader.Status().AppliedIndex >= last })
+	if !leader.StateHolds(last) {
+		t.Fatalf("the state machine stored configuration %d but does not hold it", last)
+	}
+	// As though the state machine were still storing it.
+	leader.fsm.applied.Store(last - 1)
+	leader.held.Store(0)
+	if leader.StateHolds(last) {
+		t.Fatalf("configuration %d is held before the state machine stored it", last)
+	}
+}
+
 // Entries a snapshot compacted away are held by the state machine that
 // took the snapshot, even those that never reached it: with an
 // application no log is kept behind a snapshot, so the entries after the
