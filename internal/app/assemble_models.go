@@ -2,15 +2,17 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/httpdrain"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -78,17 +80,35 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 	nodes.SetHubLevel(string(cfg.HubLevel()))
 	// Lease authorities were registered before execution recovery.
 	if addr := cfg.Gateway.IssuerAddr; addr != "" {
-		issuer := &http.Server{Addr: addr, Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken)}
+		issuer := httpdrain.New(&http.Server{Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken), ReadHeaderTimeout: 10 * time.Second})
+		served := make(chan struct{})
 		go func() {
-			if err := issuer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			defer close(served)
+			listener, err := net.Listen("tcp", addr)
+			if err == nil {
+				err = issuer.Serve(listener)
+			}
+			if err != nil {
 				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", addr, err))
 			}
 		}()
-		life.Defer(func() { issuer.Close() })
+		// The ledger closes after this step: a lease request already
+		// inside it is answered, or cancelled once the grace is over,
+		// before the step ends.
+		life.Defer(func() {
+			grace, cancel := context.WithTimeout(context.Background(), issuerShutdownGrace)
+			defer cancel()
+			_ = issuer.Shutdown(grace)
+			<-served
+		})
 		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), addr))
 	}
 	return &modelsValues{endpoints: endpoints, probeDir: probeDir, prober: prober, seen: seen}, nil
 }
+
+// issuerShutdownGrace is how long lease requests in flight may run on once
+// the application stops.
+const issuerShutdownGrace = 5 * time.Second
 
 type modelsAssembly interface {
 	Endpoints() func(ctx context.Context) []models.Endpoint

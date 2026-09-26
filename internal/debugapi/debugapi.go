@@ -7,7 +7,6 @@ package debugapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/gateway"
+	"github.com/gopact-ai/steve/internal/httpdrain"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/sameorigin"
 )
@@ -61,22 +61,27 @@ func serve(ctx context.Context, addr string, gw Gateway, def Defaults, listen fu
 		_ = listener.Close()
 		return fmt.Errorf("debug endpoint address %q bound to %s, which other machines can reach: write a loopback IP such as 127.0.0.1, or make the name resolve to loopback", addr, listener.Addr())
 	}
-	srv := &http.Server{
+	srv := httpdrain.New(&http.Server{
 		Handler:           Handler(gw, def),
 		ReadHeaderTimeout: 5 * time.Second,
-	}
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	})
+	// Requests still running when ctx ends get a grace to finish, then
+	// their contexts are cancelled; Serve returns only after they have.
+	defer context.AfterFunc(ctx, func() {
+		grace, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
-		_ = srv.Shutdown(shutdown)
-	}()
+		_ = srv.Shutdown(grace)
+	})()
 	slog.Info(fmt.Sprintf("debugapi: listening on %s", listener.Addr()))
-	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(listener); err != nil {
 		return fmt.Errorf("debug endpoint: %w", err)
 	}
 	return nil
 }
+
+// shutdownGrace is how long requests in flight may run on once Serve's
+// context has ended.
+const shutdownGrace = 5 * time.Second
 
 func Handler(gw Gateway, def Defaults) http.Handler {
 	mux := http.NewServeMux()
