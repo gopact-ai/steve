@@ -143,13 +143,19 @@ func (p *Peer) awaitContentReplica(ctx context.Context, runtime *Runtime, versio
 	}
 }
 
+// contentState is what the committed state says of a project's content. A
+// placement is refused only for what that state says: no platform
+// configuration, a project it does not declare or place, or one this hub
+// does not own. A read that fails or a project declaration still catching up
+// with the platform configuration refuses nothing: the check could not be
+// made yet.
 func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlacementState, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return contentPlacementState{}, fmt.Errorf("%w: %w", contentreplica.ErrUnavailable, ErrInactive)
 	}
 	if projectID == "" {
-		return contentPlacementState{}, contentreplica.ErrPlacement
+		return contentPlacementState{}, fmt.Errorf("%w: no project", contentreplica.ErrInvalid)
 	}
 	state, err := p.committedState(ctx, runtime)
 	if err != nil {
@@ -159,18 +165,24 @@ func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlace
 	if err != nil {
 		return contentPlacementState{}, err
 	}
+	unchecked := func(what string, err error) error {
+		return fmt.Errorf("%w: %s: %w", contentreplica.ErrUnavailable, what, err)
+	}
 	for {
 		d, ok, err := platformconfig.New(runtime.Ledger()).Load()
-		if err != nil || !ok {
-			return contentPlacementState{}, errors.Join(contentreplica.ErrPlacement, err)
+		if err != nil {
+			return contentPlacementState{}, unchecked("read platform configuration", err)
+		}
+		if !ok {
+			return contentPlacementState{}, fmt.Errorf("%w: no platform configuration", contentreplica.ErrPlacement)
 		}
 		cfg := &config.Config{}
 		if err := d.Apply(cfg); err != nil {
-			return contentPlacementState{}, err
+			return contentPlacementState{}, unchecked("apply platform configuration", err)
 		}
 		_, declarationHash, err := configbuild.ProjectDeclarations(cfg)
 		if err != nil {
-			return contentPlacementState{}, err
+			return contentPlacementState{}, unchecked("project declarations", err)
 		}
 		projects := project.Open(runtime.Ledger())
 		projects.SetHubID(p.Config.ClusterID)
@@ -178,18 +190,24 @@ func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlace
 		item, found, lookupErr := projects.Get(ctx, projectID)
 		after, err := runtime.Ledger().ReplicaVersion()
 		if err != nil {
-			return contentPlacementState{}, err
+			return contentPlacementState{}, unchecked("read local replica version", err)
 		}
 		if after != version {
 			// The replica applied more while it was read: read it again.
 			version = after
 			continue
 		}
-		if lookupErr != nil || !found {
+		switch {
+		case errors.Is(lookupErr, project.ErrNotOwner):
 			return contentPlacementState{}, errors.Join(contentreplica.ErrPlacement, lookupErr)
-		}
-		if item.Home.Node == "" || !item.Level.OrDefault().Valid() {
-			return contentPlacementState{}, contentreplica.ErrPlacement
+		case lookupErr != nil:
+			// ErrDeclarationPending among others: the project declaration
+			// has not caught up with the platform configuration yet.
+			return contentPlacementState{}, unchecked("read project "+projectID, lookupErr)
+		case !found:
+			return contentPlacementState{}, fmt.Errorf("%w: project %s is not declared", contentreplica.ErrPlacement, projectID)
+		case item.Home.Node == "" || !item.Level.OrDefault().Valid():
+			return contentPlacementState{}, fmt.Errorf("%w: project %s has no home or level", contentreplica.ErrPlacement, projectID)
 		}
 		return contentPlacementState{state: state, declaration: d, project: item}, nil
 	}
@@ -458,36 +476,36 @@ func (transport peerContentTransport) request(ctx context.Context, method, nodeI
 	}
 	if response.StatusCode != http.StatusOK {
 		defer response.Body.Close()
-		return nil, contentReplyError(nodeID, response)
+		return nil, contentReplyError(&p.contentReplies, nodeID, response)
 	}
 	return response, nil
 }
 
 // contentReplyError is what a peer's refusal of a content request means
-// here: its code, or its status for a reply without one.
-func contentReplyError(nodeID string, response *http.Response) error {
+// here, read by its code. A reply without a code this node knows — a proxy's
+// page, a peer that did not say — is what its status says and no more: a
+// server error may pass when asked again, anything else is a plain failure
+// that neither refuses a placement nor passes by itself. The caller names
+// the node.
+func contentReplyError(logs *contentRefusals, nodeID string, response *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 	var failure struct {
 		Code string `json:"code"`
 	}
-	if err := json.Unmarshal(raw, &failure); err != nil {
-		// The status alone still maps to an error below; only the
-		// finer code is lost, which is worth knowing about.
-		slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d with unreadable body %q: %v", nodeID, response.StatusCode, raw[:min(len(raw), 64)], err), "node", nodeID)
-	}
+	readErr := json.Unmarshal(raw, &failure)
 	switch failure.Code {
 	case "placement":
 		return contentreplica.ErrPlacement
 	case "authority":
-		return fmt.Errorf("content replica %s: %w: %w", nodeID, contentreplica.ErrPlacement, errContentAuthority)
+		return fmt.Errorf("%w: %w", contentreplica.ErrPlacement, errContentAuthority)
 	case "stale":
 		// The peer read the committed state after this generation did:
 		// this generation is no longer the one writing.
-		return fmt.Errorf("content replica %s: %w: %w: %w", nodeID, ErrInactive, contentreplica.ErrSuperseded, errContentStale)
+		return fmt.Errorf("%w: %w: %w", ErrInactive, contentreplica.ErrSuperseded, errContentStale)
 	case "lagging":
-		return fmt.Errorf("content replica %s: %w", nodeID, errContentLagging)
+		return errContentLagging
 	case "unavailable":
-		return fmt.Errorf("content replica %s: %w: HTTP %d", nodeID, contentreplica.ErrUnavailable, response.StatusCode)
+		return fmt.Errorf("%w: HTTP %d", contentreplica.ErrUnavailable, response.StatusCode)
 	case "invalid", "method":
 		return contentreplica.ErrInvalid
 	case "too_large":
@@ -499,10 +517,18 @@ func contentReplyError(nodeID string, response *http.Response) error {
 	case "missing":
 		return contentreplica.ErrIncomplete
 	}
-	if response.StatusCode == http.StatusForbidden {
-		return contentreplica.ErrPlacement
+	body := raw[:min(len(raw), 64)]
+	if readErr == nil {
+		readErr = fmt.Errorf("code %q", failure.Code)
 	}
-	return fmt.Errorf("content replica %s: %w: HTTP %d", nodeID, contentreplica.ErrUnavailable, response.StatusCode)
+	// Only the status is left to go by, which is worth knowing about.
+	if logged, suppressed := logs.admit(nodeID+"\x00"+strconv.Itoa(response.StatusCode), time.Now()); logged {
+		slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d without a code: body %q: %v", nodeID, response.StatusCode, body, readErr), "node", nodeID, "status", response.StatusCode, "suppressed", suppressed)
+	}
+	if response.StatusCode >= 500 {
+		return fmt.Errorf("%w: HTTP %d without a code: %q", contentreplica.ErrUnavailable, response.StatusCode, body)
+	}
+	return fmt.Errorf("content reply HTTP %d without a code: %q", response.StatusCode, body)
 }
 
 func (transport peerContentTransport) Put(ctx context.Context, nodeID string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {

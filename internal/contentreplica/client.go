@@ -284,7 +284,7 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 	if err := try(c.cfg.NodeID); err == nil {
 		return finish()
 	} else {
-		failures = append(failures, err)
+		failures = append(failures, fmt.Errorf("content replica %s: %w", c.cfg.NodeID, err))
 	}
 	for _, receipt := range m.Receipts {
 		if receipt.NodeID == c.cfg.NodeID {
@@ -302,9 +302,9 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 		if err := try(receipt.NodeID); errors.Is(err, ErrSuperseded) {
 			// The caller is no longer the writer: every other node would
 			// answer the same, and no copy is known to be missing.
-			return Manifest{}, err
+			return Manifest{}, fmt.Errorf("content replica %s: %w", receipt.NodeID, err)
 		} else if err != nil {
-			failures = append(failures, err)
+			failures = append(failures, fmt.Errorf("content replica %s: %w", receipt.NodeID, err))
 			continue
 		}
 		return finish()

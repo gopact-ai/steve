@@ -208,7 +208,7 @@ func TestContentReplyKeepsTemporaryRefusalsApartFromPlacement(t *testing.T) {
 		{"unknown code", reply(http.StatusForbidden, `{"code":"something new"}`), want{}},
 	}
 	for _, c := range cases {
-		err := contentReplyError("node-b", c.response)
+		err := contentReplyError(&contentRefusals{}, "node-b", c.response)
 		got := want{transient: errors.Is(err, contentreplica.ErrUnavailable), placement: errors.Is(err, contentreplica.ErrPlacement), inactive: errors.Is(err, ErrInactive)}
 		if got != c.want {
 			t.Errorf("%s: %v reads as %+v, want %+v", c.name, err, got, c.want)
@@ -221,7 +221,7 @@ func TestContentReplyKeepsTemporaryRefusalsApartFromPlacement(t *testing.T) {
 		t.Errorf("a reply without a code is not logged: %s", logs.String())
 	}
 	unreadable := strings.Repeat("x", 64) + "beyond the first 64 bytes"
-	contentReplyError("node-b", reply(http.StatusBadGateway, unreadable))
+	contentReplyError(&contentRefusals{}, "node-b", reply(http.StatusBadGateway, unreadable))
 	if !strings.Contains(logs.String(), strings.Repeat("x", 64)) || strings.Contains(logs.String(), "beyond") {
 		t.Errorf("an unreadable reply is not logged with its first 64 bytes: %s", logs.String())
 	}

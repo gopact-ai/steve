@@ -44,7 +44,7 @@ func (transport peerContentTransport) collect(ctx context.Context, node string) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return checkpoint.RetentionGCResult{}, fmt.Errorf("content maintenance: %w", contentReplyError(node, response))
+		return checkpoint.RetentionGCResult{}, contentReplyError(&transport.peer.contentReplies, node, response)
 	}
 	var result checkpoint.RetentionGCResult
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 32769))
