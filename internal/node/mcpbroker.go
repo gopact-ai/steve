@@ -111,6 +111,10 @@ func NewBroker(cfg BrokerConfig) *Broker {
 	return &Broker{cfg: cfg, bindings: map[string]mcpBinding{}}
 }
 
+// testHookSocketListener, when set, wraps the listener Serve accepts
+// launchers on; tests use it to make Accept fail.
+var testHookSocketListener func(net.Listener) net.Listener
+
 // Serve listens on the socket and the loopback proxy until ctx ends. It
 // returns only once the proxy has stopped and released its port, whether
 // ctx ended or the socket failed.
@@ -154,6 +158,9 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	if err := os.Chmod(sock, mode); err != nil {
 		listener.Close()
 		return err
+	}
+	if testHookSocketListener != nil {
+		listener = testHookSocketListener(listener)
 	}
 	if b.ready != nil {
 		b.ready(nil)
