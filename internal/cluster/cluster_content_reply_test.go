@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
 // contentReply is what one peer answered another's content request.
@@ -125,6 +127,10 @@ func TestContentPeerRefusesInJSONWithACodeAndAStatusThatSaysWhetherToRetry(t *te
 	object := workspaceObject(peers, []byte("content a peer refuses"))
 	forged := object
 	forged.Scope.Level = "public"
+	undeclared := object
+	undeclared.Scope.ProjectID = "undeclared"
+	unnamed := object
+	unnamed.Scope.ProjectID = ""
 	epoch, _ := coordinatorHeaders(active)
 	staleWriter := contentHeaders(active, &object)
 	staleWriter["X-Steve-Writer-Generation"] = strconv.FormatUint(active.WriterGeneration+1, 10)
@@ -147,6 +153,8 @@ func TestContentPeerRefusesInJSONWithACodeAndAStatusThatSaysWhetherToRetry(t *te
 		{name: "maintenance from a writer generation that is not current", method: http.MethodPost, headers: map[string]string{"X-Steve-Coordinator-Epoch": epoch, "X-Steve-Writer-Generation": staleWriter["X-Steve-Writer-Generation"]}, status: http.StatusForbidden, code: "stale"},
 		{name: "descriptor", method: http.MethodGet, headers: undescribed, status: http.StatusBadRequest, code: "invalid"},
 		{name: "placement", method: http.MethodGet, headers: contentHeaders(active, &forged), status: http.StatusForbidden, code: "placement"},
+		{name: "a project that is not declared", method: http.MethodGet, headers: contentHeaders(active, &undeclared), status: http.StatusForbidden, code: "placement"},
+		{name: "no project", method: http.MethodGet, headers: contentHeaders(active, &unnamed), status: http.StatusBadRequest, code: "invalid"},
 		{name: "committed state out of reach", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() { receiver.readContentState.Store(&failing) }, status: http.StatusServiceUnavailable, code: "unavailable"},
 		{name: "replica behind", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() { behind(receiver) }, status: http.StatusServiceUnavailable, code: "lagging"},
 	}
@@ -189,6 +197,15 @@ func TestContentReplyKeepsTemporaryRefusalsApartFromPlacement(t *testing.T) {
 		{"stale", reply(http.StatusForbidden, `{"code":"stale"}`), want{inactive: true}},
 		{"authority", reply(http.StatusForbidden, `{"code":"authority"}`), want{placement: true}},
 		{"placement", reply(http.StatusForbidden, `{"code":"placement"}`), want{placement: true}},
+		// A reply without a code — a proxy's page, say — is what its
+		// status says and no more: a server error may pass, anything
+		// else is a plain failure, never a placement refusal.
+		{"proxy's 502 page", reply(http.StatusBadGateway, `<html>bad gateway</html>`), want{transient: true}},
+		{"503 without a code", reply(http.StatusServiceUnavailable, `{}`), want{transient: true}},
+		{"proxy's 403 page", reply(http.StatusForbidden, `<html>forbidden</html>`), want{}},
+		{"proxy's 404 page", reply(http.StatusNotFound, `<html>not found</html>`), want{}},
+		{"proxy's 413 page", reply(http.StatusRequestEntityTooLarge, `<html>too large</html>`), want{}},
+		{"unknown code", reply(http.StatusForbidden, `{"code":"something new"}`), want{}},
 	}
 	for _, c := range cases {
 		err := contentReplyError("node-b", c.response)
@@ -196,6 +213,12 @@ func TestContentReplyKeepsTemporaryRefusalsApartFromPlacement(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%s: %v reads as %+v, want %+v", c.name, err, got, c.want)
 		}
+		if strings.HasPrefix(c.name, "proxy") && !strings.Contains(err.Error(), "HTTP "+strconv.Itoa(c.response.StatusCode)) {
+			t.Errorf("%s: %v does not say the status", c.name, err)
+		}
+	}
+	if !strings.Contains(logs.String(), `HTTP 503 without a code`) {
+		t.Errorf("a reply without a code is not logged: %s", logs.String())
 	}
 	unreadable := strings.Repeat("x", 64) + "beyond the first 64 bytes"
 	contentReplyError("node-b", reply(http.StatusBadGateway, unreadable))
@@ -387,5 +410,29 @@ func TestContentRepairStopsWhenAPeerSaysItsGenerationHasEnded(t *testing.T) {
 		if !errors.Is(err, ErrInactive) || len(observations) != 0 || asked != 1 {
 			t.Errorf("%s: %v with %q after %d peer checks; want the generation's end, no notice, one peer asked", c.name, err, observations, asked)
 		}
+	}
+}
+
+// Between a platform configuration that changes the projects and the
+// project declaration catching up with it, a peer cannot check a placement
+// yet: it says so with a 503, not a 403 that refuses the placement.
+func TestContentPeerDoesNotRefuseAPlacementWhileTheProjectDeclarationCatchesUp(t *testing.T) {
+	peers, active := contentPeers(t)
+	settings := platformconfig.New(active.Ledger)
+	declaration, ok, err := settings.Load()
+	if err != nil || !ok {
+		t.Fatalf("platform configuration: %t %v", ok, err)
+	}
+	declaration.Projects["added"] = config.Project{Level: "internal", Home: config.ProjectHome{Node: peers[0].Config.NodeID, Path: "/fixture/added"}}
+	if _, err := settings.Save(t.Context(), declaration.Revision, declaration); err != nil {
+		t.Fatal(err)
+	}
+	object := workspaceObject(peers, []byte("content while the projects catch up"))
+	reply := contentHTTP(t, peers[0], peers[1], http.MethodGet, contentHeaders(active, &object), time.Minute)
+	var body struct {
+		Code string `json:"code"`
+	}
+	if reply.err != nil || reply.status != http.StatusServiceUnavailable || json.Unmarshal(reply.body, &body) != nil || body.Code != "unavailable" {
+		t.Fatalf("placement checked against a pending project declaration: HTTP %d %q err=%v, want 503 unavailable", reply.status, reply.body, reply.err)
 	}
 }
