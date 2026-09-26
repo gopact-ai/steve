@@ -155,7 +155,7 @@ func TestScheduleControlsTheCoordinatorParsesPreserveChannelAnchor(t *testing.T)
 				if err != nil {
 					t.Fatal(err)
 				}
-				_, ui, err := g.dispatchInput(t.Context(), book, "schedule-control", gatewayInput{Message: msg}, msg, "", nil)
+				_, ui, err := g.dispatchInput(t.Context(), g.channel(), book, "schedule-control", gatewayInput{Message: msg}, msg, "", nil)
 				if ui != nil {
 					ui.closeProgress()
 				}

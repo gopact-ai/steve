@@ -21,6 +21,7 @@ type hubChannelsService struct {
 	applied       channelsettings.Settings
 	appliedSecret string
 	runtimeError  string
+	startupRetry  *consoleapi.ChannelStartupRetry
 	accessUpdater func(config.Feishu)
 }
 
@@ -49,10 +50,25 @@ func channelAccess(f channelsettings.FeishuSetting) config.Feishu {
 	}
 }
 
+// SetRuntimeError reports a channel that stopped trying; it replaces a
+// startup retry.
 func (s *hubChannelsService) SetRuntimeError(message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runtimeError = message
+	s.startupRetry = nil
+}
+
+// SetStartupRetry reports a channel startup that will be retried; nil
+// reports none.
+func (s *hubChannelsService) SetStartupRetry(retry *consoleapi.ChannelStartupRetry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startupRetry = nil
+	if retry != nil {
+		copied := *retry
+		s.startupRetry = &copied
+	}
 }
 
 func NewChannels(admin *Service, startup *config.Config) *hubChannelsService {
@@ -79,7 +95,15 @@ func (s *hubChannelsService) viewLocked() consoleapi.ChannelsView {
 		mode = "mixed"
 		liveFields = []string{"feishu.group_policy", "feishu.allow_unmentioned", "feishu.allowed_senders", "feishu.blocked_senders"}
 	}
-	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(s.admin.cfg()), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError}
+	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(s.admin.cfg()), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError, StartupRetry: s.startupRetryLocked()}
+}
+
+func (s *hubChannelsService) startupRetryLocked() *consoleapi.ChannelStartupRetry {
+	if s.startupRetry == nil {
+		return nil
+	}
+	copied := *s.startupRetry
+	return &copied
 }
 
 func cloneChannelSettings(in channelsettings.Settings) channelsettings.Settings {
