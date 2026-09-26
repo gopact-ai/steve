@@ -52,7 +52,7 @@ func ReadSetup(root string) (SetupProgress, error) {
 // done: reopening a single page later must not bring the whole guide back.
 func SaveSetup(root string, progress SetupProgress) error {
 	if !slices.Contains(SetupSteps, progress.Step) {
-		return refuse("unknown setup step %q", progress.Step)
+		return &InputError{Message: fmt.Sprintf("unknown setup step %q", progress.Step)}
 	}
 	if !progress.Done {
 		current, err := ReadSetup(root)

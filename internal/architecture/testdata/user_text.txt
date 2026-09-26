@@ -45,9 +45,6 @@ internal/cluster/cluster_upgrade.go#awaitBuildWithin 5
 internal/cluster/coordination_view.go#coordinationNode 5
 internal/configbuild/projects.go#Commit 1
 internal/configbuild/projects.go#Error 1
-internal/desktop/workspace.go#CheckWorkspaceProject 2
-internal/desktop/workspace.go#PrepareWorkspace 7
-internal/desktop/workspace.go#checkWorkspacePlace 3
 internal/nodebootstrap/binary.go#OpenBinary 6
 internal/onboard/onboard.go#TaskGoal 1
 internal/platformconfig/store.go# 1

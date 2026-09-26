@@ -953,6 +953,20 @@ var zh = map[Key]string{
 	AttemptTaskStopped:    "已按用户的暂停或取消要求结束原执行。",
 	AppStopPending:        "暂停或取消已记录，但尚未收到原节点的停止确认。已尝试联系原执行；节点恢复后会继续核对并停止同一次执行。",
 	AppLedgerNodeLevel:    "节点 %s 保存完整协作账本，数据等级不能低于 restricted；低等级机器只能作为执行节点接入",
+
+	// desktop workspace
+	DesktopWorkspaceNoProject:     "没有默认项目，无法设置工作目录",
+	DesktopWorkspaceRemoteProject: "默认项目「%s」的目录在另一台机器（%s）上，不能从这台电脑修改。请在那台机器上设置，或先在「项目」里把默认项目换成本机的项目。",
+	DesktopWorkspaceEmpty:         "工作目录不能为空",
+	DesktopWorkspaceInvalid:       "工作目录包含无效字符",
+	DesktopWorkspaceRelative:      "工作目录要写绝对路径，例如 ~/Steve",
+	DesktopWorkspaceCreateFailed:  "创建工作目录失败：%w",
+	DesktopWorkspaceCheckFailed:   "检查工作目录失败：%w",
+	DesktopWorkspaceNotFolder:     "%s 不是文件夹",
+	DesktopWorkspaceNotWritable:   "工作目录不可写：%v",
+	DesktopWorkspaceHomeOrRoot:    "工作目录要是一个专门的文件夹，不能直接用家目录或根目录",
+	DesktopWorkspaceStateDir:      "工作目录不能是 Steve 自己的数据目录或它的上级目录",
+	DesktopWorkspaceSystem:        "%s 属于系统目录，请选择个人目录下的文件夹",
 }
 
 var en = map[Key]string{
@@ -1908,4 +1922,18 @@ var en = map[Key]string{
 	AttemptTaskStopped:    "The original execution was ended as the user asked to pause or cancel.",
 	AppStopPending:        "The pause or cancel is recorded, but the original node has not confirmed the stop. The original execution was contacted; once the node recovers, the same execution is checked again and stopped.",
 	AppLedgerNodeLevel:    "Node %s keeps the full coordination ledger, so its data level cannot be below restricted; lower-level machines can only join as execution nodes",
+
+	// desktop workspace
+	DesktopWorkspaceNoProject:     "There is no default project, so no workspace can be set",
+	DesktopWorkspaceRemoteProject: "The default project \"%s\" keeps its directory on another machine (%s) and cannot be changed from this computer. Set it on that machine, or first make a project on this computer the default under Projects.",
+	DesktopWorkspaceEmpty:         "The workspace cannot be empty",
+	DesktopWorkspaceInvalid:       "The workspace contains an invalid character",
+	DesktopWorkspaceRelative:      "The workspace must be an absolute path, such as ~/Steve",
+	DesktopWorkspaceCreateFailed:  "Could not create the workspace: %w",
+	DesktopWorkspaceCheckFailed:   "Could not check the workspace: %w",
+	DesktopWorkspaceNotFolder:     "%s is not a folder",
+	DesktopWorkspaceNotWritable:   "The workspace cannot be written: %v",
+	DesktopWorkspaceHomeOrRoot:    "The workspace must be a folder of its own, not the home directory or a root directory",
+	DesktopWorkspaceStateDir:      "The workspace cannot be Steve's own data directory or a directory that contains it",
+	DesktopWorkspaceSystem:        "%s belongs to the system; choose a folder in your home directory",
 }

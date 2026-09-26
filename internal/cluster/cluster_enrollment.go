@@ -30,6 +30,7 @@ import (
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/sameorigin"
@@ -946,8 +947,10 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 		return result, err
 	}
 	// The workspace is judged and created here, on the machine that owns
-	// it: the owner's answer may name places this machine refuses.
-	workspace, err := desktop.PrepareWorkspace(bundle.WorkspaceDir, root)
+	// it: the owner's answer may name places this machine refuses. The
+	// import is a command on that machine and answers in English like the
+	// rest of the command line.
+	workspace, err := desktop.PrepareWorkspace(i18n.New(i18n.LocaleEN), bundle.WorkspaceDir, root)
 	if err != nil {
 		return result, fmt.Errorf("workspace %q: %w", bundle.WorkspaceDir, err)
 	}

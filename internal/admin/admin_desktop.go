@@ -86,10 +86,10 @@ func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWo
 	home := a.cfg().Projects[id].Home
 	local := a.cfg().LocalHomeNode(home.Node)
 	a.ConfigStore.runlock()
-	if err := desktop.CheckWorkspaceProject(id, local, home.Node); err != nil {
+	if err := desktop.CheckWorkspaceProject(textFor(ctx), id, local, home.Node); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	path, err := desktop.PrepareWorkspace(req.Path, filepath.Dir(a.Path))
+	path, err := desktop.PrepareWorkspace(textFor(ctx), req.Path, filepath.Dir(a.Path))
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}

@@ -989,6 +989,20 @@ const (
 	AttemptTaskStopped    Key = "attempt_task_stopped"
 	AppStopPending        Key = "app_stop_pending"
 	AppLedgerNodeLevel    Key = "app_ledger_node_level"
+
+	// desktop workspace
+	DesktopWorkspaceNoProject     Key = "desktop_workspace_no_project"
+	DesktopWorkspaceRemoteProject Key = "desktop_workspace_remote_project"
+	DesktopWorkspaceEmpty         Key = "desktop_workspace_empty"
+	DesktopWorkspaceInvalid       Key = "desktop_workspace_invalid"
+	DesktopWorkspaceRelative      Key = "desktop_workspace_relative"
+	DesktopWorkspaceCreateFailed  Key = "desktop_workspace_create_failed"
+	DesktopWorkspaceCheckFailed   Key = "desktop_workspace_check_failed"
+	DesktopWorkspaceNotFolder     Key = "desktop_workspace_not_folder"
+	DesktopWorkspaceNotWritable   Key = "desktop_workspace_not_writable"
+	DesktopWorkspaceHomeOrRoot    Key = "desktop_workspace_home_or_root"
+	DesktopWorkspaceStateDir      Key = "desktop_workspace_state_dir"
+	DesktopWorkspaceSystem        Key = "desktop_workspace_system"
 )
 
 type Catalog struct {
