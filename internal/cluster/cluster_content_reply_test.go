@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -224,6 +225,9 @@ func TestContentReplyKeepsTemporaryRefusalsApartFromPlacement(t *testing.T) {
 		if strings.HasPrefix(c.name, "proxy") && !strings.Contains(err.Error(), "HTTP "+strconv.Itoa(c.response.StatusCode)) {
 			t.Errorf("%s: %v does not say the status", c.name, err)
 		}
+		if nodes := uncheckedContentPeers(err); c.want.transient != slices.Equal(nodes, []string{"node-b"}) || c.want.transient != errors.Is(err, errContentPeerUnchecked) {
+			t.Errorf("%s: %v names %q as unable to check", c.name, err, nodes)
+		}
 	}
 	if !strings.Contains(logs.String(), `HTTP 503 without a code`) {
 		t.Errorf("a reply without a code is not logged: %s", logs.String())
@@ -232,6 +236,31 @@ func TestContentReplyKeepsTemporaryRefusalsApartFromPlacement(t *testing.T) {
 	contentReplyError(&contentRefusals{}, "node-b", reply(http.StatusBadGateway, unreadable))
 	if !strings.Contains(logs.String(), strings.Repeat("x", 64)) || strings.Contains(logs.String(), "beyond") {
 		t.Errorf("an unreadable reply is not logged with its first 64 bytes: %s", logs.String())
+	}
+}
+
+// A read tries every node holding a copy and joins what each said: every
+// peer that could not check the read is named, once, in the order tried,
+// and nothing else is.
+func TestContentPeersThatCouldNotCheckAreAllNamed(t *testing.T) {
+	reply := func(status int, body string) *http.Response {
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}
+	}
+	logs := &contentRefusals{}
+	tried := func(node string, err error) error { return fmt.Errorf("content replica %s: %w", node, err) }
+	err := errors.Join(contentreplica.ErrIncomplete, errors.Join(
+		tried("node-a", errors.New("local copy missing")),
+		tried("node-b", contentReplyError(logs, "node-b", reply(http.StatusServiceUnavailable, `{"code":"lagging"}`))),
+		tried("node-c", contentReplyError(logs, "node-c", reply(http.StatusForbidden, `{"code":"placement"}`))),
+		tried("node-d", contentReplyError(logs, "node-d", reply(http.StatusBadGateway, `<html>bad gateway</html>`))),
+		tried("node-b", contentReplyError(logs, "node-b", reply(http.StatusServiceUnavailable, `{"code":"unavailable"}`))),
+	))
+	if nodes := uncheckedContentPeers(err); !slices.Equal(nodes, []string{"node-b", "node-d"}) {
+		t.Fatalf("%v names %q as unable to check, want node-b and node-d", err, nodes)
+	}
+	notice := uncheckedCopy(uncheckedContentPeers(err))
+	if !strings.Contains(notice, "node-b、node-d") || strings.Contains(notice, "node-c") {
+		t.Fatalf("the notice %q does not name the peers that could not check, and only them", notice)
 	}
 }
 
@@ -484,8 +513,8 @@ func TestContentCatchUpTellsALaggingReplicaFromOneThatCannotWait(t *testing.T) {
 }
 
 // A repair that cannot read a copy because the peer holding it is behind
-// the committed state says so: the notice points at that peer, not at this
-// node, whose own replica is current.
+// the committed state says so: the notice names that peer, not this node,
+// whose own replica is current.
 func TestContentRepairPointsAtThePeerWhoseReplicaLags(t *testing.T) {
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
@@ -508,11 +537,13 @@ func TestContentRepairPointsAtThePeerWhoseReplicaLags(t *testing.T) {
 		t.Fatal(err)
 	}
 	availability := map[string]bool{}
+	var lagging []string
 	for _, receipt := range manifest.Receipts {
 		if receipt.NodeID != peers[0].Config.NodeID {
 			availability[receipt.NodeID] = false
 			for _, peer := range peers[1:] {
 				if peer.Config.NodeID == receipt.NodeID {
+					lagging = append(lagging, peer.Config.NodeID)
 					behind(peer)
 					t.Cleanup(func() { peer.readContentState.Store(nil) })
 				}
@@ -523,6 +554,14 @@ func TestContentRepairPointsAtThePeerWhoseReplicaLags(t *testing.T) {
 	notices := strings.Join(observations, "\n")
 	if status != "degraded" || !errors.Is(err, contentreplica.ErrUnavailable) || !strings.Contains(notices, "content.degraded") || strings.Contains(notices, "本机") {
 		t.Fatalf("a copy on a lagging peer: %s %v with %q; want degraded, pointing at the peer holding the copy", status, err, observations)
+	}
+	if len(lagging) == 0 {
+		t.Fatal("no copy is held by another peer")
+	}
+	for _, node := range lagging {
+		if !strings.Contains(notices, node) {
+			t.Fatalf("the notice %q does not name the lagging peer %s", observations, node)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,7 +49,8 @@ var (
 	errContentLagging = fmt.Errorf("%w: replica is behind the committed state", contentreplica.ErrUnavailable)
 	// errContentPeerUnchecked is a peer's answer that it could not check a
 	// content request for now: its replica behind or its committed state
-	// out of reach. It refuses nothing.
+	// out of reach. It refuses nothing. Each such answer is a
+	// contentPeerUncheckedError, which names the peer.
 	errContentPeerUnchecked = errors.New("the peer could not check the request for now")
 	// errContentAuthority refuses a caller the committed state does not
 	// admit to content at all: no cluster identity, not a member, removed.
@@ -59,6 +61,48 @@ var (
 	// errContentMethod refuses a request that is not a content operation.
 	errContentMethod = errors.New("content request method must be GET, PUT or POST")
 )
+
+// contentPeerUncheckedError is errContentPeerUnchecked from the peer Node,
+// with what the peer said.
+type contentPeerUncheckedError struct {
+	Node string
+	err  error
+}
+
+func (e *contentPeerUncheckedError) Error() string {
+	return fmt.Sprintf("%v: node %s: %v", errContentPeerUnchecked, e.Node, e.err)
+}
+
+func (e *contentPeerUncheckedError) Is(target error) bool { return target == errContentPeerUnchecked }
+
+func (e *contentPeerUncheckedError) Unwrap() error { return e.err }
+
+// uncheckedContentPeers is every peer, once each and in the order err
+// meets them, that answered it could not check a request. A read tries each
+// node holding a copy and joins what each said, so more than one may be
+// behind the same failure; they are all named, and there are no more of
+// them than copies of the content.
+func uncheckedContentPeers(err error) []string {
+	var nodes []string
+	var walk func(error)
+	walk = func(err error) {
+		switch e := err.(type) {
+		case nil:
+		case *contentPeerUncheckedError:
+			if !slices.Contains(nodes, e.Node) {
+				nodes = append(nodes, e.Node)
+			}
+		case interface{ Unwrap() []error }:
+			for _, inner := range e.Unwrap() {
+				walk(inner)
+			}
+		case interface{ Unwrap() error }:
+			walk(e.Unwrap())
+		}
+	}
+	walk(err)
+	return nodes
+}
 
 type contentReadsKey struct{}
 
@@ -501,9 +545,9 @@ func contentReplyError(logs *contentRefusals, nodeID string, response *http.Resp
 		// this generation is no longer the one writing.
 		return fmt.Errorf("%w: %w: %w", ErrInactive, contentreplica.ErrSuperseded, errContentStale)
 	case "lagging":
-		return fmt.Errorf("%w: %w", errContentPeerUnchecked, errContentLagging)
+		return &contentPeerUncheckedError{Node: nodeID, err: errContentLagging}
 	case "unavailable":
-		return fmt.Errorf("%w: %w: HTTP %d", errContentPeerUnchecked, contentreplica.ErrUnavailable, response.StatusCode)
+		return &contentPeerUncheckedError{Node: nodeID, err: fmt.Errorf("%w: HTTP %d", contentreplica.ErrUnavailable, response.StatusCode)}
 	case "invalid", "method":
 		return contentreplica.ErrInvalid
 	case "too_large":
@@ -524,7 +568,7 @@ func contentReplyError(logs *contentRefusals, nodeID string, response *http.Resp
 		slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d without a code: body %q: %v", nodeID, response.StatusCode, body, readErr), "node", nodeID, "status", response.StatusCode, "suppressed", suppressed)
 	}
 	if response.StatusCode >= 500 {
-		return fmt.Errorf("%w: %w: HTTP %d without a code: %q", errContentPeerUnchecked, contentreplica.ErrUnavailable, response.StatusCode, body)
+		return &contentPeerUncheckedError{Node: nodeID, err: fmt.Errorf("%w: HTTP %d without a code: %q", contentreplica.ErrUnavailable, response.StatusCode, body)}
 	}
 	return fmt.Errorf("content reply HTTP %d without a code: %q", response.StatusCode, body)
 }
