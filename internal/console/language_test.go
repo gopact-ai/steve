@@ -51,6 +51,33 @@ func TestRecoveryConversationSpeaksTheConsoleLanguage(t *testing.T) {
 	}
 }
 
+// What makes a recovery page the same page again is the source it was
+// opened for, not the wording of its notice: a notice worded otherwise —
+// an older catalog, a language Steve no longer renders it in — still
+// belongs to its source, and another source is still refused.
+func TestRecoveryPageIsRecognisedByItsSourceNotItsWording(t *testing.T) {
+	s := impatient(New(&echo{}, "owner", nil))
+	if err := s.Persist(&memDoc{}); err != nil {
+		t.Fatal(err)
+	}
+	source := RecoveryConversation{ParentTaskID: "parent-1", SourceChannel: "feishu", SourceConversation: "oc_original", Project: "p"}
+	id, err := s.EnsureRecoveryConversation(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.replies[id][0].Text = "a notice in wording the catalog no longer has"
+	s.mu.Unlock()
+	if again, err := s.EnsureRecoveryConversation(t.Context(), source); err != nil || again != id {
+		t.Fatalf("reworded notice = %q %v", again, err)
+	}
+	other := source
+	other.SourceConversation = "oc_other"
+	if _, err := s.EnsureRecoveryConversation(t.Context(), other); err == nil {
+		t.Fatal("the page accepted another source")
+	}
+}
+
 // A scheduled line on the page is labelled in the console's language.
 func TestScheduledLineIsLabelledInTheConsoleLanguage(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 8)}
