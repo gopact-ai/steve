@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"os/exec"
 	"slices"
@@ -48,9 +47,10 @@ var upgradePhases = []string{PhasePreflight, PhaseUpload, PhaseInstallation, Pha
 // new build. It returns when the upgrade has settled; UpgradeStatus reads
 // how far it has come meanwhile. One upgrade runs per machine at a time.
 func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, error) {
+	ctx, text := s.speak(ctx)
 	backend, ok := s.backend.(UpgradeBackend)
 	if !ok {
-		return InstallResult{}, fail("preflight", "upgrade_unsupported", "这类接入的机器无法从这里升级", "在该机器上用协调节点这一版本构建的 steve-node 替换原程序并重启；引导脚本不会替换已有程序")
+		return InstallResult{}, Fail(text, "preflight", "upgrade_unsupported", text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
 	}
 	var nonce [24]byte
 	rand.Read(nonce[:])
@@ -58,11 +58,11 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return InstallResult{}, fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后再升级")
+		return InstallResult{}, Fail(text, "ssh", "closed", text.T(i18n.SSHClosed), text.T(i18n.SSHClosedUpgradeFix))
 	}
 	if previous := s.plans[s.upgrades[nodeID]]; previous != nil && previous.running {
 		s.mu.Unlock()
-		return InstallResult{}, fail("installation", "in_progress", "这台机器正在升级", "等待本次升级返回结果")
+		return InstallResult{}, Fail(text, "installation", "in_progress", text.T(i18n.SSHUpgradeRunning), text.T(i18n.SSHUpgradeRunningFix))
 	}
 	stored := &storedPlan{plan: InstallPlan{ID: id, Request: InstallRequest{Name: nodeID}}, running: true, result: InstallResult{PlanID: id, Name: nodeID, NodeID: nodeID, Status: "installing", Steps: []Step{}, Phases: upgradePhases}}
 	s.plans[id] = stored
@@ -84,67 +84,69 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 
 // UpgradeStatus reads how a machine's latest upgrade is going, or how its
 // last one went until that record expires.
-func (s *Service) UpgradeStatus(nodeID string) (InstallResult, error) {
+func (s *Service) UpgradeStatus(ctx context.Context, nodeID string) (InstallResult, error) {
+	ctx, text := s.speak(ctx)
 	s.mu.Lock()
 	id, ok := s.upgrades[nodeID]
 	s.mu.Unlock()
 	if !ok {
-		return InstallResult{}, fail("planning", "unknown_plan", "这台机器没有进行中或刚结束的升级", "从机器列表发起升级")
+		return InstallResult{}, Fail(text, "planning", "unknown_plan", text.T(i18n.SSHUpgradeUnknown), text.T(i18n.SSHUpgradeUnknownFix))
 	}
-	return s.Status(id)
+	return s.Status(ctx, id)
 }
 
 func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeID string) (InstallResult, error) {
+	text := i18n.FromContext(ctx)
 	result := InstallResult{PlanID: id, Name: nodeID, NodeID: nodeID, Status: "needs_attention", Steps: []Step{}, Phases: upgradePhases}
 	reject := func(failure *StepError) (InstallResult, error) {
 		result.Steps = append(result.Steps, failure.step())
-		result.appendLog(s.now(), "steve", failure.Message+"；"+failure.Suggestion)
+		result.appendLog(s.now(), "steve", failure.Error())
 		return result, failure
 	}
-	s.enter(&result, PhasePreflight, "确认这台机器的 SSH 别名、平台和要发送的程序")
+	s.enter(&result, PhasePreflight, text.T(i18n.SSHUpgradePreflight))
 	target, err := backend.UpgradeTarget(ctx, nodeID)
 	if err != nil {
-		return reject(fail("preflight", "upgrade_target", err.Error(), "只有经 SSH 加入桌面 App 集群、且隧道仍记录在本机的机器可以从这里升级；其他机器需在该机器上替换 steve 或 steve-node 并重启"))
+		return reject(Fail(text, "preflight", "upgrade_target", err.Error(), text.T(i18n.SSHUpgradeTargetFix)))
 	}
 	candidate, _, err := s.selected(ctx, target.Alias)
 	if err != nil {
-		return reject(stepOf(err))
+		return reject(stepOf(text, err))
 	}
 	connection, err := s.bind(ctx, candidate)
 	if err != nil {
-		return reject(stepOf(err))
+		return reject(stepOf(text, err))
 	}
 	defer connection.Close()
 	check, err := s.check(ctx, candidate, connection)
 	if err != nil {
-		return reject(stepOf(err))
+		return reject(stepOf(text, err))
 	}
 	if check.OS == "" || check.Arch == "" {
-		return reject(fail("preflight", "platform", "无法识别这台机器的平台", "只支持 Linux 或 macOS 的 amd64/arm64 机器"))
+		return reject(Fail(text, "preflight", "platform", text.T(i18n.SSHUpgradePlatformUnknown), text.T(i18n.SSHUpgradePlatformUnknownFix)))
 	}
 	if !slices.Contains(check.ExistingPaths, "~/.steve-peer") {
-		return reject(fail("preflight", "peer_missing", "机器上没有 ~/.steve-peer，不是一台已接入的节点", "先通过 SSH 接入这台机器"))
+		return reject(Fail(text, "preflight", "peer_missing", text.T(i18n.SSHUpgradeNotPeer), text.T(i18n.SSHUpgradeNotPeerFix)))
 	}
 	if !check.HasTool("sha256sum") && !check.HasTool("shasum") {
-		return reject(fail("preflight", "checksum", "远端缺少 SHA-256 校验工具", "安装 sha256sum 或 shasum 后再升级"))
+		return reject(Fail(text, "preflight", "checksum", text.T(i18n.AdminSSHNoChecksum), text.T(i18n.SSHUpgradeChecksumFix)))
 	}
 	path, ok := target.FindBinary(check.OS + "/" + check.Arch)
 	if !ok {
-		return reject(fail("preflight", "binary_unavailable", "App 内没有适合 "+check.OS+"/"+check.Arch+" 的节点程序", "使用包含这个平台节点程序的桌面安装包"))
+		return reject(Fail(text, "preflight", "binary_unavailable", text.T(i18n.SSHUpgradeNoBinary, check.OS+"/"+check.Arch), text.T(i18n.SSHUpgradeNoBinaryFix)))
 	}
 	// The failed step below says what went wrong; the reason is not shown.
-	binary, metadata, err := nodebootstrap.OpenBinary(i18n.Catalog{}, path)
+	binary, metadata, err := nodebootstrap.OpenBinary(text, path)
 	if err != nil {
-		return reject(fail("preflight", "binary_unavailable", "无法读取待发送的节点程序", "重新安装 App 后再升级"))
+		return reject(Fail(text, "preflight", "binary_unavailable", text.T(i18n.SSHUpgradeBinaryUnreadable), text.T(i18n.SSHUpgradeBinaryUnreadableFix)))
 	}
 	defer binary.Close()
 	if metadata.OS != check.OS || metadata.Arch != check.Arch {
-		return reject(fail("preflight", "binary_mismatch", "节点程序的平台与机器不符", "使用目标平台的桌面安装包"))
+		return reject(Fail(text, "preflight", "binary_mismatch", text.T(i18n.SSHUpgradeBinaryMismatch), text.T(i18n.SSHUpgradeBinaryMismatchFix)))
 	}
-	result.Steps = append(result.Steps, Step{ID: "preflight", Status: "ready", Message: fmt.Sprintf("%s@%s，%s/%s；将发送 %s 版本的节点程序", check.User, check.Address, check.OS, check.Arch, target.Version)})
+	result.Steps = append(result.Steps, Step{ID: "preflight", Status: "ready", Message: text.T(i18n.SSHUpgradeReady, check.User, check.Address, check.OS, check.Arch, target.Version)})
 	s.progress(result)
-	uncertain := func(reason string) *StepError {
-		return fail("upload", "upload_uncertain", "节点程序上传"+reason+"，机器上的程序没有改变", "检查 SSH 连接后重新升级")
+	uncertain := func(stalled bool) *StepError {
+		return Fail(text, "upload", "upload_uncertain", text.T(pick(stalled, i18n.SSHUpgradeUploadStalled, i18n.SSHUpgradeUploadUnconfirmed)), text.T(i18n.SSHUpgradeUploadFix))
 	}
 	if failure := s.upload(ctx, &result, InstallPlan{ID: id, Binary: &metadata}, connection, io.LimitReader(binary, metadata.Size), "", uncertain); failure != nil {
 		return reject(failure)
@@ -152,17 +154,17 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 	if failure := s.swapProgram(ctx, &result, connection, id, metadata); failure != nil {
 		return reject(failure)
 	}
-	s.enter(&result, PhaseConnectivity, "重新建立到这台机器的 SSH 隧道，等待它以新版本回到集群")
+	s.enter(&result, PhaseConnectivity, text.T(i18n.SSHUpgradeReconnecting))
 	reporter := &phaseReporter{s: s, result: &result}
 	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, reporter.report), upgradeVerifyLimit)
 	err = backend.Upgraded(verifyCtx, nodeID)
 	cancel()
 	reporter.close()
 	if err != nil {
-		return reject(fail("connectivity", "upgrade_unconfirmed", "程序已替换，但机器还没有以新版本回到集群："+err.Error(), "稍后在机器列表核对版本；仍不见新版本就查看机器上的 ~/.steve-peer/peer.log，再次升级会保留原来能运行的程序作为回退"))
+		return reject(Fail(text, "connectivity", "upgrade_unconfirmed", text.T(i18n.SSHUpgradeUnconfirmed, err.Error()), text.T(i18n.SSHUpgradeUnconfirmedFix)))
 	}
 	result.Status, result.Connected, result.Phase = "connected", true, ""
-	message := "机器已运行 " + target.Version + " 并回到集群"
+	message := text.T(i18n.SSHUpgraded, target.Version)
 	result.Steps = append(result.Steps, Step{ID: "connectivity", Status: "ready", Message: message})
 	result.appendLog(s.now(), "steve", message)
 	return result, nil
@@ -172,19 +174,20 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 // puts it in place of the installed one and restarts the peer, restoring
 // the previous program when the new one does not stay up.
 func (s *Service) swapProgram(ctx context.Context, result *InstallResult, connection Connection, id string, metadata nodebootstrap.Binary) *StepError {
+	text := i18n.FromContext(ctx)
 	script, err := nodebootstrap.BuildPeerUpgrade(nodebootstrap.UpgradeSpec{UploadID: id, OS: metadata.OS, Arch: metadata.Arch, SHA256: metadata.SHA256})
 	if err != nil {
-		return fail("installation", "script", "无法生成升级脚本："+err.Error(), "检查节点程序的平台信息")
+		return Fail(text, "installation", "script", text.T(i18n.SSHUpgradeScriptFailed, err.Error()), text.T(i18n.SSHUpgradeScriptFailedFix))
 	}
-	s.enter(result, PhaseInstallation, "校验 SHA-256 后替换 ~/.steve-peer/bin/steve 并重启节点进程；新程序起不来会自动换回旧程序")
+	s.enter(result, PhaseInstallation, text.T(i18n.SSHUpgradeSwapping))
 	// Between stopping the peer and starting it again the machine is down;
 	// an owner closing the page must not cut the script off there.
 	installCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 	out, err := connection.Run(installCtx, "bash -s", script)
 	cancel()
-	s.output(result, out, "")
+	s.output(text, result, out, "")
 	if err == nil {
-		result.Steps = append(result.Steps, Step{ID: "installation", Status: "ready", Message: "节点程序已替换，节点进程已在新程序上重启"})
+		result.Steps = append(result.Steps, Step{ID: "installation", Status: "ready", Message: text.T(i18n.SSHUpgradeSwapped)})
 		s.progress(*result)
 		return nil
 	}
@@ -196,18 +199,18 @@ func (s *Service) swapProgram(ctx context.Context, result *InstallResult, connec
 	}
 	switch code {
 	case 26:
-		return fail("installation", "upgrade_rejected", "新程序没有保持运行，机器已换回原来的程序", "查看上面的输出和机器上的 ~/.steve-peer/peer.log")
+		return Fail(text, "installation", "upgrade_rejected", text.T(i18n.SSHUpgradeRejected), text.T(i18n.SSHUpgradeRejectedFix))
 	case 28:
-		return fail("installation", "upgrade_down", "新程序没有保持运行，也没能换回原来的程序，机器上的节点进程已停止", "登录机器查看 ~/.steve-peer/peer.log，手动启动 ~/.steve-peer/bin/steve.previous 或重新接入")
+		return Fail(text, "installation", "upgrade_down", text.T(i18n.SSHUpgradeDown), text.T(i18n.SSHUpgradeDownFix))
 	default:
-		return fail("installation", "upgrade_uncertain", "升级脚本退出异常："+err.Error(), "检查机器上的 ~/.steve-peer/peer.log 和进程状态；SSH 断开后重启可能仍在进行")
+		return Fail(text, "installation", "upgrade_uncertain", text.T(i18n.SSHUpgradeScriptExited, err.Error()), text.T(i18n.SSHUpgradeScriptExitedFix))
 	}
 }
 
-func stepOf(err error) *StepError {
+func stepOf(text i18n.Catalog, err error) *StepError {
 	var step *StepError
 	if errors.As(err, &step) {
 		return step
 	}
-	return fail("preflight", "upgrade_failed", err.Error(), "处理后重新升级")
+	return Fail(text, "preflight", "upgrade_failed", err.Error(), text.T(i18n.SSHUpgradeFailedFix))
 }

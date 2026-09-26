@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -17,6 +18,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // Candidate contains static hints, not a replacement for OpenSSH's resolver.
@@ -65,6 +68,7 @@ type directive struct {
 
 type configReader struct {
 	ctx          context.Context
+	text         i18n.Catalog
 	root, home   string
 	active       map[string]bool
 	warnings     []Warning
@@ -77,19 +81,21 @@ type configReader struct {
 // Discover reads only regular config files. Include paths use the user SSH
 // directory as their base, including when an Include appears in a nested file.
 // Match conditions are never evaluated, and discovery starts no subprocesses.
+// What it says about the files is in the language ctx carries.
 func Discover(ctx context.Context, path string) (Discovery, error) {
+	text := i18n.FromContext(ctx)
 	home, err := os.UserHomeDir()
 	if err != nil && path == "" {
-		return Discovery{}, fmt.Errorf("定位 SSH 配置失败")
+		return Discovery{}, errors.New(text.T(i18n.SSHConfigLocateFailed))
 	}
 	if path == "" {
 		path = filepath.Join(home, ".ssh", "config")
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
-		return Discovery{}, fmt.Errorf("定位 SSH 配置失败")
+		return Discovery{}, errors.New(text.T(i18n.SSHConfigLocateFailed))
 	}
-	r := configReader{ctx: ctx, root: filepath.Dir(path), home: home, active: map[string]bool{}, warnings: []Warning{}, fingerprint: sha256.New()}
+	r := configReader{ctx: ctx, text: text, root: filepath.Dir(path), home: home, active: map[string]bool{}, warnings: []Warning{}, fingerprint: sha256.New()}
 	if err := r.read(path, 0); err != nil {
 		return Discovery{}, err
 	}
@@ -144,7 +150,7 @@ func Discover(ctx context.Context, path string) (Discovery, error) {
 						if proxyJumpShape.MatchString(value) {
 							c.ProxyJump = value
 						} else {
-							c.ProxyJump = "已配置"
+							c.ProxyJump = text.T(i18n.SSHProxyConfigured)
 						}
 					}
 				case "proxycommand":
@@ -160,11 +166,11 @@ func Discover(ctx context.Context, path string) (Discovery, error) {
 	return out, nil
 }
 
-func (r *configReader) warn(source string, line int, code, message string) {
+func (r *configReader) warn(source string, line int, code string, message i18n.Key) {
 	if len(r.warnings) >= 64 {
 		return
 	}
-	r.warnings = append(r.warnings, Warning{Source: source, Line: line, Code: code, Message: message})
+	r.warnings = append(r.warnings, Warning{Source: source, Line: line, Code: code, Message: r.text.T(message)})
 }
 
 func (r *configReader) read(path string, depth int) error {
@@ -172,7 +178,7 @@ func (r *configReader) read(path string, depth int) error {
 		return err
 	}
 	if depth > 32 || r.files >= 256 || r.bytes >= 4<<20 {
-		r.warn(path, 0, "include_limit", "配置嵌套或文件总量超过读取限制，部分候选未列出")
+		r.warn(path, 0, "include_limit", i18n.SSHConfigTooMany)
 		return nil
 	}
 	canonical, err := filepath.EvalSymlinks(path)
@@ -180,32 +186,32 @@ func (r *configReader) read(path string, depth int) error {
 		if depth == 0 && os.IsNotExist(err) {
 			return nil
 		}
-		r.warn(path, 0, "unreadable_include", "无法读取此 SSH 配置文件")
+		r.warn(path, 0, "unreadable_include", i18n.SSHConfigUnreadable)
 		return nil
 	}
 	if r.active[canonical] {
-		r.warn(path, 0, "include_cycle", "已跳过循环引用的 SSH 配置")
+		r.warn(path, 0, "include_cycle", i18n.SSHConfigCycle)
 		return nil
 	}
 	info, err := os.Stat(canonical)
 	if err != nil || !info.Mode().IsRegular() {
-		r.warn(path, 0, "not_regular_file", "已跳过非普通配置文件")
+		r.warn(path, 0, "not_regular_file", i18n.SSHConfigNotRegular)
 		return nil
 	}
 	if info.Size() > 1<<20 || info.Size()+int64(r.bytes) > 4<<20 {
-		r.warn(path, 0, "include_limit", "配置文件超过读取限制")
+		r.warn(path, 0, "include_limit", i18n.SSHConfigTooLarge)
 		return nil
 	}
 	f, err := os.Open(canonical)
 	if err != nil {
-		r.warn(path, 0, "unreadable_include", "无法读取此 SSH 配置文件")
+		r.warn(path, 0, "unreadable_include", i18n.SSHConfigUnreadable)
 		return nil
 	}
 	defer f.Close()
 	// LimitReader also bounds a regular file that grows while being read.
 	raw, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
 	if err != nil || len(raw) > 1<<20 {
-		r.warn(path, 0, "unreadable_include", "无法完整读取此 SSH 配置文件")
+		r.warn(path, 0, "unreadable_include", i18n.SSHConfigPartial)
 		return nil
 	}
 	r.active[canonical] = true
@@ -246,7 +252,7 @@ func (r *configReader) read(path string, depth int) error {
 		}
 		values, ok := configWords(tail)
 		if !ok {
-			r.warn(path, line, "invalid_directive", "配置行的引号或转义不完整，已跳过")
+			r.warn(path, line, "invalid_directive", i18n.SSHConfigBadLine)
 			continue
 		}
 		d.values = values
@@ -258,7 +264,7 @@ func (r *configReader) read(path string, depth int) error {
 			if strings.HasPrefix(pattern, "~/") {
 				pattern = filepath.Join(r.home, pattern[2:])
 			} else if strings.ContainsAny(pattern, "~%$") {
-				r.warn(path, line, "dynamic_include", "包含动态路径的 Include 需由 SSH 在连接时解析")
+				r.warn(path, line, "dynamic_include", i18n.SSHConfigDynamicInclude)
 				r.conditional = true
 				continue
 			} else if !filepath.IsAbs(pattern) {
@@ -266,7 +272,7 @@ func (r *configReader) read(path string, depth int) error {
 			}
 			matches, err := filepath.Glob(pattern)
 			if err != nil {
-				r.warn(path, line, "invalid_include", "Include 路径模式无效")
+				r.warn(path, line, "invalid_include", i18n.SSHConfigBadInclude)
 				continue
 			}
 			for _, include := range matches {
@@ -277,7 +283,7 @@ func (r *configReader) read(path string, depth int) error {
 		}
 	}
 	if scanner.Err() != nil {
-		r.warn(path, line, "unreadable_include", "无法完整读取此 SSH 配置文件")
+		r.warn(path, line, "unreadable_include", i18n.SSHConfigPartial)
 	}
 	return nil
 }

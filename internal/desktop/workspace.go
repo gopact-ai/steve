@@ -82,10 +82,10 @@ func PrepareWorkspace(text i18n.Catalog, input, stateDir string) (string, error)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return "", fmt.Errorf(text.T(i18n.DesktopWorkspaceCreateFailed), err)
+			return "", text.Errorf(i18n.DesktopWorkspaceCreateFailed, err)
 		}
 	case err != nil:
-		return "", fmt.Errorf(text.T(i18n.DesktopWorkspaceCheckFailed), err)
+		return "", text.Errorf(i18n.DesktopWorkspaceCheckFailed, err)
 	case !info.IsDir():
 		return "", refuse(text, i18n.DesktopWorkspaceNotFolder, path)
 	}

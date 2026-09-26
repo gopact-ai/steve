@@ -50,10 +50,10 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 		agents := c.Agents
 		item, ok := agents[id]
 		if !ok {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoAgent), id)
+			return textFor(ctx).Errorf(i18n.AdminNoAgent, id)
 		}
 		if _, ok := c.Harnesses[spec.Harness]; !ok && spec.Node == "" {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoLocalHarness), spec.Harness)
+			return textFor(ctx).Errorf(i18n.AdminNoLocalHarness, spec.Harness)
 		}
 		if spec.Node != "" {
 			if err := checkAgentNodeTarget(textFor(ctx), c, spec.Node, target); err != nil {
@@ -61,12 +61,12 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 			}
 		}
 		if err := ability.ValidateText(spec.Requires); err != nil {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminRunCondition), err)
+			return textFor(ctx).Errorf(i18n.AdminRunCondition, err)
 		}
 		if spec.Node == "" {
 			for _, server := range spec.MCPServers {
 				if _, ok := c.MCPServers[server]; !ok {
-					return fmt.Errorf(textFor(ctx).T(i18n.AdminHubMissingMCP), server)
+					return textFor(ctx).Errorf(i18n.AdminHubMissingMCP, server)
 				}
 			}
 		}
@@ -107,7 +107,7 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 	err = a.changeAgents(func(c *config.Config) error {
 		agents := c.Agents
 		if _, ok := c.Harnesses[req.Harness]; !ok && req.Node == "" {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoLocalHarnessChoose), req.Harness)
+			return textFor(ctx).Errorf(i18n.AdminNoLocalHarnessChoose, req.Harness)
 		}
 		if req.Node != "" {
 			if err := checkAgentNodeTarget(textFor(ctx), c, req.Node, target); err != nil {
@@ -115,7 +115,7 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 			}
 		}
 		if _, exists := agents[id]; exists {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentExists), id)
+			return textFor(ctx).Errorf(i18n.AdminAgentExists, id)
 		}
 		agents[id] = config.Agent{Harness: req.Harness, Node: req.Node, Model: req.Model, About: strings.TrimSpace(req.About), Default: req.Default || len(agents) == 0}
 		// Exactly one agent is the default, so an agent asked for that
@@ -142,10 +142,10 @@ func (a *Service) RemoveAgent(ctx context.Context, id string) error {
 		agents := c.Agents
 		item, ok := agents[id]
 		if !ok {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoAgent), id)
+			return textFor(ctx).Errorf(i18n.AdminNoAgent, id)
 		}
 		if item.Default {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminDefaultAgentKept), id)
+			return textFor(ctx).Errorf(i18n.AdminDefaultAgentKept, id)
 		}
 		delete(agents, id)
 		return nil

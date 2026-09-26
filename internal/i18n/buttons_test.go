@@ -21,6 +21,12 @@ func TestSentencesNameButtonsAsTheyAreLabelled(t *testing.T) {
 				t.Errorf("%s %s = %q, want the stop choice %q quoted", locale, key, table[key], table[ConsoleStopChoice])
 			}
 		}
+		resume := consoleLabel(t, locale, "ssh", "ssh.resumeRegistration")
+		for _, key := range []Key{ClusterWaitStoppedFix, ClusterWaitStoppedLastFix} {
+			if !quotes(table[key], resume) {
+				t.Errorf("%s %s = %q, want the console's resume button %q quoted", locale, key, table[key], resume)
+			}
+		}
 		ssh := consoleLabel(t, locale, "ssh", "ssh.connect")
 		if !quotes(table[AdminNodeBinaryMissingNote], ssh) {
 			t.Errorf("%s %s = %q, want the console's SSH button %q quoted", locale, AdminNodeBinaryMissingNote, table[AdminNodeBinaryMissingNote], ssh)

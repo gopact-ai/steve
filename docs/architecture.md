@@ -30,7 +30,7 @@
 | `plugins`、`plugins/pluginledger` | 插件包、安装与运行值类型及本地文件存储；插件库、操作与运行预留的账本记录 | `plugins` 无内部依赖；`pluginledger` 依赖 ledger 与 contentreplica |
 | `budget`、`datalevel`、`channelsettings`、`filedoc` | 默认执行与产物预算、数据等级、通道设置与补丁、单文件持久文档 | 仅标准库 |
 
-`internal/architecture` 的棘轮只允许数字变好：超过 120 行的非测试函数、`cmd/steve` 的行数与内部依赖数、临时接口断言和内联字符串状态都以基线文件记录，出现新违例或基线残留已消失的条目都会失败；清理后用 `RATCHET_UPDATE=1` 重新生成基线。面向用户的中文字面量同样按声明记录在 `user_text` 基线中，只减不增，新文案经 `i18n` 目录按读者语言输出；给 Agent 读的输入、识别用户输入的词表和按 locale 与英文并列选择的文本可以豁免，但豁免只能精确到一个函数、`类型.方法` 或包级常量/变量，并写明理由，不接受整文件、整目录或整批包级声明。
+`internal/architecture` 的棘轮只允许数字变好：超过 120 行的非测试函数、`cmd/steve` 的行数与内部依赖数、临时接口断言和内联字符串状态都以基线文件记录，出现新违例或基线残留已消失的条目都会失败；清理后用 `RATCHET_UPDATE=1` 重新生成基线。面向用户的中文字面量同样按声明记录在 `user_text` 基线中（现已清空），只减不增，新文案经 `i18n` 目录按读者语言输出；给 Agent 读的输入、识别用户输入的词表和按 locale 与英文并列选择的文本可以豁免，但豁免只能精确到一个函数、`类型.方法` 或包级常量/变量，并写明理由，不接受整文件、整目录或整批包级声明。经目录说出的错误由 `Catalog.Errorf` 生成，模板里的 `%w` 在每种语言中都包住原错误；含 `%w` 的模板不经 `Catalog.T` 读取，也不交给 `fmt.Errorf` 格式化。
 
 对仓库内非空接口的类型断言或 type switch 分支（能力探测）在实现改名或签名变化后仍能编译，只会静默走回退分支。因此只有一个生产实现的被探测接口，要在一个能同时引用接口与实现的包里，用 `contracts_test.go` 中的包级 `var _ I = (*T)(nil)`、`T{}` 或 `pkg.T{}` 在编译期钉住实现，T 必须声明在非测试文件中，测试替身或 `nil` 不算钉住；断言放在测试文件里，不增加生产依赖。多个生产类型有意实现或不实现的接口，记入 `internal/architecture` 的 `openCapabilities` 并写明理由；条目对应的接口不再被探测时测试失败。既未钉住也未列入 `openCapabilities` 的被探测接口按接口记录在棘轮基线中，只减不增。`consoleapi.Admin`、`Console` 和 `PluginsService` 的每个方法，连同它们嵌入的 `consoleapi` 接口的方法，都必须在 `internal/httpapi` 中被调用或以方法值引用，否则测试失败。
 

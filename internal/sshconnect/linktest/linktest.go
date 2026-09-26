@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -151,7 +152,7 @@ func parseCommand(command string) ([]sshconnect.PortForward, []string, error) {
 		value := strings.Trim(words[i+1], "'")
 		switch words[i] {
 		case "--listen":
-			forward, err := sshconnect.ParseForward(value)
+			forward, err := sshconnect.ParseForward(i18n.Catalog{}, value)
 			if err != nil {
 				return nil, nil, err
 			}

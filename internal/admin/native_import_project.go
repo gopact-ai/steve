@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -38,7 +37,7 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 	}
 	found, err := a.inspect(ctx, name, workdir)
 	if err != nil {
-		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminNativeImportWorkdirCheckFailed), err)
+		return "", textFor(ctx).Errorf(i18n.AdminNativeImportWorkdirCheckFailed, err)
 	}
 	if len(found) == 1 && found[0].Missing {
 		return "", errors.New(textFor(ctx).T(i18n.AdminNativeImportWorkdirGone))
@@ -79,7 +78,7 @@ func (a *Service) nativeImportProject(ctx context.Context, name string, target c
 			id += "-" + hex.EncodeToString(sum[:4])
 		}
 		if _, exists := candidate.Projects[id]; exists {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNativeImportProjectNameTaken), id)
+			return textFor(ctx).Errorf(i18n.AdminNativeImportProjectNameTaken, id)
 		}
 		candidate.Projects[id] = config.Project{Home: config.ProjectHome{Node: name, Path: workdir}, Level: string(datalevel.Internal), Repo: string(project.RepoInPlace)}
 		return nil

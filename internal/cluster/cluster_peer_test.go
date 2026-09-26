@@ -134,7 +134,7 @@ func testPeerApplication(t *testing.T, activations *atomic.Int32) func(context.C
 				HTTPError(w, err)
 				return
 			}
-			WriteJSON(w, map[string]any{"node_id": activation.NodeID, "generation": activation.Generation, "data": string(data)})
+			WriteJSON(w, map[string]any{"node_id": activation.NodeID, "generation": activation.Generation, "data": string(data), "language": r.Header.Get("Accept-Language")})
 		}), BaseContext: func(net.Listener) context.Context { return ctx }}
 		done := make(chan error, 1)
 		go func() { done <- server.Serve(listener) }()

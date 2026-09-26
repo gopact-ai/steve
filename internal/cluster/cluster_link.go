@@ -3,13 +3,13 @@ package cluster
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -58,7 +58,7 @@ func (p *Peer) openLink(nodeID string, link PeerLink) *sshconnect.Link {
 		p.links = map[string]*sshconnect.Link{}
 	}
 	previous := p.links[nodeID]
-	opened = sshconnect.OpenLink(p.linkCtx, p.linkSpec(link), sshconnect.LinkOptions{Launch: p.Options.SSHLaunch, OnChange: route})
+	opened = sshconnect.OpenLink(p.linkCtx, p.linkSpec(link), sshconnect.LinkOptions{Launch: p.Options.SSHLaunch, OnChange: route, Text: p.text})
 	p.links[nodeID] = opened
 	p.Mu.Unlock()
 	route(opened.Status())
@@ -70,11 +70,11 @@ func (p *Peer) openLink(nodeID string, link PeerLink) *sshconnect.Link {
 
 // setLink records a machine's link in this node's configuration and opens
 // it; a link already open with the same description is kept as it is.
-func (p *Peer) setLink(nodeID string, link PeerLink) (*sshconnect.Link, error) {
+func (p *Peer) setLink(text i18n.Catalog, nodeID string, link PeerLink) (*sshconnect.Link, error) {
 	p.Mu.Lock()
 	if p.closing {
 		p.Mu.Unlock()
-		return nil, errors.New("本节点正在关闭")
+		return nil, errors.New(text.T(i18n.ClusterLinkClosing))
 	}
 	current, open := p.links[nodeID]
 	same := open && p.Config.Links[nodeID] == link
@@ -90,7 +90,7 @@ func (p *Peer) setLink(nodeID string, link PeerLink) (*sshconnect.Link, error) {
 		return current, nil
 	}
 	if err := SaveClusterJSON(p.Options.ClusterPath, saved, false); err != nil {
-		return nil, fmt.Errorf("保存隧道配置失败：%w", err)
+		return nil, text.Errorf(i18n.ClusterLinkSaveFailed, err)
 	}
 	return p.openLink(nodeID, link), nil
 }
@@ -131,18 +131,19 @@ func (p *Peer) LinkStatuses() map[string]sshconnect.LinkStatus {
 // first, so a restart of this node reopens it whether or not the
 // enrollment went on to finish.
 func (p *Peer) OpenEnrollmentLink(ctx context.Context, id string) error {
+	text := p.text.For(ctx)
 	p.enrollmentMu.Lock()
 	record, err := p.loadEnrollment(id)
 	p.enrollmentMu.Unlock()
 	if errors.Is(err, os.ErrNotExist) {
-		return ErrEnrollmentGone
+		return saidError{text.T(i18n.ClusterEnrollmentGone), ErrEnrollmentGone}
 	}
 	if err != nil {
 		return err
 	}
 	request := record.Request
 	if request.Alias == "" || request.HubRoute.Raft == "" || request.HubRoute.API == "" {
-		return errors.New("这次接入没有经由 SSH 隧道互联的计划")
+		return errors.New(text.T(i18n.ClusterEnrollmentNoTunnel))
 	}
 	_, raftPort, err := net.SplitHostPort(request.RaftAddress)
 	if err != nil {
@@ -153,7 +154,7 @@ func (p *Peer) OpenEnrollmentLink(ctx context.Context, id string) error {
 		return err
 	}
 	link := PeerLink{Alias: request.Alias, Remote: request.HubRoute, Peer: coordination.Route{Raft: net.JoinHostPort("127.0.0.1", raftPort), API: net.JoinHostPort("127.0.0.1", peerPort)}}
-	opened, err := p.setLink(record.NodeID, link)
+	opened, err := p.setLink(text, record.NodeID, link)
 	if err != nil {
 		return err
 	}
@@ -166,7 +167,7 @@ func (p *Peer) OpenEnrollmentLink(ctx context.Context, id string) error {
 // coordinator role moves first, from the coordination page.
 func (p *Peer) RemoveMember(ctx context.Context, nodeID string) error {
 	if nodeID == p.Config.NodeID {
-		return errors.New("不能移除本机自己")
+		return errors.New(p.text.For(ctx).T(i18n.ClusterRemoveSelf))
 	}
 	// The command ID is minted here, so a retry after a failed persist is
 	// a new command; it finds no member and only runs the cleanup below.
@@ -178,6 +179,7 @@ func (p *Peer) RemoveMember(ctx context.Context, nodeID string) error {
 // is a member), then this node's link and route to it. Both the owner's
 // removal and giving up an enrollment go through here.
 func (p *Peer) leaveCluster(ctx context.Context, commandID, nodeID string) error {
+	text := p.text.For(ctx)
 	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return coordination.ErrUnavailable
@@ -188,11 +190,11 @@ func (p *Peer) leaveCluster(ctx context.Context, commandID, nodeID string) error
 	}
 	if _, member := state.Members[nodeID]; member {
 		if _, err := runtime.Remove(ctx, coordination.RemoveRequest{ID: commandID, Actor: "owner", NodeID: nodeID}); err != nil {
-			return fmt.Errorf("移除集群成员失败：%w", err)
+			return text.Errorf(i18n.ClusterRemoveFailed, err)
 		}
 	}
 	if err := p.dropLink(nodeID); err != nil {
-		return fmt.Errorf("关闭到这台机器的 SSH 隧道失败：%w", err)
+		return text.Errorf(i18n.ClusterTunnelCloseFailed, err)
 	}
 	return nil
 }

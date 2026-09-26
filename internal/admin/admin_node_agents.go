@@ -25,7 +25,7 @@ func (a *Service) nodeForAgentEnrollment(text i18n.Catalog, name string) (config
 	target, ok := a.cfg().Nodes[name]
 	a.ConfigStore.runlock()
 	if !ok {
-		return config.Node{}, fmt.Errorf(text.T(i18n.AdminNoNode), name)
+		return config.Node{}, text.Errorf(i18n.AdminNoNode, name)
 	}
 	if a.Nodes == nil {
 		return config.Node{}, errors.New(text.T(i18n.AdminRemoteNodesNotReady))
@@ -40,7 +40,7 @@ func (a *Service) nodeForAgentEnrollment(text i18n.Catalog, name string) (config
 func checkAgentNodeTarget(text i18n.Catalog, cfg *config.Config, name string, expected config.Node) error {
 	current, ok := cfg.Nodes[name]
 	if !ok || current.Addr != expected.Addr || current.Token != expected.Token {
-		return fmt.Errorf(text.T(i18n.AdminNodeChanged), nodewire.ErrSettingsRevisionConflict)
+		return text.Errorf(i18n.AdminNodeChanged, nodewire.ErrSettingsRevisionConflict)
 	}
 	return nil
 }
@@ -173,7 +173,7 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 		for _, id := range planned.order {
 			if current, ok := c.Agents[id]; ok {
 				if current.Node != name || current.Harness != planned.agents[id].Harness {
-					return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentNameTaken), id)
+					return textFor(ctx).Errorf(i18n.AdminAgentNameTaken, id)
 				}
 				continue
 			}
@@ -231,14 +231,14 @@ func planNodeAgents(text i18n.Catalog, node string, requested []agenttools.Enrol
 			id = want.CandidateID
 		}
 		if !NameShape.MatchString(id) {
-			return nodeAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameInvalidQuoted), want.AgentID)
+			return nodeAgentPlan{}, text.Errorf(i18n.AdminAgentNameInvalidQuoted, want.AgentID)
 		}
 		if seen[id] {
-			return nodeAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameTwice), id)
+			return nodeAgentPlan{}, text.Errorf(i18n.AdminAgentNameTwice, id)
 		}
 		seen[id] = true
 		if current, ok := existing[id]; ok && (current.Node != node || current.Harness != canonical.Harness) {
-			return nodeAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameTaken), id)
+			return nodeAgentPlan{}, text.Errorf(i18n.AdminAgentNameTaken, id)
 		}
 		entry := config.Agent{Node: node, Harness: canonical.Harness, About: strings.TrimSpace(want.About), Model: strings.TrimSpace(want.Model)}
 		if len(want.Options) > 0 {
@@ -268,7 +268,7 @@ func (a *Service) checkRemoteHarness(ctx context.Context, nodeID, harnessID stri
 	}
 	declared, ok := settings.Harnesses[harnessID]
 	if !ok || strings.TrimSpace(declared.Command) == "" {
-		return config.Node{}, fmt.Errorf(textFor(ctx).T(i18n.AdminNodeHarnessUnregistered), nodeID, harnessID)
+		return config.Node{}, textFor(ctx).Errorf(i18n.AdminNodeHarnessUnregistered, nodeID, harnessID)
 	}
 	// Same-process enrollment updates the worker without touching this
 	// registry's cached advert. Publish the tool before the Agent can start
@@ -282,5 +282,5 @@ func (a *Service) checkRemoteHarness(ctx context.Context, nodeID, harnessID stri
 			return target, nil
 		}
 	}
-	return config.Node{}, fmt.Errorf(textFor(ctx).T(i18n.AdminNodeHarnessUnreported), nodeID, harnessID)
+	return config.Node{}, textFor(ctx).Errorf(i18n.AdminNodeHarnessUnreported, nodeID, harnessID)
 }

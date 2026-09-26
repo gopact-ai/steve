@@ -13,6 +13,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -148,9 +149,9 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
 	result, err := w.maintain(ctx)
 	if err != nil {
-		w.notice(ctx, "maintenance", "gc_failed", fmt.Sprintf("内容回执清理未完成，未知上传仍保留：%v", err))
+		w.notice(ctx, "maintenance", "gc_failed", i18n.ClusterMaintenanceFailed, err)
 	} else if result.Blobs > 0 {
-		w.notice(ctx, "maintenance", "gc_completed", fmt.Sprintf("已按持久释放凭据清理 %d 个内容对象（%d 字节），未知上传保持不变。", result.Blobs, result.Bytes))
+		w.notice(ctx, "maintenance", "gc_completed", i18n.ClusterMaintenanceDone, result.Blobs, result.Bytes)
 	} else {
 		delete(w.previous, "maintenance")
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func coordinationNodes(ctx context.Context, state coordination.State, localID string, local Status, probe func(context.Context, coordination.Member) (coordination.Progress, error)) []consoleapi.CoordinatorNode {
@@ -44,6 +45,7 @@ func coordinationNodes(ctx context.Context, state coordination.State, localID st
 }
 
 func coordinationNode(ctx context.Context, state coordination.State, localID string, local Status, member coordination.Member, probe func(context.Context, coordination.Member) (coordination.Progress, error)) consoleapi.CoordinatorNode {
+	text := i18n.FromContext(ctx)
 	id := member.NodeID
 	item := consoleapi.CoordinatorNode{ID: id, Name: member.Name, Local: id == localID, Voter: state.Voters[id] != "", AutoEligible: member.AutoEligible}
 	if item.Name == "" {
@@ -51,12 +53,12 @@ func coordinationNode(ctx context.Context, state coordination.State, localID str
 	}
 	var progress coordination.Progress
 	var probeErr error
-	offline := "暂时无法连接"
+	offline := text.T(i18n.ClusterNodeOffline)
 	if item.Local {
 		progress = local.Progress()
 		if !local.Healthy {
 			probeErr = coordination.ErrUnavailable
-			offline = "本机的集群服务已停止，重启 App 后恢复"
+			offline = text.T(i18n.ClusterLocalServiceStopped)
 		}
 	} else {
 		// Probes travel through the authenticated SSH/mux route. A one-second
@@ -72,11 +74,11 @@ func coordinationNode(ctx context.Context, state coordination.State, localID str
 	if !item.Online {
 		item.Reason = offline
 	} else if !state.IsActiveReplica(id) {
-		item.Reason = "节点入群或移除尚未完成"
+		item.Reason = text.T(i18n.ClusterMembershipPending)
 	} else if pendingVote {
-		item.Reason = "投票变更尚未完成，请重试原操作或重新确认"
+		item.Reason = text.T(i18n.ClusterVotePending)
 	} else if !item.Ready {
-		item.Reason = "正在同步协作记录"
+		item.Reason = text.T(i18n.ClusterSyncing)
 	}
 	return item
 }

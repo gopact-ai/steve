@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path"
 	"regexp"
@@ -28,12 +27,12 @@ func CheckProjectDir(text i18n.Catalog, input string) (string, error) {
 		return "", errors.New(text.T(i18n.AdminProjectDirRelative))
 	}
 	if strings.HasPrefix(dir, "/") || strings.HasPrefix(dir, "~") || strings.Contains(dir, "\\") {
-		return "", fmt.Errorf(text.T(i18n.AdminProjectDirAbsolute), input)
+		return "", text.Errorf(i18n.AdminProjectDirAbsolute, input)
 	}
 	dir = strings.Trim(dir, "/")
 	for _, segment := range strings.Split(dir, "/") {
 		if !ProjectDirShape.MatchString(segment) {
-			return "", fmt.Errorf(text.T(i18n.AdminProjectDirInvalid), input)
+			return "", text.Errorf(i18n.AdminProjectDirInvalid, input)
 		}
 	}
 	return dir, nil
@@ -57,15 +56,15 @@ func (a *Service) workspaceRootOf(ctx context.Context, nodeKey string) (string, 
 		advert, err := a.Nodes.Advert(actx, nodeKey)
 		switch {
 		case err != nil && !local:
-			return "", fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceRootReadFailed), a.name(nodeKey), err)
+			return "", textFor(ctx).Errorf(i18n.AdminWorkspaceRootReadFailed, a.name(nodeKey), err)
 		case err == nil && advert.WorkspaceRoot != "":
 			return advert.WorkspaceRoot, nil
 		case !local:
-			return "", fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceRootUnreported), a.name(nodeKey))
+			return "", textFor(ctx).Errorf(i18n.AdminWorkspaceRootUnreported, a.name(nodeKey))
 		}
 	}
 	if !local {
-		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceRootUnknown), a.name(nodeKey))
+		return "", textFor(ctx).Errorf(i18n.AdminWorkspaceRootUnknown, a.name(nodeKey))
 	}
 	a.ConfigStore.rlock()
 	defer a.ConfigStore.runlock()
@@ -96,7 +95,7 @@ func (a *Service) projectDirName(ctx context.Context, projectID string) (string,
 	item, exists := a.cfg().Projects[projectID]
 	a.ConfigStore.runlock()
 	if !exists {
-		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
+		return "", textFor(ctx).Errorf(i18n.AdminNoProject, projectID)
 	}
 	root, err := a.workspaceRootOf(ctx, item.Home.Node)
 	if err != nil {
@@ -119,15 +118,15 @@ func (a *Service) projectDirName(ctx context.Context, projectID string) (string,
 func (a *Service) makeProjectDir(ctx context.Context, nodeKey, dir string) error {
 	if a.localMachine(nodeKey) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminMakeDirFailed), dir, err)
+			return textFor(ctx).Errorf(i18n.AdminMakeDirFailed, dir, err)
 		}
 		return nil
 	}
 	if a.Nodes == nil {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminCannotMakeDirYet), a.name(nodeKey))
+		return textFor(ctx).Errorf(i18n.AdminCannotMakeDirYet, a.name(nodeKey))
 	}
 	if _, err := a.Nodes.Files(ctx, nodeKey, nodewire.FileRequest{Op: nodewire.FileMkdir, Path: dir}); err != nil {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminMakeDirOnFailed), a.name(nodeKey), dir, err)
+		return textFor(ctx).Errorf(i18n.AdminMakeDirOnFailed, a.name(nodeKey), dir, err)
 	}
 	return nil
 }
