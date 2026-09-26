@@ -198,8 +198,15 @@ func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 }
 
 // A revoked business generation drops its worker tunnels at once, not once
-// its stop has finished and a later generation has taken over.
+// its stop has finished and a later generation has taken over: the tunnel
+// to its own machine's worker, and those to other machines, whose replicas
+// would only notice once a later generation is named.
 func TestRevokedGenerationClosesItsWorkerTunnelsWhileItStops(t *testing.T) {
+	t.Run("own worker", func(t *testing.T) { testRevokedGenerationClosesItsWorkerTunnel(t, false) })
+	t.Run("another machine's worker", func(t *testing.T) { testRevokedGenerationClosesItsWorkerTunnel(t, true) })
+}
+
+func testRevokedGenerationClosesItsWorkerTunnel(t *testing.T, remote bool) {
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	start := testPeerApplication(t, &activations)
@@ -220,7 +227,12 @@ func TestRevokedGenerationClosesItsWorkerTunnelsWhileItStops(t *testing.T) {
 	}
 	t.Cleanup(unblock)
 	WaitPeerReady(t, hub)
-	closed := openWorkerTunnel(t, hub, hub).Done()
+	worker := hub
+	if remote {
+		worker = joinNonvoter(t, hub, nil)
+		WaitPeerReady(t, hub)
+	}
+	closed := openWorkerTunnel(t, hub, worker).Done()
 	runtime := hub.Runtime.Load()
 	runtime.mu.Lock()
 	current := runtime.current
