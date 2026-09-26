@@ -231,6 +231,19 @@ type Status struct {
 	StorageLevel  string `json:"storage_level"`
 }
 
+// LogProgress is how far a replica's Raft log has gone, as that replica
+// knows it. Committed is the last entry it knows a majority stored; a
+// follower learns it from the leader's next entries, so it never runs ahead
+// of the entries the follower holds. Applied is the last committed entry
+// Raft handed to the state machine, including the barriers of quorum reads
+// and the entry each new leader starts with, which never reach it and
+// leave State.AppliedIndex behind; the state machine may still be applying
+// the entries it was handed last.
+type LogProgress struct {
+	Committed uint64
+	Applied   uint64
+}
+
 func (s Status) Progress() Progress {
 	return Progress{ControlProtocol: s.ControlProtocol, ClusterID: s.ClusterID, NodeID: s.NodeID, AppliedIndex: s.AppliedIndex, AppVersion: s.AppVersion, FailureDomain: s.FailureDomain, StorageLevel: s.StorageLevel}
 }
