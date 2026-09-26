@@ -86,26 +86,47 @@ func TestRunReturnsAPermanentFailure(t *testing.T) {
 	}
 }
 
+// failing fails every Accept with EMFILE and reports each call on calls.
+type failing struct {
+	net.Listener
+	calls chan struct{}
+}
+
+func (l *failing) Accept() (net.Conn, error) {
+	l.calls <- struct{}{}
+	return nil, acceptError(syscall.EMFILE)
+}
+
 // ctx ending cuts a pause short, so a stop does not wait out up to a
-// second of backoff before the loop returns.
+// second of backoff before the loop returns. The ninth failure in a row
+// pauses a full second; ctx ends well inside it, and the loop returns
+// without accepting again, which it would only do once the pause ran out.
 func TestRunReturnsWhenCtxEndsDuringAPause(t *testing.T) {
-	failures := make([]error, 20)
-	for i := range failures {
-		failures[i] = acceptError(syscall.EMFILE)
-	}
-	l := &scripted{Listener: listen(t), errs: failures}
+	l := &failing{Listener: listen(t), calls: make(chan struct{}, 16)}
 	ctx, cancel := context.WithCancel(t.Context())
 	ran := make(chan error, 1)
 	go func() { ran <- Run(ctx, l, "test", func(net.Conn) {}) }()
-	time.Sleep(50 * time.Millisecond)
+	for range 9 {
+		select {
+		case <-l.calls:
+		case err := <-ran:
+			t.Fatalf("Run returned %v on a temporary failure", err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the loop stopped accepting before its ninth failure")
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
 	cancel()
 	select {
 	case err := <-ran:
 		if !errors.Is(err, syscall.EMFILE) {
 			t.Fatalf("Run returned %v, want the failure it paused on", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not return after ctx ended")
+	}
+	if accepts := 9 + len(l.calls); accepts != 9 {
+		t.Fatalf("the loop accepted %d times, again after ctx ended during its pause", accepts)
 	}
 }
 
@@ -127,9 +148,19 @@ func TestRunWarnsOnceForARunOfFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dialed.Close()
-	<-handled
+	select {
+	case <-handled:
+	case err := <-ran:
+		t.Fatalf("Run returned %v on a temporary failure", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("no connection handed out after the temporary failures")
+	}
 	raw.Close()
-	<-ran
+	select {
+	case <-ran:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return once its listener closed")
+	}
 	if n := strings.Count(logs.String(), "level=WARN"); n != 1 {
 		t.Fatalf("logged %d warnings for three failures, want 1:\n%s", n, logs.String())
 	}
