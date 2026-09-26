@@ -169,6 +169,57 @@ func TestReplacedCoordinatorLosesItsOwnWorkerTunnelWhileItsReplicationLags(t *te
 	}
 }
 
+// A machine whose replica could not be confirmed drops its worker tunnels,
+// and admits one again once its replica has caught up: the quorum read
+// that opens the tunnel confirms the replica anew, whatever the failed
+// confirmation before it found.
+func TestWorkerTunnelIsAdmittedAgainOnceAnUnconfirmedReplicaCatchesUp(t *testing.T) {
+	hub := startTestHub(t)
+	gate := newEntryGate()
+	member := joinNonvoter(t, hub, gate.wrap)
+	t.Cleanup(gate.release)
+	WaitPeerReady(t, hub)
+	closed := openWorkerTunnel(t, hub, member).Done()
+	runtime := hub.Runtime.Load()
+	state, err := runtime.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate.paused.Store(true)
+	// The large command ID makes the entry larger than any heartbeat.
+	if _, err := runtime.Rename(t.Context(), coordination.RenameRequest{ID: "rename-" + strings.Repeat("x", 16000), Actor: "owner", ExpectedRevision: state.Revision, NodeID: member.Config.NodeID, Name: "renamed"}); err != nil {
+		t.Fatal(err)
+	}
+	timeout := member.Runtime.Load().config.Coordination.ApplyTimeout
+	select {
+	case <-closed:
+	case <-time.After(2*timeout + 3*time.Second):
+		t.Fatalf("the tunnel to a machine whose replication lagged stayed open %s", 2*timeout+3*time.Second)
+	}
+	workers := &member.Runtime.Load().workers
+	workers.mu.Lock()
+	failure := workers.failure
+	workers.mu.Unlock()
+	if failure == nil || !strings.Contains(failure.Error(), "could not be confirmed with a quorum") {
+		t.Fatalf("the tunnel closed, but not because the replica could not be confirmed: %v", failure)
+	}
+	gate.release()
+	deadline := time.Now().Add(10 * time.Second)
+	for member.Runtime.Load().Status().Members[member.Config.NodeID].Name != "renamed" {
+		if time.Now().After(deadline) {
+			t.Fatal("the replica did not catch up within 10s of its replication resuming")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	connection, err := hub.DialWorker(ctx, member.Config.NodeID)
+	if err != nil {
+		t.Fatalf("the machine refused a worker tunnel after its replica caught up: %v", err)
+	}
+	connection.Close()
+}
+
 // An idle worker tunnel appends nothing to the consensus log. Every quorum
 // read the consensus leader serves appends a barrier to it, whether it is
 // its own or a member's request for the leader's state, so a log that does
