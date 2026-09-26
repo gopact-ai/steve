@@ -5,6 +5,8 @@ package node
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/stableport"
 )
 
@@ -92,5 +95,79 @@ func TestPluginBrokerProxyReleasesItsPortBeforeDone(t *testing.T) {
 			t.Fatalf("round %d: port still held once the proxy is done: %v", i, err)
 		}
 		again.Close()
+	}
+}
+
+// Serve owns the proxy it started: when the socket cannot be served, Serve
+// stops the proxy before it returns, even though its caller's context is
+// still live.
+func TestBrokerServeFailureReleasesTheProxyPort(t *testing.T) {
+	dir := t.TempDir()
+	notDir := filepath.Join(dir, "file")
+	if err := os.WriteFile(notDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	broker := NewBroker(BrokerConfig{Socket: filepath.Join(notDir, "mcp.sock")})
+	if err := broker.Serve(t.Context()); err == nil {
+		t.Fatal("served a socket under a regular file")
+	}
+	if broker.proxyPort == 0 {
+		t.Fatal("proxy never listened")
+	}
+	again, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(broker.proxyPort))
+	if err != nil {
+		t.Fatalf("proxy port still held after Serve returned: %v", err)
+	}
+	again.Close()
+}
+
+// A plugin broker that fails to start has already let go of its remembered
+// proxy port, so loading the runtime again binds that port under StrictPort.
+// The port is checked straight after the failed load, before anything else
+// gets the one P.
+func TestPluginRuntimeLoadRetriesOnItsPortAfterAFailedStart(t *testing.T) {
+	procs := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(procs) })
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer upstream.Close()
+	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir()})
+	selection := nodeRuntimeFixture(t, s, upstream.URL)
+	pool := s.pluginRuntimePool()
+	defer pool.Close()
+	prepared, err := pool.Prepare(t.Context(), "runtime", selection, harness.Config{Command: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, err := s.pluginStore().RuntimeSocket(t.Context(), prepared.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := ""
+	for i := range 10 {
+		// A non-empty directory where the socket goes: the broker's proxy
+		// is up by the time its socket fails.
+		if err := os.MkdirAll(filepath.Join(socket, "blocked"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Load(t.Context(), prepared.Ref); err == nil {
+			t.Fatalf("round %d: loaded with its socket blocked", i)
+		}
+		if address == "" {
+			address = "127.0.0.1:" + strconv.Itoa(rememberedPortIn(filepath.Join(s.pluginStore().RuntimeDir(prepared.Ref.ID), "mcp.port")))
+		}
+		free, err := net.Listen("tcp", address)
+		if err != nil {
+			t.Fatalf("round %d: proxy port still held after a failed load: %v", i, err)
+		}
+		free.Close()
+		if err := os.RemoveAll(socket); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Load(t.Context(), prepared.Ref); err != nil {
+			t.Fatalf("round %d: load after a failed start: %v", i, err)
+		}
+		if err := pool.Drop(prepared.Ref.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
