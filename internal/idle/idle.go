@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,12 +27,22 @@ func Expired(ctx context.Context) bool { return errors.Is(context.Cause(ctx), er
 // context.DeadlineExceeded, like a deadline's. It wraps a cancel-cause
 // context that ends with it, so context.Cause of it and of every context
 // derived from it names why it ended.
+//
+// A context derived from it directly — by context.WithCancel, WithTimeout
+// and the like — before it ended, ends as it ends, before its Done closes:
+// whoever sees it ended and then reads one derived from it reads that one
+// ended too, for the same reason. One derived while it is ending, or
+// through a context that is not the context package's own, such as one
+// from context.WithValue, hears a moment later.
 type idleContext struct {
 	context.Context
-	end       context.CancelCauseFunc
-	done      chan struct{}
+	end  context.CancelCauseFunc
+	done chan struct{}
+	// err is set once, under mu, before the derived contexts are ended; it
+	// is read without mu because ending them reads it.
+	err       atomic.Value
 	mu        sync.Mutex
-	err       error
+	after     map[*func()]struct{}
 	timer     *time.Timer
 	d         time.Duration
 	remaining time.Duration
@@ -62,7 +73,7 @@ func Hold(ctx context.Context) (release func()) {
 		return func() {}
 	}
 	c.mu.Lock()
-	if c.err == nil {
+	if c.Err() == nil {
 		c.stopLocked()
 	}
 	c.holds++
@@ -74,7 +85,7 @@ func Hold(ctx context.Context) (release func()) {
 			defer c.mu.Unlock()
 			c.holds--
 			c.remaining = c.d
-			if c.err == nil && c.holds == 0 && !c.paused {
+			if c.Err() == nil && c.holds == 0 && !c.paused {
 				c.arm(c.remaining)
 			}
 		})
@@ -117,19 +128,47 @@ func WithTimeout(parent context.Context, d time.Duration) (ctx Context, stop fun
 	go func() {
 		select {
 		case <-parent.Done():
-			c.finish(parent.Err())
+			c.finish(parent.Err(), context.Cause(parent))
 		case <-c.done:
 		}
 	}()
-	return c, func() { c.finish(context.Canceled) }, c.touch
+	return c, func() { c.finish(context.Canceled, nil) }, c.touch
 }
 
 func (c *idleContext) Done() <-chan struct{} { return c.done }
 
+// Err may report the end while the contexts derived from c are being ended,
+// just before Done closes.
 func (c *idleContext) Err() error {
+	err, _ := c.err.Load().(error)
+	return err
+}
+
+// AfterFunc makes c a parent the context package cancels its children
+// through: it registers f, which ends one derived context, to run when c
+// ends, before Done closes. f runs holding c.mu, so it must not call back
+// into c except for Err, Value and Deadline; the context package's never
+// does. On a c that has already ended, f runs at once in its own goroutine:
+// the caller may hold the lock f takes.
+func (c *idleContext) AfterFunc(f func()) (stop func() bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.err
+	if c.Err() != nil {
+		go f()
+		return func() bool { return false }
+	}
+	key := &f
+	if c.after == nil {
+		c.after = map[*func()]struct{}{}
+	}
+	c.after[key] = struct{}{}
+	return func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		_, registered := c.after[key]
+		delete(c.after, key)
+		return registered
+	}
 }
 
 // Deadline is the parent's: the idle clock is not a point in time.
@@ -138,7 +177,7 @@ func (c *idleContext) Deadline() (time.Time, bool) { return c.Context.Deadline()
 func (c *idleContext) touch() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.err == nil {
+	if c.Err() == nil {
 		if c.stopped() {
 			c.remaining = c.d
 		} else {
@@ -159,7 +198,7 @@ func (c *idleContext) arm(d time.Duration) {
 	c.timer = time.AfterFunc(d, func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.err == nil && !c.stopped() && c.epoch == epoch {
+		if c.Err() == nil && !c.stopped() && c.epoch == epoch {
 			c.finishLocked(context.DeadlineExceeded, errSilent)
 		}
 	})
@@ -168,7 +207,7 @@ func (c *idleContext) arm(d time.Duration) {
 func (c *idleContext) Pause() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.err != nil || c.paused {
+	if c.Err() != nil || c.paused {
 		return
 	}
 	c.stopLocked()
@@ -191,7 +230,7 @@ func (c *idleContext) stopLocked() {
 func (c *idleContext) Resume() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.err != nil || !c.paused {
+	if c.Err() != nil || !c.paused {
 		return
 	}
 	c.paused = false
@@ -200,20 +239,32 @@ func (c *idleContext) Resume() {
 	}
 }
 
-func (c *idleContext) finish(err error) {
+func (c *idleContext) finish(err, cause error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.finishLocked(err, nil)
+	c.finishLocked(err, cause)
 }
 
-// finishLocked records the cause before done closes: a context derived
-// from this one reads it when it sees done.
+// finishLocked ends c on err and cause, unless its parent ended first: then
+// c ends for the parent's reason, whatever it was about to end on. The
+// cause is recorded, and every context derived from c ended with it,
+// before done closes.
 func (c *idleContext) finishLocked(err, cause error) {
-	if c.err != nil {
+	if c.Err() != nil {
 		return
 	}
-	c.err = err
-	c.timer.Stop()
+	if cause == nil {
+		cause = err
+	}
 	c.end(cause)
+	if !errors.Is(context.Cause(c.Context), cause) {
+		err = c.Context.Err()
+	}
+	c.err.Store(err)
+	c.timer.Stop()
+	for f := range c.after {
+		(*f)()
+	}
+	c.after = nil
 	close(c.done)
 }

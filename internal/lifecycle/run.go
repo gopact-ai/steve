@@ -199,6 +199,17 @@ type Settlement struct {
 	// from the run's cancellation and bounded by it; zero commits on the
 	// run's own context, so a lost lease rejects the result.
 	CommitTimeout time.Duration
+	// SettledTimeout, when set, bounds what is left of the run once its
+	// prompt has settled — the caller's hooks, its completion, the terminal
+	// transition — on the run's own context, still cancelled as the run
+	// is. Cleanup — closing the session, giving the bindings and the
+	// workspace back, a quarantine — runs on Cleanup, detached from it and
+	// bounded by CleanupTimeout instead. The silence clock stops timing the
+	// run once the agent has answered and restarts a whole silence as the
+	// run returns; this bounds the part in between, and nothing after the
+	// run. Unlike CommitTimeout it does not take the commit out of the
+	// run's cancellation.
+	SettledTimeout time.Duration
 	// CommitAsGiven commits the completion as the caller gave it, with
 	// Complete: the result the record carries at bind-ready is a checkpoint
 	// of the work in progress, not the candidate (plan steps). Without it
@@ -405,14 +416,14 @@ func Reattach(ctx context.Context, o Options, record attempt.Record, session har
 		}
 	})
 	defer e.stopBeat()
-	var err error
 	if o.Replay != nil {
 		e.Outcome, e.Usage, e.driven = *o.Replay, record.Usage, true
-		err = e.read(ctx)
 	} else {
-		err = e.drive(ctx)
+		e.drive(ctx)
 	}
-	err = e.close(ctx, err)
+	ctx, release := e.settle(ctx)
+	defer release()
+	err := e.close(ctx, e.read(ctx))
 	return e.result(), err
 }
 
@@ -447,11 +458,13 @@ func (e *Execution) run(ctx context.Context) error {
 		}
 		ctx = next
 	}
-	err := e.start(ctx)
-	if err == nil {
-		err = e.drive(ctx)
+	if err := e.start(ctx); err != nil {
+		return e.close(ctx, err)
 	}
-	return e.close(ctx, err)
+	e.drive(ctx)
+	ctx, release := e.settle(ctx)
+	defer release()
+	return e.close(ctx, e.read(ctx))
 }
 
 // open leases the attempt — taking a previous one over when asked to —
@@ -605,13 +618,34 @@ func (e *Execution) openSession(ctx context.Context) error {
 	return nil
 }
 
-// drive sends the prompt and reads how it ended.
-func (e *Execution) drive(ctx context.Context) error {
+// drive sends the prompt and takes how it ended.
+func (e *Execution) drive(ctx context.Context) {
 	o := e.o
 	e.driven = true
 	e.Outcome = Drive{Session: e.Session, Prompt: e.Prompt, Media: o.Media, Turn: o.TurnPrompt || e.Managed, Resume: o.Resume, Ask: o.Ask, AskUser: o.AskUser, Observe: o.Observe}.Run(ctx)
 	e.Usage = Usage(e.Outcome.Last)
-	return e.read(ctx)
+}
+
+// settle is what the rest of the run is timed by once the prompt has
+// settled. The agent has answered: what is left is the caller's, and no
+// silence of the agent's ends it, so the silence clock is held — a clock
+// that ran out first has already ended every context derived from it. The
+// caller's SettledTimeout bounds it instead, when set. release gives the
+// clock back as the run returns; like a touch, that restarts a whole
+// silence for whatever the caller does next under the clock.
+func (e *Execution) settle(ctx context.Context) (context.Context, func()) {
+	if !e.settled() {
+		return ctx, func() {}
+	}
+	release := idle.Hold(ctx)
+	if e.o.Settlement.SettledTimeout <= 0 {
+		return ctx, release
+	}
+	ctx, cancel := context.WithTimeout(ctx, e.o.Settlement.SettledTimeout)
+	return ctx, func() {
+		cancel()
+		release()
+	}
 }
 
 // read is how the prompt's end reads under the caller's rules.
