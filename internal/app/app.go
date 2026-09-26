@@ -95,7 +95,7 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
-	delegation, err := assembleDelegation(input, runtime, ledger, home, fleet, execution, readModel, console)
+	delegation, err := assembleDelegation(life, input, runtime, ledger, home, fleet, execution, readModel, console)
 	if err != nil {
 		return nil, err
 	}
