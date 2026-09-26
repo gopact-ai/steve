@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 type fakeSender struct {
@@ -72,7 +73,7 @@ func (f *fakeSender) DeleteMessage(_ context.Context, messageID string) error {
 
 func startServer(t *testing.T) (*Server, *fakeSender) {
 	t.Helper()
-	s, err := New(0)
+	s, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +363,7 @@ func TestGetRefused(t *testing.T) {
 }
 
 func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
-	first, err := New(0)
+	first, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +376,7 @@ func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
 	go func() { defer close(done); _ = first.Start(ctx) }()
 	cancel()
 	<-done
-	second, err := New(port)
+	second, err := New(port, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +384,7 @@ func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
 		t.Fatalf("restart lost the port: %d -> %d", port, second.Port())
 	}
 	// A port that is meanwhile taken falls back instead of failing.
-	third, err := New(port)
+	third, err := New(port, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

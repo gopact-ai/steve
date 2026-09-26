@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -288,8 +289,8 @@ func TestTimelineSurvivesProjectionWithEveryToolReference(t *testing.T) {
 }
 
 func TestPlatformToolsAreRecognisedUnderAnyHarnessNaming(t *testing.T) {
-	SetPlatformTools("steve", map[string]string{"steve_fleet": "查名册", "steve_delegate": "委派子任务", "channel_send": "发进度消息"})
-	t.Cleanup(func() { SetPlatformTools("", nil) })
+	SetPlatformTools("steve", map[string]i18n.Key{"steve_fleet": i18n.MCPToolFleet, "steve_delegate": i18n.MCPToolDelegate, "channel_send": i18n.MCPToolChannelSend}, i18n.New(i18n.LocaleZH))
+	t.Cleanup(func() { SetPlatformTools("", nil, i18n.Catalog{}) })
 	p := FromProgress(view.Progress{Tools: []view.Tool{
 		{ID: "1", Kind: "execute", Name: "mcp__steve__steve_fleet"},
 		{ID: "2", Kind: "other", Name: "mcp.steve.steve_delegate"},
@@ -307,5 +308,21 @@ func TestPlatformToolsAreRecognisedUnderAnyHarnessNaming(t *testing.T) {
 		if got.Kind != w.kind || got.Name != w.name || got.Detail != w.detail {
 			t.Fatalf("tool %d = %+v, want %+v", i, got, w)
 		}
+	}
+}
+
+// A platform tool's label is said in the catalog's language when the call
+// is shown, so a language change reaches calls already recorded.
+func TestPlatformToolLabelsFollowTheCatalogLanguage(t *testing.T) {
+	locale := i18n.LocaleZH
+	SetPlatformTools("steve", map[string]i18n.Key{"steve_fleet": i18n.MCPToolFleet}, i18n.Dynamic(func() i18n.Locale { return locale }))
+	t.Cleanup(func() { SetPlatformTools("", nil, i18n.Catalog{}) })
+	progress := view.Progress{Tools: []view.Tool{{ID: "1", Kind: "execute", Name: "mcp__steve__steve_fleet"}}}
+	if got := FromProgress(progress).Tools[0].Detail; got != "查名册" {
+		t.Fatalf("zh label = %q", got)
+	}
+	locale = i18n.LocaleEN
+	if got := FromProgress(progress).Tools[0].Detail; got != "List the roster" {
+		t.Fatalf("en label = %q", got)
 	}
 }

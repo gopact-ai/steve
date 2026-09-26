@@ -790,6 +790,36 @@ const (
 	ConsoleRewindRelayed          Key = "console_rewind_relayed"
 	ConsoleRewindResetFailed      Key = "console_rewind_reset_failed"
 	ConsoleScheduledLine          Key = "console_scheduled_line"
+
+	// Labels for the platform's own agent tools.
+	MCPToolContext        Key = "mcp_tool_context"
+	MCPToolHelp           Key = "mcp_tool_help"
+	MCPToolProjects       Key = "mcp_tool_projects"
+	MCPToolFleet          Key = "mcp_tool_fleet"
+	MCPToolDelegate       Key = "mcp_tool_delegate"
+	MCPToolAwait          Key = "mcp_tool_await"
+	MCPToolRemember       Key = "mcp_tool_remember"
+	MCPToolRecall         Key = "mcp_tool_recall"
+	MCPToolForget         Key = "mcp_tool_forget"
+	MCPToolSchedule       Key = "mcp_tool_schedule"
+	MCPToolSchedules      Key = "mcp_tool_schedules"
+	MCPToolScheduleCancel Key = "mcp_tool_schedule_cancel"
+	MCPToolChannelSend    Key = "mcp_tool_channel_send"
+	MCPToolChannelUpdate  Key = "mcp_tool_channel_update"
+	MCPToolChannelRecall  Key = "mcp_tool_channel_recall"
+	MCPToolNodes          Key = "mcp_tool_nodes"
+	MCPToolNodeAdd        Key = "mcp_tool_node_add"
+	MCPToolNodeRefresh    Key = "mcp_tool_node_refresh"
+	MCPToolNodeRemove     Key = "mcp_tool_node_remove"
+
+	// Agent tool replies and milestone card footers.
+	MCPMilestone          Key = "mcp_milestone"
+	MCPMilestoneProgress  Key = "mcp_milestone_progress"
+	MCPDelegatedBy        Key = "mcp_delegated_by"
+	MCPRememberSaved      Key = "mcp_remember_saved"
+	MCPRememberDuplicate  Key = "mcp_remember_duplicate"
+	MCPRememberNearlyFull Key = "mcp_remember_nearly_full"
+	MCPNodeRemoved        Key = "mcp_node_removed"
 )
 
 type Catalog struct {

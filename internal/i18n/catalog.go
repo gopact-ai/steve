@@ -754,6 +754,36 @@ var zh = map[Key]string{
 	ConsoleRewindRelayed:          "这条消息是 Steve 代你发的，不能改写",
 	ConsoleRewindResetFailed:      "结束这个会话的 agent 会话失败，没有改动任何记录：",
 	ConsoleScheduledLine:          "定时任务 #%s · %s",
+
+	// Labels for the platform's own agent tools.
+	MCPToolContext:        "看当前上下文",
+	MCPToolHelp:           "查平台用法",
+	MCPToolProjects:       "查项目",
+	MCPToolFleet:          "查名册",
+	MCPToolDelegate:       "委派子任务",
+	MCPToolAwait:          "等子任务",
+	MCPToolRemember:       "记一条记忆",
+	MCPToolRecall:         "查记忆",
+	MCPToolForget:         "忘一条记忆",
+	MCPToolSchedule:       "创建定时任务",
+	MCPToolSchedules:      "查定时任务",
+	MCPToolScheduleCancel: "取消定时任务",
+	MCPToolChannelSend:    "发进度消息",
+	MCPToolChannelUpdate:  "改进度消息",
+	MCPToolChannelRecall:  "撤回消息",
+	MCPToolNodes:          "查机器",
+	MCPToolNodeAdd:        "登记机器",
+	MCPToolNodeRefresh:    "刷新机器",
+	MCPToolNodeRemove:     "移除机器",
+
+	// Agent tool replies and milestone card footers.
+	MCPMilestone:          "里程碑 %d",
+	MCPMilestoneProgress:  "里程碑 %s",
+	MCPDelegatedBy:        "%s · 受 %s 委派",
+	MCPRememberSaved:      "已持久化。当前会话不会重新注入；新会话的第一轮会带上它。",
+	MCPRememberDuplicate:  "已经记着同一条了，没有重复写入。",
+	MCPRememberNearlyFull: "这个作用域已用 %d / %d 字节；快满了，考虑用 steve_forget 清掉过期的。",
+	MCPNodeRemoved:        "机器 %s 已从 hub 忘掉：不再拨号、不再列出；它上面的进程没有动。",
 }
 
 var en = map[Key]string{
@@ -1510,4 +1540,34 @@ var en = map[Key]string{
 	ConsoleRewindRelayed:          "Steve sent this message on your behalf; it cannot be rewritten",
 	ConsoleRewindResetFailed:      "Ending this conversation's agent session failed; no records were changed: ",
 	ConsoleScheduledLine:          "Schedule #%s · %s",
+
+	// Labels for the platform's own agent tools.
+	MCPToolContext:        "Read the current context",
+	MCPToolHelp:           "Read platform help",
+	MCPToolProjects:       "List projects",
+	MCPToolFleet:          "List the roster",
+	MCPToolDelegate:       "Delegate a subtask",
+	MCPToolAwait:          "Wait for subtasks",
+	MCPToolRemember:       "Remember a fact",
+	MCPToolRecall:         "Search memory",
+	MCPToolForget:         "Forget a fact",
+	MCPToolSchedule:       "Create a schedule",
+	MCPToolSchedules:      "List schedules",
+	MCPToolScheduleCancel: "Cancel a schedule",
+	MCPToolChannelSend:    "Send a progress message",
+	MCPToolChannelUpdate:  "Update a progress message",
+	MCPToolChannelRecall:  "Recall a message",
+	MCPToolNodes:          "List machines",
+	MCPToolNodeAdd:        "Register a machine",
+	MCPToolNodeRefresh:    "Refresh a machine",
+	MCPToolNodeRemove:     "Remove a machine",
+
+	// Agent tool replies and milestone card footers.
+	MCPMilestone:          "Milestone %d",
+	MCPMilestoneProgress:  "Milestone %s",
+	MCPDelegatedBy:        "%s · delegated by %s",
+	MCPRememberSaved:      "Saved. The current session is not given it again; a new session's first turn carries it.",
+	MCPRememberDuplicate:  "The same fact is already remembered; nothing was written again.",
+	MCPRememberNearlyFull: "This scope uses %d / %d bytes and is nearly full; consider steve_forget for facts that no longer hold.",
+	MCPNodeRemoved:        "The hub forgot machine %s: it is no longer dialed or listed; its processes were left running.",
 }

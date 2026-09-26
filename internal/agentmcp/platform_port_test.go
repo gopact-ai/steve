@@ -6,18 +6,19 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // A restart may find the messaging port taken and listen elsewhere. The
 // agent is given the new address, and its session keeps both fingerprints,
 // whether the agent runs beside the gateway or reaches it through a node.
 func TestMovedMessagingPortKeepsSessionFingerprints(t *testing.T) {
-	first, err := New(0)
+	first, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.listener.Close()
-	moved, err := New(first.Port())
+	moved, err := New(first.Port(), i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

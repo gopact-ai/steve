@@ -47,9 +47,9 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 	// fingerprints leave it out, and a resumed session is given the new URL.
 	// The page recognises the platform's own tool calls by the messaging
 	// server's name and catalogue, whatever a harness calls them.
-	readmodel.SetPlatformTools(agentmcp.ServerName, agentmcp.ToolTitles())
+	readmodel.SetPlatformTools(agentmcp.ServerName, agentmcp.ToolTitles(), work.CatalogText())
 	portPath := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "agentmcp.port")
-	gate, err := agentmcp.New(readPort(portPath))
+	gate, err := agentmcp.New(readPort(portPath), work.CatalogText())
 	// redeliverPending is the delegation service's start-up pass, once it exists.
 	var reconcileDeliveries func(context.Context) error
 	var recoverRetainedDelegates func(context.Context) error

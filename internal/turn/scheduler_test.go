@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -108,7 +109,7 @@ func newScheduleMCPFixture(t *testing.T, change func(*task.Task, *attempt.Record
 		t.Fatal(err)
 	}
 	jobs := c.schedules
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +327,7 @@ func TestScheduledMCPWorkCanInspectButCannotCreate(t *testing.T) {
 }
 
 func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

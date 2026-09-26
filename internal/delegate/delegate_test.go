@@ -145,7 +145,7 @@ func newWorldWith(t *testing.T, nodes func(artifact.LocalNodes) artifact.Nodes) 
 	}
 	tasks.SetBudget(10, time.Hour)
 
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

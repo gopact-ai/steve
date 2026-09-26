@@ -62,11 +62,6 @@ internal/admin/fleet_tools.go#RefreshNode 1
 internal/admin/native_history.go#ImportNativeHistory 2
 internal/admin/native_import_project.go#checkNativeImportTarget 1
 internal/admin/native_import_project.go#nativeImportProject 6
-internal/agentmcp/inform.go#steveNodeRemove 2
-internal/agentmcp/memory.go#steveRemember 3
-internal/agentmcp/message.go#dispatchMessage 2
-internal/agentmcp/server.go# 19
-internal/agentmcp/server.go#milestoneTail 2
 internal/app/application_config.go#SaveContext 1
 internal/app/application_stop.go#stop 1
 internal/artifact/gitrepo/limits.go#Error 4
