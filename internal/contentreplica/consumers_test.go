@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,9 +22,14 @@ type places struct {
 	scope   contentreplica.Scope
 	domains map[string]string
 	denied  map[string]bool
+	// unsure are the nodes whose placement cannot be checked for now.
+	unsure map[string]bool
 }
 
 func (p *places) CheckpointPlacement(_ context.Context, scope contentreplica.Scope, node string) (contentreplica.Placement, error) {
+	if p.unsure[node] {
+		return contentreplica.Placement{}, fmt.Errorf("%w: committed state out of reach", contentreplica.ErrUnavailable)
+	}
 	if scope != p.scope || p.denied[node] || p.domains[node] == "" || scope.Level == "sealed" && node != scope.HomeNodeID {
 		return contentreplica.Placement{}, contentreplica.ErrPlacement
 	}
@@ -35,27 +41,39 @@ type transport struct {
 	stores  map[string]*contentreplica.Store
 	offline map[string]bool
 	before  func(string, contentreplica.Object)
+	// refused are the nodes that answer with an error instead of storing or
+	// reading; asked are the remote nodes contacted, in order.
+	refused map[string]error
+	asked   []string
 }
 
 func (r *transport) Put(ctx context.Context, node string, upload contentreplica.Upload, source io.Reader) (contentreplica.Receipt, error) {
 	if r.before != nil {
 		r.before(node, upload.Object)
 	}
+	r.asked = append(r.asked, node)
 	if r.offline[node] {
 		return contentreplica.Receipt{}, errors.New("node offline")
+	}
+	if err := r.refused[node]; err != nil {
+		return contentreplica.Receipt{}, err
 	}
 	return r.stores[node].Put(ctx, upload, source)
 }
 func (r *transport) Get(ctx context.Context, node string, object contentreplica.Object, into io.Writer) error {
+	r.asked = append(r.asked, node)
 	if r.offline[node] {
 		return errors.New("node offline")
+	}
+	if err := r.refused[node]; err != nil {
+		return err
 	}
 	return r.stores[node].Get(ctx, object, into)
 }
 
 func newCluster(t *testing.T, book *ledger.Ledger, level string, names ...string) (*places, *transport, func(string) *contentreplica.Client) {
 	t.Helper()
-	p := &places{scope: contentreplica.Scope{ProjectID: "p", Level: level, HomeNodeID: "a"}, domains: map[string]string{}, denied: map[string]bool{}}
+	p := &places{scope: contentreplica.Scope{ProjectID: "p", Level: level, HomeNodeID: "a"}, domains: map[string]string{}, denied: map[string]bool{}, unsure: map[string]bool{}}
 	r := &transport{book: book, stores: map[string]*contentreplica.Store{}, offline: map[string]bool{}}
 	for _, name := range names {
 		p.domains[name] = "machine-" + name

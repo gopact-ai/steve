@@ -88,6 +88,13 @@ func Open(config Config) (*Service, error) {
 	if err := checkIdentity(config); err != nil {
 		return nil, err
 	}
+	// The transport's I/O timeout is ApplyTimeout. AppendEntries gets one
+	// more timeout per TimeoutScale bytes of entries and InstallSnapshot one
+	// per TimeoutScale bytes of snapshot, so the slowest link that can still
+	// replicate carries TimeoutScale (256 KiB by default) per ApplyTimeout,
+	// about 51 KiB/s at 5s.
+	// ApplyTimeout also bounds applies and failover steps; shortening it for
+	// those raises that floor in proportion.
 	var transport *raft.NetworkTransport
 	if config.StreamLayer != nil {
 		transport = raft.NewNetworkTransport(config.StreamLayer, 3, config.ApplyTimeout, config.LogOutput)
@@ -227,6 +234,18 @@ func (s *Service) Status() Status {
 	address, id := s.raft.LeaderWithID()
 	healthy := !s.closed.Load() && s.fsm.healthy() && s.raft.State() != raft.Shutdown
 	return Status{State: s.fsm.read(), ControlProtocol: ControlProtocolVersion, NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
+}
+
+// LastIndex is the index of the last entry in this replica's Raft log. It
+// grows with every entry appended, including the barriers of quorum reads.
+func (s *Service) LastIndex() uint64 { return s.raft.LastIndex() }
+
+// LogProgress reads how far this replica's Raft log is committed and how
+// far Raft has handed it to the state machine. It reads the commit index
+// first, so a concurrent commit can only make the replica look behind.
+func (s *Service) LogProgress() LogProgress {
+	committed := s.raft.CommitIndex()
+	return LogProgress{Committed: committed, Applied: s.raft.AppliedIndex()}
 }
 
 // TransportPeers reads Raft's durable latest membership before FSM replay has
