@@ -213,8 +213,9 @@ type ServeLinkOptions struct {
 // the hub, announces itself on stdout, and then multiplexes the session:
 // connections accepted here go to the hub, and the hub's streams go to
 // the allowed targets on this machine. It takes connections on the listen
-// addresses only once the session is up; one dialed earlier waits. It returns when the session ends,
-// when the hub stops answering keepalives, or when ctx ends.
+// addresses only once the session is up; one dialed earlier waits. It
+// returns when the session ends, when the hub stops answering keepalives,
+// or when ctx ends.
 func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, options ServeLinkOptions) error {
 	logs, listens, allowed := options.Logs, options.Listens, options.Allowed
 	if logs == nil {
