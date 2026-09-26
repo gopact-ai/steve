@@ -71,7 +71,12 @@ type contentReads struct {
 }
 
 // withContentReads starts a request's reads of the committed state afresh:
-// the checks made under the returned context share one read.
+// the checks made under the returned context share one read. That includes
+// the checks the content store makes inside Put and Get with the same
+// context: they judge by the state read when the request was admitted, not
+// by a newer one. A change made meanwhile is seen by the checks serveContent
+// makes after the transfer under a context of its own, before it answers;
+// they are what stand between that change and the answer.
 func withContentReads(ctx context.Context) context.Context {
 	return context.WithValue(ctx, contentReadsKey{}, &contentReads{})
 }
