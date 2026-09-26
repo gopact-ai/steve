@@ -747,12 +747,18 @@ func (p *Peer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	// The asking node wraps this answer in a sentence for whoever is
+	// enrolling a machine, in their language; with no one named, the Hub's.
+	text := p.text
+	if locale := i18n.LocaleFromHeader(r.Header.Get("Accept-Language")); locale != "" {
+		text = i18n.New(locale)
+	}
 	state := p.Runtime.Load().Status().State
 	transportPeers := p.Runtime.Load().TransportPeers()
 	for _, member := range request.Peers {
 		known, ok := state.Members[member.NodeID]
 		if !ok || known.Address != member.Address || known.APIAddress != member.APIAddress || transportPeers[member.NodeID] != member.Address {
-			WriteJSON(w, networkCheckResult{Error: p.text.T(i18n.ClusterMemberAddressPending), Synchronizing: true})
+			WriteJSON(w, networkCheckResult{Error: text.T(i18n.ClusterMemberAddressPending), Synchronizing: true})
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
@@ -772,7 +778,7 @@ func (p *Peer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) {
 		}
 		cancel()
 		if err != nil {
-			WriteJSON(w, networkCheckResult{Error: p.text.T(i18n.ClusterNodeUnreachable, member.NodeID)})
+			WriteJSON(w, networkCheckResult{Error: text.T(i18n.ClusterNodeUnreachable, member.NodeID)})
 			return
 		}
 	}
@@ -810,6 +816,10 @@ func (p *Peer) peerJSON(ctx context.Context, member coordination.Member, method,
 	}
 	request.Header.Set("Authorization", "Bearer "+p.OwnerToken)
 	request.Header.Set("Content-Type", "application/json")
+	if locale := i18n.ContextLocale(ctx); locale != "" {
+		// Asked on someone's behalf: the answer is theirs to read.
+		request.Header.Set("Accept-Language", string(locale))
+	}
 	response, err := (&http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
 	if err != nil {
 		return err
