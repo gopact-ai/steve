@@ -1,12 +1,15 @@
 package httpdrain
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -222,5 +225,58 @@ func TestRequestReachingAStoppedServerIsRefused(t *testing.T) {
 	server.handle(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { ran = true }), recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 	if ran || recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a request after the stop ran=%v status=%d", ran, recorder.Code)
+	}
+}
+
+// syncBuffer collects log output written from the stopping goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A stop waits for a handler that ignores its cancelled context for as long
+// as it runs. Its owner is then stuck in shutdown, so the wait says which
+// request it is waiting for.
+func TestAStopWaitingOnACutHandlerNamesTheRequest(t *testing.T) {
+	logs := &syncBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	entered := make(chan struct{})
+	var release <-chan struct{}
+	server, url, _ := started(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		close(entered)
+		<-release
+	}))
+	release, let := releaser(t)
+	call(url + "/stuck/request?token=secret")
+	within(t, entered, "the request never reached its handler")
+	stopped := make(chan error, 1)
+	go func() { stopped <- server.Close() }()
+	for deadline := time.Now().Add(10 * time.Second); !strings.Contains(logs.String(), "GET /stuck/request"); {
+		if time.Now().After(deadline) {
+			t.Fatalf("a stop waiting on a cut handler never said which request it waits for; log: %q", logs.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if strings.Contains(logs.String(), "secret") {
+		t.Fatalf("the wait logged the request's query: %q", logs.String())
+	}
+	notYet(t, stopped, "Close returned")
+	let()
+	if err := within(t, stopped, "Close did not return once its handler had"); err != nil {
+		t.Fatal(err)
 	}
 }
