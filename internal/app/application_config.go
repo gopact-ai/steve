@@ -86,13 +86,13 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 		}
 		for id := range state.Members {
 			if node, ok := cfg.Nodes[id]; ok && !datalevel.Restricted.Admits(datalevel.Level(node.Level).OrDefault()) {
-				return fmt.Errorf(i18n.New(i18n.ContextLocale(ctx)).T(i18n.AppLedgerNodeLevel), id)
+				return errors.New(i18n.FromContext(ctx).T(i18n.AppLedgerNodeLevel, id))
 			}
 		}
 	}
 	candidate, err := s.value.WithCandidate(cfg)
 	if sealed := (*platformconfig.SealedError)(nil); errors.As(err, &sealed) {
-		return sealedRefusal{message: i18n.New(i18n.ContextLocale(ctx)).T(i18n.AppSealedShared, sealed.Project), cause: sealed}
+		return sealedRefusal{message: i18n.FromContext(ctx).T(i18n.AppSealedShared, sealed.Project), cause: sealed}
 	}
 	if err != nil {
 		return err

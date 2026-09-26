@@ -40,6 +40,10 @@ func LocaleFromHeader(header string) Locale {
 // none: whoever holds the Hub's catalog answers a person who named no
 // language in the Hub's.
 func (c Catalog) For(ctx context.Context) Catalog {
+	switch locale := ContextLocale(ctx); locale {
+	case LocaleZH, LocaleEN:
+		return New(locale)
+	}
 	return c
 }
 

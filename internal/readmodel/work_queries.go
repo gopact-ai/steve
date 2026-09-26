@@ -75,7 +75,7 @@ func (m *Model) TaskAccounting(id, cursor string, limit int) (AccountingPage, er
 // signals and their ancestor closure provide axes; truncated historic children
 // never determine completion eligibility, which comes from the owner summary.
 func (m *Model) projectSelected(ctx context.Context, headers []task.Header) ([]Task, map[string]plan.Plan, error) {
-	b := &snapshotBuilder{m: m, text: i18n.New(i18n.ContextLocale(ctx))}
+	b := &snapshotBuilder{m: m, text: i18n.FromContext(ctx)}
 	b.sources()
 	b.liveAttempts(ctx)
 	b.ledgerFacts(ctx)

@@ -27,7 +27,7 @@ import (
 // keep busy, activities pair the attempts with the agents, and the task
 // axes at the end roll the inbox, the attempts and the plans up the tree.
 func (m *Model) Snapshot(ctx context.Context) Snapshot {
-	b := &snapshotBuilder{m: m, text: i18n.New(i18n.ContextLocale(ctx)), snap: Snapshot{At: time.Now(), Hub: m.src.Hub}}
+	b := &snapshotBuilder{m: m, text: i18n.FromContext(ctx), snap: Snapshot{At: time.Now(), Hub: m.src.Hub}}
 	b.fleet()
 	b.agents()
 	b.sources()

@@ -97,7 +97,7 @@ func (s *Server) coordinationAvailable(w http.ResponseWriter, r *http.Request) b
 		return true
 	}
 	w.WriteHeader(http.StatusNotImplemented)
-	writeJSON(w, map[string]string{"error": i18n.New(i18n.ContextLocale(r.Context())).T(i18n.HTTPCoordinationOff)})
+	writeJSON(w, map[string]string{"error": i18n.FromContext(r.Context()).T(i18n.HTTPCoordinationOff)})
 	return false
 }
 

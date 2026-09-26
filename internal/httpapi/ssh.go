@@ -170,7 +170,7 @@ func (s *Server) sshAvailable(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	w.WriteHeader(http.StatusNotImplemented)
-	writeJSON(w, map[string]string{"error": i18n.New(i18n.ContextLocale(r.Context())).T(i18n.HTTPSSHOff)})
+	writeJSON(w, map[string]string{"error": i18n.FromContext(r.Context()).T(i18n.HTTPSSHOff)})
 	return false
 }
 

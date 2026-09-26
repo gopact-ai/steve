@@ -125,7 +125,7 @@ func (l Ledger) Facts(ctx context.Context) (Facts, error) {
 		for _, it := range is {
 			detail := it.Error
 			if detail == "" {
-				detail = i18n.New(i18n.ContextLocale(ctx)).T(i18n.ReadEffectUnconfirmed)
+				detail = i18n.FromContext(ctx).T(i18n.ReadEffectUnconfirmed)
 			}
 			f.Effects = append(f.Effects, Effect{ID: it.ID, Tool: it.Tool, TaskID: it.TaskID, Attempt: it.AttemptID, Error: detail, At: it.At})
 		}

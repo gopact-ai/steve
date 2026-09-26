@@ -88,7 +88,7 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		next.Unsettled, next.SessionSettled = false, &settled
 		next.StopEvidence = "task-stop/" + next.ID
 		next.State, next.Revision = to, op.Revision+1
-		next.Error = i18n.New(i18n.ContextLocale(ctx)).T(i18n.AttemptTaskStopped)
+		next.Error = i18n.FromContext(ctx).T(i18n.AttemptTaskStopped)
 		if next.EndedAt.IsZero() {
 			next.EndedAt = s.now().UTC()
 		}

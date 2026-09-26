@@ -144,7 +144,7 @@ func (c ProjectController) Reconcile(ctx context.Context, cfg *config.Config) er
 	}
 	c.Store.RequireDeclaration(hash)
 	if err := c.Store.Reconcile(ctx, desired, hash); err != nil {
-		return &ProjectionPendingError{Hash: hash, Err: err, text: i18n.New(i18n.ContextLocale(ctx))}
+		return &ProjectionPendingError{Hash: hash, Err: err, text: i18n.FromContext(ctx)}
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func (c ProjectController) Ensure(ctx context.Context, cfg *config.Config) error
 // the same candidate to the live config after a successful/committed save.
 func (c ProjectController) Commit(ctx context.Context, candidate *config.Config, commit func() error) error {
 	if len(candidate.Projects) == 0 {
-		return errors.New(i18n.New(i18n.ContextLocale(ctx)).T(i18n.ConfigProjectsRequired))
+		return errors.New(i18n.FromContext(ctx).T(i18n.ConfigProjectsRequired))
 	}
 	desired, hash, err := ProjectDeclarations(candidate)
 	if err != nil {
@@ -191,7 +191,7 @@ func (c ProjectController) Commit(ctx context.Context, candidate *config.Config,
 		return saveErr
 	}
 	if err := c.Store.Reconcile(ctx, desired, hash); err != nil {
-		return errors.Join(saveErr, &ProjectionPendingError{Hash: hash, Err: err, text: i18n.New(i18n.ContextLocale(ctx))})
+		return errors.Join(saveErr, &ProjectionPendingError{Hash: hash, Err: err, text: i18n.FromContext(ctx)})
 	}
 	return saveErr
 }

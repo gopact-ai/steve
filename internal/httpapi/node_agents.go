@@ -12,7 +12,7 @@ func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if s.admin == nil {
 		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, map[string]string{"error": i18n.New(i18n.ContextLocale(r.Context())).T(i18n.HTTPNodeAgentsUnsupported)})
+		writeJSON(w, map[string]string{"error": i18n.FromContext(r.Context()).T(i18n.HTTPNodeAgentsUnsupported)})
 		return
 	}
 	if r.Method == http.MethodGet {

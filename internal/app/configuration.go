@@ -77,6 +77,12 @@ func loadConfigured(path string, configure func(*config.Config) error) (*config.
 	return cfg, catalog, manager, live, nil
 }
 
+// hubContext carries the Hub's language to work no person asked for —
+// startup and doctor — so what it reports reads in that language.
+func hubContext(parent context.Context, cfg *config.Config) context.Context {
+	return i18n.WithLocale(parent, i18n.FromLang(cfg.EffectiveLocale()))
+}
+
 func wireHome(cfg *config.Config, live *skills.Live) (*capability.Assembler, error) {
 	locale := home.LocaleZH
 	if i18n.FromLang(cfg.EffectiveLocale()) == i18n.LocaleEN {

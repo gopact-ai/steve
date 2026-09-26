@@ -10,7 +10,7 @@ import (
 // from: the console's Accept-Language, or the language a turn or the
 // agent tool server put on the context.
 func textFor(ctx context.Context) i18n.Catalog {
-	return i18n.New(i18n.ContextLocale(ctx))
+	return i18n.FromContext(ctx)
 }
 
 // saidError is a message in the reader's language standing for a sentinel
