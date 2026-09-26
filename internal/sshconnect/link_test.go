@@ -326,12 +326,16 @@ func (c *noticed) Close() error {
 }
 
 // The hub counts a link as up once the far end's multiplexer answers a
-// ping, which it does as soon as it runs. A connection the far end takes
-// from a listen address before then must still reach the hub rather than
-// be dropped: here one is already waiting when the far end starts, and
-// the hub reads the far end's announcement, which the far end cannot get
-// past until then, only once the far end has closed the connection or
-// has had ample time to.
+// ping, and the multiplexer answers as soon as it runs, before the far end
+// attaches it. A connection that reaches a listen address before then must
+// wait for the session and then reach the hub, not be dropped.
+//
+// Here the connection is queued before the far end starts. The far end
+// cannot finish writing its announcement until the hub reads it, so the
+// test holds that read back until the far end has closed the connection
+// or 200ms have passed. The wait only gives a far end that drops the
+// connection time to do so; one that waits for its session never closes
+// it and is not timed.
 func TestFarEndCarriesAConnectionThatArrivedBeforeItsSession(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -355,7 +359,8 @@ func TestFarEndCarriesAConnectionThatArrivedBeforeItsSession(t *testing.T) {
 		Listens: []sshconnect.PortForward{{Listen: "127.0.0.1:7", Target: "127.0.0.1:8"}},
 		Listen:  func(string, string) (net.Listener, error) { return watched, nil },
 	}
-	go func() { _ = sshconnect.ServeLink(ctx, farIn, farOut, options) }()
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, options) }()
 	select {
 	case <-watched.closed:
 	case <-time.After(200 * time.Millisecond):
@@ -399,6 +404,15 @@ func TestFarEndCarriesAConnectionThatArrivedBeforeItsSession(t *testing.T) {
 	_ = early.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if got, err := bufio.NewReader(early).ReadString('\n'); err != nil || got != "carried\n" {
 		t.Fatalf("the early connection got %q back: %v", got, err)
+	}
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end did not stop with its context")
 	}
 }
 
