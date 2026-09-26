@@ -299,6 +299,166 @@ func TestFarEndStopsWithItsContextWhileTheHubIsSilent(t *testing.T) {
 	}
 }
 
+// noticing is a listener that signals, by closing its closed channel,
+// the first time the far end closes a connection it handed over.
+type noticing struct {
+	net.Listener
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (l *noticing) Accept() (net.Conn, error) {
+	connection, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &noticed{Conn: connection, owner: l}, nil
+}
+
+type noticed struct {
+	net.Conn
+	owner *noticing
+}
+
+func (c *noticed) Close() error {
+	c.owner.once.Do(func() { close(c.owner.closed) })
+	return c.Conn.Close()
+}
+
+// The hub counts a link as up once the far end's multiplexer answers a
+// ping, and the multiplexer answers as soon as it runs, before the far end
+// attaches it. A connection that reaches a listen address before then must
+// wait for the session and then reach the hub, not be dropped.
+//
+// Here the connection is queued before the far end starts. The far end
+// cannot finish writing its announcement until the hub reads it, so the
+// test holds that read back until the far end has closed the connection
+// or 200ms have passed. The wait only gives a far end that drops the
+// connection time to do so; one that waits for its session never closes
+// it and is not timed.
+func TestFarEndCarriesAConnectionThatArrivedBeforeItsSession(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	early, err := net.DialTimeout("tcp", listener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer early.Close()
+	if _, err := io.WriteString(early, "early\n"); err != nil {
+		t.Fatal(err)
+	}
+	watched := &noticing{Listener: listener, closed: make(chan struct{})}
+	farIn, hubOut := io.Pipe()
+	hubIn, farOut := io.Pipe()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	options := sshconnect.ServeLinkOptions{
+		Logs:    io.Discard,
+		Listens: []sshconnect.PortForward{{Listen: "127.0.0.1:7", Target: "127.0.0.1:8"}},
+		Listen:  func(string, string) (net.Listener, error) { return watched, nil },
+	}
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, options) }()
+	select {
+	case <-watched.closed:
+	case <-time.After(200 * time.Millisecond):
+	}
+	reader := bufio.NewReader(hubIn)
+	if banner, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(banner) != "STEVE-LINK/1" {
+		t.Fatalf("the far end did not announce itself: %q %v", banner, err)
+	}
+	config := yamux.DefaultConfig()
+	config.LogOutput = io.Discard
+	hub, err := yamux.Client(struct {
+		io.Reader
+		io.WriteCloser
+	}{reader, hubOut}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hub.Close()
+	if _, err := hub.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	waiting, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	defer stop()
+	stream, err := hub.AcceptStreamWithContext(waiting)
+	if err != nil {
+		_ = early.SetReadDeadline(time.Now().Add(time.Second))
+		_, dropped := early.Read(make([]byte, 1))
+		t.Fatalf("the connection that arrived before the session never reached the hub (%v); the far end ended it with %v", err, dropped)
+	}
+	_ = stream.SetDeadline(time.Now().Add(3 * time.Second))
+	carried := bufio.NewReader(stream)
+	if got, err := carried.ReadString('\n'); err != nil || got != "127.0.0.1:8\n" {
+		t.Fatalf("the stream named %q: %v", got, err)
+	}
+	if got, err := carried.ReadString('\n'); err != nil || got != "early\n" {
+		t.Fatalf("the stream carried %q: %v", got, err)
+	}
+	if _, err := io.WriteString(stream, "carried\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = early.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if got, err := bufio.NewReader(early).ReadString('\n'); err != nil || got != "carried\n" {
+		t.Fatalf("the early connection got %q back: %v", got, err)
+	}
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end did not stop with its context")
+	}
+}
+
+// A connection waiting on a listen address for a session that never comes
+// up is ended when the far end stops, not left hanging: here the hub is
+// gone before the far end can announce itself.
+func TestFarEndEndsAWaitingConnectionWhenItStopsBeforeItsSession(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	early, err := net.DialTimeout("tcp", listener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer early.Close()
+	if _, err := io.WriteString(early, "early\n"); err != nil {
+		t.Fatal(err)
+	}
+	farIn, _ := io.Pipe()
+	hubIn, farOut := io.Pipe()
+	hubIn.Close()
+	options := sshconnect.ServeLinkOptions{
+		Logs:    io.Discard,
+		Listens: []sshconnect.PortForward{{Listen: "127.0.0.1:7", Target: "127.0.0.1:8"}},
+		Listen:  func(string, string) (net.Listener, error) { return listener, nil },
+	}
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(t.Context(), farIn, farOut, options) }()
+	select {
+	case err := <-served:
+		if err == nil {
+			t.Fatal("the far end did not report that it could not announce itself")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end did not stop when it could not announce itself")
+	}
+	_ = early.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, err = early.Read(make([]byte, 1))
+	var timeout net.Error
+	if err == nil || errors.As(err, &timeout) && timeout.Timeout() {
+		t.Fatalf("the waiting connection was left open: %v", err)
+	}
+}
+
 // The far end binds each listen address through Listen, and the listener
 // it is given is the one it serves and closes when the session ends.
 func TestFarEndBindsItsListenAddressesThroughListen(t *testing.T) {
