@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -42,6 +43,30 @@ func call(url string) <-chan int {
 	return answered
 }
 
+// within waits for ch, failing with what if it has not delivered in time:
+// a stop that never reaches a handler shows up as that, not as a hang.
+func within[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s", what)
+		panic("unreachable")
+	}
+}
+
+// releaser returns a channel handlers wait on and the function that closes
+// it, which also runs when the test ends, so that a failed test does not
+// leave its server waiting on a handler at cleanup.
+func releaser(t *testing.T) (<-chan struct{}, func()) {
+	release := make(chan struct{})
+	var once sync.Once
+	let := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(let)
+	return release, let
+}
+
 func notYet[T any](t *testing.T, ch <-chan T, what string) {
 	t.Helper()
 	select {
@@ -52,7 +77,8 @@ func notYet[T any](t *testing.T, ch <-chan T, what string) {
 }
 
 func TestShutdownLetsAHandlerFinishWithinTheGrace(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
+	entered := make(chan struct{})
+	var release <-chan struct{}
 	server, url, served := started(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
 		<-release
@@ -61,55 +87,63 @@ func TestShutdownLetsAHandlerFinishWithinTheGrace(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusTeapot)
 	}))
+	release, let := releaser(t)
 	answered := call(url)
-	<-entered
+	within(t, entered, "the request never reached its handler")
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.Shutdown(t.Context()) }()
 	notYet(t, stopped, "Shutdown returned")
 	notYet(t, served, "Serve returned")
-	close(release)
-	if err := <-stopped; err != nil {
+	let()
+	if err := within(t, stopped, "Shutdown did not return once its handler had"); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-served; err != nil {
+	if err := within(t, served, "Serve did not return once the stop had finished"); err != nil {
 		t.Fatal(err)
 	}
-	if code := <-answered; code != http.StatusTeapot {
+	if code := within(t, answered, "the request in flight got no answer"); code != http.StatusTeapot {
 		t.Fatalf("the request in flight was answered with %d", code)
 	}
 }
 
 func TestShutdownPastItsDeadlineCancelsHandlersAndWaitsForThem(t *testing.T) {
-	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	entered, cancelled := make(chan struct{}), make(chan struct{})
+	var release <-chan struct{}
 	server, url, served := started(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
-		<-r.Context().Done()
-		close(cancelled)
+		select {
+		case <-r.Context().Done():
+			close(cancelled)
+		case <-release:
+			return
+		}
 		<-release
 	}))
+	release, let := releaser(t)
 	answered := call(url)
-	<-entered
+	within(t, entered, "the request never reached its handler")
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.Shutdown(ctx) }()
-	<-cancelled
+	within(t, cancelled, "the handler never saw its context cancelled once the grace was over")
 	notYet(t, stopped, "Shutdown returned")
 	notYet(t, served, "Serve returned")
-	close(release)
-	if err := <-stopped; !errors.Is(err, context.DeadlineExceeded) {
+	let()
+	if err := within(t, stopped, "Shutdown did not return once its handler had"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Shutdown past its deadline returned %v", err)
 	}
-	if err := <-served; err != nil {
+	if err := within(t, served, "Serve did not return once the stop had finished"); err != nil {
 		t.Fatal(err)
 	}
-	if code := <-answered; code == http.StatusOK {
+	if code := within(t, answered, "the request cut short got no answer"); code == http.StatusOK {
 		t.Fatal("a request cut short was answered as if it had finished")
 	}
 }
 
 func TestCloseWaitsForAHijackedHandler(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
+	entered, cancelled := make(chan struct{}), make(chan struct{})
+	var release <-chan struct{}
 	server, url, _ := started(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, _, err := http.NewResponseController(w).Hijack()
 		if err != nil {
@@ -118,16 +152,23 @@ func TestCloseWaitsForAHijackedHandler(t *testing.T) {
 		}
 		defer conn.Close()
 		close(entered)
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+			close(cancelled)
+		case <-release:
+			return
+		}
 		<-release
 	}))
+	release, let := releaser(t)
 	call(url)
-	<-entered
+	within(t, entered, "the request never reached its handler")
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.Close() }()
+	within(t, cancelled, "a hijacked handler never saw its context cancelled by Close")
 	notYet(t, stopped, "Close returned")
-	close(release)
-	if err := <-stopped; err != nil {
+	let()
+	if err := within(t, stopped, "Close did not return once its handler had"); err != nil {
 		t.Fatalf("Close returned %v", err)
 	}
 }
