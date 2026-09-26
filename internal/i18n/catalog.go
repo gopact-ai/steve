@@ -937,6 +937,11 @@ var zh = map[Key]string{
 	AdminSSHBinaryMatched:     "安装包平台已匹配，SHA-256: %s",
 	AdminSSHNodeAddress:       "节点服务将使用 %s",
 	AdminSSHNodeAddressFix:    "安装后将实际验证此地址；请确保协调节点与其他节点可以直接访问",
+
+	// Console snapshot: work whose outcome is not confirmed.
+	ReadEffectUnconfirmed:     "执行结果尚未确认",
+	ReadWriterExitUnconfirmed: "原执行进程是否退出尚未确认",
+	ReadWriterStillHeld:       "原执行进程是否退出尚未确认，目录与执行资源继续保留占用",
 }
 
 var en = map[Key]string{
@@ -1876,4 +1881,9 @@ var en = map[Key]string{
 	AdminSSHBinaryMatched:     "The package platform matches, SHA-256: %s",
 	AdminSSHNodeAddress:       "The node service will use %s",
 	AdminSSHNodeAddressFix:    "This address is verified after installation; make sure the coordinator and other nodes can reach it directly",
+
+	// Console snapshot: work whose outcome is not confirmed.
+	ReadEffectUnconfirmed:     "Whether the call took effect is not confirmed",
+	ReadWriterExitUnconfirmed: "Whether the original execution process exited is not confirmed",
+	ReadWriterStillHeld:       "Whether the original execution process exited is not confirmed; its directory and execution resources stay held",
 }

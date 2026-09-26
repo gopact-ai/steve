@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -26,7 +27,7 @@ import (
 // keep busy, activities pair the attempts with the agents, and the task
 // axes at the end roll the inbox, the attempts and the plans up the tree.
 func (m *Model) Snapshot(ctx context.Context) Snapshot {
-	b := &snapshotBuilder{m: m, snap: Snapshot{At: time.Now(), Hub: m.src.Hub}}
+	b := &snapshotBuilder{m: m, text: i18n.New(i18n.ContextLocale(ctx)), snap: Snapshot{At: time.Now(), Hub: m.src.Hub}}
 	b.fleet()
 	b.agents()
 	b.sources()
@@ -46,6 +47,8 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 type snapshotBuilder struct {
 	m    *Model
 	snap Snapshot
+	// text says the snapshot's own words in the reader's language.
+	text i18n.Catalog
 	// planByTask indexes the plans by the task they belong to.
 	planByTask map[string]plan.Plan
 	// live are the ledger's attempts in flight, placed on nodes.
@@ -335,7 +338,7 @@ func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 func (b *snapshotBuilder) inbox() {
 	snap := &b.snap
 	normalizeFacts(&snap.Facts)
-	snap.Inbox = inbox(snap.Facts, snap.Attempts)
+	snap.Inbox = inbox(b.text, snap.Facts, snap.Attempts)
 	snap.Inbox = append(snap.Inbox, b.m.pendingInteractions()...)
 }
 
@@ -355,7 +358,7 @@ func (b *snapshotBuilder) activities() {
 		act := Activity{Agent: a.Agent, AttemptID: a.ID, Kind: a.Kind, Workspace: a.Workspace, TaskID: a.TaskID, Since: a.StartedAt, At: a.StartedAt}
 		if a.Unsettled {
 			act.Kind = "writer"
-			act.Detail = "原执行进程是否退出尚未确认" + errSuffix(a.Error)
+			act.Detail = b.text.T(i18n.ReadWriterExitUnconfirmed) + errSuffix(a.Error)
 		} else if seen, ok := observed[a.Agent]; ok && seen.TaskID == a.TaskID && time.Since(seen.At) < activityFresh {
 			act.StepID, act.Tool, act.Detail, act.At, act.Conversation = seen.StepID, seen.Tool, seen.Detail, seen.At, seen.Conversation
 		}
@@ -528,7 +531,7 @@ func lane(t Task) string {
 
 // inbox projects what only a person can settle, with the commands that
 // settle it. The operations behind these stay the authority.
-func inbox(f Facts, attempts []Attempt) []HumanRequest {
+func inbox(text i18n.Catalog, f Facts, attempts []Attempt) []HumanRequest {
 	out := []HumanRequest{}
 	for _, d := range f.Disclosures {
 		out = append(out, HumanRequest{
@@ -551,7 +554,7 @@ func inbox(f Facts, attempts []Attempt) []HumanRequest {
 		out = append(out, HumanRequest{
 			ID: "writer:" + a.ID, Type: "writer", Source: a.ID, AttemptID: a.ID, Node: a.Node, Workspace: a.Workspace,
 			ProjectID: a.Project, TaskID: a.TaskID, CreatedAt: a.StartedAt,
-			Summary: "原执行进程是否退出尚未确认，目录与执行资源继续保留占用" + errSuffix(a.Error),
+			Summary: text.T(i18n.ReadWriterStillHeld) + errSuffix(a.Error),
 			Choices: []Choice{}, Resolvable: false,
 		})
 	}

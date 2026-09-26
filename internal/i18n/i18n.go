@@ -973,6 +973,11 @@ const (
 	AdminSSHBinaryMatched     Key = "admin_ssh_binary_matched"
 	AdminSSHNodeAddress       Key = "admin_ssh_node_address"
 	AdminSSHNodeAddressFix    Key = "admin_ssh_node_address_fix"
+
+	// Console snapshot: work whose outcome is not confirmed.
+	ReadEffectUnconfirmed     Key = "read_effect_unconfirmed"
+	ReadWriterExitUnconfirmed Key = "read_writer_exit_unconfirmed"
+	ReadWriterStillHeld       Key = "read_writer_still_held"
 )
 
 type Catalog struct {
