@@ -1,8 +1,10 @@
 package cluster
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode"
@@ -42,6 +44,38 @@ func TestCoordinationReasonsAreInTheReadersLanguage(t *testing.T) {
 		nodes := coordinationNodes(i18n.WithLocale(t.Context(), locale), state, "local", Status{}, nil)
 		if len(nodes) != 1 || nodes[0].Reason == "" || hasHan(nodes[0].Reason) == (locale == i18n.LocaleEN) {
 			t.Errorf("%s: %+v, want the reason in that language", locale, nodes)
+		}
+	}
+}
+
+// A plan reviewed in one language and registered in another is one plan:
+// what it will do is said in the reader's language, and only the request
+// it was made from identifies it.
+func TestAPlanReadInTwoLanguagesIsOnePlan(t *testing.T) {
+	plan := PeerEnrollmentPlan{Request: PeerEnrollmentRequest{Name: "remote", PeerAddress: "192.0.2.10:7711", RaftAddress: "192.0.2.10:7712"}, ClusterID: "test-cluster", Effects: []string{"在目标机启动持久节点：HTTPS 192.0.2.10:7711，共识 192.0.2.10:7712"}}
+	read := plan
+	read.Effects = []string{"Start a persistent node on the target machine: HTTPS 192.0.2.10:7711, consensus 192.0.2.10:7712"}
+	if plan.reviewHash() != read.reviewHash() {
+		t.Error("the same plan read in two languages has two review IDs")
+	}
+	moved := plan
+	moved.Request.PeerAddress = "192.0.2.11:7711"
+	if plan.reviewHash() == moved.reviewHash() {
+		t.Error("a plan for another address has the same review ID")
+	}
+}
+
+// A machine being enrolled has no configuration of its own yet; it
+// refuses a package in the language of the Hub that enrolls it.
+func TestAnImportedMachineRefusesInTheHubsLanguage(t *testing.T) {
+	for _, locale := range []i18n.Locale{i18n.LocaleEN, i18n.LocaleZH} {
+		data, err := json.Marshal(map[string]any{"version": 1, "operation_id": "operation", "cluster_id": "test-cluster", "node_id": "node-new", "workspace_dir": "~/steve-workspace", "owner_token": strings.Repeat("o", 40), "worker_token": strings.Repeat("w", 40), "seeds": []any{map[string]any{}}, "storage_level": "internal", "locale": locale})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ImportPeerPackage(data, filepath.Join(t.TempDir(), "peer"))
+		if err == nil || hasHan(err.Error()) == (locale == i18n.LocaleEN) || locale == i18n.LocaleEN && !strings.Contains(err.Error(), "ledger") {
+			t.Errorf("%s: %v, want the refusal of a package without a ledger grant in that language", locale, err)
 		}
 	}
 }
