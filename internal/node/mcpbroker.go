@@ -63,6 +63,8 @@ var (
 	// ErrUnbindable is a bind for a server the broker cannot hand out: an
 	// unknown transport, or an HTTP server with no proxy listening.
 	ErrUnbindable = errors.New("MCP server cannot be bound")
+	// ErrBrokerStopped is a bind on a broker whose Serve has returned.
+	ErrBrokerStopped = errors.New("MCP broker stopped")
 )
 
 // BrokerConfig is what a broker process reads: the servers, the socket,
@@ -105,6 +107,9 @@ type Broker struct {
 	mu        sync.Mutex
 	bindings  map[string]mcpBinding
 	proxyPort int
+	// stopped is why Serve returned, wrapping ErrBrokerStopped; nil while
+	// it serves.
+	stopped error
 }
 
 func NewBroker(cfg BrokerConfig) *Broker {
@@ -129,6 +134,13 @@ func (b *Broker) Serve(ctx context.Context) (serveErr error) {
 	// reported with its proxy already gone. Socket connections keep ctx.
 	proxyCtx, stopProxy := context.WithCancel(ctx)
 	defer func() {
+		why := serveErr
+		if why == nil {
+			why = context.Cause(ctx)
+		}
+		b.mu.Lock()
+		b.stopped = fmt.Errorf("%w: %w", ErrBrokerStopped, why)
+		b.mu.Unlock()
 		stopProxy()
 		if b.proxyDone != nil {
 			<-b.proxyDone
@@ -235,6 +247,12 @@ func (b *Broker) List() map[string]string {
 
 // Bind mints a binding and describes how a session reaches it.
 func (b *Broker) Bind(mcp, attempt, harness string) (ability.Binding, error) {
+	b.mu.Lock()
+	stopped := b.stopped
+	b.mu.Unlock()
+	if stopped != nil {
+		return ability.Binding{}, stopped
+	}
 	spec, ok := b.server(mcp)
 	if !ok {
 		return ability.Binding{}, ErrNoSuchServer
