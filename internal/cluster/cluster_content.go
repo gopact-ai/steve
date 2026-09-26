@@ -628,15 +628,15 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	// A context deadline alone does not interrupt a blocked HTTP body read.
 	// Bound the underlying connection so a vanished peer cannot hold a quota
 	// reservation or the store's shutdown wait indefinitely.
-	// The connection outlasts the work a little, for the answer to go out.
+	// The request is read until the work's deadline; the answer may be
+	// written a little after it, so a refusal still goes out.
 	deadline, _ := ctx.Deadline()
-	deadline = deadline.Add(contentMaintenanceTimeout / 6)
 	control := http.NewResponseController(w)
 	if err := control.SetReadDeadline(deadline); err != nil {
 		p.refuseContent(w, r, fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
-	if err := control.SetWriteDeadline(deadline); err != nil {
+	if err := control.SetWriteDeadline(deadline.Add(contentMaintenanceTimeout / 6)); err != nil {
 		p.refuseContent(w, r, fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
