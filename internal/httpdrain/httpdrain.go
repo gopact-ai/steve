@@ -133,8 +133,10 @@ func (s *Server) stop(ctx context.Context) {
 		}
 		if cut {
 			s.cut = ctx.Err()
-			s.abort()
+			// Connections first: a handler that answers once its context
+			// is cancelled then cannot reach its caller as finished.
 			s.err = errors.Join(s.err, s.srv.Close())
+			s.abort()
 			s.awaitCut()
 		}
 		<-s.idle

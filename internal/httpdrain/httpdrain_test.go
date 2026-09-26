@@ -280,3 +280,23 @@ func TestAStopWaitingOnACutHandlerNamesTheRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A handler cut short that answers as soon as its context is cancelled
+// must not reach its caller as a finished request: the connection is gone
+// before the cancellation lets it answer.
+func TestACutHandlerCannotAnswerAsIfItHadFinished(t *testing.T) {
+	entered := make(chan struct{})
+	server, url, _ := started(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+		w.WriteHeader(http.StatusOK)
+	}))
+	answered := call(url)
+	within(t, entered, "the request never reached its handler")
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code := within(t, answered, "the request cut short got no answer"); code == http.StatusOK {
+		t.Fatal("a request cut short was answered as if it had finished")
+	}
+}
