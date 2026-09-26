@@ -1477,8 +1477,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// by Leader Completeness the sender's log holds the snapshot's last entry,
 	// and by Log Matching it equals the compacted log up to that index. A
 	// predecessor below the snapshot index therefore matches, and batch
-	// entries up to that index are already in the snapshot. A leader resends
-	// from below the snapshot when the follower installed a later snapshot or
+	// entries up to that index are already in the snapshot. Such a request
+	// still says nothing about entries past its last one, so it commits no
+	// further (see the commit index update below). A leader resends from
+	// below the snapshot when the follower installed a later snapshot or
 	// compacted a batch whose response was lost.
 	snapshotIdx, snapshotTerm := r.getLastSnapshot()
 
@@ -1581,10 +1583,14 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
-	// Update the commit index
+	// Update the commit index. The request shows that our log matches the
+	// leader's only up to the last index it covers, which is its predecessor
+	// when it carries no entries. Entries past that index may be an unchecked
+	// tail from a deposed leader, such as one that survived a snapshot
+	// install, so commit no further than it.
 	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
 		start := time.Now()
-		idx := min(a.LeaderCommitIndex, r.getLastIndex())
+		idx := min(a.LeaderCommitIndex, a.PrevLogEntry+uint64(len(a.Entries)))
 		r.setCommitIndex(idx)
 		if r.configurations.latestIndex <= idx {
 			r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
