@@ -67,13 +67,6 @@ internal/app/application_stop.go#stop 1
 internal/artifact/gitrepo/limits.go#Error 4
 internal/attempt/process_stop.go#ConfirmProcessStopped 1
 internal/attempt/task_stop.go#ConfirmTaskStopped 1
-internal/card/card.go#approvalBlocks 6
-internal/card/card.go#build 1
-internal/card/card.go#controlRow 2
-internal/card/card.go#executionPanel 1
-internal/card/card.go#footerLine 1
-internal/card/card.go#recoverRow 1
-internal/card/card.go#statusLabel 9
 internal/cluster/cluster_config.go#LoadClusterPeerConfig 1
 internal/cluster/cluster_content_maintenance.go#runMaintenance 2
 internal/cluster/cluster_content_repair.go#StartContentRepair 1

@@ -77,6 +77,8 @@ const (
 	cardActionRetry    = "turn_retry"
 )
 
+// Copy is every word a card says. The caller fills all of it from its
+// catalog, in the reader's language; the card adds no words of its own.
 type Copy struct {
 	Title          string
 	Running        string
@@ -225,7 +227,7 @@ func build(t Turn, copy Copy, omitted renderOmissions) map[string]any {
 		elements = append(elements, row)
 	}
 	if omitted.details {
-		elements = append(elements, greyText("omitted", firstNonEmpty(copy.Partial, "部分详情已省略"), "notation", 0))
+		elements = append(elements, greyText("omitted", copy.Partial, "notation", 0))
 	}
 	elements = append(elements, footer(t, copy))
 	for i, el := range elements {
@@ -263,29 +265,29 @@ func build(t Turn, copy Copy, omitted renderOmissions) map[string]any {
 func statusLabel(t Turn, copy Copy) string {
 	if t.Status == StatusRunning {
 		if t.Approval != nil && t.Approval.RequestID != "" {
-			return firstNonEmpty(copy.Awaiting, "待授权")
+			return copy.Awaiting
 		}
 		if t.Question != nil {
-			return firstNonEmpty(copy.QuestionTitle, "需要你确认")
+			return copy.QuestionTitle
 		}
 		switch t.Phase {
 		case PhaseWaking:
-			return firstNonEmpty(copy.Waking, "Agent 正在唤醒")
+			return copy.Waking
 		case view.PhaseFinishing:
-			return firstNonEmpty(copy.Finishing, "正在整理结果")
+			return copy.Finishing
 		case view.PhaseSaving:
-			return firstNonEmpty(copy.Saving, "正在保存结果")
+			return copy.Saving
 		}
 	}
 	switch t.Status {
 	case StatusCompleted:
-		return firstNonEmpty(copy.Completed, "完成")
+		return copy.Completed
 	case StatusFailed:
-		return firstNonEmpty(copy.Failed, "失败")
+		return copy.Failed
 	case StatusCancelled:
-		return firstNonEmpty(copy.Cancelled, "已取消")
+		return copy.Cancelled
 	default:
-		return firstNonEmpty(copy.Running, "进行中")
+		return copy.Running
 	}
 }
 
@@ -590,9 +592,6 @@ func executionPanel(t Turn, copy Copy, hidden int) map[string]any {
 		elements = append(elements, toolPanel(fmt.Sprintf("t%d", i), tool, copy, t.UpdatedAt))
 	}
 	title := copy.Execution
-	if title == "" {
-		title = "执行过程"
-	}
 	return collapsible("exec", "**"+escape(title)+"**", t.Status == StatusRunning, elements)
 }
 
@@ -838,36 +837,18 @@ func approvalBlocks(t Turn, copy Copy) []map[string]any {
 		return nil
 	}
 	title := copy.ApprovalTitle
-	if title == "" {
-		title = "需要授权"
-	}
 	tool := copy.ApprovalTool
-	if tool == "" {
-		tool = "工具"
-	}
 	lines := []string{"**" + escape(title) + "**"}
 	if t.Approval.ToolName != "" {
 		lines = append(lines, escape(tool)+": "+escape(t.Approval.ToolName))
 	}
 	if t.Approval.Reason != "" {
 		reason := copy.ApprovalReason
-		if reason == "" {
-			reason = "原因"
-		}
 		lines = append(lines, escape(reason)+": "+escape(t.Approval.Reason))
 	}
 	rule := copy.ApprovalRule
-	if rule == "" {
-		rule = "仅允许当前操作一次"
-	}
 	allow := copy.AllowOnce
-	if allow == "" {
-		allow = "允许一次"
-	}
 	deny := copy.Deny
-	if deny == "" {
-		deny = "拒绝"
-	}
 	return []map[string]any{
 		{
 			"tag":              "interactive_container",
@@ -909,14 +890,8 @@ func controlRow(t Turn, copy Copy) map[string]any {
 	switch t.Status {
 	case StatusRunning:
 		label, action, kind = copy.Stop, cardActionCancel, "default"
-		if label == "" {
-			label = "终止"
-		}
 	case StatusFailed, StatusCancelled:
 		label, action, kind = copy.Retry, cardActionRetry, "default"
-		if label == "" {
-			label = "重试"
-		}
 	default:
 		return nil
 	}
@@ -952,9 +927,6 @@ func recoverRow(t Turn, copy Copy) map[string]any {
 		return nil
 	}
 	label := copy.Recover
-	if label == "" {
-		label = "恢复上个会话"
-	}
 	return map[string]any{
 		"tag":        "column_set",
 		"element_id": "recover",
@@ -1037,7 +1009,7 @@ func footerText(t Turn, copy Copy) string {
 	}
 	u := t.Usage
 	if u.ContextTokens > 0 || u.ContextWindow > 0 {
-		context := firstNonEmpty(copy.Context, "Ctx") + " " + compactTokens(u.ContextTokens)
+		context := copy.Context + " " + compactTokens(u.ContextTokens)
 		if u.ContextWindow > 0 {
 			context += "/" + compactTokens(u.ContextWindow) + " (" + compactPercent(u.ContextTokens, u.ContextWindow) + ")"
 		}
@@ -1047,27 +1019,24 @@ func footerText(t Turn, copy Copy) string {
 		parts = append(parts, "Tokens "+compactTokens(u.TotalTokens))
 	}
 	if u.TokensReported() && (u.TotalTokens == 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
-		parts = append(parts, firstNonEmpty(copy.In, "In")+" "+compactTokens(u.InputTokens), firstNonEmpty(copy.Out, "Out")+" "+compactTokens(u.OutputTokens))
+		parts = append(parts, copy.In+" "+compactTokens(u.InputTokens), copy.Out+" "+compactTokens(u.OutputTokens))
 	}
 	if u.CacheReadTokens > 0 {
-		parts = append(parts, firstNonEmpty(copy.Hit, "Hit")+" "+compactTokens(u.CacheReadTokens))
+		parts = append(parts, copy.Hit+" "+compactTokens(u.CacheReadTokens))
 	}
 	if u.CacheWriteTokens > 0 {
-		parts = append(parts, firstNonEmpty(copy.Write, "Wr")+" "+compactTokens(u.CacheWriteTokens))
+		parts = append(parts, copy.Write+" "+compactTokens(u.CacheWriteTokens))
 	}
 	return strings.Join(parts, " · ")
 }
 
-// footerLine appends the address tag: 发送给 <at>. The mention
+// footerLine appends the address tag: the SentTo label and <at>. The mention
 // is real, not decoration — it notifies the asker when the answer lands, and
 // it is the routing primitive agent-to-agent collaboration will ride on.
 func footerLine(t Turn, copy Copy) string {
 	line := "<font color='grey'>" + escape(footerText(t, copy)) + "</font>"
 	if t.Recipient != "" {
 		sent := copy.SentTo
-		if sent == "" {
-			sent = "发送给"
-		}
 		line += " <font color='grey'>· " + escape(sent) + "</font> <at id=" + t.Recipient + "></at>"
 	}
 	return line
