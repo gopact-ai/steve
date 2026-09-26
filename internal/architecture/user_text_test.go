@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,56 +26,78 @@ const (
 	textDouble  = "a scripted agent for tests"
 )
 
-// userTextExempt names, by file or by file#function, the literals that
-// are not Steve speaking to a person. A package-level literal is file#.
+// userTextExempt names, one declaration each, the literals that are not
+// Steve speaking to a person: file#function, file#Type.Method, or
+// file#name for a package-level constant, variable or type.
 var userTextExempt = map[string]string{
-	"internal/i18n/catalog.go": textCatalog,
+	"internal/i18n/catalog.go#zh": textCatalog,
+	"internal/i18n/catalog.go#en": textCatalog,
 
-	"cmd/mockagent/main.go": textDouble,
+	"cmd/mockagent/main.go#mockPlan":      textDouble,
+	"cmd/mockagent/main.go#scriptedReply": textDouble,
 
-	"internal/planner/llm.go#renderPrompt":                textModel,
-	"internal/planner/llm.go#run":                         textModel,
-	"internal/ctxpack/ctxpack.go#Render":                  textModel,
-	"internal/ctxpack/ctxpack.go#Bearings":                textModel,
-	"internal/exec/verify.go#verifyBrief":                 textModel,
-	"internal/exec/agent_runner.go#":                      textModel,
-	"internal/delegate/delegate.go#":                      textModel,
-	"internal/delegate/delegate.go#expectLine":            textModel,
-	"internal/delegate/deliver.go#Prompt":                 textModel,
-	"internal/delegate/deliver.go#writeChild":             textModel,
-	"internal/delegate/deliver.go#stateWord":              textModel,
-	"internal/delegate/deliver.go#landFor":                textModel,
-	"internal/delegate/preface.go#Preface":                textModel,
-	"internal/app/titler.go#titlePrompt":                  textModel,
-	"internal/onboard/onboard.go#Prompt":                  textModel,
-	"internal/onboard/onboard.go#sharedPrompt":            textModel,
-	"internal/console/console.go#quoteBlock":              textModel,
-	"internal/console/console.go#orUnknown":               textModel,
-	"internal/console/rewind.go#rewindHistory":            textModel,
-	"internal/console/relocation.go#relocationInput":      textModel,
-	"internal/material/types.go#PromptText":               textModel,
-	"internal/memory/memory.go#Template":                  textModel,
-	"internal/agentmcp/inform.go#":                        textModel,
-	"internal/agentmcp/inform.go#steveContext":            textModel,
-	"internal/agentmcp/memory.go#memoryTools":             textModel,
-	"internal/agentmcp/memory.go#steveRecall":             textModel,
-	"internal/turn/coordinator_inform.go#Where":           textModel,
-	"internal/turn/coordinator_inform.go#WhereProjects":   textModel,
-	"internal/turn/coordinator_inform.go#orNone":          textModel,
-	"internal/turn/coordinator_inform.go#repoWord":        textModel,
-	"internal/turn/recovery_relocate.go#relocationPrompt": textModel,
+	"internal/exec/agent_runner.go#ReportingContract":               textModel,
+	"internal/delegate/delegate.go#worktreeContract":                textModel,
+	"internal/agentmcp/inform.go#helpTopics":                        textModel,
+	"internal/planner/llm.go#renderPrompt":                          textModel,
+	"internal/planner/llm.go#LLM.run":                               textModel,
+	"internal/ctxpack/ctxpack.go#Context.Render":                    textModel,
+	"internal/ctxpack/ctxpack.go#Bearings":                          textModel,
+	"internal/exec/verify.go#verifyBrief":                           textModel,
+	"internal/delegate/delegate.go#expectLine":                      textModel,
+	"internal/delegate/deliver.go#Delivery.Prompt":                  textModel,
+	"internal/delegate/deliver.go#writeChild":                       textModel,
+	"internal/delegate/deliver.go#stateWord":                        textModel,
+	"internal/delegate/deliver.go#Service.landFor":                  textModel,
+	"internal/delegate/preface.go#Service.Preface":                  textModel,
+	"internal/app/titler.go#titlePrompt":                            textModel,
+	"internal/onboard/onboard.go#Prompt":                            textModel,
+	"internal/onboard/onboard.go#sharedPrompt":                      textModel,
+	"internal/console/console.go#Service.quoteBlock":                textModel,
+	"internal/console/console.go#orUnknown":                         textModel,
+	"internal/console/rewind.go#rewindHistory":                      textModel,
+	"internal/console/relocation.go#Service.relocationInput":        textModel,
+	"internal/material/types.go#Frozen.PromptText":                  textModel,
+	"internal/memory/memory.go#Template":                            textModel,
+	"internal/agentmcp/inform.go#Server.steveContext":               textModel,
+	"internal/agentmcp/memory.go#memoryTools":                       textModel,
+	"internal/agentmcp/memory.go#Server.steveRecall":                textModel,
+	"internal/turn/coordinator_inform.go#Coordinator.Where":         textModel,
+	"internal/turn/coordinator_inform.go#Coordinator.WhereProjects": textModel,
+	"internal/turn/coordinator_inform.go#orNone":                    textModel,
+	"internal/turn/coordinator_inform.go#repoWord":                  textModel,
+	"internal/turn/recovery_relocate.go#relocationPrompt":           textModel,
 
-	"internal/schedule/spec.go":                        textInput,
-	"internal/turn/commands_tasks.go#":                 textInput,
+	"internal/schedule/spec.go#chineseDuration":        textInput,
+	"internal/schedule/spec.go#parseDuration":          textInput,
+	"internal/schedule/spec.go#clock":                  textInput,
+	"internal/schedule/spec.go#parseClock":             textInput,
+	"internal/schedule/spec.go#weekdays":               textInput,
+	"internal/schedule/spec.go#isEveryDayWord":         textInput,
+	"internal/schedule/spec.go#isTomorrowWord":         textInput,
+	"internal/turn/commands_tasks.go#taskVerbs":        textInput,
+	"internal/memory/memory.go#sectionAliases":         textInput,
 	"internal/turn/commands_schedule.go#firingVerdict": textInput,
-	"internal/memory/memory.go#":                       textInput,
 	"internal/memory/memory.go#Sections":               textInput,
 	"internal/app/titler.go#cleanTitle":                textInput,
 
-	"internal/home/": textLocale,
+	"internal/home/reader.go#Reader.Load":                                     textLocale,
+	"internal/home/templates.go#UserLabelNameZH":                              textLocale,
+	"internal/home/templates.go#UserLabelTimezoneZH":                          textLocale,
+	"internal/home/templates.go#templateSoulZH":                               textLocale,
+	"internal/home/templates.go#templateUserZH":                               textLocale,
+	"internal/home/templates.go#templateMemoryZH":                             textLocale,
+	"internal/home/templates.go#ownerWrapper":                                 textLocale,
+	"internal/home/templates.go#guestWrapper":                                 textLocale,
+	"internal/home/templates.go#LanguageRule":                                 textLocale,
+	"internal/home/templates.go#ListenUnmentioned":                            textLocale,
 	"internal/onboard/draft.go#continueProfile":                               textLocale,
 	"internal/app/application_memory.go#prepareApplicationMemoryWithSettings": textLocale,
 }
+
+// exemptDeclaration is the shape of an exemption key: a Go file and one
+// declaration in it.
+var exemptDeclaration = regexp.MustCompile(`^[\w./-]+\.go#(\w+\.)?\w+$`)
 
 // TestUserTextGoesThroughTheCatalog keeps what Steve says to a person in
 // the catalog. A Chinese literal outside the catalog reaches an English
@@ -101,6 +124,9 @@ func TestUserTextGoesThroughTheCatalog(t *testing.T) {
 		}
 	}
 	for key := range userTextExempt {
+		if !exemptDeclaration.MatchString(key) {
+			t.Errorf("exemption %s names no single declaration: name the function, the Type.Method or the package-level value", key)
+		}
 		if !used[key] {
 			t.Errorf("exemption %s matches no literal; remove it", key)
 		}
@@ -115,45 +141,79 @@ func TestUserTextGoesThroughTheCatalog(t *testing.T) {
 }
 
 // userTextExemption returns the exemption key that covers site, or "".
+// Only the named declaration is covered: a file, a directory or every
+// package-level declaration of a file is never exempt as a whole.
 func userTextExemption(rel, site string) string {
-	for _, key := range []string{site, rel} {
-		if _, ok := userTextExempt[key]; ok {
-			return key
-		}
-	}
-	for dir := filepath.ToSlash(filepath.Dir(rel)); dir != "." && dir != "/"; dir = filepath.ToSlash(filepath.Dir(dir)) {
-		if _, ok := userTextExempt[dir+"/"]; ok {
-			return dir + "/"
-		}
+	if _, ok := userTextExempt[site]; ok {
+		return site
 	}
 	return ""
 }
 
 // hanLiterals returns, for each string literal with a Han character, the
-// name of the function declaring it ("" at package level).
+// declaration holding it: a function's name, a method's Type.Method, or
+// the name of a package-level constant, variable or type.
 func hanLiterals(syntax *ast.File) []string {
 	var out []string
-	visit := func(fn string, node ast.Node) {
+	visit := func(name string, node ast.Node) {
+		if node == nil {
+			return
+		}
 		ast.Inspect(node, func(n ast.Node) bool {
 			lit, ok := n.(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
 				return true
 			}
 			if value, err := strconv.Unquote(lit.Value); err == nil && strings.IndexFunc(value, isHan) >= 0 {
-				out = append(out, fn)
+				out = append(out, name)
 			}
 			return true
 		})
 	}
 	for _, decl := range syntax.Decls {
-		if fd, ok := decl.(*ast.FuncDecl); ok {
-			visit(fd.Name.Name, fd)
-			continue
+		switch decl := decl.(type) {
+		case *ast.FuncDecl:
+			visit(declName(decl), decl)
+		case *ast.GenDecl:
+			for _, spec := range decl.Specs {
+				switch spec := spec.(type) {
+				case *ast.ValueSpec:
+					for i, name := range spec.Names {
+						if len(spec.Values) == len(spec.Names) {
+							visit(name.Name, spec.Values[i])
+						} else if i == 0 {
+							visit(name.Name, spec)
+						}
+					}
+				case *ast.TypeSpec:
+					visit(spec.Name.Name, spec)
+				}
+			}
 		}
-		visit("", decl)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// declName is a function's name, or Type.Method for a method.
+func declName(fd *ast.FuncDecl) string {
+	if fd.Recv == nil || len(fd.Recv.List) == 0 {
+		return fd.Name.Name
+	}
+	typ := fd.Recv.List[0].Type
+	if star, ok := typ.(*ast.StarExpr); ok {
+		typ = star.X
+	}
+	switch generic := typ.(type) {
+	case *ast.IndexExpr:
+		typ = generic.X
+	case *ast.IndexListExpr:
+		typ = generic.X
+	}
+	if ident, ok := typ.(*ast.Ident); ok {
+		return ident.Name + "." + fd.Name.Name
+	}
+	return fd.Name.Name
 }
 
 func isHan(r rune) bool { return unicode.Is(unicode.Han, r) }
