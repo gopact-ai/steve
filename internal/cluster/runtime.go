@@ -305,12 +305,7 @@ func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
 	defer ticker.Stop()
-	// heard is when this replica last knew a consensus leader. denied is the
-	// applied index of the latest quorum read that found this node not
-	// coordinating: a replica behind it that still names this node is
-	// stale, and asking again would only repeat the answer.
-	var heard time.Time
-	var denied uint64
+	var state tickState
 	for {
 		if r.ctx.Err() != nil {
 			err := r.retire()
@@ -324,27 +319,7 @@ func (r *Runtime) run() {
 			r.shutdown(fmt.Errorf("%w: the consensus replica is no longer healthy", coordination.ErrApplication))
 			continue
 		}
-		if status.LeaderID != "" {
-			heard = time.Now()
-		}
-		err := r.coordinates(status.State)
-		if err == nil && status.AppliedIndex < denied {
-			err = coordination.ErrNotCoordinator
-		}
-		if err == nil && time.Since(heard) > r.config.Coordination.ApplyTimeout {
-			err = fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
-		}
-		if err == nil {
-			r.mu.Lock()
-			if r.restoring {
-				err = coordination.ErrNotReady
-			}
-			r.mu.Unlock()
-		}
-		if err == nil && !r.keeps(status.State) {
-			err = r.start(&denied)
-		}
-		if err != nil {
+		if err := r.step(observation{Status: status, at: time.Now()}, &state); err != nil {
 			r.invalidate(err, false)
 			r.retire()
 		}
@@ -353,6 +328,49 @@ func (r *Runtime) run() {
 		case <-ticker.C:
 		}
 	}
+}
+
+// observation is what one tick reads from the local replica.
+type observation struct {
+	coordination.Status
+	at time.Time
+}
+
+// tickState is what the runtime loop carries from one tick to the next.
+type tickState struct {
+	// heard is when this replica last knew a consensus leader.
+	heard time.Time
+	// denied is the applied index of the latest quorum read that found this
+	// node not coordinating: a replica behind it that still names this node
+	// is stale, and asking again would only repeat the answer.
+	denied uint64
+}
+
+// step is one tick of run. It returns why this node has no business
+// generation to keep, or nil once the generation the local replica names
+// is running.
+func (r *Runtime) step(seen observation, s *tickState) error {
+	if seen.LeaderID != "" {
+		s.heard = seen.at
+	}
+	err := r.coordinates(seen.State)
+	if err == nil && seen.AppliedIndex < s.denied {
+		err = coordination.ErrNotCoordinator
+	}
+	if err == nil && seen.at.Sub(s.heard) > r.config.Coordination.ApplyTimeout {
+		err = fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
+	}
+	if err == nil {
+		r.mu.Lock()
+		if r.restoring {
+			err = coordination.ErrNotReady
+		}
+		r.mu.Unlock()
+	}
+	if err == nil && !r.keeps(seen.State) {
+		err = r.start(s)
+	}
+	return err
 }
 
 // coordinates reports why state does not make this node the coordinator, or
@@ -376,13 +394,13 @@ func (r *Runtime) keeps(state coordination.State) bool {
 
 // start replaces the current generation with one for the assignment a quorum
 // read confirms, once the local replica has caught up with that read. A read
-// that finds this node not coordinating is recorded in denied.
-func (r *Runtime) start(denied *uint64) error {
+// that finds this node not coordinating is recorded in s.denied.
+func (r *Runtime) start(s *tickState) error {
 	ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
 	state, err := r.ReadState(ctx)
 	if err == nil {
 		if err = r.coordinates(state); err != nil {
-			*denied = state.AppliedIndex
+			s.denied = state.AppliedIndex
 		}
 	}
 	var version uint64

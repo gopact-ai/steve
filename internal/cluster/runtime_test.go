@@ -1075,6 +1075,61 @@ func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
 	}
 }
 
+// staleView is status as a replica behind the transfer that made another
+// node the coordinator might read it: it still names node and has applied
+// less than the leader has.
+func staleView(t *testing.T, r *Runtime, node string) observation {
+	t.Helper()
+	status := r.service.Status()
+	if status.AppliedIndex == 0 || status.LeaderID == "" {
+		t.Fatalf("the replica has nothing applied or knows no leader: %+v", status)
+	}
+	status.Coordinator.NodeID = node
+	status.AppliedIndex--
+	if err := r.coordinates(status.State); err != nil {
+		t.Fatalf("the stale view does not name %s the coordinator: %v", node, err)
+	}
+	return observation{Status: status, at: time.Now()}
+}
+
+// A replica that names this node the coordinator only because it has not
+// applied a later assignment asks a majority once. It does not ask again
+// until it has applied what that answer covered.
+func TestStaleReplicaAsksOnceUntilItAppliesTheAnswer(t *testing.T) {
+	nodes := testNodes(t, 2)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	second := joinNode(t, first, nodes[1], false, false)
+	waitFor(t, 8*time.Second, "node-2 to apply its own admission and hear from the leader", func() bool {
+		status := second.service.Status()
+		return status.IsActiveReplica("node-2") && status.LeaderID != ""
+	})
+	stale := staleView(t, second, "node-2")
+	var state tickState
+	asks := func(seen observation) int64 {
+		t.Helper()
+		before := nodes[0].servedCount(coordination.RPCPath + "state")
+		if err := second.step(seen, &state); !errors.Is(err, coordination.ErrNotCoordinator) {
+			t.Fatalf("a stale replica that a majority does not name the coordinator reported %v", err)
+		}
+		return nodes[0].servedCount(coordination.RPCPath+"state") - before
+	}
+	if n := asks(stale); n != 1 {
+		t.Fatalf("a stale view naming this node asked the leader for the state %d times, want once", n)
+	}
+	if state.denied <= stale.AppliedIndex {
+		t.Fatalf("the answer at applied index %d is not ahead of the stale view at %d", state.denied, stale.AppliedIndex)
+	}
+	if n := asks(stale); n != 0 {
+		t.Fatalf("the same stale view asked the leader again %d times after a majority denied it", n)
+	}
+	caught := stale
+	caught.AppliedIndex = state.denied
+	if n := asks(caught); n != 1 {
+		t.Fatalf("a view that applied the denying answer and still names this node asked %d times, want once", n)
+	}
+}
+
 // A coordinator that hears from no consensus leader for longer than
 // ApplyTimeout gives up its business generation, although nothing is
 // written: it can no longer tell whether it still holds its role.
