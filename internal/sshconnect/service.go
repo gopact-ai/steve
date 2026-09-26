@@ -19,6 +19,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 )
 
@@ -667,7 +668,8 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	}
 	var binaryReader io.Reader
 	if template.BinaryPath != "" {
-		binary, metadata, err := nodebootstrap.OpenBinary(template.BinaryPath)
+		// The failed step below says what went wrong; the reason is not shown.
+		binary, metadata, err := nodebootstrap.OpenBinary(i18n.Catalog{}, template.BinaryPath)
 		if err != nil {
 			return reject(fail("binary", "binary_unavailable", "无法读取待上传的节点安装包", "重新检查安装包后生成计划"))
 		}

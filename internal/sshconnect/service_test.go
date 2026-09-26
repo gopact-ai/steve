@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 )
 
@@ -111,7 +112,7 @@ func (b *fakeBackend) Preview(context.Context, InstallRequest, CheckResult) (Tem
 	}
 	template := Template{Script: script, Effects: []string{"创建节点配置并启动服务"}, Steps: []Step{{ID: "binary", Status: "ready", Message: "安装包平台已匹配"}}, ReviewID: b.reviewID}
 	if b.binaryPath != "" {
-		metadata, err := nodebootstrap.InspectBinary(b.binaryPath)
+		metadata, err := nodebootstrap.InspectBinary(i18n.Catalog{}, b.binaryPath)
 		if err != nil {
 			return Template{}, err
 		}

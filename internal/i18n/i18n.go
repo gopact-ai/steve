@@ -1003,6 +1003,14 @@ const (
 	DesktopWorkspaceHomeOrRoot    Key = "desktop_workspace_home_or_root"
 	DesktopWorkspaceStateDir      Key = "desktop_workspace_state_dir"
 	DesktopWorkspaceSystem        Key = "desktop_workspace_system"
+
+	// node installer
+	NodeBinaryUnreadable         Key = "node_binary_unreadable"
+	NodeBinaryNotFile            Key = "node_binary_not_file"
+	NodeBinaryUnsupported        Key = "node_binary_unsupported"
+	NodeBinaryUnverifiable       Key = "node_binary_unverifiable"
+	NodeBinaryChanging           Key = "node_binary_changing"
+	NodeBinaryVerifiedUnreadable Key = "node_binary_verified_unreadable"
 )
 
 type Catalog struct {

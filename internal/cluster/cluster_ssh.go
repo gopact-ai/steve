@@ -14,6 +14,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
@@ -165,7 +166,7 @@ func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "blocked", Message: "App 内没有适合目标平台的完整节点安装包", Suggestion: "使用包含 " + check.OS + "/" + check.Arch + " 节点程序的桌面安装包"})
 		return template, nodebootstrap.PeerSpec{}, plan, nil
 	}
-	metadata, err := nodebootstrap.InspectBinary(path)
+	metadata, err := nodebootstrap.InspectBinary(i18n.New(i18n.ContextLocale(ctx)), path)
 	if err != nil {
 		return template, nodebootstrap.PeerSpec{}, plan, err
 	}

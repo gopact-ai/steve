@@ -967,6 +967,14 @@ var zh = map[Key]string{
 	DesktopWorkspaceHomeOrRoot:    "工作目录要是一个专门的文件夹，不能直接用家目录或根目录",
 	DesktopWorkspaceStateDir:      "工作目录不能是 Steve 自己的数据目录或它的上级目录",
 	DesktopWorkspaceSystem:        "%s 属于系统目录，请选择个人目录下的文件夹",
+
+	// node installer
+	NodeBinaryUnreadable:         "无法读取节点安装包",
+	NodeBinaryNotFile:            "节点安装包必须是不超过 512 MiB 的普通文件",
+	NodeBinaryUnsupported:        "节点安装包需要受支持的 Linux 或 macOS 可执行文件",
+	NodeBinaryUnverifiable:       "无法校验节点安装包",
+	NodeBinaryChanging:           "无法校验节点安装包或安装包正在改变",
+	NodeBinaryVerifiedUnreadable: "无法读取已校验的节点安装包",
 }
 
 var en = map[Key]string{
@@ -1936,4 +1944,12 @@ var en = map[Key]string{
 	DesktopWorkspaceHomeOrRoot:    "The workspace must be a folder of its own, not the home directory or a root directory",
 	DesktopWorkspaceStateDir:      "The workspace cannot be Steve's own data directory or a directory that contains it",
 	DesktopWorkspaceSystem:        "%s belongs to the system; choose a folder in your home directory",
+
+	// node installer
+	NodeBinaryUnreadable:         "Cannot read the node installer",
+	NodeBinaryNotFile:            "The node installer must be a regular file of at most 512 MiB",
+	NodeBinaryUnsupported:        "The node installer must be a supported Linux or macOS executable",
+	NodeBinaryUnverifiable:       "Cannot verify the node installer",
+	NodeBinaryChanging:           "Cannot verify the node installer, or it is changing",
+	NodeBinaryVerifiedUnreadable: "Cannot read the verified node installer",
 }
