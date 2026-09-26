@@ -213,6 +213,11 @@ func (w *contentRepairWorker) reachableDomains(ctx context.Context, manifest con
 // replica behind it. Nothing is refused; the next round checks again.
 const uncheckedPlacement = " 的存储授权暂时无法核对（集群状态不可达或本机副本落后），已有副本记录保持不变，下一轮将重新核对。"
 
+// uncheckedCopy follows the label of content whose copy the peer holding
+// it could not check for now: that peer's replica behind or its committed
+// state out of reach.
+const uncheckedCopy = " 的副本所在节点暂时无法核对存储授权（该节点副本落后或无法读取集群状态），已有副本记录保持不变，请检查该节点与集群的连接；下一轮将重新核对。"
+
 func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentreplica.Manifest, availability map[string]bool) (string, error) {
 	id := manifest.ID
 	label := fmt.Sprintf("项目 %s 的内容 %s", manifest.Object.Scope.ProjectID, id[:12])
@@ -269,6 +274,9 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 			return "degraded", err
 		case errors.Is(err, checkpoint.ErrQuota):
 			w.notice(ctx, id, "degraded", label+" 暂时无法在本机保存副本，请检查存储配额；已有副本记录保持不变。")
+			return "degraded", err
+		case errors.Is(err, errContentPeerUnchecked):
+			w.notice(ctx, id, "degraded", label+uncheckedCopy)
 			return "degraded", err
 		case errors.Is(err, contentreplica.ErrUnavailable):
 			w.notice(ctx, id, "degraded", label+uncheckedPlacement)

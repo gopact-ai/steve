@@ -45,6 +45,10 @@ var (
 	// errContentLagging reports a replica that did not apply what the
 	// committed state says exists within the time a content check waits.
 	errContentLagging = fmt.Errorf("%w: replica is behind the committed state", contentreplica.ErrUnavailable)
+	// errContentPeerUnchecked is a peer's answer that it could not check a
+	// content request for now: its replica behind or its committed state
+	// out of reach. It refuses nothing.
+	errContentPeerUnchecked = errors.New("the peer could not check the request for now")
 	// errContentAuthority refuses a caller the committed state does not
 	// admit to content at all: no cluster identity, not a member, removed.
 	errContentAuthority = errors.New("content caller has no authority")
@@ -491,9 +495,9 @@ func contentReplyError(logs *contentRefusals, nodeID string, response *http.Resp
 		// this generation is no longer the one writing.
 		return fmt.Errorf("%w: %w: %w", ErrInactive, contentreplica.ErrSuperseded, errContentStale)
 	case "lagging":
-		return errContentLagging
+		return fmt.Errorf("%w: %w", errContentPeerUnchecked, errContentLagging)
 	case "unavailable":
-		return fmt.Errorf("%w: HTTP %d", contentreplica.ErrUnavailable, response.StatusCode)
+		return fmt.Errorf("%w: %w: HTTP %d", errContentPeerUnchecked, contentreplica.ErrUnavailable, response.StatusCode)
 	case "invalid", "method":
 		return contentreplica.ErrInvalid
 	case "too_large":
@@ -514,7 +518,7 @@ func contentReplyError(logs *contentRefusals, nodeID string, response *http.Resp
 		slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d without a code: body %q: %v", nodeID, response.StatusCode, body, readErr), "node", nodeID, "status", response.StatusCode, "suppressed", suppressed)
 	}
 	if response.StatusCode >= 500 {
-		return fmt.Errorf("%w: HTTP %d without a code: %q", contentreplica.ErrUnavailable, response.StatusCode, body)
+		return fmt.Errorf("%w: %w: HTTP %d without a code: %q", errContentPeerUnchecked, contentreplica.ErrUnavailable, response.StatusCode, body)
 	}
 	return fmt.Errorf("content reply HTTP %d without a code: %q", response.StatusCode, body)
 }
