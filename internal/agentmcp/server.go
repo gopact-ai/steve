@@ -167,6 +167,19 @@ type Server struct {
 	intents  Intents
 	listener net.Listener
 	srv      *http.Server
+	// grace is how long the calls in flight when the server stops get to
+	// finish on their own; those still running then have their requests
+	// cancelled.
+	grace time.Duration
+	// abort cancels every request's context, so a call that outlived the
+	// grace period returns.
+	abort context.CancelFunc
+	// calls counts the handlers running; stopping turns new ones away once
+	// shutdown has begun, so the count only falls from there.
+	callsMu  sync.Mutex
+	calls    sync.WaitGroup
+	stopping bool
+	stopOnce sync.Once
 
 	mu                  sync.Mutex
 	channels            map[string]channel.Messenger
@@ -192,7 +205,8 @@ type Server struct {
 }
 
 // New binds the loopback listener immediately so the URL is known before any
-// capability is assembled. Serving starts with Start.
+// capability is assembled. Serving starts with Start; Close gives the port
+// back whether or not the server ever started.
 //
 // Pass the previously used port to bind it again, so agents that still hold
 // the old URL keep reaching this server across gateway restarts. 0 picks
@@ -215,6 +229,7 @@ func New(preferredPort int, text i18n.Catalog) (*Server, error) {
 	s := &Server{
 		text:                text,
 		listener:            listener,
+		grace:               shutdownGrace,
 		channels:            map[string]channel.Messenger{},
 		tokens:              map[string]binding{},
 		byBind:              map[binding]string{},
@@ -227,27 +242,91 @@ func New(preferredPort int, text i18n.Catalog) (*Server, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", s.handleMCP)
-	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	base, abort := context.WithCancel(context.Background())
+	s.abort = abort
+	s.srv = &http.Server{
+		Handler:           s.tracked(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return base },
+	}
 	return s, nil
 }
 
-// Start serves until ctx is done. It always returns nil after a clean
-// shutdown so callers can run it in a bare goroutine.
+// shutdownGrace is how long the calls in flight at shutdown get before
+// their requests are cancelled.
+const shutdownGrace = 5 * time.Second
+
+// Start serves until ctx is done, then shuts the server down. It returns
+// only once no tool call is running any more, so whoever owns what the
+// tools write to can close it as soon as Start returns. It returns nil
+// after a clean shutdown so callers can run it in a bare goroutine.
 func (s *Server) Start(ctx context.Context) error {
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.srv.Shutdown(shutdown); err != nil {
-			// Serve still returns cleanly; what did not drain in time is
-			// worth a line since a stuck tool call is what it points to.
-			slog.Warn(fmt.Sprintf("agentmcp: shutdown: %v", err))
-		}
-	}()
-	if err := s.srv.Serve(s.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	served := make(chan error, 1)
+	go func() { served <- s.srv.Serve(s.listener) }()
+	var err error
+	select {
+	case <-ctx.Done():
+		s.shutdown()
+		err = <-served
+	case err = <-served:
+		s.shutdown()
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("agentmcp: serve: %w", err)
 	}
 	return nil
+}
+
+// Close shuts the server down the way a cancelled Start does and releases
+// its port, also when Start never ran. It returns once no tool call is
+// running; a running Start returns nil after it. Close may be called more
+// than once.
+func (s *Server) Close() {
+	s.shutdown()
+}
+
+// shutdown stops accepting, lets the calls in flight finish for the grace
+// period, cancels the ones still running and waits until every handler
+// has returned. Concurrent callers all return after that.
+func (s *Server) shutdown() {
+	s.stopOnce.Do(func() {
+		s.callsMu.Lock()
+		s.stopping = true
+		s.callsMu.Unlock()
+		drain, cancel := context.WithTimeout(context.Background(), s.grace)
+		defer cancel()
+		if err := s.srv.Shutdown(drain); err != nil {
+			// A stuck tool call is what this points to; its connection
+			// is cut here and its request cancelled below, rather than
+			// left writing after its storage is gone.
+			slog.Warn(fmt.Sprintf("agentmcp: shutdown: %v; cancelling the tool calls still running", err))
+			_ = s.srv.Close()
+		}
+		// Serve closes the listener it was given; one it was never given
+		// is still bound, and closing it again after Serve is harmless.
+		_ = s.listener.Close()
+		// Cancels the calls that outlived the grace period; with none
+		// left it only releases the context.
+		s.abort()
+		s.calls.Wait()
+	})
+}
+
+// tracked counts every running handler for shutdown to wait on, and
+// refuses requests that arrive once shutdown has begun.
+func (s *Server) tracked(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.callsMu.Lock()
+		if s.stopping {
+			s.callsMu.Unlock()
+			http.Error(w, "shutting down", http.StatusServiceUnavailable)
+			return
+		}
+		s.calls.Add(1)
+		s.callsMu.Unlock()
+		defer s.calls.Done()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // URL is the endpoint injected into agent MCP configs.
