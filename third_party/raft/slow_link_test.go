@@ -17,7 +17,8 @@ import (
 
 // The slow link carries a 512 KiB batch in about 500ms, well past the fixed
 // 200ms transport timeout. With one timeout per 64 KiB the transport assumes
-// at least 320 KiB/s, a third of what the link delivers.
+// at least 320 KiB/s, a third of what the link delivers. A buffered link
+// holds a whole batch, so a write can return before any of it arrives.
 const (
 	slowLinkRate    = 1 << 20
 	slowLinkTimeout = 200 * time.Millisecond
@@ -25,36 +26,47 @@ const (
 	slowLinkEntries = 16
 	slowLinkEntry   = 32 << 10
 	slowLinkChunk   = 4 << 10
+	slowLinkBuffer  = slowLinkEntries * slowLinkEntry
 )
 
 // slowLink paces the bytes written on every connection one side dials, like
-// streams multiplexed on one slow session. A write that the link cannot carry
-// before the connection's write deadline fails at the deadline, and its
-// remaining bytes are never delivered.
+// streams multiplexed on one slow session. A write returns once no more than
+// buffer bytes are still ahead of its end; with no buffer it returns once its
+// bytes have crossed. A write that cannot get that far before the
+// connection's write deadline fails at the deadline, and its remaining bytes
+// are never delivered.
 type slowLink struct {
+	buffer int
+
 	mu   sync.Mutex
 	next time.Time
 }
 
-// reserve waits until n more bytes have crossed the link and reports whether
-// they did so before deadline.
-func (l *slowLink) reserve(n int, deadline time.Time) bool {
+func slowLinkDuration(n int) time.Duration {
+	return time.Duration(n) * time.Second / slowLinkRate
+}
+
+// reserve schedules n more bytes on the link and waits until the write may
+// return. It reports when the bytes will have crossed and whether the write
+// returned before deadline.
+func (l *slowLink) reserve(n int, deadline time.Time) (time.Time, bool) {
 	l.mu.Lock()
 	now := time.Now()
 	start := l.next
 	if start.Before(now) {
 		start = now
 	}
-	end := start.Add(time.Duration(n) * time.Second / slowLinkRate)
-	if !deadline.IsZero() && end.After(deadline) {
+	end := start.Add(slowLinkDuration(n))
+	accepted := end.Add(-slowLinkDuration(l.buffer))
+	if !deadline.IsZero() && accepted.After(deadline) {
 		l.mu.Unlock()
 		time.Sleep(time.Until(deadline))
-		return false
+		return time.Time{}, false
 	}
 	l.next = end
 	l.mu.Unlock()
-	time.Sleep(time.Until(end))
-	return true
+	time.Sleep(time.Until(accepted))
+	return end, true
 }
 
 type slowLinkConn struct {
@@ -63,6 +75,51 @@ type slowLinkConn struct {
 
 	mu       sync.Mutex
 	deadline time.Time
+
+	// A buffered link delivers accepted bytes in order from one goroutine.
+	queue     chan slowLinkChunkAt
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+type slowLinkChunkAt struct {
+	data []byte
+	at   time.Time
+}
+
+func newSlowLinkConn(conn net.Conn, link *slowLink) *slowLinkConn {
+	c := &slowLinkConn{Conn: conn, link: link}
+	if link.buffer > 0 {
+		c.queue = make(chan slowLinkChunkAt, link.buffer/slowLinkChunk+1)
+		c.closed = make(chan struct{})
+		go c.deliver()
+	}
+	return c
+}
+
+func (c *slowLinkConn) deliver() {
+	for {
+		select {
+		case chunk := <-c.queue:
+			select {
+			case <-time.After(time.Until(chunk.at)):
+			case <-c.closed:
+				return
+			}
+			if _, err := c.Conn.Write(chunk.data); err != nil {
+				return
+			}
+		case <-c.closed:
+			return
+		}
+	}
+}
+
+func (c *slowLinkConn) Close() error {
+	if c.closed != nil {
+		c.closeOnce.Do(func() { close(c.closed) })
+	}
+	return c.Conn.Close()
 }
 
 func (c *slowLinkConn) SetDeadline(t time.Time) error {
@@ -91,13 +148,23 @@ func (c *slowLinkConn) Write(p []byte) (int, error) {
 		c.mu.Lock()
 		deadline := c.deadline
 		c.mu.Unlock()
-		if !c.link.reserve(chunk, deadline) {
+		at, ok := c.link.reserve(chunk, deadline)
+		if !ok {
 			return written, &net.OpError{Op: "write", Net: "tcp", Source: c.LocalAddr(), Addr: c.RemoteAddr(), Err: os.ErrDeadlineExceeded}
 		}
-		n, err := c.Conn.Write(p[:chunk])
-		written += n
-		if err != nil {
-			return written, err
+		if c.queue == nil {
+			n, err := c.Conn.Write(p[:chunk])
+			written += n
+			if err != nil {
+				return written, err
+			}
+		} else {
+			select {
+			case c.queue <- slowLinkChunkAt{data: bytes.Clone(p[:chunk]), at: at}:
+				written += chunk
+			case <-c.closed:
+				return written, net.ErrClosed
+			}
 		}
 		p = p[chunk:]
 	}
@@ -116,7 +183,7 @@ func (s slowLinkStream) Dial(address ServerAddress, timeout time.Duration) (net.
 	if err != nil || s.link == nil {
 		return c, err
 	}
-	return &slowLinkConn{Conn: c, link: s.link}, nil
+	return newSlowLinkConn(c, s.link), nil
 }
 
 func slowLinkTransport(t *testing.T, link *slowLink) *NetworkTransport {
@@ -169,9 +236,9 @@ func TestNetworkTransport_AppendEntriesScaledTimeout(t *testing.T) {
 		require.True(t, response.Success)
 	})
 
-	t.Run("pipeline", func(t *testing.T) {
+	sendPipelined := func(t *testing.T, link *slowLink) {
 		follower := slowLinkFollower(t)
-		leader := slowLinkTransport(t, &slowLink{})
+		leader := slowLinkTransport(t, link)
 		pipeline, err := leader.AppendEntriesPipeline("follower", follower.LocalAddr())
 		require.NoError(t, err)
 		t.Cleanup(func() { pipeline.Close() })
@@ -196,7 +263,13 @@ func TestNetworkTransport_AppendEntriesScaledTimeout(t *testing.T) {
 				t.Fatal("no pipelined response")
 			}
 		}
-	})
+	}
+	// The write returns only after the batch has crossed, so this guards the
+	// write deadline.
+	t.Run("pipeline", func(t *testing.T) { sendPipelined(t, &slowLink{}) })
+	// The write returns while the batch is still buffered, so the response
+	// cannot arrive before the rest crosses: this guards the read deadline.
+	t.Run("pipeline-buffered", func(t *testing.T) { sendPipelined(t, &slowLink{buffer: slowLinkBuffer}) })
 
 	t.Run("small-request-keeps-fixed-timeout", func(t *testing.T) {
 		// Nothing answers, so the request can only end at its deadline.
