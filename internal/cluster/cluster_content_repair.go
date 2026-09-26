@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -269,28 +270,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 	defer file.Close()
 	available, err := w.client.Read(ctx, manifest, file)
 	if err != nil {
-		switch {
-		case generationEnded(err), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			return "degraded", err
-		case errors.Is(err, checkpoint.ErrQuota):
-			w.notice(ctx, id, "degraded", label+" 暂时无法在本机保存副本，请检查存储配额；已有副本记录保持不变。")
-			return "degraded", err
-		case errors.Is(err, errContentPeerUnchecked):
-			w.notice(ctx, id, "degraded", label+uncheckedCopy)
-			return "degraded", err
-		case errors.Is(err, contentreplica.ErrUnavailable):
-			w.notice(ctx, id, "degraded", label+uncheckedPlacement)
-			return "degraded", err
-		case errors.Is(err, contentreplica.ErrPlacement):
-			w.notice(ctx, id, "placement_blocked", label+" 的存储授权已改变，等待确认可用存储位置后再复制。")
-			return "placement_blocked", err
-		case errors.Is(err, contentreplica.ErrIncomplete):
-			w.notice(ctx, id, "unavailable", label+" 当前无法取得已验证副本，请检查原节点连接与内容状态；恢复后会重新核对。")
-			return "unavailable", err
-		default:
-			w.notice(ctx, id, "degraded", label+" 的读取或本机保存尚未完成，已有副本记录保持不变，请检查存储和连接。")
-			return "degraded", err
-		}
+		return w.readFailed(ctx, id, label, err)
 	}
 	availability[w.peer.Config.NodeID] = true
 	// Persist this exact local upload before a separate preparation can
@@ -306,29 +286,9 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 		if _, err := file.Seek(0, 0); err != nil {
 			return "degraded", err
 		}
-		var prepared contentreplica.Manifest
-		var prepareErr error
-		if manifest.Object.Kind == contentreplica.GitBundle {
-			prepared, prepareErr = w.client.PrepareBundle(ctx, scope.ProjectID, manifest.Object.Key, manifest.Object.Base, manifest.Object.Blob, file)
-		} else {
-			prepared, prepareErr = w.client.Prepare(ctx, scope.ProjectID, manifest.Object.Kind, manifest.Object.Key, manifest.Object.Blob, file)
-		}
-		if generationEnded(prepareErr) {
-			return "degraded", prepareErr
-		}
+		prepared, prepareErr := w.prepareCopy(ctx, scope, manifest, file)
 		if prepareErr != nil {
-			// Persist a newly recovered local receipt even when no second target
-			// is currently available; Record never reduces existing protection.
-			recordErr := w.record(ctx, available)
-			message := fmt.Sprintf("%s 当前只有 %d 个独立可达副本，需要 %d 个；等待符合存储授权的节点恢复后继续补齐。", label, live, required)
-			if errors.Is(prepareErr, checkpoint.ErrQuota) {
-				message = label + " 暂时无法增加独立副本，请检查可用节点的存储配额。"
-			}
-			if recordErr != nil {
-				message = label + " 的本机内容已恢复，但副本记录尚未提交，后续会重新核对。"
-			}
-			w.notice(ctx, id, "degraded", message)
-			return "degraded", errors.Join(prepareErr, recordErr)
+			return w.prepareFailed(ctx, id, label, available, prepareErr, live, required)
 		}
 		available = prepared
 		for _, receipt := range prepared.Receipts {
@@ -353,6 +313,65 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 	}
 	w.notice(ctx, id, "repaired", label+" 已在可用节点补齐独立副本。")
 	return "repaired", nil
+}
+
+// readFailed is how a repair ends when it could not read a verified copy
+// into this node: the status it reports and the notice it gives, by what
+// stopped the read. A generation that ended or a repair that ran out of
+// time says nothing about the content.
+func (w *contentRepairWorker) readFailed(ctx context.Context, id, label string, err error) (string, error) {
+	switch {
+	case generationEnded(err), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "degraded", err
+	case errors.Is(err, checkpoint.ErrQuota):
+		w.notice(ctx, id, "degraded", label+" 暂时无法在本机保存副本，请检查存储配额；已有副本记录保持不变。")
+		return "degraded", err
+	case errors.Is(err, errContentPeerUnchecked):
+		w.notice(ctx, id, "degraded", label+uncheckedCopy)
+		return "degraded", err
+	case errors.Is(err, contentreplica.ErrUnavailable):
+		w.notice(ctx, id, "degraded", label+uncheckedPlacement)
+		return "degraded", err
+	case errors.Is(err, contentreplica.ErrPlacement):
+		w.notice(ctx, id, "placement_blocked", label+" 的存储授权已改变，等待确认可用存储位置后再复制。")
+		return "placement_blocked", err
+	case errors.Is(err, contentreplica.ErrIncomplete):
+		w.notice(ctx, id, "unavailable", label+" 当前无法取得已验证副本，请检查原节点连接与内容状态；恢复后会重新核对。")
+		return "unavailable", err
+	default:
+		w.notice(ctx, id, "degraded", label+" 的读取或本机保存尚未完成，已有副本记录保持不变，请检查存储和连接。")
+		return "degraded", err
+	}
+}
+
+// prepareCopy stores the copy staged in file on further nodes, as the kind
+// of content it is.
+func (w *contentRepairWorker) prepareCopy(ctx context.Context, scope contentreplica.Scope, manifest contentreplica.Manifest, file io.ReadSeeker) (contentreplica.Manifest, error) {
+	if manifest.Object.Kind == contentreplica.GitBundle {
+		return w.client.PrepareBundle(ctx, scope.ProjectID, manifest.Object.Key, manifest.Object.Base, manifest.Object.Blob, file)
+	}
+	return w.client.Prepare(ctx, scope.ProjectID, manifest.Object.Kind, manifest.Object.Key, manifest.Object.Blob, file)
+}
+
+// prepareFailed is how a repair ends when it recovered this node's copy but
+// could not store another: the recovered receipt is still recorded, and the
+// notice says what is short. A generation that ended says nothing.
+func (w *contentRepairWorker) prepareFailed(ctx context.Context, id, label string, available contentreplica.Manifest, prepareErr error, live, required int) (string, error) {
+	if generationEnded(prepareErr) {
+		return "degraded", prepareErr
+	}
+	// Persist a newly recovered local receipt even when no second target
+	// is currently available; Record never reduces existing protection.
+	recordErr := w.record(ctx, available)
+	message := fmt.Sprintf("%s 当前只有 %d 个独立可达副本，需要 %d 个；等待符合存储授权的节点恢复后继续补齐。", label, live, required)
+	if errors.Is(prepareErr, checkpoint.ErrQuota) {
+		message = label + " 暂时无法增加独立副本，请检查可用节点的存储配额。"
+	}
+	if recordErr != nil {
+		message = label + " 的本机内容已恢复，但副本记录尚未提交，后续会重新核对。"
+	}
+	w.notice(ctx, id, "degraded", message)
+	return "degraded", errors.Join(prepareErr, recordErr)
 }
 
 func (w *contentRepairWorker) record(ctx context.Context, manifest contentreplica.Manifest) error {

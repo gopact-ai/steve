@@ -625,19 +625,8 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	// after the transfer read it again, once, to see what changed.
 	r = r.WithContext(withContentReads(ctx))
 	recheck := r.WithContext(withContentReads(ctx))
-	// A context deadline alone does not interrupt a blocked HTTP body read.
-	// Bound the underlying connection so a vanished peer cannot hold a quota
-	// reservation or the store's shutdown wait indefinitely.
-	// The request is read until the work's deadline; the answer may be
-	// written a little after it, so a refusal still goes out.
-	deadline, _ := ctx.Deadline()
-	control := http.NewResponseController(w)
-	if err := control.SetReadDeadline(deadline); err != nil {
-		p.refuseContent(w, r, fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err))
-		return
-	}
-	if err := control.SetWriteDeadline(deadline.Add(contentMaintenanceTimeout / 6)); err != nil {
-		p.refuseContent(w, r, fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err))
+	if err := boundContentStream(ctx, w); err != nil {
+		p.refuseContent(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -653,25 +642,9 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 		p.serveContentMaintenance(w, r)
 		return
 	}
-	header := r.Header.Get(contentObjectHeader)
-	if len(header) > 11000 {
-		p.refuseContent(w, r, fmt.Errorf("%w: descriptor of %d bytes", contentreplica.ErrInvalid, len(header)))
-		return
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(header)
+	object, err := contentDescriptor(r)
 	if err != nil {
-		p.refuseContent(w, r, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err))
-		return
-	}
-	var object contentreplica.Object
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&object); err != nil {
-		p.refuseContent(w, r, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err))
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF || object.Blob.Size < 0 || object.Blob.Size > contentreplica.DefaultMaxObjectBytes {
-		p.refuseContent(w, r, fmt.Errorf("%w: descriptor size %d", contentreplica.ErrInvalid, object.Blob.Size))
+		p.refuseContent(w, r, err)
 		return
 	}
 	if err := p.contentRequestPlacement(r, object); err != nil {
@@ -685,27 +658,88 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 	if r.Method == http.MethodPut {
-		if r.ContentLength != object.Blob.Size {
-			p.refuseContent(w, r, fmt.Errorf("%w: body of %d bytes for content of %d", contentreplica.ErrInvalid, r.ContentLength, object.Blob.Size))
-			return
-		}
-		upload := contentreplica.Upload{ID: r.Header.Get(contentUploadHeader), Object: object}
-		receipt, err := store.Put(r.Context(), upload, http.MaxBytesReader(w, r.Body, object.Blob.Size+1))
-		if err != nil {
-			p.refuseContent(w, r, err)
-			return
-		}
-		if err := p.contentAuthority(recheck); err != nil {
-			p.refuseContent(w, r, err)
-			return
-		}
-		if err := p.contentRequestPlacement(recheck, object); err != nil {
-			p.refuseContent(w, r, err)
-			return
-		}
-		WriteJSON(w, receipt)
+		p.serveContentPut(w, r, recheck, store, object)
 		return
 	}
+	p.serveContentGet(w, r, recheck, store, object)
+}
+
+// boundContentStream bounds a content request's connection by ctx's
+// deadline. A context deadline alone does not interrupt a blocked HTTP body
+// read, so a vanished peer could otherwise hold a quota reservation or the
+// store's shutdown wait indefinitely. The request is read until the
+// deadline; the answer may be written a little after it, so a refusal still
+// goes out.
+func boundContentStream(ctx context.Context, w http.ResponseWriter) error {
+	deadline, _ := ctx.Deadline()
+	control := http.NewResponseController(w)
+	if err := control.SetReadDeadline(deadline); err != nil {
+		return fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err)
+	}
+	if err := control.SetWriteDeadline(deadline.Add(contentMaintenanceTimeout / 6)); err != nil {
+		return fmt.Errorf("%w: stream deadline: %w", contentreplica.ErrUnavailable, err)
+	}
+	return nil
+}
+
+// contentDescriptor is the object a content request names in its header:
+// bounded, exactly one JSON object with no unknown fields, of a size a
+// replica may hold.
+func contentDescriptor(r *http.Request) (contentreplica.Object, error) {
+	header := r.Header.Get(contentObjectHeader)
+	if len(header) > 11000 {
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor of %d bytes", contentreplica.ErrInvalid, len(header))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(header)
+	if err != nil {
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err)
+	}
+	var object contentreplica.Object
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&object); err != nil {
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor: %w", contentreplica.ErrInvalid, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF || object.Blob.Size < 0 || object.Blob.Size > contentreplica.DefaultMaxObjectBytes {
+		return contentreplica.Object{}, fmt.Errorf("%w: descriptor size %d", contentreplica.ErrInvalid, object.Blob.Size)
+	}
+	return object, nil
+}
+
+// contentStillAdmitted checks again, under recheck's fresh read of the
+// committed state, what admitted a content request: the caller's authority
+// and the object's placement. It stands between a change made during the
+// transfer and the answer.
+func (p *Peer) contentStillAdmitted(recheck *http.Request, object contentreplica.Object) error {
+	if err := p.contentAuthority(recheck); err != nil {
+		return err
+	}
+	return p.contentRequestPlacement(recheck, object)
+}
+
+// serveContentPut stores the uploaded copy and answers with its receipt once
+// the request is still admitted.
+func (p *Peer) serveContentPut(w http.ResponseWriter, r, recheck *http.Request, store *contentreplica.Store, object contentreplica.Object) {
+	if r.ContentLength != object.Blob.Size {
+		p.refuseContent(w, r, fmt.Errorf("%w: body of %d bytes for content of %d", contentreplica.ErrInvalid, r.ContentLength, object.Blob.Size))
+		return
+	}
+	upload := contentreplica.Upload{ID: r.Header.Get(contentUploadHeader), Object: object}
+	receipt, err := store.Put(r.Context(), upload, http.MaxBytesReader(w, r.Body, object.Blob.Size+1))
+	if err != nil {
+		p.refuseContent(w, r, err)
+		return
+	}
+	if err := p.contentStillAdmitted(recheck, object); err != nil {
+		p.refuseContent(w, r, err)
+		return
+	}
+	WriteJSON(w, receipt)
+}
+
+// serveContentGet stages this node's copy and sends it once the request is
+// still admitted; nothing is sent before then.
+func (p *Peer) serveContentGet(w http.ResponseWriter, r, recheck *http.Request, store *contentreplica.Store, object contentreplica.Object) {
 	file, err := os.CreateTemp("", "steve-content-download-*")
 	if err != nil {
 		p.refuseContent(w, r, fmt.Errorf("%w: staging: %w", contentreplica.ErrUnavailable, err))
@@ -721,11 +755,7 @@ func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 		p.refuseContent(w, r, fmt.Errorf("%w: staging: %w", contentreplica.ErrUnavailable, err))
 		return
 	}
-	if err := p.contentAuthority(recheck); err != nil {
-		p.refuseContent(w, r, err)
-		return
-	}
-	if err := p.contentRequestPlacement(recheck, object); err != nil {
+	if err := p.contentStillAdmitted(recheck, object); err != nil {
 		p.refuseContent(w, r, err)
 		return
 	}
