@@ -137,6 +137,9 @@ func TestContentPeerRefusesInJSONWithACodeAndAStatusThatSaysWhetherToRetry(t *te
 	staleWriter["X-Steve-Writer-Generation"] = strconv.FormatUint(active.WriterGeneration+1, 10)
 	undescribed := contentHeaders(active, nil)
 	undescribed[contentObjectHeader] = "not a descriptor!"
+	removing := func(state *coordination.State) {
+		state.Removing = map[string]bool{peers[0].Config.NodeID: true}
+	}
 	failing := contentStateReader(func(context.Context) (coordination.State, error) {
 		return coordination.State{}, errors.New("the leader is out of reach")
 	})
@@ -156,6 +159,10 @@ func TestContentPeerRefusesInJSONWithACodeAndAStatusThatSaysWhetherToRetry(t *te
 		{name: "placement", method: http.MethodGet, headers: contentHeaders(active, &forged), status: http.StatusForbidden, code: "placement"},
 		{name: "a project that is not declared", method: http.MethodGet, headers: contentHeaders(active, &undeclared), status: http.StatusForbidden, code: "placement"},
 		{name: "no project", method: http.MethodGet, headers: contentHeaders(active, &unnamed), status: http.StatusBadRequest, code: "invalid"},
+		{name: "a coordinator being removed", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() { alter(t, receiver, removing) }, status: http.StatusForbidden, code: "authority"},
+		{name: "a writer generation that is not current, from a node being removed", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() {
+			alter(t, receiver, func(state *coordination.State) { removing(state); state.WriterGeneration++ })
+		}, status: http.StatusForbidden, code: "stale"},
 		{name: "committed state out of reach", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() { receiver.readContentState.Store(&failing) }, status: http.StatusServiceUnavailable, code: "unavailable"},
 		{name: "replica behind", method: http.MethodGet, headers: contentHeaders(active, &object), arrange: func() { behind(receiver) }, status: http.StatusServiceUnavailable, code: "lagging"},
 	}
