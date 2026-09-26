@@ -288,10 +288,25 @@ func (r *Runtime) revoke(g *generation, err error) {
 	}
 }
 
+// run keeps this node's business generation in step with the coordinator
+// assignment. Each tick reads the local replica, which costs nothing: a quorum
+// read appends a barrier to the Raft log and, on a member that does not lead,
+// asks the leader for the whole state. The local view only decides whether
+// this node looks like the coordinator. A generation starts on a quorum read
+// that confirms it, and every write verifies the assignment against a majority
+// again, so the local view never authorizes anything. A running generation is
+// kept while the local replica still names it and hears from a consensus
+// leader; it is given up when either stops.
 func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
 	defer ticker.Stop()
+	// heard is when this replica last knew a consensus leader. denied is the
+	// applied index of the latest quorum read that found this node not
+	// coordinating: a replica behind it that still names this node is
+	// stale, and asking again would only repeat the answer.
+	var heard time.Time
+	var denied uint64
 	for {
 		if r.ctx.Err() != nil {
 			err := r.retire()
@@ -300,16 +315,21 @@ func (r *Runtime) run() {
 			r.mu.Unlock()
 			return
 		}
-		if !r.service.Status().Healthy {
+		status := r.service.Status()
+		if !status.Healthy {
 			r.shutdown(fmt.Errorf("%w: the consensus replica is no longer healthy", coordination.ErrApplication))
 			continue
 		}
-		ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
-		state, err := r.ReadState(ctx)
-		if err == nil && (state.Coordinator.NodeID != r.config.Coordination.NodeID || state.Coordinator.Epoch == 0 || !state.IsActiveReplica(r.config.Coordination.NodeID) || (state.AutoFailover && state.Voters[r.config.Coordination.NodeID] == "")) {
+		if status.LeaderID != "" {
+			heard = time.Now()
+		}
+		err := r.coordinates(status.State)
+		if err == nil && status.AppliedIndex < denied {
 			err = coordination.ErrNotCoordinator
 		}
-		var version uint64
+		if err == nil && time.Since(heard) > r.config.Coordination.ApplyTimeout {
+			err = fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
+		}
 		if err == nil {
 			r.mu.Lock()
 			if r.restoring {
@@ -317,32 +337,65 @@ func (r *Runtime) run() {
 			}
 			r.mu.Unlock()
 		}
-		if err == nil {
-			version, err = r.waitApplied(ctx, state.AppliedIndex, state.AppVersion)
+		if err == nil && !r.keeps(status.State) {
+			err = r.start(&denied)
 		}
-		cancel()
 		if err != nil {
 			r.invalidate(err, false)
 			r.retire()
-		} else {
-			r.mu.Lock()
-			current := r.current
-			keep := current != nil && current.Assignment == state.Coordinator && current.WriterGeneration == state.WriterGeneration && current.restore == r.restores && current.Context.Err() == nil
-			r.mu.Unlock()
-			if !keep {
-				r.retire()
-				if r.ctx.Err() == nil {
-					if err := r.activate(state.Coordinator, version, state.WriterGeneration); err != nil {
-						r.holdActivation(err)
-					}
-				}
-			}
 		}
 		select {
 		case <-r.ctx.Done():
 		case <-ticker.C:
 		}
 	}
+}
+
+// coordinates reports why state does not make this node the coordinator, or
+// nil if it does.
+func (r *Runtime) coordinates(state coordination.State) error {
+	id := r.config.Coordination.NodeID
+	if state.Coordinator.NodeID != id || state.Coordinator.Epoch == 0 || !state.IsActiveReplica(id) || (state.AutoFailover && state.Voters[id] == "") {
+		return coordination.ErrNotCoordinator
+	}
+	return nil
+}
+
+// keeps reports whether the current generation runs for state's assignment
+// and writer generation.
+func (r *Runtime) keeps(state coordination.State) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.current
+	return current != nil && current.Assignment == state.Coordinator && current.WriterGeneration == state.WriterGeneration && current.restore == r.restores && current.Context.Err() == nil
+}
+
+// start replaces the current generation with one for the assignment a quorum
+// read confirms, once the local replica has caught up with that read. A read
+// that finds this node not coordinating is recorded in denied.
+func (r *Runtime) start(denied *uint64) error {
+	ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
+	state, err := r.ReadState(ctx)
+	if err == nil {
+		if err = r.coordinates(state); err != nil {
+			*denied = state.AppliedIndex
+		}
+	}
+	var version uint64
+	if err == nil {
+		version, err = r.waitApplied(ctx, state.AppliedIndex, state.AppVersion)
+	}
+	cancel()
+	if err != nil || r.keeps(state) {
+		return err
+	}
+	r.retire()
+	if r.ctx.Err() == nil {
+		if err := r.activate(state.Coordinator, version, state.WriterGeneration); err != nil {
+			r.holdActivation(err)
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) activate(assignment coordination.Assignment, version, expectedWriter uint64) error {
