@@ -44,6 +44,30 @@ func listen(t *testing.T) net.Listener {
 	return l
 }
 
+// Accept failures that accepting again may cure are temporary: the
+// process or system out of descriptors or buffers, and a connection that
+// failed or went away before it was accepted, which net/http also waits
+// out and Linux's accept(2) says to retry. Anything else, a closed
+// listener included, is not.
+func TestTemporaryAcceptFailures(t *testing.T) {
+	temporaries := append([]syscall.Errno{
+		syscall.EMFILE, syscall.ENFILE, syscall.ENOBUFS, syscall.ENOMEM,
+		syscall.ECONNABORTED, syscall.ECONNRESET, syscall.ETIMEDOUT,
+		syscall.ENETDOWN, syscall.EPROTO, syscall.ENOPROTOOPT, syscall.EHOSTDOWN,
+		syscall.EHOSTUNREACH, syscall.EOPNOTSUPP, syscall.ENETUNREACH,
+	}, linuxOnlyTemporaries...)
+	for _, errno := range temporaries {
+		if !temporary(acceptError(errno)) {
+			t.Errorf("%v (%d) ends the loop; accepting again may cure it", errno, uintptr(errno))
+		}
+	}
+	for _, err := range []error{acceptError(syscall.EINVAL), acceptError(syscall.EBADF), acceptError(syscall.ENOTSOCK), net.ErrClosed, &net.OpError{Op: "accept", Net: "tcp", Err: net.ErrClosed}} {
+		if temporary(err) {
+			t.Errorf("%v is waited out; accepting again would not cure it", err)
+		}
+	}
+}
+
 // Temporary failures are waited out: the loop goes on to hand out the
 // connection that arrives after them, having paused 5ms, 10ms and 20ms.
 func TestRunAcceptsAgainAfterTemporaryFailures(t *testing.T) {
