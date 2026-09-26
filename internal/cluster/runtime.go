@@ -391,9 +391,14 @@ func (r *Runtime) step(seen observation, s *tickState) error {
 		}
 		err = fmt.Errorf("%w: this replica has heard from no consensus leader since it started", coordination.ErrUnavailable)
 	}
-	// A leader forgets itself only when it steps down, which it does on its
-	// own once its lease finds no majority: a majority may already follow
-	// another leader. A follower's leader is merely late until ApplyTimeout.
+	// A leader forgets itself when it steps down without learning who
+	// follows it: on its own once its lease finds no majority, when a
+	// majority may already follow another leader, or when a higher term
+	// reaches it before the new leader's first entry does. It cannot tell
+	// these apart, so it gives up at once. A leadership transfer steps a
+	// leader down the second way, but the only one starts from a leader
+	// removing itself, and the coordinator cannot be removed. A follower's
+	// leader is merely late until ApplyTimeout.
 	if err == nil && seen.LeaderID == "" && s.leading {
 		err = fmt.Errorf("%w: this replica stopped leading consensus and knows no other leader", coordination.ErrUnavailable)
 	}
