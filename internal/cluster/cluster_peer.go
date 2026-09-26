@@ -888,11 +888,10 @@ func (p *Peer) ConfigureNodes(nodes map[string]node.Config) error {
 		return coordination.ErrUnavailable
 	}
 	// The nodes are configured while a business generation starts; their
-	// tunnels belong to it.
-	assignment, writer, err := runtime.running()
-	if err != nil {
-		return err
-	}
+	// tunnels belong to it. One that has already ended is being torn down
+	// with this application: its dialer, bound to no generation, dials
+	// nothing, and the activation is not failed for it.
+	assignment, writer, _ := runtime.running()
 	dial := p.workerDialer(runtime, assignment, writer)
 	state := runtime.Status()
 	for id, cfg := range nodes {

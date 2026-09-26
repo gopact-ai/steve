@@ -557,6 +557,14 @@ func TestWorkerDialerDialsForItsOwnGenerationOnly(t *testing.T) {
 		}
 		t.Fatalf("the dialer of a replaced generation opened a tunnel for its successor: %v", err)
 	}
+	// Nodes configured once their generation had ended get a dialer bound
+	// to none.
+	if connection, err := hub.workerDialer(runtime, coordination.Assignment{}, 0)(ctx, hub.Config.NodeID); !errors.Is(err, ErrInactive) {
+		if err == nil {
+			connection.Close()
+		}
+		t.Fatalf("a dialer bound to no generation opened a tunnel: %v", err)
+	}
 	if connection, err := hub.DialWorker(ctx, hub.Config.NodeID); err != nil {
 		t.Fatalf("the running generation could not dial its own worker: %v", err)
 	} else {
