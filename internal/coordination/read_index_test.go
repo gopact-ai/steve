@@ -85,3 +85,31 @@ func TestReadIndexNeedsAMajority(t *testing.T) {
 		t.Fatalf("a leader without a majority confirmed read index %d", index)
 	}
 }
+
+// Read index requests that reach a leader together before its term is
+// established append one barrier between them, not one each.
+func TestConcurrentReadIndexesEstablishATermWithOneBarrier(t *testing.T) {
+	c := newTestCluster(t, 3)
+	leader := c.leader()
+	leader.established.Store(0)
+	before := leader.LastIndex()
+	const callers = 16
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	for range callers {
+		go func() {
+			<-start
+			_, err := leader.ReadIndex(t.Context())
+			errs <- err
+		}()
+	}
+	close(start)
+	for range callers {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if grew := leader.LastIndex() - before; grew != 1 {
+		t.Fatalf("%d read index requests establishing a term together appended %d entries, want one barrier", callers, grew)
+	}
+}
