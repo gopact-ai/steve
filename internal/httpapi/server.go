@@ -49,6 +49,9 @@ type ServerConfig struct {
 	// operations, and loopback keeps out other machines, not other local
 	// users or processes.
 	Token string
+	// Text is the Hub's catalog: a request whose Accept-Language names no
+	// language Steve speaks is answered in its language.
+	Text i18n.Catalog
 }
 
 // Server exposes the snapshot, the change stream and the dashboard.
@@ -68,6 +71,7 @@ type Server struct {
 	admin          consoleapi.Admin
 	model          Model
 	token          string
+	text           i18n.Catalog
 	reach          sameorigin.Reach
 	listener       net.Listener
 	httpServer     *http.Server
@@ -100,7 +104,7 @@ func newServer(model Model, cfg ServerConfig, listen func(network, address strin
 	}
 	requestContext, stopRequests := context.WithCancel(context.Background())
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
-	return &Server{model: model, token: cfg.Token, reach: sameorigin.ReachOf(listener.Addr()), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
+	return &Server{model: model, token: cfg.Token, text: cfg.Text, reach: sameorigin.ReachOf(listener.Addr()), listener: listener, httpServer: server, stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
@@ -271,8 +275,16 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		next(w, r.WithContext(i18n.WithLocale(r.Context(), i18n.LocaleFromHeader(r.Header.Get("Accept-Language")))))
+		next(w, r.WithContext(i18n.WithLocale(r.Context(), s.requestLocale(r))))
 	}
+}
+
+// requestLocale is the language the request names, else the Hub's.
+func (s *Server) requestLocale(r *http.Request) i18n.Locale {
+	if locale := i18n.LocaleFromHeader(r.Header.Get("Accept-Language")); locale != "" {
+		return locale
+	}
+	return s.text.Locale()
 }
 
 func (s *Server) authorized(r *http.Request) bool {

@@ -101,10 +101,10 @@ func (c *Coordinator) planRecoveryError(err error) error {
 	var noBudget exec.ErrNoBudget
 	var exhausted exec.ErrExhausted
 	if errors.As(err, &nowhere) || errors.As(err, &noBudget) || errors.As(err, &exhausted) {
-		return c.retainedBlocked("plan-conditions", "检查可用机器、执行条件、剩余预算及允许的恢复方案", "计划目前无法继续推进。", err.Error(), "建议根据上述原因恢复所需机器或权限、调整预算，或提供其他可行方案；已有步骤和结果会保留。", err)
+		return c.retainedBlocked("plan-conditions", i18n.RetainedTriedPlanConditions, i18n.RetainedProblemPlanStuck, err.Error(), i18n.RetainedAdvicePlanConditions, err)
 	}
 	if errors.Is(err, harness.ErrStopUnconfirmed) || errors.Is(err, exec.ErrRecovery) || errors.Is(err, exec.ErrProjection) || errors.Is(err, exec.ErrCompletion) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return c.retainedBlocked("plan-execution", "读取计划检查点和原执行结果", "计划尚未完整完成。", err.Error(), "建议恢复节点与存储后重新检查，保留已完成步骤。", errors.Join(err, harness.ErrStopUnconfirmed))
+		return c.retainedBlocked("plan-execution", i18n.RetainedTriedReadPlanCheckpoint, i18n.RetainedProblemPlanUnfinished, err.Error(), i18n.RetainedAdviceRestoreNodeStorage, errors.Join(err, harness.ErrStopUnconfirmed))
 	}
 	return nil
 }
@@ -124,18 +124,18 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 		c = c.localized(i18n.FromLang(req.Locale))
 	}
 	if c.maintaining {
-		return Result{}, c.retainedBlocked("maintenance", "检查协调服务", "协调服务正在交接或维护。", "暂时不能接续计划。", "建议等待交接完成后继续。", nil)
+		return Result{}, c.retainedBlocked("maintenance", i18n.RetainedTriedCoordinator, i18n.RetainedProblemCoordinatorBusy, c.text.T(i18n.RetainedReasonPlanPaused), i18n.RetainedAdviceAwaitHandover, nil)
 	}
 	tracked, ok := c.tasks.Get(identity.TaskID)
 	if !ok || tracked.Origin != "plan" || tracked.Channel != identity.Conversation || tracked.AnchorMessage != identity.MessageID || req.ConversationID != identity.Conversation || req.MessageID != identity.MessageID || tracked.Requester != "" && tracked.Requester != req.SenderOpenID || req.ExpectedProject != "" && req.ExpectedProject != tracked.ProjectID {
-		return Result{}, c.retainedBlocked("plan-identity", "核对计划与原会话", "无法确认原计划的归属。", "任务、请求者、项目或会话标识不一致。", "建议核对原任务记录后继续。", nil)
+		return Result{}, c.retainedBlocked("plan-identity", i18n.RetainedTriedPlanSession, i18n.RetainedProblemPlanOwner, c.text.T(i18n.RetainedReasonPlanMismatch), i18n.RetainedAdviceCheckTaskRecord, nil)
 	}
 	ctx, cancel := context.WithTimeout(parent, planTimeout)
 	defer cancel()
 	ctx = agentexec.WithProgress(ctx, req.OnProgress)
 	driver := "plan/" + tracked.ID
 	if !c.beginTurn(req.ConversationID, driver, cancel) {
-		return Result{}, c.retainedBlocked("plan-busy", "检查原计划的执行占用", "原计划已有一个驱动正在处理。", "需要等待当前观察者退出。", "建议稍后重新检查。", nil)
+		return Result{}, c.retainedBlocked("plan-busy", i18n.RetainedTriedPlanOccupancy, i18n.RetainedProblemPlanDriven, c.text.T(i18n.RetainedReasonAwaitObserver), i18n.RetainedAdviceCheckLater, nil)
 	}
 	defer c.clearActive(req.ConversationID, driver)
 	c.rememberMode(req)
@@ -175,11 +175,11 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 		token = record.Execution
 	}
 	if token == nil {
-		return Result{}, c.retainedBlocked("plan-authority", "检查原计划授权", "原计划缺少可核对的执行授权。", "不能使用后续任务的授权继续旧计划。", "建议核对原任务与执行记录。", nil)
+		return Result{}, c.retainedBlocked("plan-authority", i18n.RetainedTriedPlanAuthority, i18n.RetainedProblemPlanNoAuthority, c.text.T(i18n.RetainedReasonLaterAuthority), i18n.RetainedAdviceCheckTaskExecution, nil)
 	}
 	scope, err := c.executions.BeginAccepted(ctx, execution.Key{TaskID: tracked.ID, InstanceID: driver, AttemptID: identity.AttemptID}, token)
 	if err != nil {
-		return Result{}, c.retainedBlocked("plan-authority", "核对原计划授权", "原计划暂时不能继续。", err.Error(), "建议确认任务是否暂停或取消。", err)
+		return Result{}, c.retainedBlocked("plan-authority", i18n.RetainedTriedMatchPlanAuthority, i18n.RetainedProblemPlanPaused, err.Error(), i18n.RetainedAdviceCheckPaused, err)
 	}
 	defer scope.Finish(nil)
 	ctx = scope.Context()

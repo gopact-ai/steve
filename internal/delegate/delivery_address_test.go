@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -33,7 +34,7 @@ func TestDeliveryUsesParentsLatestExplicitAddress(t *testing.T) {
 	if err = store.SetAnchor(parent.ID, channel.Address{Channel: "feishu", Conversation: parent.Channel, Message: "latest"}, "console", "p2p", ""); err != nil {
 		t.Fatal(err)
 	}
-	s := New(store, nil, nil, nil, nil, "")
+	s := New(store, nil, nil, nil, nil, "", i18n.New(i18n.LocaleZH))
 	count := 0
 	s.SetDeliverer(func(_ context.Context, d Delivery) error {
 		count++

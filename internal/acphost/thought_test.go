@@ -19,7 +19,7 @@ func TestThoughtKeepsFullTextUntil64KiB(t *testing.T) {
 }
 
 func TestThoughtOverflowKeepsHeadAndMovingTail(t *testing.T) {
-	marker := regexp.MustCompile(`\n\[… 省略 (\d+) 字节 …\]\n`)
+	marker := regexp.MustCompile(`\n\[… (\d+) B …\]\n`)
 	for _, unit := range []string{"x", "思考", "🧠a"} {
 		t.Run(unit, func(t *testing.T) {
 			c := &collector{}

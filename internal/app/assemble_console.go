@@ -57,6 +57,8 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	if err != nil {
 		return nil, err
 	}
+	// A request that names no language is answered in the Hub's.
+	httpConfig.Text = work.CatalogText()
 	dashboard, err := httpapi.NewServer(view, httpConfig)
 	if err != nil {
 		return nil, err

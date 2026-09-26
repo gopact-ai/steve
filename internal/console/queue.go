@@ -232,6 +232,15 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	return s.acceptExchange(e, options.Front, options.Deferred)
 }
 
+// localeTextLocked is the catalog a request is answered in: its own
+// locale, else the request context's, else the console's default.
+func (s *Service) localeTextLocked(ctx context.Context, locale string) i18n.Catalog {
+	if locale == "" {
+		locale = s.submissionLocaleLocked(ctx, nil)
+	}
+	return i18n.New(i18n.FromLang(locale))
+}
+
 // submissionLocaleLocked is the locale a line without one is answered in:
 // the one its earlier submission had, else the request's, else the
 // console's default.

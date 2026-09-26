@@ -46,7 +46,7 @@ func (s *Service) submissionOptions(ctx context.Context, req consoleapi.Submissi
 	if req.RewindTo == "" {
 		return options, nil
 	}
-	target, err := s.beginRewind(ctx, req.Conversation, req.RewindTo, options.Key)
+	target, err := s.beginRewind(ctx, req.Conversation, req.RewindTo, options.Key, req.Locale)
 	if err != nil {
 		return enqueueOptions{}, err
 	}

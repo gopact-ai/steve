@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/budget"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // Limits can be injected per repository or store. Zero fields use the
@@ -39,9 +40,15 @@ type TooLarge struct {
 	Limit int64
 }
 
-func (e TooLarge) Error() string {
-	which := map[string]string{"files": "文件数", "bytes": "总字节数", "file_bytes": "最大单文件字节数"}[e.Which]
-	return fmt.Sprintf("快照%s超出上限：%d，上限 %d；把大文件挪出工作区或加进 .gitignore", which, e.Have, e.Limit)
+// Error is the English diagnostic: the budget may be exceeded on another
+// node, where nobody's language is known. Say tells a reader.
+func (e TooLarge) Error() string { return e.Say(i18n.New(i18n.LocaleEN)) }
+
+// Say explains the exceeded budget, its sizes and the remedy in text's
+// language.
+func (e TooLarge) Say(text i18n.Catalog) string {
+	which := map[string]i18n.Key{"files": i18n.SnapshotLimitFiles, "bytes": i18n.SnapshotLimitBytes, "file_bytes": i18n.SnapshotLimitFileBytes}[e.Which]
+	return text.T(i18n.SnapshotTooLarge, text.T(which), e.Have, e.Limit)
 }
 
 func (l Limits) check(files, bytes, largest int64) error {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 )
@@ -84,11 +86,14 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 		}
 		for id := range state.Members {
 			if node, ok := cfg.Nodes[id]; ok && !datalevel.Restricted.Admits(datalevel.Level(node.Level).OrDefault()) {
-				return fmt.Errorf("节点 %s 保存完整协作账本，数据等级不能低于 restricted；低等级机器只能作为执行节点接入", id)
+				return errors.New(i18n.FromContext(ctx).T(i18n.AppLedgerNodeLevel, id))
 			}
 		}
 	}
 	candidate, err := s.value.WithCandidate(cfg)
+	if sealed := (*platformconfig.SealedError)(nil); errors.As(err, &sealed) {
+		return sealedRefusal{message: i18n.FromContext(ctx).T(i18n.AppSealedShared, sealed.Project), cause: sealed}
+	}
 	if err != nil {
 		return err
 	}
@@ -99,3 +104,13 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 	s.value = next
 	return nil
 }
+
+// sealedRefusal says in the saver's language why a sealed project stays
+// out of the shared ledger, and is still the ledger's refusal to errors.Is.
+type sealedRefusal struct {
+	message string
+	cause   error
+}
+
+func (e sealedRefusal) Error() string { return e.message }
+func (e sealedRefusal) Unwrap() error { return e.cause }

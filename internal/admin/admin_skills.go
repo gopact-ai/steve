@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -21,7 +22,7 @@ import (
 // what by path, and which machines hold the current bundle.
 func (a *Service) Skills(ctx context.Context) (consoleapi.SkillsView, error) {
 	if a.LiveSkills == nil || a.LiveSkills.Map == nil {
-		return consoleapi.SkillsView{}, errors.New("技能没有配置")
+		return consoleapi.SkillsView{}, errors.New(textFor(ctx).T(i18n.AdminSkillsOff))
 	}
 	view := consoleapi.SkillsView{Fingerprint: a.LiveSkills.Map.Fingerprint(), SearchPaths: a.LiveSkills.Map.SearchPaths(), BuiltinRoot: a.LiveSkills.Map.BuiltinRootPath(), Skills: []consoleapi.SkillView{}, Nodes: []consoleapi.SkillNode{}, Sources: []consoleapi.SkillSource{}}
 	var pluginErr error
@@ -111,9 +112,9 @@ func (a *Service) Skills(ctx context.Context) (consoleapi.SkillsView, error) {
 }
 
 // SkillContent is one skill's SKILL.md.
-func (a *Service) SkillContent(_ context.Context, name string) (consoleapi.SkillDoc, error) {
+func (a *Service) SkillContent(ctx context.Context, name string) (consoleapi.SkillDoc, error) {
 	if a.LiveSkills == nil || a.LiveSkills.Map == nil {
-		return consoleapi.SkillDoc{}, errors.New("技能没有配置")
+		return consoleapi.SkillDoc{}, errors.New(textFor(ctx).T(i18n.AdminSkillsOff))
 	}
 	available, err := a.LiveSkills.Map.Available()
 	if err != nil {
@@ -128,7 +129,7 @@ func (a *Service) SkillContent(_ context.Context, name string) (consoleapi.Skill
 			return consoleapi.SkillDoc{Name: ref.Name, Path: ref.Path, Content: content}, nil
 		}
 	}
-	return consoleapi.SkillDoc{}, fmt.Errorf("没有叫 %q 的技能", name)
+	return consoleapi.SkillDoc{}, fmt.Errorf(textFor(ctx).T(i18n.AdminNoSkill), name)
 }
 
 // MachineSkills is what every machine last said its AI tools have of
@@ -198,22 +199,22 @@ func ownSkillsRescan() { node.OwnSkills(0) }
 // until the owner says so.
 func (a *Service) ImportSkill(ctx context.Context, nodeName, path string) (string, error) {
 	if a.LiveSkills == nil || a.LiveSkills.Map == nil {
-		return "", errors.New("技能没有配置")
+		return "", errors.New(textFor(ctx).T(i18n.AdminSkillsOff))
 	}
 	path = strings.TrimSpace(path)
 	if path == "" || !strings.HasPrefix(path, "/") {
-		return "", fmt.Errorf("目录 %q 不是绝对路径", path)
+		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminDirNotAbsolute), path)
 	}
 	name := filepath.Base(path)
 	dest := filepath.Join(a.LiveSkills.Map.UserDir(), name)
 	if _, err := os.Lstat(dest); err == nil {
-		return "", fmt.Errorf("hub 上已经有叫 %s 的技能（%s）", name, dest)
+		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminHubSkillExists), name, dest)
 	}
 	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	encoded, err := a.Nodes.Files(sctx, a.nodeKey(nodeName), nodewire.FileRequest{Op: nodewire.FileImportSkill, Path: path})
 	if err != nil {
-		return "", fmt.Errorf("从 %s 取 %s：%s", a.place(a.nodeKey(nodeName)), path, text.Clip(strings.TrimSpace(err.Error()), 200))
+		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminSkillFetchFailed), a.place(a.nodeKey(nodeName)), path, text.Clip(strings.TrimSpace(err.Error()), 200))
 	}
 	if err := skills.UnpackImport(encoded, dest); err != nil {
 		return "", err
@@ -233,7 +234,7 @@ func skillSource(s skills.Source) consoleapi.SkillSource {
 // enabled by it, so nothing restarts.
 func (a *Service) AddSkillSource(ctx context.Context, spec string) (consoleapi.SkillSource, error) {
 	if a.LiveSkills == nil || a.LiveSkills.Map == nil {
-		return consoleapi.SkillSource{}, errors.New("技能没有配置")
+		return consoleapi.SkillSource{}, errors.New(textFor(ctx).T(i18n.AdminSkillsOff))
 	}
 	src, err := a.LiveSkills.AddSource(ctx, spec)
 	if err != nil {
@@ -246,7 +247,7 @@ func (a *Service) AddSkillSource(ctx context.Context, spec string) (consoleapi.S
 // skills may change, so it takes the lock and restarts the AI tools.
 func (a *Service) UpdateSkillSources(ctx context.Context) ([]consoleapi.SkillSource, error) {
 	var out []consoleapi.SkillSource
-	err := a.withSkillsLock(func() error {
+	err := a.withSkillsLock(textFor(ctx), func() error {
 		updated, err := a.LiveSkills.UpdateSources(ctx)
 		for _, s := range updated {
 			out = append(out, skillSource(s))
@@ -257,20 +258,20 @@ func (a *Service) UpdateSkillSources(ctx context.Context) ([]consoleapi.SkillSou
 }
 
 // RemoveSkillSource forgets a source; skills enabled from it go with it.
-func (a *Service) RemoveSkillSource(_ context.Context, slug string) error {
-	return a.withSkillsLock(func() error { return a.LiveSkills.RemoveSource(slug) })
+func (a *Service) RemoveSkillSource(ctx context.Context, slug string) error {
+	return a.withSkillsLock(textFor(ctx), func() error { return a.LiveSkills.RemoveSource(slug) })
 }
 
 // withSkillsLock runs a change to the skills the way the chat verb does:
 // not while a turn runs, since the change restarts the AI tools.
-func (a *Service) withSkillsLock(op func() error) error {
+func (a *Service) withSkillsLock(text i18n.Catalog, op func() error) error {
 	if a.LiveSkills == nil || a.LiveSkills.Map == nil {
-		return errors.New("技能没有配置")
+		return errors.New(text.T(i18n.AdminSkillsOff))
 	}
 	if a.Coordinator != nil {
 		release, ok := a.Coordinator.SkillsLock()
 		if !ok {
-			return fmt.Errorf("%w：有回合在跑，改技能会重启 AI 工具，等它结束再改", consoleapi.ErrBusy)
+			return fmt.Errorf(text.T(i18n.AdminSkillsTurnRunning), consoleapi.ErrBusy)
 		}
 		defer release()
 	}
@@ -280,8 +281,8 @@ func (a *Service) withSkillsLock(op func() error) error {
 // SetSkill turns a skill on or off for every agent. Agents in flight
 // keep their session; the next session opens with the new set, and the
 // changed fingerprint tells the owner to /new.
-func (a *Service) SetSkill(_ context.Context, name string, enabled bool) error {
-	return a.withSkillsLock(func() error {
+func (a *Service) SetSkill(ctx context.Context, name string, enabled bool) error {
+	return a.withSkillsLock(textFor(ctx), func() error {
 		if enabled {
 			return a.LiveSkills.Enable(name)
 		}
@@ -290,13 +291,13 @@ func (a *Service) SetSkill(_ context.Context, name string, enabled bool) error {
 }
 
 // AddSkillPath adds a directory to look for skills in.
-func (a *Service) AddSkillPath(_ context.Context, path string) error {
+func (a *Service) AddSkillPath(ctx context.Context, path string) error {
 	if a.LiveSkills == nil || a.LiveSkills.Map == nil {
-		return errors.New("技能没有配置")
+		return errors.New(textFor(ctx).T(i18n.AdminSkillsOff))
 	}
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return errors.New("目录不能为空")
+		return errors.New(textFor(ctx).T(i18n.AdminDirEmpty))
 	}
 	if strings.HasPrefix(path, "~") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -304,17 +305,17 @@ func (a *Service) AddSkillPath(_ context.Context, path string) error {
 		}
 	}
 	if info, err := os.Stat(path); err != nil || !info.IsDir() {
-		return fmt.Errorf("hub 上没有目录 %s", path)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminHubDirMissing), path)
 	}
 	return a.LiveSkills.AddPath(path)
 }
 
 // RemoveSkillPath stops looking in a directory; skills enabled from it
 // go with it, so it takes the lock.
-func (a *Service) RemoveSkillPath(_ context.Context, path string) error {
+func (a *Service) RemoveSkillPath(ctx context.Context, path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return errors.New("目录不能为空")
+		return errors.New(textFor(ctx).T(i18n.AdminDirEmpty))
 	}
-	return a.withSkillsLock(func() error { return a.LiveSkills.RemovePath(path) })
+	return a.withSkillsLock(textFor(ctx), func() error { return a.LiveSkills.RemovePath(path) })
 }

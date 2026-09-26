@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -174,7 +175,7 @@ func newStopRegistryFixture(t *testing.T, bin string, pendingOpen bool) *stopReg
 		t.Fatal(err)
 	}
 	sessions := &registryStopSessions{manager: manager}
-	stops := newApplicationStops(attempts, tasks, sessions)
+	stops := newApplicationStops(attempts, tasks, sessions, i18n.New(i18n.LocaleZH))
 	stops.executions = registry
 	return &stopRegistryFixture{ctx: ctx, book: book, tasks: tasks, attempts: attempts, record: record, registry: registry, owner: owner, sessions: sessions, stops: stops}
 }

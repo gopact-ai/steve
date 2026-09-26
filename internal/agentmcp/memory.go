@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/memory"
 )
 
@@ -54,12 +55,12 @@ func (s *Server) steveRemember(ctx context.Context, bind binding, raw json.RawMe
 	}
 	out := map[string]any{"id": r.ID, "scope": scope.String(), "new": r.New, "bytes": r.Bytes, "budget": r.Budget}
 	if r.New {
-		out["note"] = "已持久化。当前会话不会重新注入；新会话的第一轮会带上它。"
+		out["note"] = s.text.T(i18n.MCPRememberSaved)
 	} else {
-		out["note"] = "已经记着同一条了，没有重复写入。"
+		out["note"] = s.text.T(i18n.MCPRememberDuplicate)
 	}
 	if r.Budget > 0 && r.Bytes*10 > r.Budget*9 {
-		out["warning"] = fmt.Sprintf("这个作用域已用 %d / %d 字节；快满了，考虑用 steve_forget 清掉过期的。", r.Bytes, r.Budget)
+		out["warning"] = s.text.T(i18n.MCPRememberNearlyFull, r.Bytes, r.Budget)
 	}
 	return jsonText(out), nil
 }

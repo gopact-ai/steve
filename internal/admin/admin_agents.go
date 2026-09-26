@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // changeAgents validates a complete candidate before touching durable or live
@@ -48,23 +50,23 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 		agents := c.Agents
 		item, ok := agents[id]
 		if !ok {
-			return fmt.Errorf("没有叫 %q 的 Agent", id)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoAgent), id)
 		}
 		if _, ok := c.Harnesses[spec.Harness]; !ok && spec.Node == "" {
-			return fmt.Errorf("本机没有配置 AI 工具 %q", spec.Harness)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoLocalHarness), spec.Harness)
 		}
 		if spec.Node != "" {
-			if err := checkAgentNodeTarget(c, spec.Node, target); err != nil {
+			if err := checkAgentNodeTarget(textFor(ctx), c, spec.Node, target); err != nil {
 				return err
 			}
 		}
 		if err := ability.ValidateText(spec.Requires); err != nil {
-			return fmt.Errorf("运行条件：%w", err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminRunCondition), err)
 		}
 		if spec.Node == "" {
 			for _, server := range spec.MCPServers {
 				if _, ok := c.MCPServers[server]; !ok {
-					return fmt.Errorf("hub 上没有 MCP 服务器 %q；在 hub 机器的配置里加，或把 Agent 放到有它的机器上", server)
+					return fmt.Errorf(textFor(ctx).T(i18n.AdminHubMissingMCP), server)
 				}
 			}
 		}
@@ -96,7 +98,7 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 	}
 	id := strings.ToLower(strings.TrimSpace(req.ID))
 	if !NameShape.MatchString(id) {
-		return fmt.Errorf("Agent 名只能是小写字母、数字、点、下划线、连字符")
+		return errors.New(textFor(ctx).T(i18n.AdminAgentNameInvalid))
 	}
 	target, err := a.checkRemoteHarness(ctx, req.Node, req.Harness)
 	if err != nil {
@@ -105,15 +107,15 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 	err = a.changeAgents(func(c *config.Config) error {
 		agents := c.Agents
 		if _, ok := c.Harnesses[req.Harness]; !ok && req.Node == "" {
-			return fmt.Errorf("本机没有配置 AI 工具 %q，请先选择并登记已安装的工具", req.Harness)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoLocalHarnessChoose), req.Harness)
 		}
 		if req.Node != "" {
-			if err := checkAgentNodeTarget(c, req.Node, target); err != nil {
+			if err := checkAgentNodeTarget(textFor(ctx), c, req.Node, target); err != nil {
 				return err
 			}
 		}
 		if _, exists := agents[id]; exists {
-			return fmt.Errorf("Agent %s 已经存在", id)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentExists), id)
 		}
 		agents[id] = config.Agent{Harness: req.Harness, Node: req.Node, Model: req.Model, About: strings.TrimSpace(req.About), Default: req.Default || len(agents) == 0}
 		// Exactly one agent is the default, so an agent asked for that
@@ -134,16 +136,16 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 	return err
 }
 
-func (a *Service) RemoveAgent(_ context.Context, id string) error {
+func (a *Service) RemoveAgent(ctx context.Context, id string) error {
 	id = strings.ToLower(strings.TrimSpace(id))
 	err := a.changeAgents(func(c *config.Config) error {
 		agents := c.Agents
 		item, ok := agents[id]
 		if !ok {
-			return fmt.Errorf("没有叫 %q 的 Agent", id)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoAgent), id)
 		}
 		if item.Default {
-			return fmt.Errorf("%s 是默认 Agent，不能删；先在配置里换一个默认", id)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminDefaultAgentKept), id)
 		}
 		delete(agents, id)
 		return nil

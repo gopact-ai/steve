@@ -30,6 +30,7 @@ import (
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/sameorigin"
@@ -946,8 +947,11 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 		return result, err
 	}
 	// The workspace is judged and created here, on the machine that owns
-	// it: the owner's answer may name places this machine refuses.
-	workspace, err := desktop.PrepareWorkspace(bundle.WorkspaceDir, root)
+	// it: the owner's answer may name places this machine refuses. The
+	// refusal is read by that machine's owner, in the language the node is
+	// set up to speak.
+	const locale = i18n.LocaleZH
+	workspace, err := desktop.PrepareWorkspace(i18n.New(locale), bundle.WorkspaceDir, root)
 	if err != nil {
 		return result, fmt.Errorf("workspace %q: %w", bundle.WorkspaceDir, err)
 	}
@@ -960,7 +964,7 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	settings := PeerConfig{Version: 1, ClusterID: bundle.ClusterID, NodeID: bundle.NodeID, StorageLevel: bundle.StorageLevel, Name: bundle.Name, DataDir: clusterDir, RaftAddress: bundle.RaftAdvertise, PeerAddress: bundle.PeerAdvertise, RaftBindAddress: bundle.RaftListen, PeerBindAddress: bundle.PeerListen, PeerURL: "https://" + bundle.PeerAdvertise, UIAddress: "127.0.0.1:0", CACertFile: filepath.Join(clusterDir, "ca.pem"), CertFile: filepath.Join(clusterDir, "node.pem"), KeyFile: filepath.Join(clusterDir, "node-key.pem"), OwnerTokenFile: filepath.Join(clusterDir, "owner-control-token"), WorkerConfigFile: filepath.Join(clusterDir, "node.json"), Seeds: bundle.Seeds, Routes: bundle.Routes}
 	UIToken := ClusterRandomToken()
 	disabled := false
-	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: workspace}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: "zh", DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: UIToken, PromptTimeout: config.Duration(10 * time.Minute)}}
+	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: workspace}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: string(locale), DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: UIToken, PromptTimeout: config.Duration(10 * time.Minute)}}
 	worker := node.ServerConfig{Name: bundle.NodeID, Listen: "127.0.0.1:0", Token: bundle.WorkerToken, Hubs: map[string]string{bundle.ClusterID: bundle.WorkerToken}, StateDir: filepath.Join(clusterDir, "node"), StateRoot: root, WorkspaceRoot: workspace, Harnesses: map[string]node.HarnessSpec{}}
 	for _, dir := range []string{"cluster", "home"} {
 		if err := os.MkdirAll(filepath.Join(staging, dir), 0o700); err != nil {

@@ -7,13 +7,14 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/memory"
 )
 
 // Home is Steve's own directory as the page shows it.
 func (a *Service) Home(ctx context.Context) (consoleapi.HomeView, error) {
 	if a.HomePath == "" && a.SharedHome == nil {
-		return consoleapi.HomeView{}, errors.New("没有配置档案目录（gateway.home_path）")
+		return consoleapi.HomeView{}, errors.New(textFor(ctx).T(i18n.AdminNoHomePath))
 	}
 	var files []home.File
 	if a.SharedHome != nil {
@@ -102,7 +103,7 @@ func (a *Service) SetHomeFile(ctx context.Context, name, text string) error {
 		return a.SharedHome.WriteHomeFile(ctx, name, text, memory.Actor{By: "console"})
 	}
 	if a.HomePath == "" {
-		return errors.New("没有配置档案目录（gateway.home_path）")
+		return errors.New(textFor(ctx).T(i18n.AdminNoHomePath))
 	}
 	if name == home.FileMemory && a.Memory != nil {
 		// The global memory is a scope: same lock, ids kept, audited.
