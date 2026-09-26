@@ -51,7 +51,7 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	// the owner's DM works in — so nothing special-cases it downstream.
 	projects := project.Open(book, artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
 	projects.SetHubID(cfg.Gateway.HubID)
-	if err := (configbuild.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
+	if err := (configbuild.ProjectController{Store: projects}).Reconcile(hubContext(ctx, cfg), cfg); err != nil {
 		return nil, fmt.Errorf("reconcile configured projects: %w", err)
 	}
 

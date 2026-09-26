@@ -25,6 +25,23 @@ func testCopy() Copy {
 		Out:          "Out",
 		Hit:          "Hit",
 		Write:        "Wr",
+		Partial:      "部分详情已省略",
+		Awaiting:     "待授权",
+		Waking:       "Agent 正在唤醒",
+		Finishing:    "正在整理结果",
+		Saving:       "正在保存结果",
+		Stop:         "终止",
+		Retry:        "重试",
+		Recover:      "恢复上个会话",
+		SentTo:       "发送给",
+		AllowOnce:    "允许一次",
+		Deny:         "拒绝",
+
+		ApprovalTitle:  "需要授权",
+		ApprovalTool:   "工具",
+		ApprovalReason: "原因",
+		ApprovalRule:   "仅允许当前操作一次",
+		QuestionTitle:  "需要你确认",
 	}
 }
 

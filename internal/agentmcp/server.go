@@ -22,6 +22,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/stableport"
 	"github.com/gopact-ai/steve/internal/task"
@@ -160,6 +161,9 @@ type sentState struct {
 }
 
 type Server struct {
+	// text says the server's own words — milestone footers and tool
+	// replies — in the configured language.
+	text     i18n.Catalog
 	intents  Intents
 	listener net.Listener
 	srv      *http.Server
@@ -210,7 +214,7 @@ type Server struct {
 // sockets while the gateway is down. A port meanwhile taken falls back the
 // same way; a resumed session is given the new URL, and its fingerprint
 // leaves this server's port out (capability.Extra.Platform).
-func New(preferredPort int) (*Server, error) {
+func New(preferredPort int, text i18n.Catalog) (*Server, error) {
 	var listener net.Listener
 	var err error
 	if preferredPort > 0 {
@@ -223,6 +227,7 @@ func New(preferredPort int) (*Server, error) {
 		return nil, fmt.Errorf("agentmcp: listen: %w", err)
 	}
 	s := &Server{
+		text:                text,
 		listener:            listener,
 		grace:               shutdownGrace,
 		channels:            map[string]channel.Messenger{},
@@ -655,20 +660,34 @@ func (s *Server) toolList() []map[string]any {
 // titles are the short labels the console shows for the platform's own
 // tools, kept beside the tools themselves: adding a tool means adding
 // its label here, and the page never names a tool on its own.
-var titles = map[string]string{
-	"steve_context": "看当前上下文", "steve_help": "查平台用法", "steve_projects": "查项目", "steve_fleet": "查名册",
-	"steve_delegate": "委派子任务", "steve_await": "等子任务",
-	"steve_remember": "记一条记忆", "steve_recall": "查记忆", "steve_forget": "忘一条记忆",
-	"steve_schedule": "创建定时任务", "steve_schedules": "查定时任务", "steve_schedule_cancel": "取消定时任务",
-	"channel_send": "发进度消息", "channel_update": "改进度消息", "channel_recall": "撤回消息",
-	"steve_nodes": "查机器", "steve_node_add": "登记机器", "steve_node_refresh": "刷新机器", "steve_node_remove": "移除机器",
+var titles = map[string]i18n.Key{
+	"steve_context":         i18n.MCPToolContext,
+	"steve_help":            i18n.MCPToolHelp,
+	"steve_projects":        i18n.MCPToolProjects,
+	"steve_fleet":           i18n.MCPToolFleet,
+	"steve_delegate":        i18n.MCPToolDelegate,
+	"steve_await":           i18n.MCPToolAwait,
+	"steve_remember":        i18n.MCPToolRemember,
+	"steve_recall":          i18n.MCPToolRecall,
+	"steve_forget":          i18n.MCPToolForget,
+	"steve_schedule":        i18n.MCPToolSchedule,
+	"steve_schedules":       i18n.MCPToolSchedules,
+	"steve_schedule_cancel": i18n.MCPToolScheduleCancel,
+	"channel_send":          i18n.MCPToolChannelSend,
+	"channel_update":        i18n.MCPToolChannelUpdate,
+	"channel_recall":        i18n.MCPToolChannelRecall,
+	"steve_nodes":           i18n.MCPToolNodes,
+	"steve_node_add":        i18n.MCPToolNodeAdd,
+	"steve_node_refresh":    i18n.MCPToolNodeRefresh,
+	"steve_node_remove":     i18n.MCPToolNodeRemove,
 }
 
 // ToolTitles is every tool the platform can offer, with its label: the
 // read model uses it to recognise the platform's own calls under any
-// harness's naming. A tool without a label is still recognised, by name.
-func ToolTitles() map[string]string {
-	out := map[string]string{}
+// harness's naming and says the label in the reader's language. A tool
+// without a label is still recognised, by name.
+func ToolTitles() map[string]i18n.Key {
+	out := map[string]i18n.Key{}
 	for _, t := range toolList(true, true, true, true, true) {
 		name, _ := t["name"].(string)
 		if name == "" {
@@ -677,7 +696,8 @@ func ToolTitles() map[string]string {
 		if title, ok := titles[name]; ok {
 			out[name] = title
 		} else {
-			out[name] = strings.ReplaceAll(strings.TrimPrefix(name, "steve_"), "_", " ")
+			// Not a catalog entry: the catalog says an unknown key as is.
+			out[name] = i18n.Key(strings.ReplaceAll(strings.TrimPrefix(name, "steve_"), "_", " "))
 		}
 	}
 	return out
@@ -853,6 +873,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 	if err := json.Unmarshal(params, &call); err != nil {
 		return toolError("bad tools/call params")
 	}
+	// What the services behind a tool say back is in the server's language.
+	ctx = i18n.WithLocale(ctx, s.text.Locale())
 	var out string
 	var err error
 	switch call.Name {
@@ -985,14 +1007,14 @@ func (s *Server) await(ctx context.Context, bind binding, raw json.RawMessage) (
 // the final card wears, plus which stage this is. A delegated child's tail
 // names who delegated it, so a card from another machine is not mistaken
 // for the parent's own progress.
-func milestoneTail(style, agentID string, seq int, progress string) string {
+func milestoneTail(text i18n.Catalog, style, agentID string, seq int, progress string) string {
 	base := style
 	if base == "" {
 		base = agentID
 	}
-	label := fmt.Sprintf("里程碑 %d", seq)
+	label := text.T(i18n.MCPMilestone, seq)
 	if progress != "" {
-		label = "里程碑 " + progress
+		label = text.T(i18n.MCPMilestoneProgress, progress)
 	}
 	if base == "" {
 		return label

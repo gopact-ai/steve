@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
@@ -28,7 +29,5 @@ func confirmNeverAdmitted(ctx context.Context, driver RetainedChatDriver, e Exch
 }
 
 func neverAdmittedMessage(e Exchange) string {
-	return line(e.Locale == "en",
-		"已确认这条输入在执行接纳前结束，没有启动执行，也没有重新发送。",
-		"Confirmed that this input ended before execution admission. No execution started and the input was not resent.")
+	return i18n.New(i18n.FromLang(e.Locale)).T(i18n.ConsoleNeverAdmitted)
 }

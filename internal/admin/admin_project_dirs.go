@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -21,18 +22,18 @@ var ProjectDirShape = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 // relative to the machine's workspace, never a path of its own: the same
 // project must be the same relative directory on every machine, or a copy
 // on a second machine lands somewhere the first has never heard of.
-func CheckProjectDir(input string) (string, error) {
+func CheckProjectDir(text i18n.Catalog, input string) (string, error) {
 	dir := strings.TrimSpace(input)
 	if dir == "" {
-		return "", errors.New("目录要写工作区下的相对路径，例如 my-service")
+		return "", errors.New(text.T(i18n.AdminProjectDirRelative))
 	}
 	if strings.HasPrefix(dir, "/") || strings.HasPrefix(dir, "~") || strings.Contains(dir, "\\") {
-		return "", fmt.Errorf("目录 %q 不能是绝对路径：只写工作区下的相对路径，每台机器各自拼上自己的工作区", input)
+		return "", fmt.Errorf(text.T(i18n.AdminProjectDirAbsolute), input)
 	}
 	dir = strings.Trim(dir, "/")
 	for _, segment := range strings.Split(dir, "/") {
 		if !ProjectDirShape.MatchString(segment) {
-			return "", fmt.Errorf("目录 %q 不能用：每一段只能是字母、数字、点、下划线、连字符，且不能以点开头", input)
+			return "", fmt.Errorf(text.T(i18n.AdminProjectDirInvalid), input)
 		}
 	}
 	return dir, nil
@@ -56,15 +57,15 @@ func (a *Service) workspaceRootOf(ctx context.Context, nodeKey string) (string, 
 		advert, err := a.Nodes.Advert(actx, nodeKey)
 		switch {
 		case err != nil && !local:
-			return "", fmt.Errorf("读取 %s 的工作区目录失败：%w", a.name(nodeKey), err)
+			return "", fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceRootReadFailed), a.name(nodeKey), err)
 		case err == nil && advert.WorkspaceRoot != "":
 			return advert.WorkspaceRoot, nil
 		case !local:
-			return "", fmt.Errorf("%s 还没有报告自己的工作区目录，等它连上再试", a.name(nodeKey))
+			return "", fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceRootUnreported), a.name(nodeKey))
 		}
 	}
 	if !local {
-		return "", fmt.Errorf("还不知道 %s 的工作区目录", a.name(nodeKey))
+		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceRootUnknown), a.name(nodeKey))
 	}
 	a.ConfigStore.rlock()
 	defer a.ConfigStore.runlock()
@@ -73,7 +74,7 @@ func (a *Service) workspaceRootOf(ctx context.Context, nodeKey string) (string, 
 
 // projectPath resolves a project's directory on one machine.
 func (a *Service) projectPath(ctx context.Context, nodeKey, dir string) (string, error) {
-	clean, err := CheckProjectDir(dir)
+	clean, err := CheckProjectDir(textFor(ctx), dir)
 	if err != nil {
 		return "", err
 	}
@@ -95,7 +96,7 @@ func (a *Service) projectDirName(ctx context.Context, projectID string) (string,
 	item, exists := a.cfg().Projects[projectID]
 	a.ConfigStore.runlock()
 	if !exists {
-		return "", fmt.Errorf("没有叫 %q 的项目", projectID)
+		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
 	}
 	root, err := a.workspaceRootOf(ctx, item.Home.Node)
 	if err != nil {
@@ -118,15 +119,15 @@ func (a *Service) projectDirName(ctx context.Context, projectID string) (string,
 func (a *Service) makeProjectDir(ctx context.Context, nodeKey, dir string) error {
 	if a.localMachine(nodeKey) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("建立目录 %s 失败：%w", dir, err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminMakeDirFailed), dir, err)
 		}
 		return nil
 	}
 	if a.Nodes == nil {
-		return fmt.Errorf("还不能在 %s 上建立目录", a.name(nodeKey))
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminCannotMakeDirYet), a.name(nodeKey))
 	}
 	if _, err := a.Nodes.Files(ctx, nodeKey, nodewire.FileRequest{Op: nodewire.FileMkdir, Path: dir}); err != nil {
-		return fmt.Errorf("在 %s 上建立目录 %s 失败：%w", a.name(nodeKey), dir, err)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminMakeDirOnFailed), a.name(nodeKey), dir, err)
 	}
 	return nil
 }

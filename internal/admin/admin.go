@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/node"
@@ -188,9 +189,9 @@ func (a *Service) saveConfig(ctx context.Context, candidate *config.Config) erro
 	}
 	if err != nil {
 		if config.Committed(err) {
-			return fmt.Errorf("配置已应用，目录同步失败，持久性尚未确认：%w", err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminConfigAppliedSyncFailed), err)
 		}
-		return fmt.Errorf("写 %s 失败：%w", a.Path, err)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminWriteFailed), a.Path, err)
 	}
 	return nil
 }

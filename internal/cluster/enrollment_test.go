@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/cluster/clustertest"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func TestPeerEnrollmentReviewChangesFailBeforeIssuingIdentity(t *testing.T) {
@@ -114,6 +115,44 @@ func TestPeerEnrollmentTakesADisplayNameAndAWorkspaceForTheMachine(t *testing.T)
 	raw, _ = os.ReadFile(filepath.Join(stateDir, "cluster", "node.json"))
 	if err := json.Unmarshal(raw, &worker); err != nil || worker.WorkspaceRoot != workspace {
 		t.Fatalf("the executor does not run in the workspace: %s %v", raw, err)
+	}
+}
+
+// A new node is set up in Chinese, the language its configuration names,
+// and the import refuses a workspace in that language: it is that node's
+// owner who reads the refusal, on that machine.
+func TestPeerImportRefusesAWorkspaceInTheLanguageOfTheNodeItSetsUp(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var starts atomic.Int32
+	options.Activate = testPeerApplication(t, &starts)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	ports := clustertest.HoldEnrollmentPorts(t)
+	request := PeerEnrollmentRequest{Name: "box", PeerAddress: ports.Peer, RaftAddress: ports.Raft, Level: "restricted"}
+	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = plan.Request
+	request.ExpectedPlanHash = plan.ReviewID
+	prepared, err := peer.PrepareEnrollment(t.Context(), request, "language-plan", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The preview already refuses a relative workspace, so the only way one
+	// reaches the importing machine is in a package changed on the way.
+	var bundle PeerJoinPackage
+	if err := json.Unmarshal(prepared.Payload, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	bundle.WorkspaceDir = "relative"
+	payload, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ImportPeerPackage(payload, filepath.Join(t.TempDir(), "peer-state"))
+	if want := i18n.New(i18n.LocaleZH).T(i18n.DesktopWorkspaceRelative); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("import refusal = %v, want it to say %q", err, want)
 	}
 }
 

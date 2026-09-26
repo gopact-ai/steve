@@ -7,6 +7,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -52,7 +53,7 @@ func TestRecoveryPreferencesMustBeConfirmedBeforeTaskInput(t *testing.T) {
 			if mode == "missing" {
 				r.settings.Options = nil
 			}
-			err := applyRecoveryPreferences(t.Context(), r, preferences)
+			err := applyRecoveryPreferences(t.Context(), i18n.New(i18n.LocaleZH), r, preferences)
 			if mode == "supported" {
 				if err != nil {
 					t.Fatal(err)

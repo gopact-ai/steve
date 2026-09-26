@@ -8,12 +8,9 @@ import (
 	"sync"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/task"
 )
-
-// unrecordedAnswer is what the parent is told about a child that was never
-// admitted: there was no execution, so there is nothing to resume from.
-const unrecordedAnswer = "子任务在开始执行前中断，没有执行记录。如果仍需要这项工作，请重新委派。"
 
 // inherited is the accounting rows open when the service was created:
 // opened by an earlier process, never by this one. A row this process
@@ -113,5 +110,7 @@ func (s *Service) settleUnrecorded(ctx context.Context, tracked task.Task, row t
 	if tracked.Result != nil {
 		return nil
 	}
-	return s.tasks.SetResult(tracked.ID, task.Result{Outcome: task.OutcomeInterrupted, Answer: unrecordedAnswer, Attempt: row.ExecutionID})
+	// The child was never admitted: there was no execution, so there is
+	// nothing to resume from, and the answer says so.
+	return s.tasks.SetResult(tracked.ID, task.Result{Outcome: task.OutcomeInterrupted, Answer: s.text.T(i18n.DelegateUnrecordedAnswer), Attempt: row.ExecutionID})
 }

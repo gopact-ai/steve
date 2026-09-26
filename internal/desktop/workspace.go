@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // InputError is a refusal of what the owner asked for, as opposed to a
@@ -21,19 +23,19 @@ func IsInputError(err error) bool {
 	return errors.As(err, &input)
 }
 
-func refuse(format string, args ...any) error {
-	return &InputError{Message: fmt.Sprintf(format, args...)}
+func refuse(text i18n.Catalog, key i18n.Key, args ...any) error {
+	return &InputError{Message: text.T(key, args...)}
 }
 
 // CheckWorkspaceProject confirms there is a default project and that it
 // lives on this computer; the workspace page only ever moves a local one.
 // local tells whether the project's home node is this machine.
-func CheckWorkspaceProject(id string, local bool, node string) error {
+func CheckWorkspaceProject(text i18n.Catalog, id string, local bool, node string) error {
 	if id == "" {
-		return refuse("没有默认项目，无法设置工作目录")
+		return refuse(text, i18n.DesktopWorkspaceNoProject)
 	}
 	if !local {
-		return refuse("默认项目「%s」的目录在另一台机器（%s）上，不能从这台电脑修改。请在那台机器上设置，或先在「项目」里把默认项目换成本机的项目。", id, node)
+		return refuse(text, i18n.DesktopWorkspaceRemoteProject, id, node)
 	}
 	return nil
 }
@@ -54,13 +56,13 @@ func ManagedWorkspace(stateDir, path string) bool {
 // the operating system, the home directory itself, and the desktop's own
 // state directory are refused, because agents will create and delete files
 // there. stateDir is where the desktop keeps its configuration.
-func PrepareWorkspace(input, stateDir string) (string, error) {
+func PrepareWorkspace(text i18n.Catalog, input, stateDir string) (string, error) {
 	path := strings.TrimSpace(input)
 	if path == "" {
-		return "", refuse("工作目录不能为空")
+		return "", refuse(text, i18n.DesktopWorkspaceEmpty)
 	}
 	if strings.ContainsRune(path, 0) {
-		return "", refuse("工作目录包含无效字符")
+		return "", refuse(text, i18n.DesktopWorkspaceInvalid)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -70,26 +72,26 @@ func PrepareWorkspace(input, stateDir string) (string, error) {
 		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 	}
 	if !filepath.IsAbs(path) {
-		return "", refuse("工作目录要写绝对路径，例如 ~/Steve")
+		return "", refuse(text, i18n.DesktopWorkspaceRelative)
 	}
 	path = filepath.Clean(path)
-	if err := checkWorkspacePlace(resolveExisting(path), resolveExisting(filepath.Clean(home)), stateDir); err != nil {
+	if err := checkWorkspacePlace(text, resolveExisting(path), resolveExisting(filepath.Clean(home)), stateDir); err != nil {
 		return "", err
 	}
 	info, err := os.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return "", fmt.Errorf("创建工作目录失败：%w", err)
+			return "", fmt.Errorf(text.T(i18n.DesktopWorkspaceCreateFailed), err)
 		}
 	case err != nil:
-		return "", fmt.Errorf("检查工作目录失败：%w", err)
+		return "", fmt.Errorf(text.T(i18n.DesktopWorkspaceCheckFailed), err)
 	case !info.IsDir():
-		return "", refuse("%s 不是文件夹", path)
+		return "", refuse(text, i18n.DesktopWorkspaceNotFolder, path)
 	}
 	probe, err := os.CreateTemp(path, ".steve-write-*")
 	if err != nil {
-		return "", refuse("工作目录不可写：%v", err)
+		return "", refuse(text, i18n.DesktopWorkspaceNotWritable, err)
 	}
 	probe.Close()
 	os.Remove(probe.Name())
@@ -99,14 +101,14 @@ func PrepareWorkspace(input, stateDir string) (string, error) {
 // checkWorkspacePlace judges the resolved path: not the home or a volume
 // root, not inside a system root, and not the desktop's state directory or
 // any directory that contains it.
-func checkWorkspacePlace(path, home, stateDir string) error {
+func checkWorkspacePlace(text i18n.Catalog, path, home, stateDir string) error {
 	if path == home || path == filepath.VolumeName(path)+string(filepath.Separator) {
-		return refuse("工作目录要是一个专门的文件夹，不能直接用家目录或根目录")
+		return refuse(text, i18n.DesktopWorkspaceHomeOrRoot)
 	}
 	if stateDir != "" {
 		state := resolveExisting(filepath.Clean(stateDir))
 		if path == state || within(path, state) || within(state, path) {
-			return refuse("工作目录不能是 Steve 自己的数据目录或它的上级目录")
+			return refuse(text, i18n.DesktopWorkspaceStateDir)
 		}
 	}
 	if within(path, home) {
@@ -114,7 +116,7 @@ func checkWorkspacePlace(path, home, stateDir string) error {
 	}
 	for _, reserved := range reservedRoots() {
 		if path == reserved || within(path, reserved) {
-			return refuse("%s 属于系统目录，请选择个人目录下的文件夹", reserved)
+			return refuse(text, i18n.DesktopWorkspaceSystem, reserved)
 		}
 	}
 	return nil

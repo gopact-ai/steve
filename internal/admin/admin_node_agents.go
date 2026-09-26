@@ -11,23 +11,24 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
-func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
+func (a *Service) nodeForAgentEnrollment(text i18n.Catalog, name string) (config.Node, error) {
 	if name == "" || name == "hub" {
-		return config.Node{}, errors.New("请选择已接入的远端机器；本机工具请在本机登记")
+		return config.Node{}, errors.New(text.T(i18n.AdminChooseRemoteNode))
 	}
 	a.ConfigStore.rlock()
 	target, ok := a.cfg().Nodes[name]
 	a.ConfigStore.runlock()
 	if !ok {
-		return config.Node{}, fmt.Errorf("没有叫 %q 的机器", name)
+		return config.Node{}, fmt.Errorf(text.T(i18n.AdminNoNode), name)
 	}
 	if a.Nodes == nil {
-		return config.Node{}, errors.New("远端机器服务尚未就绪")
+		return config.Node{}, errors.New(text.T(i18n.AdminRemoteNodesNotReady))
 	}
 	return target, nil
 }
@@ -36,10 +37,10 @@ func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
 // cfg declares under name: the configuration about to be committed, or the
 // one in force held still. Reusing a display name cannot reuse an earlier
 // machine's discovery or installation result.
-func checkAgentNodeTarget(cfg *config.Config, name string, expected config.Node) error {
+func checkAgentNodeTarget(text i18n.Catalog, cfg *config.Config, name string, expected config.Node) error {
 	current, ok := cfg.Nodes[name]
 	if !ok || current.Addr != expected.Addr || current.Token != expected.Token {
-		return fmt.Errorf("%w: 机器身份或连接已变化，请重新选择", nodewire.ErrSettingsRevisionConflict)
+		return fmt.Errorf(text.T(i18n.AdminNodeChanged), nodewire.ErrSettingsRevisionConflict)
 	}
 	return nil
 }
@@ -47,7 +48,7 @@ func checkAgentNodeTarget(cfg *config.Config, name string, expected config.Node)
 // NodeAgents asks the selected machine for its own installed tools. SSH
 // previews and commands discovered on the coordinator are never used here.
 func (a *Service) NodeAgents(ctx context.Context, name string) (agenttools.Discovery, error) {
-	target, err := a.nodeForAgentEnrollment(name)
+	target, err := a.nodeForAgentEnrollment(textFor(ctx), name)
 	if err != nil {
 		return agenttools.Discovery{}, err
 	}
@@ -57,7 +58,7 @@ func (a *Service) NodeAgents(ctx context.Context, name string) (agenttools.Disco
 	}
 	a.ConfigStore.rlock()
 	defer a.ConfigStore.runlock()
-	if err := checkAgentNodeTarget(a.cfg(), name, target); err != nil {
+	if err := checkAgentNodeTarget(textFor(ctx), a.cfg(), name, target); err != nil {
 		return agenttools.Discovery{}, err
 	}
 	for i := range discovered.Agents {
@@ -121,19 +122,19 @@ func (a *Service) harnessOffers(ctx context.Context, name string) map[string]rea
 func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttools.EnrollRequest) (agenttools.Enrollment, error) {
 	requested := req.Requested()
 	if len(requested) == 0 {
-		return agenttools.Enrollment{}, errors.New("请选择要登记的 Agent")
+		return agenttools.Enrollment{}, errors.New(textFor(ctx).T(i18n.AdminChooseAgentToEnroll))
 	}
-	target, err := a.nodeForAgentEnrollment(name)
+	target, err := a.nodeForAgentEnrollment(textFor(ctx), name)
 	if err != nil {
 		return agenttools.Enrollment{}, err
 	}
 	if a.Catalog == nil {
-		return agenttools.Enrollment{}, errors.New("Agent 服务尚未就绪")
+		return agenttools.Enrollment{}, errors.New(textFor(ctx).T(i18n.AdminAgentServiceNotReady))
 	}
 	a.ConfigStore.rlock()
 	existing := maps.Clone(a.cfg().Agents)
 	a.ConfigStore.runlock()
-	planned, err := planNodeAgents(name, requested, existing)
+	planned, err := planNodeAgents(textFor(ctx), name, requested, existing)
 	if err != nil {
 		return agenttools.Enrollment{}, err
 	}
@@ -160,7 +161,7 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	var prepared *agent.Catalog
 	added := false
 	saveErr := a.updateConfigThen(a.lifetime(), func(c *config.Config) error {
-		if err := checkAgentNodeTarget(c, name, target); err != nil {
+		if err := checkAgentNodeTarget(textFor(ctx), c, name, target); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
@@ -172,7 +173,7 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 		for _, id := range planned.order {
 			if current, ok := c.Agents[id]; ok {
 				if current.Node != name || current.Harness != planned.agents[id].Harness {
-					return fmt.Errorf("Agent 名称 %s 已被占用", id)
+					return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentNameTaken), id)
 				}
 				continue
 			}
@@ -217,7 +218,7 @@ type nodeAgentPlan struct {
 
 // planNodeAgents checks every requested agent against the supported tools and
 // the names already in use, before anything is installed on the machine.
-func planNodeAgents(node string, requested []agenttools.EnrollAgent, existing map[string]config.Agent) (nodeAgentPlan, error) {
+func planNodeAgents(text i18n.Catalog, node string, requested []agenttools.EnrollAgent, existing map[string]config.Agent) (nodeAgentPlan, error) {
 	plan := nodeAgentPlan{agents: map[string]config.Agent{}, candidates: map[string]string{}}
 	seen := map[string]bool{}
 	for _, want := range requested {
@@ -230,14 +231,14 @@ func planNodeAgents(node string, requested []agenttools.EnrollAgent, existing ma
 			id = want.CandidateID
 		}
 		if !NameShape.MatchString(id) {
-			return nodeAgentPlan{}, fmt.Errorf("Agent 名 %q 只能是小写字母、数字、点、下划线、连字符", want.AgentID)
+			return nodeAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameInvalidQuoted), want.AgentID)
 		}
 		if seen[id] {
-			return nodeAgentPlan{}, fmt.Errorf("Agent 名称 %s 在这次登记里出现了两次", id)
+			return nodeAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameTwice), id)
 		}
 		seen[id] = true
 		if current, ok := existing[id]; ok && (current.Node != node || current.Harness != canonical.Harness) {
-			return nodeAgentPlan{}, fmt.Errorf("Agent 名称 %s 已被占用", id)
+			return nodeAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameTaken), id)
 		}
 		entry := config.Agent{Node: node, Harness: canonical.Harness, About: strings.TrimSpace(want.About), Model: strings.TrimSpace(want.Model)}
 		if len(want.Options) > 0 {
@@ -257,7 +258,7 @@ func (a *Service) checkRemoteHarness(ctx context.Context, nodeID, harnessID stri
 	if nodeID == "" {
 		return config.Node{}, nil
 	}
-	target, err := a.nodeForAgentEnrollment(nodeID)
+	target, err := a.nodeForAgentEnrollment(textFor(ctx), nodeID)
 	if err != nil {
 		return config.Node{}, err
 	}
@@ -267,7 +268,7 @@ func (a *Service) checkRemoteHarness(ctx context.Context, nodeID, harnessID stri
 	}
 	declared, ok := settings.Harnesses[harnessID]
 	if !ok || strings.TrimSpace(declared.Command) == "" {
-		return config.Node{}, fmt.Errorf("机器 %s 尚未登记 AI 工具 %s，请先选择该机器已安装的工具", nodeID, harnessID)
+		return config.Node{}, fmt.Errorf(textFor(ctx).T(i18n.AdminNodeHarnessUnregistered), nodeID, harnessID)
 	}
 	// Same-process enrollment updates the worker without touching this
 	// registry's cached advert. Publish the tool before the Agent can start
@@ -281,5 +282,5 @@ func (a *Service) checkRemoteHarness(ctx context.Context, nodeID, harnessID stri
 			return target, nil
 		}
 	}
-	return config.Node{}, fmt.Errorf("机器 %s 尚未报告 AI 工具 %s，请刷新后重试", nodeID, harnessID)
+	return config.Node{}, fmt.Errorf(textFor(ctx).T(i18n.AdminNodeHarnessUnreported), nodeID, harnessID)
 }

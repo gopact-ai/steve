@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/exec"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -100,7 +101,7 @@ func TestAgentDelegatesAcrossMachinesThroughTheTool(t *testing.T) {
 	f.registry.EnsureConnected(t.Context())
 	f.tasks.SetBudget(12, time.Hour)
 
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestAgentDelegatesAcrossMachinesThroughTheTool(t *testing.T) {
 	defer cancel()
 	go func() { _ = gate.Start(ctx) }()
 
-	service := delegate.New(f.tasks, f.roster, f.manager, capability.NewAssembler(nil), f.artifacts, "hub-e2e")
+	service := delegate.New(f.tasks, f.roster, f.manager, capability.NewAssembler(nil), f.artifacts, "hub-e2e", i18n.New(i18n.LocaleZH))
 	service.SetLedger(f.attempts, f.artifacts)
 	service.SetGate(gate)
 	service.SetEndpoints(f.registry)

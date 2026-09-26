@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/memory"
 )
 
@@ -122,7 +123,7 @@ func waitEntered(t *testing.T, m *heldMemorizer) {
 // finishes, and writes, before Start returns: whoever owns the storage
 // closes it on Start's return.
 func TestStartReturnsOnlyAfterInFlightToolCallsFinish(t *testing.T) {
-	s, err := New(0)
+	s, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +171,7 @@ func TestStartReturnsOnlyAfterInFlightToolCallsFinish(t *testing.T) {
 // A tool call that would outlast the grace period has its request
 // cancelled, and Start still waits for it to return before it does.
 func TestStartCancelsToolCallsThatOutlastTheGracePeriod(t *testing.T) {
-	s, err := New(0)
+	s, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestStartCancelsToolCallsThatOutlastTheGracePeriod(t *testing.T) {
 // fails after that, the server is never started, and Close is what gives
 // the port back.
 func TestCloseReleasesThePortOfAServerNeverStarted(t *testing.T) {
-	s, err := New(0)
+	s, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +240,7 @@ func TestCloseReleasesThePortOfAServerNeverStarted(t *testing.T) {
 // does: it returns once the call in flight has finished, and Start
 // returns nil after it.
 func TestCloseDrainsARunningServer(t *testing.T) {
-	s, err := New(0)
+	s, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

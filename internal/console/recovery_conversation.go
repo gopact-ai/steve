@@ -4,12 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -35,23 +35,28 @@ func (s *Service) EnsureRecoveryConversation(ctx context.Context, source Recover
 		return "", consoleapi.ErrQuestionForbidden
 	}
 	conversation := Prefix + "recovery:" + url.PathEscape(source.ParentTaskID)
-	channelName := source.SourceChannel
-	if source.SourceChannel == "feishu" || source.SourceChannel == "lark" {
-		channelName = "飞书"
-	}
-	title := clipTitle(fmt.Sprintf("%s · 任务 #%s", channelName, source.ParentTaskID))
-	body := fmt.Sprintf("来源：%s\n原会话：%s\n原父任务：#%s\n项目：%s\n\n原任务的待答问题将在此显示。", source.SourceChannel, source.SourceConversation, source.ParentTaskID, source.Project)
-	hash := sha256.Sum256([]byte(source.ParentTaskID))
+	// The notice is named after the whole source, so the page is found
+	// again by what it was opened for; its wording is in whichever
+	// language the page was made and decides nothing.
+	hash := sha256.Sum256([]byte(strings.Join([]string{source.ParentTaskID, source.SourceChannel, source.SourceConversation, source.Project}, "\x00")))
 	noticeID := "recovery-source-" + hex.EncodeToString(hash[:])
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.recoveryStoppedLocked() {
 		return "", consoleapi.ErrConsoleClosing
 	}
+	// The page is introduced in the console's language when it is made.
+	text := i18n.New(i18n.FromLang(s.submissionLocaleLocked(ctx, nil)))
+	channelName := source.SourceChannel
+	if source.SourceChannel == "feishu" || source.SourceChannel == "lark" {
+		channelName = text.T(i18n.ConsoleRecoveryFeishu)
+	}
+	title := clipTitle(text.T(i18n.ConsoleRecoveryTitle, channelName, source.ParentTaskID))
+	body := recoveryIntroduction(text, source)
 	if previous, exists := s.replies[conversation]; exists {
 		for _, reply := range previous {
 			if reply.ID == noticeID {
-				if reply.Kind != "notice" || reply.ProjectID != source.Project || reply.Text != body || reply.Format != "text" {
+				if reply.Kind != "notice" || reply.ProjectID != source.Project || reply.Format != "text" {
 					return "", consoleapi.ErrQuestionConflict
 				}
 				return conversation, nil
@@ -75,4 +80,9 @@ func (s *Service) EnsureRecoveryConversation(ctx context.Context, source Recover
 		s.model.Publish(readmodel.Event{At: now, Kind: "console.meta", Conversation: conversation, Text: title})
 	}
 	return conversation, nil
+}
+
+// recoveryIntroduction is the notice that opens a recovery page.
+func recoveryIntroduction(text i18n.Catalog, source RecoveryConversation) string {
+	return text.T(i18n.ConsoleRecoveryBody, source.SourceChannel, source.SourceConversation, source.ParentTaskID, source.Project)
 }

@@ -6,11 +6,12 @@ import (
 
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 )
 
 func (a *Service) NativeHistory(ctx context.Context, name string, source nativehistory.Source) ([]nativehistory.Entry, error) {
-	target, err := a.nodeForAgentEnrollment(name)
+	target, err := a.nodeForAgentEnrollment(textFor(ctx), name)
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +21,7 @@ func (a *Service) NativeHistory(ctx context.Context, name string, source nativeh
 	}
 	a.ConfigStore.rlock()
 	defer a.ConfigStore.runlock()
-	if err := checkAgentNodeTarget(a.cfg(), name, target); err != nil {
+	if err := checkAgentNodeTarget(textFor(ctx), a.cfg(), name, target); err != nil {
 		return nil, err
 	}
 	return entries, nil
@@ -28,7 +29,7 @@ func (a *Service) NativeHistory(ctx context.Context, name string, source nativeh
 
 func (a *Service) ImportNativeHistory(ctx context.Context, name string, req consoleapi.NativeImportRequest) (consoleapi.ImportedSession, error) {
 	if !a.ClusterMode || a.Coordinator == nil || a.Console == nil || a.Catalog == nil || a.Projects == nil {
-		return consoleapi.ImportedSession{}, errors.New("历史会话迁移需要已启用集群的服务")
+		return consoleapi.ImportedSession{}, errors.New(textFor(ctx).T(i18n.AdminNativeImportNeedsCluster))
 	}
 	if previous, exists, err := a.Console.ImportedConversation(name, req); err != nil || exists {
 		return previous, err
@@ -37,13 +38,13 @@ func (a *Service) ImportNativeHistory(ctx context.Context, name string, req cons
 	if err != nil {
 		return consoleapi.ImportedSession{}, err
 	}
-	target, err := a.nodeForAgentEnrollment(name)
+	target, err := a.nodeForAgentEnrollment(textFor(ctx), name)
 	if err != nil {
 		return consoleapi.ImportedSession{}, err
 	}
 	selected, ok := a.Catalog.Resolve(req.Agent)
 	if !ok || selected.ID != req.Agent || selected.Node != name || selected.Harness != req.Source.Harness {
-		return consoleapi.ImportedSession{}, errors.New("请选择运行在来源机器上且使用相同工具的 Agent")
+		return consoleapi.ImportedSession{}, errors.New(textFor(ctx).T(i18n.AdminNativeImportChooseAgent))
 	}
 	var ref nativehistory.Reference
 	if req.Project == "" {
@@ -77,7 +78,7 @@ func (a *Service) ImportNativeHistory(ctx context.Context, name string, req cons
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
 	a.ConfigStore.rlock()
-	err = checkNativeImportTarget(a.cfg(), name, target, selected)
+	err = checkNativeImportTarget(textFor(ctx), a.cfg(), name, target, selected)
 	a.ConfigStore.runlock()
 	if err != nil {
 		return consoleapi.ImportedSession{}, err

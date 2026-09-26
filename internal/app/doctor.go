@@ -48,7 +48,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 	if err := checkHome(cfg); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(hubContext(context.Background(), cfg), timeout)
 	defer cancel()
 	if cfg.FeishuEnabled() {
 		identity, err := feishu.Probe(ctx, cfg.Feishu.AppID, cfg.Feishu.AppSecret, cfg.Feishu.Domain)

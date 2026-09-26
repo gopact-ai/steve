@@ -5,6 +5,7 @@ package agentmcp
 import (
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/stableport"
 )
 
@@ -19,13 +20,13 @@ func requireStablePort(t *testing.T, what string, port int) {
 // a port it picks, first or because the remembered one is taken, comes
 // from the stable range.
 func TestNewPicksItsPortFromTheStableRange(t *testing.T) {
-	first, err := New(0)
+	first, err := New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.listener.Close()
 	requireStablePort(t, "first start", first.Port())
-	moved, err := New(first.Port())
+	moved, err := New(first.Port(), i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

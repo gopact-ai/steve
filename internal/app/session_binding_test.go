@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -230,7 +231,7 @@ func TestApplicationStopsUseCommittedSessionBinding(t *testing.T) {
 			next.SetTransports(link)
 			next.SetNodeSessionBinder(newApplicationSessionBinder(active))
 			next.SetStopRegistrar(execution.RegisterStopHandler)
-			stops := newApplicationStops(attempts, tasks, next)
+			stops := newApplicationStops(attempts, tasks, next, i18n.New(i18n.LocaleZH))
 			inspect := func() nodewire.SessionState {
 				t.Helper()
 				probe := execution.WithProbeKey(ctx, execution.Key{TaskID: record.TaskID, AttemptID: record.ID})

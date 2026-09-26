@@ -92,7 +92,7 @@ func (m *Markdown) RememberOnce(ctx context.Context, scope Scope, section, text,
 	if err != nil {
 		return Receipt{}, false, err
 	}
-	after, r, err := prepareRemember(scope, section, text, before)
+	after, r, err := prepareRemember(scope, hubLocale(m.locale), section, text, before)
 	if err != nil {
 		return Receipt{}, false, err
 	}

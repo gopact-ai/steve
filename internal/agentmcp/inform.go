@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // The platform server's own tools about the platform. A skill is text
@@ -271,7 +273,7 @@ func (s *Server) steveNodeRemove(ctx context.Context, bind binding, raw json.Raw
 	if err := f.RemoveNode(ctx, args.Name); err != nil {
 		return "", err
 	}
-	return "机器 " + args.Name + " 已从 hub 忘掉：不再拨号、不再列出；它上面的进程没有动。", nil
+	return s.text.T(i18n.MCPNodeRemoved, args.Name), nil
 }
 
 func (s *Server) steveNodeRefresh(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {

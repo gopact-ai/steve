@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
 // ErrWorkspacePreparing says a project's directory on a machine is being
 // made right now. The work that asked for it can be tried again once the
 // copy is there; nothing is lost in the meantime.
-var ErrWorkspacePreparing = errors.New("项目的工作区还在准备中")
+var ErrWorkspacePreparing = errors.New("project workspace is still being prepared")
 
 // attachWait is how long a caller waits for a copy that has to be cloned
 // before it is told to come back. A directory that only has to be made
@@ -39,7 +40,7 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("没有叫 %q 的项目", projectID)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
 	}
 	if _, err := p.Place(nodeKey); err == nil {
 		return nil
@@ -49,7 +50,7 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 		case project.CopyProvisioning:
 			return a.awaitCopy(ctx, projectID, nodeKey)
 		case project.CopyFailed:
-			return fmt.Errorf("%s 上的项目副本没有建成：%s", a.name(nodeKey), existing.Error)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminCopyNotBuilt), a.name(nodeKey), existing.Error)
 		}
 	}
 	origin := "adopt"
@@ -83,11 +84,11 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 // a clone needs. A machine that cannot answer is not guessed about.
 func (a *Service) missingDir(ctx context.Context, nodeKey, path string) (bool, error) {
 	if nodeKey != "" && a.Nodes == nil {
-		return false, fmt.Errorf("还不能查看 %s 上的目录", a.name(nodeKey))
+		return false, fmt.Errorf(textFor(ctx).T(i18n.AdminCannotBrowseYet), a.name(nodeKey))
 	}
 	found, err := a.inspect(ctx, nodeKey, path)
 	if err != nil {
-		return false, fmt.Errorf("检查 %s 上的 %s 失败：%w", a.name(nodeKey), path, err)
+		return false, fmt.Errorf(textFor(ctx).T(i18n.AdminCheckPathFailed), a.name(nodeKey), path, err)
 	}
 	return len(found) == 1 && found[0].Missing, nil
 }
@@ -103,19 +104,19 @@ func (a *Service) awaitCopy(ctx context.Context, projectID, nodeKey string) erro
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("没有叫 %q 的项目", projectID)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
 		}
 		made, found := p.CopyOn(nodeKey)
 		switch {
 		case !found:
-			return fmt.Errorf("%s 上的项目副本不见了", a.name(nodeKey))
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminCopyGone), a.name(nodeKey))
 		case made.State == project.CopyReady:
 			return nil
 		case made.State == project.CopyFailed:
-			return fmt.Errorf("%s 上的项目副本没有建成：%s", a.name(nodeKey), made.Error)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminCopyNotBuilt), a.name(nodeKey), made.Error)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%w：正在把 %s 复制到 %s，完成后再说一次", ErrWorkspacePreparing, projectID, a.name(nodeKey))
+			return saidError{textFor(ctx).T(i18n.AdminCopyInProgress, projectID, a.name(nodeKey)), ErrWorkspacePreparing}
 		}
 		select {
 		case <-ctx.Done():

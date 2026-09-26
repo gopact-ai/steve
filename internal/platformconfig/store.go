@@ -22,7 +22,7 @@ const document = "platform-configuration"
 
 var (
 	ErrConflict     = errors.New("shared configuration changed; reload before saving")
-	ErrSealedShared = errors.New("sealed 项目仅支持独立单机实例；共享协调账本会复制项目正文")
+	ErrSealedShared = errors.New("a sealed project needs an independent single-machine service; a shared ledger copies project content")
 )
 
 type Declaration struct {
@@ -318,6 +318,14 @@ func validate(d Declaration) error {
 	return err
 }
 
+// SealedError names the sealed project a shared ledger refused. It is
+// ErrSealedShared to errors.Is; whoever answers a person says it in their
+// language.
+type SealedError struct{ Project string }
+
+func (e *SealedError) Error() string        { return ErrSealedShared.Error() + ": " + e.Project }
+func (e *SealedError) Is(target error) bool { return target == ErrSealedShared }
+
 // Shared application documents contain task, conversation and memory text.
 // Sealed data cannot enter an all-member ledger, even in its first single-peer
 // phase, because a later join replays its complete log and database history.
@@ -326,7 +334,7 @@ func validateClassifications(projects map[string]config.Project) error {
 		switch item.Level {
 		case "", "public", "internal", "restricted":
 		case "sealed":
-			return fmt.Errorf("%w: %s", ErrSealedShared, id)
+			return &SealedError{Project: id}
 		default:
 			return fmt.Errorf("project %q has an invalid shared data level", id)
 		}

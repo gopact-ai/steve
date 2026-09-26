@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
@@ -66,7 +67,7 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build mockagent: %v\n%s", err, output)
 	}
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

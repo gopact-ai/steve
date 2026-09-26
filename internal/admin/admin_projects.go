@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
@@ -93,7 +94,7 @@ func (a *Service) holdChangedWorkspaces(ctx context.Context, desired []project.P
 				release()
 				var busy attempt.Busy
 				if errors.As(err, &busy) {
-					return nil, fmt.Errorf("%w：工作区有回合在运行（%s）", consoleapi.ErrBusy, busy.Holder)
+					return nil, fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceTurnRunning), consoleapi.ErrBusy, busy.Holder)
 				}
 				return nil, err
 			}
@@ -106,14 +107,14 @@ func (a *Service) holdChangedWorkspaces(ctx context.Context, desired []project.P
 func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectRequest) error {
 	id := strings.TrimSpace(req.ID)
 	if !NameShape.MatchString(id) {
-		return fmt.Errorf("项目名只能是小写字母、数字、点、下划线、连字符")
+		return errors.New(textFor(ctx).T(i18n.AdminProjectNameInvalid))
 	}
 	if id == HomeProjectID {
-		return fmt.Errorf("%s 是 Steve 自己的家，不能再声明", id)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectIsHome), id)
 	}
 	nodeKey := a.nodeKey(req.Node)
 	if !a.localMachine(nodeKey) {
-		return fmt.Errorf("项目的主目录建在协调者上；其它机器用「添加工作区」按同一相对目录对齐")
+		return errors.New(textFor(ctx).T(i18n.AdminProjectHomeOnCoordinator))
 	}
 	dir := strings.TrimSpace(req.Path)
 	if dir == "" {
@@ -137,7 +138,7 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 			if reflect.DeepEqual(old, item) {
 				return nil
 			}
-			return fmt.Errorf("项目 %s 已经存在", id)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectExists), id)
 		}
 		candidate.Projects[id] = item
 		return nil
@@ -164,10 +165,10 @@ func (a *Service) SetProjectHome(ctx context.Context, projectID, dir string) err
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
 		if !exists {
-			return fmt.Errorf("没有叫 %q 的项目", projectID)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
 		}
 		if !candidate.LocalHomeNode(item.Home.Node) {
-			return fmt.Errorf("项目 %s 在机器 %s 上，目录要在那台机器上改", projectID, item.Home.Node)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectHomeElsewhere), projectID, item.Home.Node)
 		}
 		if item.Home.Path == path {
 			return nil
@@ -205,7 +206,7 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 	} else if origin == "clone" {
 		origin = string(project.OriginCloned)
 	} else {
-		return fmt.Errorf("未知工作区来源 %q", origin)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceSourceUnknown), origin)
 	}
 	if origin == string(project.OriginAdopted) {
 		if err := a.makeProjectDir(ctx, nodeKey, path); err != nil {
@@ -215,14 +216,14 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
 		if !exists {
-			return fmt.Errorf("没有叫 %q 的项目", projectID)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
 		}
 		for _, ws := range item.Workspaces {
 			if ws.Node == nodeKey {
 				if ws.Path == path && (ws.Origin == origin || (ws.Origin == "" && origin == string(project.OriginAdopted))) {
 					return nil
 				}
-				return fmt.Errorf("项目 %s 在 %s 已有副本", projectID, nodeKey)
+				return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectCopyExists), projectID, nodeKey)
 			}
 		}
 		ws := config.ProjectWorkspace{Node: nodeKey, Path: path, Origin: origin}
@@ -232,18 +233,18 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 				return err
 			}
 			if !ok {
-				return fmt.Errorf("没有叫 %q 的项目", projectID)
+				return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
 			}
 			ws.Source = a.cloneSource(p)
 			if ws.Source == "" {
-				return fmt.Errorf("项目 %s 没有可以克隆的来源", projectID)
+				return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectNoCloneSource), projectID)
 			}
 			found, err := a.inspect(ctx, nodeKey, path)
 			if err != nil {
-				return fmt.Errorf("检查工作区失败：%w", err)
+				return fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceCheckFailed), err)
 			}
 			if missing := len(found) == 1 && found[0].Missing; !missing {
-				return fmt.Errorf("%s 上已经有 %s；克隆需要尚不存在的目录", a.name(nodeKey), path)
+				return fmt.Errorf(textFor(ctx).T(i18n.AdminCloneTargetExists), a.name(nodeKey), path)
 			}
 		}
 		item.Workspaces = append(item.Workspaces, ws)
@@ -257,7 +258,7 @@ func (a *Service) RemoveWorkspace(ctx context.Context, projectID, nodeName strin
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
 		if !exists {
-			return fmt.Errorf("没有叫 %q 的项目", projectID)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
 		}
 		for i, ws := range item.Workspaces {
 			if ws.Node == nodeKey {
@@ -276,22 +277,22 @@ func (a *Service) RemoveWorkspace(ctx context.Context, projectID, nodeName strin
 // nobody can open. The directory on disk is not touched.
 func (a *Service) RemoveProject(ctx context.Context, id string) error {
 	if id == HomeProjectID {
-		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminHomeNotRemovable), id)
 	}
 	a.ConfigStore.rlock()
 	isDefault := id == a.cfg().Gateway.DefaultProject
 	a.ConfigStore.runlock()
 	if isDefault {
-		return fmt.Errorf("%s 是默认项目，不能移除", id)
+		return fmt.Errorf(textFor(ctx).T(i18n.AdminDefaultProjectKept), id)
 	}
 	for _, conversation := range a.conversationsOf(ctx, id) {
 		if err := a.DeleteConversation(ctx, conversation); err != nil {
-			return fmt.Errorf("删除项目 %s 的会话 %s 失败：%w", id, conversation, err)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminDeleteProjectConversationFailed), id, conversation, err)
 		}
 	}
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		if id == candidate.Gateway.DefaultProject {
-			return fmt.Errorf("%s 是默认项目，不能移除", id)
+			return fmt.Errorf(textFor(ctx).T(i18n.AdminDefaultProjectKept), id)
 		}
 		delete(candidate.Projects, id)
 		return nil

@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/project"
@@ -32,7 +33,7 @@ func (r applicationMCPReplicator) Propose(_ context.Context, write ledger.Replic
 
 func applicationGrantGate(t *testing.T, book *ledger.Ledger) *agentmcp.Server {
 	t.Helper()
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}

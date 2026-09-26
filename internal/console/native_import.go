@@ -69,7 +69,7 @@ func (s *Service) EnsureImportedConversation(ctx context.Context, command string
 	title := clipTitle(fmt.Sprintf("%s · %s", origin.Reference.Harness, origin.Reference.NativeID))
 	now := time.Now().UTC()
 	s.meta[conversation] = Meta{Title: title, TitleBy: "system", UpdatedAt: now, NativeImport: &origin}
-	body := i18n.New(i18n.ContextLocale(ctx)).T(i18n.NativeHistoryImported, origin.Reference.Harness, origin.Node, origin.Reference.NativeID, origin.Reference.SourceWorkdir)
+	body := i18n.FromContext(ctx).T(i18n.NativeHistoryImported, origin.Reference.Harness, origin.Node, origin.Reference.NativeID, origin.Reference.SourceWorkdir)
 	notice := s.recordLocked(consoleapi.Reply{ID: "native-import-" + hex.EncodeToString(hash[:]), Conversation: conversation, ProjectID: origin.Project, At: now, Title: title, Text: body, Format: "text", Kind: "notice"})
 	if err := s.save(); err != nil {
 		delete(s.meta, conversation)

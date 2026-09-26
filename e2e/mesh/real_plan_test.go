@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/project"
@@ -259,7 +260,7 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	f.registry.EnsureConnected(t.Context())
 	_, _ = onNode(t, nodeB, "mkdir -p "+shellPath(realHome(nodeB, "real-b"))+" && rm -f "+shellPath(realHome(nodeB, "real-b")+"/staged.txt"))
 
-	gate, err := agentmcp.New(0)
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +268,7 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	defer cancel()
 	go func() { _ = gate.Start(ctx) }()
 
-	service := delegate.New(f.tasks, f.roster, f.manager, f.assembler, f.artifacts, "hub-e2e")
+	service := delegate.New(f.tasks, f.roster, f.manager, f.assembler, f.artifacts, "hub-e2e", i18n.New(i18n.LocaleZH))
 	service.SetLedger(f.attempts, f.artifacts)
 	service.SetGate(gate)
 	service.SetEndpoints(f.registry)

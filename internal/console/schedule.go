@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/schedule"
 )
 
@@ -37,7 +38,10 @@ func (s *Service) EnqueueScheduled(ctx context.Context, firing schedule.Firing) 
 	if current := s.inspector.ProjectOf(ctx, firing.ConversationID); current != firing.ProjectID {
 		return Exchange{}, fmt.Errorf("scheduled project is %s, but this conversation is now bound to %s; scheduled work was not queued", firing.ProjectID, current)
 	}
-	_, exchange, err := s.enqueue(ctx, firing.ConversationID, "定时任务 #"+firing.ID+" · "+firing.Prompt, nil, enqueueOptions{
+	s.mu.Lock()
+	text := s.localeTextLocked(ctx, "")
+	s.mu.Unlock()
+	_, exchange, err := s.enqueue(ctx, firing.ConversationID, text.T(i18n.ConsoleScheduledLine, firing.ID, firing.Prompt), nil, enqueueOptions{
 		Key: firing.Key, Prompt: "@" + firing.Member + " " + firing.Prompt,
 		Origin: "schedule:" + firing.ID, Requester: firing.Requester, ExpectedProject: firing.ProjectID,
 	})

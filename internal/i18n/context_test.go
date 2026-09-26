@@ -1,6 +1,9 @@
 package i18n
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestHeaderNegotiationHonorsPriorityAndExclusions(t *testing.T) {
 	for header, want := range map[string]Locale{
@@ -14,5 +17,27 @@ func TestHeaderNegotiationHonorsPriorityAndExclusions(t *testing.T) {
 		if got := LocaleFromHeader(header); got != want {
 			t.Errorf("%q: %q, want %q", header, got, want)
 		}
+	}
+}
+
+// The language a request carries wins; a request that carries none, or
+// one Steve does not speak, is answered in the holder's language.
+func TestForPrefersTheRequestLanguageOverTheHolders(t *testing.T) {
+	hub := New(LocaleEN)
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		want Locale
+	}{
+		{"request names chinese", WithLocale(context.Background(), LocaleZH), LocaleZH},
+		{"request names none", context.Background(), LocaleEN},
+		{"request names an unknown language", WithLocale(context.Background(), "fr"), LocaleEN},
+	} {
+		if got := hub.For(tc.ctx).Locale(); got != tc.want {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+	}
+	if got := FromContext(WithLocale(context.Background(), LocaleEN)).Locale(); got != LocaleEN {
+		t.Errorf("FromContext with english = %s", got)
 	}
 }
