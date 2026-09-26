@@ -544,7 +544,8 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 
 // establish completes a barrier in term unless one has completed since the
 // caller found the term not yet established. Callers take turns, so read
-// index requests that arrive together append one barrier between them.
+// index requests that arrive together append one barrier between them. A
+// caller whose turn comes once the node has left term fails without one.
 func (s *Service) establish(ctx context.Context, term uint64) error {
 	select {
 	case s.establishing <- struct{}{}:
@@ -552,6 +553,9 @@ func (s *Service) establish(ctx context.Context, term uint64) error {
 		return ctx.Err()
 	}
 	defer func() { <-s.establishing }()
+	if s.raft.CurrentTerm() != term {
+		return fmt.Errorf("%w: leadership changed while it was being established", ErrNotLeader)
+	}
 	if s.established.Load() != term {
 		if err := s.barrier(ctx); err != nil {
 			return err
