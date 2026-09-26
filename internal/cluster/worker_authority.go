@@ -31,7 +31,9 @@ const workerAuthorityInterval = 100 * time.Millisecond
 // leader for a read index and waits, at most ApplyTimeout, for its replica
 // to apply its log up to it. The tunnels close when a confirmation fails,
 // or when none has succeeded for three ApplyTimeouts. A confirmation
-// appends nothing to the consensus log. The leader needs none: its replica
+// appends nothing to the consensus log but the barrier a leader completes
+// once in each term, which the runtime's own quorum reads have usually
+// completed already. The leader needs none: its replica
 // holds every committed entry, and it gives the tunnels up as soon as it
 // stops leading without knowing another leader.
 type workerAuthority struct {
@@ -196,9 +198,12 @@ func (w *workerAuthority) settleLocked(started time.Time, err error) {
 	}
 }
 
-// awaitLog waits for the local replica to have applied its log up to
-// index. Raft hands entries to the state machine in order, so the next
-// observation of the replica includes them.
+// awaitLog waits for Raft on the local replica to have handed its log up
+// to index to the state machine, in order. The state machine may still be
+// applying the last entries it was handed, as LogProgress describes, so an
+// observation of the replica just after awaitLog returns can still miss
+// them; it holds them once the state machine has applied what it was
+// handed, which it does in memory.
 func (r *Runtime) awaitLog(ctx context.Context, index uint64) error {
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()

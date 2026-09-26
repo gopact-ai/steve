@@ -448,11 +448,15 @@ func (s *Service) barrier(ctx context.Context) error {
 // leader's commit index may miss entries its predecessor committed. It
 // fails with ErrNotLeader on a node that does not lead consensus.
 //
-// Raft counts toward the confirmation a follower's answer to a heartbeat
-// already in flight when it was asked, so the majority it relies on may
-// be up to one heartbeat old: should another leader commit an entry in
-// that interval, the index may miss it. A caller that asks again later
-// finds it then.
+// Raft counts toward the confirmation the answers to requests already in
+// flight when it was asked, so a follower's vote in it can be as old as
+// such an answer takes to arrive, which the transport bounds by
+// ApplyTimeout. Raft keeps LeaderLeaseTimeout within the heartbeat timeout
+// after which followers start electing another leader, so a leader that
+// has lost its majority steps down about when, and by default well
+// before, another can be elected and commit. The index can therefore miss
+// an entry only when leadership moves while it is being confirmed; a
+// caller that asks again later finds the entry then.
 func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	if s.closed.Load() {
 		return 0, ErrUnavailable
