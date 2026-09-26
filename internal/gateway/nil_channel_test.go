@@ -1,12 +1,15 @@
 package gateway
 
 import (
+	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 // Without Feishu the gateway has no channel, yet it still owns durable input
@@ -164,12 +167,12 @@ func TestNilChannelRefusesNoticesWithoutProcessing(t *testing.T) {
 func TestNilChannelTurnRunsWithoutCardOrReactionAndFailsDelivery(t *testing.T) {
 	p := &countingProcessor{}
 	g := New(p)
-	if id := g.ack("om_1"); id != "" {
+	if id := ack(g.channel(), "om_1"); id != "" {
 		t.Fatalf("ack without a channel = %q", id)
 	}
-	g.unack("om_1", "rx_1")
-	g.recall("om_card")
-	ui := g.newTurnUI(inboundFixture(), false)
+	unack(g.channel(), "om_1", "rx_1")
+	recall(g.channel(), "om_card")
+	ui := g.newTurnUI(g.channel(), inboundFixture(), false)
 	if ui.cardID != "" || ui.fallback || ui.reaction != "" {
 		t.Fatalf("turn UI without a channel = card %q fallback %v reaction %q", ui.cardID, ui.fallback, ui.reaction)
 	}
@@ -177,7 +180,7 @@ func TestNilChannelTurnRunsWithoutCardOrReactionAndFailsDelivery(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "gateway reply channel is not available") || p.calls.Load() != 1 {
 		t.Fatalf("turn without a channel = %v after %d calls", err, p.calls.Load())
 	}
-	if _, err := g.newResultUI(inboundFixture()).finish(turn.Result{Text: "retained"}, nil); err == nil ||
+	if _, err := g.newResultUI(g.channel(), inboundFixture()).finish(turn.Result{Text: "retained"}, nil); err == nil ||
 		!strings.Contains(err.Error(), "gateway reply channel is not available") {
 		t.Fatalf("retained result without a channel = %v", err)
 	}
@@ -185,5 +188,80 @@ func TestNilChannelTurnRunsWithoutCardOrReactionAndFailsDelivery(t *testing.T) {
 	topic.ConversationID, topic.Text = topic.ChatID, "/t split the work"
 	if err := g.processTask(topic, ""); err != nil || p.calls.Load() != 1 {
 		t.Fatalf("topic without a channel = %v after %d calls", err, p.calls.Load())
+	}
+}
+
+// Feishu is bound once its identity is verified, which may be long after
+// recovery, schedules and notices began using the same gateway, and while
+// they run. Until then accepted input waits with no step recorded; the first
+// pass after the bind runs and answers it once.
+func TestLateBoundChannelTakesOverWaitingInput(t *testing.T) {
+	book := openNilChannelBook(t)
+	p := &durableInputProbe{}
+	g := New(p)
+	g.SetRecoveryLedger(book)
+	if err := g.processAcceptedFixture(inboundFixture(), p); err == nil ||
+		!strings.Contains(err.Error(), "gateway reply channel is not available") {
+		t.Fatalf("input before the bind = %v; want the missing channel", err)
+	}
+	ch := &ingressTopicChannel{}
+	// Incomplete, so it is refused after the channel check, never run.
+	incomplete := testFire()
+	incomplete.Prompt = ""
+	passes := make(chan struct{})
+	go func() {
+		defer close(passes)
+		for range 20 {
+			_ = g.recoverQueuedFixture(t.Context(), book, p, nil)
+			g.Notify(Notice{TaskID: "task", MessageID: "anchor", Text: "done"})
+			_, _ = g.FireSchedule(t.Context(), incomplete)
+		}
+	}()
+	g.BindChannel(ch)
+	<-passes
+	if err := g.recoverQueuedFixture(t.Context(), book, p, nil); err != nil {
+		t.Fatalf("recovery after the bind: %v", err)
+	}
+	if pendingInputs(t, book) != 0 || p.calls.Load() != 1 || ch.results.Load() != 1 {
+		t.Fatalf("after the bind: pending=%d calls=%d results=%d; want 0, 1, 1",
+			pendingInputs(t, book), p.calls.Load(), ch.results.Load())
+	}
+}
+
+// bindingProcessor binds a channel to its gateway while it handles a turn.
+type bindingProcessor struct {
+	turntest.IdleCoordinator
+	g  *Gateway
+	ch Channel
+}
+
+func (p *bindingProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
+	p.g.BindChannel(p.ch)
+	return turn.Result{Text: "answer"}, nil
+}
+
+// postCounter counts every message posted through it.
+type postCounter struct {
+	nopChannel
+	posts atomic.Int32
+}
+
+func (c *postCounter) Reply(context.Context, string, string) error { c.posts.Add(1); return nil }
+func (c *postCounter) ReplyText(context.Context, string, string) (string, error) {
+	c.posts.Add(1)
+	return "posted", nil
+}
+
+// A turn that began without a channel ends without one: a channel bound
+// while it runs does not post an answer for a turn that showed no card or
+// reaction, which leaves the input to the pass that has a channel.
+func TestTurnKeepsTheChannelItBeganWith(t *testing.T) {
+	ch := &postCounter{}
+	p := &bindingProcessor{ch: ch}
+	g := New(p)
+	p.g = g
+	err := g.processTask(inboundFixture(), "")
+	if err == nil || !strings.Contains(err.Error(), "gateway reply channel is not available") || ch.posts.Load() != 0 {
+		t.Fatalf("turn bound midway = %v with %d posts; want the missing channel and none", err, ch.posts.Load())
 	}
 }

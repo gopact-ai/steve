@@ -206,7 +206,7 @@ func TestTurnCardSettingsChangesRetainKnownIdentity(t *testing.T) {
 		g := New(fakeProcessor{})
 		ch := &progressCards{patches: make(chan []byte, 16)}
 		g.BindChannel(ch)
-		ui := g.newTurnUI(feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
+		ui := g.newTurnUI(g.channel(), feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
 		defer ui.closeProgress()
 		p := card.Progress{Settings: card.Settings{Harness: "codex", Model: "first-model", Mode: "agent"}}
 		ui.progress(p)
@@ -237,7 +237,7 @@ func TestTurnCardUsageRefreshesOnlyOnChange(t *testing.T) {
 		g := New(fakeProcessor{})
 		ch := &progressCards{patches: make(chan []byte, 16)}
 		g.BindChannel(ch)
-		ui := g.newTurnUI(feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
+		ui := g.newTurnUI(g.channel(), feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
 		defer ui.closeProgress()
 		p := card.Progress{Usage: card.Usage{OutputTokens: 10}}
 		ui.progress(p)
@@ -270,7 +270,7 @@ func TestTurnCardFinishCancelsPendingProgress(t *testing.T) {
 				g := New(fakeProcessor{})
 				ch := &progressCards{patches: make(chan []byte, 16)}
 				g.BindChannel(ch)
-				ui := g.newTurnUI(feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
+				ui := g.newTurnUI(g.channel(), feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
 				defer ui.closeProgress()
 				ui.progress(card.Progress{Answer: "unfinished"})
 				id, err := ui.finish(turn.Result{Text: "final answer"}, tc.err)
@@ -292,7 +292,7 @@ func TestTurnCardApprovalFlushesPendingTextImmediately(t *testing.T) {
 		g := New(fakeProcessor{})
 		ch := &progressCards{patches: make(chan []byte, 16)}
 		g.BindChannel(ch)
-		ui := g.newTurnUI(feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
+		ui := g.newTurnUI(g.channel(), feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
 		defer ui.closeProgress()
 		ui.progress(card.Progress{Answer: "pending answer"})
 		ui.setApproval(&card.Approval{RequestID: "approval", ToolName: "execute"})
@@ -317,7 +317,7 @@ func TestTurnCardLocalizedPhasesSurviveProgress(t *testing.T) {
 				ch := &progressCards{patches: make(chan []byte, 16)}
 				g.BindChannel(ch)
 				msg := feishu.InboundMessage{ChatID: "chat", MessageID: "message"}
-				ui := g.newTurnUI(msg, false)
+				ui := g.newTurnUI(g.channel(), msg, false)
 				defer ui.closeProgress()
 				if ui.copy.Finishing != g.text.T(i18n.CardFinishing) || ui.copy.Saving != g.text.T(i18n.CardSaving) ||
 					ui.copy.Partial != g.text.T(i18n.CardPartial) {
@@ -368,7 +368,7 @@ func TestTurnCardSubstantiveProgressLeavesWaking(t *testing.T) {
 				g := New(fakeProcessor{})
 				ch := &progressCards{patches: make(chan []byte, 16)}
 				g.BindChannel(ch)
-				ui := g.newTurnUI(feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
+				ui := g.newTurnUI(g.channel(), feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
 				defer ui.closeProgress()
 				ui.progress(tc.next)
 				ui.mu.Lock()
@@ -397,7 +397,7 @@ func TestTurnCardOrdinaryFlushRechecksInterval(t *testing.T) {
 		g := New(fakeProcessor{})
 		ch := &progressCards{patches: make(chan []byte, 16)}
 		g.BindChannel(ch)
-		ui := g.newTurnUI(feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
+		ui := g.newTurnUI(g.channel(), feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
 		defer ui.closeProgress()
 		ui.setApproval(&card.Approval{RequestID: "approval"})
 		takeCardPatch(t, ch, "tool_approval")
@@ -453,7 +453,7 @@ func newBlockedCardUI(t *testing.T) (*turnUI, *blockedProgressCards) {
 		replies: make(chan string, 16), abort: make(chan struct{}),
 	}
 	g.BindChannel(ch)
-	ui := g.newTurnUI(feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
+	ui := g.newTurnUI(g.channel(), feishu.InboundMessage{ChatID: "chat", MessageID: "message"}, false)
 	t.Cleanup(func() {
 		close(ch.abort)
 		ui.closeProgress()

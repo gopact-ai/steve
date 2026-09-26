@@ -55,7 +55,8 @@ type Notice struct {
 // deliberate: it is the second, louder knock after a card that may have
 // landed in a chat nobody was watching.
 func (g *Gateway) Notify(n Notice) {
-	if g.ch == nil || n.MessageID == "" || strings.TrimSpace(n.Text) == "" {
+	ch := g.channel()
+	if ch == nil || n.MessageID == "" || strings.TrimSpace(n.Text) == "" {
 		return
 	}
 	text := n.Text
@@ -64,7 +65,7 @@ func (g *Gateway) Notify(n Notice) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, err := g.ch.ReplyText(ctx, n.MessageID, text); err != nil {
+	if _, err := ch.ReplyText(ctx, n.MessageID, text); err != nil {
 		slog.Error(fmt.Sprintf("gateway: notice for task #%s: %v", n.TaskID, err), "task", n.TaskID, "message", n.MessageID)
 	}
 }
@@ -86,14 +87,15 @@ func (g *Gateway) DeliverConfirmed(r Revival, notice, prompt string, confirm fun
 }
 
 func (g *Gateway) deliver(r Revival, notice, prompt string, confirm func(error)) error {
-	if g.ch == nil {
+	ch := g.channel()
+	if ch == nil {
 		return fmt.Errorf("channel cannot post notices")
 	}
 	if r.ConversationID == "" || r.MessageID == "" || r.Member == "" {
 		return fmt.Errorf("task #%s: incomplete anchor", r.TaskID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	noticeID, err := g.ch.ReplyText(ctx, r.MessageID, notice)
+	noticeID, err := ch.ReplyText(ctx, r.MessageID, notice)
 	cancel()
 	if err != nil {
 		return noticeError(err)
@@ -147,7 +149,8 @@ type FireReceipt struct{ MessageID string }
 // something that just appears. A run the coordinator refuses is neither
 // announced nor replayed.
 func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error) {
-	if g.ch == nil {
+	ch := g.channel()
+	if ch == nil {
 		return FireReceipt{}, fmt.Errorf("channel cannot post schedule notice for #%s", f.ScheduleID)
 	}
 	if f.Channel != "feishu" || strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
@@ -160,7 +163,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 		return FireReceipt{}, err
 	}
 	noticeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	noticeID, err := g.ch.ReplyText(noticeCtx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
+	noticeID, err := ch.ReplyText(noticeCtx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
 	cancel()
 	if err != nil {
 		var network net.Error
@@ -212,7 +215,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	if g.gate != nil {
 		g.gate.Anchor(f.ConversationID, channel.Address{Channel: "feishu", Conversation: f.ConversationID, Message: noticeID})
 	}
-	ui := g.newTurnUI(msg, false)
+	ui := g.newTurnUI(ch, msg, false)
 	result, runErr := g.coordinator.Handle(ctx, turn.Request{
 		Channel: "feishu", ConversationID: f.ConversationID, Input: text, Origin: msg.Origin,
 		MessageID: noticeID, ChatID: f.ChatID, CardID: ui.cardID, SenderOpenID: f.Requester,
