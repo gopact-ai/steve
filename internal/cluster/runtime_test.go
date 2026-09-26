@@ -1171,6 +1171,90 @@ func TestCoordinatorThatHearsFromNoLeaderGivesUpItsGeneration(t *testing.T) {
 	}
 }
 
+// A consensus leader forgets itself only when it steps down, and it steps
+// down on its own once its lease finds no majority, so a coordinator that
+// led and now knows no leader cannot tell whether a majority still names
+// it. It gives its generation up at once. A follower that stops hearing
+// from a leader waits ApplyTimeout first: a heartbeat may be merely late.
+// A leader that hands over to another member it hears from keeps its
+// generation.
+func TestCoordinatorThatStopsLeadingGivesUpItsGenerationAtOnce(t *testing.T) {
+	nodes := testNodes(t, 1)
+	coordinator := openNode(t, nodes[0])
+	active := ready(t, coordinator)
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	leading := observation{Status: coordinator.service.Status(), at: time.Now()}
+	if !leading.IsLeader || leading.LeaderID != "node-1" {
+		t.Fatalf("a single node does not lead its own consensus: %+v", leading.Status)
+	}
+	view := func(leader string, after time.Duration) observation {
+		seen := leading
+		seen.LeaderID, seen.IsLeader, seen.at = leader, leader == "node-1", leading.at.Add(after)
+		return seen
+	}
+	var led tickState
+	if err := coordinator.step(leading, &led); err != nil {
+		t.Fatalf("the leading coordinator did not keep generation %d: %v", active.Generation, err)
+	}
+	if err := coordinator.step(view("", 20*time.Millisecond), &led); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a coordinator that led and knows no leader 20ms later reported %v, want it to give up", err)
+	}
+	if err := coordinator.step(view("", 40*time.Millisecond), &led); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a coordinator that led and still knows no leader reported %v, want it to stay given up", err)
+	}
+
+	var handed tickState
+	for _, tick := range []struct {
+		leader string
+		after  time.Duration
+	}{{"node-1", 0}, {"node-9", 20 * time.Millisecond}, {"", 40 * time.Millisecond}, {"", applyTimeout}} {
+		if err := coordinator.step(view(tick.leader, tick.after), &handed); err != nil {
+			t.Fatalf("a coordinator that handed leadership to node-9 gave up %s later, knowing leader %q: %v", tick.after, tick.leader, err)
+		}
+	}
+	if err := coordinator.step(view("", 20*time.Millisecond+applyTimeout+time.Millisecond), &handed); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a coordinator that heard from no leader for longer than %s reported %v, want it to give up", applyTimeout, err)
+	}
+	if active.Context.Err() != nil {
+		t.Fatal("the running generation ended although only a tick was asked")
+	}
+}
+
+// A coordinator that leads consensus and loses every member gives its
+// generation up once its lease expires, well before a follower would.
+func TestIsolatedLeadingCoordinatorGivesUpWithinItsLease(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for i := 1; i < len(nodes); i++ {
+		joinNode(t, first, nodes[i], true, false)
+	}
+	active := ready(t, first)
+	if leader := first.service.Status().LeaderID; leader != "node-1" {
+		t.Fatalf("the coordinator node-1 is to lead consensus, but the leader is %q", leader)
+	}
+	for _, n := range nodes {
+		n.raft.pause()
+		t.Cleanup(n.raft.resume)
+	}
+	paused := time.Now()
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	select {
+	case <-active.Context.Done():
+	case <-time.After(3 * applyTimeout):
+		t.Fatalf("an isolated leading coordinator kept business generation %d for %s: %+v", active.Generation, 3*applyTimeout, first.Status())
+	}
+	if took := time.Since(paused); took >= applyTimeout {
+		t.Fatalf("an isolated leading coordinator gave up its generation after %s, not within its %s lease: a follower would have waited %s", took.Round(time.Millisecond), steadyTiming.lease, applyTimeout)
+	}
+	first.mu.Lock()
+	cause := first.lastError
+	first.mu.Unlock()
+	if !errors.Is(cause, coordination.ErrUnavailable) {
+		t.Fatalf("the generation was given up without reporting that leadership was lost: %v", cause)
+	}
+}
+
 func TestThreeNodeLedgerTransfersPreserveFactsAndFenceEveryOldGeneration(t *testing.T) {
 	nodes := testNodes(t, 3)
 	// Existing version-zero facts are absent from the Raft log. A new node

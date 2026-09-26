@@ -300,7 +300,9 @@ func (r *Runtime) revoke(g *generation, err error) {
 // that confirms it, and every write verifies the assignment against a majority
 // again, so the local view never authorizes anything. A running generation is
 // kept while the local replica still names it and hears from a consensus
-// leader; it is given up when either stops.
+// leader. It is given up when the replica names another, at once when this
+// node stops leading consensus without knowing a successor, and after
+// ApplyTimeout when a follower stops hearing from its leader.
 func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
@@ -338,8 +340,10 @@ type observation struct {
 
 // tickState is what the runtime loop carries from one tick to the next.
 type tickState struct {
-	// heard is when this replica last knew a consensus leader.
-	heard time.Time
+	// heard is when this replica last knew a consensus leader, and leading
+	// whether that leader was this node.
+	heard   time.Time
+	leading bool
 	// denied is the applied index of the latest quorum read that found this
 	// node not coordinating: a replica behind it that still names this node
 	// is stale, and asking again would only repeat the answer.
@@ -351,11 +355,17 @@ type tickState struct {
 // is running.
 func (r *Runtime) step(seen observation, s *tickState) error {
 	if seen.LeaderID != "" {
-		s.heard = seen.at
+		s.heard, s.leading = seen.at, seen.LeaderID == r.config.Coordination.NodeID
 	}
 	err := r.coordinates(seen.State)
 	if err == nil && seen.AppliedIndex < s.denied {
 		err = coordination.ErrNotCoordinator
+	}
+	// A leader forgets itself only when it steps down, which it does on its
+	// own once its lease finds no majority: a majority may already follow
+	// another leader. A follower's leader is merely late until ApplyTimeout.
+	if err == nil && seen.LeaderID == "" && s.leading {
+		err = fmt.Errorf("%w: this replica stopped leading consensus and knows no other leader", coordination.ErrUnavailable)
 	}
 	if err == nil && seen.at.Sub(s.heard) > r.config.Coordination.ApplyTimeout {
 		err = fmt.Errorf("%w: this replica has heard from no consensus leader for %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
