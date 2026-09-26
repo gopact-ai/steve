@@ -47,21 +47,32 @@ func (b *bridge) listening(i int) bool {
 }
 
 // listen opens forward i's listener, at a free loopback port when the
-// forward names none, and returns where it answers.
+// forward names none, starts taking its connections and returns where it
+// answers.
 func (b *bridge) listen(i int, forward PortForward) (string, error) {
+	listener, err := b.open(i, forward)
+	if err != nil {
+		return "", err
+	}
+	go b.accept(listener, forward.Target)
+	return listener.Addr().String(), nil
+}
+
+// open binds forward i's listener without taking its connections: until
+// accept runs, dials wait in the listener's queue.
+func (b *bridge) open(i int, forward PortForward) (net.Listener, error) {
 	address := forward.Listen
 	if address == "" {
 		address = "127.0.0.1:0"
 	}
 	listener, err := b.bind("tcp", address)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	b.mu.Lock()
 	b.listeners[i] = listener
 	b.mu.Unlock()
-	go b.accept(listener, forward.Target)
-	return listener.Addr().String(), nil
+	return listener, nil
 }
 
 // accept carries listener's connections until the listener closes or
@@ -74,7 +85,9 @@ func (b *bridge) accept(listener net.Listener, target string) {
 
 // carry sends an accepted connection to target on the other end. With no
 // session up the connection is closed at once, which the dialer sees as
-// a refused connection rather than a stall.
+// a refused connection rather than a stall. Only the hub's listeners get
+// here between sessions: the far end takes connections only once its
+// session is attached.
 func (b *bridge) carry(connection net.Conn, target string) {
 	b.mu.Lock()
 	session := b.session
@@ -200,8 +213,10 @@ type ServeLinkOptions struct {
 // over the SSH session the hub opened. It binds every listen address for
 // the hub, announces itself on stdout, and then multiplexes the session:
 // connections accepted here go to the hub, and the hub's streams go to
-// the allowed targets on this machine. It returns when the session ends,
-// when the hub stops answering keepalives, or when ctx ends.
+// the allowed targets on this machine. It takes connections on the listen
+// addresses only once the session is up; one dialed earlier waits. It
+// returns when the session ends, when the hub stops answering keepalives,
+// or when ctx ends.
 func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, options ServeLinkOptions) error {
 	logs, listens, allowed := options.Logs, options.Listens, options.Allowed
 	if logs == nil {
@@ -212,13 +227,16 @@ func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, opti
 		b.bind = options.Listen
 	}
 	defer b.close()
+	listeners := make([]net.Listener, len(listens))
 	for i, forward := range listens {
 		if forward.Listen == "" {
 			return errors.New("每个 --listen 都需要指定监听地址")
 		}
-		if _, err := b.listen(i, forward); err != nil {
+		listener, err := b.open(i, forward)
+		if err != nil {
 			return fmt.Errorf("监听 %s 失败：%w", forward.Listen, err)
 		}
+		listeners[i] = listener
 	}
 	if _, err := io.WriteString(stdout, linkBanner+"\n"); err != nil {
 		return err
@@ -227,7 +245,13 @@ func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, opti
 	if err != nil {
 		return err
 	}
+	// The multiplexer answers the hub's ping, and so lets the hub count
+	// the link as up, before it is attached here. Taking connections only
+	// now means none is taken with no session to carry it.
 	b.attach(session)
+	for i, listener := range listeners {
+		go b.accept(listener, listens[i].Target)
+	}
 	select {
 	case <-session.CloseChan():
 		return nil
