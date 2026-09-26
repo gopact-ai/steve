@@ -314,6 +314,18 @@ func TestRaft_AppendEntriesSnapshotBoundaryCommitIndex(t *testing.T) {
 			require.Eventually(t, func() bool { return len(fsm.Logs()) >= len(want) }, 2*time.Second, time.Millisecond)
 			require.Equal(t, want, fsm.Logs(), "the follower must apply the leader's entries, never its stale tail")
 		})
+
+		// A request that covers less than the leader has committed, such as
+		// one delayed behind a later batch, never moves the commit index back.
+		t.Run(fmt.Sprintf("delayed-request-keeps-commit-trailing-%d", trailing), func(t *testing.T) {
+			leader, follower, node, _, header := staleTailFollower(t, trailing)
+			staleTailInstall(t, leader, follower, header)
+			require.True(t, staleTailAppend(t, leader, follower, header, 100, 130))
+			require.Equal(t, uint64(130), node.getCommitIndex())
+
+			require.True(t, staleTailAppend(t, leader, follower, header, 30, 94), "the delayed request lies below the snapshot")
+			require.Equal(t, uint64(130), node.getCommitIndex(), "the commit index must never decrease")
+		})
 	}
 
 	// A caught-up follower learns the commit index from a request without
