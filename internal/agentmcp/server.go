@@ -22,6 +22,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/httpdrain"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/stableport"
 	"github.com/gopact-ai/steve/internal/task"
@@ -162,19 +163,11 @@ type sentState struct {
 type Server struct {
 	intents  Intents
 	listener net.Listener
-	srv      *http.Server
+	srv      *httpdrain.Server
 	// grace is how long the calls in flight when the server stops get to
 	// finish on their own; those still running then have their requests
 	// cancelled.
-	grace time.Duration
-	// abort cancels every request's context, so a call that outlived the
-	// grace period returns.
-	abort context.CancelFunc
-	// calls counts the handlers running; stopping turns new ones away once
-	// shutdown has begun, so the count only falls from there.
-	callsMu  sync.Mutex
-	calls    sync.WaitGroup
-	stopping bool
+	grace    time.Duration
 	stopOnce sync.Once
 
 	mu                  sync.Mutex
@@ -237,13 +230,7 @@ func New(preferredPort int) (*Server, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", s.handleMCP)
-	base, abort := context.WithCancel(context.Background())
-	s.abort = abort
-	s.srv = &http.Server{
-		Handler:           s.tracked(mux),
-		ReadHeaderTimeout: 5 * time.Second,
-		BaseContext:       func(net.Listener) context.Context { return base },
-	}
+	s.srv = httpdrain.New(&http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second})
 	return s, nil
 }
 
@@ -256,17 +243,8 @@ const shutdownGrace = 5 * time.Second
 // tools write to can close it as soon as Start returns. It returns nil
 // after a clean shutdown so callers can run it in a bare goroutine.
 func (s *Server) Start(ctx context.Context) error {
-	served := make(chan error, 1)
-	go func() { served <- s.srv.Serve(s.listener) }()
-	var err error
-	select {
-	case <-ctx.Done():
-		s.shutdown()
-		err = <-served
-	case err = <-served:
-		s.shutdown()
-	}
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+	defer context.AfterFunc(ctx, s.shutdown)()
+	if err := s.srv.Serve(s.listener); err != nil {
 		return fmt.Errorf("agentmcp: serve: %w", err)
 	}
 	return nil
@@ -285,42 +263,16 @@ func (s *Server) Close() {
 // has returned. Concurrent callers all return after that.
 func (s *Server) shutdown() {
 	s.stopOnce.Do(func() {
-		s.callsMu.Lock()
-		s.stopping = true
-		s.callsMu.Unlock()
 		drain, cancel := context.WithTimeout(context.Background(), s.grace)
 		defer cancel()
 		if err := s.srv.Shutdown(drain); err != nil {
-			// A stuck tool call is what this points to; its connection
-			// is cut here and its request cancelled below, rather than
-			// left writing after its storage is gone.
-			slog.Warn(fmt.Sprintf("agentmcp: shutdown: %v; cancelling the tool calls still running", err))
-			_ = s.srv.Close()
+			// A stuck tool call is what this points to; it was cut off
+			// rather than left writing after its storage is gone.
+			slog.Warn(fmt.Sprintf("agentmcp: shutdown: %v; the tool calls still running at the end of the grace period were cancelled", err))
 		}
 		// Serve closes the listener it was given; one it was never given
 		// is still bound, and closing it again after Serve is harmless.
 		_ = s.listener.Close()
-		// Cancels the calls that outlived the grace period; with none
-		// left it only releases the context.
-		s.abort()
-		s.calls.Wait()
-	})
-}
-
-// tracked counts every running handler for shutdown to wait on, and
-// refuses requests that arrive once shutdown has begun.
-func (s *Server) tracked(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.callsMu.Lock()
-		if s.stopping {
-			s.callsMu.Unlock()
-			http.Error(w, "shutting down", http.StatusServiceUnavailable)
-			return
-		}
-		s.calls.Add(1)
-		s.callsMu.Unlock()
-		defer s.calls.Done()
-		next.ServeHTTP(w, r)
 	})
 }
 
