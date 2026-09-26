@@ -1472,14 +1472,26 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	} else {
 		r.setLeader(r.trans.DecodePeer(a.Leader), ServerID(a.ID))
 	}
+	// A snapshot holds only committed entries, committed in a term no later
+	// than the current one. Requests from older terms were rejected above, so
+	// by Leader Completeness the sender's log holds the snapshot's last entry,
+	// and by Log Matching it equals the compacted log up to that index. A
+	// predecessor below the snapshot index therefore matches, and batch
+	// entries up to that index are already in the snapshot. Such a request
+	// still says nothing about entries past its last one, so it commits no
+	// further (see the commit index update below). A leader resends from
+	// below the snapshot when the follower installed a later snapshot or
+	// compacted a batch whose response was lost.
+	snapshotIdx, snapshotTerm := r.getLastSnapshot()
+
 	// Verify the last log entry
-	if a.PrevLogEntry > 0 {
+	if a.PrevLogEntry > 0 && a.PrevLogEntry >= snapshotIdx {
 		lastIdx, lastTerm := r.getLastEntry()
 
 		var prevLogTerm uint64
 		if a.PrevLogEntry == lastIdx {
 			prevLogTerm = lastTerm
-		} else if snapshotIdx, snapshotTerm := r.getLastSnapshot(); a.PrevLogEntry == snapshotIdx {
+		} else if a.PrevLogEntry == snapshotIdx {
 			// The snapshot boundary is durable predecessor state even
 			// though its log entry has already been compacted. This is
 			// essential when the leader retransmits an AppendEntries batch
@@ -1515,6 +1527,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		lastLogIdx, _ := r.getLastLog()
 		var newEntries []*Log
 		for i, entry := range a.Entries {
+			if entry.Index <= snapshotIdx {
+				continue
+			}
 			if entry.Index > lastLogIdx {
 				newEntries = a.Entries[i:]
 				break
@@ -1568,10 +1583,14 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
-	// Update the commit index
-	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
+	// Update the commit index. The request shows that our log matches the
+	// leader's only up to the last index it covers, which is its predecessor
+	// when it carries no entries. Entries past that index may be an unchecked
+	// tail from a deposed leader, such as one that survived a snapshot
+	// install, so commit no further than it. A request that covers less than
+	// we have already committed, such as a delayed one, leaves it alone.
+	if idx := min(a.LeaderCommitIndex, a.PrevLogEntry+uint64(len(a.Entries))); idx > r.getCommitIndex() {
 		start := time.Now()
-		idx := min(a.LeaderCommitIndex, r.getLastIndex())
 		r.setCommitIndex(idx)
 		if r.configurations.latestIndex <= idx {
 			r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
