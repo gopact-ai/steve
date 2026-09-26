@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -223,7 +222,7 @@ func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, opti
 			return errors.New(options.Text.T(i18n.SSHListenMissing))
 		}
 		if _, err := b.listen(i, forward); err != nil {
-			return fmt.Errorf(options.Text.T(i18n.SSHListenFailed), forward.Listen, err)
+			return options.Text.Errorf(i18n.SSHListenFailed, forward.Listen, err)
 		}
 	}
 	if _, err := io.WriteString(stdout, linkBanner+"\n"); err != nil {

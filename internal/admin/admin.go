@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"sync"
 	"time"
@@ -189,9 +188,9 @@ func (a *Service) saveConfig(ctx context.Context, candidate *config.Config) erro
 	}
 	if err != nil {
 		if config.Committed(err) {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminConfigAppliedSyncFailed), err)
+			return textFor(ctx).Errorf(i18n.AdminConfigAppliedSyncFailed, err)
 		}
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminWriteFailed), a.Path, err)
+		return textFor(ctx).Errorf(i18n.AdminWriteFailed, a.Path, err)
 	}
 	return nil
 }

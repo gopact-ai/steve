@@ -18,13 +18,24 @@ import (
 // error is never read through Catalog.T.
 func TestCatalogErrorsAreMadeByErrorf(t *testing.T) {
 	root := repoRoot(t)
-	wrapping := wrappingKeys(t, root)
-	if len(wrapping) == 0 {
+	keys := catalogKeys(t, root)
+	wrapping := 0
+	for _, wraps := range keys {
+		if wraps {
+			wrapping++
+		}
+	}
+	if wrapping == 0 {
 		t.Fatal("no catalog template wraps an error; the check below would pass whatever the code does")
 	}
 	files := sourceFiles(t, root)
 	for _, source := range parseGoSources(t, root, files) {
-		inCatalog := source.dir == "internal/i18n"
+		// Inside the catalog's own package a key is named without "i18n.";
+		// only a name the catalog defines counts, not Errorf's own key.
+		inCatalog := map[string]bool(nil)
+		if source.dir == "internal/i18n" {
+			inCatalog = keys
+		}
 		// A template fmt.Errorf formats is reported once, as that call.
 		reported := map[ast.Node]bool{}
 		ast.Inspect(source.syntax, func(n ast.Node) bool {
@@ -40,7 +51,7 @@ func TestCatalogErrorsAreMadeByErrorf(t *testing.T) {
 					return true
 				}
 			}
-			if key := catalogKey(call, inCatalog); key != "" && wrapping[key] {
+			if key := catalogKey(call, inCatalog); key != "" && keys[key] {
 				t.Errorf("%s: Catalog.T reads %s, which wraps an error; make the error with Catalog.Errorf", site, key)
 			}
 			return true
@@ -48,9 +59,9 @@ func TestCatalogErrorsAreMadeByErrorf(t *testing.T) {
 	}
 }
 
-// wrappingKeys names the catalog keys whose template, in any language,
-// wraps an error with %w.
-func wrappingKeys(t *testing.T, root string) map[string]bool {
+// catalogKeys names every catalog key, true for one whose template, in any
+// language, wraps an error with %w.
+func catalogKeys(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	sources := parseGoSources(t, root, []string{filepath.Join(root, "internal/i18n/catalog.go")})
 	keys := map[string]bool{}
@@ -62,6 +73,9 @@ func wrappingKeys(t *testing.T, root string) map[string]bool {
 		name, ok := entry.Key.(*ast.Ident)
 		if !ok {
 			return true
+		}
+		if _, seen := keys[name.Name]; !seen {
+			keys[name.Name] = false
 		}
 		ast.Inspect(entry.Value, func(n ast.Node) bool {
 			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
@@ -87,8 +101,8 @@ func isCall(call *ast.CallExpr, pkg, name string) bool {
 }
 
 // catalogKey is the key name of a call x.T(i18n.Key, ...), or of
-// x.T(Key, ...) inside the catalog's own package; "" for any other call.
-func catalogKey(call *ast.CallExpr, inCatalog bool) string {
+// x.T(Key, ...) with Key one of inCatalog; "" for any other call.
+func catalogKey(call *ast.CallExpr, inCatalog map[string]bool) string {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "T" || len(call.Args) == 0 {
 		return ""
@@ -99,7 +113,7 @@ func catalogKey(call *ast.CallExpr, inCatalog bool) string {
 			return key.Sel.Name
 		}
 	case *ast.Ident:
-		if inCatalog {
+		if _, ok := inCatalog[key.Name]; ok {
 			return key.Name
 		}
 	}

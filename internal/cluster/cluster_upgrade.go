@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/desktop"
@@ -57,7 +56,7 @@ func (b peerSSHBackend) Upgraded(ctx context.Context, nodeID string) error {
 	}
 	sshconnect.Report(ctx, text.T(i18n.ClusterUpgradeReopen))
 	if err := b.peer.openLink(nodeID, link).WaitConnected(ctx); err != nil {
-		return fmt.Errorf(text.T(i18n.ClusterUpgradeReopenFailed), err)
+		return text.Errorf(i18n.ClusterUpgradeReopenFailed, err)
 	}
 	sshconnect.Report(ctx, text.T(i18n.ClusterUpgradeAwaitBuild))
 	return awaitBuildWithin(ctx, b.peer.askBuild(nodeID), awaitAskLimit, time.Second, nodewire.Version())

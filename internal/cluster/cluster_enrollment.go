@@ -286,7 +286,7 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 		// node advertises; the other members it must reach on its own.
 		if id != p.Config.NodeID || !routed {
 			if err := validPeerEndpoint(text, member.Address, allowLoopback); err != nil {
-				return PeerEnrollmentPlan{}, fmt.Errorf(text.T(i18n.ClusterMemberUnreachable), member.NodeID, err)
+				return PeerEnrollmentPlan{}, text.Errorf(i18n.ClusterMemberUnreachable, member.NodeID, err)
 			}
 			endpoint, err := url.Parse(member.APIAddress)
 			if err != nil || endpoint.Scheme != "https" {
@@ -355,7 +355,7 @@ func (p *Peer) PrepareEnrollment(ctx context.Context, request PeerEnrollmentRequ
 		return PeerEnrollmentPackage{}, err
 	}
 	if request.ExpectedPlanHash == "" || request.ExpectedPlanHash != plan.ReviewID {
-		return PeerEnrollmentPackage{}, fmt.Errorf(text.T(i18n.ClusterPlanChangedReview), coordination.ErrConflict)
+		return PeerEnrollmentPackage{}, text.Errorf(i18n.ClusterPlanChangedReview, coordination.ErrConflict)
 	}
 	caPEM, err := ReadClusterPrivate(p.Config.CACertFile)
 	if err != nil {
@@ -502,7 +502,7 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 	member := coordination.Member{NodeID: record.NodeID, Name: record.Name, Address: record.Request.RaftAddress, APIAddress: "https://" + record.Request.PeerAddress, AutoEligible: false, StorageLevel: record.Request.Level, Voting: false}
 	status, err := p.client.Status(ctx, member)
 	if err != nil {
-		return finish("awaiting_peer", fmt.Errorf(text.T(i18n.ClusterAwaitingPeer), err))
+		return finish("awaiting_peer", text.Errorf(i18n.ClusterAwaitingPeer, err))
 	}
 	if !status.Healthy {
 		return finish("awaiting_peer", coordination.ErrNotReady)
@@ -546,7 +546,7 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 			break
 		}
 		if time.Now().After(deadline) {
-			return finish("synchronizing", fmt.Errorf(text.T(i18n.ClusterReplicating), coordination.ErrNotReady, progress.AppliedIndex, state.AppliedIndex))
+			return finish("synchronizing", text.Errorf(i18n.ClusterReplicating, coordination.ErrNotReady, progress.AppliedIndex, state.AppliedIndex))
 		}
 		select {
 		case <-ctx.Done():
@@ -585,12 +585,12 @@ func (p *Peer) AbandonPeerEnrollment(ctx context.Context, id string) error {
 		return saidError{text.T(i18n.ClusterEnrollmentJoined), ErrEnrollmentJoined}
 	}
 	if err := p.leaveCluster(ctx, id+"/abandon", record.NodeID); err != nil {
-		return fmt.Errorf(text.T(i18n.ClusterAbandonWithdrawFailed), err)
+		return text.Errorf(i18n.ClusterAbandonWithdrawFailed, err)
 	}
 	path := p.enrollmentPath(id)
 	archived := path + ".abandoned-" + time.Now().UTC().Format("20060102T150405Z")
 	if err := os.Rename(path, archived); err != nil {
-		return fmt.Errorf(text.T(i18n.ClusterAbandonArchiveFailed), err)
+		return text.Errorf(i18n.ClusterAbandonArchiveFailed, err)
 	}
 	return nil
 }
@@ -707,7 +707,7 @@ func (p *Peer) validatePeerMesh(ctx context.Context, peers []coordination.Member
 		for {
 			var result networkCheckResult
 			if err := p.peerJSON(ctx, source, http.MethodPost, "/cluster/network/check", networkCheckRequest{Peers: peers}, &result); err != nil {
-				return fmt.Errorf(text.T(i18n.ClusterMeshFailed), source.NodeID, err)
+				return text.Errorf(i18n.ClusterMeshFailed, source.NodeID, err)
 			}
 			if result.Ready {
 				break

@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -91,7 +90,7 @@ func (p *Peer) setLink(text i18n.Catalog, nodeID string, link PeerLink) (*sshcon
 		return current, nil
 	}
 	if err := SaveClusterJSON(p.Options.ClusterPath, saved, false); err != nil {
-		return nil, fmt.Errorf(text.T(i18n.ClusterLinkSaveFailed), err)
+		return nil, text.Errorf(i18n.ClusterLinkSaveFailed, err)
 	}
 	return p.openLink(nodeID, link), nil
 }
@@ -191,11 +190,11 @@ func (p *Peer) leaveCluster(ctx context.Context, commandID, nodeID string) error
 	}
 	if _, member := state.Members[nodeID]; member {
 		if _, err := runtime.Remove(ctx, coordination.RemoveRequest{ID: commandID, Actor: "owner", NodeID: nodeID}); err != nil {
-			return fmt.Errorf(text.T(i18n.ClusterRemoveFailed), err)
+			return text.Errorf(i18n.ClusterRemoveFailed, err)
 		}
 	}
 	if err := p.dropLink(nodeID); err != nil {
-		return fmt.Errorf(text.T(i18n.ClusterTunnelCloseFailed), err)
+		return text.Errorf(i18n.ClusterTunnelCloseFailed, err)
 	}
 	return nil
 }

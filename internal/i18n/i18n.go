@@ -1413,6 +1413,13 @@ func (c Catalog) Locale() Locale {
 	return locale
 }
 
+// Errorf makes an error from key's template with fmt.Errorf, so a %w in
+// it wraps its argument for errors.Is and errors.As in every language.
+// T formats with Sprintf and would leave "%!w(...)" in the sentence.
+func (c Catalog) Errorf(key Key, args ...any) error {
+	return fmt.Errorf(c.T(key), args...)
+}
+
 func (c Catalog) T(key Key, args ...any) string {
 	table := zh
 	if c.Locale() == LocaleEN {

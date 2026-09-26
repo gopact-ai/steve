@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os/exec"
@@ -151,7 +150,7 @@ func (l *Link) bind() error {
 		}
 		address, err := l.bridge.listen(i, l.status.Outbound[i])
 		if err != nil {
-			return fmt.Errorf(l.options.Text.T(i18n.SSHLinkLocalListenFailed), l.status.Outbound[i].Listen, err)
+			return l.options.Text.Errorf(i18n.SSHLinkLocalListenFailed, l.status.Outbound[i].Listen, err)
 		}
 		l.status.Outbound[i].Listen = address
 	}
@@ -312,7 +311,7 @@ func (l *Link) ready(ctx context.Context, process *Session, ended <-chan struct{
 		}
 		if _, err := mux.Ping(); err != nil {
 			_ = mux.Close()
-			result <- readyOutcome{err: fmt.Errorf(text.T(i18n.SSHLinkNoAnswer), err)}
+			result <- readyOutcome{err: text.Errorf(i18n.SSHLinkNoAnswer, err)}
 			return
 		}
 		result <- readyOutcome{mux: mux}
@@ -360,7 +359,7 @@ func awaitBanner(text i18n.Catalog, reader *bufio.Reader) error {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf(text.T(i18n.SSHLinkNotStarted), err)
+			return text.Errorf(i18n.SSHLinkNotStarted, err)
 		}
 		if read += len(line); read > reader.Size() {
 			return errors.New(text.T(i18n.SSHLinkChatter))

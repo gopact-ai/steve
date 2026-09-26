@@ -831,7 +831,7 @@ func (p *Peer) TransferCoordinator(ctx context.Context, request consoleapi.Coord
 
 func (p *Peer) SetAutoFailover(ctx context.Context, request consoleapi.CoordinatorPolicy) (consoleapi.CoordinationView, error) {
 	if request.Enabled && !p.Options.AllowAutoFailover {
-		return consoleapi.CoordinationView{}, fmt.Errorf(p.text.For(ctx).T(i18n.ClusterFailoverNotReadyError), coordination.ErrNotReady)
+		return consoleapi.CoordinationView{}, p.text.For(ctx).Errorf(i18n.ClusterFailoverNotReadyError, coordination.ErrNotReady)
 	}
 	_, err := p.Runtime.Load().SetAutoFailover(ctx, coordination.PolicyRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, Enabled: request.Enabled})
 	if err != nil {
