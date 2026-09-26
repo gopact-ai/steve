@@ -234,7 +234,7 @@ func (c *Coordinator) openRelocationAttempt(ctx context.Context, p attempt.Reloc
 	if admitted != nil {
 		return c.attempts.RecoverRelocationPreparation(ctx, admitted.ID)
 	}
-	r, err := c.attempts.OpenRelocation(ctx, p.ID, approval)
+	r, err := c.attempts.OpenRelocation(ctx, c.text, p.ID, approval)
 	if err != nil {
 		return attempt.Record{}, err
 	}

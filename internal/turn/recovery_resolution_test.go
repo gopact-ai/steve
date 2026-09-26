@@ -188,7 +188,7 @@ func TestRelocationResolutionPreservesAccountingAndReplacement(t *testing.T) {
 			var replacement attempt.Record
 			var err error
 			if entry != "open" {
-				replacement, err = c.attempts.OpenRelocation(t.Context(), plan.ID, approval)
+				replacement, err = c.attempts.OpenRelocation(t.Context(), c.text, plan.ID, approval)
 				if err != nil {
 					t.Fatal(err)
 				}

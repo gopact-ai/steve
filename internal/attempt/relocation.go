@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
@@ -235,7 +236,7 @@ func (s *Service) RelocationWorkspaces(ctx context.Context, node string) (map[st
 // creates the new attempt with its recovery relationship in one transaction.
 // The caller has verified actual complete checkpoint bytes and fresh target
 // admission; these checks do not turn content metadata into executable bytes.
-func (s *Service) OpenRelocation(ctx context.Context, planID string, approval RelocationApproval) (Record, error) {
+func (s *Service) OpenRelocation(ctx context.Context, text i18n.Catalog, planID string, approval RelocationApproval) (Record, error) {
 	var created Record
 	err := s.l.Update(ctx, func(tx *ledger.Tx) error {
 		p, err := relocationPlanTx(tx, planID)
@@ -258,7 +259,7 @@ func (s *Service) OpenRelocation(ctx context.Context, planID string, approval Re
 		if err := s.checkReplacementSpec(spec, old, p); err != nil {
 			return err
 		}
-		evidence, err := s.relocationStopEvidence(old, tracked, p, approval)
+		evidence, err := s.relocationStopEvidence(text, old, tracked, p, approval)
 		if err != nil {
 			return err
 		}
@@ -374,7 +375,7 @@ func (s *Service) checkReplacementSpec(spec Spec, old Record, p RelocationIntent
 // plan-scoped confirmation of the stop and of the effects reviewed. The
 // checkpoint rules then decide whether that evidence, with the plan's
 // unresolved actions, admits a new attempt on the target.
-func (s *Service) relocationStopEvidence(old Record, tracked *task.Task, p RelocationIntent, approval RelocationApproval) (string, error) {
+func (s *Service) relocationStopEvidence(text i18n.Catalog, old Record, tracked *task.Task, p RelocationIntent, approval RelocationApproval) (string, error) {
 	automatic := false
 	if proof := approval.Node; proof != nil && !proof.ObservedAt.IsZero() && !proof.ObservedAt.After(s.now().Add(time.Second)) && s.now().Sub(proof.ObservedAt) <= time.Minute {
 		st, cmd := proof.Session, proof.Session.Command
@@ -396,9 +397,9 @@ func (s *Service) relocationStopEvidence(old Record, tracked *task.Task, p Reloc
 	if manual {
 		retry = &checkpoint.RetryAuthorization{PlanID: p.ID, TaskID: old.TaskID, AttemptID: old.ID, Actor: approval.Actor, DecisionID: approval.ChoiceID, TargetNodeID: p.Target.Node}
 	}
-	decision := checkpoint.CheckReplacement(checkpoint.ReplacementRequest{PlanID: p.ID, Source: source, Isolation: checkpoint.IsolationEvidence{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, Kind: checkpoint.IsolationProcessStopped, Reference: evidence}, Reconciliation: checkpoint.ActionReconciliation{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, IsolationReference: evidence, Checked: true, Results: approval.ActionResults, RetryAuthorization: retry}, UnknownActions: p.UnknownActions, Target: checkpoint.ResumeTarget{NodeID: p.Target.Node, ExecutionEpoch: p.Target.ExecutionGeneration, TaskEpoch: p.TaskEpoch, Authorized: true, AdmissionChecked: true}})
+	decision := checkpoint.CheckReplacement(text, checkpoint.ReplacementRequest{PlanID: p.ID, Source: source, Isolation: checkpoint.IsolationEvidence{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, Kind: checkpoint.IsolationProcessStopped, Reference: evidence}, Reconciliation: checkpoint.ActionReconciliation{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, IsolationReference: evidence, Checked: true, Results: approval.ActionResults, RetryAuthorization: retry}, UnknownActions: p.UnknownActions, Target: checkpoint.ResumeTarget{NodeID: p.Target.Node, ExecutionEpoch: p.Target.ExecutionGeneration, TaskEpoch: p.TaskEpoch, Authorized: true, AdmissionChecked: true}})
 	if decision.Action != checkpoint.ResumeStartAttempt {
-		return "", errors.New(decision.Question.Message())
+		return "", errors.New(decision.Question.Message(text))
 	}
 	return evidence, nil
 }

@@ -79,9 +79,6 @@ internal/card/card.go#executionPanel 1
 internal/card/card.go#footerLine 1
 internal/card/card.go#recoverRow 1
 internal/card/card.go#statusLabel 9
-internal/checkpoint/resume.go#CheckReplacement 40
-internal/checkpoint/resume.go#Message 1
-internal/checkpoint/resume.go#ResumePlan 20
 internal/cluster/cluster_config.go#LoadClusterPeerConfig 1
 internal/cluster/cluster_content_maintenance.go#runMaintenance 2
 internal/cluster/cluster_content_repair.go#StartContentRepair 1
