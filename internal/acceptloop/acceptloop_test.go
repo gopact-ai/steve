@@ -192,3 +192,118 @@ func TestRunWarnsOnceForARunOfFailures(t *testing.T) {
 		t.Fatalf("the warning does not name the listener:\n%s", logs.String())
 	}
 }
+
+// logged captures what the default logger writes for the rest of the
+// test and returns a function that yields the lines written so far.
+func logged(t *testing.T) func() []string {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return func() []string {
+		return strings.Split(strings.TrimSpace(logs.String()), "\n")
+	}
+}
+
+// lines counts the lines at level that contain every one of parts.
+func lines(logs []string, level string, parts ...string) int {
+	n := 0
+	for _, line := range logs {
+		matches := strings.Contains(line, "level="+level)
+		for _, part := range parts {
+			matches = matches && strings.Contains(line, part)
+		}
+		if matches {
+			n++
+		}
+	}
+	return n
+}
+
+// A run of failures that starts and ends within a minute of the last
+// warning is still logged: its failures are counted, and the first
+// accept once the minute is up logs a warning with that count.
+func TestALaterRunOfFailuresIsLogged(t *testing.T) {
+	logs := logged(t)
+	start := time.Now()
+	w := warnings{what: "test listener"}
+	w.failed(start, acceptError(syscall.EMFILE), firstPause)
+	w.accepted(start.Add(10 * time.Millisecond))
+	w.failed(start.Add(20*time.Second), acceptError(syscall.ENFILE), firstPause)
+	w.failed(start.Add(20*time.Second+firstPause), acceptError(syscall.ENFILE), 2*firstPause)
+	w.accepted(start.Add(20*time.Second + 3*firstPause))
+	w.accepted(start.Add(30 * time.Second))
+	if n := lines(logs(), "WARN"); n != 1 {
+		t.Fatalf("logged %d warnings within a minute, want 1:\n%s", n, strings.Join(logs(), "\n"))
+	}
+	w.accepted(start.Add(warnEvery))
+	if n := lines(logs(), "WARN", "test listener: accept:", syscall.ENFILE.Error(), "2 failures not logged"); n != 1 {
+		t.Fatalf("the second run of failures is not logged once the minute is up:\n%s", strings.Join(logs(), "\n"))
+	}
+	w.accepted(start.Add(3 * warnEvery))
+	if n := lines(logs(), "WARN"); n != 2 {
+		t.Fatalf("logged %d warnings, want one for each run of failures:\n%s", n, strings.Join(logs(), "\n"))
+	}
+}
+
+// A warned run of failures ends with a line saying the listener accepts
+// again and how many failures the run had, so a reader knows the
+// incident is over.
+func TestAWarnedRunEndsWithALineSayingSo(t *testing.T) {
+	logs := logged(t)
+	start := time.Now()
+	w := warnings{what: "test listener"}
+	for i := range 3 {
+		w.failed(start.Add(time.Duration(i)*time.Second), acceptError(syscall.EMFILE), time.Second)
+	}
+	w.accepted(start.Add(3 * time.Second))
+	w.accepted(start.Add(4 * time.Second))
+	if n := lines(logs(), "INFO", "test listener: accepting again after 3 failures"); n != 1 {
+		t.Fatalf("the end of the run is not logged once:\n%s", strings.Join(logs(), "\n"))
+	}
+	w.accepted(start.Add(2 * warnEvery))
+	if n := lines(logs(), "WARN"); n != 1 {
+		t.Fatalf("logged %d warnings for one run the end of which was logged, want 1:\n%s", n, strings.Join(logs(), "\n"))
+	}
+}
+
+// While failures last, a warning comes once a minute and counts the
+// failures since the last line.
+func TestALongRunOfFailuresIsCountedEveryMinute(t *testing.T) {
+	logs := logged(t)
+	start := time.Now()
+	w := warnings{what: "test listener"}
+	for i := range 181 {
+		w.failed(start.Add(time.Duration(i)*time.Second), acceptError(syscall.EMFILE), time.Second)
+	}
+	if n := lines(logs(), "WARN"); n != 4 {
+		t.Fatalf("logged %d warnings over three minutes of failures, want 4:\n%s", n, strings.Join(logs(), "\n"))
+	}
+	if n := lines(logs(), "WARN", "(59 failures before it not logged)"); n != 3 {
+		t.Fatalf("the warnings after the first do not count the failures in between:\n%s", strings.Join(logs(), "\n"))
+	}
+}
+
+// Failures and accepts that alternate log at most a warning and the line
+// ending its run each minute, however often they alternate.
+func TestAlternatingFailuresAndAcceptsLogBoundedLines(t *testing.T) {
+	logs := logged(t)
+	start := time.Now()
+	w := warnings{what: "test listener"}
+	const minutes = 10
+	for at := time.Duration(0); at < minutes*warnEvery; at += 20 * time.Millisecond {
+		w.failed(start.Add(at), acceptError(syscall.EMFILE), firstPause)
+		w.accepted(start.Add(at + 10*time.Millisecond))
+	}
+	all := logs()
+	if n := lines(all, "WARN"); n > minutes {
+		t.Fatalf("logged %d warnings over %d minutes, want at most one a minute", n, minutes)
+	}
+	if n := lines(all, "INFO"); n > minutes {
+		t.Fatalf("logged %d lines ending a run over %d minutes, want at most one a minute", n, minutes)
+	}
+	if n := lines(all, "WARN", "failures before it not logged"); n != minutes-1 {
+		t.Fatalf("%d warnings count the failures since the line before, want %d:\n%s", n, minutes-1, strings.Join(all, "\n"))
+	}
+}
