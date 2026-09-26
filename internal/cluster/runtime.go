@@ -314,7 +314,7 @@ func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
 	defer ticker.Stop()
-	var state tickState
+	state := tickState{started: time.Now()}
 	for {
 		if r.ctx.Err() != nil {
 			err := r.retire()
@@ -348,8 +348,9 @@ type observation struct {
 
 // tickState is what the runtime loop carries from one tick to the next.
 type tickState struct {
-	// heard is when this replica last knew a consensus leader, and leading
-	// whether that leader was this node.
+	// started is when the loop began. heard is when this replica last knew
+	// a consensus leader, and leading whether that leader was this node.
+	started time.Time
 	heard   time.Time
 	leading bool
 	// denied is the applied index of the latest quorum read that found this
@@ -366,7 +367,8 @@ type tickState struct {
 
 // step is one tick of run. It returns why this node has no business
 // generation to keep, or nil once the generation the local replica names
-// is running.
+// is running, and while a replica that just started waits for its first
+// consensus leader.
 func (r *Runtime) step(seen observation, s *tickState) error {
 	if seen.LeaderID != "" {
 		s.heard, s.leading = seen.at, seen.LeaderID == r.config.Coordination.NodeID
@@ -380,6 +382,14 @@ func (r *Runtime) step(seen observation, s *tickState) error {
 	err := r.coordinates(seen.State)
 	if err == nil && seen.AppliedIndex < s.denied {
 		err = coordination.ErrNotCoordinator
+	}
+	// A replica that has known no leader since it started is waiting for an
+	// election; it has nothing running to give up.
+	if err == nil && s.heard.IsZero() {
+		if seen.at.Sub(s.started) <= r.config.Coordination.ApplyTimeout {
+			return nil
+		}
+		err = fmt.Errorf("%w: this replica has heard from no consensus leader since it started", coordination.ErrUnavailable)
 	}
 	// A leader forgets itself only when it steps down, which it does on its
 	// own once its lease finds no majority: a majority may already follow

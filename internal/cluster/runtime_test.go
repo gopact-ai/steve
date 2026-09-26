@@ -1311,6 +1311,56 @@ func TestCoordinatorThatWritesAndIdlesKeepsItsGeneration(t *testing.T) {
 	kept(fmt.Sprintf("idled for %s after a quorum read", span))
 }
 
+// A replica that has not heard from a consensus leader since it started is
+// waiting for an election, not cut off from a leader it had: for
+// ApplyTimeout it waits without reporting anything, and then it says it has
+// heard from none since it started.
+func TestStartingCoordinatorWaitsForItsFirstLeader(t *testing.T) {
+	nodes := testNodes(t, 1)
+	coordinator := openNode(t, nodes[0])
+	ready(t, coordinator)
+	applyTimeout := nodes[0].config.Coordination.ApplyTimeout
+	started := time.Now()
+	electing := observation{Status: coordinator.service.Status(), log: coordinator.service.LogProgress(), at: started}
+	electing.LeaderID, electing.LeaderAddress, electing.IsLeader = "", "", false
+	state := tickState{started: started}
+	for _, after := range []time.Duration{0, applyTimeout / 2, applyTimeout} {
+		seen := electing
+		seen.at = started.Add(after)
+		if err := coordinator.step(seen, &state); err != nil {
+			t.Fatalf("a starting replica that knew no leader %s after it started reported %v", after, err)
+		}
+	}
+	seen := electing
+	seen.at = started.Add(applyTimeout + time.Millisecond)
+	err := coordinator.step(seen, &state)
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "since it started") {
+		t.Fatalf("a replica that heard from no leader in the %s since it started reported %v", applyTimeout, err)
+	}
+}
+
+// A coordinator that restarts from a snapshot names itself before Raft has
+// elected anyone. It waits for the election without reporting that it lost
+// a leader.
+func TestRestartedCoordinatorReportsNoLostLeader(t *testing.T) {
+	nodes := testNodes(t, 1)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	if err := first.service.Snapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	nodes[0].runtime.Store(nil)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := captureRuntimeLog(t)
+	again := openNode(t, nodes[0])
+	ready(t, again)
+	if logged := output.String(); strings.Contains(logged, "leader") {
+		t.Fatalf("a restarting coordinator reported a lost leader:\n%s", logged)
+	}
+}
+
 // A coordinator that leads consensus and loses every member gives its
 // generation up once its lease expires, well before a follower would.
 func TestIsolatedLeadingCoordinatorGivesUpWithinItsLease(t *testing.T) {
