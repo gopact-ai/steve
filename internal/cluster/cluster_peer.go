@@ -885,30 +885,58 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 
 func (p *Peer) Worker() PeerWorkerDescriptor { return p.WorkerDescriptor }
 
-func (p *Peer) ConfigureNodes(nodes map[string]node.Config) error {
-	runtime := p.Runtime.Load()
-	if runtime == nil {
-		return coordination.ErrUnavailable
-	}
-	state := runtime.Status()
+// ConfigureNodes has the machines among nodes that are cluster members
+// reached through worker tunnels of the business generation that activation
+// starts. A generation that has ended by then is being torn down with its
+// application; its dialer dials nothing.
+func (p *Peer) ConfigureNodes(nodes map[string]node.Config, activation Activation) {
+	dial := p.workerDialer(activation.Runtime, activation.Assignment, activation.WriterGeneration)
+	state := activation.Runtime.Status()
 	for id, cfg := range nodes {
 		if _, ok := state.Members[id]; ok {
-			cfg.DialContext = p.DialWorker
+			cfg.DialContext = dial
 			nodes[id] = cfg
 		}
 	}
-	return nil
 }
 
 // DialWorker establishes an authenticated stream to a peer's own loopback
-// worker. The connection's lifetime is independent of the setup context.
-func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, error) {
+// worker for the business generation running here; see workerDialer.
+func (p *Peer) DialWorker(ctx context.Context, nodeID string) (net.Conn, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return nil, coordination.ErrUnavailable
 	}
+	assignment, writer, err := runtime.running()
+	if err != nil {
+		return nil, err
+	}
+	return p.workerDialer(runtime, assignment, writer)(ctx, nodeID)
+}
+
+// workerDialer establishes authenticated streams to peers' own loopback
+// workers for the business generation of runtime that runs for assignment
+// at writer generation writer, and for no other: it dials nothing once
+// that generation has ended. A connection's lifetime is independent of the
+// setup context: it is closed when that generation ends, or when this
+// node's replica stops granting it (see watchWorkerAuthority).
+func (p *Peer) workerDialer(runtime *Runtime, assignment coordination.Assignment, writer uint64) func(context.Context, string) (net.Conn, error) {
+	return func(parent context.Context, nodeID string) (net.Conn, error) {
+		return p.dialWorker(parent, runtime, assignment, writer, nodeID)
+	}
+}
+
+func (p *Peer) dialWorker(parent context.Context, runtime *Runtime, assignment coordination.Assignment, writer uint64, nodeID string) (net.Conn, error) {
+	if p.Runtime.Load() != runtime {
+		return nil, fmt.Errorf("%w: the consensus runtime was replaced", ErrInactive)
+	}
+	ended, err := runtime.generationDone(assignment, writer)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
+	asked := time.Now()
 	state, err := runtime.ReadState(ctx)
 	if err != nil {
 		return nil, err
@@ -916,16 +944,27 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 	if state.Coordinator.NodeID != p.Config.NodeID {
 		return nil, coordination.ErrNotCoordinator
 	}
+	if state.Coordinator != assignment || state.WriterGeneration != writer {
+		return nil, fmt.Errorf("%w: the business generation that dials has been replaced", ErrInactive)
+	}
 	member, ok := state.Members[nodeID]
 	if !ok {
 		return nil, coordination.ErrInvalid
+	}
+	grant, err := runtime.grantWorker(ctx, asked, state, nodeID)
+	if err != nil {
+		return nil, err
 	}
 	if nodeID == p.Config.NodeID {
 		connection, err := p.openLocalWorker(ctx, p.Config.NodeID)
 		if err != nil {
 			return nil, err
 		}
-		go p.watchWorkerAuthority(p.ctx, state.Coordinator, state.WriterGeneration, connection.(*authenticatedWorkerConnection).done, func() { connection.Close() })
+		if err := dialerEnded(ended); err != nil {
+			connection.Close()
+			return nil, err
+		}
+		go p.watchWorkerAuthority(p.ctx, grant, connection.(*authenticatedWorkerConnection).done, ended, func() { connection.Close() })
 		return connection, nil
 	}
 	origin, err := url.Parse(member.APIAddress)
@@ -964,23 +1003,55 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 		return nil, err
 	}
 	if response.StatusCode != http.StatusOK {
+		var refusal struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&refusal)
 		response.Body.Close()
 		connection.Close()
+		if refusal.Error != "" {
+			return nil, fmt.Errorf("worker tunnel rejected: HTTP %d: %s", response.StatusCode, refusal.Error)
+		}
 		return nil, fmt.Errorf("worker tunnel rejected: HTTP %d", response.StatusCode)
 	}
 	if err := ctx.Err(); err != nil {
 		connection.Close()
 		return nil, err
 	}
-	return &bufferedWorkerConnection{Conn: connection, reader: reader}, nil
+	if err := dialerEnded(ended); err != nil {
+		connection.Close()
+		return nil, err
+	}
+	tunnel := &bufferedWorkerConnection{Conn: connection, reader: reader, done: make(chan struct{})}
+	go p.watchWorkerAuthority(p.ctx, grant, tunnel.done, ended, func() { tunnel.Close() })
+	return tunnel, nil
+}
+
+// dialerEnded reports, once ended is closed, that the business
+// generation dialing a worker ended while it dialed: its tunnel is not
+// handed over, though the worker may have accepted it.
+func dialerEnded(ended <-chan struct{}) error {
+	select {
+	case <-ended:
+		return fmt.Errorf("%w: the business generation that dials ended", ErrInactive)
+	default:
+		return nil
+	}
 }
 
 type bufferedWorkerConnection struct {
 	net.Conn
 	reader *bufio.Reader
+	once   sync.Once
+	done   chan struct{}
 }
 
 func (c *bufferedWorkerConnection) Read(buffer []byte) (int, error) { return c.reader.Read(buffer) }
+
+func (c *bufferedWorkerConnection) Close() error {
+	c.once.Do(func() { close(c.done) })
+	return c.Conn.Close()
+}
 
 func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
@@ -1000,21 +1071,9 @@ func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "owner authorization denied", http.StatusForbidden)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	state, err := p.Runtime.Load().ReadState(ctx)
-	cancel()
+	grant, err := p.admitWorkerTunnel(r, identity.NodeID)
 	if err != nil {
 		HTTPError(w, err)
-		return
-	}
-	epoch, err := strconv.ParseUint(r.Header.Get("X-Steve-Coordinator-Epoch"), 10, 64)
-	if err != nil || state.Coordinator.NodeID != identity.NodeID || state.Coordinator.Epoch != epoch {
-		HTTPError(w, coordination.ErrStaleEpoch)
-		return
-	}
-	writer, err := strconv.ParseUint(r.Header.Get("X-Steve-Writer-Generation"), 10, 64)
-	if err != nil || state.WriterGeneration != writer {
-		HTTPError(w, coordination.ErrStaleEpoch)
 		return
 	}
 	worker, err := p.openLocalWorker(r.Context(), identity.NodeID)
@@ -1049,7 +1108,7 @@ func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	watchCtx, watchCancel := context.WithCancel(p.ctx)
 	defer watchCancel()
-	go p.watchWorkerAuthority(watchCtx, state.Coordinator, writer, nil, func() { connection.Close(); worker.Close() })
+	go p.watchWorkerAuthority(watchCtx, grant, nil, nil, func() { connection.Close(); worker.Close() })
 	if _, err := buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
 	}
@@ -1062,6 +1121,32 @@ func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 	connection.Close()
 	worker.Close()
 	<-done
+}
+
+// admitWorkerTunnel grants the tunnel requested by r to the coordinator
+// that authenticated as coordinator, once a quorum read confirms the
+// coordinator epoch and writer generation it presents.
+func (p *Peer) admitWorkerTunnel(r *http.Request, coordinator string) (workerGrant, error) {
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return workerGrant{}, coordination.ErrUnavailable
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	asked := time.Now()
+	state, err := runtime.ReadState(ctx)
+	if err != nil {
+		return workerGrant{}, err
+	}
+	epoch, err := strconv.ParseUint(r.Header.Get("X-Steve-Coordinator-Epoch"), 10, 64)
+	if err != nil || state.Coordinator.NodeID != coordinator || state.Coordinator.Epoch != epoch {
+		return workerGrant{}, coordination.ErrStaleEpoch
+	}
+	writer, err := strconv.ParseUint(r.Header.Get("X-Steve-Writer-Generation"), 10, 64)
+	if err != nil || state.WriterGeneration != writer {
+		return workerGrant{}, coordination.ErrStaleEpoch
+	}
+	return runtime.grantWorker(ctx, asked, state, p.Config.NodeID)
 }
 
 func restorePeerAdapters(cfg *node.ServerConfig) {
@@ -1129,42 +1214,6 @@ func (p *Peer) authenticatedWorkerPeer(connection net.Conn) (string, bool) {
 		return "", false
 	}
 	return principal.NodeID, true
-}
-
-func (p *Peer) watchWorkerAuthority(ctx context.Context, assignment coordination.Assignment, writer uint64, done <-chan struct{}, closeConnection func()) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	lastQuorum := time.Now()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-done:
-			return
-		case <-ticker.C:
-		}
-		runtime := p.Runtime.Load()
-		if runtime == nil {
-			closeConnection()
-			return
-		}
-		local := runtime.Status()
-		if !local.Healthy || local.Coordinator != assignment || local.WriterGeneration != writer {
-			closeConnection()
-			return
-		}
-		if time.Since(lastQuorum) < time.Second {
-			continue
-		}
-		readCtx, cancel := context.WithTimeout(ctx, time.Second)
-		state, err := runtime.ReadState(readCtx)
-		cancel()
-		if err != nil || state.Coordinator != assignment || state.WriterGeneration != writer {
-			closeConnection()
-			return
-		}
-		lastQuorum = time.Now()
-	}
 }
 
 func (p *Peer) serveWorkerDescriptor(w http.ResponseWriter, r *http.Request) {

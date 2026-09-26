@@ -871,7 +871,8 @@ func (p *Peer) RegisterEnrolledWorker(ctx context.Context, nodeID, level string)
 	if admin == nil {
 		return coordination.ErrNotReady
 	}
-	return admin.AdmitWorker(ctx, nodeID, node.Config{Addr: worker.Address, Token: worker.Token, Level: level, DialContext: p.DialWorker})
+	dial := p.workerDialer(active.Runtime, active.Assignment, active.WriterGeneration)
+	return admin.AdmitWorker(ctx, nodeID, node.Config{Addr: worker.Address, Token: worker.Token, Level: level, DialContext: dial})
 }
 
 type PeerImportResult struct {

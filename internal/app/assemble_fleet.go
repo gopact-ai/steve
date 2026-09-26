@@ -35,9 +35,7 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	}
 	nodeConfigs := configbuild.NodeConfigs(cfg)
 	if environment != nil && environment.ConfigureNodes != nil {
-		if err := environment.ConfigureNodes(nodeConfigs); err != nil {
-			return nil, err
-		}
+		environment.ConfigureNodes(nodeConfigs)
 	}
 	nodes := node.NewRegistry(cfg.Gateway.HubID, nodeConfigs)
 	if environment != nil {

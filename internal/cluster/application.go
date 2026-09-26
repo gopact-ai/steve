@@ -25,7 +25,7 @@ type ApplicationHost interface {
 	ApplicationClusterID() string
 	ConfigureApplication(*config.Config, Activation) error
 	ApplicationReady(*adminsvc.Service, ApplicationServer, Activation) error
-	ConfigureNodes(map[string]node.Config) error
+	ConfigureNodes(map[string]node.Config, Activation)
 	ContentReplicator(Activation) (contentreplica.Replicator, error)
 	ApplicationSessionAuthorizer(Activation) func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
 	ApplicationReceiptAuthorizer(Activation) func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionReceipt) error

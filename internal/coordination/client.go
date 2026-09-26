@@ -170,6 +170,16 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 	return state, nil
 }
 
+// ReadIndex asks the consensus leader for a read index; see
+// Service.ReadIndex.
+func (c *Client) ReadIndex(ctx context.Context) (uint64, error) {
+	var reply readIndexReply
+	if err := c.route(ctx, "readindex", nil, &reply); err != nil {
+		return 0, err
+	}
+	return reply.Index, nil
+}
+
 func (c *Client) ApplyApp(ctx context.Context, request AppCommand) (Result, error) {
 	if request.CallerNodeID != c.config.TLS.NodeID {
 		return Result{}, ErrNotCoordinator
@@ -233,7 +243,7 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 		}
 	}
 	var headers http.Header
-	if action != "app" && action != "writer" && action != "state" {
+	if action != "app" && action != "writer" && action != "state" && action != "readindex" {
 		if c.config.ControlHeaders == nil {
 			return fmt.Errorf("%w: owner authorization is required", ErrInvalid)
 		}
@@ -359,7 +369,7 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 		return nil, err
 	}
 	method := http.MethodPost
-	if action == "status" || action == "state" {
+	if action == "status" || action == "state" || action == "readindex" {
 		method = http.MethodGet
 	}
 	request, err := http.NewRequestWithContext(ctx, method, origin+RPCPath+action, bytes.NewReader(body))
@@ -386,6 +396,12 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 	// the request, so none of these is reported as invalid input.
 	if int64(len(data)) > c.config.MaxResponseBytes {
 		return nil, fmt.Errorf("coordination: peer %s response exceeds %d bytes", member.NodeID, c.config.MaxResponseBytes)
+	}
+	if response.StatusCode == http.StatusMethodNotAllowed {
+		// This build sends every action by the method its own handler
+		// serves it by, so a peer that refuses the method does not serve
+		// the action: it runs another build.
+		return nil, fmt.Errorf("%w: peer %s does not serve %s requests by %s; it may run another build", ErrInvalid, member.NodeID, action, method)
 	}
 	if response.StatusCode != http.StatusOK {
 		var failure rpcFailure

@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/logs"
+	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -62,7 +63,7 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 		return nil
 	}}
 	environment.HTTPConfig = &httpapi.ServerConfig{Addr: "127.0.0.1:0", Token: token}
-	environment.ConfigureNodes = p.ConfigureNodes
+	environment.ConfigureNodes = func(nodes map[string]node.Config) { p.ConfigureNodes(nodes, activation) }
 	environment.WriteConfig = stateConfig.Save
 	environment.WriteConfigContext = stateConfig.SaveContext
 	environment.ConfigurationRevision = stateConfig.Revision

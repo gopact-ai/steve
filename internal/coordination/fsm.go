@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -70,8 +71,12 @@ func (r receipt) err() error {
 }
 
 type machine struct {
-	mu                 sync.RWMutex
-	state              State
+	mu    sync.RWMutex
+	state State
+	// applied is state.AppliedIndex as of the latest change the machine
+	// finished, for readers that must not wait for one in progress. It
+	// stays put once the machine has failed.
+	applied            atomic.Uint64
 	receipts           map[string]receipt
 	app                Application
 	failure            error
@@ -127,6 +132,14 @@ func (m *machine) lookup(id, fingerprint string) (receipt, bool) {
 	return r, ok
 }
 
+// publishApplied publishes the index of the last entry applied, once the
+// change that applied it has finished. The caller holds m.mu.
+func (m *machine) publishApplied() {
+	if m.failure == nil {
+		m.applied.Store(m.state.AppliedIndex)
+	}
+}
+
 func (m *machine) healthy() bool { m.mu.RLock(); defer m.mu.RUnlock(); return m.failure == nil }
 
 func (m *machine) fail(err error) receipt {
@@ -149,6 +162,7 @@ func (r *receipt) reject(code, message string) { r.Code = code; r.Message = mess
 func (m *machine) Apply(log *raft.Log) interface{} {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.publishApplied()
 	if m.failure != nil {
 		return receipt{Code: "application", Message: "replica is stopped"}
 	}
@@ -686,6 +700,7 @@ func (m *machine) notifyMembership() {
 func (m *machine) StoreConfiguration(index uint64, c raft.Configuration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.publishApplied()
 	if m.failure != nil {
 		return
 	}
@@ -787,6 +802,7 @@ func (m *machine) Restore(reader io.ReadCloser) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.publishApplied()
 	if data.Format != snapshotFormat || data.State.ClusterID != m.state.ClusterID || data.State.Members == nil || data.State.Replicas == nil || data.State.Voters == nil || data.State.Removing == nil || data.State.PendingAddresses == nil || data.Receipts == nil {
 		return fmt.Errorf("%w: snapshot identity or format differs", ErrInvalid)
 	}
