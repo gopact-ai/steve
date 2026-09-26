@@ -29,7 +29,6 @@ func connectMemory(t *testing.T, m *memoryNode, r *Registry) *conn {
 	t.Helper()
 	c := &conn{name: "n", mux: m.connection(t), advert: nodewire.Advert{
 		SessionGraceMS: m.s.sessionGrace().Milliseconds(), Harnesses: []nodewire.Harness{{ID: "cat"}}}}
-	r.eventMu.Lock()
 	r.mu.Lock()
 	if r.gens == nil {
 		r.gens = map[string]int64{}
@@ -40,7 +39,6 @@ func connectMemory(t *testing.T, m *memoryNode, r *Registry) *conn {
 	r.signalLocked("n")
 	r.clocksLocked("n", true)
 	r.mu.Unlock()
-	r.eventMu.Unlock()
 	go func() { <-c.mux.Done(); r.down(c) }()
 	return c
 }
@@ -355,11 +353,12 @@ func TestLateDownCannotPauseNewConnectionOrEmitOldEvent(t *testing.T) {
 	defer unregister()
 	var mu sync.Mutex
 	var events []Status
-	r.SetObserver(func(s Status) { mu.Lock(); defer mu.Unlock(); events = append(events, s) })
+	r.SetObserver(func(s Status, _ time.Time) { mu.Lock(); defer mu.Unlock(); events = append(events, s) })
 	_ = old.mux.Close()
 	r.down(old)
 	newConn := connectMemory(t, m, r)
 	r.down(old)
+	heardAll(t, r)
 	clock.mu.Lock()
 	paused, pauses, resumes := clock.paused, clock.pauses, clock.resumes
 	clock.mu.Unlock()
