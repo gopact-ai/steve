@@ -705,6 +705,8 @@ go run ./e2e/fleet -scenario autonomous
 | `sweep: removed N orphaned worktree(s) on ...` | 清理没有活 attempt 持有的隔离工作树；启动及 node 连接时会触发检查。 |
 | `sweep: worktrees on <node>: <error>` | 该机器的孤儿工作树清扫失败；检查可达性、目录和文件权限。 |
 | `coordination: unavailable: local replica did not reach applied index ...` | 协调节点本机的账本副本落后于集群已提交的状态。写入在提交前最多等副本追上 5 秒，超时即放弃，这次写入没有提交，可以重试；激活业务代时等不到自己的写入 fence 也会放弃，副本追上后重新激活。持续出现时检查该节点与共识 leader 之间的 Raft 连接和本机磁盘。 |
+| `cluster: content refused <code> <method> from <caller>: HTTP <status>: ...` | 存放内容副本的节点拒绝了一次内容请求；同一调用方、同一 code 每分钟只记一行，其间未记的次数写在 `suppressed`。403 是拒绝：`authority` 是调用方身份、证书或集群不符，`stale` 是调用方带来的协调 epoch 或 writer 代不是已提交的当前值（hub 按本业务代已结束处理），`placement` 是按已提交状态该节点不能存放这个项目的内容。503 不是拒绝，可以重试：`lagging` 是该节点的账本副本在 5 秒内没有追上集群已提交的状态，`unavailable` 是读不到已提交状态或本机暂时无法处理。hub 不把 503 当作放置拒绝，补副本保留已有记录、下一轮重新核对。持续 `lagging` 时检查该节点与共识 leader 之间的 Raft 连接。 |
+| `cluster: content reply from <node>: HTTP <status> with unreadable body "..."` | hub 读不懂该节点的拒绝回复，引号内是回复开头至多 64 字节；此时只按 HTTP 状态判断（403 视为放置拒绝，其余视为暂时不可用）。通常是该节点运行的版本与 hub 不一致，或请求被中间代理拦截。 |
 | `gateway.owner_id is required for a console-only hub` | 独立控制台缺少 owner。设置稳定的 `gateway.owner_id`；控制台 token 用于认证，不能代替 owner 身份。 |
 | `能力或身份文件已变化，请先发送 /new` / `Capabilities or identity files changed` | 会话保存的能力指纹与当前装配结果不同。只有身份与平台说明的变化可以原地补发；MCP、技能或可见性配置变化，以及没有会话配置基线的旧会话（在引入基线之前最后一次对话的会话），都要求 `/new` 一次，之后新会话带基线，身份/平台说明的更新不再要求 `/new`。不要为了隐藏提示跳过校验。 |
 | `Authentication required`，但资源页 harness 可用 | 可执行程序存在/能启动不等于模型认证有效；检查 node 的登录环境、认证链接和隔离 home，尤其不要用裸环境启动 node/nodectl。 |
