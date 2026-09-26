@@ -55,11 +55,6 @@ var (
 	errContentMethod = errors.New("content request method must be GET, PUT or POST")
 )
 
-// contentCatchUpPoll is how often a content check looks at how far its own
-// replica has applied while it waits: a local read, nothing is asked of the
-// leader.
-const contentCatchUpPoll = 5 * time.Millisecond
-
 type contentReadsKey struct{}
 
 // contentReads is the committed state one content request judges by. It
@@ -113,34 +108,27 @@ func unavailableRead(read contentStateReader) contentStateReader {
 }
 
 // awaitContentReplica waits for this replica to apply the committed state's
-// application version, for as long as a write waits for its replica to
-// catch up (ApplyTimeout, 5s by default): past that the replica is taken to
-// be lagging, and the caller may try again here or elsewhere. It returns
-// the version the replica has.
+// application version, as a write waits for its replica to catch up: for at
+// most ApplyTimeout (5s by default), and not at all once the replica has
+// stopped applying. It returns the version the replica has.
 func (p *Peer) awaitContentReplica(ctx context.Context, runtime *Runtime, version uint64) (uint64, error) {
-	started := time.Now()
-	bound := time.NewTimer(runtime.config.Coordination.ApplyTimeout)
-	defer bound.Stop()
-	poll := time.NewTicker(contentCatchUpPoll)
-	defer poll.Stop()
-	for {
-		local, err := runtime.Ledger().ReplicaVersion()
-		if err != nil {
-			return 0, fmt.Errorf("%w: read local replica version: %w", contentreplica.ErrUnavailable, err)
-		}
-		if local >= version {
-			return local, nil
-		}
-		select {
-		case <-ctx.Done():
-			return 0, fmt.Errorf("%w: %w", contentreplica.ErrUnavailable, ctx.Err())
-		case <-runtime.ctx.Done():
-			return 0, fmt.Errorf("%w: %w", contentreplica.ErrUnavailable, ErrInactive)
-		case <-bound.C:
-			return 0, fmt.Errorf("%w: at version %d, committed state at %d after %s", errContentLagging, local, version, time.Since(started).Round(time.Millisecond))
-		case <-poll.C:
-		}
+	local, err := runtime.awaitApplied(ctx, 0, version)
+	if err != nil {
+		return 0, contentCatchUpError(ctx, err)
 	}
+	return local, nil
+}
+
+// contentCatchUpError is what a content check makes of err, the end of its
+// wait for this replica to catch up. Past the bound the replica is lagging,
+// and the caller may try again here or elsewhere. A replica that stopped
+// applying, a runtime that stopped, or the caller's own end leaves the check
+// unmade. None of them refuses anything.
+func contentCatchUpError(ctx context.Context, err error) error {
+	if ctx.Err() == nil && errors.Is(err, coordination.ErrUnavailable) {
+		return fmt.Errorf("%w: %v", errContentLagging, err)
+	}
+	return fmt.Errorf("%w: replica catch-up: %w", contentreplica.ErrUnavailable, err)
 }
 
 // contentState is what the committed state says of a project's content. A

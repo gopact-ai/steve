@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -434,5 +435,31 @@ func TestContentPeerDoesNotRefuseAPlacementWhileTheProjectDeclarationCatchesUp(t
 	}
 	if reply.err != nil || reply.status != http.StatusServiceUnavailable || json.Unmarshal(reply.body, &body) != nil || body.Code != "unavailable" {
 		t.Fatalf("placement checked against a pending project declaration: HTTP %d %q err=%v, want 503 unavailable", reply.status, reply.body, reply.err)
+	}
+}
+
+// Waiting for this replica to catch up ends in one of two answers: lagging
+// when the bound passed with the replica still behind, unavailable when it
+// could not wait — a replica that stopped applying, a runtime that stopped,
+// the caller's own end, which stays in the error.
+func TestContentCatchUpTellsALaggingReplicaFromOneThatCannotWait(t *testing.T) {
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	cases := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		code string
+	}{
+		{"bound passed", t.Context(), fmt.Errorf("%w: local replica did not reach application version 9", coordination.ErrUnavailable), "lagging"},
+		{"replica stopped applying", t.Context(), coordination.ErrApplication, "unavailable"},
+		{"runtime stopped", t.Context(), ErrInactive, "unavailable"},
+		{"caller's own end", cancelled, context.Canceled, "unavailable"},
+	}
+	for _, c := range cases {
+		err := contentCatchUpError(c.ctx, c.err)
+		if _, code := contentRefusal(err); code != c.code || !errors.Is(err, contentreplica.ErrUnavailable) || errors.Is(err, coordination.ErrUnavailable) || !errors.Is(err, c.err) && c.code != "lagging" {
+			t.Errorf("%s: %v answers %q, want %q", c.name, err, code, c.code)
+		}
 	}
 }
