@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,8 +45,8 @@ func openWorkerTunnel(t *testing.T, coordinator, worker *Peer) *nodewire.Mux {
 }
 
 // joinNonvoter starts a peer that joins hub as a non-voting member. A
-// non-nil raft receives the member's inbound Raft connections.
-func joinNonvoter(t *testing.T, hub *Peer, raft *gatedListener) *Peer {
+// non-nil raft wraps the listener of the member's inbound Raft connections.
+func joinNonvoter(t *testing.T, hub *Peer, raft func(net.Listener) net.Listener) *Peer {
 	t.Helper()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), hub)
 	var activations atomic.Int32
@@ -56,14 +59,10 @@ func joinNonvoter(t *testing.T, hub *Peer, raft *gatedListener) *Peer {
 			if err != nil || !bound.CompareAndSwap(false, true) {
 				return listener, err
 			}
-			raft.Listener = listener
-			return raft, nil
+			return raft(listener), nil
 		}
 	}
 	member := StartTestPeer(t, options)
-	if raft != nil {
-		t.Cleanup(raft.resume)
-	}
 	if _, err := hub.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: member.Config.NodeID, Name: member.Config.Name, Address: member.Config.RaftAddress, APIAddress: member.Config.PeerURL, Voting: false}}); err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +77,95 @@ func startTestHub(t *testing.T) *Peer {
 	hub := StartTestPeer(t, options)
 	WaitPeerReady(t, hub)
 	return hub
+}
+
+// entryGate wraps a Raft listener. While paused it holds each inbound
+// connection from its first read larger than a heartbeat: log entries stop
+// arriving, and heartbeats, which travel on connections of their own, keep
+// arriving.
+type entryGate struct {
+	net.Listener
+	paused atomic.Bool
+	hold   chan struct{}
+	once   sync.Once
+}
+
+func newEntryGate() *entryGate { return &entryGate{hold: make(chan struct{})} }
+
+func (g *entryGate) wrap(listener net.Listener) net.Listener {
+	g.Listener = listener
+	return g
+}
+
+func (g *entryGate) release() { g.once.Do(func() { close(g.hold) }) }
+
+func (g *entryGate) Accept() (net.Conn, error) {
+	conn, err := g.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &entryGateConn{Conn: conn, gate: g}, nil
+}
+
+type entryGateConn struct {
+	net.Conn
+	gate *entryGate
+	held bool
+}
+
+func (c *entryGateConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if c.gate.paused.Load() && (c.held || n > 1024) {
+		c.held = true
+		<-c.gate.hold
+	}
+	return n, err
+}
+
+// transferCoordinator names to as the coordinator. Its large reason makes
+// the entry larger than any heartbeat.
+func transferCoordinator(t *testing.T, through, to *Peer, reason string) {
+	t.Helper()
+	runtime := through.Runtime.Load()
+	state, err := runtime.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer-to-" + to.Config.NodeID + "-" + strconv.FormatUint(state.Coordinator.Epoch, 10), Actor: "owner", ExpectedEpoch: state.Coordinator.Epoch, TargetNodeID: to.Config.NodeID, Reason: reason}); err != nil {
+		t.Fatalf("name %s the coordinator: %v", to.Config.NodeID, err)
+	}
+}
+
+// A coordinator that was replaced while its replica received heartbeats
+// but no log entries still names itself, so no local view tells it or its
+// own worker that it no longer coordinates. The tunnel to its own machine's
+// worker, on which commands, file writes and agents need no further check,
+// is closed nonetheless within two ApplyTimeouts.
+func TestReplacedCoordinatorLosesItsOwnWorkerTunnelWhileItsReplicationLags(t *testing.T) {
+	hub := startTestHub(t)
+	gate := newEntryGate()
+	old := joinNonvoter(t, hub, gate.wrap)
+	t.Cleanup(gate.release)
+	transferCoordinator(t, hub, old, "hand over")
+	WaitPeerReady(t, old)
+	closed := openWorkerTunnel(t, old, old).Done()
+	gate.paused.Store(true)
+	transferCoordinator(t, hub, hub, strings.Repeat("take back ", 1600))
+	replaced := time.Now()
+	WaitPeerReady(t, hub)
+	if seen := old.Runtime.Load().Status().Coordinator; seen.NodeID != old.Config.NodeID {
+		t.Fatalf("the replaced coordinator's replica applied the transfer to %s; its replication was meant to lag", seen.NodeID)
+	}
+	timeout := old.Runtime.Load().config.Coordination.ApplyTimeout
+	bound := 2*timeout + 3*time.Second
+	select {
+	case <-closed:
+		if seen := old.Runtime.Load().Status().Coordinator; seen.NodeID != old.Config.NodeID {
+			t.Fatalf("the tunnel closed once the replica caught up with the transfer, not while it lagged")
+		}
+	case <-time.After(bound - time.Since(replaced)):
+		t.Fatalf("the replaced coordinator kept the tunnel to its own worker %s after it was replaced, while its replication lagged", bound)
+	}
 }
 
 // An idle worker tunnel costs the cluster nothing. Every quorum read the
@@ -153,7 +241,8 @@ func TestRevokedGenerationClosesItsWorkerTunnelsWhileItStops(t *testing.T) {
 func TestWorkerTunnelClosesWhenItsReplicaStopsHearingTheLeader(t *testing.T) {
 	hub := startTestHub(t)
 	raft := &gatedListener{}
-	member := joinNonvoter(t, hub, raft)
+	member := joinNonvoter(t, hub, raft.wrap)
+	t.Cleanup(raft.resume)
 	WaitPeerReady(t, hub)
 	closed := openWorkerTunnel(t, hub, member).Done()
 	raft.pause()

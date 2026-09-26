@@ -72,6 +72,11 @@ type gatedListener struct {
 	gate atomic.Pointer[chan struct{}]
 }
 
+func (l *gatedListener) wrap(listener net.Listener) net.Listener {
+	l.Listener = listener
+	return l
+}
+
 func (l *gatedListener) pause() {
 	gate := make(chan struct{})
 	l.gate.CompareAndSwap(nil, &gate)
