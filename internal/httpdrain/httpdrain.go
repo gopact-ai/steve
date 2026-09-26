@@ -98,6 +98,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // Close is Shutdown without letting any handler finish on its own. Cutting
 // handlers short is what it is for, so only closing errors are reported.
+// A stop already under way is not hurried: Close waits for it, grace and
+// all.
 func (s *Server) Close() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
