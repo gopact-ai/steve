@@ -46,11 +46,14 @@ type Service struct {
 	// completed while it led consensus: from then on its commit index
 	// covers every entry committed before that term. See ReadIndex.
 	established atomic.Uint64
-	closeOnce   sync.Once
-	closeErr    error
-	ctx         context.Context
-	cancel      context.CancelFunc
-	workers     sync.WaitGroup
+	// establishing is held by the read index request completing a barrier
+	// to establish the term, so requests arriving together append one.
+	establishing chan struct{}
+	closeOnce    sync.Once
+	closeErr     error
+	ctx          context.Context
+	cancel       context.CancelFunc
+	workers      sync.WaitGroup
 }
 
 // addressTransport keeps RPC source addresses consistent with live listener
@@ -165,7 +168,7 @@ func Open(config Config) (*Service, error) {
 		return nil, fmt.Errorf("open raft: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{config: config, raft: node, transport: transport, store: store, fsm: fsm, ctx: ctx, cancel: cancel}
+	s := &Service{config: config, raft: node, transport: transport, store: store, fsm: fsm, establishing: make(chan struct{}, 1), ctx: ctx, cancel: cancel}
 	if config.Bootstrap && !hasState {
 		future := node.BootstrapCluster(raft.Configuration{Servers: []raft.Server{{ID: cfg.LocalID, Address: transport.LocalAddr(), Suffrage: raft.Voter}}})
 		if err := future.Error(); err != nil {
@@ -469,11 +472,8 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	}
 	term := s.raft.CurrentTerm()
 	if s.established.Load() != term {
-		if err := s.barrier(ctx); err != nil {
+		if err := s.establish(ctx, term); err != nil {
 			return 0, err
-		}
-		if s.established.Load() != term {
-			return 0, fmt.Errorf("%w: leadership changed while it was being established", ErrNotLeader)
 		}
 	}
 	index := s.raft.CommitIndex()
@@ -486,6 +486,27 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 		return 0, fmt.Errorf("%w: leadership changed while it was being confirmed", ErrNotLeader)
 	}
 	return index, nil
+}
+
+// establish completes a barrier in term unless one has completed since the
+// caller found the term not yet established. Callers take turns, so read
+// index requests that arrive together append one barrier between them.
+func (s *Service) establish(ctx context.Context, term uint64) error {
+	select {
+	case s.establishing <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-s.establishing }()
+	if s.established.Load() != term {
+		if err := s.barrier(ctx); err != nil {
+			return err
+		}
+	}
+	if s.established.Load() != term {
+		return fmt.Errorf("%w: leadership changed while it was being established", ErrNotLeader)
+	}
+	return nil
 }
 
 // fingerprint identifies a command's input so a reused command ID with
