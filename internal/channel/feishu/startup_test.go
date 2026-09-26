@@ -25,6 +25,8 @@ type startupOutcome struct {
 	attempts int32
 	err      error
 	started  bool
+	// ready is whether Start reported the channel ready.
+	ready bool
 }
 
 // startAgainst starts a channel whose verification reads the bot identity
@@ -38,6 +40,7 @@ func startAgainst(t *testing.T, secret string, handler http.HandlerFunc) startup
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var attempts atomic.Int32
+	var ready atomic.Bool
 	conn := newStuckConn()
 	c := startingChannel(conn, func(ctx context.Context) (Identity, error) {
 		if attempts.Add(1) > 1 {
@@ -45,6 +48,7 @@ func startAgainst(t *testing.T, secret string, handler http.HandlerFunc) startup
 		}
 		return botIdentity(ctx, api)
 	})
+	c.onReady = func() { ready.Store(true) }
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Start(ctx) }()
 	select {
@@ -55,7 +59,7 @@ func startAgainst(t *testing.T, secret string, handler http.HandlerFunc) startup
 			started = true
 		default:
 		}
-		return startupOutcome{attempts: attempts.Load(), err: err, started: started}
+		return startupOutcome{attempts: attempts.Load(), err: err, started: started, ready: ready.Load()}
 	case <-time.After(waitDeadline):
 		t.Fatal("Start neither retried nor returned")
 		return startupOutcome{}
@@ -107,8 +111,8 @@ func TestStartReportsAPermanentStartupFailureWithoutRetrying(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := startAgainst(t, tc.secret, tc.handler)
-			if got.attempts != 1 || got.err == nil || errors.Is(got.err, context.Canceled) || got.started {
-				t.Fatalf("permanent failure: %d attempts, err %v, connected %t; want one attempt reported as the error", got.attempts, got.err, got.started)
+			if got.attempts != 1 || got.err == nil || errors.Is(got.err, context.Canceled) || got.started || got.ready {
+				t.Fatalf("permanent failure: %d attempts, err %v, connected %t, ready %t; want one attempt reported as the error", got.attempts, got.err, got.started, got.ready)
 			}
 		})
 	}
@@ -134,8 +138,8 @@ func TestStartRetriesATransientStartupFailure(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := startAgainst(t, "test-secret", handler)
-			if got.attempts != 2 || !errors.Is(got.err, context.Canceled) || got.started {
-				t.Fatalf("transient failure: %d attempts, err %v, connected %t; want a second attempt", got.attempts, got.err, got.started)
+			if got.attempts != 2 || !errors.Is(got.err, context.Canceled) || got.started || got.ready {
+				t.Fatalf("transient failure: %d attempts, err %v, connected %t, ready %t; want a second attempt", got.attempts, got.err, got.started, got.ready)
 			}
 		})
 	}
@@ -284,6 +288,51 @@ func TestStartReportsEachStartupRetry(t *testing.T) {
 			r.Next.Before(reported[i]) || r.Next.After(reported[i].Add(delay)) {
 			t.Fatalf("retry %d reported %+v at %s; want failure %d, its error and the next attempt within %s", i+1, r, reported[i], i+1, delay)
 		}
+	}
+	cancel()
+	<-errCh
+}
+
+// What serves Feishu work learns the channel is usable once, after its
+// identity is verified and before anything waiting on Ready or the long
+// connection's first event can observe the channel.
+func TestStartReportsReadyAfterVerificationAndBeforeConnecting(t *testing.T) {
+	var attempts atomic.Int32
+	conn := newStuckConn()
+	c := startingChannel(conn, func(ctx context.Context) (Identity, error) {
+		if attempts.Add(1) == 1 {
+			return unreachable(ctx)
+		}
+		return Identity{OpenID: "ou_bot"}, nil
+	})
+	var calls atomic.Int32
+	var observed string
+	c.onReady = func() {
+		calls.Add(1)
+		select {
+		case <-conn.started:
+			observed = "the long connection had started"
+		case <-c.Ready():
+			observed = "Ready was already closed"
+		default:
+			if c.botOpenID != "ou_bot" {
+				observed = "the bot identity was not recorded"
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Start(ctx) }()
+	select {
+	case <-conn.started:
+	case err := <-errCh:
+		t.Fatalf("Start() = %v before connecting", err)
+	case <-time.After(waitDeadline):
+		t.Fatal("the long connection never started")
+	}
+	if calls.Load() != 1 || observed != "" || attempts.Load() != 2 {
+		t.Fatalf("ready reported %d times after %d attempts (%s); want once, after the verified second attempt", calls.Load(), attempts.Load(), observed)
 	}
 	cancel()
 	<-errCh

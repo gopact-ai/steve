@@ -94,6 +94,11 @@ type Options struct {
 	// OnStartRetry reports each startup failure Start will retry. It runs
 	// on Start's goroutine and must not block.
 	OnStartRetry func(StartRetry)
+	// OnReady runs once Start has verified the application, before Ready
+	// is closed and before the long connection can deliver an event. It
+	// runs on Start's goroutine and is never called when verification
+	// fails or is stopped.
+	OnReady func()
 }
 
 // StartRetry is a startup failure Start will retry.
@@ -120,6 +125,8 @@ type Channel struct {
 	delay func(failures int) time.Duration
 	// onRetry is Options.OnStartRetry.
 	onRetry func(StartRetry)
+	// onReady is Options.OnReady.
+	onReady func()
 	// botOpenID is written by Start before the long connection begins,
 	// which is the only source of inbound events that read it.
 	botOpenID string
@@ -162,7 +169,7 @@ var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
 // application and connects.
 func New(opts Options, handler Handler) *Channel {
 	api := newAPI(opts.AppID, opts.AppSecret, opts.Domain)
-	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry}
+	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry, onReady: opts.OnReady}
 	channel.identify = func(ctx context.Context) (Identity, error) { return botIdentity(ctx, api) }
 	channel.SetAccess(opts.Access, opts.AllowUnmentioned)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
@@ -231,8 +238,8 @@ func (c *Channel) EnrichInput(ctx context.Context, msg InboundMessage) InboundMe
 	return msg
 }
 
-// Ready is closed once Start has verified the bot identity, before the
-// long connection begins.
+// Ready is closed once Start has verified the bot identity and OnReady
+// has returned, before the long connection begins.
 func (c *Channel) Ready() <-chan struct{} { return c.ready }
 
 // Start verifies the bot identity, then blocks and maintains the long
@@ -245,6 +252,9 @@ func (c *Channel) Start(ctx context.Context) error {
 		return err
 	}
 	c.botOpenID = identity.OpenID
+	if c.onReady != nil {
+		c.onReady()
+	}
 	close(c.ready)
 	done := make(chan error, 1)
 	go func() {
