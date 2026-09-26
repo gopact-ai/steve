@@ -5,25 +5,55 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/httpapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/logs"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 func OpenClusterPeer(ctx context.Context, options cluster.PeerOptions) (*cluster.Peer, error) {
 	logs.Install()
-	options.StartApplication = startPeerApplication
+	hub := &hubLanguage{}
+	if options.Text.IsZero() {
+		// A configuration that does not load is OpenPeer's to report.
+		if installed, err := config.Load(options.ConfigPath); err == nil {
+			hub.installed = i18n.FromLang(installed.EffectiveLocale())
+			options.Text = i18n.Dynamic(hub.locale)
+		}
+	}
+	options.StartApplication = func(ctx context.Context, p cluster.ApplicationHost, activation cluster.Activation, ready func(cluster.PeerApplicationEndpoint) error) (cluster.Deactivate, error) {
+		return startPeerApplication(ctx, p, activation, ready, hub)
+	}
 	options.SSHHandler = func(service cluster.SSHControl, token, origin string) (http.Handler, error) {
 		return httpapi.SSHHandler(service, token, origin)
 	}
 	return cluster.OpenPeer(ctx, options)
 }
-func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activation cluster.Activation, ready func(cluster.PeerApplicationEndpoint) error) (cluster.Deactivate, error) {
+
+// hubLanguage is the Hub's language as this node knows it. In a cluster
+// the owner sets it in the shared configuration, which the application
+// reads live once it runs on this node; until then, and on a node it has
+// never run on, it is the language the node's own configuration names. A
+// node the application has left keeps the last language it saw.
+type hubLanguage struct {
+	installed i18n.Locale
+	live      atomic.Pointer[config.RuntimeSettings]
+}
+
+func (h *hubLanguage) locale() i18n.Locale {
+	if settings := h.live.Load(); settings != nil {
+		return i18n.FromLang(settings.Load().Gateway.Locale)
+	}
+	return h.installed
+}
+
+func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activation cluster.Activation, ready func(cluster.PeerApplicationEndpoint) error, hub *hubLanguage) (cluster.Deactivate, error) {
 	token := cluster.ClusterRandomToken()
 	started := make(chan struct{})
 	done := make(chan struct{})
@@ -49,6 +79,9 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 		}
 		return p.ConfigureApplication(cfg, activation)
 	}, Ready: func(admin *adminsvc.Service, dashboard *httpapi.Server) error {
+		if admin.RuntimeSettings != nil {
+			hub.live.Store(admin.RuntimeSettings)
+		}
 		if admin.View != nil {
 			repairObserve = admin.View.Observe
 		}
