@@ -125,7 +125,9 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 		if err != nil {
 			return errors.Join(fmt.Errorf("task %s attempt %s on %s: native stop remains pending: %w", r.TaskID, r.ID, r.Node, cause), err)
 		}
-		if !r.Unsettled || r.Error != message {
+		// A stop already recorded as pending was reported when it was
+		// recorded; its explanation is in whichever language the Hub had.
+		if !r.Unsettled {
 			slog.Warn(fmt.Sprintf("steve: native stop pending task=%s attempt=%s node=%s: %v", r.TaskID, r.ID, r.Node, cause), "task", r.TaskID, "attempt", r.ID, "node", r.Node)
 		}
 		return nil
