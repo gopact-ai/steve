@@ -27,9 +27,13 @@ const (
 // A temporary failure — the process or system out of descriptors or
 // buffers, or a connection that failed or went away before it was
 // accepted — pauses and accepts again. The pause starts at 5ms, doubles
-// up to 1s, and starts over once a connection is accepted. The failure
-// is logged as a warning naming what, at most once a minute. ctx ending
+// up to 1s, and starts over once a connection is accepted. ctx ending
 // during a pause returns the failure paused on.
+//
+// Failures are logged as warnings naming what, at most one a minute.
+// Those that come sooner are counted, and the count goes out with the
+// next failure or accept once the minute is up. A run of failures that
+// was warned about ends with a line saying what accepts again.
 func Run(ctx context.Context, l net.Listener, what string, handle func(net.Conn)) error {
 	var pause time.Duration
 	w := warnings{what: what}
@@ -56,23 +60,65 @@ func Run(ctx context.Context, l net.Listener, what string, handle func(net.Conn)
 	}
 }
 
-// warnings logs the temporary failures of one accept loop.
+// warnings logs the temporary failures of one accept loop: at most one
+// warning every warnEvery, however failures and accepts alternate, and
+// one line ending each run of failures that had a warning. Failures not
+// logged are counted, and a later line carries the count, so a run is
+// never left out because it came soon after another.
 type warnings struct {
-	what   string
-	warned time.Time // when the last warning was logged
+	what     string
+	warned   time.Time // when the last warning was logged
+	unlogged int       // failures since the last line, none of them in it
+	last     error     // the latest of those failures
+	run      int       // failures since the last accept
+	told     bool      // whether the run has had a warning
 }
 
-// failed logs err, which the loop waits out for pause, unless a warning
-// was logged less than warnEvery before now.
+// failed logs err, which the loop waits out for pause, if the last
+// warning was warnEvery or more before now, and otherwise counts it.
 func (w *warnings) failed(now time.Time, err error, pause time.Duration) {
-	if w.warned.IsZero() || now.Sub(w.warned) >= warnEvery {
-		w.warned = now
-		slog.Warn(fmt.Sprintf("%s: accept: %v; accepting again in %v", w.what, err, pause))
+	w.run++
+	w.unlogged++
+	w.last = err
+	if !w.due(now) {
+		return
+	}
+	msg := fmt.Sprintf("%s: accept: %v; accepting again in %v", w.what, err, pause)
+	if earlier := w.unlogged - 1; earlier > 0 {
+		msg += fmt.Sprintf(" (%s before it not logged)", failures(earlier))
+	}
+	w.warn(now, msg)
+	w.told = true
+}
+
+// accepted ends a run of failures, logging its end if the run had a
+// warning, and logs failures still uncounted once a warning is due.
+func (w *warnings) accepted(now time.Time) {
+	if w.told {
+		slog.Info(fmt.Sprintf("%s: accepting again after %s", w.what, failures(w.run)))
+		w.unlogged = 0
+	}
+	w.run, w.told = 0, false
+	if w.unlogged > 0 && w.due(now) {
+		w.warn(now, fmt.Sprintf("%s: accept: %v; %s not logged, accepting again", w.what, w.last, failures(w.unlogged)))
 	}
 }
 
-// accepted notes a connection accepted at now; it logs nothing.
-func (w *warnings) accepted(now time.Time) {}
+func (w *warnings) due(now time.Time) bool {
+	return w.warned.IsZero() || now.Sub(w.warned) >= warnEvery
+}
+
+func (w *warnings) warn(now time.Time, msg string) {
+	slog.Warn(msg)
+	w.warned, w.unlogged, w.last = now, 0, nil
+}
+
+func failures(n int) string {
+	if n == 1 {
+		return "1 failure"
+	}
+	return fmt.Sprintf("%d failures", n)
+}
 
 // temporaries are the errors accept(2) returns for resources that free
 // up, and for a single connection that failed or went away before it was
