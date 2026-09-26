@@ -291,6 +291,11 @@ func (c *Client) Read(ctx context.Context, m Manifest, into io.Writer) (result M
 			continue
 		}
 		where, err := placement(ctx, c.cfg.Policy, scope, receipt.NodeID)
+		if errors.Is(err, ErrUnavailable) {
+			// A copy whose placement could not be checked is not missing.
+			failures = append(failures, fmt.Errorf("content replica %s: %w", receipt.NodeID, err))
+			continue
+		}
 		if err != nil || where.FailureDomain != receipt.FailureDomain {
 			continue
 		}
