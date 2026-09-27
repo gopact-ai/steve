@@ -87,6 +87,17 @@ func pauseAll(pauses ...*raftLoopPause) error {
 	return nil
 }
 
+// leaseOutlastingApplyTimeout gives a node a lease of twice ApplyTimeout.
+// Raft sends heartbeats every tenth to fifth of the heartbeat timeout, which
+// may not be shorter than the lease, so a leader whose followers fall silent
+// has heard from them within a fifth of its lease and keeps leading for at
+// least 1.6 ApplyTimeouts after that, longer than a wait bounded by one.
+func leaseOutlastingApplyTimeout(config *Config) {
+	config.RaftConfig.LeaderLeaseTimeout = 2 * config.ApplyTimeout
+	config.RaftConfig.HeartbeatTimeout = config.RaftConfig.LeaderLeaseTimeout
+	config.RaftConfig.ElectionTimeout = config.RaftConfig.LeaderLeaseTimeout
+}
+
 // otherVoter returns the voter of a two-voter cluster that is not the leader.
 func otherVoter(t *testing.T, c *testCluster, leader *Service) *Service {
 	t.Helper()
@@ -111,7 +122,8 @@ func otherVoter(t *testing.T, c *testCluster, leader *Service) *Service {
 // with ErrLeadershipLost, and the bound would go untested. The lease must
 // therefore outlast ApplyTimeout by itself, whatever the heartbeats did before
 // the pause: how promptly they get through depends on scheduling, and under
-// the race detector the gap between two of them reaches most of a 90ms lease.
+// the race detector the gap between two of them reaches most of the 90ms lease
+// other tests use.
 func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 	tests := []struct {
 		name string
@@ -120,7 +132,7 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 		run func(t *testing.T) (*Service, func(context.Context) error, string)
 	}{
 		{"vote-grant", func(t *testing.T) (*Service, func(context.Context) error, string) {
-			c := newTestCluster(t, 2)
+			c := newTunedTestCluster(t, 2, leaseOutlastingApplyTimeout)
 			leader, peer := joinNonvoter(t, c)
 			pauses := []*raftLoopPause{newRaftLoopPause(t, otherVoter(t, c, leader)), newRaftLoopPause(t, peer)}
 			// The progress probe after the final barrier is the last step
@@ -143,7 +155,7 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 			return leader, func(ctx context.Context) error { _, err := leader.SetVoting(ctx, request); return err }, "add voter new-node"
 		}},
 		{"join-voter", func(t *testing.T) (*Service, func(context.Context) error, string) {
-			c := newTestCluster(t, 2)
+			c := newTunedTestCluster(t, 2, leaseOutlastingApplyTimeout)
 			leader := c.leader()
 			peer := addUnjoinedTestReplica(t, c, "joining-domain")
 			pauses := []*raftLoopPause{newRaftLoopPause(t, otherVoter(t, c, leader)), newRaftLoopPause(t, peer)}
