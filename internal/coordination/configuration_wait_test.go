@@ -18,8 +18,10 @@ import (
 // raftLoopPause parks a node's Raft main loop inside an observer filter.
 // requestVote reports the request to observers before it does anything else,
 // so a marked RequestVote holds the loop until release. The transport answers
-// heartbeats outside the main loop, so a leader keeps contact with the paused
-// node, and keeps its lease, while the node acknowledges no appended entry.
+// heartbeats outside the main loop unless its heartbeat handler is cleared, so
+// pause clears it: heartbeats then wait behind the parked loop like every
+// other request, and the paused node acknowledges nothing, not even that it is
+// alive.
 type raftLoopPause struct {
 	node      *Service
 	marker    []byte
@@ -61,6 +63,7 @@ func (p *raftLoopPause) pause() error {
 	}()
 	select {
 	case <-p.entered:
+		p.node.transport.SetHeartbeatHandler(nil)
 		return nil
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("raft loop of %s did not pause", p.node.config.NodeID)
@@ -99,10 +102,16 @@ func otherVoter(t *testing.T, c *testCluster, leader *Service) *Service {
 // Every membership change waits for its configuration entry while holding
 // membershipMu (SetVoting also opMu). Each case pauses followers after the
 // call's last quorum write, so that neither the configuration before the
-// change nor the one after it has a quorum that acknowledges the entry, while
-// the leader keeps its lease. The call must end within ApplyTimeout instead of
-// holding the locks until the entry commits, and name the change it gave up
-// waiting for.
+// change nor the one after it has a quorum that acknowledges the entry. The
+// call must end within ApplyTimeout instead of holding the locks until the
+// entry commits, and name the change it gave up waiting for.
+//
+// The paused followers answer no heartbeat either, so the leader keeps leading
+// only until its lease runs out; a leader that stepped down would end the wait
+// with ErrLeadershipLost, and the bound would go untested. The lease must
+// therefore outlast ApplyTimeout by itself, whatever the heartbeats did before
+// the pause: how promptly they get through depends on scheduling, and under
+// the race detector the gap between two of them reaches most of a 90ms lease.
 func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 	tests := []struct {
 		name string
