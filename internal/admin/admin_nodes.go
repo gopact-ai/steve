@@ -66,7 +66,7 @@ func (a *Service) setNodeSettingsLocked(ctx context.Context, name string, set no
 
 	for _, d := range set.Declares {
 		if !strings.Contains(d, ":") {
-			return nodewire.Settings{}, fmt.Errorf(textFor(ctx).T(i18n.AdminDeclarationForm), d)
+			return nodewire.Settings{}, textFor(ctx).Errorf(i18n.AdminDeclarationForm, d)
 		}
 	}
 	var previous map[string]config.Harness
@@ -76,11 +76,11 @@ func (a *Service) setNodeSettingsLocked(ctx context.Context, name string, set no
 		for id, ag := range c.Agents {
 			if ag.Node == "" {
 				if _, ok := harnesses[ag.Harness]; !ok {
-					return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentUsesHarness), id, ag.Harness)
+					return textFor(ctx).Errorf(i18n.AdminAgentUsesHarness, id, ag.Harness)
 				}
 				for _, srv := range ag.MCPServers {
 					if _, ok := servers[srv]; !ok {
-						return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentUsesMCPServer), id, srv)
+						return textFor(ctx).Errorf(i18n.AdminAgentUsesMCPServer, id, srv)
 					}
 				}
 			}
@@ -133,16 +133,16 @@ func (a *Service) hubHarnessSettings(text i18n.Catalog, settings map[string]node
 	harnesses := make(map[string]config.Harness, len(settings))
 	for id, h := range settings {
 		if !NameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
-			return nil, fmt.Errorf(text.T(i18n.AdminHarnessInvalid), id)
+			return nil, text.Errorf(i18n.AdminHarnessInvalid, id)
 		}
 		a.ConfigStore.rlock()
 		item := a.cfg().Harnesses[id]
 		a.ConfigStore.runlock()
 		if h.Adapter != nil && *h.Adapter != item.Adapter {
-			return nil, fmt.Errorf(text.T(i18n.AdminHarnessAdapterRestart), id)
+			return nil, text.Errorf(i18n.AdminHarnessAdapterRestart, id)
 		}
 		if item.Adapter != "" && h.Command != item.Command {
-			return nil, fmt.Errorf(text.T(i18n.AdminHarnessFixedAdapter), id)
+			return nil, text.Errorf(i18n.AdminHarnessFixedAdapter, id)
 		}
 		item.Command, item.Args, item.ProcessDir = h.Command, h.Args, h.ProcessDir
 		if h.Env != nil {
@@ -182,20 +182,20 @@ func (a *Service) hubMCPSettings(text i18n.Catalog, settings map[string]nodewire
 			m.Headers = old.Headers
 		}
 		if !NameShape.MatchString(strings.ToLower(id)) {
-			return nil, fmt.Errorf(text.T(i18n.AdminMCPServerNameInvalid), id)
+			return nil, text.Errorf(i18n.AdminMCPServerNameInvalid, id)
 		}
 		switch m.Type {
 		case "", "stdio":
 			if strings.TrimSpace(m.Command) == "" {
-				return nil, fmt.Errorf(text.T(i18n.AdminMCPServerNeedsCommand), id)
+				return nil, text.Errorf(i18n.AdminMCPServerNeedsCommand, id)
 			}
 			m.Type = "stdio"
 		case "http", "sse":
 			if !strings.HasPrefix(m.URL, "http://") && !strings.HasPrefix(m.URL, "https://") {
-				return nil, fmt.Errorf(text.T(i18n.AdminMCPServerNeedsURL), id)
+				return nil, text.Errorf(i18n.AdminMCPServerNeedsURL, id)
 			}
 		default:
-			return nil, fmt.Errorf(text.T(i18n.AdminMCPServerUnknownType), id, m.Type)
+			return nil, text.Errorf(i18n.AdminMCPServerUnknownType, id, m.Type)
 		}
 		servers[id] = config.MCPServer{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
 	}
@@ -240,10 +240,10 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	var binary string
 	saveErr := a.updateConfig(ctx, func(c *config.Config) error {
 		if _, exists := c.Nodes[name]; exists {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeExists), name)
+			return textFor(ctx).Errorf(i18n.AdminNodeExists, name)
 		}
 		if name == a.NodeName {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeIsHub), name)
+			return textFor(ctx).Errorf(i18n.AdminNodeIsHub, name)
 		}
 		if c.Nodes == nil {
 			c.Nodes = map[string]config.Node{}
@@ -321,7 +321,7 @@ func (a *Service) AdmitWorker(ctx context.Context, nodeID string, worker node.Co
 func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || name == a.NodeName || name == "hub" {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminHubNotRemovable), name)
+		return textFor(ctx).Errorf(i18n.AdminHubNotRemovable, name)
 	}
 	// Placement checks and removal share the same administration boundary as
 	// agent/project updates; no new owner can arrive between check and delete.
@@ -330,14 +330,14 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	if a.Catalog != nil {
 		for _, ag := range a.Catalog.List() {
 			if ag.Node == name {
-				return fmt.Errorf(textFor(ctx).T(i18n.AdminAgentStillOnNode), ag.ID, name)
+				return textFor(ctx).Errorf(i18n.AdminAgentStillOnNode, ag.ID, name)
 			}
 		}
 	}
 	if a.Projects != nil {
 		list, err := a.Projects.List(ctx)
 		if err != nil {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeProjectCheckFailed), name, err)
+			return textFor(ctx).Errorf(i18n.AdminNodeProjectCheckFailed, name, err)
 		}
 		for _, p := range list {
 			for _, ws := range p.Workspaces() {
@@ -355,14 +355,14 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	_, inConfig := a.cfg().Nodes[name]
 	a.ConfigStore.runlock()
 	if !inConfig {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminNoNode), name)
+		return textFor(ctx).Errorf(i18n.AdminNoNode, name)
 	}
 	// Leaving the cluster can take a consensus round; readers of the
 	// configuration need not wait for it, the administration lock already
 	// keeps the machine from gaining new occupants meanwhile.
 	if a.Members != nil {
 		if err := a.Members.RemoveMember(ctx, name); err != nil {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNodeNotLeft), name, err)
+			return textFor(ctx).Errorf(i18n.AdminNodeNotLeft, name, err)
 		}
 	}
 	var levels map[string]datalevel.Level

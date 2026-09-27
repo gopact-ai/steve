@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,7 +128,7 @@ func (a *Service) SkillContent(ctx context.Context, name string) (consoleapi.Ski
 			return consoleapi.SkillDoc{Name: ref.Name, Path: ref.Path, Content: content}, nil
 		}
 	}
-	return consoleapi.SkillDoc{}, fmt.Errorf(textFor(ctx).T(i18n.AdminNoSkill), name)
+	return consoleapi.SkillDoc{}, textFor(ctx).Errorf(i18n.AdminNoSkill, name)
 }
 
 // MachineSkills is what every machine last said its AI tools have of
@@ -203,18 +202,18 @@ func (a *Service) ImportSkill(ctx context.Context, nodeName, path string) (strin
 	}
 	path = strings.TrimSpace(path)
 	if path == "" || !strings.HasPrefix(path, "/") {
-		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminDirNotAbsolute), path)
+		return "", textFor(ctx).Errorf(i18n.AdminDirNotAbsolute, path)
 	}
 	name := filepath.Base(path)
 	dest := filepath.Join(a.LiveSkills.Map.UserDir(), name)
 	if _, err := os.Lstat(dest); err == nil {
-		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminHubSkillExists), name, dest)
+		return "", textFor(ctx).Errorf(i18n.AdminHubSkillExists, name, dest)
 	}
 	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	encoded, err := a.Nodes.Files(sctx, a.nodeKey(nodeName), nodewire.FileRequest{Op: nodewire.FileImportSkill, Path: path})
 	if err != nil {
-		return "", fmt.Errorf(textFor(ctx).T(i18n.AdminSkillFetchFailed), a.place(a.nodeKey(nodeName)), path, text.Clip(strings.TrimSpace(err.Error()), 200))
+		return "", textFor(ctx).Errorf(i18n.AdminSkillFetchFailed, a.place(a.nodeKey(nodeName)), path, text.Clip(strings.TrimSpace(err.Error()), 200))
 	}
 	if err := skills.UnpackImport(encoded, dest); err != nil {
 		return "", err
@@ -271,7 +270,7 @@ func (a *Service) withSkillsLock(text i18n.Catalog, op func() error) error {
 	if a.Coordinator != nil {
 		release, ok := a.Coordinator.SkillsLock()
 		if !ok {
-			return fmt.Errorf(text.T(i18n.AdminSkillsTurnRunning), consoleapi.ErrBusy)
+			return text.Errorf(i18n.AdminSkillsTurnRunning, consoleapi.ErrBusy)
 		}
 		defer release()
 	}
@@ -305,7 +304,7 @@ func (a *Service) AddSkillPath(ctx context.Context, path string) error {
 		}
 	}
 	if info, err := os.Stat(path); err != nil || !info.IsDir() {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminHubDirMissing), path)
+		return textFor(ctx).Errorf(i18n.AdminHubDirMissing, path)
 	}
 	return a.LiveSkills.AddPath(path)
 }

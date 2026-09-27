@@ -31,8 +31,16 @@ func TestPeerEnrollmentReviewChangesFailBeforeIssuingIdentity(t *testing.T) {
 	request = plan.Request
 	request.ExpectedPlanHash = plan.ReviewID
 	request.Level = "sealed"
-	if _, err := peer.PrepareEnrollment(t.Context(), request, "changed-plan", true); !errors.Is(err, coordination.ErrConflict) {
-		t.Fatalf("unreviewed plan change accepted: %v", err)
+	// The refusal wraps ErrConflict in every language, and its sentence
+	// has nothing left unformatted.
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		_, err := peer.PrepareEnrollment(i18n.WithLocale(t.Context(), locale), request, "changed-plan", true)
+		if !errors.Is(err, coordination.ErrConflict) {
+			t.Fatalf("%s: unreviewed plan change accepted: %v", locale, err)
+		}
+		if strings.Contains(err.Error(), "%!") || !strings.HasPrefix(err.Error(), coordination.ErrConflict.Error()+": ") {
+			t.Errorf("%s: refused with %q, want ErrConflict's text followed by the reason", locale, err)
+		}
 	}
 	if _, err := peer.loadEnrollment("changed-plan"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("unreviewed change created a node identity")

@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -40,7 +39,7 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 		return err
 	}
 	if !ok {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
+		return textFor(ctx).Errorf(i18n.AdminNoProject, projectID)
 	}
 	if _, err := p.Place(nodeKey); err == nil {
 		return nil
@@ -50,7 +49,7 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 		case project.CopyProvisioning:
 			return a.awaitCopy(ctx, projectID, nodeKey)
 		case project.CopyFailed:
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminCopyNotBuilt), a.name(nodeKey), existing.Error)
+			return textFor(ctx).Errorf(i18n.AdminCopyNotBuilt, a.name(nodeKey), existing.Error)
 		}
 	}
 	origin := "adopt"
@@ -84,11 +83,11 @@ func (a *Service) EnsureProjectWorkspace(ctx context.Context, projectID, nodeKey
 // a clone needs. A machine that cannot answer is not guessed about.
 func (a *Service) missingDir(ctx context.Context, nodeKey, path string) (bool, error) {
 	if nodeKey != "" && a.Nodes == nil {
-		return false, fmt.Errorf(textFor(ctx).T(i18n.AdminCannotBrowseYet), a.name(nodeKey))
+		return false, textFor(ctx).Errorf(i18n.AdminCannotBrowseYet, a.name(nodeKey))
 	}
 	found, err := a.inspect(ctx, nodeKey, path)
 	if err != nil {
-		return false, fmt.Errorf(textFor(ctx).T(i18n.AdminCheckPathFailed), a.name(nodeKey), path, err)
+		return false, textFor(ctx).Errorf(i18n.AdminCheckPathFailed, a.name(nodeKey), path, err)
 	}
 	return len(found) == 1 && found[0].Missing, nil
 }
@@ -104,16 +103,16 @@ func (a *Service) awaitCopy(ctx context.Context, projectID, nodeKey string) erro
 			return err
 		}
 		if !ok {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
+			return textFor(ctx).Errorf(i18n.AdminNoProject, projectID)
 		}
 		made, found := p.CopyOn(nodeKey)
 		switch {
 		case !found:
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminCopyGone), a.name(nodeKey))
+			return textFor(ctx).Errorf(i18n.AdminCopyGone, a.name(nodeKey))
 		case made.State == project.CopyReady:
 			return nil
 		case made.State == project.CopyFailed:
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminCopyNotBuilt), a.name(nodeKey), made.Error)
+			return textFor(ctx).Errorf(i18n.AdminCopyNotBuilt, a.name(nodeKey), made.Error)
 		}
 		if time.Now().After(deadline) {
 			return saidError{textFor(ctx).T(i18n.AdminCopyInProgress, projectID, a.name(nodeKey)), ErrWorkspacePreparing}

@@ -51,8 +51,8 @@ func (a *Service) SSHCommit(ctx context.Context, id string) (sshconnect.InstallR
 	return a.sshService().Commit(ctx, id)
 }
 
-func (a *Service) SSHStatus(_ context.Context, id string) (sshconnect.InstallResult, error) {
-	return a.sshService().Status(id)
+func (a *Service) SSHStatus(ctx context.Context, id string) (sshconnect.InstallResult, error) {
+	return a.sshService().Status(ctx, id)
 }
 
 func (a *Service) SSHAbandon(ctx context.Context, id string) error {
@@ -120,7 +120,7 @@ func (b sshNodeBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		OS:       metadata.OS, Arch: metadata.Arch, SHA256: metadata.SHA256}
 	script, err := nodebootstrap.Build(spec)
 	if err != nil {
-		return template, nodebootstrap.Spec{}, fmt.Errorf(textFor(ctx).T(i18n.AdminSSHScriptFailed), err)
+		return template, nodebootstrap.Spec{}, textFor(ctx).Errorf(i18n.AdminSSHScriptFailed, err)
 	}
 	template.Script = script
 	template.Steps = append(template.Steps, sshconnect.Step{ID: "node_address", Status: "ready", Message: textFor(ctx).T(i18n.AdminSSHNodeAddress, req.Addr), Suggestion: textFor(ctx).T(i18n.AdminSSHNodeAddressFix)})
@@ -171,6 +171,6 @@ func (a *Service) SSHUpgrade(ctx context.Context, nodeID string) (sshconnect.Ins
 	return a.sshService().Upgrade(ctx, nodeID)
 }
 
-func (a *Service) SSHUpgradeStatus(_ context.Context, nodeID string) (sshconnect.InstallResult, error) {
-	return a.sshService().UpgradeStatus(nodeID)
+func (a *Service) SSHUpgradeStatus(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return a.sshService().UpgradeStatus(ctx, nodeID)
 }

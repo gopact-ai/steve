@@ -94,7 +94,7 @@ func (a *Service) holdChangedWorkspaces(ctx context.Context, desired []project.P
 				release()
 				var busy attempt.Busy
 				if errors.As(err, &busy) {
-					return nil, fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceTurnRunning), consoleapi.ErrBusy, busy.Holder)
+					return nil, textFor(ctx).Errorf(i18n.AdminWorkspaceTurnRunning, consoleapi.ErrBusy, busy.Holder)
 				}
 				return nil, err
 			}
@@ -110,7 +110,7 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 		return errors.New(textFor(ctx).T(i18n.AdminProjectNameInvalid))
 	}
 	if id == HomeProjectID {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectIsHome), id)
+		return textFor(ctx).Errorf(i18n.AdminProjectIsHome, id)
 	}
 	nodeKey := a.nodeKey(req.Node)
 	if !a.localMachine(nodeKey) {
@@ -138,7 +138,7 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 			if reflect.DeepEqual(old, item) {
 				return nil
 			}
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectExists), id)
+			return textFor(ctx).Errorf(i18n.AdminProjectExists, id)
 		}
 		candidate.Projects[id] = item
 		return nil
@@ -165,10 +165,10 @@ func (a *Service) SetProjectHome(ctx context.Context, projectID, dir string) err
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
 		if !exists {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
+			return textFor(ctx).Errorf(i18n.AdminNoProject, projectID)
 		}
 		if !candidate.LocalHomeNode(item.Home.Node) {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectHomeElsewhere), projectID, item.Home.Node)
+			return textFor(ctx).Errorf(i18n.AdminProjectHomeElsewhere, projectID, item.Home.Node)
 		}
 		if item.Home.Path == path {
 			return nil
@@ -206,7 +206,7 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 	} else if origin == "clone" {
 		origin = string(project.OriginCloned)
 	} else {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceSourceUnknown), origin)
+		return textFor(ctx).Errorf(i18n.AdminWorkspaceSourceUnknown, origin)
 	}
 	if origin == string(project.OriginAdopted) {
 		if err := a.makeProjectDir(ctx, nodeKey, path); err != nil {
@@ -216,14 +216,14 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
 		if !exists {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
+			return textFor(ctx).Errorf(i18n.AdminNoProject, projectID)
 		}
 		for _, ws := range item.Workspaces {
 			if ws.Node == nodeKey {
 				if ws.Path == path && (ws.Origin == origin || (ws.Origin == "" && origin == string(project.OriginAdopted))) {
 					return nil
 				}
-				return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectCopyExists), projectID, nodeKey)
+				return textFor(ctx).Errorf(i18n.AdminProjectCopyExists, projectID, nodeKey)
 			}
 		}
 		ws := config.ProjectWorkspace{Node: nodeKey, Path: path, Origin: origin}
@@ -233,18 +233,18 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 				return err
 			}
 			if !ok {
-				return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
+				return textFor(ctx).Errorf(i18n.AdminNoProject, projectID)
 			}
 			ws.Source = a.cloneSource(p)
 			if ws.Source == "" {
-				return fmt.Errorf(textFor(ctx).T(i18n.AdminProjectNoCloneSource), projectID)
+				return textFor(ctx).Errorf(i18n.AdminProjectNoCloneSource, projectID)
 			}
 			found, err := a.inspect(ctx, nodeKey, path)
 			if err != nil {
-				return fmt.Errorf(textFor(ctx).T(i18n.AdminWorkspaceCheckFailed), err)
+				return textFor(ctx).Errorf(i18n.AdminWorkspaceCheckFailed, err)
 			}
 			if missing := len(found) == 1 && found[0].Missing; !missing {
-				return fmt.Errorf(textFor(ctx).T(i18n.AdminCloneTargetExists), a.name(nodeKey), path)
+				return textFor(ctx).Errorf(i18n.AdminCloneTargetExists, a.name(nodeKey), path)
 			}
 		}
 		item.Workspaces = append(item.Workspaces, ws)
@@ -258,7 +258,7 @@ func (a *Service) RemoveWorkspace(ctx context.Context, projectID, nodeName strin
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
 		if !exists {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminNoProject), projectID)
+			return textFor(ctx).Errorf(i18n.AdminNoProject, projectID)
 		}
 		for i, ws := range item.Workspaces {
 			if ws.Node == nodeKey {
@@ -277,22 +277,22 @@ func (a *Service) RemoveWorkspace(ctx context.Context, projectID, nodeName strin
 // nobody can open. The directory on disk is not touched.
 func (a *Service) RemoveProject(ctx context.Context, id string) error {
 	if id == HomeProjectID {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminHomeNotRemovable), id)
+		return textFor(ctx).Errorf(i18n.AdminHomeNotRemovable, id)
 	}
 	a.ConfigStore.rlock()
 	isDefault := id == a.cfg().Gateway.DefaultProject
 	a.ConfigStore.runlock()
 	if isDefault {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminDefaultProjectKept), id)
+		return textFor(ctx).Errorf(i18n.AdminDefaultProjectKept, id)
 	}
 	for _, conversation := range a.conversationsOf(ctx, id) {
 		if err := a.DeleteConversation(ctx, conversation); err != nil {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminDeleteProjectConversationFailed), id, conversation, err)
+			return textFor(ctx).Errorf(i18n.AdminDeleteProjectConversationFailed, id, conversation, err)
 		}
 	}
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		if id == candidate.Gateway.DefaultProject {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminDefaultProjectKept), id)
+			return textFor(ctx).Errorf(i18n.AdminDefaultProjectKept, id)
 		}
 		delete(candidate.Projects, id)
 		return nil
