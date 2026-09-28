@@ -108,9 +108,10 @@ func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 // A peer asked to collect checks the caller against a read of its own, and
 // each ledger write here is fenced by a read of its own.
 //
-// Collecting on this node reads afresh. It collects only once this replica
-// holds everything committed when it reads, and what was committed after
-// the round's read — this round's releases among it — is part of that.
+// Collecting on this node reads afresh, and checks this generation against
+// that read before it collects. It collects only once this replica holds
+// everything committed when it reads, and what was committed after the
+// round's read — this round's releases among it — is part of that.
 func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult, error) {
 	ctx = withContentReads(ctx)
 	state, err := contentGenerationState(ctx, w.active)
@@ -137,7 +138,7 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		itemCtx, cancel := context.WithTimeout(ctx, contentMaintenanceTimeout)
 		var result checkpoint.RetentionGCResult
 		if node == w.peer.Config.NodeID {
-			result, err = w.peer.collectContent(withContentReads(itemCtx))
+			result, err = w.collectHere(itemCtx)
 		} else {
 			result, err = transport.collect(itemCtx, node)
 		}
@@ -158,6 +159,19 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		}
 	}
 	return total, errors.Join(failures...)
+}
+
+// collectHere collects on this node under a read of its own, read as
+// collecting reads it, once that read still has this generation writing.
+func (w *contentRepairWorker) collectHere(ctx context.Context) (checkpoint.RetentionGCResult, error) {
+	ctx = withContentReads(ctx)
+	if _, err := w.peer.committedState(ctx, w.active.Runtime); err != nil {
+		return checkpoint.RetentionGCResult{}, err
+	}
+	if _, err := contentGenerationState(ctx, w.active); err != nil {
+		return checkpoint.RetentionGCResult{}, err
+	}
+	return w.peer.collectContent(ctx)
 }
 
 func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
