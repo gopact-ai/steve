@@ -102,7 +102,17 @@ func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, result)
 }
 
+// maintain is one maintenance round. As in a repair round (see sweep), its
+// checks judge by one read of the committed state, taken when it starts:
+// which nodes to ask, and whether this generation still writes before each.
+// A peer asked to collect checks the caller against a read of its own, and
+// each ledger write here is fenced by a read of its own.
+//
+// Collecting on this node reads afresh. It collects only once this replica
+// holds everything committed when it reads, and what was committed after
+// the round's read — this round's releases among it — is part of that.
 func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult, error) {
+	ctx = withContentReads(ctx)
 	state, err := contentGenerationState(ctx, w.active)
 	if err != nil {
 		return checkpoint.GCResult{}, err
@@ -127,7 +137,7 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		itemCtx, cancel := context.WithTimeout(ctx, contentMaintenanceTimeout)
 		var result checkpoint.RetentionGCResult
 		if node == w.peer.Config.NodeID {
-			result, err = w.peer.collectContent(itemCtx)
+			result, err = w.peer.collectContent(withContentReads(itemCtx))
 		} else {
 			result, err = transport.collect(itemCtx, node)
 		}
