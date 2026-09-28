@@ -536,6 +536,23 @@ if (process.env.PURE_ONLY !== "1") {
         const readsAfter = channelReads;
         await page.waitForTimeout(2_500);
         assert.equal(channelReads, readsAfter, "a connected channel is still being polled");
+        // A started channel whose connection was lost is shown as reconnecting,
+        // followed without a reload until the connection is back.
+        channels.reconnect = { since: new Date().toISOString(), attempts: 0 };
+        await page.getByRole("button", { name: "Reload", exact: true }).click();
+        await page.getByRole("button", { name: "Discard draft and reload", exact: true }).click();
+        const reconnecting = page.getByRole("status").filter({ hasText: "reconnecting on its own" });
+        await reconnecting.filter({ hasText: "Failed attempts: 0." }).waitFor();
+        assert.equal(await reconnecting.getByText("Error details", { exact: true }).count(), 0);
+        channels.reconnect = { ...channels.reconnect, attempts: 2, last_error: "503: system busy" };
+        await reconnecting.filter({ hasText: "Failed attempts: 2." }).waitFor({ timeout: 15_000 });
+        await reconnecting.getByText("Error details", { exact: true }).click();
+        await reconnecting.getByText("503: system busy", { exact: true }).waitFor();
+        delete channels.reconnect;
+        await reconnecting.waitFor({ state: "detached", timeout: 15_000 });
+        const readsConnected = channelReads;
+        await page.waitForTimeout(6_000);
+        assert.equal(channelReads, readsConnected, "a reconnected channel is still being polled");
         assert.deepEqual(errors, []); assert.deepEqual(external, []);
         console.log("PASS settings center browser: drafts/CAS, next-operation/task modes, zero budgets, landing schema, mixed/restart channel capabilities, restart receipts, English and narrow layout");
         await context.close();
