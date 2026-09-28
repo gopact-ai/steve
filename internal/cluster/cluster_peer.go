@@ -50,6 +50,12 @@ const clusterApplicationPath = "/cluster/application"
 // coordinator: the writer generation, applied index and application
 // version the read saw. The coordinator's epoch travels in
 // X-Steve-Coordinator-Epoch.
+//
+// Only a peer holding the owner token reaches the coordinator's
+// application, and the coordinator takes the read such a peer says it
+// made instead of reading for itself. The read is still used only if it
+// names the coordinator's current assignment and writer generation, and
+// the request waits for this replica to apply up to it.
 const coordinatorReadHeader = "X-Steve-Coordinator-Read"
 
 const clusterWorkerPath = "/cluster/worker"
