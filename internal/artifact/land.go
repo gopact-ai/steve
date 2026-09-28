@@ -124,6 +124,14 @@ func (c Conflict) Error() string {
 	return fmt.Sprintf("landing %s: %s", c.State, strings.Join(c.Paths, ", "))
 }
 
+// recoveryCause marks the error of a landing that recovery ended on an
+// apply conflict.
+const recoveryCause = "recovery: "
+
+// ConflictReason is why a landing stopped at an apply conflict, as its
+// queue record keeps it: without the mark recovery puts on its error.
+func (l Landing) ConflictReason() string { return strings.TrimPrefix(l.Error, recoveryCause) }
+
 // ErrRecoveryPending refuses a new landing while an earlier one on the
 // same project is still waiting to be recovered: the canonical workspace
 // is half written, and a snapshot of it is nothing to merge onto.
@@ -587,7 +595,7 @@ func (s *Store) recoverFailedApply(ctx context.Context, p project.Project, land 
 		return fmt.Errorf("%w: landing %s: apply failed (%v) and recovering it failed: %v", ErrRecoveryPending, land.ID, applyErr, err)
 	}
 	if land.State != LandCommitted {
-		return Conflict{State: land.State, Paths: land.Paths, Reason: strings.TrimPrefix(land.Error, "recovery: ")}
+		return Conflict{State: land.State, Paths: land.Paths, Reason: land.ConflictReason()}
 	}
 	return nil
 }

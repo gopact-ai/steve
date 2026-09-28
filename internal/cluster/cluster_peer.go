@@ -44,6 +44,22 @@ import (
 
 const clusterApplicationPath = "/cluster/application"
 
+// coordinatorReadHeader carries, on a console request a member forwards to
+// the coordinator's application, the read of the committed state through
+// the leader that the member made for the request and that names the
+// coordinator: the writer generation, applied index and application
+// version the read saw. The coordinator's epoch travels in
+// X-Steve-Coordinator-Epoch.
+//
+// Only a peer holding the owner token reaches the coordinator's
+// application, and the coordinator takes the read such a peer says it
+// made instead of reading for itself. The read is still used only if it
+// names the coordinator's current assignment and writer generation, and
+// the request waits for this replica to apply up to it. A request that
+// carries the header empty, more than once or in a form the coordinator
+// cannot parse is refused.
+const coordinatorReadHeader = "X-Steve-Coordinator-Read"
+
 const clusterWorkerPath = "/cluster/worker"
 
 const clusterContentPath = "/cluster/content"
@@ -572,6 +588,10 @@ func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "coordination is starting", http.StatusServiceUnavailable)
 		return
 	}
+	// This read finds the coordinator for r. The coordinator's application
+	// answers r once the coordinator has applied what the read saw, whether
+	// it is this node or r is forwarded to it with the read: a request reads
+	// the committed state once.
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	state, err := runtime.ReadState(ctx)
 	cancel()
@@ -593,7 +613,7 @@ func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, err)
 		return
 	}
-	p.proxy(w, r, origin, clusterApplicationPath, p.OwnerToken, state.Coordinator.Epoch, transport)
+	p.proxy(w, r, origin, clusterApplicationPath, p.OwnerToken, state.Coordinator.Epoch, &state, transport)
 }
 
 func (p *Peer) servePeerApplication(w http.ResponseWriter, r *http.Request) {
@@ -615,17 +635,52 @@ func (p *Peer) servePeerApplication(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "coordinator epoch is required", http.StatusBadRequest)
 		return
 	}
+	var read *coordination.State
+	if values := r.Header.Values(coordinatorReadHeader); len(values) > 0 {
+		state, err := parseCoordinatorRead(values[0], p.Config.NodeID, epoch)
+		if err != nil || len(values) > 1 {
+			http.Error(w, "invalid coordinator read", http.StatusBadRequest)
+			return
+		}
+		read = &state
+	}
 	request := r.Clone(r.Context())
 	request.URL.Path = strings.TrimPrefix(request.URL.Path, clusterApplicationPath)
 	request.URL.RawPath = ""
-	p.proxyLocalApplication(w, request, epoch, nil)
+	p.proxyLocalApplication(w, request, epoch, read)
+}
+
+// formatCoordinatorRead is the value of coordinatorReadHeader for state.
+func formatCoordinatorRead(state coordination.State) string {
+	return fmt.Sprintf("writer=%d index=%d version=%d", state.WriterGeneration, state.AppliedIndex, state.AppVersion)
+}
+
+// parseCoordinatorRead is the read a value of coordinatorReadHeader
+// carries. It names node, which the forwarded request reached, the
+// coordinator at epoch.
+func parseCoordinatorRead(value, node string, epoch uint64) (coordination.State, error) {
+	fields := strings.Fields(value)
+	names := [...]string{"writer", "index", "version"}
+	if len(fields) != len(names) {
+		return coordination.State{}, fmt.Errorf("%w: coordinator read %q", coordination.ErrInvalid, value)
+	}
+	var numbers [len(names)]uint64
+	for i, field := range fields {
+		number, ok := strings.CutPrefix(field, names[i]+"=")
+		parsed, err := strconv.ParseUint(number, 10, 64)
+		if !ok || err != nil {
+			return coordination.State{}, fmt.Errorf("%w: coordinator read %q", coordination.ErrInvalid, value)
+		}
+		numbers[i] = parsed
+	}
+	return coordination.State{Coordinator: coordination.Assignment{NodeID: node, Epoch: epoch}, WriterGeneration: numbers[0], AppliedIndex: numbers[1], AppVersion: numbers[2]}, nil
 }
 
 // proxyLocalApplication hands r to this node's application once a read of
 // the committed state through the leader, made after r arrived, confirms
 // the business generation serving it. read, if set, is such a read, made
-// for r already; without it the generation is confirmed by a read of its
-// own.
+// for r already, here or by the member that forwarded r after r arrived
+// there; without it the generation is confirmed by a read of its own.
 func (p *Peer) proxyLocalApplication(w http.ResponseWriter, r *http.Request, epoch uint64, read *coordination.State) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {
@@ -660,10 +715,13 @@ func (p *Peer) proxyLocalApplication(w http.ResponseWriter, r *http.Request, epo
 		return
 	}
 	origin, _ := url.Parse(target.URL)
-	p.proxy(w, r, origin, "", target.Token, epoch, p.localTransport)
+	p.proxy(w, r, origin, "", target.Token, epoch, nil, p.localTransport)
 }
 
-func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, prefix, token string, epoch uint64, transport http.RoundTripper) {
+// proxy forwards r to origin. read, if set, is the read of the committed
+// state that found origin the coordinator, which the coordinator takes as
+// its own; see coordinatorReadHeader.
+func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, prefix, token string, epoch uint64, read *coordination.State, transport http.RoundTripper) {
 	// The application may answer before the forwarded request body is fully
 	// copied. Without full duplex, starting the answer makes this server take
 	// the rest of the inbound body for itself and close it, and the transport
@@ -687,6 +745,10 @@ func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, pr
 		request.Out.Header.Del("Origin")
 		request.Out.Header.Set("Authorization", "Bearer "+token)
 		request.Out.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(epoch, 10))
+		request.Out.Header.Del(coordinatorReadHeader)
+		if read != nil {
+			request.Out.Header.Set(coordinatorReadHeader, formatCoordinatorRead(*read))
+		}
 		askIn(request.In.Context(), request.Out.Header)
 	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
 		http.Error(w, p.text.For(r.Context()).T(i18n.ClusterCoordinatorUnavailable), http.StatusServiceUnavailable)

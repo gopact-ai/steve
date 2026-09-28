@@ -227,7 +227,9 @@ func (s *Store) replaceRecordsLocked(ctx context.Context, next *draft, guard fun
 	changed := len(changes) > 0 || next.NextID != s.data.NextID
 	if !changed && guard == nil {
 		// Nothing to persist and nothing to check: skip the write transaction
-		// so an idle pass does not reach the ledger at all.
+		// so an idle pass does not reach the ledger at all. A no-op therefore
+		// no longer probes the ledger revision or its writer; a stale store
+		// is found by its next real write, as SetMeta's no-op always was.
 		s.installLocked(next, changes)
 		return nil
 	}

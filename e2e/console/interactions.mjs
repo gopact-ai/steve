@@ -734,7 +734,11 @@ const checks = {
     },
 };
 
+// Below 640px it measures once ".app-mobile-bar" is there: until the
+// breakpoint change renders, the document still holds the desktop tree,
+// clipped to the narrow window.
 async function noHorizontalOverflow(page) {
+    if (await page.evaluate(() => innerWidth < 640)) await page.locator(".app-mobile-bar").waitFor({ state: "attached" });
     const size = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
     assert.ok(size.document <= size.viewport + 1, `Document overflows horizontally: ${JSON.stringify(size)}`);
 }

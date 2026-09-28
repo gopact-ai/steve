@@ -18,7 +18,7 @@ func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		result, err := s.admin.NodeAgents(r.Context(), r.PathValue("name"))
 		if err != nil {
-			writeDesktopError(w, err, http.StatusServiceUnavailable)
+			writeDesktopError(w, r, err, http.StatusServiceUnavailable)
 			return
 		}
 		writeJSON(w, result)
@@ -34,7 +34,7 @@ func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, result)
 			return
 		}
-		writeDesktopError(w, err, http.StatusBadRequest)
+		writeDesktopError(w, r, err, http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, result)

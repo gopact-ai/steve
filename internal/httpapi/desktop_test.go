@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 type desktopFixture struct {
@@ -73,6 +74,9 @@ func (d *desktopFixture) DesktopWorkspace(ctx context.Context, r consoleapi.Desk
 	if r.Path == "/etc" {
 		return consoleapi.DesktopStatus{}, &desktop.InputError{Message: "/etc 属于系统目录"}
 	}
+	if r.Path == "/far" {
+		return consoleapi.DesktopStatus{}, desktop.CheckWorkspaceProject("default", false, "far")
+	}
 	if r.Path == "/broken" {
 		return consoleapi.DesktopStatus{}, errors.New("创建工作目录失败：disk full")
 	}
@@ -114,5 +118,22 @@ func TestDesktopSetupProgressAndWorkspaceAcceptOnlyTheirShapes(t *testing.T) {
 	(&Server{}).consoleDesktopWorkspace(w, httptest.NewRequest(http.MethodPut, "/console/desktop/workspace", strings.NewReader(`{"path":"~/Steve"}`)))
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("without a desktop service = %d", w.Code)
+	}
+}
+
+// A workspace the owner cannot use is refused in the language of the
+// request that asked for it.
+func TestDesktopWorkspaceRefusalIsInTheRequestLanguage(t *testing.T) {
+	s := &Server{desktop: &desktopFixture{}}
+	for _, tc := range []struct {
+		locale i18n.Locale
+		want   string
+	}{{i18n.LocaleEN, "another machine"}, {i18n.LocaleZH, "另一台机器"}} {
+		r := httptest.NewRequest(http.MethodPut, "/console/desktop/workspace", strings.NewReader(`{"path":"/far"}`))
+		w := httptest.NewRecorder()
+		s.consoleDesktopWorkspace(w, r.WithContext(i18n.WithLocale(r.Context(), tc.locale)))
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), tc.want) {
+			t.Fatalf("%s refusal = %d %s", tc.locale, w.Code, w.Body.String())
+		}
 	}
 }

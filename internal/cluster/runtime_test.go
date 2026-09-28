@@ -1435,10 +1435,10 @@ func ready(t *testing.T, r *Runtime) Activation {
 // A quorum read from a member that does not lead is a request to the
 // leader, over what may be a slow link, for the whole cluster state. Once
 // the business generation is ready and nothing changes, the log stops
-// growing and no member asks the leader for the state. A quorum read
+// growing and neither runtime reads the committed state. A quorum read
 // appends nothing to the log once the leader's term has an entry, so the
-// log shows only writes here, and a leader that kept reading its own state
-// would go unseen.
+// log shows only writes: the reads are counted where each runtime makes
+// them, and the member's also on their way to the leader.
 func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
@@ -1451,12 +1451,19 @@ func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
 	ready(t, first)
 	idle := 25 * nodes[0].config.PollInterval
 	index, reads := first.service.LastIndex(), nodes[0].servedCount(coordination.RPCPath+"state")
+	leaderReads, memberReads := first.stateReads.Load(), second.stateReads.Load()
 	time.Sleep(idle)
 	if grown := first.service.LastIndex() - index; grown != 0 {
 		t.Errorf("the Raft log grew by %d entries while the cluster was idle for %s", grown, idle)
 	}
 	if asked := nodes[0].servedCount(coordination.RPCPath+"state") - reads; asked != 0 {
 		t.Errorf("the leader was asked for the cluster state %d times while the cluster was idle for %s", asked, idle)
+	}
+	if n := first.stateReads.Load() - leaderReads; n != 0 {
+		t.Errorf("the coordinator, which leads, read the committed state %d times while the cluster was idle for %s", n, idle)
+	}
+	if n := second.stateReads.Load() - memberReads; n != 0 {
+		t.Errorf("the member read the committed state %d times while the cluster was idle for %s", n, idle)
 	}
 	if status := first.Status(); !status.Ready {
 		t.Fatalf("the coordinator stopped being ready while idle: %+v", status)
