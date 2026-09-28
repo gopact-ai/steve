@@ -31,29 +31,35 @@ type retainedPlanSupervisor struct {
 	runs                                        []exec.RunRecord
 	execution                                   *task.ExecutionToken
 	err                                         error
+	seen                                        contextsSeen
+	resumedUnder                                context.Context
 }
 
 func (s *retainedPlanSupervisor) Plan(context.Context, planner.Request) (plan.Plan, error) {
 	s.planned++
 	return s.proposed, s.err
 }
-func (s *retainedPlanSupervisor) ResumePlanning(_ context.Context, id string) (plan.Plan, error) {
+func (s *retainedPlanSupervisor) ResumePlanning(ctx context.Context, id string) (plan.Plan, error) {
+	s.seen.see(ctx)
 	s.resumedPlanning++
 	s.attemptID = id
 	return s.proposed, s.err
 }
 func (s *retainedPlanSupervisor) Execute(ctx context.Context, _ plan.Plan) (exec.Outcome, error) {
+	s.seen.see(ctx)
 	s.executed++
 	s.execution = execution.Token(ctx)
 	return exec.Outcome{}, s.err
 }
-func (s *retainedPlanSupervisor) Resume(context.Context, exec.RunRecord) (exec.Outcome, error) {
+func (s *retainedPlanSupervisor) Resume(ctx context.Context, _ exec.RunRecord) (exec.Outcome, error) {
+	s.resumedUnder = ctx
 	s.resumed++
 	return exec.Outcome{}, s.err
 }
 func (s *retainedPlanSupervisor) Name() string                          { return "retained-test" }
 func (s *retainedPlanSupervisor) PrepareRecovery(context.Context) error { return nil }
-func (s *retainedPlanSupervisor) OpenRuns(context.Context) ([]exec.RunRecord, error) {
+func (s *retainedPlanSupervisor) OpenRuns(ctx context.Context) ([]exec.RunRecord, error) {
+	s.seen.see(ctx)
 	return s.runs, nil
 }
 

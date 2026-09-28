@@ -116,6 +116,7 @@ func (c *Coordinator) planRecoveryError(err error) error {
 // ResumeRetainedPlan resumes the admitted planning command or persisted run.
 // It never invokes Handle or creates a second task for the original exchange.
 func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity RetainedPlan, req Request) (Result, error) {
+	parent = turnContext(parent)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var err error

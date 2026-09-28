@@ -68,6 +68,7 @@ func relocationRequestDigest(req Request) string {
 // PlanRelocation validates copied bytes and prepares an isolated target before
 // asking for a scoped decision. An empty effects log cannot prove CLI safety.
 func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request) (RelocationPlan, error) {
+	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var channelErr error
@@ -213,6 +214,7 @@ func relocationPrompt(r attempt.Record, base string, relocation *RelocationConte
 // RelocateChat consumes one persisted plan and its exact choice. It sends a new
 // prompt only after the old attempt is retired and a new attempt is admitted.
 func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, req Request) (result Result, err error) {
+	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	c, err = c.forChannel(req.Channel)

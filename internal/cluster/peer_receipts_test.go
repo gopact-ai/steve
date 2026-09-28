@@ -118,6 +118,72 @@ func TestNodeReceiptProofAcceptsEveryFailedEnding(t *testing.T) {
 	}
 }
 
+// A turn that answers no channel message has no delivery for any owner to
+// confirm. Its fully settled and accounted receipt is kept as pending
+// evidence rather than read as a malformed identity.
+func TestNodeReceiptProofKeepsTurnWithoutIdentityPending(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	tasks, err := task.OpenLedger(book)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := attempt.New(book)
+	tracked, err := tasks.Create(task.Task{Channel: "introduction", Transport: "feishu", Member: "worker", Requester: "owner", System: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Begin(tracked.ID, "worker", "node", ""); err != nil {
+		t.Fatal(err)
+	}
+	token, err := tasks.ExecutionToken(tracked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := attempts.Open(t.Context(), attempt.Spec{ID: "turnless", TaskID: tracked.ID, Kind: attempt.KindChat,
+		Agent: "worker", Node: "node", Execution: &token, Scope: attempt.ScopePathSet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.BindAttempt(token, record.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+		record, err = attempts.Advance(t.Context(), record.ID, phase, "test", func(r *attempt.Record) {
+			r.Session, r.NativeContext = "ns_"+strings.Repeat("a", 64), "native-context"
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	receipt, err := nodewire.NewSessionReceipt(nodewire.SessionState{ID: record.Session, ContextID: record.NativeContext,
+		Binding: nodewire.SessionBinding{TaskID: tracked.ID, AttemptID: record.ID, NodeID: "node",
+			SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, "worker"), TaskEpoch: token.Epoch,
+			ExecutionEpoch: attempt.SessionExecutionEpoch(record)},
+		Command: &nodewire.SessionCommand{ID: attempt.InputCommandID(record), InputSequence: 1, State: nodewire.SessionCommandCompleted, Settled: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := attempts.MarkSessionSettled(t.Context(), record.ID, "test"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(turn.Result{Attempt: record.ID, AgentID: "worker", Text: "hello"})
+	record, err = attempts.FinishCompletion(t.Context(), record.ID, "test", attempt.Completion{NodeReceipt: &receipt,
+		Result: attempt.Result{Output: raw}, Usage: &attempt.Usage{Reported: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.SettleAttempt(t.Context(), tracked.ID, record.ID, "", record.EndedAt, task.OutcomeOK, task.RecoveryUsage{Reported: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReadNodeReceiptProof(t.Context(), book, receipt); !errors.Is(err, ErrNodeReceiptPending) {
+		t.Fatalf("receipt of a turn without identity must stay pending: %v", err)
+	}
+}
+
 func committedConsoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string) (nodewire.SessionReceipt, consoleapi.Reply) {
 	t.Helper()
 	return consoleReceipt(t, book, node, missing, "")
