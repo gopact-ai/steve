@@ -924,6 +924,24 @@ func TestRuntimeLoopReadThatGivesUpIsReportedAsUnavailable(t *testing.T) {
 func TestActivationCheckThatGivesUpIsReportedAsUnavailable(t *testing.T) {
 	nodes := testNodesWith(t, 2, steadyTiming)
 	activating, release := holdActivationOpen(t, nodes[1])
+	// The build records why its generation ended before it returns: once it
+	// has, the runtime revokes the ended generation again, as inactive.
+	causes := make(chan error, 1)
+	held := nodes[1].config.Activate
+	nodes[1].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		stop, err := held(ctx, activation)
+		if ctx.Err() != nil {
+			r := activation.Runtime
+			r.mu.Lock()
+			cause := r.lastError
+			r.mu.Unlock()
+			select {
+			case causes <- cause:
+			default:
+			}
+		}
+		return stop, err
+	}
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	second := joinNode(t, first, nodes[1], true, false)
@@ -941,14 +959,12 @@ func TestActivationCheckThatGivesUpIsReportedAsUnavailable(t *testing.T) {
 	open := sync.OnceFunc(func() { close(gate.release) })
 	t.Cleanup(open)
 	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	var err error
 	select {
-	case <-active.Context.Done():
+	case err = <-causes:
 	case <-time.After(2 * applyTimeout):
 		t.Fatalf("generation %d outlived a check that could not finish; ApplyTimeout is %s", active.Generation, applyTimeout)
 	}
-	second.mu.Lock()
-	err := second.lastError
-	second.mu.Unlock()
 	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "quorum read") {
 		t.Fatalf("a check that gave up ended the generation with %v, not as unavailable saying what it waited for", err)
 	}
@@ -966,7 +982,10 @@ func TestActivationCheckThatGivesUpIsReportedAsUnavailable(t *testing.T) {
 // instead of holding the next attempt back as after a failed build.
 func TestActivationThatMeetsUnavailableCoordinationTriesAgainAtOnce(t *testing.T) {
 	nodes := testNodes(t, 1)
-	poll := 200 * time.Millisecond
+	// A failed build waits at least five poll intervals. The poll is long
+	// enough that the rest of an attempt, a quorum read, a writer fence and
+	// opening the ledger, fits well within those under load.
+	poll := 500 * time.Millisecond
 	nodes[0].config.PollInterval = poll
 	build := nodes[0].config.Activate
 	var attempts atomic.Int64
