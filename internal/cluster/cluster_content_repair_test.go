@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -467,5 +468,59 @@ func TestContentRepairLocalFailuresAreVisibleWithoutClaimingRemoteDataLost(t *te
 				t.Fatal("unchanged local failure repeatedly notified")
 			}
 		})
+	}
+}
+
+// Once its business generation has ended, content repair says nothing: not
+// that the scan or the maintenance failed, nor anything about the content.
+// Neither failed; the next generation checks again. It says nothing whether
+// the committed state it reads no longer names this generation before the
+// runtime retires it, or a peer answers that it is no longer the writer —
+// and maintenance then stops asking the other peers, which would answer
+// the same.
+func TestContentRepairSaysNothingOnceItsGenerationHasEnded(t *testing.T) {
+	peers, active := contentPeers(t)
+	var mu sync.Mutex
+	var observations []string
+	observe := func(kind, _, message string, _ map[string]string) {
+		mu.Lock()
+		defer mu.Unlock()
+		observations = append(observations, kind+": "+message)
+	}
+
+	ended := active
+	ended.WriterGeneration++
+	peers[0].Options.ContentRepairInterval = 10 * time.Millisecond
+	runtime := peers[0].Runtime.Load()
+	before := runtime.stateReads.Load()
+	stop := peers[0].StartContentRepair(ended, observe)
+	// A round reads the committed state for its scan and again for its
+	// maintenance; past four reads the first round is over.
+	for deadline := time.Now().Add(10 * time.Second); runtime.stateReads.Load()-before <= 4; {
+		if time.Now().After(deadline) {
+			stop()
+			t.Fatal("content repair did not finish a round")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stop()
+	mu.Lock()
+	if len(observations) != 0 {
+		t.Errorf("repair for a generation the committed state no longer names said %q; want nothing", observations)
+	}
+	observations = nil
+	mu.Unlock()
+
+	worker, err := peers[0].newContentRepair(active, observe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asked []*atomic.Int64
+	for _, peer := range peers[1:] {
+		asked = append(asked, supersede(t, peer))
+	}
+	worker.runMaintenance(t.Context())
+	if len(observations) != 0 || asked[0].Load()+asked[1].Load() != 1 {
+		t.Errorf("maintenance that a peer told its generation has ended said %q after asking %d peers; want nothing, one peer asked", observations, asked[0].Load()+asked[1].Load())
 	}
 }
