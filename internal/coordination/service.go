@@ -52,6 +52,10 @@ type Service struct {
 	// establishing is held by the read index request completing a barrier
 	// to establish the term, so requests arriving together append one.
 	establishing chan struct{}
+	// transfers counts the leadership transfers this node has started, and
+	// transferring those Raft has not yet resolved; see ReadIndex.
+	transfers    atomic.Uint64
+	transferring atomic.Int64
 	closeOnce    sync.Once
 	closeErr     error
 	ctx          context.Context
@@ -554,12 +558,20 @@ func (s *Service) barrier(ctx context.Context) error {
 // Raft counts toward the confirmation the answers to requests already in
 // flight when it was asked, so a follower's vote in it can be as old as
 // such an answer takes to arrive, which the transport bounds by
-// ApplyTimeout. Raft keeps LeaderLeaseTimeout within the heartbeat timeout
-// after which followers start electing another leader, so a leader that
-// has lost its majority steps down about when, and by default well
-// before, another can be elected and commit. The index can therefore miss
-// an entry only when leadership moves while it is being confirmed; a
-// caller that asks again later finds the entry then.
+// ApplyTimeout. A follower that has heard from its leader within the
+// heartbeat timeout votes for no one else, and Raft keeps
+// LeaderLeaseTimeout within that timeout, so a leader that has lost its
+// majority steps down about when, and by default well before, another can
+// be elected and commit. The index can therefore miss an entry only when
+// leadership moves by an election while it is being confirmed; a caller
+// that asks again later finds the entry then.
+//
+// The target of a leadership transfer asks for votes that followers grant
+// at once, so while this node transfers its leadership an old answer
+// shows nothing. ReadIndex then fails with ErrUnavailable, as a barrier
+// does, if a transfer ran at any time while the read was being confirmed.
+// A transfer that Raft gave up on can still be completed by a target whose
+// election outlasts it; that leaves the window of an election.
 func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	if s.closed.Load() {
 		return 0, ErrUnavailable
@@ -569,6 +581,11 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	}
 	if s.raft.State() != raft.Leader {
 		return 0, fmt.Errorf("%w: leader is %s", ErrNotLeader, s.Status().LeaderID)
+	}
+	// Read before transferring, which a transfer raises first.
+	transfers := s.transfers.Load()
+	if s.transferring.Load() != 0 {
+		return 0, errTransferring
 	}
 	term := s.raft.CurrentTerm()
 	if s.established.Load() != term {
@@ -585,7 +602,27 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	if s.raft.CurrentTerm() != term {
 		return 0, fmt.Errorf("%w: leadership changed while it was being confirmed", ErrNotLeader)
 	}
+	if s.transfers.Load() != transfers {
+		return 0, errTransferring
+	}
 	return index, nil
+}
+
+// errTransferring refuses a read while this node transfers its leadership.
+var errTransferring = fmt.Errorf("%w: %s", ErrUnavailable, raft.ErrLeadershipTransferInProgress)
+
+// transferLeadership hands this node's consensus leadership to target. Read
+// index requests are refused from before Raft starts the transfer until it
+// has resolved it, whatever becomes of the caller; see ReadIndex.
+func (s *Service) transferLeadership(target raft.ServerID, address raft.ServerAddress) raft.Future {
+	s.transferring.Add(1)
+	s.transfers.Add(1)
+	future := s.raft.LeadershipTransferToServer(target, address)
+	go func() {
+		future.Error()
+		s.transferring.Add(-1)
+	}()
+	return future
 }
 
 // establish completes a barrier in term unless one has completed since the
@@ -993,7 +1030,7 @@ func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, er
 			if err != nil || progress.AppliedIndex < state.AppliedIndex || progress.AppVersion < state.AppVersion {
 				continue
 			}
-			err = s.wait(ctx, s.raft.LeadershipTransferToServer(raft.ServerID(target), raft.ServerAddress(state.Voters[target])))
+			err = s.wait(ctx, s.transferLeadership(raft.ServerID(target), raft.ServerAddress(state.Voters[target])))
 			// Raft reports an unfinished transfer, such as its election
 			// timeout expiring or a failed TimeoutNow RPC, without a sentinel
 			// error. The target may still take over, so the caller should
