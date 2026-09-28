@@ -324,13 +324,59 @@ func (s *Service) TransportPeers() map[string]string {
 	return peers
 }
 
-// ReadState performs a quorum-confirmed read. Status is a local, potentially
+// ReadState performs a quorum-confirmed read: the state it returns holds
+// every entry committed before the call. Status is a local, potentially
 // stale view and must never be used to authorize execution or a write.
+//
+// The leader confirms the read as ReadIndex does, by a majority's answer,
+// and appends nothing to the log once it has committed an entry of its
+// term; it then waits, for at most ApplyTimeout, for its state machine to
+// hold the log up to the read index, which it usually already does. The
+// confirmation shares ReadIndex's limit: it can miss an entry only when
+// leadership moves while it is being confirmed. Any other node refuses the
+// read with ErrNotLeader.
 func (s *Service) ReadState(ctx context.Context) (State, error) {
-	if err := s.barrier(ctx); err != nil {
+	if s.raft.State() != raft.Leader {
+		if err := s.barrier(ctx); err != nil {
+			return State{}, err
+		}
+		return s.fsm.read(), nil
+	}
+	index, err := s.ReadIndex(ctx)
+	if err != nil {
+		return State{}, err
+	}
+	if err := s.awaitState(ctx, index); err != nil {
 		return State{}, err
 	}
 	return s.fsm.read(), nil
+}
+
+// awaitState waits, for at most ApplyTimeout, for the state machine to hold
+// the log up to index; see StateHolds. index must be committed.
+func (s *Service) awaitState(ctx context.Context, index uint64) error {
+	if s.StateHolds(index) {
+		return nil
+	}
+	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	defer cancel()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for !s.StateHolds(index) {
+		select {
+		case <-ticker.C:
+		case <-bounded.Done():
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("%w: the state machine did not apply the log up to read index %d within %s; it has applied %d", ErrUnavailable, index, s.config.ApplyTimeout, s.fsm.applied.Load())
+		case <-s.ctx.Done():
+			return ErrUnavailable
+		case <-s.fsm.failed:
+			return ErrApplication
+		}
+	}
+	return nil
 }
 
 func (s *Service) Snapshot(ctx context.Context) error {
@@ -499,9 +545,9 @@ func (s *Service) barrier(ctx context.Context) error {
 // ReadIndex returns, once a majority confirms that this node still leads
 // consensus, an index at or beyond every entry committed before the call:
 // a replica that has applied its log up to that index holds everything a
-// quorum read would have returned. Unlike ReadState it appends nothing to
-// the log, except for one barrier when this node has not yet completed one
-// in its current term, since until an entry of its own term commits a new
+// quorum read would have returned. It appends nothing to the log, except
+// for one barrier when this node has not yet completed one in its current
+// term, since until an entry of its own term commits a new
 // leader's commit index may miss entries its predecessor committed. It
 // fails with ErrNotLeader on a node that does not lead consensus.
 //
@@ -580,12 +626,33 @@ func fingerprint(kind string, input any) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// submit appends c to the log and returns its receipt, or the receipt of
+// the earlier command with c's ID.
+//
+// The state machine checks each command, against earlier receipts and
+// against the fences of its kind, as of its own place in the log, so
+// nothing submit reads beforehand decides a command's outcome. A barrier
+// first lets the receipt lookup below answer a retry of a command the
+// state machine has already applied without appending it again; it is
+// needed only while the leader has not yet committed an entry of its term,
+// when its state machine can lag entries its predecessors committed. Once
+// it has, a retry the lookup misses is appended and answered by the state
+// machine with the same receipt. A node that does not lead still fails at
+// the barrier, as before.
 func (s *Service) submit(ctx context.Context, c command) (Result, error) {
 	if strings.TrimSpace(c.ID) == "" || strings.TrimSpace(c.Actor) == "" {
 		return Result{}, fmt.Errorf("%w: command ID and actor are required", ErrInvalid)
 	}
-	if err := s.barrier(ctx); err != nil {
-		return Result{}, err
+	if s.closed.Load() {
+		return Result{}, ErrUnavailable
+	}
+	if !s.fsm.healthy() {
+		return Result{}, ErrApplication
+	}
+	if s.raft.State() != raft.Leader || s.established.Load() != s.raft.CurrentTerm() {
+		if err := s.barrier(ctx); err != nil {
+			return Result{}, err
+		}
 	}
 	if r, ok := s.fsm.lookupCommand(c); ok {
 		return r.Result, r.err()
