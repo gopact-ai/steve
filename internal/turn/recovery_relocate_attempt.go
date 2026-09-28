@@ -331,12 +331,9 @@ func (c *Coordinator) liveRelocationServers(ctx context.Context, node string, fr
 	if i < 0 {
 		return frozen, nil
 	}
-	if c.nodes == nil {
-		return nil, fmt.Errorf("turn: no MCP endpoint resolver for node %q", node)
-	}
-	endpoint, err := c.nodes.MCPEndpoint(ctx, node)
+	endpoint, err := c.nodeMCPEndpoint(ctx, node)
 	if err != nil {
-		return nil, fmt.Errorf("turn: resolve node %q MCP endpoint: %w", node, err)
+		return nil, err
 	}
 	servers := slices.Clone(frozen)
 	servers[i].URL = endpoint

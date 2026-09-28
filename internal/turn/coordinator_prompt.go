@@ -281,7 +281,7 @@ func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, sel
 // describeGateExtras is side-effect free: drift must be checked before any
 // credential is prepared or an existing binding is revoked.
 func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Agent, saved state.Session) ([]capability.Extra, string, string, error) {
-	if c.gate == nil {
+	if !c.messaging() {
 		return nil, saved.AgentToken, "", nil
 	}
 	supported, err := c.runtime.SupportsHTTPMCP(ctx, placement(selected))
@@ -297,15 +297,28 @@ func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Age
 	}
 	endpoint := ""
 	if selected.Node != "" {
-		if c.nodes == nil {
-			return nil, saved.AgentToken, "", fmt.Errorf("turn: no MCP endpoint resolver for node %q", selected.Node)
-		}
-		endpoint, err = c.nodes.MCPEndpoint(ctx, selected.Node)
-		if err != nil {
-			return nil, saved.AgentToken, "", fmt.Errorf("turn: resolve node %q MCP endpoint: %w", selected.Node, err)
+		if endpoint, err = c.nodeMCPEndpoint(ctx, selected.Node); err != nil {
+			return nil, saved.AgentToken, "", err
 		}
 	}
 	return c.gate.DescribeExtras(token, endpoint), token, endpoint, nil
+}
+
+// messaging reports whether this hub runs the messaging server;
+// Callbacks.AgentGate is nil when its port could not be bound.
+func (c *Coordinator) messaging() bool { return c.gate != nil }
+
+// nodeMCPEndpoint is the messaging URL an agent on node calls: the loopback
+// port the node advertises now.
+func (c *Coordinator) nodeMCPEndpoint(ctx context.Context, node string) (string, error) {
+	if c.nodes == nil {
+		return "", fmt.Errorf("turn: no MCP endpoint resolver for node %q", node)
+	}
+	endpoint, err := c.nodes.MCPEndpoint(ctx, node)
+	if err != nil {
+		return "", fmt.Errorf("turn: resolve node %q MCP endpoint: %w", node, err)
+	}
+	return endpoint, nil
 }
 
 // clearSettledTaint lets a conversation carry on after an interrupted turn.
