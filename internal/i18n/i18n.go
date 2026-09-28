@@ -713,6 +713,9 @@ const (
 	DelegateStateCancelled      Key = "delegate_state_cancelled"
 	DelegateUnrecordedAnswer    Key = "delegate_unrecorded_answer"
 
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed Key = "delegate_suppressed_unconfirmed"
+
 	// Resume and replacement recovery questions.
 	ResumeTitle                        Key = "resume_title"
 	ResumeAttemptedSeparator           Key = "resume_attempted_separator"
