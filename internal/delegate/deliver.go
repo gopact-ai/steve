@@ -315,10 +315,16 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 // between turns, so this is the moment; a turn composing its prompt lends
 // its own lease — and answers, per child, where its files are. The
 // message must not say "landed" for a child whose landing is still queued
-// behind someone else's lock.
+// behind someone else's lock or stuck on a conflict.
 func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.Lease) func(task.Task) string {
 	byArtifact := map[string]string{}
 	held := ""
+	conflicted := func(state, reason string, paths []string) string {
+		if detail := conflictDetail(state, reason, paths); detail != "" {
+			return "落地冲突：" + detail
+		}
+		return "落地冲突"
+	}
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
 			var landed []artifact.Landing
@@ -330,15 +336,26 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			}
 			for _, l := range landed {
 				switch l.State {
-				case "committed":
+				case artifact.LandCommitted:
 					byArtifact[l.Artifact] = fmt.Sprintf("已落地主目录，%d 个路径", len(l.Paths))
-				case "conflict":
-					byArtifact[l.Artifact] = "落地冲突：" + l.Error
+				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
+					byArtifact[l.Artifact] = conflicted(l.State, l.Error, l.Paths)
 				default:
 					byArtifact[l.Artifact] = l.State
 					if l.Error != "" {
 						byArtifact[l.Artifact] += "：" + l.Error
 					}
+				}
+			}
+			// A result still stuck on an earlier conflict is skipped by the
+			// pass and has no landing in it; the queue says why it waits.
+			stuck, err := s.artifacts.Stuck(ctx, p.ID)
+			if err != nil {
+				slog.Warn(fmt.Sprintf("delegate: read stuck results of %s: %v", p.ID, err), "parent", parent.ID, "project", p.ID)
+			}
+			for _, st := range stuck {
+				if _, ok := byArtifact[st.Artifact]; !ok {
+					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths)
 				}
 			}
 			if lerr != nil {
@@ -379,6 +396,20 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 		}
 		return "已在此前落地或无改动"
 	}
+}
+
+// conflictDetail says what a landing conflict is about: the paths, and
+// for an apply conflict the reason it stopped. A merge conflict needs no
+// reason — both sides changed those paths.
+func conflictDetail(state, reason string, paths []string) string {
+	detail := strings.Join(paths, ", ")
+	if state == artifact.LandApplyConflicted && reason != "" {
+		if detail == "" {
+			return reason
+		}
+		return reason + ": " + detail
+	}
+	return detail
 }
 
 // RedeliverPending is the start-up pass: children that ended before the
