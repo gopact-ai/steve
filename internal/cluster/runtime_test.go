@@ -918,6 +918,44 @@ func TestRuntimeLoopReadThatGivesUpIsReportedAsUnavailable(t *testing.T) {
 	ready(t, second)
 }
 
+// On the consensus leader, the runtime loop's quorum read is bounded by
+// coordination, which says what it waited for: here a majority that does
+// not confirm the leader. The lease outlasts ApplyTimeout, so the leader
+// keeps leading while no follower answers it.
+func TestRuntimeLoopReadOnTheLeaderSaysWhatItWaitedFor(t *testing.T) {
+	applyTimeout := time.Second
+	lease := 2 * applyTimeout
+	nodes := testNodesWith(t, 2, fixtureTiming{heartbeat: lease, election: lease, lease: lease, retryWindow: 15 * time.Second})
+	for _, n := range nodes {
+		n.config.Coordination.ApplyTimeout = applyTimeout
+	}
+	first := openNode(t, nodes[0])
+	active := ready(t, first)
+	joinNode(t, first, nodes[1], true, false)
+	if !first.Status().IsLeader {
+		t.Fatal("fixture no longer runs node-1's generation on the consensus leader")
+	}
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	first.mu.Lock()
+	current := first.current
+	first.mu.Unlock()
+	if current == nil || current.Generation != active.Generation {
+		t.Fatalf("generation %d is not the current one", active.Generation)
+	}
+	given := errors.New("test gives the generation up")
+	first.revoke(current, given)
+	err := lastErrorOtherThan(t, first, 3*applyTimeout, given)
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "a majority did not confirm this node's leadership") {
+		t.Fatalf("a quorum read on the leader that gave up was reported as %v, not saying what it waited for", err)
+	}
+	if !first.Status().IsLeader {
+		t.Fatal("node-1 stopped leading; the read was not ended by its bound")
+	}
+	nodes[1].raft.resume()
+	ready(t, first)
+}
+
 // While the application builds, the runtime checks with a quorum read that
 // the generation still has its assignment. One that does not finish within
 // ApplyTimeout gives the generation up, reported as unavailable.
