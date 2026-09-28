@@ -132,6 +132,12 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	return &interactionE2E{server: server, service: service, book: book, materials: materials, client: &http.Client{Timeout: 5 * time.Second}}
 }
 
+// interactionWait bounds how long a helper waits for a turn to reply or
+// ask. It is above the fixture's 10s no-progress turn timeout, so a slow
+// turn ends in the product's own outcome instead of the test giving up
+// first: under CPU contention the before-snapshot alone has taken over 5s.
+const interactionWait = 30 * time.Second
+
 func (f *interactionE2E) request(t *testing.T, method, path string, body []byte, mime, token string, want int) []byte {
 	t.Helper()
 	req, err := http.NewRequest(method, f.server.URL()+path, bytes.NewReader(body))
@@ -175,7 +181,7 @@ func (f *interactionE2E) submit(t *testing.T, conversation, input, key string, r
 func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.PendingQuestion {
 	t.Helper()
 	started := time.Now()
-	until := started.Add(5 * time.Second)
+	until := started.Add(interactionWait)
 	for time.Now().Before(until) {
 		var data struct {
 			Questions []consoleapi.PendingQuestion `json:"questions"`
@@ -194,7 +200,7 @@ func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.Pen
 func (f *interactionE2E) reply(t *testing.T, e consoleapi.Exchange) consoleapi.Reply {
 	t.Helper()
 	started := time.Now()
-	until := started.Add(5 * time.Second)
+	until := started.Add(interactionWait)
 	for time.Now().Before(until) {
 		var data struct {
 			Replies []consoleapi.Reply `json:"replies"`
