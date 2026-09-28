@@ -1167,6 +1167,11 @@ func (s *Store) LandPendingUnder(ctx context.Context, p project.Project, held le
 }
 
 func (s *Store) landPending(ctx context.Context, p project.Project, held *ledger.Lease) ([]Landing, error) {
+	// Most passes find nothing to do. Deciding that from reads keeps an
+	// idle pass off the ledger's write path entirely.
+	if idle, err := s.nothingToLand(ctx, p); err != nil || idle {
+		return nil, err
+	}
 	// Turns, delivery callbacks and the background sweep can all drain this
 	// queue. One renewed, fenced driver must own its read/land/delete cycle.
 	ttl := s.landingDriverTTL
@@ -1194,13 +1199,7 @@ func (s *Store) landPending(ctx context.Context, p project.Project, held *ledger
 			return err
 		})
 	}
-	var queue []Pending
-	for _, data := range raw {
-		var item Pending
-		if err := json.Unmarshal(data, &item); err == nil && item.Project == p.ID {
-			queue = append(queue, item)
-		}
-	}
+	queue := pendingFor(raw, p.ID)
 	sort.Slice(queue, func(i, j int) bool { return queue[i].At.Before(queue[j].At) })
 	head, err := s.CanonicalOf(ctx, p.ID)
 	if err != nil {
@@ -1239,6 +1238,55 @@ func (s *Store) landPending(ctx context.Context, p project.Project, held *ledger
 		}
 	}
 	return out, nil
+}
+
+// nothingToLand says, from reads alone, whether a pass over the project
+// would skip every queued result: none is queued for it, or each one is
+// still blocked on the canonical as it stands.
+//
+// It is a hint, not a decision. A result queued, unblocked or freed by a
+// canonical move after this read is picked up by the next pass: the
+// background sweep runs one for every project on a timer, and deliveries
+// and turns run their own. When it says there is work, the driver takes its
+// lease and reads the queue and the canonical again, so a result another
+// driver has already landed and removed is not landed twice, and one that
+// is blocked is still skipped.
+func (s *Store) nothingToLand(ctx context.Context, p project.Project) (bool, error) {
+	raw, err := s.ledger.Bindings(ctx, pendingKind)
+	if err != nil {
+		return false, err
+	}
+	queue := pendingFor(raw, p.ID)
+	for _, item := range queue {
+		if item.Blocked == nil {
+			return false, nil
+		}
+	}
+	if len(queue) == 0 {
+		return true, nil
+	}
+	head, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, item := range queue {
+		if !s.stillBlocked(ctx, p, *item.Blocked, head) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// pendingFor is the project's share of the raw landing queue.
+func pendingFor(raw map[string]json.RawMessage, projectID string) []Pending {
+	var queue []Pending
+	for _, data := range raw {
+		var item Pending
+		if err := json.Unmarshal(data, &item); err == nil && item.Project == projectID {
+			queue = append(queue, item)
+		}
+	}
+	return queue
 }
 
 // Stuck is a queued result whose landing stopped at a conflict and is
