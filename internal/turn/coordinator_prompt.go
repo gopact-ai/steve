@@ -281,7 +281,7 @@ func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, sel
 // describeGateExtras is side-effect free: drift must be checked before any
 // credential is prepared or an existing binding is revoked.
 func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Agent, saved state.Session) ([]capability.Extra, string, string, error) {
-	if !c.messaging() {
+	if c.gate == nil {
 		return nil, saved.AgentToken, "", nil
 	}
 	supported, err := c.runtime.SupportsHTTPMCP(ctx, placement(selected))
@@ -303,10 +303,6 @@ func (c *Coordinator) describeGateExtras(ctx context.Context, selected agent.Age
 	}
 	return c.gate.DescribeExtras(token, endpoint), token, endpoint, nil
 }
-
-// messaging reports whether this hub runs the messaging server;
-// Callbacks.AgentGate is nil when its port could not be bound.
-func (c *Coordinator) messaging() bool { return c.gate != nil }
 
 // nodeMCPEndpoint is the messaging URL an agent on node calls: the loopback
 // port the node advertises now.

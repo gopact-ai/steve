@@ -70,7 +70,7 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 // both are this server on 127.0.0.1 and fingerprints leave out its port.
 func (c *Coordinator) setupExtras(ctx context.Context, conversationID string, mode home.Mode, saved state.Session) []capability.Extra {
 	var extras []capability.Extra
-	if c.messaging() && saved.AgentToken != "" {
+	if c.gate != nil && saved.AgentToken != "" {
 		extras = c.gate.DescribeExtras(saved.AgentToken, "")
 	}
 	if mode != home.ModeOwner {
