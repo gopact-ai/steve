@@ -411,7 +411,7 @@ func (a *Service) Bootstrap(name, token string) (string, bool) {
 	spec := nodebootstrap.Spec{Name: name, Port: port, Token: token, Harnesses: harnesses}
 	if binary != "" && hubURL != "" {
 		// Only whether the installer can be sent matters; its reason is not shown.
-		metadata, err := nodebootstrap.InspectBinary(i18n.Catalog{}, binary)
+		metadata, err := nodebootstrap.InspectBinary(binary)
 		if err != nil {
 			return "", false
 		}

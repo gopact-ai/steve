@@ -13,6 +13,9 @@ const (
 	LocaleEN Locale = "en"
 )
 
+// Locales is every language a Catalog speaks.
+func Locales() []Locale { return []Locale{LocaleZH, LocaleEN} }
+
 func FromLang(lang string) Locale {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	if cut, _, ok := strings.Cut(lang, "."); ok {
