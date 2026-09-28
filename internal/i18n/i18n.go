@@ -713,6 +713,11 @@ const (
 	DelegateStateCancelled      Key = "delegate_state_cancelled"
 	DelegateUnrecordedAnswer    Key = "delegate_unrecorded_answer"
 
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed Key = "delegate_suppressed_unconfirmed"
+	DelegateSuppressedEnded       Key = "delegate_suppressed_ended"
+	DelegateSuppressedMissing     Key = "delegate_suppressed_missing"
+
 	// Resume and replacement recovery questions.
 	ResumeTitle                        Key = "resume_title"
 	ResumeAttemptedSeparator           Key = "resume_attempted_separator"
@@ -1159,6 +1164,8 @@ const (
 	SSHUpgradeRunningFix          Key = "ssh_upgrade_running_fix"
 	SSHUpgradeUnknown             Key = "ssh_upgrade_unknown"
 	SSHUpgradeUnknownFix          Key = "ssh_upgrade_unknown_fix"
+	SSHUpgradeUnknownNode         Key = "ssh_upgrade_unknown_node"
+	SSHUpgradeUnknownNodeFix      Key = "ssh_upgrade_unknown_node_fix"
 	SSHUpgradePreflight           Key = "ssh_upgrade_preflight"
 	SSHUpgradeTargetFix           Key = "ssh_upgrade_target_fix"
 	SSHUpgradePlatformUnknown     Key = "ssh_upgrade_platform_unknown"

@@ -20,6 +20,10 @@ type UpgradeBackend interface {
 	// UpgradeTarget names the alias a machine is reached through and the
 	// program to send it.
 	UpgradeTarget(ctx context.Context, nodeID string) (UpgradeTarget, error)
+	// Knows reports whether nodeID names a machine the backend knows of,
+	// whether or not it can be upgraded from here. An upgrade is neither
+	// started nor read for one it does not know.
+	Knows(ctx context.Context, nodeID string) bool
 	// Upgraded runs once the machine's program was swapped and its peer
 	// restarted: the backend brings its own side up to date and returns
 	// when the machine is back on the new build. It may Report progress.
@@ -32,6 +36,14 @@ type UpgradeTarget struct {
 	Version string
 	// FindBinary locates the program for a platform such as "linux/amd64".
 	FindBinary func(platform string) (string, bool)
+}
+
+// UnknownNode is the code of the failure an upgrade, or its status,
+// returns for a node ID no machine has: nothing about it is recorded.
+const UnknownNode = "unknown_node"
+
+func unknownNode(text i18n.Catalog, nodeID string) *StepError {
+	return Fail(text, "preflight", UnknownNode, text.T(i18n.SSHUpgradeUnknownNode, nodeID), text.T(i18n.SSHUpgradeUnknownNodeFix))
 }
 
 // upgradeVerifyLimit bounds how long the coordinator waits for a machine
@@ -51,6 +63,9 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 	backend, ok := s.backend.(UpgradeBackend)
 	if !ok {
 		return InstallResult{}, Fail(text, "preflight", "upgrade_unsupported", text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
+	}
+	if !backend.Knows(ctx, nodeID) {
+		return InstallResult{}, unknownNode(text, nodeID)
 	}
 	var nonce [24]byte
 	rand.Read(nonce[:])
@@ -86,6 +101,9 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 // last one went until that record expires.
 func (s *Service) UpgradeStatus(ctx context.Context, nodeID string) (InstallResult, error) {
 	ctx, text := s.speak(ctx)
+	if backend, ok := s.backend.(UpgradeBackend); ok && !backend.Knows(ctx, nodeID) {
+		return InstallResult{}, unknownNode(text, nodeID)
+	}
 	s.mu.Lock()
 	id, ok := s.upgrades[nodeID]
 	s.mu.Unlock()

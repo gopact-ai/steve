@@ -39,10 +39,12 @@ const accountingReceiptSQL = `SELECT count(*),min(id),min(data) FROM
 
 // ReadAccountingTx reads the single original accounting row in the caller's
 // snapshot. It grants no deletion authority: the caller must check settlement,
-// usage, result and delivery alongside this exact identity.
+// usage, result and delivery alongside this exact identity. The execution
+// identifies the row; the turn is matched exactly and is empty for a turn that
+// answers no channel message.
 func ReadAccountingTx(tx ledger.Reader, taskID, executionID, turnID string) (Attempt, int, bool, error) {
-	if taskID == "" || executionID == "" || turnID == "" {
-		return Attempt{}, 0, false, errors.New("task accounting requires task, execution and turn identities")
+	if taskID == "" || executionID == "" {
+		return Attempt{}, 0, false, errors.New("task accounting requires task and execution identities")
 	}
 	var count int
 	var id, raw sql.NullString
