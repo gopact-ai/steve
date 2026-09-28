@@ -646,25 +646,7 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	// node-2's application writes while its generation is being activated.
 	// The runtime then waits for Activate and does not check the replica's
 	// progress itself, so nothing but the write's own check bounds the wait.
-	activating := make(chan Activation, 1)
-	proceed := make(chan struct{})
-	release := sync.OnceFunc(func() { close(proceed) })
-	t.Cleanup(release)
-	build := nodes[1].config.Activate
-	nodes[1].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
-		stop, err := build(ctx, activation)
-		if err == nil {
-			select {
-			case activating <- activation:
-			default:
-			}
-			select {
-			case <-proceed:
-			case <-ctx.Done():
-			}
-		}
-		return stop, err
-	}
+	activating, release := holdActivationOpen(t, nodes[1])
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	for _, n := range nodes[1:] {
@@ -728,6 +710,97 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	release()
 	if published := ready(t, second); published.Generation != active.Generation {
 		t.Fatalf("generation %d was published instead of generation %d, whose write failed", published.Generation, active.Generation)
+	}
+}
+
+// holdActivationOpen has n's business stores built and then keeps Activate
+// from returning until release is called or the generation ends. The
+// generation is sent on the returned channel once its stores are built.
+// Meanwhile the runtime loop waits for Activate and does not check the
+// replica's progress, so a write the application makes is bounded by
+// nothing but its own waits.
+func holdActivationOpen(t *testing.T, n *clusterNode) (<-chan Activation, func()) {
+	t.Helper()
+	activating := make(chan Activation, 1)
+	proceed := make(chan struct{})
+	release := sync.OnceFunc(func() { close(proceed) })
+	t.Cleanup(release)
+	build := n.config.Activate
+	n.config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		stop, err := build(ctx, activation)
+		if err == nil {
+			select {
+			case activating <- activation:
+			default:
+			}
+			select {
+			case <-proceed:
+			case <-ctx.Done():
+			}
+		}
+		return stop, err
+	}
+	return activating, release
+}
+
+// A write that the consensus leader commits but this replica cannot apply
+// fails once ApplyTimeout passes, as unavailable, saying how far the replica
+// got and that the write was committed. The generation is given up: its
+// caches may miss the committed write until the replica catches up.
+func TestCommittedWriteThisReplicaCannotApplyFailsAsUnavailable(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	activating, release := holdActivationOpen(t, nodes[1])
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	var active Activation
+	select {
+	case active = <-activating:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-2 did not start its business generation: %+v", second.Status())
+	}
+	requireAnotherLeader(t, first, "node-2")
+	// node-2 has applied everything committed so far, so the write passes
+	// its check before proposing; then node-2 stops receiving Raft traffic,
+	// and node-1 and node-3 commit the write without it.
+	leader, err := first.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied := second.service.Status().AppliedIndex; applied < leader.AppliedIndex {
+		t.Fatalf("node-2 has applied index %d, behind the leader's %d, before the write", applied, leader.AppliedIndex)
+	}
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	done := make(chan error, 1)
+	go func() { done <- active.Ledger.PutBinding(context.Background(), "test", "committed-elsewhere", "value") }()
+	select {
+	case err = <-done:
+	case <-time.After(2 * applyTimeout):
+		t.Fatalf("the write kept waiting for a local apply that cannot happen; ApplyTimeout is %s", applyTimeout)
+	}
+	if !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a committed write this replica could not apply failed with %v, not as unavailable", err)
+	}
+	if text := err.Error(); !strings.Contains(text, "local replica did not reach applied index") || !strings.Contains(text, "committed") {
+		t.Fatalf("the failure does not say how far the replica got or that the write was committed: %v", err)
+	}
+	if active.Context.Err() == nil {
+		t.Fatal("a write committed without this replica left the business generation authorized")
+	}
+	release()
+	nodes[1].raft.resume()
+	fresh := ready(t, second)
+	var got string
+	if ok, err := fresh.Ledger.GetBinding(t.Context(), "test", "committed-elsewhere", &got); err != nil || !ok || got != "value" {
+		t.Fatalf("the generation activated after the stall lost the committed write: ok=%v value=%q err=%v", ok, got, err)
 	}
 }
 
