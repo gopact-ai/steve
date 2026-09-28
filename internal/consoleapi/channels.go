@@ -17,6 +17,7 @@ type ChannelsView struct {
 	Warning        string                   `json:"warning,omitempty"`
 	RuntimeError   string                   `json:"runtime_error,omitempty"`
 	StartupRetry   *ChannelStartupRetry     `json:"startup_retry,omitempty"`
+	Reconnect      *ChannelReconnect        `json:"reconnect,omitempty"`
 }
 
 // ChannelStartupRetry reports a channel whose startup failed with an error
@@ -25,6 +26,14 @@ type ChannelStartupRetry struct {
 	Attempts  int       `json:"attempts"`
 	NextAt    time.Time `json:"next_at"`
 	LastError string    `json:"last_error"`
+}
+
+// ChannelReconnect reports a started channel whose connection failed or
+// was lost and is being established again.
+type ChannelReconnect struct {
+	Since     time.Time `json:"since"`
+	Attempts  int       `json:"attempts"`
+	LastError string    `json:"last_error,omitempty"`
 }
 
 type ChannelsUpdate struct {

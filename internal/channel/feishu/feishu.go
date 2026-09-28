@@ -100,6 +100,22 @@ type Options struct {
 	// runs on Start's goroutine and is never called when verification
 	// fails or is stopped.
 	OnReady func()
+	// OnReconnect reports the long connection after Ready: a Reconnect
+	// while the official client is establishing it again, nil once it is
+	// back. Calls are ordered, run on the client's goroutines and must not
+	// block. A failure the client will not retry ends Start instead.
+	OnReconnect func(*Reconnect)
+}
+
+// Reconnect is a long connection that failed or was lost and is being
+// established again.
+type Reconnect struct {
+	// Since is when the connection failed or was lost.
+	Since time.Time
+	// Failures counts the attempts that failed since.
+	Failures int
+	// Err is the last failure; nil before an attempt failed.
+	Err error
 }
 
 // StartRetry is a startup failure Start will retry.
@@ -128,6 +144,8 @@ type Channel struct {
 	onRetry func(StartRetry)
 	// onReady is Options.OnReady.
 	onReady func()
+	// onReconnect is Options.OnReconnect.
+	onReconnect func(*Reconnect)
 	// botOpenID is written by Start before the long connection begins,
 	// which is the only source of inbound events that read it.
 	botOpenID string
@@ -170,7 +188,7 @@ var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
 // application and connects.
 func New(opts Options, handler Handler) *Channel {
 	api := newAPI(opts.AppID, opts.AppSecret, opts.Domain)
-	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry, onReady: opts.OnReady}
+	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry, onReady: opts.OnReady, onReconnect: opts.OnReconnect}
 	channel.identify = func(ctx context.Context) (Identity, error) { return botIdentity(ctx, api) }
 	channel.SetAccess(opts.Access, opts.AllowUnmentioned)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
@@ -203,12 +221,17 @@ func New(opts Options, handler Handler) *Channel {
 			return resp, nil
 		})
 
-	channel.ws = larkws.NewClient(opts.AppID, opts.AppSecret,
-		larkws.WithEventHandler(eventHandler),
-		larkws.WithDomain(BaseURL(opts.Domain)),
+	channel.ws = newLongConn(channel, opts.AppID, opts.AppSecret, BaseURL(opts.Domain), eventHandler)
+	return channel
+}
+
+// newLongConn is c's long connection to the Feishu at baseURL.
+func newLongConn(c *Channel, appID, appSecret, baseURL string, events *dispatcher.EventDispatcher) *larkws.Client {
+	return larkws.NewClient(appID, appSecret,
+		larkws.WithEventHandler(events),
+		larkws.WithDomain(baseURL),
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
 	)
-	return channel
 }
 
 func (channel *Channel) messageHandler(botOpenID string, allowUnmentioned bool, handler Handler) func(context.Context, *larkim.P2MessageReceiveV1) error {

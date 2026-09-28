@@ -71,6 +71,9 @@ func (s *hubChannelsService) SetStartupRetry(retry *consoleapi.ChannelStartupRet
 	}
 }
 
+// SetReconnect reports a started channel reconnecting; nil reports none.
+func (s *hubChannelsService) SetReconnect(*consoleapi.ChannelReconnect) {}
+
 func NewChannels(admin *Service, startup *config.Config) *hubChannelsService {
 	return &hubChannelsService{admin: admin, applied: startup.ChannelSettings(), appliedSecret: startup.Feishu.AppSecret}
 }
