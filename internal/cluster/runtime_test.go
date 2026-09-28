@@ -960,6 +960,37 @@ func TestActivationCheckThatGivesUpIsReportedAsUnavailable(t *testing.T) {
 	}
 }
 
+// An application that cannot be built because coordination is unavailable
+// says nothing about the build: the runtime gives the generation up and
+// tries again on its next poll, as when its writer fence does not apply,
+// instead of holding the next attempt back as after a failed build.
+func TestActivationThatMeetsUnavailableCoordinationTriesAgainAtOnce(t *testing.T) {
+	nodes := testNodes(t, 1)
+	poll := 200 * time.Millisecond
+	nodes[0].config.PollInterval = poll
+	build := nodes[0].config.Activate
+	var attempts atomic.Int64
+	var failed, retried time.Time
+	nodes[0].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		switch attempts.Add(1) {
+		case 1:
+			defer func() { failed = time.Now() }()
+			return nil, fmt.Errorf("open task store: %w", fmt.Errorf("%w: local replica did not reach applied index 12", coordination.ErrUnavailable))
+		case 2:
+			retried = time.Now()
+		}
+		return build(ctx, activation)
+	}
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	if attempts.Load() != 2 {
+		t.Fatalf("the application was built %d times, want a failed build and one more", attempts.Load())
+	}
+	if gap := retried.Sub(failed); gap >= 5*poll {
+		t.Fatalf("the runtime waited %s to build again, as after a failed build; its poll interval is %s", gap.Round(time.Millisecond), poll)
+	}
+}
+
 func TestCallerCancellationBeforeProposalSubmitsNothing(t *testing.T) {
 	nodes := testNodes(t, 1)
 	r := openNode(t, nodes[0])
