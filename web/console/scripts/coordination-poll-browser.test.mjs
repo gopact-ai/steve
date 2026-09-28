@@ -1,7 +1,8 @@
-import { workState } from "../../../e2e/console/work-fixture.mjs";
 // Reading the coordination view probes every member of the cluster. The
-// view is re-read every few seconds only while its panel is on screen;
-// elsewhere a long floor keeps the shell's coordinator current.
+// view is re-read at once when its panel opens and every few seconds while
+// it is on screen; elsewhere a long floor keeps the shell's coordinator
+// current.
+import { workState } from "../../../e2e/console/work-fixture.mjs";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../node_modules/vite/dist/node/index.js";
@@ -55,9 +56,13 @@ try {
     assert.equal(await readsDuring(50_000), 0, "away from the coordination panel the view is not re-read every few seconds");
     assert.ok(await readsDuring(15_000) >= 1, "away from the coordination panel a long floor still re-reads the view");
 
+    const beforeOpen = reads;
     await page.goto(`${origin}/#/fleet`);
     const panel = page.getByRole("region", { name: "Coordination and failover", exact: true });
     await panel.waitFor();
+    await page.clock.runFor(1000);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(reads > beforeOpen, "opening the coordination panel re-reads the view at once instead of showing the one the floor last read");
     await settle();
     const watched = await readsDuring(20_000);
     assert.ok(watched >= 3 && watched <= 5, `while the coordination panel is on screen the view is re-read every few seconds: ${watched} reads in 20s`);
@@ -67,7 +72,7 @@ try {
     await settle();
     assert.equal(await readsDuring(50_000), 0, "once the panel is closed the view is no longer re-read every few seconds");
     assert.deepEqual(errors, []);
-    console.log("Coordination view: re-read every few seconds only while its panel is on screen");
+    console.log("Coordination view: re-read when its panel opens and every few seconds only while it is on screen");
 } finally {
     await context.close(); await browser.close(); await server.close();
 }
