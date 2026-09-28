@@ -347,3 +347,28 @@ func TestQuorumReadsThatGiveUpSayWhatTheyWaitedFor(t *testing.T) {
 		}
 	}
 }
+
+// A leader whose followers fall silent keeps leading until its lease runs
+// out. A quorum read it serves meanwhile gives up on ApplyTimeout as
+// unavailable and says that a majority did not confirm its leadership.
+func TestQuorumReadThatNoMajorityConfirmsSaysSo(t *testing.T) {
+	c := newTunedTestCluster(t, 2, leaseOutlastingApplyTimeout)
+	leader := c.leader()
+	// The first read establishes the term, so the next one only asks a
+	// majority to confirm the leader.
+	if _, err := leader.ReadState(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	term := leader.raft.CurrentTerm()
+	if err := pauseAll(newSilentRaftLoopPause(t, otherVoter(t, c, leader))); err != nil {
+		t.Fatal(err)
+	}
+	_, err := leader.ReadState(context.Background())
+	want := fmt.Sprintf("a majority did not confirm this node's leadership in term %d within %s", term, leader.config.ApplyTimeout)
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), want) {
+		t.Fatalf("a quorum read no majority confirmed failed with %v, not as unavailable saying %q", err, want)
+	}
+	if !leader.Status().IsLeader {
+		t.Fatal("leader stepped down; the read was not ended by its bound")
+	}
+}
