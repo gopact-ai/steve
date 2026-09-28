@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 type abandonBackend struct {
@@ -36,7 +38,7 @@ func TestAbandonDropsPlanAndTellsBackendAboutRegisteredOperation(t *testing.T) {
 	if len(backend.abandoned) != 1 || backend.abandoned[0] != plan.ID {
 		t.Fatalf("backend was not told to abandon the registered operation: %v", backend.abandoned)
 	}
-	if _, err := svc.Status(plan.ID); err == nil {
+	if _, err := svc.Status(t.Context(), plan.ID); err == nil {
 		t.Fatal("abandoned plan still has a status")
 	}
 	// A plan that never registered anything is only forgotten locally.
@@ -58,7 +60,7 @@ func TestAbandonDropsPlanAndTellsBackendAboutRegisteredOperation(t *testing.T) {
 	}
 	// Giving up is idempotent: an operation the backend no longer has is
 	// already abandoned, so the dialog can forget its copy.
-	backend.abandonErr = fail("planning", "unknown_plan", "这次接入的记录已不存在", "刷新接入记录")
+	backend.abandonErr = Fail(i18n.Catalog{}, "planning", "unknown_plan", "这次接入的记录已不存在", "刷新接入记录")
 	if err := svc.Abandon(t.Context(), strings.Repeat("f", 48)); err != nil {
 		t.Fatalf("a vanished operation was not treated as abandoned: %v", err)
 	}

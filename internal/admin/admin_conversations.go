@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -42,11 +41,11 @@ func (a *Service) DeleteConversation(ctx context.Context, conversation string) e
 func deleteRefusal(text i18n.Catalog, err error) error {
 	switch {
 	case errors.Is(err, task.ErrExecuting):
-		return fmt.Errorf(text.T(i18n.AdminDeleteTaskRunning), err)
+		return text.Errorf(i18n.AdminDeleteTaskRunning, err)
 	case errors.Is(err, turn.ErrConversationBusy), errors.Is(err, consoleapi.ErrBusy):
-		return fmt.Errorf(text.T(i18n.AdminDeleteTurnRunning), err)
+		return text.Errorf(i18n.AdminDeleteTurnRunning, err)
 	case errors.Is(err, consoleapi.ErrConsoleClosing):
-		return fmt.Errorf(text.T(i18n.AdminDeleteHubMaintenance), err)
+		return text.Errorf(i18n.AdminDeleteHubMaintenance, err)
 	default:
 		return err
 	}

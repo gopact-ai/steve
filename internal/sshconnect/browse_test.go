@@ -143,7 +143,7 @@ type aliasBackend struct {
 	aliases map[string]string
 }
 
-func (b *aliasBackend) MachineAlias(nodeID string) (string, error) {
+func (b *aliasBackend) MachineAlias(_ context.Context, nodeID string) (string, error) {
 	alias, ok := b.aliases[nodeID]
 	if !ok {
 		return "", errors.New("本机没有记录到这台机器的 SSH 隧道")

@@ -29,6 +29,7 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/sameorigin"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
@@ -91,7 +92,7 @@ func LoadClusterPeerConfig(path string) (PeerConfig, error) {
 		return config, errors.New("cluster configuration lacks a supported version or stable identity")
 	}
 	if config.StorageLevel != "restricted" && config.StorageLevel != "sealed" {
-		return config, errors.New("完整机群节点必须明确授权保存 restricted 级别的私有协作账本")
+		return config, errors.New("a full cluster node needs explicit permission to keep the private collaboration ledger at restricted level")
 	}
 	for _, path := range []string{config.DataDir, config.CACertFile, config.CertFile, config.KeyFile, config.OwnerTokenFile} {
 		if !filepath.IsAbs(path) {
@@ -124,7 +125,9 @@ func LoadClusterPeerConfig(path string) (PeerConfig, error) {
 		// Both ends are loopback ports: Remote is handed to ssh -R, and a
 		// listener on any other address would expose this node's ports.
 		for _, route := range []coordination.Route{link.Remote, link.Peer} {
-			if err := loopbackRoute(route); err != nil {
+			// Read before the node knows its language, like the rest of
+			// this file's refusals, so said in English.
+			if err := loopbackRoute(i18n.New(i18n.LocaleEN), route); err != nil {
 				return config, fmt.Errorf("invalid link to node %s: %w", nodeID, err)
 			}
 		}

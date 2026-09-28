@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // Connection is one authenticated SSH transport retained from plan checking
@@ -24,7 +26,9 @@ type ConnectionBinder interface {
 }
 
 type sshConnection struct {
-	runner      OpenSSH
+	runner OpenSSH
+	// text is the language of whoever bound the connection.
+	text        i18n.Catalog
 	dir, socket string
 	mu          sync.Mutex
 	closed      bool
@@ -33,11 +37,12 @@ type sshConnection struct {
 // Bind creates an isolated ControlMaster with no command or forwarded ports.
 // ControlPersist bounds orphaned masters if the owning application exits.
 func (r OpenSSH) Bind(ctx context.Context, alias string, arguments []string) (Connection, error) {
+	text := i18n.FromContext(ctx)
 	dir, err := os.MkdirTemp("/tmp", "steve-ssh-")
 	if err != nil {
-		return nil, fail("ssh", "connection_setup", "无法创建私有 SSH 连接目录", "检查本机临时目录权限后重试")
+		return nil, Fail(text, "ssh", "connection_setup", text.T(i18n.SSHConnectionDir), text.T(i18n.SSHConnectionDirFix))
 	}
-	connection := &sshConnection{runner: r, dir: dir, socket: filepath.Join(dir, "master")}
+	connection := &sshConnection{runner: r, text: text, dir: dir, socket: filepath.Join(dir, "master")}
 	keep := false
 	defer func() {
 		if !keep {
@@ -85,7 +90,7 @@ func (r OpenSSH) Bind(ctx context.Context, alias string, arguments []string) (Co
 		return nil, connectionError(ctx, string(data))
 	}
 	if _, err := r.Run(ctx, connection.controlArguments("check"), ""); err != nil {
-		return nil, fail("ssh", "connection_lost", "固定 SSH 连接未能建立", "重新检查机器并生成安装计划")
+		return nil, Fail(text, "ssh", "connection_lost", text.T(i18n.SSHMasterFailed), text.T(i18n.SSHMasterFailedFix))
 	}
 	keep = true
 	return connection, nil
@@ -106,7 +111,7 @@ func (c *sshConnection) available() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return fail("ssh", "connection_lost", "原检查使用的 SSH 连接已关闭", "重新检查并审阅安装计划；不会改用其他连接发送凭据")
+		return Fail(c.text, "ssh", "connection_lost", c.text.T(i18n.SSHConnectionClosed), c.text.T(i18n.SSHConnectionClosedFix))
 	}
 	return nil
 }

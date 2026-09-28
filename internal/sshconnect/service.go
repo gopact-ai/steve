@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/url"
@@ -187,6 +186,8 @@ type Options struct {
 	Backend          Backend
 	PlanTTL          time.Duration
 	InstallationMode InstallationMode
+	// Text is the Hub's language, for a caller whose context names none.
+	Text i18n.Catalog
 }
 
 type storedPlan struct {
@@ -212,6 +213,7 @@ type Service struct {
 	upgrades         map[string]string
 	closed           bool
 	installationMode InstallationMode
+	text             i18n.Catalog
 	// An upload lives as long as bytes keep moving; these pace the watch.
 	uploadTick, uploadStall, uploadReport time.Duration
 }
@@ -226,16 +228,27 @@ func New(options Options) *Service {
 	if options.InstallationMode == "" {
 		options.InstallationMode = InstallExecutor
 	}
-	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}, installationMode: options.InstallationMode, uploadTick: time.Second, uploadStall: uploadStallLimit, uploadReport: uploadReportEvery}
+	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}, installationMode: options.InstallationMode, text: options.Text, uploadTick: time.Second, uploadStall: uploadStallLimit, uploadReport: uploadReportEvery}
+}
+
+// speak is ctx carrying the language of whoever called, the Hub's when
+// they named none, and the catalog in that language. Every entry point
+// starts with it; what it calls reads the language back from ctx, and what
+// it writes into an installation's log is written in that language.
+func (s *Service) speak(ctx context.Context) (context.Context, i18n.Catalog) {
+	text := s.text.For(ctx)
+	return i18n.WithLocale(ctx, text.Locale()), text
 }
 
 func (s *Service) Discover(ctx context.Context) (Discovery, error) {
+	ctx, _ = s.speak(ctx)
 	return Discover(ctx, s.configPath)
 }
 
 func (s *Service) selected(ctx context.Context, alias string) (Candidate, string, error) {
+	text := i18n.FromContext(ctx)
 	if !aliasShape.MatchString(alias) {
-		return Candidate{}, "", fail("configuration", "invalid_alias", "SSH 别名无效", "从发现列表中选择一台机器")
+		return Candidate{}, "", Fail(text, "configuration", "invalid_alias", text.T(i18n.SSHAliasInvalid), text.T(i18n.SSHAliasInvalidFix))
 	}
 	d, err := s.Discover(ctx)
 	if err != nil {
@@ -246,13 +259,14 @@ func (s *Service) selected(ctx context.Context, alias string) (Candidate, string
 			return c, d.Revision, nil
 		}
 	}
-	return Candidate{}, "", fail("configuration", "unknown_alias", "SSH 配置中未找到这个别名", "刷新机器列表后重新选择")
+	return Candidate{}, "", Fail(text, "configuration", "unknown_alias", text.T(i18n.SSHAliasUnknown), text.T(i18n.SSHAliasUnknownFix))
 }
 
 // Check is invoked only after a user selected an alias. OpenSSH retains the
 // user's authentication and proxy configuration, with forwarding and local or
 // remote startup commands disabled. Unknown host keys require normal SSH setup.
 func (s *Service) Check(ctx context.Context, alias string) (CheckResult, error) {
+	ctx, _ = s.speak(ctx)
 	c, _, err := s.selected(ctx, alias)
 	if err != nil {
 		return CheckResult{}, err
@@ -266,15 +280,16 @@ func (s *Service) Check(ctx context.Context, alias string) (CheckResult, error) 
 }
 
 func (s *Service) bind(ctx context.Context, c Candidate) (Connection, error) {
+	text := i18n.FromContext(ctx)
 	s.mu.Lock()
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return nil, fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后检查")
+		return nil, Fail(text, "ssh", "closed", text.T(i18n.SSHClosed), text.T(i18n.SSHClosedCheckFix))
 	}
 	binder, ok := s.runner.(ConnectionBinder)
 	if !ok {
-		return nil, fail("ssh", "connection_binding", "SSH 执行器不支持固定认证连接", "需要支持固定连接的 SSH 执行器；不会发送安装凭据")
+		return nil, Fail(text, "ssh", "connection_binding", text.T(i18n.SSHNoBinding), text.T(i18n.SSHNoBindingFix))
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -283,7 +298,7 @@ func (s *Service) bind(ctx context.Context, c Candidate) (Connection, error) {
 		return nil, err
 	}
 	if connection == nil {
-		return nil, fail("ssh", "connection_binding", "未能建立固定 SSH 连接", "重新检查机器；不会发送安装凭据")
+		return nil, Fail(text, "ssh", "connection_binding", text.T(i18n.SSHBindFailed), text.T(i18n.SSHBindFailedFix))
 	}
 	s.mu.Lock()
 	closed = s.closed
@@ -292,15 +307,16 @@ func (s *Service) bind(ctx context.Context, c Candidate) (Connection, error) {
 		// The service closed while the master came up; the closed error is
 		// the finding, and a failed teardown leaves only a stray directory.
 		_ = connection.Close()
-		return nil, fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后检查")
+		return nil, Fail(text, "ssh", "closed", text.T(i18n.SSHClosed), text.T(i18n.SSHClosedCheckFix))
 	}
 	return connection, nil
 }
 
 func (s *Service) check(ctx context.Context, c Candidate, connection Connection) (CheckResult, error) {
+	text := i18n.FromContext(ctx)
 	result := CheckResult{Candidate: c, Tools: []Tool{}, Agents: []agenttools.Candidate{}, ExistingPaths: []string{}, InstallationMode: s.installationMode, Steps: []Step{}, CheckedAt: s.now().UTC()}
 	if s.installationMode != InstallExecutor && s.installationMode != InstallPeer {
-		return result, fail("configuration", "invalid_installation_mode", "SSH 接入方式配置无效", "修正本机服务的接入配置后重试")
+		return result, Fail(text, "configuration", "invalid_installation_mode", text.T(i18n.SSHModeInvalid), text.T(i18n.SSHModeInvalidFix))
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -312,7 +328,7 @@ func (s *Service) check(ctx context.Context, c Candidate, connection Connection)
 	}
 	values, err := parseProbe(output.Stdout)
 	if err != nil {
-		failure := fail("environment", "invalid_probe", "SSH 已连接，但未收到完整的环境检查结果", "确认该账号允许运行标准 POSIX shell，修复启动脚本后重试")
+		failure := Fail(text, "environment", "invalid_probe", text.T(i18n.SSHProbeIncomplete), text.T(i18n.SSHProbeIncompleteFix))
 		result.Steps = append(result.Steps, failure.step())
 		return result, failure
 	}
@@ -330,9 +346,9 @@ func (s *Service) check(ctx context.Context, c Candidate, connection Connection)
 			result.ExistingPaths = append(result.ExistingPaths, values[entry.field])
 		}
 	}
-	result.Steps = append(result.Steps, Step{ID: "ssh", Status: "ready", Message: "SSH 连接与认证已通过：" + result.User + "@" + result.Address})
+	result.Steps = append(result.Steps, Step{ID: "ssh", Status: "ready", Message: text.T(i18n.SSHReady, result.User+"@"+result.Address)})
 	if result.OS == "" || result.Arch == "" {
-		result.Steps = append(result.Steps, Step{ID: "platform", Status: "blocked", Message: "当前安装流程不支持这台机器的平台", Suggestion: "选择 Linux 或 macOS 的 amd64/arm64 机器"})
+		result.Steps = append(result.Steps, Step{ID: "platform", Status: "blocked", Message: text.T(i18n.SSHPlatformUnsupported), Suggestion: text.T(i18n.SSHPlatformUnsupportedFix)})
 	} else {
 		result.Steps = append(result.Steps, Step{ID: "platform", Status: "ready", Message: result.OS + "/" + result.Arch})
 	}
@@ -346,11 +362,11 @@ func (s *Service) check(ctx context.Context, c Candidate, connection Connection)
 	result.Agents = agenttools.FromPaths(paths)
 	for _, name := range []string{"bash", "nohup"} {
 		if !result.HasTool(name) {
-			result.Steps = append(result.Steps, Step{ID: "tool_" + name, Status: "blocked", Message: "未找到 " + name, Suggestion: "在远端账号的 PATH 中安装该工具后重新检查"})
+			result.Steps = append(result.Steps, Step{ID: "tool_" + name, Status: "blocked", Message: text.T(i18n.SSHToolMissing, name), Suggestion: text.T(i18n.SSHToolMissingFix)})
 		}
 	}
 	if result.ExistingInstallation {
-		result.Steps = append(result.Steps, Step{ID: "existing_node", Status: "blocked", Message: "发现已有 Steve 配置或数据，已停止新安装", Suggestion: "这次检查无法确认服务是否正在运行、配置属于哪个工作台；请先核对原接入记录，不要覆盖或删除这些文件"})
+		result.Steps = append(result.Steps, Step{ID: "existing_node", Status: "blocked", Message: text.T(i18n.SSHExistingNode), Suggestion: text.T(i18n.SSHExistingNodeFix)})
 	}
 	return result, nil
 }
@@ -358,14 +374,15 @@ func (s *Service) check(ctx context.Context, c Candidate, connection Connection)
 // Plan performs fresh read-only checks and saves an expiring review snapshot.
 // A blocked plan still contains evidence and suggestions for the user.
 func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, error) {
-	if err := validateRequest(req, s.installationMode); err != nil {
+	ctx, text := s.speak(ctx)
+	if err := validateRequest(text, req, s.installationMode); err != nil {
 		return InstallPlan{}, err
 	}
 	if s.installationMode == InstallPeer && req.WorkspaceDir == "" {
 		req.WorkspaceDir = DefaultWorkspaceDir
 	}
 	if s.backend == nil {
-		return InstallPlan{}, fail("planning", "not_configured", "节点接入尚未配置", "配置节点注册服务后重试")
+		return InstallPlan{}, Fail(text, "planning", "not_configured", text.T(i18n.SSHNotConfigured), text.T(i18n.SSHNotConfiguredFix))
 	}
 	c, revision, err := s.selected(ctx, req.Alias)
 	if err != nil {
@@ -401,7 +418,7 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return InstallPlan{}, fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后检查")
+		return InstallPlan{}, Fail(text, "ssh", "closed", text.T(i18n.SSHClosed), text.T(i18n.SSHClosedCheckFix))
 	}
 	var expired []Connection
 	for id, stored := range s.plans {
@@ -422,7 +439,7 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 			// to tear down leaves a stray directory and no plan to report to.
 			_ = old.Close()
 		}
-		return InstallPlan{}, fail("planning", "too_many_plans", "待确认的安装计划过多", "等待旧计划过期后重试")
+		return InstallPlan{}, Fail(text, "planning", "too_many_plans", text.T(i18n.SSHTooManyPlans), text.T(i18n.SSHTooManyPlansFix))
 	}
 	// The caller can edit its copy without altering what Commit will execute.
 	s.plans[plan.ID] = &storedPlan{plan: clonePlan(plan), revision: revision, connection: connection}
@@ -479,10 +496,11 @@ func (s *Service) Close() error {
 // returns the earlier outcome; a partial or uncertain installation is never
 // repeated automatically, since its process may have survived a lost SSH link.
 func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) {
+	ctx, text := s.speak(ctx)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return InstallResult{}, fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后核对原操作")
+		return InstallResult{}, Fail(text, "ssh", "closed", text.T(i18n.SSHClosed), text.T(i18n.SSHClosedReviewFix))
 	}
 	stored, ok := s.plans[id]
 	if !ok {
@@ -490,7 +508,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 		if recovery, ok := s.backend.(RegistrationRecovery); ok {
 			return s.resumeRegistration(ctx, recovery, id)
 		}
-		return InstallResult{}, fail("planning", "unknown_plan", "安装计划不存在或已过期", "重新检查机器并生成计划")
+		return InstallResult{}, Fail(text, "planning", "unknown_plan", text.T(i18n.SSHPlanUnknown), text.T(i18n.SSHPlanUnknownFix))
 	}
 	if stored.done {
 		result, err := cloneResult(stored.result), stored.err
@@ -500,7 +518,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 			// The failure being retried is no longer a finding; what the
 			// earlier attempt did settle stays on record.
 			stored.result.Steps = settledSteps(stored.result.Steps)
-			stored.result.appendLog(s.now(), "steve", "继续确认原接入操作，不重新上传或安装")
+			stored.result.appendLog(s.now(), "steve", text.T(i18n.SSHResuming))
 			s.mu.Unlock()
 			result, err = s.resumeRegistration(WithReporter(ctx, func(message string) { s.noteStored(id, message) }), recovery, id)
 			s.mu.Lock()
@@ -511,7 +529,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 			result.Steps = append(append([]Step{}, stored.result.Steps...), result.Steps...)
 			if result.Connected {
 				result.Phase = ""
-				result.appendLog(s.now(), "steve", "原接入操作已确认完成")
+				result.appendLog(s.now(), "steve", text.T(i18n.SSHResumed))
 			} else {
 				result.Phase = PhaseConnectivity
 				if err != nil {
@@ -529,7 +547,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 	if stored.running {
 		result := cloneResult(stored.result)
 		s.mu.Unlock()
-		return result, fail("installation", "in_progress", "这个安装计划正在执行", "等待本次执行返回结果")
+		return result, Fail(text, "installation", "in_progress", text.T(i18n.SSHPlanRunning), text.T(i18n.SSHPlanRunningFix))
 	}
 	if s.now().After(stored.plan.ExpiresAt) || !stored.plan.Ready {
 		s.mu.Unlock()
@@ -538,7 +556,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 			// a stray directory behind the refusal.
 			_ = stored.connection.Close()
 		}
-		return InstallResult{}, fail("planning", "plan_not_ready", "安装计划已过期或仍有未解决的问题", "处理计划中列出的问题后重新检查")
+		return InstallResult{}, Fail(text, "planning", "plan_not_ready", text.T(i18n.SSHPlanNotReady), text.T(i18n.SSHPlanNotReadyFix))
 	}
 	stored.running = true
 	stored.result = InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "installing", Steps: []Step{}, Phases: s.phasesFor(stored.plan)}
@@ -559,11 +577,12 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 }
 
 func (s *Service) resumeRegistration(ctx context.Context, recovery RegistrationRecovery, id string) (InstallResult, error) {
+	text := i18n.FromContext(ctx)
 	if len(id) != 48 {
-		return InstallResult{}, fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
+		return InstallResult{}, Fail(text, "planning", "unknown_plan", text.T(i18n.SSHOperationUnknown), text.T(i18n.SSHOperationUnknownFix))
 	}
 	if _, err := hex.DecodeString(id); err != nil {
-		return InstallResult{}, fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
+		return InstallResult{}, Fail(text, "planning", "unknown_plan", text.T(i18n.SSHOperationUnknown), text.T(i18n.SSHOperationUnknownFix))
 	}
 	ctx, cancel := context.WithTimeout(ctx, peerVerifyLimit)
 	defer cancel()
@@ -576,15 +595,16 @@ func (s *Service) resumeRegistration(ctx context.Context, recovery RegistrationR
 // remote machine is touched: what an earlier attempt installed there is
 // listed in the plan's steps for the user to clean up.
 func (s *Service) Abandon(ctx context.Context, id string) error {
+	ctx, text := s.speak(ctx)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后再放弃这次接入")
+		return Fail(text, "ssh", "closed", text.T(i18n.SSHClosed), text.T(i18n.SSHClosedAbandonFix))
 	}
 	stored, ok := s.plans[id]
 	if ok && stored.running {
 		s.mu.Unlock()
-		return fail("installation", "in_progress", "这个安装计划正在执行", "等待本次执行返回结果后再放弃")
+		return Fail(text, "installation", "in_progress", text.T(i18n.SSHPlanRunning), text.T(i18n.SSHPlanRunningAbandonFix))
 	}
 	registered := !ok || stored.result.Registered
 	s.mu.Unlock()
@@ -592,10 +612,10 @@ func (s *Service) Abandon(ctx context.Context, id string) error {
 		// A refusal changes nothing: the plan stays exactly as it was.
 		abandoner, supported := s.backend.(RegistrationAbandoner)
 		if !supported {
-			return fail("planning", "abandon_unsupported", "这类接入无法自动撤销", "在资源页移除这条登记后重新接入")
+			return Fail(text, "planning", "abandon_unsupported", text.T(i18n.SSHAbandonUnsupported), text.T(i18n.SSHAbandonUnsupportedFix))
 		}
 		if _, err := hex.DecodeString(id); err != nil || len(id) != 48 {
-			return fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
+			return Fail(text, "planning", "unknown_plan", text.T(i18n.SSHOperationUnknown), text.T(i18n.SSHOperationUnknownFix))
 		}
 		abandonCtx, cancel := context.WithTimeout(ctx, abandonLimit)
 		defer cancel()
@@ -628,22 +648,23 @@ func (s *Service) Abandon(ctx context.Context, id string) error {
 const abandonLimit = 30 * time.Second
 
 func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string, connection Connection) (InstallResult, error) {
+	text := i18n.FromContext(ctx)
 	result := InstallResult{PlanID: plan.ID, Name: plan.Request.Name, Status: "needs_attention", Steps: []Step{}, Phases: s.phasesFor(plan)}
 	reject := func(failure *StepError) (InstallResult, error) {
 		result.Steps = append(result.Steps, failure.step())
-		result.appendLog(s.now(), "steve", failure.Message+"；"+failure.Suggestion)
+		result.appendLog(s.now(), "steve", failure.Error())
 		return result, failure
 	}
-	s.enter(&result, PhasePreflight, "复核 SSH 配置、机器环境和安装计划")
+	s.enter(&result, PhasePreflight, text.T(i18n.SSHPreflight))
 	candidate, current, err := s.selected(ctx, plan.Request.Alias)
 	if err != nil {
 		return result, err
 	}
 	if current != revision {
-		return reject(fail("configuration", "config_changed", "SSH 配置已在预览后改变", "重新检查机器并审阅新的安装计划"))
+		return reject(Fail(text, "configuration", "config_changed", text.T(i18n.SSHConfigChanged), text.T(i18n.SSHConfigChangedFix)))
 	}
 	if connection == nil {
-		return reject(fail("ssh", "connection_lost", "原检查使用的固定 SSH 连接已失效", "重新检查并审阅；不会改用其他连接发送凭据"))
+		return reject(Fail(text, "ssh", "connection_lost", text.T(i18n.SSHConnectionLost), text.T(i18n.SSHConnectionLostFix)))
 	}
 	check, err := s.check(ctx, candidate, connection)
 	if err != nil {
@@ -651,7 +672,7 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		return result, err
 	}
 	if check.OS != plan.Check.OS || check.Arch != plan.Check.Arch || check.Address != plan.Check.Address || check.User != plan.Check.User || !stepsReady(check.Steps) {
-		return reject(fail("environment", "environment_changed", "机器环境已改变或不再满足接入条件", "重新检查并确认目标机器"))
+		return reject(Fail(text, "environment", "environment_changed", text.T(i18n.SSHEnvironmentChanged), text.T(i18n.SSHEnvironmentChangedFix)))
 	}
 	s.probeLoopbackPorts(ctx, connection, &check)
 	if check.FreeLoopbackPorts == nil {
@@ -664,79 +685,79 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		return result, err
 	}
 	if template.Script != plan.Script || template.ReviewID != plan.ReviewID || !stepsReady(template.Steps) {
-		return reject(fail("planning", "plan_changed", "安装配置或安装包已在预览后改变", "审阅新的安装计划后再接入"))
+		return reject(Fail(text, "planning", "plan_changed", text.T(i18n.SSHPlanChanged), text.T(i18n.SSHPlanChangedFix)))
 	}
 	var binaryReader io.Reader
 	if template.BinaryPath != "" {
 		// The failed step below says what went wrong; the reason is not shown.
-		binary, metadata, err := nodebootstrap.OpenBinary(i18n.Catalog{}, template.BinaryPath)
+		binary, metadata, err := nodebootstrap.OpenBinary(text, template.BinaryPath)
 		if err != nil {
-			return reject(fail("binary", "binary_unavailable", "无法读取待上传的节点安装包", "重新检查安装包后生成计划"))
+			return reject(Fail(text, "binary", "binary_unavailable", text.T(i18n.SSHBinaryUnreadable), text.T(i18n.SSHBinaryUnreadableFix)))
 		}
 		defer binary.Close()
 		if plan.Binary == nil || metadata != *plan.Binary {
-			return reject(fail("binary", "binary_changed", "待上传的节点安装包已在预览后改变", "重新审阅安装计划"))
+			return reject(Fail(text, "binary", "binary_changed", text.T(i18n.SSHBinaryChanged), text.T(i18n.SSHBinaryChangedFix)))
 		}
 		binaryReader = io.LimitReader(binary, metadata.Size)
 	}
-	s.enter(&result, PhaseRegistration, "在协调节点登记 "+plan.Request.Name)
+	s.enter(&result, PhaseRegistration, text.T(i18n.SSHRegistering, plan.Request.Name))
 	registerRequest := plan.Request
 	registerRequest.ApprovedReviewID = plan.ReviewID
 	registration, err := s.backend.Register(ctx, registerRequest, check, plan.ID)
 	result.Registered = registration.Name != ""
 	result.NodeID = registration.NodeID
 	if err != nil {
-		return reject(fail("registration", "registration_failed", "节点登记未完整完成："+err.Error(), "检查资源页中的登记状态后处理；本次没有自动重试安装"))
+		return reject(Fail(text, "registration", "registration_failed", text.T(i18n.SSHRegistrationFailed, err.Error()), text.T(i18n.SSHRegistrationFailedFix)))
 	}
 	normalized := strings.ReplaceAll(registration.Script, registration.Token, PreviewToken)
 	normalized = strings.ReplaceAll(normalized, plan.ID, nodebootstrap.PreviewUploadID)
 	if !result.Registered || registration.Token == "" || normalized != plan.Script || registration.ReviewID != plan.ReviewID {
-		return reject(fail("planning", "registration_changed", "登记期间安装配置发生改变，安装已停止", "检查已登记的节点并重新审阅接入配置"))
+		return reject(Fail(text, "planning", "registration_changed", text.T(i18n.SSHRegistrationChanged), text.T(i18n.SSHRegistrationChangedFix)))
 	}
-	registeredMessage := "节点已登记"
+	registeredMessage := text.T(i18n.SSHRegistered)
 	_, peerRegistration := s.backend.(RegistrationVerifier)
 	if peerRegistration {
-		registeredMessage = "接入操作已保存，独立节点身份已准备"
+		registeredMessage = text.T(i18n.SSHPeerRegistered)
 	}
 	result.Steps = append(result.Steps, Step{ID: "registration", Status: "ready", Message: registeredMessage})
 	s.progress(result)
 	if binaryReader != nil {
-		uncertain := func(reason string) *StepError {
+		uncertain := func(stalled bool) *StepError {
 			if peerRegistration {
-				return fail("upload", "upload_uncertain", "节点程序上传"+reason+"，接入操作已保留", "检查 SSH 连接和本次接入记录；尚未确认加入投票成员")
+				return Fail(text, "upload", "upload_uncertain", text.T(pick(stalled, i18n.SSHPeerUploadStalled, i18n.SSHPeerUploadUnconfirmed)), text.T(i18n.SSHPeerUploadFix))
 			}
-			return fail("upload", "upload_uncertain", "节点安装包上传"+reason+"，节点登记已保留", "确认远端没有已安装节点后，在资源页移除这条未完成登记，再重新接入")
+			return Fail(text, "upload", "upload_uncertain", text.T(pick(stalled, i18n.SSHUploadStalled, i18n.SSHUploadUnconfirmed)), text.T(i18n.SSHUploadUncertainFix))
 		}
 		if failure := s.upload(ctx, &result, plan, connection, binaryReader, registration.Token, uncertain); failure != nil {
 			return reject(failure)
 		}
 	}
-	s.enter(&result, PhaseInstallation, "在远端执行安装脚本")
+	s.enter(&result, PhaseInstallation, text.T(i18n.SSHInstalling))
 	installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	out, err := connection.Run(installCtx, "bash -s", registration.Script)
 	cancel()
-	s.output(&result, out, registration.Token)
+	s.output(text, &result, out, registration.Token)
 	if err != nil {
-		s.note(&result, "安装脚本退出异常："+err.Error())
+		s.note(&result, text.T(i18n.SSHScriptFailed, err.Error()))
 		if binaryReader != nil {
 			result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
 		}
 		if peerRegistration {
-			return reject(fail("installation", "installation_uncertain", "远端节点启动未确认完成，接入操作已保留", "检查 ~/.steve-peer/peer.log 与原接入操作；SSH 断开后服务可能仍在运行，请先核对状态"))
+			return reject(Fail(text, "installation", "installation_uncertain", text.T(i18n.SSHPeerStartUncertain), text.T(i18n.SSHPeerStartUncertainFix)))
 		}
-		return reject(fail("installation", "installation_uncertain", "远端安装未确认完成，节点登记已保留", "检查远端 ~/steve-node.log 与节点在线状态；SSH 断开后进程可能仍在运行，请勿重复安装"))
+		return reject(Fail(text, "installation", "installation_uncertain", text.T(i18n.SSHInstallUncertain), text.T(i18n.SSHInstallUncertainFix)))
 	}
-	result.Steps = append(result.Steps, Step{ID: "installation", Status: "ready", Message: "远端安装脚本已完成"})
+	result.Steps = append(result.Steps, Step{ID: "installation", Status: "ready", Message: text.T(i18n.SSHInstalled)})
 	s.progress(result)
 	if linker, ok := s.backend.(Linker); ok {
-		s.enter(&result, PhaseLink, "在这次接入的 SSH 会话上运行刚安装的节点程序，两台机器之间的集群通信都承载在这条会话里，不依赖网络路由或 sshd 的端口转发")
+		s.enter(&result, PhaseLink, text.T(i18n.SSHLinking))
 		linkCtx, cancel := context.WithTimeout(ctx, linkLimit)
 		err := linker.Link(linkCtx, plan.ID, registration)
 		cancel()
 		if err != nil {
-			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "确认这个别名能免交互登录并执行命令，且远端 ~/.steve-peer/bin/steve 是本次安装的版本（旧版没有 link 命令）；然后放弃这次接入并重新检查、接入"))
+			return reject(Fail(text, "link", "link_failed", text.T(i18n.SSHLinkFailed, err.Error()), text.T(i18n.SSHLinkFailedFix)))
 		}
-		result.Steps = append(result.Steps, Step{ID: "link", Status: "ready", Message: "SSH 隧道已建立，集群通信将经由这条隧道"})
+		result.Steps = append(result.Steps, Step{ID: "link", Status: "ready", Message: text.T(i18n.SSHLinked)})
 		s.progress(result)
 	}
 	if failure := s.verifyConnectivity(ctx, &result, plan); failure != nil {
@@ -747,12 +768,14 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 
 // upload sends the node program over the fixed SSH connection and records
 // the machine's output. A failed upload is cleaned up before it is reported
-// as what the caller makes of an upload that "未确认完成" or "停滞后已中止".
+// as what the caller makes of an upload that was not confirmed, or that
+// stalled and was stopped.
 // A laptop pushing tens of MiB through a VPN can take many minutes, so the
 // upload has no fixed budget: it goes on while bytes move and ends when
 // they stop for uploadStall.
-func (s *Service) upload(ctx context.Context, result *InstallResult, plan InstallPlan, connection Connection, binary io.Reader, token string, uncertain func(reason string) *StepError) *StepError {
-	s.enter(result, PhaseUpload, fmt.Sprintf("通过 SSH 上传节点程序（%s，%.1f MiB）；链路慢时会持续上传并汇报进度", plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
+func (s *Service) upload(ctx context.Context, result *InstallResult, plan InstallPlan, connection Connection, binary io.Reader, token string, uncertain func(stalled bool) *StepError) *StepError {
+	text := i18n.FromContext(ctx)
+	s.enter(result, PhaseUpload, text.T(i18n.SSHUploading, plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
 	command, _ := nodebootstrap.UploadCommand(plan.ID)
 	uploadCtx, cancel := context.WithTimeout(ctx, uploadLimit)
 	metered := &meteredReader{Reader: binary}
@@ -760,19 +783,15 @@ func (s *Service) upload(ctx context.Context, result *InstallResult, plan Instal
 	out, err := connection.Upload(uploadCtx, command, metered)
 	stalled := settle()
 	cancel()
-	s.output(result, out, token)
+	s.output(text, result, out, token)
 	if err != nil {
 		if stalled {
-			s.note(result, fmt.Sprintf("上传停滞超过 %s（已传 %.1f / %.1f MiB），已中止", s.uploadStall.Round(time.Second), mib(metered.read.Load()), mib(plan.Binary.Size)))
+			s.note(result, text.T(i18n.SSHUploadStallNote, s.uploadStall.Round(time.Second), mib(metered.read.Load()), mib(plan.Binary.Size)))
 		}
 		result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
-		reason := "未确认完成"
-		if stalled {
-			reason = "停滞后已中止"
-		}
-		return uncertain(reason)
+		return uncertain(stalled)
 	}
-	result.Steps = append(result.Steps, Step{ID: "upload", Status: "ready", Message: "节点安装包已通过 SSH 上传，安装时将核验 SHA-256"})
+	result.Steps = append(result.Steps, Step{ID: "upload", Status: "ready", Message: text.T(i18n.SSHUploaded)})
 	s.progress(*result)
 	return nil
 }
@@ -781,14 +800,15 @@ func (s *Service) upload(ctx context.Context, result *InstallResult, plan Instal
 // and settles the result as connected. Sub-phase reports from the backend
 // are forwarded while verification runs and ignored once it has returned.
 func (s *Service) verifyConnectivity(ctx context.Context, result *InstallResult, plan InstallPlan) *StepError {
+	text := i18n.FromContext(ctx)
 	verifier, peerRegistration := s.backend.(RegistrationVerifier)
 	verifyTimeout := 15 * time.Second
-	message := fmt.Sprintf("等待节点连通（最多 %s）", verifyTimeout)
+	message := text.T(i18n.SSHWaitingNode, verifyTimeout)
 	if peerRegistration {
 		// Cluster enrollment keeps going as long as it makes progress; the
 		// verifier stops it on a stall, this cap only bounds the request.
 		verifyTimeout = peerVerifyLimit
-		message = "等待节点接入集群；只要阶段还在推进就持续检测"
+		message = text.T(i18n.SSHWaitingPeer)
 	}
 	s.enter(result, PhaseConnectivity, message)
 	reporter := &phaseReporter{s: s, result: result}
@@ -806,12 +826,12 @@ func (s *Service) verifyConnectivity(ctx context.Context, result *InstallResult,
 		if errors.As(err, &stepErr) {
 			return stepErr
 		}
-		return fail("connectivity", "node_unreachable", "节点服务已启动，但协调节点尚未连通", "检查节点地址、端口和网络路由；SSH 代理连通不代表节点端口可直接访问")
+		return Fail(text, "connectivity", "node_unreachable", text.T(i18n.SSHNodeUnreachable), text.T(i18n.SSHNodeUnreachableFix))
 	}
 	result.Status, result.Connected, result.Phase = "connected", true, ""
-	message = "协调节点已完成节点协议握手"
+	message = text.T(i18n.SSHNodeConnected)
 	if peerRegistration {
-		message = "节点已完成集群接入、状态同步和独立连接验证"
+		message = text.T(i18n.SSHPeerConnected)
 	}
 	result.Steps = append(result.Steps, Step{ID: "connectivity", Status: "ready", Message: message})
 	result.appendLog(s.now(), "steve", message)
@@ -830,13 +850,14 @@ func (s *Service) progress(result InstallResult) {
 }
 
 func (s *Service) cleanupUpload(ctx context.Context, connection Connection, id string) Step {
+	text := i18n.FromContext(ctx)
 	command, _ := nodebootstrap.CleanupUploadCommand(id)
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if _, err := connection.Run(cleanupCtx, command, ""); err != nil {
-		return Step{ID: "upload_cleanup", Status: "blocked", Message: "暂未确认临时上传文件已清理", Suggestion: "恢复 SSH 连接后可移除 ~/steve-bin/.upload-" + id + "，该目录仅属于本次上传"}
+		return Step{ID: "upload_cleanup", Status: "blocked", Message: text.T(i18n.SSHCleanupUnconfirmed), Suggestion: text.T(i18n.SSHCleanupUnconfirmedFix, id)}
 	}
-	return Step{ID: "upload_cleanup", Status: "ready", Message: "本次临时上传已清理"}
+	return Step{ID: "upload_cleanup", Status: "ready", Message: text.T(i18n.SSHCleanedUp)}
 }
 
 func (s *Service) arguments(alias, command string) []string {
@@ -854,36 +875,36 @@ var nodeNameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // executor's name becomes a configuration key and keeps the key shape; a
 // peer's name is what people see for the machine, and any display name
 // will do. A workspace directory is absolute or under the remote home.
-func validateRequest(req InstallRequest, mode InstallationMode) error {
+func validateRequest(text i18n.Catalog, req InstallRequest, mode InstallationMode) error {
 	if !aliasShape.MatchString(req.Alias) {
-		return fail("planning", "invalid_alias", "机器别名无效", "从发现列表选择机器")
+		return Fail(text, "planning", "invalid_alias", text.T(i18n.SSHMachineAliasInvalid), text.T(i18n.SSHMachineAliasInvalidFix))
 	}
 	if mode == InstallPeer {
 		if _, err := coordination.MemberName(req.Name); err != nil {
-			return fail("planning", "invalid_name", "机器名称无效", "填写 1–64 个字符的机器名称，用来在列表里认出这台机器")
+			return Fail(text, "planning", "invalid_name", text.T(i18n.SSHMachineNameInvalid), text.T(i18n.SSHMachineNameInvalidFix))
 		}
 		if req.WorkspaceDir != "" && !validWorkspaceDir(req.WorkspaceDir) {
-			return fail("planning", "invalid_workspace", "工作目录无效", "填写目标机上的绝对路径，或以 ~/ 开头的用户目录下路径，例如 ~/steve-workspace")
+			return Fail(text, "planning", "invalid_workspace", text.T(i18n.SSHWorkspaceInvalid), text.T(i18n.SSHWorkspaceInvalidFix))
 		}
 	} else if !nodeNameShape.MatchString(req.Name) {
-		return fail("planning", "invalid_name", "节点名称无效", "节点名称使用小写字母、数字、点、下划线和连字符")
+		return Fail(text, "planning", "invalid_name", text.T(i18n.SSHNodeNameInvalid), text.T(i18n.SSHNodeNameInvalidFix))
 	} else if req.WorkspaceDir != "" {
-		return fail("planning", "invalid_workspace", "执行节点不支持指定工作目录", "留空工作目录；执行节点在 ~/steve-bin 下运行")
+		return Fail(text, "planning", "invalid_workspace", text.T(i18n.SSHExecutorWorkspace), text.T(i18n.SSHExecutorWorkspaceFix))
 	}
 	host, portText, err := net.SplitHostPort(req.Addr)
 	port, portErr := strconv.Atoi(portText)
 	if err != nil || host == "" || portErr != nil || port < 1 || port > 65535 || strings.ContainsAny(host, "\r\n\x00 \t/?#@") {
-		return fail("planning", "invalid_address", "节点地址无效", "填写协调节点可以直接访问的主机名或 IP 与端口，例如 192.0.2.7:7701")
+		return Fail(text, "planning", "invalid_address", text.T(i18n.SSHAddressInvalid), text.T(i18n.SSHAddressInvalidFix))
 	}
 	switch req.Level {
 	case "", "public", "internal", "restricted", "sealed":
 	default:
-		return fail("planning", "invalid_level", "节点数据等级无效", "选择 public、internal、restricted 或 sealed")
+		return Fail(text, "planning", "invalid_level", text.T(i18n.SSHLevelInvalid), text.T(i18n.SSHLevelInvalidFix))
 	}
 	if req.HubURL != "" {
 		u, err := url.Parse(req.HubURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(req.HubURL, "\r\n\x00'\\") {
-			return fail("planning", "invalid_coordinator_url", "协调服务地址无效", "使用有效的 HTTP 或 HTTPS 服务地址")
+			return Fail(text, "planning", "invalid_coordinator_url", text.T(i18n.SSHHubURLInvalid), text.T(i18n.SSHHubURLInvalidFix))
 		}
 	}
 	return nil
@@ -954,37 +975,52 @@ func cloneResult(result InstallResult) InstallResult {
 
 // StepError is safe for HTTP responses; raw SSH output is used only to classify
 // the failure and is never included in errors, logs or serialized results.
+// Build one with Fail, so its Error joins message and suggestion the way
+// the language they are written in does.
 type StepError struct {
 	Stage      string `json:"stage"`
 	Code       string `json:"code"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion"`
+	text       i18n.Catalog
 }
 
-func (e *StepError) Error() string { return e.Message + "；" + e.Suggestion }
+func (e *StepError) Error() string { return e.text.T(i18n.SSHStepError, e.Message, e.Suggestion) }
 func (e *StepError) step() Step {
 	return Step{ID: e.Stage, Status: "blocked", Message: e.Message, Suggestion: e.Suggestion}
 }
-func fail(stage, code, message, suggestion string) *StepError {
-	return &StepError{Stage: stage, Code: code, Message: message, Suggestion: suggestion}
+
+// Fail is a failed step whose message and suggestion are in text's language.
+func Fail(text i18n.Catalog, stage, code, message, suggestion string) *StepError {
+	return &StepError{Stage: stage, Code: code, Message: message, Suggestion: suggestion, text: text}
+}
+
+// pick is the key for an upload that stalled, or for one that ended
+// otherwise unconfirmed.
+func pick(stalled bool, ifStalled, otherwise i18n.Key) i18n.Key {
+	if stalled {
+		return ifStalled
+	}
+	return otherwise
 }
 
 func connectionError(ctx context.Context, stderr string) *StepError {
-	text := strings.ToLower(stderr)
+	text := i18n.FromContext(ctx)
+	said := strings.ToLower(stderr)
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
-		return fail("ssh", "cancelled", "连接检查已取消", "需要时重新检查这台机器")
-	case strings.Contains(text, "host key verification failed"), strings.Contains(text, "remote host identification has changed"), strings.Contains(text, "no host key is known"):
-		return fail("ssh", "host_key", "SSH 主机身份尚未通过校验", "先在终端用 SSH 核实并信任这台机器的主机密钥，再回来检查")
-	case strings.Contains(text, "permission denied"), strings.Contains(text, "authentication failed"), strings.Contains(text, "too many authentication failures"):
-		return fail("ssh", "authentication", "SSH 认证失败", "检查该别名的账号、密钥和 SSH agent；如需交互登录，先在终端完成后重试")
-	case errors.Is(ctx.Err(), context.DeadlineExceeded), strings.Contains(text, "timed out"), strings.Contains(text, "connection timeout"):
-		return fail("ssh", "timeout", "SSH 连接超时", "检查机器在线状态、VPN 或跳板机连接，再重新检查")
-	case strings.Contains(text, "could not resolve hostname"), strings.Contains(text, "name or service not known"):
-		return fail("ssh", "resolution", "SSH 无法解析目标地址", "检查 SSH config 中的 HostName、DNS 与网络连接")
-	case strings.Contains(text, "connection refused"), strings.Contains(text, "no route to host"):
-		return fail("ssh", "unreachable", "SSH 服务不可达", "检查机器的 SSH 服务、端口、网络路由及跳板机")
+		return Fail(text, "ssh", "cancelled", text.T(i18n.SSHCancelled), text.T(i18n.SSHCancelledFix))
+	case strings.Contains(said, "host key verification failed"), strings.Contains(said, "remote host identification has changed"), strings.Contains(said, "no host key is known"):
+		return Fail(text, "ssh", "host_key", text.T(i18n.SSHHostKey), text.T(i18n.SSHHostKeyFix))
+	case strings.Contains(said, "permission denied"), strings.Contains(said, "authentication failed"), strings.Contains(said, "too many authentication failures"):
+		return Fail(text, "ssh", "authentication", text.T(i18n.SSHAuthFailed), text.T(i18n.SSHAuthFailedFix))
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), strings.Contains(said, "timed out"), strings.Contains(said, "connection timeout"):
+		return Fail(text, "ssh", "timeout", text.T(i18n.SSHTimeout), text.T(i18n.SSHTimeoutFix))
+	case strings.Contains(said, "could not resolve hostname"), strings.Contains(said, "name or service not known"):
+		return Fail(text, "ssh", "resolution", text.T(i18n.SSHResolution), text.T(i18n.SSHResolutionFix))
+	case strings.Contains(said, "connection refused"), strings.Contains(said, "no route to host"):
+		return Fail(text, "ssh", "unreachable", text.T(i18n.SSHUnreachable), text.T(i18n.SSHUnreachableFix))
 	default:
-		return fail("ssh", "connection_failed", "SSH 连接或环境检查失败", "先在终端确认这个别名可以执行远端命令，再重新检查")
+		return Fail(text, "ssh", "connection_failed", text.T(i18n.SSHConnectionFailed), text.T(i18n.SSHConnectionFailedFix))
 	}
 }

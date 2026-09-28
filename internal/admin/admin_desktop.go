@@ -237,20 +237,20 @@ func planDesktopAgents(text i18n.Catalog, requested []consoleapi.DesktopEnrollAg
 		seen[candidateID] = true
 		item, ok := candidates[candidateID]
 		if !ok {
-			return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminDesktopUnsupportedAgent), candidateID)
+			return desktopAgentPlan{}, text.Errorf(i18n.AdminDesktopUnsupportedAgent, candidateID)
 		}
 		name := strings.ToLower(strings.TrimSpace(want.AgentID))
 		if name == "" {
 			name = candidateID
 		}
 		if !NameShape.MatchString(name) {
-			return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameInvalidQuoted), name)
+			return desktopAgentPlan{}, text.Errorf(i18n.AdminAgentNameInvalidQuoted, name)
 		}
 		if localHarnessRegistered(agents, item.Harness) {
 			continue
 		}
 		if _, exists := agents[name]; exists || taken[name] {
-			return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminAgentNameTakenRename), name)
+			return desktopAgentPlan{}, text.Errorf(i18n.AdminAgentNameTakenRename, name)
 		}
 		taken[name] = true
 		registered, tool, err := desktop.Registration(item)
@@ -259,7 +259,7 @@ func planDesktopAgents(text i18n.Catalog, requested []consoleapi.DesktopEnrollAg
 		}
 		if configured, exists := harnesses[item.Harness]; exists {
 			if configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) {
-				return desktopAgentPlan{}, fmt.Errorf(text.T(i18n.AdminDesktopHarnessDiffers), item.Name)
+				return desktopAgentPlan{}, text.Errorf(i18n.AdminDesktopHarnessDiffers, item.Name)
 			}
 		} else {
 			plan.harnesses[item.Harness] = tool
@@ -331,15 +331,15 @@ func (a *Service) prepareDesktopAgents(ctx context.Context, statePath string, se
 	// configuration lock. Existing requests and status reads remain usable.
 	stateDir := filepath.Dir(statePath)
 	if err := runtime.PrepareSelected(stateDir, selected); err != nil {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminDesktopPrepareEnv), err)
+		return textFor(ctx).Errorf(i18n.AdminDesktopPrepareEnv, err)
 	}
 	install := &config.Config{Gateway: config.Gateway{StatePath: statePath}, Harnesses: harnesses}
 	if err := configbuild.PrepareAdapters(ctx, install); err != nil {
-		return fmt.Errorf(textFor(ctx).T(i18n.AdminDesktopInstallAdapter), err)
+		return textFor(ctx).Errorf(i18n.AdminDesktopInstallAdapter, err)
 	}
 	if a.LiveSkills != nil {
 		if err := a.LiveSkills.AddDests(runtime.SelectedSkillDests(stateDir, selected)...); err != nil {
-			return fmt.Errorf(textFor(ctx).T(i18n.AdminDesktopPrepareSkills), err)
+			return textFor(ctx).Errorf(i18n.AdminDesktopPrepareSkills, err)
 		}
 	}
 	return nil

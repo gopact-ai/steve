@@ -48,7 +48,7 @@ func TestStatusReportsPhaseAndLogWhileInstalling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status, err := svc.Status(plan.ID); err != nil || status.PlanID != plan.ID || status.Status != "planned" {
+	if status, err := svc.Status(t.Context(), plan.ID); err != nil || status.PlanID != plan.ID || status.Status != "planned" {
 		t.Fatalf("status before commit = %#v %v, want planned", status, err)
 	}
 	var once sync.Once
@@ -61,7 +61,7 @@ func TestStatusReportsPhaseAndLogWhileInstalling(t *testing.T) {
 	case err := <-completed:
 		t.Fatalf("commit did not reach installer: %v", err)
 	}
-	status, err := svc.Status(plan.ID)
+	status, err := svc.Status(t.Context(), plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,14 +78,14 @@ func TestStatusReportsPhaseAndLogWhileInstalling(t *testing.T) {
 	if err := <-completed; err != nil {
 		t.Fatal(err)
 	}
-	done, err := svc.Status(plan.ID)
+	done, err := svc.Status(t.Context(), plan.ID)
 	if err != nil || done.Status != "connected" || done.Phase != "" {
 		t.Fatalf("finished status = %#v %v", done, err)
 	}
 	if text := logText(done); !strings.Contains(text, "stdout: Node process started") {
 		t.Fatalf("finished log lacks remote output: %q", text)
 	}
-	if _, err := svc.Status("nope"); err == nil {
+	if _, err := svc.Status(t.Context(), "nope"); err == nil {
 		t.Fatal("unknown plan must not have a status")
 	}
 }
@@ -113,7 +113,7 @@ func TestFailedInstallLogKeepsStderrAndRedactsCredential(t *testing.T) {
 	if strings.Contains(text, "test-install-secret") || !strings.Contains(text, "stdout: starting with [redacted]") {
 		t.Fatalf("credential leaked or stdout missing: %q", text)
 	}
-	status, err := svc.Status(plan.ID)
+	status, err := svc.Status(t.Context(), plan.ID)
 	if err != nil || status.Status != "needs_attention" || logText(status) != text {
 		t.Fatalf("status after failure must carry the same log: %#v %v", status, err)
 	}
@@ -188,7 +188,7 @@ func TestResumeCarriesTheInstallationRecord(t *testing.T) {
 			t.Fatalf("resume log lacks %q: %q", want, text)
 		}
 	}
-	if status, _ := svc.Status(plan.ID); logText(status) != text {
+	if status, _ := svc.Status(t.Context(), plan.ID); logText(status) != text {
 		t.Fatal("status after resume differs from the returned record")
 	}
 }
@@ -209,7 +209,7 @@ func TestLateReportsAndProgressCannotReopenASettledInstallation(t *testing.T) {
 	}
 	Report(backend.keep, "too late")
 	svc.progress(InstallResult{PlanID: plan.ID, Status: "installing"})
-	status, err := svc.Status(plan.ID)
+	status, err := svc.Status(t.Context(), plan.ID)
 	if err != nil || status.Status != "connected" || strings.Contains(logText(status), "too late") || logText(status) != logText(result) {
 		t.Fatalf("settled installation was reopened: %#v %v", status, err)
 	}
