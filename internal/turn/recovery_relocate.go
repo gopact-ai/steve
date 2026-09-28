@@ -213,6 +213,7 @@ func relocationPrompt(r attempt.Record, base string, relocation *RelocationConte
 // RelocateChat consumes one persisted plan and its exact choice. It sends a new
 // prompt only after the old attempt is retired and a new attempt is admitted.
 func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, req Request) (result Result, err error) {
+	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	c, err = c.forChannel(req.Channel)

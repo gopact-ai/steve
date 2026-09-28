@@ -105,7 +105,7 @@ func (n observedNodes) Admit(ctx context.Context, _ string, _ nodewire.AdmitRequ
 	return ability.Admission{}, nil
 }
 func (n observedNodes) Bindings(context.Context, string, string) []ability.Binding { return nil }
-func (n observedNodes) Release(context.Context, string, string) error           { return nil }
+func (n observedNodes) Release(context.Context, string, string) error              { return nil }
 
 // recoveryEntryRuns drives each recovery entry a console exchange can
 // reach once its observer fails, under queued, and returns what the

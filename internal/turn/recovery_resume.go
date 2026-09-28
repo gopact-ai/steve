@@ -121,6 +121,7 @@ func (c *Coordinator) ProbeRetained(ctx context.Context, id string) error {
 // ResumeRetainedChat observes the exact command admitted before coordinator
 // loss. It never calls Handle, opens a new task/attempt, or sends Prompt again.
 func (c *Coordinator) ResumeRetainedChat(parent context.Context, id string, req Request) (result Result, err error) {
+	parent = turnContext(parent)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	return c.resumeRetainedChat(parent, id, req, false)
