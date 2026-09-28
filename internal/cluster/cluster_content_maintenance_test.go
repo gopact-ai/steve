@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -355,5 +358,50 @@ func TestContentMaintenanceCollectsHereOnlyWhileItsOwnReadHasTheGenerationWritin
 	peers[0].readContentState.Store(nil)
 	if _, err := worker.maintain(t.Context()); err != nil || heldHere() {
 		t.Fatalf("maintenance with its generation writing: %v; want the upload its owner gave up collected here", err)
+	}
+}
+
+// A maintenance round that meets the end of its generation tells the owner
+// nothing, but logs one line saying so, with what failed before it stopped.
+func TestContentMaintenanceLogsWhatFailedBeforeItsGenerationEnded(t *testing.T) {
+	peers, active := contentPeers(t)
+	remote := append([]*Peer(nil), peers[1:]...)
+	sort.Slice(remote, func(i, j int) bool { return remote[i].Config.NodeID < remote[j].Config.NodeID })
+	caller := peers[0].Config.NodeID
+	// The first peer asked refuses this node as being removed; the next
+	// answers that this generation has ended.
+	alter(t, remote[0], func(state *coordination.State) {
+		state.Removing = maps.Clone(state.Removing)
+		if state.Removing == nil {
+			state.Removing = map[string]bool{}
+		}
+		state.Removing[caller] = true
+	})
+	supersede(t, remote[1])
+	var mu sync.Mutex
+	var observations []string
+	worker, err := peers[0].newContentRepair(active, func(kind, _, message string, _ map[string]string) {
+		mu.Lock()
+		defer mu.Unlock()
+		observations = append(observations, kind+": "+message)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := captureRuntimeLog(t)
+	worker.runMaintenance(t.Context())
+	mu.Lock()
+	defer mu.Unlock()
+	if len(observations) != 0 {
+		t.Errorf("maintenance whose generation ended said %q; want nothing", observations)
+	}
+	var stopped []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "content repair: maintenance stopped") {
+			stopped = append(stopped, line)
+		}
+	}
+	if len(stopped) != 1 || !strings.Contains(stopped[0], "content maintenance "+remote[0].Config.NodeID+": ") || !strings.Contains(stopped[0], "content maintenance "+remote[1].Config.NodeID+": ") {
+		t.Fatalf("maintenance whose generation ended logged %q; want one line with the refusal of %s and the end heard from %s", stopped, remote[0].Config.NodeID, remote[1].Config.NodeID)
 	}
 }

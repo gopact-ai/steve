@@ -493,10 +493,12 @@ func TestContentRepairSaysNothingOnceItsGenerationHasEnded(t *testing.T) {
 	peers[0].Options.ContentRepairInterval = 10 * time.Millisecond
 	runtime := peers[0].Runtime.Load()
 	before := runtime.stateReads.Load()
+	logs := captureRuntimeLog(t)
 	stop := peers[0].StartContentRepair(ended, observe)
-	// A round reads the committed state for its scan and again for its
-	// maintenance; past four reads the first round is over.
-	for deadline := time.Now().Add(10 * time.Second); runtime.stateReads.Load()-before <= 4; {
+	// A round whose scan finds its generation ended reads the committed
+	// state once and does not maintain; past two reads the first round is
+	// over.
+	for deadline := time.Now().Add(10 * time.Second); runtime.stateReads.Load()-before <= 2; {
 		if time.Now().After(deadline) {
 			stop()
 			t.Fatal("content repair did not finish a round")
@@ -504,6 +506,10 @@ func TestContentRepairSaysNothingOnceItsGenerationHasEnded(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	stop()
+	logged := logs.String()
+	if !strings.Contains(logged, "content repair: scan stopped") || strings.Contains(logged, "content repair: maintenance stopped") {
+		t.Errorf("repair for a generation the committed state no longer names logged %q; want the scan stopped and no maintenance", logged)
+	}
 	mu.Lock()
 	if len(observations) != 0 {
 		t.Errorf("repair for a generation the committed state no longer names said %q; want nothing", observations)
