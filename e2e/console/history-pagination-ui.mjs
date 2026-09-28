@@ -77,6 +77,10 @@ try {
         assert.equal(f.requests.at(-1).cursor, cursors[1]);
         assert.equal(await page.getByRole("button", { name: "All records shown", exact: true }).isDisabled(), true);
         await page.setViewportSize({ width: 390, height: 844 });
+        // The phone layout replaces the sidebar with this bar once the
+        // breakpoint change has rendered; measuring before it reads the
+        // desktop tree clipped to the narrow window.
+        await page.locator(".app-mobile-bar").waitFor();
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "Long history must wrap without horizontal overflow");
         if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/history-narrow-long.png`, fullPage: true });
         const emit = () => page.evaluate((at) => window.emit({ kind: "fixture.changed", at }), at);

@@ -233,6 +233,10 @@ try {
     assert.equal(await page.evaluate(() => document.activeElement !== document.body), true, "keyboard focus remains in controls");
     for (const width of [1600, 1000, 780]) {
         await page.setViewportSize({ width, height: 720 });
+        // Below 1280px the sidebar turns compact and drops its collapse
+        // control once the breakpoint change renders; measure that layout,
+        // not the full sidebar still squeezing the conversation.
+        if (width < 1280) await page.locator(".app-collapse").waitFor({ state: "detached" });
         assert.equal(await message.inputValue(), "Draft retained during streaming and resize");
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
         if (process.env.CONVERSATION_SCREENSHOTS) {
