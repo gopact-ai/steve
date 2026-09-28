@@ -56,7 +56,9 @@ func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObserv
 	go func() {
 		defer close(done)
 		for {
-			if _, err := worker.sweep(ctx); err != nil && ctx.Err() == nil {
+			// A generation that ended failed no scan: the next one checks
+			// again.
+			if _, err := worker.sweep(ctx); err != nil && ctx.Err() == nil && !generationEnded(err) {
 				worker.notice(ctx, "scan", "scan_failed", i18n.ClusterContentScanFailed)
 			}
 			worker.runMaintenance(ctx)

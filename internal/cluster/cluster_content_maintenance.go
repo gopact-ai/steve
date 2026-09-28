@@ -149,6 +149,10 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		cancel()
 		total.Blobs += result.Blobs
 		total.Bytes += result.Bytes
+		if generationEnded(err) {
+			// Every other peer would answer the same.
+			return total, fmt.Errorf("content maintenance %s: %w", node, err)
+		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("content maintenance %s: %w", node, err))
 		}
@@ -158,6 +162,10 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 
 func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
 	result, err := w.maintain(ctx)
+	if generationEnded(err) {
+		// Nothing failed: the next generation maintains again.
+		return
+	}
 	if err != nil {
 		w.notice(ctx, "maintenance", "gc_failed", i18n.ClusterMaintenanceFailed, err)
 	} else if result.Blobs > 0 {
