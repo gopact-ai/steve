@@ -339,7 +339,8 @@ func (s *Service) TransportPeers() map[string]string {
 // index, which it usually already does. The confirmation shares
 // ReadIndex's limits. Any other node refuses the read with ErrNotLeader.
 // Either gives up within ApplyTimeout, which a caller holding a lock
-// through the read may rely on.
+// through the read may rely on; giving up at that limit, rather than at the
+// caller's deadline, fails as ErrUnavailable saying what the read waited for.
 func (s *Service) ReadState(ctx context.Context) (State, error) {
 	if s.raft.State() != raft.Leader {
 		if err := s.barrier(ctx); err != nil {
@@ -538,8 +539,8 @@ func (s *Service) bound(ctx context.Context) (context.Context, context.CancelFun
 }
 
 // gaveUp is err, which ended a wait on ctx, unless a limit set by bound ended
-// ctx: then it is ErrUnavailable saying that what did not happen within the
-// limit, and how far this node's log got. The caller's own cancellation or
+// ctx: then it is ErrUnavailable saying what did not happen within the limit
+// and how far this node's log got. The caller's own cancellation or
 // deadline is returned unchanged.
 func (s *Service) gaveUp(ctx context.Context, err error, what string) error {
 	var limit applyBound
