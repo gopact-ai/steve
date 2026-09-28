@@ -56,6 +56,43 @@ func TestReadAccountingTxRequiresExactOriginalExecution(t *testing.T) {
 	}
 }
 
+// A turn that answers no channel message, such as the onboarding
+// introduction, binds its accounting without a turn identity. The execution
+// alone is unique, so that row is read by its exact empty turn, and a turn
+// identity it never had does not find it.
+func TestReadAccountingTxReadsExecutionBoundWithoutTurn(t *testing.T) {
+	_, book := taskRecordBook(t)
+	now := time.Now().UTC()
+	row := attemptRecord{TaskID: "task", Index: 0, Attempt: Attempt{ExecutionID: "execution", ExecutionEpoch: 1,
+		StartedAt: now, EndedAt: now.Add(time.Second), Outcome: OutcomeOK, Member: "worker"}}
+	if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+		if err := tx.PutBinding(taskKind, "task", taskHead{Task: Task{ID: "task"}, AttemptCount: 1}); err != nil {
+			return err
+		}
+		return tx.PutBinding(taskAttemptKind, attemptKey("task", 0), row)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(execution, turn string) (bool, error) {
+		var found bool
+		err := book.Read(t.Context(), func(tx *ledger.ReadTx) error {
+			var err error
+			_, _, found, err = ReadAccountingTx(tx, "task", execution, turn)
+			return err
+		})
+		return found, err
+	}
+	if found, err := read("execution", ""); err != nil || !found {
+		t.Fatalf("accounting bound without a turn identity: %t %v", found, err)
+	}
+	if found, err := read("execution", "turn"); err != nil || found {
+		t.Fatalf("turn identity the execution never had matched: %t %v", found, err)
+	}
+	if _, err := read("", ""); err == nil {
+		t.Fatal("accounting read without an execution identity")
+	}
+}
+
 func TestReadAccountingTxRejectsMalformedOrMiskeyedRows(t *testing.T) {
 	for _, raw := range []string{`null`, `[]`, `{`, `{"task_id":"task","index":-1}`, `{"task_id":"task","index":0,"execution_id":"execution","turn_id":"turn"}`} {
 		t.Run(fmt.Sprintf("%q", raw), func(t *testing.T) {

@@ -13,7 +13,6 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/home"
-	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/project"
@@ -99,37 +98,7 @@ func TestAnOwnerTurnQueuedFromAnEndedToolCallStillGetsItsProjectMemory(t *testin
 	if _, err := book.Begin(t.Context(), r.ID, "attempt", string(r.State), "", r); err != nil {
 		t.Fatal(err)
 	}
-	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := gate.SetStore(grants, nil); err != nil {
-		t.Fatal(err)
-	}
-	calls := &recallContext{}
-	gate.SetMemorizer(calls)
-	gate.Extras(conversation, "codex", "schedule-token", "")
-	if err := gate.BindExecution(t.Context(), agentmcp.Binding{ConversationID: conversation, AgentID: "codex"}, agentmcp.GrantScope{TaskID: "parent-task", TaskEpoch: 1, AttemptID: r.ID, ExecutionGeneration: 1, NodeID: r.Node, SessionID: r.Session}); err != nil {
-		t.Fatal(err)
-	}
-	serving, stop := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- gate.Start(serving) }()
-	t.Cleanup(func() {
-		stop()
-		if err := <-done; err != nil {
-			t.Error(err)
-		}
-	})
-	if text, bad := scheduleToolCall(t, gate, "steve_recall", map[string]any{"query": "deploys"}); bad {
-		t.Fatalf("the tool call was refused: %s", text)
-	}
-	calls.mu.Lock()
-	queued := context.WithoutCancel(calls.ctx)
-	calls.mu.Unlock()
-	if _, ok := agentmcp.ScopeFromContext(queued); !ok {
-		t.Fatal("the tool call carried no grant")
-	}
+	queued := toolCallContext(t, grants, conversation, agentmcp.GrantScope{TaskID: "parent-task", TaskEpoch: 1, AttemptID: r.ID, ExecutionGeneration: 1, NodeID: r.Node, SessionID: r.Session})
 	// The parent's turn is over by the time its child's result arrives.
 	grants.ended.Store(true)
 
