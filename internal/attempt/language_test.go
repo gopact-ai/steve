@@ -1,6 +1,7 @@
 package attempt
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unicode"
@@ -51,8 +52,15 @@ func TestRelocationRefusalIsEnglishUntilSomeoneIsTold(t *testing.T) {
 	s, _, _, p, _, _ := relocationFixture(t)
 	approval := manualRelocation(p)
 	approval.ActionResults = nil
-	_, err := s.OpenRelocation(t.Context(), i18n.Catalog{}, p.ID, approval)
+	_, err := s.OpenRelocation(t.Context(), p.ID, approval)
 	if err == nil || containsHan(err.Error()) || !strings.Contains(err.Error(), "original CLI request outcome is unknown") {
 		t.Fatalf("refusal = %v, want the unresolved action explained in English", err)
+	}
+	var refused *ReplacementRefused
+	if !errors.As(err, &refused) {
+		t.Fatalf("refusal %T cannot be told", err)
+	}
+	if said := refused.Say(i18n.New(i18n.LocaleZH)); !containsHan(said) || !strings.Contains(said, "original CLI request outcome is unknown") {
+		t.Fatalf("refusal told in Chinese = %q", said)
 	}
 }
