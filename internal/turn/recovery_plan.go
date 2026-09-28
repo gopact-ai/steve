@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -103,7 +104,10 @@ func (c *Coordinator) planRecoveryError(err error) error {
 	if errors.As(err, &nowhere) || errors.As(err, &noBudget) || errors.As(err, &exhausted) {
 		return c.retainedBlocked("plan-conditions", i18n.RetainedTriedPlanConditions, i18n.RetainedProblemPlanStuck, err.Error(), i18n.RetainedAdvicePlanConditions, err)
 	}
-	if errors.Is(err, harness.ErrStopUnconfirmed) || errors.Is(err, exec.ErrRecovery) || errors.Is(err, exec.ErrProjection) || errors.Is(err, exec.ErrCompletion) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	// Unavailable coordination fails a write the plan depends on, and a write
+	// that was proposed may still take effect: like a lost context, it says
+	// nothing about the plan, which is kept for a retry.
+	if errors.Is(err, harness.ErrStopUnconfirmed) || errors.Is(err, exec.ErrRecovery) || errors.Is(err, exec.ErrProjection) || errors.Is(err, exec.ErrCompletion) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, coordination.ErrUnavailable) {
 		return c.retainedBlocked("plan-execution", i18n.RetainedTriedReadPlanCheckpoint, i18n.RetainedProblemPlanUnfinished, err.Error(), i18n.RetainedAdviceRestoreNodeStorage, errors.Join(err, harness.ErrStopUnconfirmed))
 	}
 	return nil
