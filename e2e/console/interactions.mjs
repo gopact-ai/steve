@@ -734,10 +734,11 @@ const checks = {
     },
 };
 
-// After a resize to a phone width, wait for ".app-mobile-bar" before calling
-// this: until the breakpoint change renders, the document still holds the
-// desktop tree, clipped to the narrow window.
+// Below 640px it measures once ".app-mobile-bar" is there: until the
+// breakpoint change renders, the document still holds the desktop tree,
+// clipped to the narrow window.
 async function noHorizontalOverflow(page) {
+    if (await page.evaluate(() => innerWidth < 640)) await page.locator(".app-mobile-bar").waitFor({ state: "attached" });
     const size = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
     assert.ok(size.document <= size.viewport + 1, `Document overflows horizontally: ${JSON.stringify(size)}`);
 }
@@ -1046,7 +1047,6 @@ checks["session-setup-view"] = async (f) => {
     // rather than counting a Chinese character as one byte.
     await detail.getByText(/^指令 · 6[0-9] B$/).waitFor();
     await f.page.setViewportSize({ width: 390, height: 844 });
-    await f.page.locator(".app-mobile-bar").waitFor();
     await noHorizontalOverflow(f.page);
 };
 
@@ -2276,7 +2276,6 @@ checks["audit-space-by-machine"] = async (f) => {
     await row(nodes[2].name.slice(0, 12)).getByText("首次测量中…", { exact: true }).waitFor();
     await row(nodes[3].name.slice(0, 12)).getByText("该机器未上报占用", { exact: true }).waitFor();
     await f.page.setViewportSize({ width: 390, height: 844 });
-    await f.page.locator(".app-mobile-bar").waitFor();
     await noHorizontalOverflow(f.page);
     assert.equal(f.calls.length, 0);
 };
@@ -2354,7 +2353,6 @@ checks["usage-dashboard-ranges"] = async (f) => {
     await f.page.getByRole("button", { name: "30d", exact: true }).waitFor();
     assert.equal(await f.page.getByRole("button", { name: "30d", exact: true }).getAttribute("aria-pressed"), "true", "Selected range survives refresh");
     await f.page.setViewportSize({ width: 390, height: 844 });
-    await f.page.locator(".app-mobile-bar").waitFor();
     await noHorizontalOverflow(f.page);
     assert.equal(f.calls.length, 0, "Changing usage range must never submit work");
 };
@@ -2478,7 +2476,6 @@ checks["usage-dashboard-duration-coverage"] = async (f) => {
     await f.page.getByText("TPM covers 0 tokens; 100 tokens have no valid duration.", { exact: true }).waitFor();
     assert.equal(await cardValue("TPM").innerText(), "Unavailable");
     await f.page.setViewportSize({ width: 390, height: 844 });
-    await f.page.locator(".app-mobile-bar").waitFor();
     await noHorizontalOverflow(f.page);
     await f.page.screenshot({ path: path.join(output, "usage-duration-missing-narrow-en.png"), fullPage: true });
     assert.equal(f.calls.length, 0, "Coverage inspection must never submit work");
