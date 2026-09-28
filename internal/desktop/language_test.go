@@ -50,3 +50,19 @@ func TestWorkspaceRefusalsAreSaidInTheOwnersLanguage(t *testing.T) {
 		}
 	}
 }
+
+// A workspace refused where nobody's language is known is refused in
+// English; the edge that answers the owner says it in theirs.
+func TestWorkspaceRefusalsAreEnglishUntilSomeoneIsTold(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, path := range []string{"", "relative/dir", home} {
+		_, err := PrepareWorkspace(i18n.Catalog{}, path, "")
+		if err == nil || !IsInputError(err) || containsHan(err.Error()) {
+			t.Errorf("%q refusal %v is not an English refusal", path, err)
+		}
+	}
+	if err := CheckWorkspaceProject(i18n.Catalog{}, "default", false, "far"); err == nil || containsHan(err.Error()) {
+		t.Errorf("remote project refusal %v is not English", err)
+	}
+}
