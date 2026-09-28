@@ -137,7 +137,12 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 	}
 	if _, err := b.runtime.awaitApplied(ctx, result.Index, result.AppVersion); err != nil {
 		// The write is committed; this generation's caches show it only
-		// once this replica applies it.
+		// once this replica applies it. Callers take an unavailable error
+		// for a write that did not happen, not for an unknown outcome, and
+		// may record that verdict with a later write. The revoke below,
+		// made before this returns, fails every later write of this
+		// generation with ErrInactive, so no such verdict is recorded; it
+		// must stay ahead of the return.
 		if errors.Is(err, coordination.ErrUnavailable) {
 			err = fmt.Errorf("%w; write %s was committed", err, write.ID)
 		}
