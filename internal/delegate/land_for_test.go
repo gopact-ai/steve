@@ -1,15 +1,20 @@
 package delegate
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -125,6 +130,34 @@ func TestLandForSaysAConflictReachedNowIsAConflictOnceTheCanonicalMoves(t *testi
 	}
 }
 
+// A result a pass skips as stuck on its conflict is stuck, even when a
+// result landed later in the same pass moves the canonical on so that the
+// next pass retries it: this pass did not.
+func TestLandForSaysAResultThePassSkippedAsStuckIsStuck(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	p, first, second := conflictingResults(t, w)
+	if land, err := w.artifacts.Land(t.Context(), p, first.ID, "test"); err != nil || land.State != artifact.LandCommitted {
+		t.Fatalf("first landing = %+v err=%v", land, err)
+	}
+	var conflict artifact.Conflict
+	if _, err := w.artifacts.Land(t.Context(), p, second.ID, "test"); !errors.As(err, &conflict) {
+		t.Fatalf("second landing did not conflict: %v", err)
+	}
+	other := publishFile(t, w, "att-3", "other.md", "other\n")
+	if err := w.artifacts.Defer(t.Context(), "p", other.ID, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	landing := w.service.landFor(t.Context(), parent, nil)
+	if got := landing(childWith(other.ID)); !strings.HasPrefix(got, "已落地主目录") {
+		t.Fatalf("landing text for the result landed in the pass = %q", got)
+	}
+	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md" {
+		t.Fatalf("landing text for a result the pass skipped as stuck = %q; want the conflict and its path", got)
+	}
+}
+
 // busyMainDirectory has another turn work in the project's main
 // directory, which holds its lock until the test ends.
 func busyMainDirectory(t *testing.T, w *world) {
@@ -139,6 +172,13 @@ func busyMainDirectory(t *testing.T, w *world) {
 // canonical as it is now.
 func publishNotes(t *testing.T, w *world, owner, body string) artifact.Manifest {
 	t.Helper()
+	return publishFile(t, w, owner, "notes.md", body)
+}
+
+// publishFile publishes a result that writes body to name over the
+// canonical as it is now.
+func publishFile(t *testing.T, w *world, owner, name, body string) artifact.Manifest {
+	t.Helper()
 	ctx := t.Context()
 	ws, err := w.artifacts.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: owner})
 	if err != nil {
@@ -148,7 +188,7 @@ func publishNotes(t *testing.T, w *world, owner, body string) artifact.Manifest 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ws.Path, "notes.md"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ws.Path, name), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := w.artifacts.Publish(ctx, ws, base, owner, body)
@@ -260,5 +300,110 @@ func TestLandForSaysAnApplyConflictAsLaterPassesDo(t *testing.T) {
 	}
 	if later := w.service.landFor(ctx, parent, nil)(childWith(m.ID)); later != now {
 		t.Fatalf("landing text for the same apply conflict later = %q; reached now it was %q", later, now)
+	}
+}
+
+// hookedNodes runs before ahead of each artifact operation on a node.
+type hookedNodes struct {
+	artifact.LocalNodes
+	before func(ops.Request)
+}
+
+func (n hookedNodes) Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
+	n.before(req)
+	return n.LocalNodes.Artifact(ctx, node, req)
+}
+
+// homeOnNode moves project p's main directory onto node-a, whose artifact
+// operations run here after before. A main directory on the hub does not
+// go through nodes, so this is how a test acts in the middle of a landing.
+func homeOnNode(t *testing.T, w *world, before func(ops.Request)) {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	projects := project.Open(book)
+	home := t.TempDir()
+	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: "node-a", Path: home}}}); err != nil {
+		t.Fatal(err)
+	}
+	nodes := hookedNodes{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, before: before}
+	w.artifacts, w.attempts, w.home = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, nodes), attempt.New(book), home
+	w.service.SetLedger(w.attempts, w.artifacts)
+}
+
+// editBy writes body to name in the main directory, as someone working
+// there by hand would.
+func editBy(t *testing.T, w *world, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(w.home, name), []byte(body), 0o644); err != nil {
+		t.Error(err)
+	}
+}
+
+// An apply conflict recovery reached in this pass — a.txt edited by hand
+// as the landing starts writing it — reads as the queue keeps it for every
+// later pass, without recovery's own cause.
+func TestLandForSaysARecoveredApplyConflictAsLaterPassesDo(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	var once sync.Once
+	homeOnNode(t, w, func(req ops.Request) {
+		if req.Op == ops.Apply {
+			once.Do(func() { editBy(t, w, "a.txt", "by hand\n") })
+		}
+	})
+	editBy(t, w, "a.txt", "base\n")
+	m := publishFile(t, w, "att-1", "a.txt", "mine\n")
+	if err := w.artifacts.Defer(t.Context(), "p", m.ID, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	now := w.service.landFor(t.Context(), parent, nil)(childWith(m.ID))
+	if !strings.HasPrefix(now, "落地冲突：") || strings.Contains(now, "recovery:") || !strings.HasSuffix(now, ": a.txt") {
+		t.Fatalf("landing text for an apply conflict recovery reached now = %q; want the conflict, why and its path", now)
+	}
+	if later := w.service.landFor(t.Context(), parent, nil)(childWith(m.ID)); later != now {
+		t.Fatalf("landing text for the same apply conflict later = %q; reached now it was %q", later, now)
+	}
+}
+
+// An apply conflict recovery reached in this pass says why without
+// recovery's own cause, also once a result landed after it in the same
+// pass has changed its path, so that its queue record holds it no longer.
+func TestLandForSaysARecoveredApplyConflictWithoutItsCauseOnceItsPathMoves(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	var applied atomic.Bool
+	var beforeOther atomic.Pointer[string]
+	homeOnNode(t, w, func(req ops.Request) {
+		if req.Op == ops.Apply && applied.CompareAndSwap(false, true) {
+			editBy(t, w, "a.txt", "by hand\n")
+		}
+		// Edited again before the next landing snapshots the main
+		// directory, a.txt changes in the canonical.
+		if message := beforeOther.Load(); message != nil && req.Op == ops.Snapshot && req.Message == *message {
+			editBy(t, w, "a.txt", "by hand again\n")
+		}
+	})
+	editBy(t, w, "a.txt", "base\n")
+	m := publishFile(t, w, "att-1", "a.txt", "mine\n")
+	other := publishFile(t, w, "att-2", "b.txt", "other\n")
+	message := "before landing " + other.ID[:12]
+	beforeOther.Store(&message)
+	for _, r := range []artifact.Manifest{m, other} {
+		if err := w.artifacts.Defer(t.Context(), "p", r.ID, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	landing := w.service.landFor(t.Context(), parent, nil)
+	if got := landing(childWith(other.ID)); !strings.HasPrefix(got, "已落地主目录") {
+		t.Fatalf("landing text for the result landed after the conflict = %q", got)
+	}
+	if got := landing(childWith(m.ID)); !strings.HasPrefix(got, "落地冲突：") || strings.Contains(got, "recovery:") || !strings.HasSuffix(got, ": a.txt") {
+		t.Fatalf("landing text for an apply conflict recovery reached before its path moved = %q; want the conflict, why and its path", got)
 	}
 }
