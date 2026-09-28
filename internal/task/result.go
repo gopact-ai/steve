@@ -91,6 +91,16 @@ func (s *Store) SetResult(id string, r Result) error {
 
 // SetDelivery moves a child's delivery state.
 func (s *Store) SetDelivery(id, state string) error {
+	return s.setDelivery(id, state, "")
+}
+
+// SuppressDelivery settles a result its parent will never receive and
+// records why, for the person reading the child's record.
+func (s *Store) SuppressDelivery(id, reason string) error {
+	return s.setDelivery(id, DeliverySuppressed, reason)
+}
+
+func (s *Store) setDelivery(id, state, detail string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.data.Tasks[id]; !ok {
@@ -102,7 +112,7 @@ func (s *Store) SetDelivery(id, state string) error {
 		t.Delivery = &Delivery{Key: DeliveryKey(id)}
 	}
 	t.Delivery.State, t.Delivery.At = state, s.now()
-	t.Delivery.Error, t.Delivery.NextAttemptAt = "", time.Time{}
+	t.Delivery.Error, t.Delivery.NextAttemptAt = detail, time.Time{}
 	return s.replaceLocked(next)
 }
 

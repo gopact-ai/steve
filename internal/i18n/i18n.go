@@ -715,6 +715,8 @@ const (
 
 	// Why a delegated child's result was settled without reaching its parent.
 	DelegateSuppressedUnconfirmed Key = "delegate_suppressed_unconfirmed"
+	DelegateSuppressedEnded       Key = "delegate_suppressed_ended"
+	DelegateSuppressedMissing     Key = "delegate_suppressed_missing"
 
 	// Resume and replacement recovery questions.
 	ResumeTitle                        Key = "resume_title"
