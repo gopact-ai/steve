@@ -41,7 +41,7 @@ const accountingReceiptSQL = `SELECT count(*),min(id),min(data) FROM
 // snapshot. It grants no deletion authority: the caller must check settlement,
 // usage, result and delivery alongside this exact identity. The execution
 // identifies the row; the turn is matched exactly and is empty for a turn that
-// answers no channel message, such as the onboarding introduction.
+// answers no channel message.
 func ReadAccountingTx(tx ledger.Reader, taskID, executionID, turnID string) (Attempt, int, bool, error) {
 	if taskID == "" || executionID == "" {
 		return Attempt{}, 0, false, errors.New("task accounting requires task and execution identities")
