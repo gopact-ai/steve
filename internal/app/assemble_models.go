@@ -78,18 +78,22 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 	fleet.SetNodeLevels(cfg.NodeLevels())
 	fleet.SetNodeRegions(cfg.NodeRegions())
 	nodes.SetHubLevel(string(cfg.HubLevel()))
-	// Lease authorities were registered before execution recovery.
+	// Lease authorities were registered before execution recovery. A hub
+	// told to issue leases to other regions does not run without its
+	// issuer, so the address is bound here and a failure stops startup.
 	if addr := cfg.Gateway.IssuerAddr; addr != "" {
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			return nil, fmt.Errorf("lease issuer on %s: %w", addr, err)
+		}
+		// A configured port 0 or host name is logged as what it bound.
+		bound := listener.Addr().String()
 		issuer := httpdrain.New(&http.Server{Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken), ReadHeaderTimeout: 10 * time.Second})
 		served := make(chan struct{})
 		go func() {
 			defer close(served)
-			listener, err := net.Listen("tcp", addr)
-			if err == nil {
-				err = issuer.Serve(listener)
-			}
-			if err != nil {
-				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", addr, err))
+			if err := issuer.Serve(listener); err != nil {
+				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", bound, err))
 			}
 		}()
 		// The ledger closes after this step: a lease request already
@@ -101,7 +105,7 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 			_ = issuer.Shutdown(grace)
 			<-served
 		})
-		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), addr))
+		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), bound))
 	}
 	return &modelsValues{endpoints: endpoints, probeDir: probeDir, prober: prober, seen: seen}, nil
 }
