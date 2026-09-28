@@ -106,6 +106,11 @@ func (s *Store) RecordDelivery(ids []string, state, detail string) error {
 		if t.Delivery.State == DeliveryDelivered || t.Delivery.State == DeliverySuppressed {
 			continue
 		}
+		if state == DeliveryQueued && t.Delivery.State == DeliveryQueued && t.Delivery.Error == detail {
+			// Seeing the same queue receipt again is not news. Keeping the
+			// first observation leaves At as "queued since" and writes nothing.
+			continue
+		}
 		d := t.Delivery
 		d.State, d.At, d.Error = state, s.now(), detail
 		d.NextAttemptAt = time.Time{}
