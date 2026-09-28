@@ -1427,10 +1427,28 @@ func (s *Store) Attempting(ctx context.Context, projectID, artifactID, taskID st
 	})
 }
 
-// Stuck lists the project's queued results that are held up by a merge
-// conflict, oldest first.
+// Stuck lists the project's queued results whose landing stopped at a
+// merge or apply conflict, oldest first. A result stays listed until a
+// pass lands or drops it, recovery commits it, or it is unblocked; a retry
+// that conflicts again keeps it listed with the new conflict.
 func (s *Store) Stuck(ctx context.Context, projectID string) ([]Stuck, error) {
 	return s.blocked(ctx, projectID)
+}
+
+// StillStuck is Stuck less the results the canonical head has since
+// cleared of their conflict: the ones a landing pass skips now.
+func (s *Store) StillStuck(ctx context.Context, p project.Project) ([]Stuck, error) {
+	stuck, err := s.blocked(ctx, p.ID)
+	if err != nil || len(stuck) == 0 {
+		return nil, err
+	}
+	head, err := s.CanonicalOf(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(stuck, func(st Stuck) bool {
+		return !s.stillBlocked(ctx, p, Blocked{Landing: st.Landing, State: st.State, Canonical: st.Canonical, Marked: st.Marked, Paths: st.Paths}, head)
+	}), nil
 }
 
 // AllStuck is every project's blocked result, oldest first. A console

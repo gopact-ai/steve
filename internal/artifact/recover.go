@@ -463,7 +463,7 @@ func clipPaths(paths []string, n int) string {
 // conflict is kept, with the reason a person can act on. A project that
 // is gone has no queue to keep it on.
 func (s *Store) conflictedRecovery(ctx context.Context, p project.Project, land *Landing, paths []string, reason string) {
-	s.failed(ctx, land, LandRecoveryPending, LandApplyConflicted, "recovery: "+reason, paths)
+	s.failed(ctx, land, LandRecoveryPending, LandApplyConflicted, recoveryCause+reason, paths)
 	if land.State == LandApplyConflicted && !land.Recoverable && p.ID != "" {
 		s.queueConflicted(ctx, p, *land, Conflict{State: LandApplyConflicted, Paths: paths, Reason: reason}, land.By, land.Source)
 	}

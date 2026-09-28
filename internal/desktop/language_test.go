@@ -34,19 +34,35 @@ func TestWorkspaceRefusalsAreSaidInTheOwnersLanguage(t *testing.T) {
 		text := i18n.New(tc.locale)
 		var said []string
 		for _, path := range []string{"", "relative/dir", home, "/usr/local/steve", file, string([]byte{'/', 'a', 0}), state} {
-			_, err := PrepareWorkspace(text, path, state)
+			_, err := PrepareWorkspace(path, state)
 			if err == nil {
 				t.Fatalf("%q should be refused", path)
 			}
-			said = append(said, err.Error())
+			said = append(said, text.Explain(err))
 		}
-		for _, err := range []error{CheckWorkspaceProject(text, "", true, ""), CheckWorkspaceProject(text, "default", false, "far")} {
-			said = append(said, err.Error())
+		for _, err := range []error{CheckWorkspaceProject("", true, ""), CheckWorkspaceProject("default", false, "far")} {
+			said = append(said, text.Explain(err))
 		}
 		for _, message := range said {
 			if message == "" || containsHan(message) == tc.wantEN {
 				t.Errorf("%s refusal %q is not in that language", tc.locale, message)
 			}
 		}
+	}
+}
+
+// A workspace refused where nobody's language is known is refused in
+// English; the edge that answers the owner says it in theirs.
+func TestWorkspaceRefusalsAreEnglishUntilSomeoneIsTold(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, path := range []string{"", "relative/dir", home} {
+		_, err := PrepareWorkspace(path, "")
+		if err == nil || !IsInputError(err) || containsHan(err.Error()) {
+			t.Errorf("%q refusal %v is not an English refusal", path, err)
+		}
+	}
+	if err := CheckWorkspaceProject("default", false, "far"); err == nil || containsHan(err.Error()) {
+		t.Errorf("remote project refusal %v is not English", err)
 	}
 }

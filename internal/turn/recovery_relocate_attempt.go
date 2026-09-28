@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/datalevel"
@@ -234,7 +236,11 @@ func (c *Coordinator) openRelocationAttempt(ctx context.Context, p attempt.Reloc
 	if admitted != nil {
 		return c.attempts.RecoverRelocationPreparation(ctx, admitted.ID)
 	}
-	r, err := c.attempts.OpenRelocation(ctx, c.text, p.ID, approval)
+	r, err := c.attempts.OpenRelocation(ctx, p.ID, approval)
+	var refused *attempt.ReplacementRefused
+	if errors.As(err, &refused) {
+		return attempt.Record{}, errors.New(refused.Say(c.text))
+	}
 	if err != nil {
 		return attempt.Record{}, err
 	}
@@ -314,6 +320,30 @@ func (c *Coordinator) freezeRelocationSession(ctx context.Context, req Request, 
 	return frozen, nil
 }
 
+// liveRelocationServers is the frozen configuration with the built-in
+// messaging server moved to where the target node listens now. The node
+// picks that loopback port when it starts, so an open retried after the
+// node restarted elsewhere must not hand the replacement the old port; the
+// frozen bearer and every other server stay exactly as frozen. A node that
+// already recorded this open under the old port refuses the moved one as a
+// conflict instead of starting a second native session. A replacement
+// always runs on a remote node, never on the hub.
+func (c *Coordinator) liveRelocationServers(ctx context.Context, node string, frozen []acp.MCPServer) ([]acp.MCPServer, error) {
+	i := slices.IndexFunc(frozen, func(server acp.MCPServer) bool {
+		return server.Name == agentmcp.ServerName && server.Type == acp.MCPServerTypeHTTP
+	})
+	if i < 0 {
+		return frozen, nil
+	}
+	endpoint, err := c.nodeMCPEndpoint(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	servers := slices.Clone(frozen)
+	servers[i].URL = endpoint
+	return servers, nil
+}
+
 // relocationSessionState is the conversation's record of the replacement
 // session, saved tainted before it opens.
 func (c *Coordinator) relocationSessionState(ctx context.Context, req Request, r attempt.Record, frozen attempt.RelocationSessionConfig) (state.Session, error) {
@@ -339,8 +369,12 @@ func (c *Coordinator) relocationSessionState(ctx context.Context, req Request, r
 // attempt to running. known says a session exists on the node, whatever
 // happened after.
 func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt.Record, selected agent.Agent, frozen attempt.RelocationSessionConfig, session state.Session) (harness.Runner, attempt.Record, state.Session, bool, error) {
+	servers, err := c.liveRelocationServers(ctx, selected.Node, frozen.MCPServers)
+	if err != nil {
+		return nil, r, session, false, err
+	}
 	ctx = harness.WithPluginProfile(ctx, r.PluginRuntime)
-	runner, err := c.runtime.OpenSession(ctx, placement(selected), r.Session, r.Workspace.Path, frozen.MCPServers)
+	runner, err := c.runtime.OpenSession(ctx, placement(selected), r.Session, r.Workspace.Path, servers)
 	if err != nil {
 		return nil, r, session, false, err
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -102,7 +103,18 @@ func (p *Peer) serveContentMaintenance(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, result)
 }
 
+// maintain is one maintenance round. As in a repair round (see sweep), its
+// checks judge by one read of the committed state, taken when it starts:
+// which nodes to ask, and whether this generation still writes before each.
+// A peer asked to collect checks the caller against a read of its own, and
+// each ledger write here is fenced by a read of its own.
+//
+// Collecting on this node reads afresh, and checks this generation against
+// that read before it collects. It collects only once this replica holds
+// everything committed when it reads, and what was committed after the
+// round's read — this round's releases among it — is part of that.
 func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult, error) {
+	ctx = withContentReads(ctx)
 	state, err := contentGenerationState(ctx, w.active)
 	if err != nil {
 		return checkpoint.GCResult{}, err
@@ -127,7 +139,7 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		itemCtx, cancel := context.WithTimeout(ctx, contentMaintenanceTimeout)
 		var result checkpoint.RetentionGCResult
 		if node == w.peer.Config.NodeID {
-			result, err = w.peer.collectContent(itemCtx)
+			result, err = w.collectHere(itemCtx)
 		} else {
 			result, err = transport.collect(itemCtx, node)
 		}
@@ -142,12 +154,37 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		if err != nil {
 			failures = append(failures, fmt.Errorf("content maintenance %s: %w", node, err))
 		}
+		if generationEnded(err) {
+			// Every other peer would answer the same.
+			return total, errors.Join(failures...)
+		}
 	}
 	return total, errors.Join(failures...)
 }
 
-func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
+// collectHere collects on this node under a read of its own, read as
+// collecting reads it, once that read still has this generation writing.
+func (w *contentRepairWorker) collectHere(ctx context.Context) (checkpoint.RetentionGCResult, error) {
+	ctx = withContentReads(ctx)
+	if _, err := w.peer.committedState(ctx, w.active.Runtime); err != nil {
+		return checkpoint.RetentionGCResult{}, err
+	}
+	if _, err := contentGenerationState(ctx, w.active); err != nil {
+		return checkpoint.RetentionGCResult{}, err
+	}
+	return w.peer.collectContent(ctx)
+}
+
+// runMaintenance runs one maintenance round and tells the owner what it
+// found. It returns false once the round has shown its generation ended.
+func (w *contentRepairWorker) runMaintenance(ctx context.Context) bool {
 	result, err := w.maintain(ctx)
+	if generationEnded(err) {
+		// Nothing failed: the next generation maintains again. What
+		// failed before the round stopped is logged, not said.
+		slog.Info("content repair: maintenance stopped, its generation has ended", "writer_generation", w.active.WriterGeneration, "cause", err.Error())
+		return false
+	}
 	if err != nil {
 		w.notice(ctx, "maintenance", "gc_failed", i18n.ClusterMaintenanceFailed, err)
 	} else if result.Blobs > 0 {
@@ -155,4 +192,5 @@ func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
 	} else {
 		delete(w.previous, "maintenance")
 	}
+	return true
 }
