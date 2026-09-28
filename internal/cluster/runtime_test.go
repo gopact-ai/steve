@@ -1274,10 +1274,9 @@ func TestCoordinatorThatDoesNotApplyWhatItCommittedGivesUpItsGeneration(t *testi
 }
 
 // A coordinator keeps its generation for as long as its replica applies
-// what it commits: while it keeps writing, each write reading the assignment
-// from a majority and so committing a barrier as well, and while it idles
-// after a quorum read, whose barrier is the last entry and never reaches the
-// state machine.
+// what it commits: while it keeps writing, and while it idles after a
+// barrier, which is then the last entry and never reaches the state
+// machine.
 func TestCoordinatorThatWritesAndIdlesKeepsItsGeneration(t *testing.T) {
 	nodes := testNodesWith(t, 3, steadyTiming)
 	first := openNode(t, nodes[0])
@@ -1309,11 +1308,23 @@ func TestCoordinatorThatWritesAndIdlesKeepsItsGeneration(t *testing.T) {
 		}
 	}
 	kept(fmt.Sprintf("wrote %d times in %s", writes, span))
-	if _, err := second.ReadState(t.Context()); err != nil {
-		t.Fatal(err)
+	// A transfer refused for a stale epoch reads the assignment behind a
+	// barrier, which an established leader appends for nothing else, and
+	// appends nothing after it.
+	before := second.service.LastIndex()
+	if _, err := second.Transfer(t.Context(), coordination.TransferRequest{ID: "stale-transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-3"}); !errors.Is(err, coordination.ErrStaleEpoch) {
+		t.Fatalf("a transfer for a stale epoch returned %v", err)
+	}
+	var log coordination.LogProgress
+	waitFor(t, applyTimeout, "node-2 to hand the barrier over to its state machine", func() bool {
+		log = second.service.LogProgress()
+		return log.Applied > before && log.Applied == second.service.LastIndex()
+	})
+	if state := second.service.Status().AppliedIndex; state >= log.Applied {
+		t.Fatalf("the state machine applied the last entry %d, so it is no barrier; it has applied %d", log.Applied, state)
 	}
 	time.Sleep(span)
-	kept(fmt.Sprintf("idled for %s after a quorum read", span))
+	kept(fmt.Sprintf("idled for %s after a barrier", span))
 }
 
 // A replica that has not heard from a consensus leader since it started is
