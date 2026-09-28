@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { useI18n } from "@/providers/locale-provider";
-import { useFleet } from "./fleet";
+import { useFleet, useFleetEvents } from "./fleet";
 import { HTTPError } from "./http";
 import { executeCoordination, fetchCoordination, type CoordinationCommand, type CoordinationView } from "./api/coordination";
 
@@ -22,9 +22,10 @@ function readOperations(): OperationStore {
 }
 // Reading the view probes every member of the cluster. It is re-read when
 // the event stream reconnects — a coordinator handover ends the stream it
-// served — and every COORDINATION_WATCHED while something that shows each
-// member's state, the coordination panel, is on screen. Otherwise the long
-// COORDINATION_FLOOR bounds how stale the coordinator the shell names is.
+// served — and when a coordination or node event arrives, and every
+// COORDINATION_WATCHED while something that shows each member's state, the
+// coordination panel, is on screen. Otherwise the long COORDINATION_FLOOR
+// bounds how stale the coordinator the shell names is.
 export const COORDINATION_WATCHED = 5_000;
 export const COORDINATION_FLOOR = 60_000;
 function validView(value: CoordinationView) { return value && typeof value.enabled === "boolean" && Array.isArray(value.nodes) && Array.isArray(value.events) && (!value.enabled || (typeof value.cluster_id === "string" && Number.isFinite(value.epoch) && Number.isFinite(value.revision))); }
@@ -32,6 +33,7 @@ function validView(value: CoordinationView) { return value && typeof value.enabl
 export function CoordinationProvider({ children }: { children: ReactNode }) {
     const { t } = useI18n();
     const live = useFleet((fleet) => fleet.live);
+    const events = useFleetEvents();
     const [view, setView] = useState<CoordinationView | null>(null);
     const currentView = useRef<CoordinationView | null>(null);
     const [error, setError] = useState("");
@@ -64,7 +66,8 @@ export function CoordinationProvider({ children }: { children: ReactNode }) {
         return () => { if (!released) { released = true; setWatchers((count) => count - 1); } };
     }, []);
     const watched = watchers > 0;
-    useEffect(() => { void load(); }, [live, load]);
+    const changed = events.find((event) => event.kind.startsWith("coordination.") || event.kind === "node.updated")?.at;
+    useEffect(() => { void load(); }, [live, changed, load]);
     useEffect(() => { if (!view?.enabled) return; const timer = window.setInterval(() => void load(), watched ? COORDINATION_WATCHED : COORDINATION_FLOOR); return () => window.clearInterval(timer); }, [view?.enabled, watched, load]);
 
     const execute = useEventCallback(async (command?: CoordinationCommand) => {
