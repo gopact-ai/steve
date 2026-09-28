@@ -206,7 +206,7 @@ func (s *Service) TaskStopPending(ctx context.Context, id, actor string) error {
 // stopPendingSaid reports whether an attempt's error is the explanation
 // TaskStopPending records, in any language the Hub may have had.
 func stopPendingSaid(text string) bool {
-	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+	for _, locale := range i18n.Locales() {
 		if text == i18n.New(locale).T(i18n.AppStopPending) {
 			return true
 		}
