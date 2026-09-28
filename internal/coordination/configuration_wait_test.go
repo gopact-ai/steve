@@ -70,6 +70,16 @@ func (p *raftLoopPause) pause() error {
 	}
 }
 
+// answersHeartbeat reports whether the node answers a heartbeat within the
+// pause transport's timeout. The heartbeat carries the term every cluster
+// bootstraps with, which a node has left once a leader is elected, so the
+// node refuses it without changing anything.
+func (p *raftLoopPause) answersHeartbeat() bool {
+	request := raft.AppendEntriesRequest{RPCHeader: raft.RPCHeader{ProtocolVersion: raft.ProtocolVersionMax, Addr: []byte(p.transport.LocalAddr())}, Term: 1}
+	var response raft.AppendEntriesResponse
+	return p.transport.AppendEntries(raft.ServerID(p.node.config.NodeID), p.node.transport.LocalAddr(), &request, &response) == nil
+}
+
 func (p *raftLoopPause) release() {
 	p.leave.Do(func() {
 		close(p.released)
