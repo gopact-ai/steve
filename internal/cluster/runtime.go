@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -117,6 +118,9 @@ type Runtime struct {
 	workerDone chan struct{}
 	closeDone  chan struct{}
 	closeOnce  sync.Once
+	// stateReads counts the reads of the committed state this runtime has
+	// asked the consensus leader for; see ReadState.
+	stateReads atomic.Uint64
 }
 
 func Open(config Config) (*Runtime, error) {
