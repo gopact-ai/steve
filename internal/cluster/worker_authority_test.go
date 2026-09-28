@@ -2,9 +2,13 @@ package cluster
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -317,16 +321,17 @@ func TestWorkerConfirmationWaitsForTheStateMachineToApply(t *testing.T) {
 	}
 }
 
-// An idle worker tunnel appends nothing to the consensus log. Every quorum
-// read the consensus leader serves appends a barrier to it, whether it is
-// its own or a member's request for the leader's state, so a log that does
-// not grow also shows that no member asked the leader for its state. The
-// member confirms its replica with a read index instead, which the
-// measurement spans.
+// An idle worker tunnel appends nothing to the consensus log, and a member
+// keeping one does not ask the leader for its state, the whole of which
+// may travel over a slow link: it confirms its replica with a read index
+// instead, which the measurement spans. A leader appends nothing for
+// either once it has established its term, so the member's requests are
+// counted on their way to the leader.
 func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	WaitPeerReady(t, hub)
+	asked := countRequests(t, member, hub)
 	service := hub.Runtime.Load().service
 	span := hub.Runtime.Load().config.Coordination.ApplyTimeout + time.Second
 	growth := func() uint64 {
@@ -351,11 +356,62 @@ func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 	own.Close()
 	openWorkerTunnel(t, hub, member)
 	opened := confirmed()
+	states, indexes := asked(coordination.RPCPath+"state"), asked(coordination.RPCPath+"readindex")
 	if grew := growth(); grew != 0 {
-		t.Errorf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries in %s; the member is asking the leader for its state", grew, span)
+		t.Errorf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries in %s", grew, span)
+	}
+	if n := asked(coordination.RPCPath+"state") - states; n != 0 {
+		t.Errorf("a member keeping an idle worker tunnel asked the leader for its state %d times in %s", n, span+time.Second)
 	}
 	if !confirmed().After(opened) {
 		t.Errorf("the member kept its worker tunnel %s without confirming its replica with a quorum", span+time.Second)
+	}
+	if asked(coordination.RPCPath+"readindex") == indexes {
+		t.Errorf("the member asked the leader for no read index in %s; its requests do not pass the count", span+time.Second)
+	}
+}
+
+// countRequests sends from's requests to the peer API of to through a proxy
+// that counts them, and returns how many for path it has passed on. The
+// proxy answers for to and calls to as from, with their node identities.
+func countRequests(t *testing.T, from, to *Peer) func(path string) int64 {
+	t.Helper()
+	serverTLS, err := to.identity.ServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientTLS, err := from.identity.ClientConfig(to.Config.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(to.Config.PeerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &http.Transport{TLSClientConfig: clientTLS}
+	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(target) }, Transport: upstream}
+	var served sync.Map
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter, _ := served.LoadOrStore(r.URL.Path, new(atomic.Int64))
+		counter.(*atomic.Int64).Add(1)
+		proxy.ServeHTTP(w, r)
+	})}
+	go server.Serve(tls.NewListener(listener, serverTLS))
+	t.Cleanup(func() {
+		from.routes.Delete(to.Config.NodeID)
+		server.Close()
+		upstream.CloseIdleConnections()
+	})
+	from.routes.Set(to.Config.NodeID, coordination.Route{API: listener.Addr().String()})
+	return func(path string) int64 {
+		if counter, ok := served.Load(path); ok {
+			return counter.(*atomic.Int64).Load()
+		}
+		return 0
 	}
 }
 
