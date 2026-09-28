@@ -8,8 +8,11 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -80,5 +83,35 @@ func TestSSHBinaryRefusalIsInTheRequestLanguage(t *testing.T) {
 		if step == nil || step.Status != "blocked" || step.Message == "" || containsHan(step.Message) != tc.han {
 			t.Fatalf("%s binary step = %#v", tc.locale, step)
 		}
+	}
+}
+
+// Copies resumed at startup explain a declaration they could not apply in
+// the Hub's language, read when they are resumed: the startup context
+// carries no reader's language of its own.
+func TestResumedCopiesExplainInTheHubsLanguage(t *testing.T) {
+	for _, tc := range []struct {
+		locale string
+		han    bool
+	}{{"en", false}, {"zh", true}} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, book := projectAdminFixture(t)
+			a.cfg().Gateway.Locale = tc.locale
+			a.cfg().Projects["new"] = config.Project{Home: config.ProjectHome{Path: t.TempDir()}}
+			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+				_, err := tx.Exec(`CREATE TRIGGER stop_reconcile BEFORE INSERT ON bindings WHEN NEW.kind = 'project-declarations' BEGIN SELECT RAISE(ABORT, 'projection unavailable'); END`)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			err := a.ResumeProjectCopies(t.Context())
+			var pending *configbuild.ProjectionPendingError
+			if !errors.As(err, &pending) {
+				t.Fatalf("resume = %v, want the declaration pending", err)
+			}
+			if said := strings.TrimSuffix(err.Error(), pending.Err.Error()); containsHan(said) != tc.han {
+				t.Fatalf("%s hub explained %q", tc.locale, err)
+			}
+		})
 	}
 }
