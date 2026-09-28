@@ -20,8 +20,12 @@ type Setup struct {
 	Agent, Node, Harness, Model string
 	// Mode is which identity the home lends this conversation.
 	Mode string
-	// Instructions is the assembled text, exactly as a new session
-	// would receive it, and Sections is what it is made of, in order.
+	// Instructions is the assembled text a session is given, and Sections
+	// is what it is made of, in order. The messaging server's guidance is
+	// included only for a session that already holds a token for it. A
+	// conversation without one is shown the rest, although the session its
+	// next turn opens is also given that guidance when this hub runs the
+	// messaging server and the agent speaks HTTP MCP.
 	Instructions string
 	Sections     []capability.Section
 	MCPServers   []string
