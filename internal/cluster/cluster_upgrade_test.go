@@ -3,6 +3,8 @@ package cluster
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -92,5 +94,52 @@ func TestAskBuildReadsTheMemberStatusInsteadOfTheLocalApplication(t *testing.T) 
 	}
 	if _, err := peer.askBuild("node-absent")(t.Context()); err == nil || !strings.Contains(err.Error(), "成员") {
 		t.Fatalf("a member outside the cluster was not refused: %v", err)
+	}
+}
+
+// An upgrade asked for a node ID that is neither this node, a machine it
+// keeps a link to, nor a cluster member is refused as unknown and leaves no
+// record. Every machine the cluster knows keeps its usual answer: a member
+// without a link is told it has no tunnel here. Without a running consensus
+// runtime membership cannot be read, so no node ID is called unknown.
+func TestUpgradeTellsAnUnknownNodeFromAMachineWithoutATunnel(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(config, []byte("# no hosts\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nodes := testNodes(t, 1)
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	peer := &Peer{Config: PeerConfig{NodeID: "node-hub", Links: map[string]PeerLink{"node-dev": {Alias: "dev"}}}}
+	peer.Runtime.Store(r)
+	service := sshconnect.New(sshconnect.Options{ConfigPath: config, Backend: peerSSHBackend{peer: peer}, InstallationMode: sshconnect.InstallPeer})
+	t.Cleanup(func() { _ = service.Close() })
+	code := func(node string) string {
+		t.Helper()
+		result, err := service.Upgrade(t.Context(), node)
+		var step *sshconnect.StepError
+		if !errors.As(err, &step) {
+			t.Fatalf("%s: %#v %v", node, result, err)
+		}
+		if (step.Code == "unknown_node") != (result.Status == "") {
+			t.Fatalf("%s: refused as %s with record %#v", node, step.Code, result)
+		}
+		return step.Code
+	}
+	for node, want := range map[string]string{"Mac mini": "unknown_node", "node-1": "upgrade_target", "node-hub": "upgrade_target", "node-dev": "unknown_alias"} {
+		if got := code(node); got != want {
+			t.Fatalf("%s refused as %s, want %s", node, got, want)
+		}
+	}
+	var step *sshconnect.StepError
+	if _, err := service.UpgradeStatus(t.Context(), "Mac mini"); !errors.As(err, &step) || step.Code != "unknown_node" {
+		t.Fatalf("unknown node status = %v", err)
+	}
+	if status, err := service.UpgradeStatus(t.Context(), "node-1"); err != nil || status.Status != "needs_attention" {
+		t.Fatalf("a member's refused upgrade is not readable: %#v %v", status, err)
+	}
+	peer.Runtime.Store(nil)
+	if got := code("Mac mini"); got != "upgrade_target" {
+		t.Fatalf("without a runtime an unlisted node was refused as %s", got)
 	}
 }

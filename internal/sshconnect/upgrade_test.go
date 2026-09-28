@@ -19,6 +19,8 @@ type upgradeBackend struct {
 	upgraded    []string
 	upgradedErr error
 	binaryPath  string
+	// unknown is a node ID no machine of the backend has.
+	unknown string
 	// hold keeps Upgraded from returning until closed; holding counts the
 	// calls waiting there.
 	hold    chan struct{}
@@ -30,6 +32,10 @@ func (b *upgradeBackend) UpgradeTarget(_ context.Context, nodeID string) (Upgrad
 		return UpgradeTarget{}, errors.New("这台机器没有记录 SSH 隧道")
 	}
 	return UpgradeTarget{Alias: b.alias, Version: "abc1234", FindBinary: func(platform string) (string, bool) { return b.binaryPath, platform == "linux/amd64" }}, nil
+}
+
+func (b *upgradeBackend) Knows(_ context.Context, nodeID string) bool {
+	return nodeID != b.unknown
 }
 
 func (b *upgradeBackend) Upgraded(ctx context.Context, nodeID string) error {
@@ -123,6 +129,39 @@ func TestUpgradeRefusesMachinesItCannotReachOrThatHaveNoPeer(t *testing.T) {
 		if call.upload || strings.Contains(call.stdin, "steve.previous") {
 			t.Fatal("a refused upgrade sent or swapped the program")
 		}
+	}
+}
+
+// A node ID that names no machine, such as a machine's display name, is
+// refused as unknown: no upgrade record is kept, nothing is run, and there
+// is no status to read for it. A known machine this node cannot reach keeps
+// its record, so why it was refused stays readable.
+func TestUpgradeRefusesAnUnknownNodeWithoutKeepingARecord(t *testing.T) {
+	svc, runner, backend, _ := upgradeFixture(t)
+	backend.unknown = "Mac mini"
+	result, err := svc.Upgrade(t.Context(), "Mac mini")
+	var step *StepError
+	if !errors.As(err, &step) || step.Code != "unknown_node" || result.Status != "" || result.PlanID != "" {
+		t.Fatalf("unknown node upgrade = %#v %v", result, err)
+	}
+	if !strings.Contains(step.Message, "Mac mini") {
+		t.Fatalf("the refusal does not name what was asked for: %q", step.Message)
+	}
+	if _, err := svc.UpgradeStatus(t.Context(), "Mac mini"); !errors.As(err, &step) || step.Code != "unknown_node" {
+		t.Fatalf("unknown node status = %v", err)
+	}
+	svc.mu.Lock()
+	kept := len(svc.plans) + len(svc.upgrades)
+	svc.mu.Unlock()
+	if kept != 0 || len(runner.calls) != 0 {
+		t.Fatalf("an unknown node left %d records and ran %d commands", kept, len(runner.calls))
+	}
+	backend.alias = ""
+	if result, err := svc.Upgrade(t.Context(), "node-1"); !errors.As(err, &step) || step.Code != "upgrade_target" || result.Status != "needs_attention" {
+		t.Fatalf("known machine without a tunnel = %#v %v", result, err)
+	}
+	if status, err := svc.UpgradeStatus(t.Context(), "node-1"); err != nil || status.Status != "needs_attention" {
+		t.Fatalf("known machine's refused upgrade is not readable: %#v %v", status, err)
 	}
 }
 
