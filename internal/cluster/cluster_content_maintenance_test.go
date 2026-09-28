@@ -288,3 +288,24 @@ func TestContentMaintenanceRefusalReachesTheCoordinatorInTime(t *testing.T) {
 		t.Fatalf("maintenance on a peer that cannot check it: %v; want the peer's answer that it could not", err)
 	}
 }
+
+// A maintenance round checks its generation against one read of the
+// committed state, however many nodes it asks to collect. Two reads are
+// its own: collecting on this node reads afresh, since it collects only
+// once this replica holds everything committed when it looks, and the
+// ledger write that releases superseded receipts is fenced by its own read.
+func TestContentMaintenanceRoundReadsTheCommittedStateOnceForItsChecks(t *testing.T) {
+	peers, active := contentPeers(t)
+	worker, err := peers[0].newContentRepair(active, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := peers[0].Runtime.Load()
+	before := runtime.stateReads.Load()
+	if _, err := worker.maintain(t.Context()); err != nil {
+		t.Fatalf("maintenance of %d nodes: %v", len(peers), err)
+	}
+	if reads := runtime.stateReads.Load() - before; reads != 3 {
+		t.Fatalf("maintenance of %d nodes read the committed state %d times; want one read for its checks, one for collecting here and one for its write", len(peers), reads)
+	}
+}
