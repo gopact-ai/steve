@@ -175,13 +175,15 @@ func (w *contentRepairWorker) collectHere(ctx context.Context) (checkpoint.Reten
 	return w.peer.collectContent(ctx)
 }
 
-func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
+// runMaintenance runs one maintenance round and tells the owner what it
+// found. It returns false once the round has shown its generation ended.
+func (w *contentRepairWorker) runMaintenance(ctx context.Context) bool {
 	result, err := w.maintain(ctx)
 	if generationEnded(err) {
 		// Nothing failed: the next generation maintains again. What
 		// failed before the round stopped is logged, not said.
 		slog.Info("content repair: maintenance stopped, its generation has ended", "writer_generation", w.active.WriterGeneration, "cause", err.Error())
-		return
+		return false
 	}
 	if err != nil {
 		w.notice(ctx, "maintenance", "gc_failed", i18n.ClusterMaintenanceFailed, err)
@@ -190,4 +192,5 @@ func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
 	} else {
 		delete(w.previous, "maintenance")
 	}
+	return true
 }

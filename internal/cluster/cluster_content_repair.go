@@ -56,15 +56,19 @@ func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObserv
 	go func() {
 		defer close(done)
 		for {
-			// A generation that ended failed no scan, and has nothing left
-			// to maintain: the next one checks again.
-			if _, err := worker.sweep(ctx); generationEnded(err) {
+			// A generation that ended failed no scan, has nothing left to
+			// maintain and does not come back: repair ends with it, and the
+			// next generation's repair checks again.
+			_, err := worker.sweep(ctx)
+			if generationEnded(err) {
 				slog.Info("content repair: scan stopped, its generation has ended", "writer_generation", active.WriterGeneration, "cause", err.Error())
-			} else {
-				if err != nil && ctx.Err() == nil {
-					worker.notice(ctx, "scan", "scan_failed", i18n.ClusterContentScanFailed)
-				}
-				worker.runMaintenance(ctx)
+				return
+			}
+			if err != nil && ctx.Err() == nil {
+				worker.notice(ctx, "scan", "scan_failed", i18n.ClusterContentScanFailed)
+			}
+			if !worker.runMaintenance(ctx) {
+				return
 			}
 			timer := time.NewTimer(interval)
 			select {
