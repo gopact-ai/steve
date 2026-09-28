@@ -92,37 +92,45 @@ func TestTaskStopAfterResumeDoesNotUpgradeOrFinishTheNewTaskTurn(t *testing.T) {
 	}
 }
 
-// A stop still waiting on its node is recorded once. Checking again adds
-// no event, even after the Hub changed language and so words the same
-// explanation differently, and an attempt already quarantined keeps the
-// reason it was quarantined for.
+// A stop still waiting on its node is recorded once, over whatever the
+// attempt was quarantined for before: the owner reads that the pause or
+// cancel is recorded. Checking again adds no event, even after the Hub
+// changed language and so words the same explanation differently.
 func TestTaskStopPendingIsRecordedOnce(t *testing.T) {
-	zh, en := i18n.New(i18n.LocaleZH).T(i18n.AppStopPending), i18n.New(i18n.LocaleEN).T(i18n.AppStopPending)
+	zh := i18n.New(i18n.LocaleZH).T(i18n.AppStopPending)
 	for _, quarantined := range []bool{false, true} {
 		t.Run(fmt.Sprintf("quarantined=%t", quarantined), func(t *testing.T) {
 			s, _, old, _, tasks := retainedFixture(t)
 			if _, err := tasks.SetAside(old.TaskID, task.StatePaused); err != nil {
 				t.Fatal(err)
 			}
-			want := zh
 			if quarantined {
-				want = "old observer gone"
-				if err := s.MarkUnsettled(t.Context(), old.ID, "restart", errors.New(want), nil); err != nil {
+				if err := s.MarkUnsettled(t.Context(), old.ID, "restart", errors.New("old observer gone"), nil); err != nil {
 					t.Fatal(err)
 				}
-			} else if err := s.TaskStopPending(t.Context(), old.ID, "task-stop-recovery", zh); err != nil {
+			}
+			if err := taskStopPending(t, s, old.ID, i18n.LocaleZH); err != nil {
 				t.Fatal(err)
 			}
 			first, _ := s.Get(t.Context(), old.ID)
+			if !first.Unsettled || first.Error != zh {
+				t.Fatalf("stop pending recorded as %q, want %q", first.Error, zh)
+			}
 			before, _ := s.l.Events(t.Context(), old.ID)
-			if err := s.TaskStopPending(t.Context(), old.ID, "task-stop-recovery", en); err != nil {
+			if err := taskStopPending(t, s, old.ID, i18n.LocaleEN); err != nil {
 				t.Fatal(err)
 			}
 			current, _ := s.Get(t.Context(), old.ID)
 			after, _ := s.l.Events(t.Context(), old.ID)
-			if !current.Unsettled || current.Error != want || current.Revision != first.Revision || len(after) != len(before) {
+			if !current.Unsettled || current.Error != zh || current.Revision != first.Revision || len(after) != len(before) {
 				t.Fatalf("pending stop recorded again: %q revision %d->%d, events %d->%d", current.Error, first.Revision, current.Revision, len(before), len(after))
 			}
 		})
 	}
+}
+
+// taskStopPending records a stop pending on its node as the Hub does
+// while it speaks locale.
+func taskStopPending(t *testing.T, s *Service, id string, locale i18n.Locale) error {
+	return s.TaskStopPending(i18n.WithLocale(t.Context(), locale), id, "task-stop-recovery", i18n.New(locale).T(i18n.AppStopPending))
 }
