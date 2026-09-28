@@ -22,3 +22,20 @@ func TestExplainSaysWhatCanBeSaid(t *testing.T) {
 		t.Fatalf("plain error = %q", got)
 	}
 }
+
+// An explained error reads as its reader's language says it and still
+// holds what it wraps; explaining it again says that afresh.
+func TestExplainedSaysAndStillWraps(t *testing.T) {
+	zh, en := New(LocaleZH), New(LocaleEN)
+	err := en.Explained(fmt.Errorf("upload: %w", refusal{}))
+	if got := err.Error(); got != en.T(NodeBinaryUnreadable) {
+		t.Fatalf("explained = %q", got)
+	}
+	var said refusal
+	if !errors.As(err, &said) {
+		t.Fatalf("explained %v no longer wraps its refusal", err)
+	}
+	if got := zh.Explain(err); got != zh.T(NodeBinaryUnreadable) {
+		t.Fatalf("explained again = %q", got)
+	}
+}
