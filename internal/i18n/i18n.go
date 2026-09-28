@@ -1365,6 +1365,8 @@ const (
 	ClusterContentPlacementUnchecked Key = "cluster_content_placement_unchecked"
 	ClusterContentCopyUncheckedOne   Key = "cluster_content_copy_unchecked_one"
 	ClusterContentCopyUncheckedMany  Key = "cluster_content_copy_unchecked_many"
+	ClusterContentStoreUncheckedOne  Key = "cluster_content_store_unchecked_one"
+	ClusterContentStoreUncheckedMany Key = "cluster_content_store_unchecked_many"
 	ClusterContentPlacementMismatch  Key = "cluster_content_placement_mismatch"
 	ClusterContentReplicated         Key = "cluster_content_replicated"
 	ClusterContentShort              Key = "cluster_content_short"
