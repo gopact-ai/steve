@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -117,6 +118,9 @@ type Runtime struct {
 	workerDone chan struct{}
 	closeDone  chan struct{}
 	closeOnce  sync.Once
+	// stateReads counts the reads of the committed state this runtime has
+	// asked the consensus leader for; see ReadState.
+	stateReads atomic.Uint64
 }
 
 func Open(config Config) (*Runtime, error) {
@@ -224,6 +228,44 @@ func (r *Runtime) WaitReady(ctx context.Context) (Activation, error) {
 		case <-changed:
 		}
 	}
+}
+
+// readyAt is WaitReady judged by state, a read of the committed state made
+// through the leader for the caller, instead of a read of its own. When
+// state names the ready generation — this node coordinating, with that
+// generation's assignment and writer generation — it only waits, as Prepare
+// does after its own read, for this replica to apply what the read saw.
+// Otherwise the read was made before the generation started or after it
+// was replaced, and readyAt is WaitReady.
+func (r *Runtime) readyAt(ctx context.Context, state coordination.State) (Activation, error) {
+	r.mu.Lock()
+	current := r.current
+	ready := !r.closed && r.ready && current != nil && current.Context.Err() == nil &&
+		state.Coordinator.NodeID == r.config.Coordination.NodeID && state.Coordinator == current.Assignment &&
+		state.WriterGeneration != 0 && state.WriterGeneration == current.WriterGeneration
+	var active Activation
+	if ready {
+		active = current.Activation
+	}
+	r.mu.Unlock()
+	if !ready {
+		return r.WaitReady(ctx)
+	}
+	b := &replicator{runtime: r, generation: current, book: active.Ledger}
+	bound, cancel := b.boundContext(ctx)
+	position, err := b.caughtUp(bound, state)
+	cancel()
+	if err == nil {
+		active.Version = position.Version
+		return active, nil
+	}
+	if ctx.Err() != nil {
+		return Activation{}, ctx.Err()
+	}
+	if current.Context.Err() != nil || errors.Is(err, ErrInactive) {
+		return r.WaitReady(ctx)
+	}
+	return Activation{}, err
 }
 
 func (r *Runtime) notifyLocked() {

@@ -73,6 +73,39 @@ func TestContentRepairDoesNotReadOrRetransmitHealthyCopies(t *testing.T) {
 	}
 }
 
+// A repair round reads the committed state through the leader once, however
+// many objects it looks at.
+func TestContentRepairRoundReadsTheCommittedStateOnce(t *testing.T) {
+	peers, active := contentPeers(t)
+	client, err := peers[0].ContentReplicator(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const objects = 4
+	for i := range objects {
+		data := []byte(fmt.Sprintf("healthy object %d of one round", i))
+		ref := checkpoint.Reference(data)
+		manifest, err := client.Prepare(t.Context(), "workspace", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		recordRepairManifest(t, active.Ledger, manifest)
+	}
+	worker, err := peers[0].newContentRepair(active, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := peers[0].Runtime.Load()
+	before := runtime.stateReads.Load()
+	report, err := worker.sweep(t.Context())
+	if err != nil || report.Healthy != objects {
+		t.Fatalf("a round over healthy content: %+v %v", report, err)
+	}
+	if reads := runtime.stateReads.Load() - before; reads != 1 {
+		t.Fatalf("a round over %d healthy objects read the committed state %d times; want one read", objects, reads)
+	}
+}
+
 func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	peers, active := contentPeers(t)
 	source := peers[0]

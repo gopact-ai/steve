@@ -580,7 +580,7 @@ func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state.Coordinator.NodeID == p.Config.NodeID {
-		p.proxyLocalApplication(w, r, state.Coordinator.Epoch)
+		p.proxyLocalApplication(w, r, state.Coordinator.Epoch, &state)
 		return
 	}
 	member, ok := state.Members[state.Coordinator.NodeID]
@@ -618,17 +618,28 @@ func (p *Peer) servePeerApplication(w http.ResponseWriter, r *http.Request) {
 	request := r.Clone(r.Context())
 	request.URL.Path = strings.TrimPrefix(request.URL.Path, clusterApplicationPath)
 	request.URL.RawPath = ""
-	p.proxyLocalApplication(w, request, epoch)
+	p.proxyLocalApplication(w, request, epoch, nil)
 }
 
-func (p *Peer) proxyLocalApplication(w http.ResponseWriter, r *http.Request, epoch uint64) {
+// proxyLocalApplication hands r to this node's application once a read of
+// the committed state through the leader, made after r arrived, confirms
+// the business generation serving it. read, if set, is such a read, made
+// for r already; without it the generation is confirmed by a read of its
+// own.
+func (p *Peer) proxyLocalApplication(w http.ResponseWriter, r *http.Request, epoch uint64, read *coordination.State) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {
 		HTTPError(w, coordination.ErrUnavailable)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	active, err := runtime.WaitReady(ctx)
+	var active Activation
+	var err error
+	if read != nil {
+		active, err = runtime.readyAt(ctx, *read)
+	} else {
+		active, err = runtime.WaitReady(ctx)
+	}
 	cancel()
 	if err != nil {
 		HTTPError(w, err)

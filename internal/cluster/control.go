@@ -61,6 +61,7 @@ func (r *Runtime) ReadState(ctx context.Context) (coordination.State, error) {
 		return coordination.State{}, ErrInactive
 	}
 	r.rememberMembers()
+	r.stateReads.Add(1)
 	state, err := r.service.ReadState(ctx)
 	if errors.Is(err, coordination.ErrNotLeader) && r.config.Client != nil {
 		return r.config.Client.ReadState(ctx)

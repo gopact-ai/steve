@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -199,6 +200,68 @@ func PeerRequest(t *testing.T, peer *Peer, method, path string, body any) (int, 
 		t.Fatal(err)
 	}
 	return response.StatusCode, data
+}
+
+// A console request this node's own application answers reads the
+// committed state through the leader once: the read that finds this node
+// coordinating is the one that confirms its business generation.
+func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	options.Activate = testPeerApplication(t, &activations)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	if status, body := PeerRequest(t, peer, http.MethodGet, "/console/test?token="+peer.UIToken, nil); status != http.StatusOK {
+		t.Fatalf("application gateway: %d %s", status, body)
+	}
+	runtime := peer.Runtime.Load()
+	before := runtime.stateReads.Load()
+	if status, body := PeerRequest(t, peer, http.MethodGet, "/console/test?token="+peer.UIToken, nil); status != http.StatusOK {
+		t.Fatalf("application gateway: %d %s", status, body)
+	}
+	if reads := runtime.stateReads.Load() - before; reads != 1 {
+		t.Fatalf("a console request answered by this node read the committed state %d times; want one read", reads)
+	}
+}
+
+// A read made for a request confirms the business generation only if it
+// names that generation; otherwise the generation is confirmed by a read of
+// its own, and a read the generation has no part in replaces nothing. Either
+// way this replica applies what the read saw before the request is served.
+func TestRuntimeReadyAtConfirmsOnlyTheGenerationItsReadNames(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	options.Activate = testPeerApplication(t, &activations)
+	peer := StartTestPeer(t, options)
+	active := WaitPeerReady(t, peer)
+	runtime := peer.Runtime.Load()
+	state, err := runtime.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := runtime.stateReads.Load()
+	ready, err := runtime.readyAt(t.Context(), state)
+	if reads := runtime.stateReads.Load() - before; err != nil || ready.Generation != active.Generation || reads != 0 {
+		t.Fatalf("a read naming the generation: generation %d (want %d) %v, %d more reads; want it confirmed without another read", ready.Generation, active.Generation, err, reads)
+	}
+
+	stale := state
+	stale.WriterGeneration++
+	before = runtime.stateReads.Load()
+	ready, err = runtime.readyAt(t.Context(), stale)
+	if reads := runtime.stateReads.Load() - before; err != nil || ready.Generation != active.Generation || reads == 0 {
+		t.Fatalf("a read naming another writer: generation %d (want %d) %v, %d more reads; want it confirmed by a read of its own", ready.Generation, active.Generation, err, reads)
+	}
+
+	ahead := state
+	ahead.AppliedIndex += 1000
+	if _, err := runtime.readyAt(t.Context(), ahead); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a read this replica never catches up with: %v; want unavailable", err)
+	}
+	if again := WaitPeerReady(t, peer); again.Generation != active.Generation || activations.Load() != 1 {
+		t.Fatalf("the generation was replaced: %d, %d activations", again.Generation, activations.Load())
+	}
 }
 
 func TestClusterPeerDesktopStartsWithStableOriginAndPersistentWorker(t *testing.T) {

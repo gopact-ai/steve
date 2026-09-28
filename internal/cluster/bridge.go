@@ -88,6 +88,13 @@ func (b *replicator) Prepare(parent context.Context) (ledger.ReplicaPosition, er
 		b.runtime.revoke(b.generation, err)
 		return ledger.ReplicaPosition{}, err
 	}
+	return b.caughtUp(ctx, state)
+}
+
+// caughtUp is the rest of Prepare once state, a read of the committed state
+// through the leader, has shown this generation writing: it waits for this
+// replica to apply what that read saw. ctx is bound to the generation.
+func (b *replicator) caughtUp(ctx context.Context, state coordination.State) (ledger.ReplicaPosition, error) {
 	// Ledger and task store writers hold their locks through Prepare, and a
 	// caller may have no deadline. Catching up is bounded by ApplyTimeout so
 	// a replica that stays behind fails this write as unavailable instead of
