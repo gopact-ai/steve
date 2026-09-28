@@ -96,6 +96,38 @@ func TestAnEndedParentSuppressesAContinuationItsConversationStillHolds(t *testin
 	}
 }
 
+// A paused or failed parent can still resume and take its continuation,
+// so one it has queued stays queued: nothing is suppressed, and each pass
+// keeps reading the receipt.
+func TestAPausedOrFailedParentKeepsItsContinuationQueued(t *testing.T) {
+	for _, held := range []task.State{task.StatePaused, task.StateFailed} {
+		t.Run(string(held), func(t *testing.T) {
+			w := newWorld(t)
+			parent := w.running(t, "codex")
+			child := completedChild(t, w, parent, "waiting for the parent to resume")
+			w.service.SetDeliverer(func(context.Context, Delivery) error { return channel.ErrDeliveryQueued })
+			w.service.Flush(t.Context(), parent.ID)
+			if _, err := w.tasks.Advance(parent.ID, held); err != nil {
+				t.Fatal(err)
+			}
+			w.service.SetDeliverer(func(context.Context, Delivery) error { t.Error("a queued continuation was sent again"); return nil })
+			lookups := 0
+			w.service.SetDeliveryReceipt(func(task.Task, string) (bool, error) { lookups++; return true, channel.ErrDeliveryQueued })
+			now := time.Now()
+			for pass := range 3 {
+				w.service.reconcileDeliveries(t.Context(), now.Add(time.Duration(pass)*5*time.Second))
+			}
+			got, _ := w.tasks.Get(child.ID)
+			if got.Delivery == nil || got.Delivery.State != task.DeliveryQueued || got.Delivery.Error != "" {
+				t.Fatalf("delivery = %+v, want queued without a reason", got.Delivery)
+			}
+			if lookups != 3 {
+				t.Errorf("receipt looked up %d times in three passes, want every pass", lookups)
+			}
+		})
+	}
+}
+
 // checkSuppressedReason wants the reason a person reads beside a
 // suppressed result: in the Hub's language, naming the parent and how it
 // ended, and not the internal delivery key, which only the log carries.
