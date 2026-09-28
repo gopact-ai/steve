@@ -92,8 +92,12 @@ func TestRemoveLeaderReportsUnfinishedLeadershipTransferAsUnavailable(t *testing
 	// The target keeps answering heartbeats and progress probes but
 	// acknowledges no new entry, so the transfer cannot catch it up before the
 	// election timeout ends the attempt, and TimeoutNow is never sent.
-	if err := newRaftLoopPause(t, c.nodes[target]).pause(); err != nil {
+	pause := newRaftLoopPause(t, c.nodes[target])
+	if err := pause.pause(); err != nil {
 		t.Fatal(err)
+	}
+	if !pause.answersHeartbeat() {
+		t.Fatal("the paused target stopped answering heartbeats")
 	}
 	_, err := leader.Remove(t.Context(), RemoveRequest{ID: "remove-leader", Actor: "owner", NodeID: leader.config.NodeID})
 	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "consensus leadership transfer to "+target) {
