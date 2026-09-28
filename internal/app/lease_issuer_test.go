@@ -124,6 +124,32 @@ func TestLeaseIssuerStopsOnlyOnceTheRequestInsideTheLedgerIsAnswered(t *testing.
 	}
 }
 
+// The startup log names the address the issuer actually listens on, so a
+// configured port 0 or host name still tells other regions where to reach it.
+func TestLeaseIssuerLogsTheAddressItBound(t *testing.T) {
+	output := captureLog(t)
+	state := t.TempDir()
+	book, err := ledger.Open(state, ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	assembleLeaseIssuer(t, book, &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(state, "state.json"), IssuerAddr: "127.0.0.1:0"}})
+	const prefix = " leases on "
+	logged := output.String()
+	at := strings.Index(logged, prefix)
+	if at < 0 {
+		t.Fatalf("the issuer did not log where it listens: %q", logged)
+	}
+	addr, _, _ := strings.Cut(logged[at+len(prefix):], "\n")
+	addr = strings.Fields(addr)[0]
+	resp, err := http.Post("http://"+addr+"/leases/acquire", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("the logged issuer address %q does not answer: %v", addr, err)
+	}
+	resp.Body.Close()
+}
+
 // assembleLeaseIssuer assembles the models stage, which starts the lease
 // issuer cfg names, and returns the lifetime that stops it.
 func assembleLeaseIssuer(t *testing.T, book *ledger.Ledger, cfg *config.Config) *applicationLifetime {
