@@ -201,6 +201,29 @@ func PeerRequest(t *testing.T, peer *Peer, method, path string, body any) (int, 
 	return response.StatusCode, data
 }
 
+// A console request this node's own application answers reads the
+// committed state through the leader once: the read that finds this node
+// coordinating is the one that confirms its business generation. Each read
+// appends a barrier to the leader's log, and a GET writes nothing else.
+func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	options.Activate = testPeerApplication(t, &activations)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	if status, body := PeerRequest(t, peer, http.MethodGet, "/console/test?token="+peer.UIToken, nil); status != http.StatusOK {
+		t.Fatalf("application gateway: %d %s", status, body)
+	}
+	leader := peer.Runtime.Load().service
+	before := leader.LastIndex()
+	if status, body := PeerRequest(t, peer, http.MethodGet, "/console/test?token="+peer.UIToken, nil); status != http.StatusOK {
+		t.Fatalf("application gateway: %d %s", status, body)
+	}
+	if appended := leader.LastIndex() - before; appended > 1 {
+		t.Fatalf("a console request answered by this node appended %d entries to the leader's log; want one read", appended)
+	}
+}
+
 func TestClusterPeerDesktopStartsWithStableOriginAndPersistentWorker(t *testing.T) {
 	options, installed := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
