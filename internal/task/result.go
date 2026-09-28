@@ -95,7 +95,9 @@ func (s *Store) SetDelivery(id, state string) error {
 }
 
 // SuppressDelivery settles a result its parent will never receive and
-// records why, for the person reading the child's record.
+// records why, for the person reading the child's record. A result
+// already settled keeps its state: a parent that collected it in its own
+// turn after the caller last read the record has received it.
 func (s *Store) SuppressDelivery(id, reason string) error {
 	return s.setDelivery(id, DeliverySuppressed, reason)
 }
@@ -103,8 +105,12 @@ func (s *Store) SuppressDelivery(id, reason string) error {
 func (s *Store) setDelivery(id, state, detail string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.data.Tasks[id]; !ok {
+	stored, ok := s.data.Tasks[id]
+	if !ok {
 		return fmt.Errorf("task %s not found", id)
+	}
+	if d := stored.Delivery; state == DeliverySuppressed && d != nil && (d.State == DeliveryDelivered || d.State == DeliverySuppressed) {
+		return nil
 	}
 	next := s.draft()
 	t := next.edit(id)
