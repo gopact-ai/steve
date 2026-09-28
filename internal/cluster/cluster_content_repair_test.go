@@ -73,6 +73,53 @@ func TestContentRepairDoesNotReadOrRetransmitHealthyCopies(t *testing.T) {
 	}
 }
 
+// contentLeader is the coordination service of the peer leading consensus.
+func contentLeader(t *testing.T, peers []*Peer) *coordination.Service {
+	t.Helper()
+	for _, peer := range peers {
+		if service := peer.Runtime.Load().service; service.Status().IsLeader {
+			return service
+		}
+	}
+	t.Fatal("no peer leads consensus")
+	return nil
+}
+
+// A repair round reads the committed state through the leader once, however
+// many objects it looks at: each read appends a barrier to the leader's log,
+// and a round over healthy content writes nothing else.
+func TestContentRepairRoundReadsTheCommittedStateOnce(t *testing.T) {
+	peers, active := contentPeers(t)
+	client, err := peers[0].ContentReplicator(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const objects = 4
+	for i := range objects {
+		data := []byte(fmt.Sprintf("healthy object %d of one round", i))
+		ref := checkpoint.Reference(data)
+		manifest, err := client.Prepare(t.Context(), "workspace", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		recordRepairManifest(t, active.Ledger, manifest)
+	}
+	worker, err := peers[0].newContentRepair(active, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := alter(t, peers[0], func(*coordination.State) {})
+	leader := contentLeader(t, peers)
+	before := leader.LastIndex()
+	report, err := worker.sweep(t.Context())
+	if err != nil || report.Healthy != objects {
+		t.Fatalf("a round over healthy content: %+v %v", report, err)
+	}
+	if appended := leader.LastIndex() - before; appended > 1 || reads.Load() > 1 {
+		t.Fatalf("a round over %d healthy objects appended %d entries to the leader's log and read the committed state %d times for content checks; want one read", objects, appended, reads.Load())
+	}
+}
+
 func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	peers, active := contentPeers(t)
 	source := peers[0]
