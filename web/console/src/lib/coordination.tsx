@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { useI18n } from "@/providers/locale-provider";
-import { useFleet, useFleetEvents } from "./fleet";
+import { useFleet } from "./fleet";
 import { HTTPError } from "./http";
 import { executeCoordination, fetchCoordination, type CoordinationCommand, type CoordinationView } from "./api/coordination";
 
@@ -11,6 +11,8 @@ interface OperationStore { pending?: CoordinationOperation; history: Coordinatio
 interface CoordinationState {
     view: CoordinationView | null; error: string; busy: boolean; notice: string; pending?: CoordinationOperation; history: CoordinationOperation[];
     refresh: () => Promise<void>; run: (command: CoordinationCommand) => Promise<boolean>; retry: () => Promise<boolean>; acknowledgeRejection: () => void;
+    /** watch keeps the view re-read every few seconds until the returned release is called. */
+    watch: () => () => void;
 }
 const CoordinationContext = createContext<CoordinationState | null>(null);
 function storageKey() { return `steve.coordination.operations:${new URL(".", window.location.href).href}`; }
@@ -18,12 +20,18 @@ function readOperations(): OperationStore {
     try { const value = JSON.parse(localStorage.getItem(storageKey()) || "null"); return { pending: value?.pending, history: Array.isArray(value?.history) ? value.history : [] }; }
     catch { return { history: [] }; }
 }
+// Reading the view probes every member of the cluster. It is re-read when
+// the event stream reconnects — a coordinator handover ends the stream it
+// served — and every COORDINATION_WATCHED while something that shows each
+// member's state, the coordination panel, is on screen. Otherwise the long
+// COORDINATION_FLOOR bounds how stale the coordinator the shell names is.
+export const COORDINATION_WATCHED = 5_000;
+export const COORDINATION_FLOOR = 60_000;
 function validView(value: CoordinationView) { return value && typeof value.enabled === "boolean" && Array.isArray(value.nodes) && Array.isArray(value.events) && (!value.enabled || (typeof value.cluster_id === "string" && Number.isFinite(value.epoch) && Number.isFinite(value.revision))); }
 
 export function CoordinationProvider({ children }: { children: ReactNode }) {
     const { t } = useI18n();
     const live = useFleet((fleet) => fleet.live);
-    const events = useFleetEvents();
     const [view, setView] = useState<CoordinationView | null>(null);
     const currentView = useRef<CoordinationView | null>(null);
     const [error, setError] = useState("");
@@ -49,9 +57,15 @@ export function CoordinationProvider({ children }: { children: ReactNode }) {
         return next;
     }
     const load = useResourceRead("coordination", fetchCoordination, accept, (error) => setError(error instanceof Error ? error.message : String(error)));
-    const changed = events.find((event) => event.kind.startsWith("coordination.") || event.kind === "node.updated")?.at;
-    useEffect(() => { void load(); }, [live, changed, load]);
-    useEffect(() => { if (!view?.enabled) return; const timer = window.setInterval(() => void load(), 5000); return () => window.clearInterval(timer); }, [view?.enabled, load]);
+    const [watchers, setWatchers] = useState(0);
+    const watch = useCallback(() => {
+        setWatchers((count) => count + 1);
+        let released = false;
+        return () => { if (!released) { released = true; setWatchers((count) => count - 1); } };
+    }, []);
+    const watched = watchers > 0;
+    useEffect(() => { void load(); }, [live, load]);
+    useEffect(() => { if (!view?.enabled) return; const timer = window.setInterval(() => void load(), watched ? COORDINATION_WATCHED : COORDINATION_FLOOR); return () => window.clearInterval(timer); }, [view?.enabled, watched, load]);
 
     const execute = useEventCallback(async (command?: CoordinationCommand) => {
         if (acting.current) return false;
@@ -91,8 +105,8 @@ export function CoordinationProvider({ children }: { children: ReactNode }) {
     });
     const value = useMemo(() => ({
         view, error, busy, notice, pending: operations.pending, history: operations.history,
-        refresh: load, run: execute, retry, acknowledgeRejection,
-    }), [view, error, busy, notice, operations.pending, operations.history, load, execute, retry, acknowledgeRejection]);
+        refresh: load, run: execute, retry, acknowledgeRejection, watch,
+    }), [view, error, busy, notice, operations.pending, operations.history, load, execute, retry, acknowledgeRejection, watch]);
     return <CoordinationContext.Provider value={value}>{children}</CoordinationContext.Provider>;
 }
 export function useCoordination() { const value = useContext(CoordinationContext); if (!value) throw new Error("useCoordination outside CoordinationProvider"); return value; }
