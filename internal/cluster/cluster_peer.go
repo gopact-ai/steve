@@ -55,7 +55,9 @@ const clusterApplicationPath = "/cluster/application"
 // application, and the coordinator takes the read such a peer says it
 // made instead of reading for itself. The read is still used only if it
 // names the coordinator's current assignment and writer generation, and
-// the request waits for this replica to apply up to it.
+// the request waits for this replica to apply up to it. A request that
+// carries the header empty, more than once or in a form the coordinator
+// cannot parse is refused.
 const coordinatorReadHeader = "X-Steve-Coordinator-Read"
 
 const clusterWorkerPath = "/cluster/worker"
@@ -634,9 +636,9 @@ func (p *Peer) servePeerApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var read *coordination.State
-	if value := r.Header.Get(coordinatorReadHeader); value != "" {
-		state, err := parseCoordinatorRead(value, p.Config.NodeID, epoch)
-		if err != nil {
+	if values := r.Header.Values(coordinatorReadHeader); len(values) > 0 {
+		state, err := parseCoordinatorRead(values[0], p.Config.NodeID, epoch)
+		if err != nil || len(values) > 1 {
 			http.Error(w, "invalid coordinator read", http.StatusBadRequest)
 			return
 		}
