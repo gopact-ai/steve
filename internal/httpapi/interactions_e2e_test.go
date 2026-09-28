@@ -92,12 +92,15 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	})
 	service := console.New(coordinator, "owner", nil)
 	// Drain the console before the ledger closes, so a turn still running at
-	// the end of a subtest settles instead of retrying its save forever.
+	// the end of a subtest settles instead of retrying its save forever. A
+	// turn that does not settle fails the test that left it, with where it
+	// is stuck; the ledger still closes, and that turn retries its save
+	// until the test process exits.
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), interactionWait)
 		defer cancel()
 		if err := service.Shutdown(ctx); err != nil {
-			t.Logf("console shutdown: %v", err)
+			t.Errorf("console did not drain within %s before its ledger closes: %v\n--- goroutines in steve's internal packages\n%s", interactionWait, err, steveGoroutines(diagnoseLimit))
 		}
 	})
 	service.SetMaterials(materials, func(ctx context.Context, conversation, principal, projectID string) error {
@@ -133,9 +136,10 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 }
 
 // interactionWait bounds how long a helper waits for a turn to reply or
-// ask. It is above the fixture's 10s no-progress turn timeout, so a slow
-// turn ends in the product's own outcome instead of the test giving up
-// first: under CPU contention the before-snapshot alone has taken over 5s.
+// ask, and how long a fixture waits for its console to drain. It is above
+// the fixture's 10s no-progress turn timeout, so a slow turn ends in the
+// product's own outcome instead of the test giving up first: under CPU
+// contention the before-snapshot alone has taken over 5s.
 const interactionWait = 30 * time.Second
 
 // interactionPoll caps the pause between a wait's polls, which starts at
@@ -157,14 +161,28 @@ func (f *interactionE2E) request(t *testing.T, method, path string, body []byte,
 	started := time.Now()
 	res, err := f.client.Do(req)
 	if err != nil {
-		t.Fatalf("%s %s: %v%s", method, path, err, f.diagnose("console:e2e", time.Since(started)))
+		t.Fatalf("%s %s: %v%s", method, path, err, f.diagnose(requestConversation(path), time.Since(started)))
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(res.Body)
-	if err != nil || res.StatusCode != want {
-		t.Fatalf("%s %s status=%d want=%d body=%s err=%v", method, path, res.StatusCode, want, raw, err)
+	if err != nil {
+		t.Fatalf("%s %s status=%d: reading the body: %v%s", method, path, res.StatusCode, err, f.diagnose(requestConversation(path), time.Since(started)))
+	}
+	if res.StatusCode != want {
+		t.Fatalf("%s %s status=%d want=%d body=%s", method, path, res.StatusCode, want, raw)
 	}
 	return raw
+}
+
+// requestConversation is the conversation a request names in its query,
+// or else the one most of these requests are about.
+func requestConversation(path string) string {
+	if u, err := url.Parse(path); err == nil {
+		if conversation := u.Query().Get("conversation"); conversation != "" {
+			return conversation
+		}
+	}
+	return "console:e2e"
 }
 func (f *interactionE2E) json(t *testing.T, path string, value any, want int) []byte {
 	t.Helper()
