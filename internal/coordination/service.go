@@ -364,13 +364,21 @@ func (s *Service) ReadState(ctx context.Context) (State, error) {
 }
 
 // awaitState waits, until ctx ends, for the state machine to hold the log
-// up to index; see StateHolds. index must be committed.
+// up to index; see StateHolds. index must be committed, and is then in this
+// node's log, so what StateHolds finds between the applied index and index
+// is settled: the entries that never reach the state machine are already
+// there, and compaction drops only entries the state machine holds, having
+// applied them or restored a snapshot that covers them. Only the state
+// machine applying more of the log can make it hold index, so awaitState
+// looks again each time the state machine publishes its progress.
 func (s *Service) awaitState(ctx context.Context, index uint64) error {
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	for !s.StateHolds(index) {
+	for {
+		changed := s.fsm.appliedChanged()
+		if s.StateHolds(index) {
+			return nil
+		}
 		select {
-		case <-ticker.C:
+		case <-changed:
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-s.ctx.Done():
@@ -379,7 +387,6 @@ func (s *Service) awaitState(ctx context.Context, index uint64) error {
 			return ErrApplication
 		}
 	}
-	return nil
 }
 
 func (s *Service) Snapshot(ctx context.Context) error {

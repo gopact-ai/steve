@@ -83,6 +83,11 @@ type machine struct {
 	failed             chan struct{}
 	membershipChanged  chan struct{}
 	snapshotGeneration uint64
+	// progress is closed, and dropped, when applied is next published; see
+	// appliedChanged. It has a lock of its own so that a waiter never waits
+	// for mu, which a change holds for as long as the application takes.
+	progressMu sync.Mutex
+	progress   chan struct{}
 }
 
 func newMachine(clusterID string, app Application) *machine {
@@ -133,11 +138,31 @@ func (m *machine) lookup(id, fingerprint string) (receipt, bool) {
 }
 
 // publishApplied publishes the index of the last entry applied, once the
-// change that applied it has finished. The caller holds m.mu.
+// change that applied it has finished, and wakes whoever waits on
+// appliedChanged. The caller holds m.mu.
 func (m *machine) publishApplied() {
-	if m.failure == nil {
-		m.applied.Store(m.state.AppliedIndex)
+	if m.failure != nil {
+		return
 	}
+	m.applied.Store(m.state.AppliedIndex)
+	m.progressMu.Lock()
+	defer m.progressMu.Unlock()
+	if m.progress != nil {
+		close(m.progress)
+		m.progress = nil
+	}
+}
+
+// appliedChanged returns a channel that is closed when applied is next
+// published. A waiter takes the channel before it looks at what it waits
+// for, so a change published in between still wakes it.
+func (m *machine) appliedChanged() <-chan struct{} {
+	m.progressMu.Lock()
+	defer m.progressMu.Unlock()
+	if m.progress == nil {
+		m.progress = make(chan struct{})
+	}
+	return m.progress
 }
 
 func (m *machine) healthy() bool { m.mu.RLock(); defer m.mu.RUnlock(); return m.failure == nil }
