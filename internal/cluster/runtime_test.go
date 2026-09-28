@@ -1010,6 +1010,70 @@ func TestActivationThatMeetsUnavailableCoordinationTriesAgainAtOnce(t *testing.T
 	}
 }
 
+// Builds that keep meeting unavailable coordination are spaced out: the
+// first is tried again on the next poll, and each one after it waits twice
+// as long as the one before, starting from the poll interval. A generation
+// that becomes ready starts the count over.
+func TestActivationThatKeepsMeetingUnavailableCoordinationBacksOff(t *testing.T) {
+	nodes := testNodes(t, 1)
+	poll := 100 * time.Millisecond
+	nodes[0].config.PollInterval = poll
+	build := nodes[0].config.Activate
+	var mu sync.Mutex
+	var started, failed []time.Time
+	failing := 5
+	nodes[0].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		started = append(started, time.Now())
+		if failing > 0 {
+			failing--
+			defer func() { failed = append(failed, time.Now()) }()
+			return nil, fmt.Errorf("open task store: %w", fmt.Errorf("%w: local replica did not reach applied index 12", coordination.ErrUnavailable))
+		}
+		return build(ctx, activation)
+	}
+	r := openNode(t, nodes[0])
+	waitReady := func() Activation {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		activation, err := r.WaitReady(ctx)
+		if err != nil {
+			t.Fatalf("runtime did not activate: %v, status=%+v", err, r.Status())
+		}
+		return activation
+	}
+	active := waitReady()
+	mu.Lock()
+	if len(started) != 6 {
+		t.Fatalf("the application was built %d times, want five failed builds and one more", len(started))
+	}
+	// The fifth build in a row that failed waits eight poll intervals.
+	if gap := started[5].Sub(failed[4]); gap < 8*poll {
+		t.Fatalf("the runtime built again %s after the fifth failed build in a row; its poll interval is %s", gap.Round(time.Millisecond), poll)
+	}
+	failing = 1
+	mu.Unlock()
+	r.mu.Lock()
+	current := r.current
+	r.mu.Unlock()
+	if current == nil || current.Generation != active.Generation {
+		t.Fatalf("generation %d is not the current one", active.Generation)
+	}
+	r.revoke(current, errors.New("test gives the generation up"))
+	waitReady()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(started) != 8 {
+		t.Fatalf("the application was built %d times, want one more failed build and one more", len(started))
+	}
+	// Without starting over, the next wait would be sixteen poll intervals.
+	if gap := started[7].Sub(failed[5]); gap >= 16*poll {
+		t.Fatalf("the runtime waited %s to build again after a generation had been ready; its poll interval is %s", gap.Round(time.Millisecond), poll)
+	}
+}
+
 func TestCallerCancellationBeforeProposalSubmitsNothing(t *testing.T) {
 	nodes := testNodes(t, 1)
 	r := openNode(t, nodes[0])
