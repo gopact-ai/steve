@@ -603,6 +603,15 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 			if errors.Is(err, context.Canceled) && !r.valid(g) {
 				return nil
 			}
+			// A build that failed on this generation's authority says
+			// nothing about the application. The generation is given up,
+			// as when its writer fence does not apply, and the runtime
+			// loop, which confirms the assignment and waits for this
+			// replica again first, activates another on its next poll.
+			if authorityInDoubt(err) {
+				r.revoke(g, err)
+				return nil
+			}
 			return fmt.Errorf("activate business generation: %w", err)
 		}
 	}
@@ -624,6 +633,12 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 	r.notifyLocked()
 	slog.Info(fmt.Sprintf("cluster: business generation %d ready", g.Generation), "node", g.NodeID, "generation", g.Generation, "epoch", assignment.Epoch, "writer_generation", g.WriterGeneration, "took", time.Since(started).Round(time.Millisecond))
 	return nil
+}
+
+// authorityInDoubt reports whether err says that a generation lost its
+// authority, or that coordination could not confirm it just now.
+func authorityInDoubt(err error) bool {
+	return errors.Is(err, ErrInactive) || errors.Is(err, coordination.ErrUnavailable) || errors.Is(err, coordination.ErrNotLeader) || errors.Is(err, coordination.ErrNotCoordinator) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)
 }
 
 // holdActivation keeps this replica in the cluster when its own application
