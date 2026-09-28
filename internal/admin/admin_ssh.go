@@ -100,9 +100,9 @@ func (b sshNodeBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		blocked("binary", textFor(ctx).T(i18n.AdminSSHNoBinary), textFor(ctx).T(i18n.AdminSSHNoBinaryFix))
 		return template, nodebootstrap.Spec{}, nil
 	}
-	metadata, err := nodebootstrap.InspectBinary(textFor(ctx), binary)
+	metadata, err := nodebootstrap.InspectBinary(binary)
 	if err != nil {
-		blocked("binary", err.Error(), textFor(ctx).T(i18n.AdminSSHBinaryUnsupportedFix))
+		blocked("binary", textFor(ctx).Explain(err), textFor(ctx).T(i18n.AdminSSHBinaryUnsupportedFix))
 		return template, nodebootstrap.Spec{}, nil
 	}
 	template.Binary, template.BinaryPath = &metadata, binary

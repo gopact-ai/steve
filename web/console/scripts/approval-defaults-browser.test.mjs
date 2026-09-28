@@ -110,6 +110,9 @@ try {
     assert.equal(await drawer.getByRole('button', { name: /默认审批模式/ }).isDisabled(), true);
     assert.equal(writes.length, 4, 'Viewing unavailable capabilities must never guess or save a mode');
     await page.setViewportSize({ width: 390, height: 620 });
+    // Measure the phone layout, not the desktop tree still mounted until
+    // the breakpoint change renders.
+    await page.locator('.app-mobile-bar').waitFor();
     await page.evaluate(() => document.documentElement.style.setProperty('--ui-font-size', '18px'));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     const bodyFits = await drawer.locator('.workbench-drawer-body').evaluate(el => el.scrollWidth <= el.clientWidth + 1);

@@ -993,9 +993,9 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	}
 	// The workspace is judged and created here, on the machine that owns
 	// it: the owner's answer may name places this machine refuses.
-	workspace, err := desktop.PrepareWorkspace(text, bundle.WorkspaceDir, root)
+	workspace, err := desktop.PrepareWorkspace(bundle.WorkspaceDir, root)
 	if err != nil {
-		return result, fmt.Errorf("workspace %q: %w", bundle.WorkspaceDir, err)
+		return result, fmt.Errorf("workspace %q: %w", bundle.WorkspaceDir, text.Explained(err))
 	}
 	staging, err := os.MkdirTemp(filepath.Dir(root), ".peer-import-")
 	if err != nil {

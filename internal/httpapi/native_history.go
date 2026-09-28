@@ -11,14 +11,14 @@ func (s *Server) consoleNativeHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if s.admin == nil {
-		writeDesktopError(w, nativehistory.ErrUnsupported, http.StatusNotImplemented)
+		writeDesktopError(w, r, nativehistory.ErrUnsupported, http.StatusNotImplemented)
 		return
 	}
 	if r.Method == http.MethodGet {
 		source := nativehistory.Source{Harness: r.URL.Query().Get("harness"), Home: r.URL.Query().Get("home")}
 		entries, err := s.admin.NativeHistory(r.Context(), r.PathValue("name"), source)
 		if err != nil {
-			writeDesktopError(w, err, http.StatusBadRequest)
+			writeDesktopError(w, r, err, http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, map[string]any{"entries": entries})
@@ -30,7 +30,7 @@ func (s *Server) consoleNativeHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.admin.ImportNativeHistory(r.Context(), r.PathValue("name"), request)
 	if err != nil {
-		writeDesktopError(w, err, http.StatusBadRequest)
+		writeDesktopError(w, r, err, http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, result)

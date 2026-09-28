@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -115,8 +117,8 @@ func testPeerApplication(t *testing.T, activations *atomic.Int32) func(context.C
 		}
 		token := ClusterRandomToken()
 		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !ConstantToken(r.Header.Get("Authorization"), token) || r.URL.Query().Get("token") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Referer") != "" {
-				http.Error(w, "proxy leaked client credentials", http.StatusBadRequest)
+			if !ConstantToken(r.Header.Get("Authorization"), token) || r.URL.Query().Get("token") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Referer") != "" || r.Header.Get(coordinatorReadHeader) != "" {
+				http.Error(w, "proxy leaked client credentials or a coordinator read", http.StatusBadRequest)
 				return
 			}
 			if r.Method == http.MethodPost {
@@ -221,6 +223,125 @@ func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
 	}
 	if reads := runtime.stateReads.Load() - before; reads != 1 {
 		t.Fatalf("a console request answered by this node read the committed state %d times; want one read", reads)
+	}
+}
+
+// A console request that enters at a member and is answered by the
+// coordinator's application reads the committed state through the leader
+// once: the member's read, which finds the coordinator, travels with the
+// request and confirms the coordinator's business generation.
+func TestClusterPeerForwardsAConsoleRequestWithItsRead(t *testing.T) {
+	hub := startTestHub(t)
+	member := joinNonvoter(t, hub, nil)
+	WaitPeerReady(t, hub)
+	answer := func() {
+		t.Helper()
+		status, body := PeerRequest(t, member, http.MethodGet, "/console/test?token="+member.UIToken, nil)
+		var result struct {
+			NodeID string `json:"node_id"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil || status != http.StatusOK || result.NodeID != hub.Config.NodeID {
+			t.Fatalf("a request at the member was not answered by the coordinator: %d %s %v", status, body, err)
+		}
+	}
+	answer()
+	reads := func() uint64 { return hub.Runtime.Load().stateReads.Load() + member.Runtime.Load().stateReads.Load() }
+	before := reads()
+	answer()
+	if n := reads() - before; n != 1 {
+		t.Fatalf("a console request forwarded to the coordinator read the committed state %d times; want one read", n)
+	}
+}
+
+// A coordinator read is what a member tells the coordinator it saw for a
+// request it forwards. One that arrives with a console request is not
+// taken from the browser: the member forwards its own read in its place,
+// the coordinator answering its own console reads for itself, and neither
+// hands the header on to the application.
+func TestClusterPeerTakesNoCoordinatorReadFromTheConsole(t *testing.T) {
+	hub := startTestHub(t)
+	member := joinNonvoter(t, hub, nil)
+	active := WaitPeerReady(t, hub)
+	reads := func() uint64 { return hub.Runtime.Load().stateReads.Load() + member.Runtime.Load().stateReads.Load() }
+	for _, entry := range []*Peer{member, hub} {
+		for _, forged := range []string{"garbage", fmt.Sprintf("writer=%d index=0 version=0", active.WriterGeneration+1), fmt.Sprintf("writer=%d index=0 version=0", active.WriterGeneration)} {
+			request, err := http.NewRequest(http.MethodGet, entry.UiURL+"/console/test?token="+entry.UIToken, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set(coordinatorReadHeader, forged)
+			before := reads()
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			var result struct {
+				NodeID string `json:"node_id"`
+			}
+			if err := json.Unmarshal(body, &result); err != nil || response.StatusCode != http.StatusOK || result.NodeID != hub.Config.NodeID {
+				t.Fatalf("a console request at %s carrying the coordinator read %q: %d %s %v; want the coordinator's answer", entry.Config.NodeID, forged, response.StatusCode, body, err)
+			}
+			if n := reads() - before; n != 1 {
+				t.Errorf("a console request at %s carrying the coordinator read %q read the committed state %d times; want one read of its own", entry.Config.NodeID, forged, n)
+			}
+		}
+	}
+}
+
+// The coordinator judges the read a forwarded request carries: one it
+// cannot parse, an empty one or more than one is refused, one naming the coordinator's current business
+// generation is taken as its own read, one naming another writer is left
+// aside for a read of its own, and one this replica does not reach in time
+// is not answered.
+func TestClusterPeerJudgesTheReadAForwardedRequestCarries(t *testing.T) {
+	hub := startTestHub(t)
+	member := joinNonvoter(t, hub, nil)
+	active := WaitPeerReady(t, hub)
+	clientTLS, err := member.identity.ClientConfig(hub.Config.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{TLSClientConfig: clientTLS}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 20 * time.Second}
+	forward := func(reads ...string) (int, string, uint64) {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodGet, hub.Config.PeerURL+clusterApplicationPath+"/console/test", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+member.OwnerToken)
+		request.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(active.Assignment.Epoch, 10))
+		for _, read := range reads {
+			request.Header.Add(coordinatorReadHeader, read)
+		}
+		before := hub.Runtime.Load().stateReads.Load()
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, _ := io.ReadAll(response.Body)
+		return response.StatusCode, string(body), hub.Runtime.Load().stateReads.Load() - before
+	}
+	writer := active.WriterGeneration
+	current := fmt.Sprintf("writer=%d index=0 version=0", writer)
+	for _, read := range [][]string{{"garbage"}, {fmt.Sprintf("writer=%d index=0", writer)}, {fmt.Sprintf("writer=%d index=x version=0", writer)}, {""}, {current, current}} {
+		if status, body, reads := forward(read...); status != http.StatusBadRequest || reads != 0 {
+			t.Errorf("the coordinator read %q: %d %s after %d reads; want it refused as invalid", read, status, body, reads)
+		}
+	}
+	if status, body, reads := forward(current); status != http.StatusOK || reads != 0 {
+		t.Errorf("a read naming the current business generation: %d %s after %d reads; want it answered on that read", status, body, reads)
+	}
+	if status, body, reads := forward(fmt.Sprintf("writer=%d index=0 version=0", writer+1)); status != http.StatusOK || reads == 0 {
+		t.Errorf("a read naming another writer: %d %s after %d reads; want it answered on a read of the coordinator's own", status, body, reads)
+	}
+	ahead := hub.Runtime.Load().service.Status().AppliedIndex + 1_000_000
+	if status, body, _ := forward(fmt.Sprintf("writer=%d index=%d version=0", writer, ahead)); status != http.StatusServiceUnavailable {
+		t.Errorf("a read this replica never reaches: %d %s; want it left unanswered as unavailable", status, body)
 	}
 }
 

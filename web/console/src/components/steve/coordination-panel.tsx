@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Radio, RadioGroup } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
 import { Toggle } from "@/components/base/toggle/toggle";
@@ -12,7 +12,9 @@ import type { CoordinationNode, CoordinationEvent } from "@/lib/api/coordination
 
 export function CoordinationPanel() {
     const { t, locale } = useI18n();
-    const { view, pending, history, error, notice, busy, refresh, retry, run, acknowledgeRejection } = useCoordination();
+    const { view, pending, history, error, notice, busy, refresh, retry, run, acknowledgeRejection, watch } = useCoordination();
+    // Each member's state shown here goes stale in seconds.
+    useEffect(() => watch(), [watch]);
     const [transferring, setTransferring] = useState(false);
     const [votingNode, setVotingNode] = useState<{ node: CoordinationNode; revision: number } | null>(null);
     if (!view?.enabled) return pending ? <section aria-label={t("coord.title")} className="space-y-2 rounded-lg bg-primary p-4 ring-1 ring-secondary"><p role="status" className="text-sm text-secondary">{t("coord.unconfirmed")}</p><p className="break-all font-mono text-xs text-tertiary">{pending.body.command_id}</p>{error && <p className="break-words text-sm text-error-primary">{error}</p>}<Button size="sm" color="secondary" onClick={() => void refresh()}>{t("coord.refresh")}</Button></section> : null;

@@ -108,32 +108,17 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 	environment.Content = content
 	environment.Fail = func(err error) { p.ApplicationStoreFailure(activation, err) }
 	go func() {
-		application, err := Build(ctx, Config{Path: p.ApplicationConfigPath(), Environment: environment})
-		if err != nil {
-			runErr = err
-		} else {
-			runErr = application.Run(ctx)
-		}
-		if ctx.Err() != nil && cluster.ApplicationAuthorityError(runErr) {
-			runErr = ctx.Err()
-		}
-		var restart *adminsvc.RestartExit
-		expectedRestart := errors.As(runErr, &restart)
-		replaceProgram := expectedRestart && restart.Program != ""
-		if replaceProgram && ctx.Err() == nil {
-			// Becoming another build is not something this activation can
-			// do to itself: the runtime stops with the restart as its
-			// cause, and the process continues as the named program.
-			activation.Runtime.FailGeneration(activation.Generation, runErr)
-		} else if expectedRestart && ctx.Err() == nil {
-			runErr = activation.Runtime.RestartGeneration(activation.Generation)
-		} else if expectedRestart {
-			runErr = nil
-		}
-		if runErr == nil && ctx.Err() == nil && !expectedRestart {
-			runErr = errors.New("business application exited unexpectedly")
-		}
+		var expectedRestart bool
+		expectedRestart, runErr = runPeerApplication(ctx, p.ApplicationConfigPath(), environment, activation)
 		close(done)
+		select {
+		case <-started:
+		default:
+			// An application that never started is this activation's
+			// failure, returned below: the runtime keeps the replica and
+			// builds the application again.
+			return
+		}
 		if ctx.Err() == nil && !expectedRestart {
 			if cluster.ApplicationAuthorityError(runErr) {
 				// RequestRebuild only refuses (ErrInactive) when this
@@ -160,13 +145,52 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 	}
 	select {
 	case <-started:
-		if ctx.Err() == nil {
-			stopRepair = p.StartContentRepair(activation, repairObserve)
-		}
-		return stop, nil
 	case <-done:
-		return stop, runErr
+		select {
+		case <-started:
+			// It started and has exited since: the runner deals with that
+			// exit as with any other once started.
+		default:
+			return stop, runErr
+		}
 	case <-ctx.Done():
 		return stop, ctx.Err()
 	}
+	if ctx.Err() == nil {
+		stopRepair = p.StartContentRepair(activation, repairObserve)
+	}
+	return stop, nil
+}
+
+// runPeerApplication builds and runs the business application until it
+// ends. It hands a restart the application asks for to the runtime, and
+// says whether the application asked for one.
+func runPeerApplication(ctx context.Context, path string, environment *Environment, activation cluster.Activation) (bool, error) {
+	var runErr error
+	application, err := Build(ctx, Config{Path: path, Environment: environment})
+	if err != nil {
+		runErr = err
+	} else {
+		runErr = application.Run(ctx)
+	}
+	if ctx.Err() != nil && cluster.ApplicationAuthorityError(runErr) {
+		runErr = ctx.Err()
+	}
+	var restart *adminsvc.RestartExit
+	expectedRestart := errors.As(runErr, &restart)
+	replaceProgram := expectedRestart && restart.Program != ""
+	if replaceProgram && ctx.Err() == nil {
+		// Becoming another build is not something this activation can
+		// do to itself: the runtime stops with the restart as its
+		// cause, and the process continues as the named program.
+		activation.Runtime.FailGeneration(activation.Generation, runErr)
+	} else if expectedRestart && ctx.Err() == nil {
+		runErr = activation.Runtime.RestartGeneration(activation.Generation)
+	} else if expectedRestart {
+		runErr = nil
+	}
+	if runErr == nil && ctx.Err() == nil && !expectedRestart {
+		runErr = errors.New("business application exited unexpectedly")
+	}
+	return expectedRestart, runErr
 }

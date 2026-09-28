@@ -149,6 +149,9 @@ try {
     await page.getByRole("alert").filter({ hasText: "Invalid usage response" }).waitFor();
     response = usageResponse(); await page.getByRole("button", { name: "重试", exact: true }).click(); await summary().waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
+    // Measure the phone layout, not the desktop tree still mounted until
+    // the breakpoint change renders.
+    await page.locator(".app-mobile-bar").waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
     await page.screenshot({ path: path.join(output, "usage-narrow.png"), fullPage: true });
     console.log("PASS serialized follow-up, source/partial/HTTP/unwired/malformed states and retry");
