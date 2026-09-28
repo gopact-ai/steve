@@ -11,7 +11,7 @@ func TestResultDeliveryRollsUpWithoutCountingSuccessAsAttention(t *testing.T) {
 		{ID: "child", Parent: "root", Origin: "delegate:root", State: task.StateDone, Result: &task.Result{Answer: "result"}},
 		{ID: "uncertain", Parent: "child", Origin: "delegate:child", State: task.StateDone, Result: &task.Result{}, Delivery: &task.Delivery{State: task.DeliveryUncertain, Error: "receipt lost", Attempts: 2}},
 		{ID: "delivered", Parent: "root", Origin: "delegate:root", State: task.StateDone, Result: &task.Result{}, Delivery: &task.Delivery{State: task.DeliveryDelivered}},
-		{ID: "suppressed", Parent: "root", Origin: "delegate:root", State: task.StateDone, Result: &task.Result{}, Delivery: &task.Delivery{State: task.DeliverySuppressed}},
+		{ID: "suppressed", Parent: "root", Origin: "delegate:root", State: task.StateDone, Result: &task.Result{}, Delivery: &task.Delivery{State: task.DeliverySuppressed, Error: "parent ended"}},
 	}
 	b := snapshotBuilder{snap: Snapshot{Tasks: tasks(list, nil)}, activityKnown: true, attentionKnown: true}
 	b.taskAxes()
@@ -22,6 +22,10 @@ func TestResultDeliveryRollsUpWithoutCountingSuccessAsAttention(t *testing.T) {
 	uncertain := b.snap.Tasks[2].ResultDelivery
 	if uncertain.Error != "receipt lost" || uncertain.Attempts != 2 {
 		t.Fatalf("missing delivery evidence: %+v", uncertain)
+	}
+	// A suppressed result is settled, but the console still shows why.
+	if suppressed := b.snap.Tasks[4].ResultDelivery; suppressed.State != task.DeliverySuppressed || suppressed.Error != "parent ended" {
+		t.Fatalf("suppressed delivery lost its reason: %+v", suppressed)
 	}
 	uncertain.Error = "tampered"
 	if list[2].Delivery.Error != "receipt lost" {

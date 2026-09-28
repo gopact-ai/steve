@@ -677,6 +677,11 @@ var zh = map[Key]string{
 	DelegateStateCancelled:      "已取消",
 	DelegateUnrecordedAnswer:    "子任务在开始执行前中断，没有执行记录。如果仍需要这项工作，请重新委派。",
 
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed: "父任务 #%s 已结束（%s）。送进它会话的结果消息尚未确认处理完（例如仍在等你回答恢复问题），不会再次发送；结果保留在本任务中。",
+	DelegateSuppressedEnded:       "父任务 #%s 在收到这个结果前已结束（%s），结果不再发送；结果保留在本任务中。",
+	DelegateSuppressedMissing:     "父任务 #%s 的记录已不存在，结果不会发送；结果保留在本任务中。",
+
 	// Resume and replacement recovery questions.
 	ResumeTitle:                        "继续任务需要你的决定",
 	ResumeAttemptedSeparator:           "；",
@@ -2023,6 +2028,11 @@ var en = map[Key]string{
 	DelegateStateFailed:         "failed",
 	DelegateStateCancelled:      "cancelled",
 	DelegateUnrecordedAnswer:    "The subtask was interrupted before it started and left no execution record. Delegate it again if the work is still needed.",
+
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed: "Parent task #%s has ended (%s). The result message in its conversation has not been confirmed as processed (it may still be waiting for your answer to a recovery question); it will not be sent again, and the result stays on this task.",
+	DelegateSuppressedEnded:       "Parent task #%s ended (%s) before receiving this result; it will not be sent, and the result stays on this task.",
+	DelegateSuppressedMissing:     "Parent task #%s no longer exists; this result will not be sent, and it stays on this task.",
 
 	// Resume and replacement recovery questions.
 	ResumeTitle:                        "Continuing this task needs your decision",
