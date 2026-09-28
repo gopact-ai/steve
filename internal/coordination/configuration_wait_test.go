@@ -133,11 +133,12 @@ func TestRaftLoopPauseWithholdsHeartbeatsOnlyWhenSilent(t *testing.T) {
 	}
 }
 
-// leaseOutlastingApplyTimeout gives a node a lease of twice ApplyTimeout.
-// Raft sends heartbeats every tenth to fifth of the heartbeat timeout, which
-// may not be shorter than the lease, so a leader whose followers fall silent
-// has heard from them within a fifth of its lease and keeps leading for at
-// least 1.6 ApplyTimeouts after that, longer than a wait bounded by one.
+// leaseOutlastingApplyTimeout gives a node a lease of twice ApplyTimeout and
+// sets the heartbeat timeout, which may not be shorter than the lease, equal
+// to it. Raft sends heartbeats every tenth to fifth of the heartbeat timeout,
+// so a leader whose followers fall silent has heard from them within a fifth
+// of its lease and keeps leading for at least 1.6 ApplyTimeouts after that,
+// longer than a wait bounded by one.
 func leaseOutlastingApplyTimeout(config *Config) {
 	config.RaftConfig.LeaderLeaseTimeout = 2 * config.ApplyTimeout
 	config.RaftConfig.HeartbeatTimeout = config.RaftConfig.LeaderLeaseTimeout
