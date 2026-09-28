@@ -91,6 +91,15 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 		o.Tasks, o.Executions = tasks, registry
 	})
 	service := console.New(coordinator, "owner", nil)
+	// Drain the console before the ledger closes, so a turn still running at
+	// the end of a subtest settles instead of retrying its save forever.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := service.Shutdown(ctx); err != nil {
+			t.Logf("console shutdown: %v", err)
+		}
+	})
 	service.SetMaterials(materials, func(ctx context.Context, conversation, principal, projectID string) error {
 		if principal != "owner" || projectID != "scratch" {
 			return material.ErrScope
@@ -134,9 +143,10 @@ func (f *interactionE2E) request(t *testing.T, method, path string, body []byte,
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	started := time.Now()
 	res, err := f.client.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s %s: %v%s", method, path, err, f.diagnose("console:e2e", time.Since(started)))
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(res.Body)
@@ -164,7 +174,8 @@ func (f *interactionE2E) submit(t *testing.T, conversation, input, key string, r
 }
 func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.PendingQuestion {
 	t.Helper()
-	until := time.Now().Add(5 * time.Second)
+	started := time.Now()
+	until := started.Add(5 * time.Second)
 	for time.Now().Before(until) {
 		var data struct {
 			Questions []consoleapi.PendingQuestion `json:"questions"`
@@ -177,12 +188,13 @@ func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.Pen
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("no pending question: queue=%+v replies=%+v", f.service.Queue("console:e2e"), f.service.Replies("console:e2e"))
+	t.Fatalf("exchange %s asked no pending question%s", exchangeID, f.diagnose("console:e2e", time.Since(started)))
 	return consoleapi.PendingQuestion{}
 }
 func (f *interactionE2E) reply(t *testing.T, e consoleapi.Exchange) consoleapi.Reply {
 	t.Helper()
-	until := time.Now().Add(5 * time.Second)
+	started := time.Now()
+	until := started.Add(5 * time.Second)
 	for time.Now().Before(until) {
 		var data struct {
 			Replies []consoleapi.Reply `json:"replies"`
@@ -197,7 +209,7 @@ func (f *interactionE2E) reply(t *testing.T, e consoleapi.Exchange) consoleapi.R
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("exchange %s did not complete", e.ID)
+	t.Fatalf("exchange %s did not complete%s", e.ID, f.diagnose(e.Conversation, time.Since(started)))
 	return consoleapi.Reply{}
 }
 
