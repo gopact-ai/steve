@@ -177,7 +177,11 @@ func (s *Server) sshAvailable(w http.ResponseWriter, r *http.Request) bool {
 func (s *Server) sshError(w http.ResponseWriter, err error) {
 	var step *sshconnect.StepError
 	if errors.As(err, &step) {
-		w.WriteHeader(http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if step.Code == sshconnect.UnknownNode {
+			status = http.StatusNotFound
+		}
+		w.WriteHeader(status)
 		writeJSON(w, map[string]any{"error": step.Error(), "step": step})
 		return
 	}
