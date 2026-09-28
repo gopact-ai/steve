@@ -12,6 +12,7 @@ import (
 // StopRetainedTask stops the original recovery task, including its delegated
 // children. No active turn or currently selected Agent is needed to identify it.
 func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req Request) (Result, error) {
+	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var err error

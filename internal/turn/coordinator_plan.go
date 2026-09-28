@@ -261,6 +261,7 @@ func (c *Coordinator) landingSummary(outcome exec.Outcome) string {
 // abandoned attempts, and the outcome reaches the chat through the task's
 // anchor like a turn that finished late.
 func (c *Coordinator) ResumePlans(ctx context.Context) {
+	ctx = turnContext(ctx)
 	if err := c.supervisor.PrepareRecovery(ctx); err != nil {
 		slog.Error(fmt.Sprintf("turn: prepare plan recovery: %v", err))
 		return
