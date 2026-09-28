@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 // upgradeBackend enrolls nothing; it only answers where a machine is and
@@ -162,6 +164,43 @@ func TestUpgradeRefusesAnUnknownNodeWithoutKeepingARecord(t *testing.T) {
 	}
 	if status, err := svc.UpgradeStatus(t.Context(), "node-1"); err != nil || status.Status != "needs_attention" {
 		t.Fatalf("known machine's refused upgrade is not readable: %#v %v", status, err)
+	}
+}
+
+// The refusal says what this node does not know, not why: a well-formed
+// node ID can be unknown here too, for a machine that joined while this
+// node's replica could not catch up, so it neither blames a display name
+// nor speaks for the whole cluster. Chinese names the ID the way the
+// console labels it.
+func TestUnknownNodeRefusalSaysThisNodeDoesNotKnowTheID(t *testing.T) {
+	svc, _, backend, _ := upgradeFixture(t)
+	backend.unknown = "node-7f3a"
+	refusal := func(locale i18n.Locale) *StepError {
+		t.Helper()
+		_, err := svc.Upgrade(i18n.WithLocale(t.Context(), locale), "node-7f3a")
+		var step *StepError
+		if !errors.As(err, &step) || step.Code != "unknown_node" {
+			t.Fatalf("%s: unknown node upgrade = %v", locale, err)
+		}
+		return step
+	}
+	zh, en := refusal(i18n.LocaleZH), refusal(i18n.LocaleEN)
+	for _, want := range []string{"node-7f3a", "本机不知道", "节点 ID"} {
+		if !strings.Contains(zh.Message, want) {
+			t.Errorf("zh refusal %q does not say %q", zh.Message, want)
+		}
+	}
+	for _, want := range []string{"node-7f3a", "does not know"} {
+		if !strings.Contains(en.Message, want) {
+			t.Errorf("en refusal %q does not say %q", en.Message, want)
+		}
+	}
+	for _, said := range []string{zh.Message, zh.Suggestion, en.Message, en.Suggestion} {
+		for _, presumed := range []string{"集群里没有", "显示名", "display name", "No machine in the cluster"} {
+			if strings.Contains(said, presumed) {
+				t.Errorf("refusal %q presumes %q", said, presumed)
+			}
+		}
 	}
 }
 
