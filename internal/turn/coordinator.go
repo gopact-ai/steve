@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
@@ -457,6 +458,10 @@ func (c *Coordinator) listenPrefix(req Request) string {
 }
 
 func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
+	// A turn is never part of an agent's tool call, even one queued from
+	// work that began in such a call, like a child's result delivered to
+	// its parent: it runs on the hub's authority and opens its own grant.
+	ctx = agentmcp.WithoutGrant(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var err error
