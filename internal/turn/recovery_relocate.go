@@ -68,6 +68,7 @@ func relocationRequestDigest(req Request) string {
 // PlanRelocation validates copied bytes and prepares an isolated target before
 // asking for a scoped decision. An empty effects log cannot prove CLI safety.
 func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request) (RelocationPlan, error) {
+	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var channelErr error
