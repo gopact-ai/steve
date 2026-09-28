@@ -36,6 +36,14 @@ func ScopeFromContext(ctx context.Context) (GrantScope, bool) {
 	return *fixed.Grant.Scope, true
 }
 
+// WithoutGrant is ctx with no tool call's grant. Work that outlives the call
+// that led to it, such as a turn queued from it, runs on its own authority:
+// the call's grant would still decide what it may read and write, and is
+// refused once the call's execution has ended.
+func WithoutGrant(ctx context.Context) context.Context {
+	return context.WithValue(ctx, grantContextKey{}, nil)
+}
+
 // AuthorizeContext checks a tool's original grant again inside a consumer's
 // write transaction. Non-MCP callers retain their own authorization policy.
 func AuthorizeContext(ctx context.Context, tx StoreTx) error {
