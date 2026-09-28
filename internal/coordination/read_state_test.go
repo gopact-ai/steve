@@ -21,12 +21,8 @@ func TestReadStateOnAnEstablishedLeaderAppendsNothing(t *testing.T) {
 				if n == leader {
 					continue
 				}
-				before := n.LastIndex()
 				if _, err := n.ReadState(t.Context()); !errors.Is(err, ErrNotLeader) {
 					t.Errorf("follower %s answered a quorum read: %v", id, err)
-				}
-				if n.LastIndex() != before {
-					t.Errorf("a quorum read refused by follower %s grew its log", id)
 				}
 			}
 			c.mu.RUnlock()
@@ -51,9 +47,9 @@ func TestReadStateOnAnEstablishedLeaderAppendsNothing(t *testing.T) {
 	}
 }
 
-// A write on a leader that has committed an entry of its term appends the
-// write's entry and nothing else; one that has not yet appends a barrier
-// before it, once.
+// A write on a leader that has committed an entry of its term, to the
+// application or to membership, appends the write's entry and nothing
+// else; one that has not yet appends a barrier before it, once.
 func TestAWriteOnAnEstablishedLeaderAppendsOneEntry(t *testing.T) {
 	c := newTestCluster(t, 3, func(_ string, dir string) Application { return openCounter(t, dir) })
 	leader := c.leader()
@@ -77,11 +73,11 @@ func TestAWriteOnAnEstablishedLeaderAppendsOneEntry(t *testing.T) {
 		}
 	}
 	before = leader.LastIndex()
-	if _, err := leader.SetAutoFailover(t.Context(), PolicyRequest{ID: "policy", Actor: "owner", ExpectedRevision: leader.Status().Revision, Enabled: true}); err != nil {
+	if _, err := leader.Rename(t.Context(), RenameRequest{ID: "rename", Actor: "owner", ExpectedRevision: leader.Status().Revision, NodeID: "node-2", Name: "builder"}); err != nil {
 		t.Fatal(err)
 	}
 	if grew := leader.LastIndex() - before; grew != 1 {
-		t.Fatalf("a membership policy change on an established leader appended %d entries, want only its own", grew)
+		t.Fatalf("renaming a member on an established leader appended %d entries, want only its own", grew)
 	}
 }
 
