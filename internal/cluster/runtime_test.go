@@ -358,7 +358,7 @@ func TestLateProposalCannotCommitAfterBusinessCachesAreReconstructed(t *testing.
 }
 
 func TestUnknownProposalOutcomeRevokesCachedStoresBeforeAnotherWrite(t *testing.T) {
-	nodes := testNodes(t, 2)
+	nodes := testNodesWith(t, 2, steadyTiming)
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	second := joinNode(t, first, nodes[1], true, false)
@@ -392,7 +392,7 @@ func TestUnknownProposalOutcomeRevokesCachedStoresBeforeAnotherWrite(t *testing.
 }
 
 func TestCallerCancellationDuringProposalKeepsBusinessGeneration(t *testing.T) {
-	nodes := testNodes(t, 2)
+	nodes := testNodesWith(t, 2, steadyTiming)
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	second := joinNode(t, first, nodes[1], true, false)
@@ -838,7 +838,7 @@ func TestReplicaThatDoesNotCatchUpGivesTheSameReasonEachTime(t *testing.T) {
 // nothing bounded that wait the node would stay silently stuck, unable to
 // notice a lost assignment or try again.
 func TestActivationWhoseWriterFenceCannotApplyGivesUpAndRetries(t *testing.T) {
-	nodes := testNodes(t, 3)
+	nodes := testNodesWith(t, 3, steadyTiming)
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	for _, n := range nodes[1:] {
