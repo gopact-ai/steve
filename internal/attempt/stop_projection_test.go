@@ -53,6 +53,45 @@ func TestMarkStopProjectedWaitsForSettledAccounting(t *testing.T) {
 	requireMark(true)
 }
 
+// A turn that answers no channel message binds its accounting without a
+// turn identity. Its confirmed stop waits for that row like any other and is
+// retired once the row is settled, instead of failing every stop pass.
+func TestMarkStopProjectedRetiresStopOfTurnWithoutIdentity(t *testing.T) {
+	s, _ := newService(t)
+	tasks, err := task.OpenLedger(s.l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := tasks.Create(task.Task{Channel: "chat", Member: "m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Begin(root.ID, "m1", "n1", ""); err != nil {
+		t.Fatal(err)
+	}
+	token, err := tasks.ExecutionToken(root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.BindAttempt(token, "stopped", ""); err != nil {
+		t.Fatal(err)
+	}
+	yes := true
+	r := Record{Spec: Spec{ID: "stopped", TaskID: root.ID, Kind: KindChat, Node: "n1", Execution: &token},
+		State: Failed, Session: "ns_stopped", SessionSettled: &yes, StopEvidence: "task-stop/stopped", Revision: 1,
+		Usage: &Usage{Input: 3, Output: 4, Model: "m", Reported: true}}
+	putHistoryAttempt(t, s.l, r)
+	if marked, err := s.MarkStopProjected(t.Context(), r.ID, "test"); err != nil || marked {
+		t.Fatalf("unsettled accounting: marked=%v err=%v", marked, err)
+	}
+	if err := tasks.SettleAttempt(t.Context(), root.ID, r.ID, "", time.Now(), task.OutcomeCancelled, StoppedUsage(r)); err != nil {
+		t.Fatal(err)
+	}
+	if marked, err := s.MarkStopProjected(t.Context(), r.ID, "test"); err != nil || !marked {
+		t.Fatalf("settled accounting: marked=%v err=%v", marked, err)
+	}
+}
+
 func TestMarkStopProjectedRefusesRecordsThatAreNotConfirmedStops(t *testing.T) {
 	s, _ := newService(t)
 	yes := true
