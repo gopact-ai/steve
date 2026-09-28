@@ -364,13 +364,18 @@ func (s *Service) ReadState(ctx context.Context) (State, error) {
 }
 
 // awaitState waits, until ctx ends, for the state machine to hold the log
-// up to index; see StateHolds. index must be committed, and is then in this
-// node's log, so what StateHolds finds between the applied index and index
-// is settled: the entries that never reach the state machine are already
-// there, and compaction drops only entries the state machine holds, having
-// applied them or restored a snapshot that covers them. Only the state
-// machine applying more of the log can make it hold index, so awaitState
-// looks again each time the state machine publishes its progress.
+// up to index; see StateHolds. index must be at most this node's commit
+// index, as the one ReadIndex returns on the leader is. The log up to index
+// is then here and committed, so what StateHolds finds between the applied
+// index and index is settled: the entries that never reach the state
+// machine are already there, and compaction drops only entries the state
+// machine holds, having applied them or restored a snapshot that covers
+// them. Only the state machine applying more of the log can make it hold
+// index, so awaitState looks again each time the state machine publishes
+// its progress. That is not so for an index this node has yet to commit,
+// such as the leader's read index on a follower: committing entries that
+// never reach the state machine can make it hold index without anything
+// being published.
 func (s *Service) awaitState(ctx context.Context, index uint64) error {
 	for {
 		changed := s.fsm.appliedChanged()

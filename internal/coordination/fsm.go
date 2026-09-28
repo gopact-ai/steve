@@ -139,7 +139,8 @@ func (m *machine) lookup(id, fingerprint string) (receipt, bool) {
 
 // publishApplied publishes the index of the last entry applied, once the
 // change that applied it has finished, and wakes whoever waits on
-// appliedChanged. The caller holds m.mu.
+// appliedChanged. The caller holds m.mu. Once the machine has failed it
+// publishes nothing and wakes no one; failed is closed instead.
 func (m *machine) publishApplied() {
 	if m.failure != nil {
 		return
@@ -155,7 +156,8 @@ func (m *machine) publishApplied() {
 
 // appliedChanged returns a channel that is closed when applied is next
 // published. A waiter takes the channel before it looks at what it waits
-// for, so a change published in between still wakes it.
+// for, so a change published in between still wakes it. Nothing is
+// published once the machine has failed, so a waiter also waits on failed.
 func (m *machine) appliedChanged() <-chan struct{} {
 	m.progressMu.Lock()
 	defer m.progressMu.Unlock()
