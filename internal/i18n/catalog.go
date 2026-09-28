@@ -677,6 +677,11 @@ var zh = map[Key]string{
 	DelegateStateCancelled:      "已取消",
 	DelegateUnrecordedAnswer:    "子任务在开始执行前中断，没有执行记录。如果仍需要这项工作，请重新委派。",
 
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed: "父任务 #%s 已结束（%s）。送进它会话的结果消息尚未确认处理完（例如仍在等你回答恢复问题），不会再次发送；结果保留在本任务中。",
+	DelegateSuppressedEnded:       "父任务 #%s 在收到这个结果前已结束（%s），结果不再发送；结果保留在本任务中。",
+	DelegateSuppressedMissing:     "父任务 #%s 的记录已不存在，结果不会发送；结果保留在本任务中。",
+
 	// Resume and replacement recovery questions.
 	ResumeTitle:                        "继续任务需要你的决定",
 	ResumeAttemptedSeparator:           "；",
@@ -1123,6 +1128,8 @@ var zh = map[Key]string{
 	SSHUpgradeRunningFix:          "等待本次升级返回结果",
 	SSHUpgradeUnknown:             "这台机器没有进行中或刚结束的升级",
 	SSHUpgradeUnknownFix:          "从机器列表发起升级",
+	SSHUpgradeUnknownNode:         "本机不知道节点 ID 为 %q 的机器：它不是本机，本机没有记录到它的 SSH 隧道，本机副本的集群成员里也没有它",
+	SSHUpgradeUnknownNodeFix:      "升级按节点 ID（形如 node-…）指定机器，机器详情里可以看到；机器刚加入，或本机暂时与集群多数成员失联时，本机副本可能还没有它，稍后重试",
 	SSHUpgradePreflight:           "确认这台机器的 SSH 别名、平台和要发送的程序",
 	SSHUpgradeTargetFix:           "只有经 SSH 加入桌面 App 集群、且隧道仍记录在本机的机器可以从这里升级；其他机器需在该机器上替换 steve 或 steve-node 并重启",
 	SSHUpgradePlatformUnknown:     "无法识别这台机器的平台",
@@ -2022,6 +2029,11 @@ var en = map[Key]string{
 	DelegateStateCancelled:      "cancelled",
 	DelegateUnrecordedAnswer:    "The subtask was interrupted before it started and left no execution record. Delegate it again if the work is still needed.",
 
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed: "Parent task #%s has ended (%s). The result message in its conversation has not been confirmed as processed (it may still be waiting for your answer to a recovery question); it will not be sent again, and the result stays on this task.",
+	DelegateSuppressedEnded:       "Parent task #%s ended (%s) before receiving this result; it will not be sent, and the result stays on this task.",
+	DelegateSuppressedMissing:     "Parent task #%s no longer exists; this result will not be sent, and it stays on this task.",
+
 	// Resume and replacement recovery questions.
 	ResumeTitle:                        "Continuing this task needs your decision",
 	ResumeAttemptedSeparator:           "; ",
@@ -2468,6 +2480,8 @@ var en = map[Key]string{
 	SSHUpgradeRunningFix:          "Wait for this upgrade to finish",
 	SSHUpgradeUnknown:             "This machine has no upgrade running or just finished",
 	SSHUpgradeUnknownFix:          "Start an upgrade from the machine list",
+	SSHUpgradeUnknownNode:         "This node does not know a machine with node ID %q: it is not this node, has no SSH tunnel recorded here, and is not a member in this node's replica",
+	SSHUpgradeUnknownNodeFix:      "Upgrades name a machine by its node ID (node-…), shown in the machine's details; a machine that joined recently, or while this node is cut off from most of the cluster, may not be in this node's replica yet, so try again later",
 	SSHUpgradePreflight:           "Confirming the machine's SSH alias, platform and the program to send",
 	SSHUpgradeTargetFix:           "Only machines that joined the desktop app's cluster over SSH, with their tunnel still recorded here, can be upgraded from here; on other machines replace steve or steve-node on the machine itself and restart it",
 	SSHUpgradePlatformUnknown:     "The machine's platform is not recognised",

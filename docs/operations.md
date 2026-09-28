@@ -533,6 +533,8 @@ node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平
 
 控制台「资源 → 机器」把协调节点最近一次连接因协议不符被拒的机器标为“协议不兼容”，详情写明双方的协议版本和应升级的一方。协议比协调节点旧的机器在详情和页面提示条中提供升级入口，但只有经 SSH 加入桌面 App 集群的机器能通过它（`POST /console/ssh/upgrades/{node}`）升级；服务端协调节点经 SSH 安装的 `steve-node` 和手工部署的 `steve-node` 都会被拒绝升级，需在该机器上替换为新构建的二进制，引导脚本不更新已有二进制。协议比协调节点新的机器只显示说明。
 
+`POST /console/ssh/upgrades/{node}` 发起升级，`GET /console/ssh/upgrades/{node}` 读取这台机器进行中或刚结束的升级记录。路径参数 `{node}` 是机器的 node ID（形如 `node-…`），不是显示名。桌面 App 集群中，node ID 既不是本机、也不是本机记录了 SSH 隧道的机器、也不在本机副本的集群成员中时，两个请求都返回 404，错误体与该 API 其他拒绝相同（`error` 与 `step`，`step.code` 为 `unknown_node`，按请求语言写明），不创建升级记录。成员从本机副本读取，不经多数派确认：机器刚加入，或本机与集群多数成员失联、副本停在失联前时，本机副本里可能还没有它，这期间它（本机没有到它的隧道时）同样得到 404，副本追上后恢复。已知机器不能升级（本机、没有记录 SSH 隧道的成员等）时仍返回 200 与 `needs_attention` 的升级记录，记录里写明原因。服务端协调节点不提供这项升级，`POST` 对任何 node ID 都返回 400（`step.code` 为 `upgrade_unsupported`），`GET` 返回 400（`unknown_plan`）。
+
 升级顺序：v1 与 v2 的节点协议连接互相拒绝，协调节点和执行节点都升级完之前，两者之间的节点连接一直被拒绝。桌面 App 集群由本机协调时先升级 App，再从控制台升级经 SSH 加入的机器；协调职责已交接给其他机器时，先升级当前协调节点，或先把协调交接回本机。服务端部署把协调节点的 `steve` 与各执行节点的 `steve-node` 一起替换并重启。
 
 v2 基线包括节点会话、原生会话续接、输入回执确认、进程流 journal、执行准入与 MCP 绑定、技能包、节点配置及其修订号、目录检查、MCP 探测、机器自带技能与 MCP 上报、产物与文件操作、插件包与插件运行时，协调节点对这些操作不检查 feature。advert 的 `features` 只列 v2 节点可能缺少的能力：`native_history.v1`（非 Unix 平台无法保存原生历史，不声明）与 `service_restart.v1`（仅 Unix 上独立运行的 `steve-node` 声明）。
@@ -707,6 +709,7 @@ go run ./e2e/fleet -scenario autonomous
 | `delegate: ... task #C under #P on ...` | 子任务 C 已创建并交给所列机器，P 是父任务；后续靠这些 ID 查 attempt 与产物。 |
 | `delegate: delivered N child result(s) into ... for task #P` | 父会话投递接口已接受结果，delivery 状态已处理；不代表父 agent 已完成汇总，也不能单凭此行认定文件落地。查看消息中的落地状态、任务改动和主目录。 |
 | `delegate: deliver ...: <error>` | 结果投递失败，结果留在任务记录，待后续 flush 或启动补投递；先处理日志中的队列/持久化错误。 |
+| `delegate: suppressed N child result(s) for ended task #P: continuation not settled` | 父任务 P 已结束（done/cancelled），而它会话里的续跑消息（continuation）还没有已结算的处理回执，例如仍在等 owner 回答恢复问题；交接键在日志字段 `key` 中。子任务 delivery 记为 `suppressed`，原因按 Hub 默认语言写入 delivery 的 `error` 字段（写入后不随语言切换改写），控制台“结果交接”中可见；结果保留在子任务记录里，不再重发，也不再每轮核对回执。该 continuation 本身不被撤销，仍按会话恢复流程处理；之后它是否处理完不会改写子任务的 delivery 状态。 |
 | `sweep: landing ...: <state> (N paths)` | 每 30 秒的后台任务重试待落地产物；看实际 state，不能把这行一律当成功。 |
 | `sweep: land pending for <project>: <error>` | 后台落地遇到非占锁错误；查看对应产物/landing。规范锁被占用时继续排队，不打印这一错误。 |
 | `sweep: removed N orphaned worktree(s) on ...` | 清理没有活 attempt 持有的隔离工作树；启动及 node 连接时会触发检查。 |
