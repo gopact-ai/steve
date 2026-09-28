@@ -132,5 +132,5 @@ func TestTaskStopPendingIsRecordedOnce(t *testing.T) {
 // taskStopPending records a stop pending on its node as the Hub does
 // while it speaks locale.
 func taskStopPending(t *testing.T, s *Service, id string, locale i18n.Locale) error {
-	return s.TaskStopPending(i18n.WithLocale(t.Context(), locale), id, "task-stop-recovery", i18n.New(locale).T(i18n.AppStopPending))
+	return s.TaskStopPending(i18n.WithLocale(t.Context(), locale), id, "task-stop-recovery")
 }

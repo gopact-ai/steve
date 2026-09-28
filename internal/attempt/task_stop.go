@@ -168,11 +168,10 @@ func PendingSessionOpen(r Record) bool {
 }
 
 // TaskStopPending keeps lack of a native receipt visible without interpreting
-// it as stopped. An attempt already quarantined with an explanation is
-// already visible: a repeated check adds no new event, whatever language
-// its explanation is now worded in, and an earlier reason for the
-// quarantine is kept.
-func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation string) error {
+// it as stopped: the attempt is quarantined with an explanation in ctx's
+// language, over whatever it was quarantined for before. A repeated check
+// adds no new event, whatever language the explanation was recorded in.
+func (s *Service) TaskStopPending(ctx context.Context, id, actor string) error {
 	current, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -180,18 +179,16 @@ func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation st
 	if taskStopAlreadySettled(current) {
 		return nil
 	}
-	if explanation == "" || len(explanation) > 16<<10 {
-		return errors.New("task stop pending explanation is invalid")
-	}
-	if current.Unsettled && current.Error != "" {
+	if current.Unsettled && stopPendingSaid(current.Error) {
 		return nil
 	}
+	explanation := i18n.FromContext(ctx).T(i18n.AppStopPending)
 	_, err = s.l.Transition(ctx, id, string(current.State), string(current.State), actor, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
 		var next Record
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
 		}
-		if taskStopAlreadySettled(next) || next.Unsettled && next.Error != "" {
+		if taskStopAlreadySettled(next) || next.Unsettled && stopPendingSaid(next.Error) {
 			return errTaskStopRecorded
 		}
 		if _, err := stoppedTaskTx(tx, next); err != nil {
@@ -204,4 +201,15 @@ func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation st
 		return nil
 	}
 	return err
+}
+
+// stopPendingSaid reports whether an attempt's error is the explanation
+// TaskStopPending records, in any language the Hub may have had.
+func stopPendingSaid(text string) bool {
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		if text == i18n.New(locale).T(i18n.AppStopPending) {
+			return true
+		}
+	}
+	return false
 }
