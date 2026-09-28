@@ -321,9 +321,9 @@ func TestContentPeerLogsWhyItRefusedOncePerCallerAndCode(t *testing.T) {
 }
 
 // A repair that cannot check a placement for now — the committed state out
-// of reach — leaves the content for its next round: it neither declares the
-// placement blocked nor counts the copies it could not check as lost, and
-// it copies nothing.
+// of reach, or this replica behind it — leaves the content for its next
+// round: it neither declares the placement blocked nor counts the copies it
+// could not check as lost, and it copies nothing.
 func TestContentRepairWaitsOutAPlacementItCouldNotCheck(t *testing.T) {
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
@@ -355,7 +355,15 @@ func TestContentRepairWaitsOutAPlacementItCouldNotCheck(t *testing.T) {
 	if live, err := worker.reachableDomains(t.Context(), manifest, map[string]bool{}); !errors.Is(err, contentreplica.ErrUnavailable) {
 		t.Fatalf("copies whose placement could not be checked: %d live, err=%v; want unavailable", live, err)
 	}
+	// A round judges by the committed state it reads when it starts: out of
+	// reach then, the round does not start.
 	report, err := worker.sweep(t.Context())
+	if !errors.Is(err, contentreplica.ErrUnavailable) || report.Examined != 0 || counted.reads != 0 || counted.prepares != 0 {
+		t.Fatalf("repair without the committed state: %+v read=%d prepare=%d %v; want the round unstarted, nothing copied", report, counted.reads, counted.prepares, err)
+	}
+	// Read, but with this replica behind it, the placement is left unchecked.
+	behind(peers[0])
+	report, err = worker.sweep(t.Context())
 	if err != nil || report.Degraded != 1 || report.Skipped != 0 || counted.reads != 0 || counted.prepares != 0 {
 		t.Fatalf("repair without a placement check: %+v read=%d prepare=%d %v; want degraded, nothing copied", report, counted.reads, counted.prepares, err)
 	}

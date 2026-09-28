@@ -103,8 +103,27 @@ func (w *contentRepairWorker) notice(ctx context.Context, id, status string, key
 	}
 }
 
+// sweep is one repair round. The round reads the committed state through
+// the leader once, when it starts, and every check it makes afterwards, for
+// every object, judges by that read. Reusing it is safe because nothing the
+// round does rests on it alone:
+//   - every ledger write, record's among them, prepares through the
+//     replicator, which reads the committed state through the leader again
+//     and refuses a stale coordinator epoch or writer generation;
+//   - a peer asked to store, serve or collect content checks the caller's
+//     epoch and writer generation, and the placement, against a read of its
+//     own;
+//   - the runtime cancels the generation's context, which every check looks
+//     at, once this replica applies another assignment or writer generation.
+//
+// What the read decides by itself is which copies count and whom to ask for
+// more; a change committed during the round is judged by the next one.
 func (w *contentRepairWorker) sweep(ctx context.Context) (contentRepairReport, error) {
 	var report contentRepairReport
+	ctx = withContentReads(ctx)
+	if _, err := w.peer.committedState(ctx, w.active.Runtime); err != nil {
+		return report, err
+	}
 	if _, err := contentGenerationState(ctx, w.active); err != nil {
 		return report, err
 	}
@@ -384,6 +403,10 @@ func (w *contentRepairWorker) prepareFailed(ctx context.Context, id string, subj
 	return "degraded", errors.Join(prepareErr, recordErr)
 }
 
+// record writes manifest to the ledger. The check before the write stops
+// a generation that has ended without a trip to the leader; within a round
+// it judges by the round's read. The write itself is fenced by the ledger
+// update, which reads the committed state through the leader again.
 func (w *contentRepairWorker) record(ctx context.Context, manifest contentreplica.Manifest) error {
 	if _, err := contentGenerationState(ctx, w.active); err != nil {
 		return err

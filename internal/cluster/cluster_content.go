@@ -106,9 +106,9 @@ func uncheckedContentPeers(err error) []string {
 
 type contentReadsKey struct{}
 
-// contentReads is the committed state one content request judges by. It
-// is read once, through the leader, and every check the request makes
-// after that reuses it.
+// contentReads is the committed state one content request, or one repair
+// round, judges by. It is read once, through the leader, and every check
+// made after that under the same context reuses it.
 type contentReads struct {
 	mu    sync.Mutex
 	state *coordination.State
@@ -121,20 +121,16 @@ type contentReads struct {
 // by a newer one. A change made meanwhile is seen by the checks serveContent
 // makes after the transfer under a context of its own, before it answers;
 // they are what stand between that change and the answer.
+//
+// A repair round shares its reads the same way; see sweep.
 func withContentReads(ctx context.Context) context.Context {
 	return context.WithValue(ctx, contentReadsKey{}, &contentReads{})
 }
 
-// committedState is the coordination state a content check judges by, as
-// the runtime reads it through the consensus leader — once per request
-// when the request shares its reads.
-func (p *Peer) committedState(ctx context.Context, runtime *Runtime) (coordination.State, error) {
-	read := runtime.ReadState
-	if stand := p.readContentState.Load(); stand != nil {
-		read = *stand
-	}
-	// A read that fails refuses nothing: the check could not be made.
-	read = unavailableRead(read)
+// sharedState reads the committed state with read, or, under a context that
+// shares its reads, returns the state first read under it. A failed read is
+// not kept: the next check reads again.
+func sharedState(ctx context.Context, read contentStateReader) (coordination.State, error) {
 	reads, _ := ctx.Value(contentReadsKey{}).(*contentReads)
 	if reads == nil {
 		return read(ctx)
@@ -149,6 +145,18 @@ func (p *Peer) committedState(ctx context.Context, runtime *Runtime) (coordinati
 		reads.state = &state
 	}
 	return *reads.state, nil
+}
+
+// committedState is the coordination state a content check judges by, as
+// the runtime reads it through the consensus leader — once per request
+// when the request shares its reads.
+func (p *Peer) committedState(ctx context.Context, runtime *Runtime) (coordination.State, error) {
+	read := runtime.ReadState
+	if stand := p.readContentState.Load(); stand != nil {
+		read = *stand
+	}
+	// A read that fails refuses nothing: the check could not be made.
+	return sharedState(ctx, unavailableRead(read))
 }
 
 func unavailableRead(read contentStateReader) contentStateReader {
@@ -300,7 +308,7 @@ func (p *Peer) ContentReplicator(active Activation) (contentreplica.Replicator, 
 			return contentScope(current.project), nil
 		},
 		Members: func(ctx context.Context) ([]string, error) {
-			state, err := active.Runtime.ReadState(ctx)
+			state, err := sharedState(ctx, active.Runtime.ReadState)
 			if err != nil {
 				return nil, err
 			}
@@ -324,11 +332,16 @@ type generationContent struct {
 
 func (c generationContent) MaxObjectBytes() int64 { return c.client.MaxObjectBytes() }
 
+// contentGenerationState is the committed state, if it still has active's
+// business generation writing. Under a context that shares its reads it
+// judges by the shared read; active's context, which the runtime cancels
+// once its replica applies another assignment or writer generation, is
+// checked every time.
 func contentGenerationState(ctx context.Context, active Activation) (coordination.State, error) {
 	if active.Context == nil || active.Context.Err() != nil || active.Runtime == nil {
 		return coordination.State{}, ErrInactive
 	}
-	state, err := active.Runtime.ReadState(ctx)
+	state, err := sharedState(ctx, active.Runtime.ReadState)
 	if err != nil {
 		return coordination.State{}, err
 	}
