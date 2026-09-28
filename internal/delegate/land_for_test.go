@@ -376,7 +376,7 @@ func TestLandForSaysARecoveredApplyConflictAsLaterPassesDo(t *testing.T) {
 func TestLandForSaysARecoveredApplyConflictWithoutItsCauseOnceItsPathMoves(t *testing.T) {
 	w := newWorld(t)
 	parent := w.running(t, "codex")
-	var applied atomic.Bool
+	var applied, editedAgain atomic.Bool
 	var beforeOther atomic.Pointer[string]
 	homeOnNode(t, w, func(req ops.Request) {
 		if req.Op == ops.Apply && applied.CompareAndSwap(false, true) {
@@ -386,6 +386,7 @@ func TestLandForSaysARecoveredApplyConflictWithoutItsCauseOnceItsPathMoves(t *te
 		// directory, a.txt changes in the canonical.
 		if message := beforeOther.Load(); message != nil && req.Op == ops.Snapshot && req.Message == *message {
 			editBy(t, w, "a.txt", "by hand again\n")
+			editedAgain.Store(true)
 		}
 	})
 	editBy(t, w, "a.txt", "base\n")
@@ -400,6 +401,9 @@ func TestLandForSaysARecoveredApplyConflictWithoutItsCauseOnceItsPathMoves(t *te
 	}
 
 	landing := w.service.landFor(t.Context(), parent, nil)
+	if !editedAgain.Load() {
+		t.Fatal("a.txt was not edited again before the later landing snapshotted the main directory")
+	}
 	if got := landing(childWith(other.ID)); !strings.HasPrefix(got, "已落地主目录") {
 		t.Fatalf("landing text for the result landed after the conflict = %q", got)
 	}
