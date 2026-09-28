@@ -309,3 +309,51 @@ func TestContentMaintenanceRoundReadsTheCommittedStateOnceForItsChecks(t *testin
 		t.Fatalf("maintenance of %d nodes read the committed state %d times; want one read for its checks, one for collecting here and one for its write", len(peers), reads)
 	}
 }
+
+// Maintenance collects on this node only under a read of its own that still
+// has its generation writing. Once the generation has ended, it collects
+// nothing here, though the round's first read still had it writing.
+func TestContentMaintenanceCollectsHereOnlyWhileItsOwnReadHasTheGenerationWriting(t *testing.T) {
+	peers, active := contentPeers(t)
+	owner, err := material.Open(t.TempDir(), active.Ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	owner.SetReplication(contentClientLosingReplies(t, peers[0], active))
+	data := []byte("an upload its owner gave up")
+	if _, err := owner.Upload(t.Context(), "workspace", "lost reply", "text/plain", bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrIncomplete) {
+		t.Fatalf("an upload whose replies are lost: %v; want it given up", err)
+	}
+	state, err := peers[0].contentState(t.Context(), "workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := contentreplica.Object{Scope: contentScope(state.project), Kind: contentreplica.Material, Key: checkpoint.Reference(data).SHA256, Blob: checkpoint.Reference(data)}
+	heldHere := func() bool {
+		store, release, err := peers[0].acquireContent()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		return store.Get(t.Context(), released, &bytes.Buffer{}) == nil
+	}
+	if !heldHere() {
+		t.Fatal("this node holds no copy of the upload its owner gave up")
+	}
+	worker, err := peers[0].newContentRepair(active, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This node's reads see a later writer generation; the round's first
+	// read, and its write's, go to the leader as they are.
+	supersede(t, peers[0])
+	_, err = worker.maintain(t.Context())
+	if held := heldHere(); !generationEnded(err) || !held {
+		t.Fatalf("maintenance whose read here has its generation ended: %v, copy still here: %t; want the round ended there and nothing collected here", err, held)
+	}
+	peers[0].readContentState.Store(nil)
+	if _, err := worker.maintain(t.Context()); err != nil || heldHere() {
+		t.Fatalf("maintenance with its generation writing: %v; want the upload its owner gave up collected here", err)
+	}
+}
