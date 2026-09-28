@@ -331,7 +331,9 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			// begins, so they are read first. A result the pass skipped is
 			// stuck, even once a result landed after it has moved the
 			// canonical on for the next pass to retry it. A result whose
-			// conflict had cleared before is queued like any other.
+			// conflict had cleared before is queued like any other. One
+			// that another pass lands or drops between this read and this
+			// pass still reads as stuck.
 			stuck, err := s.artifacts.StillStuck(ctx, p)
 			if err != nil {
 				slog.Warn(fmt.Sprintf("delegate: read stuck results of %s: %v", p.ID, err), "parent", parent.ID, "project", p.ID)
