@@ -690,7 +690,7 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	var binaryReader io.Reader
 	if template.BinaryPath != "" {
 		// The failed step below says what went wrong; the reason is not shown.
-		binary, metadata, err := nodebootstrap.OpenBinary(text, template.BinaryPath)
+		binary, metadata, err := nodebootstrap.OpenBinary(template.BinaryPath)
 		if err != nil {
 			return reject(Fail(text, "binary", "binary_unavailable", text.T(i18n.SSHBinaryUnreadable), text.T(i18n.SSHBinaryUnreadableFix)))
 		}

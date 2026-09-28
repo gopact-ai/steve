@@ -56,10 +56,20 @@ func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObserv
 	go func() {
 		defer close(done)
 		for {
-			if _, err := worker.sweep(ctx); err != nil && ctx.Err() == nil {
+			// A generation that ended failed no scan, has nothing left to
+			// maintain and does not come back: repair ends with it, and the
+			// next generation's repair checks again.
+			_, err := worker.sweep(ctx)
+			if generationEnded(err) {
+				slog.Info("content repair: scan stopped, its generation has ended", "writer_generation", active.WriterGeneration, "cause", err.Error())
+				return
+			}
+			if err != nil && ctx.Err() == nil {
 				worker.notice(ctx, "scan", "scan_failed", i18n.ClusterContentScanFailed)
 			}
-			worker.runMaintenance(ctx)
+			if !worker.runMaintenance(ctx) {
+				return
+			}
 			timer := time.NewTimer(interval)
 			select {
 			case <-ctx.Done():
@@ -235,15 +245,16 @@ func (w *contentRepairWorker) reachableDomains(ctx context.Context, manifest con
 	return len(domains), nil
 }
 
-// uncheckedCopy is what to say about content whose copy the peers holding
-// it could not check for now: their replica behind or their committed
-// state out of reach. It names those peers after the content's subject.
-func uncheckedCopy(text i18n.Catalog, subject []any, nodes []string) (i18n.Key, []any) {
-	key := i18n.ClusterContentCopyUncheckedOne
+// uncheckedPeers is what to say about content the peers that could not
+// check a request for now — their replica behind or their committed state
+// out of reach — stand in the way of: one when a single peer does, many
+// when several do. It names those peers after args.
+func uncheckedPeers(text i18n.Catalog, one, many i18n.Key, args []any, nodes []string) (i18n.Key, []any) {
+	key := one
 	if len(nodes) > 1 {
-		key = i18n.ClusterContentCopyUncheckedMany
+		key = many
 	}
-	return key, append(subject[:len(subject):len(subject)], strings.Join(nodes, text.T(i18n.ListSeparator)))
+	return key, append(args[:len(args):len(args)], strings.Join(nodes, text.T(i18n.ListSeparator)))
 }
 
 func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentreplica.Manifest, availability map[string]bool) (string, error) {
@@ -355,7 +366,8 @@ func (w *contentRepairWorker) readFailed(ctx context.Context, id string, subject
 		w.notice(ctx, id, "degraded", i18n.ClusterContentLocalQuota, subject...)
 		return "degraded", err
 	case errors.Is(err, errContentPeerUnchecked):
-		key, args := uncheckedCopy(w.peer.text, subject, uncheckedContentPeers(err))
+		// The peers holding a copy could not check the read.
+		key, args := uncheckedPeers(w.peer.text, i18n.ClusterContentCopyUncheckedOne, i18n.ClusterContentCopyUncheckedMany, subject, uncheckedContentPeers(err))
 		w.notice(ctx, id, "degraded", key, args...)
 		return "degraded", err
 	case errors.Is(err, contentreplica.ErrUnavailable):
@@ -393,8 +405,12 @@ func (w *contentRepairWorker) prepareFailed(ctx context.Context, id string, subj
 	// is currently available; Record never reduces existing protection.
 	recordErr := w.record(ctx, available)
 	key, args := i18n.ClusterContentFewCopies, append(subject[:len(subject):len(subject)], live, required)
-	if errors.Is(prepareErr, checkpoint.ErrQuota) {
+	switch {
+	case errors.Is(prepareErr, checkpoint.ErrQuota):
 		key, args = i18n.ClusterContentRemoteQuota, subject
+	case errors.Is(prepareErr, errContentPeerUnchecked):
+		// The peers asked to store a copy could not check the request.
+		key, args = uncheckedPeers(w.peer.text, i18n.ClusterContentStoreUncheckedOne, i18n.ClusterContentStoreUncheckedMany, args, uncheckedContentPeers(prepareErr))
 	}
 	if recordErr != nil {
 		key, args = i18n.ClusterContentRecordPending, subject
