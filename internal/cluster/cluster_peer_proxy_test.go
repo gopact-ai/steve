@@ -55,7 +55,7 @@ func relayEarlyAnswer(t *testing.T) {
 	defer transport.CloseIdleConnections()
 	peer := &Peer{}
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		peer.proxy(w, r, origin, "", "owner-token", 1, transport)
+		peer.proxy(w, r, origin, "", "owner-token", 1, nil, transport)
 	}))
 	defer front.Close()
 

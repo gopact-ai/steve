@@ -120,8 +120,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 		if parent.Err() != nil {
 			return cause
 		}
-		message := s.text.T(i18n.AppStopPending)
-		err := s.attempts.TaskStopPending(parent, r.ID, "task-stop-recovery", message)
+		err := s.attempts.TaskStopPending(parent, r.ID, "task-stop-recovery")
 		if err != nil {
 			return errors.Join(fmt.Errorf("task %s attempt %s on %s: native stop remains pending: %w", r.TaskID, r.ID, r.Node, cause), err)
 		}

@@ -13,6 +13,9 @@ const (
 	LocaleEN Locale = "en"
 )
 
+// Locales is every language a Catalog speaks.
+func Locales() []Locale { return []Locale{LocaleZH, LocaleEN} }
+
 func FromLang(lang string) Locale {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	if cut, _, ok := strings.Cut(lang, "."); ok {
@@ -1372,6 +1375,8 @@ const (
 	ClusterContentPlacementUnchecked Key = "cluster_content_placement_unchecked"
 	ClusterContentCopyUncheckedOne   Key = "cluster_content_copy_unchecked_one"
 	ClusterContentCopyUncheckedMany  Key = "cluster_content_copy_unchecked_many"
+	ClusterContentStoreUncheckedOne  Key = "cluster_content_store_unchecked_one"
+	ClusterContentStoreUncheckedMany Key = "cluster_content_store_unchecked_many"
 	ClusterContentPlacementMismatch  Key = "cluster_content_placement_mismatch"
 	ClusterContentReplicated         Key = "cluster_content_replicated"
 	ClusterContentShort              Key = "cluster_content_short"

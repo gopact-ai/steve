@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -138,6 +139,30 @@ func TestRetainedPlanKeepsRecoveryQuestionInOriginalExchange(t *testing.T) {
 	var blocked *agentexec.RecoveryBlocked
 	if !errors.As(err, &blocked) || result.Text != "" || !strings.Contains(blocked.Question.Message, "node unreachable") || sup.planned != 0 || sup.executed != 0 {
 		t.Fatalf("retained planning was reported as terminal: result=%+v err=%v", result, err)
+	}
+}
+
+// Coordination that is briefly unavailable, as when the coordinator's
+// replica has fallen behind, fails a write without settling the plan's
+// outcome. Planning or execution that meets it keeps the plan retained and
+// asks, as a lost context does, instead of reporting the plan failed.
+func TestRetainedPlanThatMeetsUnavailableCoordinationStaysRetained(t *testing.T) {
+	c, sup, identity, req := retainedPlanFixture(t)
+	unavailable := fmt.Errorf("record plan run: %w", fmt.Errorf("%w: local replica did not reach applied index 12", coordination.ErrUnavailable))
+	sup.err = unavailable
+	result, err := c.ResumeRetainedPlan(t.Context(), identity, req)
+	var blocked *agentexec.RecoveryBlocked
+	if !errors.As(err, &blocked) || !errors.Is(err, coordination.ErrUnavailable) || result.Text != "" || len(c.plans.List()) != 0 {
+		t.Fatalf("planning that met unavailable coordination was reported as terminal: result=%+v err=%v", result, err)
+	}
+	sup.err = nil
+	if _, err := c.ResumeRetainedPlan(t.Context(), identity, req); err != nil || len(c.plans.List()) != 1 {
+		t.Fatalf("planning did not resume once coordination was back: %v", err)
+	}
+	sup.err = unavailable
+	result, err = c.ResumeRetainedPlan(t.Context(), identity, req)
+	if !errors.As(err, &blocked) || !errors.Is(err, coordination.ErrUnavailable) || result.Text != "" {
+		t.Fatalf("execution that met unavailable coordination was reported as terminal: result=%+v err=%v", result, err)
 	}
 }
 

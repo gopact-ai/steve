@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +44,7 @@ type clusterNode struct {
 	heldApp   chan coordination.AppCommand
 	gateApp   atomic.Pointer[appGate]
 	gateFence atomic.Pointer[appGate]
+	gateState atomic.Pointer[appGate]
 	served    sync.Map // RPC path -> *atomic.Int64 requests this node's server received
 	raft      *gatedListener
 	server    *httptest.Server
@@ -56,9 +58,9 @@ type clusterNode struct {
 	activated []*businessStores
 }
 
-// appGate stops application commands (gateApp) or writer fences (gateFence)
-// at the consensus leader's RPC handler until release is closed, then serves
-// them unchanged.
+// appGate stops application commands (gateApp), writer fences (gateFence)
+// or quorum reads (gateState) at the consensus leader's RPC handler until
+// release is closed, then serves them unchanged.
 type appGate struct {
 	once    sync.Once
 	arrived chan struct{}
@@ -196,6 +198,10 @@ func testNodesWith(t *testing.T, count int, timing fixtureTiming) []*clusterNode
 					<-gate.release
 				}
 				if gate := n.gateFence.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"writer" {
+					gate.once.Do(func() { close(gate.arrived) })
+					<-gate.release
+				}
+				if gate := n.gateState.Load(); gate != nil && r.URL.Path == coordination.RPCPath+"state" {
 					gate.once.Do(func() { close(gate.arrived) })
 					<-gate.release
 				}
@@ -646,25 +652,7 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	// node-2's application writes while its generation is being activated.
 	// The runtime then waits for Activate and does not check the replica's
 	// progress itself, so nothing but the write's own check bounds the wait.
-	activating := make(chan Activation, 1)
-	proceed := make(chan struct{})
-	release := sync.OnceFunc(func() { close(proceed) })
-	t.Cleanup(release)
-	build := nodes[1].config.Activate
-	nodes[1].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
-		stop, err := build(ctx, activation)
-		if err == nil {
-			select {
-			case activating <- activation:
-			default:
-			}
-			select {
-			case <-proceed:
-			case <-ctx.Done():
-			}
-		}
-		return stop, err
-	}
+	activating, release := holdActivationOpen(t, nodes[1])
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	for _, n := range nodes[1:] {
@@ -731,6 +719,120 @@ func TestWriteOnAReplicaThatCannotCatchUpFailsAsUnavailable(t *testing.T) {
 	}
 }
 
+// holdActivationOpen has n's business stores built and then keeps Activate
+// from returning until release is called or the generation ends. The
+// generation is sent on the returned channel once its stores are built.
+// Meanwhile the runtime loop waits for Activate and does not check the
+// replica's progress, so a write the application makes is bounded by
+// nothing but its own waits.
+func holdActivationOpen(t *testing.T, n *clusterNode) (<-chan Activation, func()) {
+	t.Helper()
+	activating := make(chan Activation, 1)
+	proceed := make(chan struct{})
+	release := sync.OnceFunc(func() { close(proceed) })
+	t.Cleanup(release)
+	build := n.config.Activate
+	n.config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		stop, err := build(ctx, activation)
+		if err == nil {
+			select {
+			case activating <- activation:
+			default:
+			}
+			select {
+			case <-proceed:
+			case <-ctx.Done():
+			}
+		}
+		return stop, err
+	}
+	return activating, release
+}
+
+// A write that the consensus leader commits but this replica cannot apply
+// fails once ApplyTimeout passes, as unavailable, saying how far the replica
+// got and that the write was committed. The generation is given up: its
+// caches may miss the committed write until the replica catches up.
+func TestCommittedWriteThisReplicaCannotApplyFailsAsUnavailable(t *testing.T) {
+	nodes := testNodesWith(t, 3, steadyTiming)
+	activating, release := holdActivationOpen(t, nodes[1])
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	for _, n := range nodes[1:] {
+		joinNode(t, first, n, true, false)
+	}
+	second := nodes[1].runtime.Load()
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	var active Activation
+	select {
+	case active = <-activating:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-2 did not start its business generation: %+v", second.Status())
+	}
+	requireAnotherLeader(t, first, "node-2")
+	// node-2 has applied everything committed so far, so the write passes
+	// its check before proposing; then node-2 stops receiving Raft traffic,
+	// and node-1 and node-3 commit the write without it.
+	leader, err := first.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied := second.service.Status().AppliedIndex; applied < leader.AppliedIndex {
+		t.Fatalf("node-2 has applied index %d, behind the leader's %d, before the write", applied, leader.AppliedIndex)
+	}
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	done := make(chan error, 1)
+	go func() { done <- active.Ledger.PutBinding(context.Background(), "test", "committed-elsewhere", "value") }()
+	select {
+	case err = <-done:
+	case <-time.After(2 * applyTimeout):
+		t.Fatalf("the write kept waiting for a local apply that cannot happen; ApplyTimeout is %s", applyTimeout)
+	}
+	if !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a committed write this replica could not apply failed with %v, not as unavailable", err)
+	}
+	if text := err.Error(); !strings.Contains(text, "local replica did not reach applied index") || !strings.Contains(text, "; write ") || !strings.Contains(text, " was committed") {
+		t.Fatalf("the failure does not say how far the replica got or that the write was committed: %v", err)
+	}
+	if active.Context.Err() == nil {
+		t.Fatal("a write committed without this replica left the business generation authorized")
+	}
+	release()
+	nodes[1].raft.resume()
+	fresh := ready(t, second)
+	var got string
+	if ok, err := fresh.Ledger.GetBinding(t.Context(), "test", "committed-elsewhere", &got); err != nil || !ok || got != "value" {
+		t.Fatalf("the generation activated after the stall lost the committed write: ok=%v value=%q err=%v", ok, got, err)
+	}
+}
+
+// A replica that does not catch up says which limit it was given, not how
+// long this wait happened to take, so the runtime loop, which reports a
+// reason once until it changes, reports a replica that stays behind once.
+func TestReplicaThatDoesNotCatchUpGivesTheSameReasonEachTime(t *testing.T) {
+	nodes := testNodes(t, 1)
+	// No wait measured to the millisecond comes out at this limit.
+	applyTimeout := time.Second + 300*time.Microsecond
+	nodes[0].config.Coordination.ApplyTimeout = applyTimeout
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	var reasons []string
+	for range 2 {
+		_, err := r.awaitApplied(t.Context(), 1<<62, 0)
+		if !errors.Is(err, coordination.ErrUnavailable) {
+			t.Fatalf("a wait for an index this replica does not reach failed with %v, not as unavailable", err)
+		}
+		reasons = append(reasons, err.Error())
+	}
+	if !strings.Contains(reasons[0], "within "+applyTimeout.String()+";") || reasons[1] != reasons[0] {
+		t.Fatalf("waits for the same index gave %q and %q, not the limit of %s", reasons[0], reasons[1], applyTimeout)
+	}
+}
+
 // Activation commits a writer fence and waits for this replica to apply it
 // before building any store. The runtime loop runs activation itself, so if
 // nothing bounded that wait the node would stay silently stuck, unable to
@@ -789,6 +891,285 @@ func TestActivationWhoseWriterFenceCannotApplyGivesUpAndRetries(t *testing.T) {
 	}
 	if err := fresh.Ledger.PutBinding(t.Context(), "test", "after-fence", "written"); err != nil {
 		t.Fatalf("the generation activated after the stall cannot write: %v", err)
+	}
+}
+
+// lastErrorOtherThan waits until r records an error that is none of
+// expected, and returns it.
+func lastErrorOtherThan(t *testing.T, r *Runtime, within time.Duration, expected ...error) error {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		err := r.lastError
+		r.mu.Unlock()
+		if err != nil && !slices.ContainsFunc(expected, func(e error) bool { return errors.Is(err, e) }) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s recorded no error but %v within %s: %+v", r.config.Coordination.NodeID, expected, within, r.Status())
+	return nil
+}
+
+// The runtime loop starts a generation on a quorum read, which a member
+// that does not lead asks the consensus leader for. One that does not
+// finish within ApplyTimeout leaves the generation unstarted and is
+// reported as unavailable, saying what the loop waited for.
+func TestRuntimeLoopReadThatGivesUpIsReportedAsUnavailable(t *testing.T) {
+	nodes := testNodesWith(t, 2, steadyTiming)
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	second := joinNode(t, first, nodes[1], true, false)
+	gate := &appGate{arrived: make(chan struct{}), release: make(chan struct{})}
+	nodes[0].gateState.Store(gate)
+	release := sync.OnceFunc(func() { close(gate.release) })
+	t.Cleanup(release)
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	err := lastErrorOtherThan(t, second, 3*applyTimeout, coordination.ErrNotCoordinator)
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "quorum read") || !strings.Contains(err.Error(), applyTimeout.String()) {
+		t.Fatalf("a quorum read that gave up was reported as %v, not as unavailable saying what the loop waited for", err)
+	}
+	if second.Status().Ready {
+		t.Fatal("node-2 started a generation without the quorum read that confirms it")
+	}
+	nodes[0].gateState.Store(nil)
+	release()
+	ready(t, second)
+}
+
+// On the consensus leader, the runtime loop's quorum read is bounded by
+// coordination, which says what it waited for: here a majority that does
+// not confirm the leader. The lease outlasts ApplyTimeout, so the leader
+// keeps leading while no follower answers it.
+func TestRuntimeLoopReadOnTheLeaderSaysWhatItWaitedFor(t *testing.T) {
+	applyTimeout := time.Second
+	lease := 2 * applyTimeout
+	nodes := testNodesWith(t, 2, fixtureTiming{heartbeat: lease, election: lease, lease: lease, retryWindow: 15 * time.Second})
+	for _, n := range nodes {
+		n.config.Coordination.ApplyTimeout = applyTimeout
+	}
+	first := openNode(t, nodes[0])
+	active := ready(t, first)
+	joinNode(t, first, nodes[1], true, false)
+	if !first.Status().IsLeader {
+		t.Fatal("fixture no longer runs node-1's generation on the consensus leader")
+	}
+	nodes[1].raft.pause()
+	t.Cleanup(nodes[1].raft.resume)
+	first.mu.Lock()
+	current := first.current
+	first.mu.Unlock()
+	if current == nil || current.Generation != active.Generation {
+		t.Fatalf("generation %d is not the current one", active.Generation)
+	}
+	given := errors.New("test gives the generation up")
+	first.revoke(current, given)
+	err := lastErrorOtherThan(t, first, 3*applyTimeout, given)
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "a majority did not confirm this node's leadership") {
+		t.Fatalf("a quorum read on the leader that gave up was reported as %v, not saying what it waited for", err)
+	}
+	if !first.Status().IsLeader {
+		t.Fatal("node-1 stopped leading; the read was not ended by its bound")
+	}
+	nodes[1].raft.resume()
+	ready(t, first)
+}
+
+// A generation is given up for the first reason found. What fails
+// afterwards only because it was given up, here the activation that goes on
+// to prepare the generation's ledger, does not replace that reason.
+func TestGenerationGivenUpKeepsItsFirstReason(t *testing.T) {
+	nodes := testNodes(t, 1)
+	activating, release := holdActivationOpen(t, nodes[0])
+	r := openNode(t, nodes[0])
+	var active Activation
+	select {
+	case active = <-activating:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-1 did not start its business generation: %+v", r.Status())
+	}
+	r.mu.Lock()
+	current := r.current
+	r.mu.Unlock()
+	if current == nil || current.Generation != active.Generation {
+		t.Fatalf("generation %d is not the current one", active.Generation)
+	}
+	reason := errors.New("test gives the generation up")
+	r.revoke(current, reason)
+	// The next generation starts only once the activation of this one has
+	// returned, having found it given up.
+	select {
+	case next := <-activating:
+		if next.Generation <= active.Generation {
+			t.Fatalf("generation %d started again", next.Generation)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-1 did not start another business generation: %+v", r.Status())
+	}
+	if got := r.Status().LastError; got != reason.Error() {
+		t.Fatalf("generation %d was given up for %q, and the runtime reports %q", active.Generation, reason, got)
+	}
+	release()
+	ready(t, r)
+}
+
+// While the application builds, the runtime checks with a quorum read that
+// the generation still has its assignment. One that does not finish within
+// ApplyTimeout gives the generation up, reported as unavailable.
+func TestActivationCheckThatGivesUpIsReportedAsUnavailable(t *testing.T) {
+	nodes := testNodesWith(t, 2, steadyTiming)
+	activating, release := holdActivationOpen(t, nodes[1])
+	// The build records why its generation ended before it returns: once it
+	// has, the runtime revokes the ended generation again, as inactive.
+	causes := make(chan error, 1)
+	held := nodes[1].config.Activate
+	nodes[1].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		stop, err := held(ctx, activation)
+		if ctx.Err() != nil {
+			r := activation.Runtime
+			r.mu.Lock()
+			cause := r.lastError
+			r.mu.Unlock()
+			select {
+			case causes <- cause:
+			default:
+			}
+		}
+		return stop, err
+	}
+	first := openNode(t, nodes[0])
+	ready(t, first)
+	second := joinNode(t, first, nodes[1], true, false)
+	if _, err := first.Transfer(t.Context(), coordination.TransferRequest{ID: "transfer", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"}); err != nil {
+		t.Fatal(err)
+	}
+	var active Activation
+	select {
+	case active = <-activating:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-2 did not start its business generation: %+v", second.Status())
+	}
+	gate := &appGate{arrived: make(chan struct{}), release: make(chan struct{})}
+	nodes[0].gateState.Store(gate)
+	open := sync.OnceFunc(func() { close(gate.release) })
+	t.Cleanup(open)
+	applyTimeout := nodes[1].config.Coordination.ApplyTimeout
+	var err error
+	select {
+	case err = <-causes:
+	case <-time.After(2 * applyTimeout):
+		t.Fatalf("generation %d outlived a check that could not finish; ApplyTimeout is %s", active.Generation, applyTimeout)
+	}
+	if !errors.Is(err, coordination.ErrUnavailable) || !strings.Contains(err.Error(), "quorum read") {
+		t.Fatalf("a check that gave up ended the generation with %v, not as unavailable saying what it waited for", err)
+	}
+	nodes[0].gateState.Store(nil)
+	open()
+	release()
+	if fresh := ready(t, second); fresh.Generation <= active.Generation {
+		t.Fatalf("generation %d was published, not a new one after generation %d", fresh.Generation, active.Generation)
+	}
+}
+
+// An application that cannot be built because coordination is unavailable
+// says nothing about the build: the runtime gives the generation up and
+// tries again on its next poll, as when its writer fence does not apply,
+// instead of holding the next attempt back as after a failed build.
+func TestActivationThatMeetsUnavailableCoordinationTriesAgainAtOnce(t *testing.T) {
+	nodes := testNodes(t, 1)
+	// A failed build waits at least five poll intervals. The poll is long
+	// enough that the rest of an attempt, a quorum read, a writer fence and
+	// opening the ledger, fits well within those under load.
+	poll := 500 * time.Millisecond
+	nodes[0].config.PollInterval = poll
+	build := nodes[0].config.Activate
+	var attempts atomic.Int64
+	var failed, retried time.Time
+	nodes[0].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		switch attempts.Add(1) {
+		case 1:
+			defer func() { failed = time.Now() }()
+			return nil, fmt.Errorf("open task store: %w", fmt.Errorf("%w: local replica did not reach applied index 12", coordination.ErrUnavailable))
+		case 2:
+			retried = time.Now()
+		}
+		return build(ctx, activation)
+	}
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	if attempts.Load() != 2 {
+		t.Fatalf("the application was built %d times, want a failed build and one more", attempts.Load())
+	}
+	if gap := retried.Sub(failed); gap >= 5*poll {
+		t.Fatalf("the runtime waited %s to build again, as after a failed build; its poll interval is %s", gap.Round(time.Millisecond), poll)
+	}
+}
+
+// Builds that keep meeting unavailable coordination are spaced out: the
+// first is tried again on the next poll, and each one after it waits twice
+// as long as the one before, starting from the poll interval. A generation
+// that becomes ready starts the count over.
+func TestActivationThatKeepsMeetingUnavailableCoordinationBacksOff(t *testing.T) {
+	nodes := testNodes(t, 1)
+	poll := 100 * time.Millisecond
+	nodes[0].config.PollInterval = poll
+	build := nodes[0].config.Activate
+	var mu sync.Mutex
+	var started, failed []time.Time
+	failing := 5
+	nodes[0].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		started = append(started, time.Now())
+		if failing > 0 {
+			failing--
+			defer func() { failed = append(failed, time.Now()) }()
+			return nil, fmt.Errorf("open task store: %w", fmt.Errorf("%w: local replica did not reach applied index 12", coordination.ErrUnavailable))
+		}
+		return build(ctx, activation)
+	}
+	r := openNode(t, nodes[0])
+	waitReady := func() Activation {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		activation, err := r.WaitReady(ctx)
+		if err != nil {
+			t.Fatalf("runtime did not activate: %v, status=%+v", err, r.Status())
+		}
+		return activation
+	}
+	active := waitReady()
+	mu.Lock()
+	if len(started) != 6 {
+		t.Fatalf("the application was built %d times, want five failed builds and one more", len(started))
+	}
+	// The fifth build in a row that failed waits eight poll intervals.
+	if gap := started[5].Sub(failed[4]); gap < 8*poll {
+		t.Fatalf("the runtime built again %s after the fifth failed build in a row; its poll interval is %s", gap.Round(time.Millisecond), poll)
+	}
+	failing = 1
+	mu.Unlock()
+	r.mu.Lock()
+	current := r.current
+	r.mu.Unlock()
+	if current == nil || current.Generation != active.Generation {
+		t.Fatalf("generation %d is not the current one", active.Generation)
+	}
+	r.revoke(current, errors.New("test gives the generation up"))
+	waitReady()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(started) != 8 {
+		t.Fatalf("the application was built %d times, want one more failed build and one more", len(started))
+	}
+	// Without starting over, the next wait would be sixteen poll intervals.
+	if gap := started[7].Sub(failed[5]); gap >= 16*poll {
+		t.Fatalf("the runtime waited %s to build again after a generation had been ready; its poll interval is %s", gap.Round(time.Millisecond), poll)
 	}
 }
 
@@ -1054,10 +1435,10 @@ func ready(t *testing.T, r *Runtime) Activation {
 // A quorum read from a member that does not lead is a request to the
 // leader, over what may be a slow link, for the whole cluster state. Once
 // the business generation is ready and nothing changes, the log stops
-// growing and no member asks the leader for the state. A quorum read
+// growing and neither runtime reads the committed state. A quorum read
 // appends nothing to the log once the leader's term has an entry, so the
-// log shows only writes here, and a leader that kept reading its own state
-// would go unseen.
+// log shows only writes: the reads are counted where each runtime makes
+// them, and the member's also on their way to the leader.
 func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
@@ -1070,12 +1451,19 @@ func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
 	ready(t, first)
 	idle := 25 * nodes[0].config.PollInterval
 	index, reads := first.service.LastIndex(), nodes[0].servedCount(coordination.RPCPath+"state")
+	leaderReads, memberReads := first.stateReads.Load(), second.stateReads.Load()
 	time.Sleep(idle)
 	if grown := first.service.LastIndex() - index; grown != 0 {
 		t.Errorf("the Raft log grew by %d entries while the cluster was idle for %s", grown, idle)
 	}
 	if asked := nodes[0].servedCount(coordination.RPCPath+"state") - reads; asked != 0 {
 		t.Errorf("the leader was asked for the cluster state %d times while the cluster was idle for %s", asked, idle)
+	}
+	if n := first.stateReads.Load() - leaderReads; n != 0 {
+		t.Errorf("the coordinator, which leads, read the committed state %d times while the cluster was idle for %s", n, idle)
+	}
+	if n := second.stateReads.Load() - memberReads; n != 0 {
+		t.Errorf("the member read the committed state %d times while the cluster was idle for %s", n, idle)
 	}
 	if status := first.Status(); !status.Ready {
 		t.Fatalf("the coordinator stopped being ready while idle: %+v", status)
