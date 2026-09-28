@@ -979,6 +979,44 @@ func TestRuntimeLoopReadOnTheLeaderSaysWhatItWaitedFor(t *testing.T) {
 	ready(t, first)
 }
 
+// A generation is given up for the first reason found. What fails
+// afterwards only because it was given up, here the activation that goes on
+// to prepare the generation's ledger, does not replace that reason.
+func TestGenerationGivenUpKeepsItsFirstReason(t *testing.T) {
+	nodes := testNodes(t, 1)
+	activating, release := holdActivationOpen(t, nodes[0])
+	r := openNode(t, nodes[0])
+	var active Activation
+	select {
+	case active = <-activating:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-1 did not start its business generation: %+v", r.Status())
+	}
+	r.mu.Lock()
+	current := r.current
+	r.mu.Unlock()
+	if current == nil || current.Generation != active.Generation {
+		t.Fatalf("generation %d is not the current one", active.Generation)
+	}
+	reason := errors.New("test gives the generation up")
+	r.revoke(current, reason)
+	// The next generation starts only once the activation of this one has
+	// returned, having found it given up.
+	select {
+	case next := <-activating:
+		if next.Generation <= active.Generation {
+			t.Fatalf("generation %d started again", next.Generation)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatalf("node-1 did not start another business generation: %+v", r.Status())
+	}
+	if got := r.Status().LastError; got != reason.Error() {
+		t.Fatalf("generation %d was given up for %q, and the runtime reports %q", active.Generation, reason, got)
+	}
+	release()
+	ready(t, r)
+}
+
 // While the application builds, the runtime checks with a quorum read that
 // the generation still has its assignment. One that does not finish within
 // ApplyTimeout gives the generation up, reported as unavailable.
