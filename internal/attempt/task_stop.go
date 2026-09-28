@@ -168,7 +168,10 @@ func PendingSessionOpen(r Record) bool {
 }
 
 // TaskStopPending keeps lack of a native receipt visible without interpreting
-// it as stopped. Repeated checks with the same explanation add no new event.
+// it as stopped. An attempt already quarantined with an explanation is
+// already visible: a repeated check adds no new event, whatever language
+// its explanation is now worded in, and an earlier reason for the
+// quarantine is kept.
 func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation string) error {
 	current, err := s.Get(ctx, id)
 	if err != nil {
@@ -180,7 +183,7 @@ func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation st
 	if explanation == "" || len(explanation) > 16<<10 {
 		return errors.New("task stop pending explanation is invalid")
 	}
-	if current.Unsettled && current.Error == explanation {
+	if current.Unsettled && current.Error != "" {
 		return nil
 	}
 	_, err = s.l.Transition(ctx, id, string(current.State), string(current.State), actor, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
@@ -188,7 +191,7 @@ func (s *Service) TaskStopPending(ctx context.Context, id, actor, explanation st
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
 		}
-		if taskStopAlreadySettled(next) {
+		if taskStopAlreadySettled(next) || next.Unsettled && next.Error != "" {
 			return errTaskStopRecorded
 		}
 		if _, err := stoppedTaskTx(tx, next); err != nil {
