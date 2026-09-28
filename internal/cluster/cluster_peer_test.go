@@ -224,6 +224,33 @@ func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
 	}
 }
 
+// A console request that enters at a member and is answered by the
+// coordinator's application reads the committed state through the leader
+// once: the member's read, which finds the coordinator, travels with the
+// request and confirms the coordinator's business generation.
+func TestClusterPeerForwardsAConsoleRequestWithItsRead(t *testing.T) {
+	hub := startTestHub(t)
+	member := joinNonvoter(t, hub, nil)
+	WaitPeerReady(t, hub)
+	answer := func() {
+		t.Helper()
+		status, body := PeerRequest(t, member, http.MethodGet, "/console/test?token="+member.UIToken, nil)
+		var result struct {
+			NodeID string `json:"node_id"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil || status != http.StatusOK || result.NodeID != hub.Config.NodeID {
+			t.Fatalf("a request at the member was not answered by the coordinator: %d %s %v", status, body, err)
+		}
+	}
+	answer()
+	reads := func() uint64 { return hub.Runtime.Load().stateReads.Load() + member.Runtime.Load().stateReads.Load() }
+	before := reads()
+	answer()
+	if n := reads() - before; n != 1 {
+		t.Fatalf("a console request forwarded to the coordinator read the committed state %d times; want one read", n)
+	}
+}
+
 // A read made for a request confirms the business generation only if it
 // names that generation; otherwise the generation is confirmed by a read of
 // its own, and a read the generation has no part in replaces nothing. Either
