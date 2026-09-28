@@ -13,11 +13,11 @@ import (
 	"github.com/gopact-ai/steve/internal/roster"
 )
 
-// The model probe and the lease issuer keep working while the
-// administration rewrites the configuration they were built from.
+// The model probe keeps working while the administration rewrites the
+// configuration it was built from.
 func TestModelProbesReadTheirConfigurationWhileItIsRewritten(t *testing.T) {
 	state := t.TempDir()
-	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(state, "state.json"), IssuerAddr: "127.0.0.1:0"}}
+	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(state, "state.json")}}
 	book, err := ledger.Open(state, ledger.Options{})
 	if err != nil {
 		t.Fatal(err)

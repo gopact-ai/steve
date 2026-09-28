@@ -1,12 +1,14 @@
 package app
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -52,7 +54,7 @@ func TestHubDoesNotStartWhenItsLeaseIssuerCannotBind(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the hub started although its lease issuer could not bind %s", addr)
 	}
-	if want := "lease issuer on " + addr + ":"; !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "address already in use") {
+	if want := "lease issuer on " + addr + ":"; !strings.Contains(err.Error(), want) || !errors.Is(err, syscall.EADDRINUSE) {
 		t.Fatalf("startup error %q does not name the issuer address (%q) and why it could not bind", err, want)
 	}
 	release, err := runtime.AcquireLock(filepath.Dir(cfg.Gateway.StatePath))
@@ -91,34 +93,8 @@ func TestLeaseIssuerStopsOnlyOnceTheRequestInsideTheLedgerIsAnswered(t *testing.
 	free.Close()
 	const token = "issuer-token"
 	cfg := &config.Config{Gateway: config.Gateway{StatePath: filepath.Join(state, "state.json"), IssuerAddr: addr, IssuerToken: token}}
-	manager, err := harness.NewManager(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalog, err := agent.NewCatalog(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nodes := node.NewRegistry("hub", nil)
-	t.Cleanup(nodes.Close)
-	life := &applicationLifetime{}
-	t.Cleanup(func() { life.Close() })
-	boot := &runtimeValues{book: book, cfg: cfg, configStore: adminsvc.NewConfigStore(cfg), manager: manager, catalog: catalog}
-	if _, err := assembleModels(life, boot, &fleetValues{fleet: roster.New(catalog), nodes: nodes}); err != nil {
-		t.Fatal(err)
-	}
+	life := assembleLeaseIssuer(t, book, cfg)
 	url := "http://" + addr + "/leases/acquire"
-	for deadline := time.Now().Add(5 * time.Second); ; {
-		resp, err := http.Post(url, "application/json", strings.NewReader(`{}`))
-		if err == nil {
-			resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("lease issuer never answered: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 
 	hold.Store(true)
 	answered := make(chan int, 1)
@@ -146,4 +122,27 @@ func TestLeaseIssuerStopsOnlyOnceTheRequestInsideTheLedgerIsAnswered(t *testing.
 	if code := <-answered; code != http.StatusOK {
 		t.Fatalf("the lease request in flight was answered with %d", code)
 	}
+}
+
+// assembleLeaseIssuer assembles the models stage, which starts the lease
+// issuer cfg names, and returns the lifetime that stops it.
+func assembleLeaseIssuer(t *testing.T, book *ledger.Ledger, cfg *config.Config) *applicationLifetime {
+	t.Helper()
+	manager, err := harness.NewManager(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := agent.NewCatalog(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := node.NewRegistry("hub", nil)
+	t.Cleanup(nodes.Close)
+	life := &applicationLifetime{}
+	t.Cleanup(func() { life.Close() })
+	boot := &runtimeValues{book: book, cfg: cfg, configStore: adminsvc.NewConfigStore(cfg), manager: manager, catalog: catalog}
+	if _, err := assembleModels(life, boot, &fleetValues{fleet: roster.New(catalog), nodes: nodes}); err != nil {
+		t.Fatal(err)
+	}
+	return life
 }
