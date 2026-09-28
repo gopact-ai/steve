@@ -10,12 +10,14 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // toolCallContext serves one real steve_recall call for conversation's
@@ -179,6 +181,53 @@ func TestRecoveryEntriesDoNotRunUnderTheGrantOfTheToolCallThatQueuedThem(t *test
 		for _, ctx := range seen {
 			if scope, ok := agentmcp.ScopeFromContext(ctx); ok {
 				t.Errorf("%s: drove its work under the grant of attempt %s's tool call", entry, scope.AttemptID)
+				break
+			}
+		}
+	}
+}
+
+// endedChildContext is the context a child's result reaches its parent's
+// conversation in: the child's own execution scope, which has ended.
+func endedChildContext(t *testing.T, c *Coordinator) (context.Context, execution.Key) {
+	t.Helper()
+	child, err := c.tasks.Create(task.Task{Transport: "console", Goal: "delegated work", Channel: "console:parent", Member: "worker", ProjectID: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := execution.Key{TaskID: child.ID, InstanceID: "delegate/" + child.ID, AttemptID: "child-attempt"}
+	scope, err := c.executions.Begin(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.Finish(nil)
+	return context.WithoutCancel(scope.Context()), key
+}
+
+// The same exchange also carries the execution scope of the child whose
+// result it delivers. That child has ended, and these entries are not part
+// of it: nothing they drive, before they open their own scope, identifies
+// as the child's execution.
+func TestRecoveryEntriesDoNotRunAsTheEndedChildWhoseResultQueuedThem(t *testing.T) {
+	children := map[string]execution.Key{}
+	var mu sync.Mutex
+	runs := recoveryEntryRuns(t, func(t *testing.T, c *Coordinator) context.Context {
+		ctx, key := endedChildContext(t, c)
+		mu.Lock()
+		children[t.Name()] = key
+		mu.Unlock()
+		return ctx
+	})
+	if len(runs) != 3 {
+		t.Fatalf("entries run: %d", len(runs))
+	}
+	for entry, seen := range runs {
+		if len(seen) == 0 {
+			t.Errorf("%s: drove nothing that could be observed", entry)
+		}
+		for _, ctx := range seen {
+			if key, ok := execution.KeyOf(ctx); ok && key == children[entry] {
+				t.Errorf("%s: drove its work as ended child task #%s", entry, key.TaskID)
 				break
 			}
 		}
