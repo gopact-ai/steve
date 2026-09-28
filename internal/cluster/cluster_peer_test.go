@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -221,6 +222,47 @@ func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
 	}
 	if appended := leader.LastIndex() - before; appended > 1 {
 		t.Fatalf("a console request answered by this node appended %d entries to the leader's log; want one read", appended)
+	}
+}
+
+// A read made for a request confirms the business generation only if it
+// names that generation; otherwise the generation is confirmed by a read of
+// its own, and a read the generation has no part in replaces nothing. Either
+// way this replica applies what the read saw before the request is served.
+func TestRuntimeReadyAtConfirmsOnlyTheGenerationItsReadNames(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	options.Activate = testPeerApplication(t, &activations)
+	peer := StartTestPeer(t, options)
+	active := WaitPeerReady(t, peer)
+	runtime := peer.Runtime.Load()
+	leader := runtime.service
+	state, err := runtime.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := leader.LastIndex()
+	ready, err := runtime.readyAt(t.Context(), state)
+	if err != nil || ready.Generation != active.Generation || leader.LastIndex() != before {
+		t.Fatalf("a read naming the generation: generation %d (want %d) %v, %d entries appended; want it confirmed without another read", ready.Generation, active.Generation, err, leader.LastIndex()-before)
+	}
+
+	stale := state
+	stale.WriterGeneration++
+	before = leader.LastIndex()
+	ready, err = runtime.readyAt(t.Context(), stale)
+	if err != nil || ready.Generation != active.Generation || leader.LastIndex() == before {
+		t.Fatalf("a read naming another writer: generation %d (want %d) %v, %d entries appended; want it confirmed by a read of its own", ready.Generation, active.Generation, err, leader.LastIndex()-before)
+	}
+
+	ahead := state
+	ahead.AppliedIndex += 1000
+	if _, err := runtime.readyAt(t.Context(), ahead); !errors.Is(err, coordination.ErrUnavailable) {
+		t.Fatalf("a read this replica never catches up with: %v; want unavailable", err)
+	}
+	if again := WaitPeerReady(t, peer); again.Generation != active.Generation || activations.Load() != 1 {
+		t.Fatalf("the generation was replaced: %d, %d activations", again.Generation, activations.Load())
 	}
 }
 
