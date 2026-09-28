@@ -100,8 +100,7 @@ func TestAskBuildReadsTheMemberStatusInsteadOfTheLocalApplication(t *testing.T) 
 // An upgrade asked for a node ID that is neither this node, a machine it
 // keeps a link to, nor a cluster member is refused as unknown and leaves no
 // record. Every machine the cluster knows keeps its usual answer: a member
-// without a link is told it has no tunnel here. Without a running consensus
-// runtime membership cannot be read, so no node ID is called unknown.
+// without a link is told it has no tunnel here.
 func TestUpgradeTellsAnUnknownNodeFromAMachineWithoutATunnel(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "config")
 	if err := os.WriteFile(config, []byte("# no hosts\n"), 0o600); err != nil {
@@ -138,6 +137,9 @@ func TestUpgradeTellsAnUnknownNodeFromAMachineWithoutATunnel(t *testing.T) {
 	if status, err := service.UpgradeStatus(t.Context(), "node-1"); err != nil || status.Status != "needs_attention" {
 		t.Fatalf("a member's refused upgrade is not readable: %#v %v", status, err)
 	}
+	// A serving peer always has a runtime: OpenPeer stores it before the
+	// console is served and never clears it. Knows still guards a nil one,
+	// like the other readers of the runtime, and then calls no ID unknown.
 	peer.Runtime.Store(nil)
 	if got := code("Mac mini"); got != "upgrade_target" {
 		t.Fatalf("without a runtime an unlisted node was refused as %s", got)

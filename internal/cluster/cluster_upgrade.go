@@ -32,9 +32,9 @@ func (b peerSSHBackend) UpgradeTarget(ctx context.Context, nodeID string) (sshco
 }
 
 // Knows is true for this node, a machine it keeps a link to, and a member
-// of the cluster. Membership is read from the local replica; without a
-// running consensus runtime it cannot be read, and no node ID is called
-// unknown.
+// of the cluster. Membership is read from the local replica, which may not
+// yet hold a member that joined recently. A peer serves the console only
+// once its runtime is stored; without one no node ID is called unknown.
 func (b peerSSHBackend) Knows(_ context.Context, nodeID string) bool {
 	if nodeID == b.peer.Config.NodeID {
 		return true
