@@ -334,11 +334,11 @@ func (s *Service) TransportPeers() map[string]string {
 //
 // The leader confirms the read as ReadIndex does, by a majority's answer,
 // and appends nothing to the log once it has committed an entry of its
-// term; it then waits, for at most ApplyTimeout, for its state machine to
-// hold the log up to the read index, which it usually already does. The
-// confirmation shares ReadIndex's limit: it can miss an entry only when
-// leadership moves while it is being confirmed. Any other node refuses the
-// read with ErrNotLeader.
+// term; it then waits for its state machine to hold the log up to the read
+// index, which it usually already does. The confirmation shares
+// ReadIndex's limits. Any other node refuses the read with ErrNotLeader.
+// Either gives up within ApplyTimeout, which a caller holding a lock
+// through the read may rely on.
 func (s *Service) ReadState(ctx context.Context) (State, error) {
 	if s.raft.State() != raft.Leader {
 		if err := s.barrier(ctx); err != nil {
@@ -346,34 +346,31 @@ func (s *Service) ReadState(ctx context.Context) (State, error) {
 		}
 		return s.fsm.read(), nil
 	}
-	index, err := s.ReadIndex(ctx)
+	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	defer cancel()
+	index, err := s.ReadIndex(bounded)
 	if err != nil {
 		return State{}, err
 	}
-	if err := s.awaitState(ctx, index); err != nil {
+	if err := s.awaitState(bounded, index); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return State{}, fmt.Errorf("%w: the state machine did not apply the log up to read index %d within %s; it has applied %d", ErrUnavailable, index, s.config.ApplyTimeout, s.fsm.applied.Load())
+		}
 		return State{}, err
 	}
 	return s.fsm.read(), nil
 }
 
-// awaitState waits, for at most ApplyTimeout, for the state machine to hold
-// the log up to index; see StateHolds. index must be committed.
+// awaitState waits, until ctx ends, for the state machine to hold the log
+// up to index; see StateHolds. index must be committed.
 func (s *Service) awaitState(ctx context.Context, index uint64) error {
-	if s.StateHolds(index) {
-		return nil
-	}
-	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
-	defer cancel()
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 	for !s.StateHolds(index) {
 		select {
 		case <-ticker.C:
-		case <-bounded.Done():
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf("%w: the state machine did not apply the log up to read index %d within %s; it has applied %d", ErrUnavailable, index, s.config.ApplyTimeout, s.fsm.applied.Load())
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-s.ctx.Done():
 			return ErrUnavailable
 		case <-s.fsm.failed:
