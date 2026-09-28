@@ -99,6 +99,32 @@ func TestLandForSaysAConflictReachedNowIsAConflict(t *testing.T) {
 	}
 }
 
+// A conflict this pass reached is a conflict even when a result landed
+// after it in the same pass has moved the canonical on, so that the next
+// pass retries it.
+func TestLandForSaysAConflictReachedNowIsAConflictOnceTheCanonicalMoves(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	p, first, second := conflictingResults(t, w)
+	if land, err := w.artifacts.Land(t.Context(), p, first.ID, "test"); err != nil || land.State != artifact.LandCommitted {
+		t.Fatalf("first landing = %+v err=%v", land, err)
+	}
+	later := publishNotes(t, w, "att-3", "later\n")
+	for _, m := range []artifact.Manifest{second, later} {
+		if err := w.artifacts.Defer(t.Context(), "p", m.ID, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	landing := w.service.landFor(t.Context(), parent, nil)
+	if got := landing(childWith(later.ID)); !strings.HasPrefix(got, "已落地主目录") {
+		t.Fatalf("landing text for the result landed after the conflict = %q", got)
+	}
+	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md" {
+		t.Fatalf("landing text for a result that conflicted before the canonical moved = %q; want the conflict and its path", got)
+	}
+}
+
 // busyMainDirectory has another turn work in the project's main
 // directory, which holds its lock until the test ends.
 func busyMainDirectory(t *testing.T, w *world) {

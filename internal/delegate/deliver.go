@@ -354,7 +354,9 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			// waits, in the words later passes will use: a conflict this pass
 			// reached through recovery carries recovery's cause in the
 			// landing. A result whose conflict has cleared is queued like any
-			// other, even when this pass did not reach it.
+			// other, even when this pass did not reach it. A result this pass
+			// committed keeps its landing: its queue record outlives it only
+			// when removing the record failed.
 			stuck, err := s.artifacts.StillStuck(ctx, p)
 			if err != nil {
 				slog.Warn(fmt.Sprintf("delegate: read stuck results of %s: %v", p.ID, err), "parent", parent.ID, "project", p.ID)
