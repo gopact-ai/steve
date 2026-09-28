@@ -496,7 +496,7 @@ func TestContentRepairSaysNothingOnceItsGenerationHasEnded(t *testing.T) {
 	logs := captureRuntimeLog(t)
 	stop := peers[0].StartContentRepair(ended, observe)
 	// A round whose scan finds its generation ended reads the committed
-	// state once and does not maintain; past two reads the first round is
+	// state once and does not maintain; past two reads, two rounds are
 	// over.
 	for deadline := time.Now().Add(10 * time.Second); runtime.stateReads.Load()-before <= 2; {
 		if time.Now().After(deadline) {
