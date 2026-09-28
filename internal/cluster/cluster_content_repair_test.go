@@ -495,17 +495,14 @@ func TestContentRepairSaysNothingOnceItsGenerationHasEnded(t *testing.T) {
 	before := runtime.stateReads.Load()
 	logs := captureRuntimeLog(t)
 	stop := peers[0].StartContentRepair(ended, observe)
-	// A round whose scan finds its generation ended reads the committed
-	// state once and does not maintain; past two reads, two rounds are
-	// over.
-	for deadline := time.Now().Add(10 * time.Second); runtime.stateReads.Load()-before <= 2; {
-		if time.Now().After(deadline) {
-			stop()
-			t.Fatal("content repair did not finish a round")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitFor(t, 10*time.Second, "the scan to find its generation ended", func() bool {
+		return strings.Contains(logs.String(), "content repair: scan stopped")
+	})
+	time.Sleep(20 * peers[0].Options.ContentRepairInterval)
 	stop()
+	if logged, reads := strings.Count(logs.String(), "content repair: scan stopped"), runtime.stateReads.Load()-before; logged != 1 || reads != 1 {
+		t.Errorf("repair whose scan found its generation ended logged that %d times and read the committed state %d times over 20 intervals; want it to end there, once each", logged, reads)
+	}
 	logged := logs.String()
 	if !strings.Contains(logged, "content repair: scan stopped") || strings.Contains(logged, "content repair: maintenance stopped") {
 		t.Errorf("repair for a generation the committed state no longer names logged %q; want the scan stopped and no maintenance", logged)
@@ -528,5 +525,28 @@ func TestContentRepairSaysNothingOnceItsGenerationHasEnded(t *testing.T) {
 	worker.runMaintenance(t.Context())
 	if len(observations) != 0 || asked[0].Load()+asked[1].Load() != 1 {
 		t.Errorf("maintenance that a peer told its generation has ended said %q after asking %d peers; want nothing, one peer asked", observations, asked[0].Load()+asked[1].Load())
+	}
+}
+
+// Content repair belongs to one generation, which cannot come back: once
+// maintenance has heard from a peer that it ended, repair ends too, with
+// no further round to scan, ask the peers again or log the end again.
+func TestContentRepairEndsWhenMaintenanceHearsItsGenerationEnded(t *testing.T) {
+	peers, active := contentPeers(t)
+	var asked []*atomic.Int64
+	for _, peer := range peers[1:] {
+		asked = append(asked, supersede(t, peer))
+	}
+	peers[0].Options.ContentRepairInterval = 10 * time.Millisecond
+	logs := captureRuntimeLog(t)
+	stop := peers[0].StartContentRepair(active, nil)
+	waitFor(t, 10*time.Second, "maintenance to hear its generation ended", func() bool {
+		return strings.Contains(logs.String(), "content repair: maintenance stopped")
+	})
+	time.Sleep(20 * peers[0].Options.ContentRepairInterval)
+	stop()
+	logged := logs.String()
+	if n := strings.Count(logged, "content repair: maintenance stopped"); n != 1 || strings.Contains(logged, "content repair: scan stopped") || asked[0].Load()+asked[1].Load() != 1 {
+		t.Errorf("repair whose maintenance heard its generation ended logged that %d times and asked %d peers over 20 intervals (scan stopped logged: %v); want it to end there, one peer asked", n, asked[0].Load()+asked[1].Load(), strings.Contains(logged, "content repair: scan stopped"))
 	}
 }
