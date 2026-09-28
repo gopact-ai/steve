@@ -31,6 +31,25 @@ func (b peerSSHBackend) UpgradeTarget(ctx context.Context, nodeID string) (sshco
 	return sshconnect.UpgradeTarget{Alias: alias, Version: nodewire.Version(), FindBinary: find}, nil
 }
 
+// Knows is true for this node, a machine it keeps a link to, and a member
+// of the cluster. Membership is read from the local replica; without a
+// running consensus runtime it cannot be read, and no node ID is called
+// unknown.
+func (b peerSSHBackend) Knows(_ context.Context, nodeID string) bool {
+	if nodeID == b.peer.Config.NodeID {
+		return true
+	}
+	if _, ok := b.peer.link(nodeID); ok {
+		return true
+	}
+	runtime := b.peer.Runtime.Load()
+	if runtime == nil {
+		return true
+	}
+	_, member := runtime.Status().Members[nodeID]
+	return member
+}
+
 // MachineAlias is the alias of the link this node keeps to a member: how
 // it is reached to browse its directories or send it a program. This node
 // is not reached over SSH from itself.

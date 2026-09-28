@@ -1159,6 +1159,8 @@ const (
 	SSHUpgradeRunningFix          Key = "ssh_upgrade_running_fix"
 	SSHUpgradeUnknown             Key = "ssh_upgrade_unknown"
 	SSHUpgradeUnknownFix          Key = "ssh_upgrade_unknown_fix"
+	SSHUpgradeUnknownNode         Key = "ssh_upgrade_unknown_node"
+	SSHUpgradeUnknownNodeFix      Key = "ssh_upgrade_unknown_node_fix"
 	SSHUpgradePreflight           Key = "ssh_upgrade_preflight"
 	SSHUpgradeTargetFix           Key = "ssh_upgrade_target_fix"
 	SSHUpgradePlatformUnknown     Key = "ssh_upgrade_platform_unknown"
