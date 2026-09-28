@@ -254,3 +254,47 @@ func TestQuorumReadsAreRefusedWhileTheLeaderTransfersLeadership(t *testing.T) {
 	}
 	t.Fatal("no read ran while a leadership transfer did")
 }
+
+// A quorum read gives up within ApplyTimeout, as the barrier it replaces
+// did, although its caller sets no deadline and other reads wait with it
+// for the leader to establish its term: a ledger writer holds its lock
+// through one.
+func TestQuorumReadsGiveUpWithinApplyTimeout(t *testing.T) {
+	gate := &snapshotGate{entered: make(chan struct{}), released: make(chan struct{})}
+	c := newTestCluster(t, 1, func(_ string, dir string) Application {
+		gate.durableCounter = openCounter(t, dir)
+		return gate
+	})
+	leader := c.leader()
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(gate.released) }) })
+	if _, err := leader.ReadState(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// A barrier completes once the state machine has applied the entries
+	// before it, which it cannot while it is held.
+	gate.armed.Store(true)
+	go leader.Snapshot(t.Context())
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the snapshot did not start")
+	}
+	leader.established.Store(0)
+	applyTimeout := leader.config.ApplyTimeout
+	took := make(chan time.Duration, 3)
+	for range cap(took) {
+		go func() {
+			started := time.Now()
+			if _, err := leader.ReadState(context.Background()); err == nil {
+				t.Error("a quorum read succeeded while the state machine was held")
+			}
+			took <- time.Since(started)
+		}()
+	}
+	for range cap(took) {
+		if d := <-took; d > applyTimeout+applyTimeout/2 {
+			t.Errorf("a quorum read gave up after %s, ApplyTimeout is %s", d.Round(time.Millisecond), applyTimeout)
+		}
+	}
+}
