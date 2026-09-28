@@ -25,6 +25,13 @@ type testCluster struct {
 
 func newTestCluster(t *testing.T, count int, applications ...func(string, string) Application) *testCluster {
 	t.Helper()
+	return newTunedTestCluster(t, count, nil, applications...)
+}
+
+// newTunedTestCluster is newTestCluster with tune, if not nil, applied to
+// each node's configuration before the node opens.
+func newTunedTestCluster(t *testing.T, count int, tune func(*Config), applications ...func(string, string) Application) *testCluster {
+	t.Helper()
 	c := &testCluster{t: t, nodes: map[string]*Service{}, configs: map[string]Config{}}
 	for i := 0; i < count; i++ {
 		id := fmt.Sprintf("node-%d", i+1)
@@ -43,6 +50,9 @@ func newTestCluster(t *testing.T, count int, applications ...func(string, string
 		config := Config{ClusterID: "test-cluster", NodeID: id, FailureDomain: "test-domain-" + id, StorageLevel: "restricted", DataDir: t.TempDir(), BindAddress: addr, Bootstrap: i == 0, RaftConfig: cfg, LogOutput: io.Discard, ApplyTimeout: time.Second, FailoverTimeout: 300 * time.Millisecond, ProbeInterval: 40 * time.Millisecond, Probe: c.probe}
 		if len(applications) > 0 {
 			config.Application = applications[0](id, config.DataDir)
+		}
+		if tune != nil {
+			tune(&config)
 		}
 		c.configs[id] = config
 		n, err := Open(config)
