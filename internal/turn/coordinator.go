@@ -457,11 +457,19 @@ func (c *Coordinator) listenPrefix(req Request) string {
 	return home.ListenUnmentioned(locale) + "\n\n"
 }
 
+// turnContext is ctx as a turn entry runs under it. A turn is never part
+// of the tool call or execution that queued it, like the parent's call
+// and the child's execution behind a child's result delivered to its
+// parent: it runs on the hub's authority, opens its own scope and binds
+// its own grant. Every exported entry that acts on a turn or its task,
+// running, relocating, stopping or resolving it, enters through it too.
+// Read-only lookups and probes need not: they change nothing.
+func turnContext(ctx context.Context) context.Context {
+	return execution.WithoutScope(agentmcp.WithoutGrant(ctx))
+}
+
 func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
-	// A turn is never part of an agent's tool call, even one queued from
-	// work that began in such a call, like a child's result delivered to
-	// its parent: it runs on the hub's authority and opens its own grant.
-	ctx = agentmcp.WithoutGrant(ctx)
+	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var err error

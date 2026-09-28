@@ -238,9 +238,14 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	}
 	if !ok || parent.State.Terminal() {
 		// Nobody to continue: the results stay on the children's records;
-		// the listing shows them. Mark them so they are not retried.
+		// the listing shows them. Mark them so they are not retried, and
+		// say why in the Hub's language.
+		reason := s.text.T(i18n.DelegateSuppressedMissing, parentID)
+		if ok {
+			reason = s.text.T(i18n.DelegateSuppressedEnded, parentID, noticeState(s.text, parent.State))
+		}
 		for _, c := range waiting {
-			if err := s.tasks.SetDelivery(c.ID, task.DeliverySuppressed); err != nil {
+			if err := s.tasks.SuppressDelivery(c.ID, reason); err != nil {
 				slog.Error(fmt.Sprintf("delegate: suppress delivery for task #%s: %v", c.ID, err), "task", c.ID, "parent", parentID)
 			}
 		}
