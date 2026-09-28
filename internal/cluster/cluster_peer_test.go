@@ -291,7 +291,7 @@ func TestClusterPeerTakesNoCoordinatorReadFromTheConsole(t *testing.T) {
 }
 
 // The coordinator judges the read a forwarded request carries: one it
-// cannot parse is refused, one naming the coordinator's current business
+// cannot parse, an empty one or more than one is refused, one naming the coordinator's current business
 // generation is taken as its own read, one naming another writer is left
 // aside for a read of its own, and one this replica does not reach in time
 // is not answered.
@@ -306,7 +306,7 @@ func TestClusterPeerJudgesTheReadAForwardedRequestCarries(t *testing.T) {
 	transport := &http.Transport{TLSClientConfig: clientTLS}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 20 * time.Second}
-	forward := func(read string) (int, string, uint64) {
+	forward := func(reads ...string) (int, string, uint64) {
 		t.Helper()
 		request, err := http.NewRequest(http.MethodGet, hub.Config.PeerURL+clusterApplicationPath+"/console/test", nil)
 		if err != nil {
@@ -314,7 +314,9 @@ func TestClusterPeerJudgesTheReadAForwardedRequestCarries(t *testing.T) {
 		}
 		request.Header.Set("Authorization", "Bearer "+member.OwnerToken)
 		request.Header.Set("X-Steve-Coordinator-Epoch", strconv.FormatUint(active.Assignment.Epoch, 10))
-		request.Header.Set(coordinatorReadHeader, read)
+		for _, read := range reads {
+			request.Header.Add(coordinatorReadHeader, read)
+		}
 		before := hub.Runtime.Load().stateReads.Load()
 		response, err := client.Do(request)
 		if err != nil {
@@ -325,12 +327,13 @@ func TestClusterPeerJudgesTheReadAForwardedRequestCarries(t *testing.T) {
 		return response.StatusCode, string(body), hub.Runtime.Load().stateReads.Load() - before
 	}
 	writer := active.WriterGeneration
-	for _, read := range []string{"garbage", fmt.Sprintf("writer=%d index=0", writer), fmt.Sprintf("writer=%d index=x version=0", writer)} {
-		if status, body, reads := forward(read); status != http.StatusBadRequest || reads != 0 {
+	current := fmt.Sprintf("writer=%d index=0 version=0", writer)
+	for _, read := range [][]string{{"garbage"}, {fmt.Sprintf("writer=%d index=0", writer)}, {fmt.Sprintf("writer=%d index=x version=0", writer)}, {""}, {current, current}} {
+		if status, body, reads := forward(read...); status != http.StatusBadRequest || reads != 0 {
 			t.Errorf("the coordinator read %q: %d %s after %d reads; want it refused as invalid", read, status, body, reads)
 		}
 	}
-	if status, body, reads := forward(fmt.Sprintf("writer=%d index=0 version=0", writer)); status != http.StatusOK || reads != 0 {
+	if status, body, reads := forward(current); status != http.StatusOK || reads != 0 {
 		t.Errorf("a read naming the current business generation: %d %s after %d reads; want it answered on that read", status, body, reads)
 	}
 	if status, body, reads := forward(fmt.Sprintf("writer=%d index=0 version=0", writer+1)); status != http.StatusOK || reads == 0 {
