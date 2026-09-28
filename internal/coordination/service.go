@@ -613,16 +613,30 @@ var errTransferring = fmt.Errorf("%w: %s", ErrUnavailable, raft.ErrLeadershipTra
 
 // transferLeadership hands this node's consensus leadership to target. Read
 // index requests are refused from before Raft starts the transfer until it
-// has resolved it, whatever becomes of the caller; see ReadIndex.
+// has resolved it, whatever becomes of the caller; see ReadIndex. Raft's
+// future answers a single waiter, so the one returned waits for it here.
 func (s *Service) transferLeadership(target raft.ServerID, address raft.ServerAddress) raft.Future {
 	s.transferring.Add(1)
 	s.transfers.Add(1)
 	future := s.raft.LeadershipTransferToServer(target, address)
+	resolved := &sharedFuture{done: make(chan struct{})}
 	go func() {
-		future.Error()
+		resolved.err = future.Error()
 		s.transferring.Add(-1)
+		close(resolved.done)
 	}()
-	return future
+	return resolved
+}
+
+// sharedFuture is a Raft future that any number of callers can wait for.
+type sharedFuture struct {
+	done chan struct{}
+	err  error
+}
+
+func (f *sharedFuture) Error() error {
+	<-f.done
+	return f.err
 }
 
 // establish completes a barrier in term unless one has completed since the
