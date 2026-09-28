@@ -53,3 +53,36 @@ func TestAChildsResultAndDeliveryOutliveTheProcess(t *testing.T) {
 		t.Fatal("a returned task shares its result with the store")
 	}
 }
+
+func TestSuppressingKeepsAResultAlreadySettled(t *testing.T) {
+	s, err := OpenLedger(testLedger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := s.Create(Task{Goal: "root", Channel: "c", Member: "a"})
+	for _, settled := range []string{DeliveryDelivered, DeliverySuppressed} {
+		child, err := s.Spawn(root.ID, Task{Goal: "child", Member: "b", Origin: "delegate:" + root.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Advance(child.ID, StateDone); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetResult(child.ID, Result{Outcome: "ok", Answer: "did it"}); err != nil {
+			t.Fatal(err)
+		}
+		// A parent collecting the result in its own turn settles it first;
+		// a later suppression decided on an older read must not undo that.
+		if err := s.SetDelivery(child.ID, settled); err != nil {
+			t.Fatal(err)
+		}
+		before, _ := s.Get(child.ID)
+		if err := s.SuppressDelivery(child.ID, "parent ended"); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.Get(child.ID)
+		if got.Delivery == nil || *got.Delivery != *before.Delivery {
+			t.Fatalf("%s delivery after suppression = %+v, want unchanged %+v", settled, got.Delivery, before.Delivery)
+		}
+	}
+}
