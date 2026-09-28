@@ -218,5 +218,6 @@ export const settingsPageEn = {
     "settingsPage.waitingOn.unknown": "Waiting for the work in progress",
     "settingsPage.channelStartupFailed": "Channel startup failed. Check the application credentials, save, then restart the coordinator.",
     "settingsPage.channelStartupRetrying": "The channel cannot connect yet and is retrying on its own. Failed attempts: {attempts}; next attempt at {time}. No restart is needed.",
+    "settingsPage.channelReconnecting": "The channel lost its connection at {time} and is reconnecting on its own. Failed attempts: {attempts}. No restart is needed.",
     "settingsPage.errorDetails": "Error details"
 } as const satisfies Record<keyof typeof settingsPageZh,string>;
