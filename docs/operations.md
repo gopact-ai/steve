@@ -707,6 +707,7 @@ go run ./e2e/fleet -scenario autonomous
 | `delegate: ... task #C under #P on ...` | 子任务 C 已创建并交给所列机器，P 是父任务；后续靠这些 ID 查 attempt 与产物。 |
 | `delegate: delivered N child result(s) into ... for task #P` | 父会话投递接口已接受结果，delivery 状态已处理；不代表父 agent 已完成汇总，也不能单凭此行认定文件落地。查看消息中的落地状态、任务改动和主目录。 |
 | `delegate: deliver ...: <error>` | 结果投递失败，结果留在任务记录，待后续 flush 或启动补投递；先处理日志中的队列/持久化错误。 |
+| `delegate: suppressed N child result(s) for ended task #P: continuation <key> still unprocessed` | 父任务 P 已结束（done/cancelled），而它会话里的续跑消息（continuation）仍未处理完，例如正在等 owner 回答恢复问题。子任务 delivery 记为 `suppressed`，原因写在 delivery 的 `error` 字段，控制台“结果交接”中可见；结果保留在子任务记录里，不再重发，也不再每轮核对回执。该 continuation 本身不被撤销，仍按会话恢复流程处理；之后它是否处理完不会改写子任务的 delivery 状态。 |
 | `sweep: landing ...: <state> (N paths)` | 每 30 秒的后台任务重试待落地产物；看实际 state，不能把这行一律当成功。 |
 | `sweep: land pending for <project>: <error>` | 后台落地遇到非占锁错误；查看对应产物/landing。规范锁被占用时继续排队，不打印这一错误。 |
 | `sweep: removed N orphaned worktree(s) on ...` | 清理没有活 attempt 持有的隔离工作树；启动及 node 连接时会触发检查。 |

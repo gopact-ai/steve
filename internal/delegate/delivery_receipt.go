@@ -2,6 +2,7 @@ package delegate
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/channel"
@@ -25,6 +26,9 @@ func (s *Service) currentWaiting(candidates []task.Task) []task.Task {
 
 // Inspect an existing queue entry before applying parent-state gates or
 // rebuilding landing descriptions. This path never starts a parent turn.
+// A continuation still unprocessed when its parent has ended is suppressed
+// with the reason: the parent takes nothing more, and the entry left in its
+// conversation is not sent again, so the child would otherwise stay queued.
 func (s *Service) checkDeliveryReceipts(parent task.Task, waiting []task.Task, receipt func(task.Task, string) (bool, error)) []task.Task {
 	groups := map[string][]string{}
 	for _, child := range waiting {
@@ -45,11 +49,16 @@ func (s *Service) checkDeliveryReceipts(parent task.Task, waiting []task.Task, r
 		state, detail := task.DeliveryDelivered, ""
 		if errors.Is(err, channel.ErrDeliveryQueued) {
 			state = task.DeliveryQueued
+			if parent.State.Terminal() {
+				state, detail = task.DeliverySuppressed, fmt.Sprintf("Parent task #%s is %s; continuation %s is still unprocessed in its conversation and is not sent again", parent.ID, parent.State, key)
+			}
 		} else if err != nil {
 			state, detail = task.DeliveryUncertain, err.Error()
 		}
 		if err := s.tasks.RecordDelivery(ids, state, detail); err != nil {
 			slog.Error("delegate: save durable queue receipt", "parent", parent.ID, "error", err)
+		} else if state == task.DeliverySuppressed {
+			slog.Info(fmt.Sprintf("delegate: suppressed %d child result(s) for ended task #%s: continuation %s still unprocessed", len(ids), parent.ID, key), "parent", parent.ID, "key", key, "conversation", parent.Channel)
 		}
 	}
 	out := waiting[:0]
