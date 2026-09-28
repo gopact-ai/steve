@@ -16,6 +16,13 @@ type RPCOptions struct {
 	// AuthorizeControl validates an owner authorization carried by an already
 	// authenticated peer. It must return the trusted audit actor; request body
 	// actors are ignored. Nil denies every administrative mutation.
+	//
+	// The actor is part of the command's input, against which a reused
+	// command ID is checked; see fingerprint. So a retry through this handler
+	// of a command already applied, whether first submitted to a Service
+	// directly or through another member's handler, is refused as a command
+	// ID with different input unless the actor returned here is the one the
+	// first attempt named.
 	AuthorizeControl func(*http.Request, Identity, string) (string, error)
 	MaxBodyBytes     int64
 }
