@@ -31,6 +31,7 @@ type retainedPlanSupervisor struct {
 	execution                                   *task.ExecutionToken
 	err                                         error
 	seen                                        contextsSeen
+	resumedUnder                                context.Context
 }
 
 func (s *retainedPlanSupervisor) Plan(context.Context, planner.Request) (plan.Plan, error) {
@@ -49,7 +50,8 @@ func (s *retainedPlanSupervisor) Execute(ctx context.Context, _ plan.Plan) (exec
 	s.execution = execution.Token(ctx)
 	return exec.Outcome{}, s.err
 }
-func (s *retainedPlanSupervisor) Resume(context.Context, exec.RunRecord) (exec.Outcome, error) {
+func (s *retainedPlanSupervisor) Resume(ctx context.Context, _ exec.RunRecord) (exec.Outcome, error) {
+	s.resumedUnder = ctx
 	s.resumed++
 	return exec.Outcome{}, s.err
 }

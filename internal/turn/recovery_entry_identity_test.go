@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -59,9 +60,10 @@ func toolCallContext(t *testing.T, grants agentmcp.Store, conversation string, s
 	return queued
 }
 
-// parentToolCallContext is the context a child's result reaches its
-// parent's conversation in: the one the parent agent's steve_delegate
-// call was served in, long after that call ended.
+// parentToolCallContext stands for the context a child's result reaches
+// its parent's conversation in: the one the parent agent's steve_delegate
+// call was served in, long after that call ended. A steve_recall call
+// carries its grant the same way.
 func parentToolCallContext(t *testing.T) context.Context {
 	t.Helper()
 	grants := &scheduleGrantStore{data: map[string]json.RawMessage{}}
@@ -109,6 +111,9 @@ func (n observedNodes) Admit(ctx context.Context, _ string, _ nodewire.AdmitRequ
 func (n observedNodes) Bindings(context.Context, string, string) []ability.Binding { return nil }
 func (n observedNodes) Release(context.Context, string, string) error              { return nil }
 
+// recoveryEntries is how many entries recoveryEntryRuns drives.
+const recoveryEntries = 5
+
 // recoveryEntryRuns drives each recovery entry a console exchange can
 // reach once its observer fails, under queued, and returns what the
 // dependencies it drove were given.
@@ -137,6 +142,39 @@ func recoveryEntryRuns(t *testing.T, queued func(*testing.T, *Coordinator) conte
 			t.Fatal(err)
 		}
 		runs[t.Name()] = sup.seen.all()
+	})
+
+	t.Run("resume retained plan run", func(t *testing.T) {
+		c, sup, identity, req := retainedPlanFixture(t)
+		sup.runs = []exec.RunRecord{{ID: "run", TaskID: identity.TaskID, ProjectID: identity.ProjectID, PlanID: "plan"}}
+		ctx, cancel := context.WithTimeout(queued(t, c), waitDeadline)
+		defer cancel()
+		if _, err := c.ResumeRetainedPlan(ctx, identity, req); err != nil {
+			t.Fatal(err)
+		}
+		// Only the run's own driving counts here: the entry opens no scope
+		// of its own before handing the run back to the supervisor.
+		var resumed []context.Context
+		if sup.resumedUnder != nil {
+			resumed = append(resumed, sup.resumedUnder)
+		}
+		runs[t.Name()] = resumed
+	})
+
+	t.Run("plan relocation", func(t *testing.T) {
+		seen := &contextsSeen{}
+		c, runner, _, old, req := retainedChatFixture(t, withDeps(func(d *Deps) {
+			d.Runtime = observedRetainedManager{retainedTestManager: d.Runtime.(retainedTestManager), seen: seen}
+		}))
+		runner.state.State, runner.state.ProcessStopped = "interrupted", true
+		runner.state.Command.ProcessStopped = true
+		req.Relocation = &RelocationContext{Input: "original task"}
+		ctx, cancel := context.WithTimeout(queued(t, c), waitDeadline)
+		defer cancel()
+		// No copy exists to relocate from here; planning stops after it has
+		// inspected the original node.
+		_, _ = c.PlanRelocation(ctx, old.ID, req)
+		runs[t.Name()] = seen.all()
 	})
 
 	t.Run("relocate chat", func(t *testing.T) {
@@ -171,7 +209,7 @@ func recoveryEntryRuns(t *testing.T, queued func(*testing.T, *Coordinator) conte
 // nothing they drive is handed the grant of the tool call behind them.
 func TestRecoveryEntriesDoNotRunUnderTheGrantOfTheToolCallThatQueuedThem(t *testing.T) {
 	runs := recoveryEntryRuns(t, func(t *testing.T, _ *Coordinator) context.Context { return parentToolCallContext(t) })
-	if len(runs) != 3 {
+	if len(runs) != recoveryEntries {
 		t.Fatalf("entries run: %d", len(runs))
 	}
 	for entry, seen := range runs {
@@ -210,15 +248,12 @@ func endedChildContext(t *testing.T, c *Coordinator) (context.Context, execution
 // as the child's execution.
 func TestRecoveryEntriesDoNotRunAsTheEndedChildWhoseResultQueuedThem(t *testing.T) {
 	children := map[string]execution.Key{}
-	var mu sync.Mutex
 	runs := recoveryEntryRuns(t, func(t *testing.T, c *Coordinator) context.Context {
 		ctx, key := endedChildContext(t, c)
-		mu.Lock()
 		children[t.Name()] = key
-		mu.Unlock()
 		return ctx
 	})
-	if len(runs) != 3 {
+	if len(runs) != recoveryEntries {
 		t.Fatalf("entries run: %d", len(runs))
 	}
 	for entry, seen := range runs {
