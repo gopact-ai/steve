@@ -2,6 +2,7 @@ package nodebootstrap
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ func containsHan(s string) bool {
 }
 
 // An installer the owner chose that cannot be sent is refused in the
-// owner's language.
+// owner's language when the owner is told.
 func TestBinaryRefusalsAreSaidInTheOwnersLanguage(t *testing.T) {
 	dir := t.TempDir()
 	unknown := filepath.Join(dir, "node")
@@ -29,12 +30,13 @@ func TestBinaryRefusalsAreSaidInTheOwnersLanguage(t *testing.T) {
 		wantEN bool
 	}{{i18n.LocaleEN, true}, {i18n.LocaleZH, false}} {
 		for _, path := range []string{filepath.Join(dir, "missing"), dir, unknown} {
-			_, err := InspectBinary(i18n.New(tc.locale), path)
-			if err == nil {
-				t.Fatalf("%s should be refused", path)
+			_, err := InspectBinary(path)
+			var refusal BinaryRefusal
+			if !errors.As(err, &refusal) {
+				t.Fatalf("%s refusal = %v", path, err)
 			}
-			if containsHan(err.Error()) == tc.wantEN {
-				t.Errorf("%s refusal %q is not in that language", tc.locale, err)
+			if said := refusal.Say(i18n.New(tc.locale)); containsHan(said) == tc.wantEN {
+				t.Errorf("%s refusal %q is not in that language", tc.locale, said)
 			}
 		}
 	}
@@ -49,7 +51,7 @@ func TestBinaryRefusalsAreEnglishUntilSomeoneIsTold(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{filepath.Join(dir, "missing"), dir, unknown} {
-		_, err := InspectBinary(i18n.Catalog{}, path)
+		_, err := InspectBinary(path)
 		if err == nil || containsHan(err.Error()) {
 			t.Errorf("%s refusal %v is not English", path, err)
 		}

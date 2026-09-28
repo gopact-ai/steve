@@ -135,7 +135,7 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 		return reject(Fail(text, "preflight", "binary_unavailable", text.T(i18n.SSHUpgradeNoBinary, check.OS+"/"+check.Arch), text.T(i18n.SSHUpgradeNoBinaryFix)))
 	}
 	// The failed step below says what went wrong; the reason is not shown.
-	binary, metadata, err := nodebootstrap.OpenBinary(text, path)
+	binary, metadata, err := nodebootstrap.OpenBinary(path)
 	if err != nil {
 		return reject(Fail(text, "preflight", "binary_unavailable", text.T(i18n.SSHUpgradeBinaryUnreadable), text.T(i18n.SSHUpgradeBinaryUnreadableFix)))
 	}
