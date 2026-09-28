@@ -8,6 +8,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/memory"
+	"github.com/gopact-ai/steve/internal/state"
 )
 
 // Setup is what an agent is given to work with in a conversation: the
@@ -46,7 +47,8 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 		return Setup{}, fmt.Errorf("no agent %q", agentID)
 	}
 	mode := c.modeOf(conversationID)
-	capabilities, err := c.assembler.AssembleExtra(selected, mode, c.setupExtras(ctx, conversationID, mode))
+	saved := c.store.Conversation(conversationID).Sessions[selected.ID]
+	capabilities, err := c.assembler.AssembleExtra(selected, mode, c.setupExtras(ctx, conversationID, mode, saved))
 	if err != nil {
 		return Setup{}, err
 	}
@@ -55,25 +57,32 @@ func (c *Coordinator) SessionSetup(ctx context.Context, conversationID, agentID 
 		Mode: string(mode), Instructions: capabilities.Instructions, Sections: capabilities.Sections,
 		MCPServers: append([]string{agentmcp.ServerName}, selected.MCPServers...),
 	}
-	saved := c.store.Conversation(conversationID).Sessions[selected.ID]
 	out.Applied = saved.InstructionsApplied && saved.CapabilityHash == capabilities.Fingerprint
 	return out, nil
 }
 
-// setupExtras is the remembered text a turn would add. The messaging
-// server's extras are left out: they mint a session token, which a
-// read-only question has no business doing.
-func (c *Coordinator) setupExtras(ctx context.Context, conversationID string, mode home.Mode) []capability.Extra {
+// setupExtras is what a turn would add on top of the agent's own set: the
+// messaging server the session already holds, then remembered text. A
+// session holds the messaging server exactly when it keeps a token for
+// it. A read-only question neither mints a token nor asks the agent's
+// machine where it listens, so the server is described at the hub's own
+// address; a fingerprint cannot tell that from a node's loopback, since
+// both are this server on 127.0.0.1 and fingerprints leave out its port.
+func (c *Coordinator) setupExtras(ctx context.Context, conversationID string, mode home.Mode, saved state.Session) []capability.Extra {
+	var extras []capability.Extra
+	if c.gate != nil && saved.AgentToken != "" {
+		extras = c.gate.DescribeExtras(saved.AgentToken, "")
+	}
 	if mode != home.ModeOwner {
-		return nil
+		return extras
 	}
 	id := c.memoryProject(ctx, conversationID)
 	if id == "" {
-		return nil
+		return extras
 	}
 	text, err := c.memory.Snapshot(ctx, memory.ProjectScope(id))
 	if err != nil || text == "" {
-		return nil
+		return extras
 	}
-	return []capability.Extra{{Name: "memory:project:" + id, Memory: text}}
+	return append(extras, capability.Extra{Name: "memory:project:" + id, Memory: text})
 }
