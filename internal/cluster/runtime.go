@@ -339,8 +339,9 @@ func (r *Runtime) revoke(g *generation, err error) {
 
 // run keeps this node's business generation in step with the coordinator
 // assignment. Each tick reads the local replica, which costs nothing: a quorum
-// read appends a barrier to the Raft log and, on a member that does not lead,
-// asks the leader for the whole state. The local view only decides whether
+// read asks a majority to confirm the leader and, on a member that does not
+// lead, is a request to the leader, over what may be a slow link, for the
+// whole state. The local view only decides whether
 // this node looks like the coordinator. A generation starts on a quorum read
 // that confirms it, and every write verifies the assignment against a majority
 // again, so the local view never authorizes anything. A running generation is

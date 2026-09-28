@@ -52,6 +52,10 @@ type Service struct {
 	// establishing is held by the read index request completing a barrier
 	// to establish the term, so requests arriving together append one.
 	establishing chan struct{}
+	// transfers counts the leadership transfers this node has started, and
+	// transferring those Raft has not yet resolved; see ReadIndex.
+	transfers    atomic.Uint64
+	transferring atomic.Int64
 	closeOnce    sync.Once
 	closeErr     error
 	ctx          context.Context
@@ -298,7 +302,8 @@ func (s *Service) raiseHeld(index uint64) {
 }
 
 // LastIndex is the index of the last entry in this replica's Raft log. It
-// grows with every entry appended, including the barriers of quorum reads.
+// grows with every entry appended, including the barrier a leader appends
+// before its first quorum read or write of a term.
 func (s *Service) LastIndex() uint64 { return s.raft.LastIndex() }
 
 // LogProgress reads how far this replica's Raft log is committed and how
@@ -324,13 +329,56 @@ func (s *Service) TransportPeers() map[string]string {
 	return peers
 }
 
-// ReadState performs a quorum-confirmed read. Status is a local, potentially
+// ReadState performs a quorum-confirmed read: the state it returns holds
+// every entry committed before the call. Status is a local, potentially
 // stale view and must never be used to authorize execution or a write.
+//
+// The leader confirms the read as ReadIndex does, by a majority's answer,
+// and appends nothing to the log once it has committed an entry of its
+// term; it then waits for its state machine to hold the log up to the read
+// index, which it usually already does. The confirmation shares
+// ReadIndex's limits. Any other node refuses the read with ErrNotLeader.
+// Either gives up within ApplyTimeout, which a caller holding a lock
+// through the read may rely on.
 func (s *Service) ReadState(ctx context.Context) (State, error) {
-	if err := s.barrier(ctx); err != nil {
+	if s.raft.State() != raft.Leader {
+		if err := s.barrier(ctx); err != nil {
+			return State{}, err
+		}
+		return s.fsm.read(), nil
+	}
+	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	defer cancel()
+	index, err := s.ReadIndex(bounded)
+	if err != nil {
+		return State{}, err
+	}
+	if err := s.awaitState(bounded, index); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return State{}, fmt.Errorf("%w: the state machine did not apply the log up to read index %d within %s; it has applied %d", ErrUnavailable, index, s.config.ApplyTimeout, s.fsm.applied.Load())
+		}
 		return State{}, err
 	}
 	return s.fsm.read(), nil
+}
+
+// awaitState waits, until ctx ends, for the state machine to hold the log
+// up to index; see StateHolds. index must be committed.
+func (s *Service) awaitState(ctx context.Context, index uint64) error {
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for !s.StateHolds(index) {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.ctx.Done():
+			return ErrUnavailable
+		case <-s.fsm.failed:
+			return ErrApplication
+		}
+	}
+	return nil
 }
 
 func (s *Service) Snapshot(ctx context.Context) error {
@@ -499,21 +547,29 @@ func (s *Service) barrier(ctx context.Context) error {
 // ReadIndex returns, once a majority confirms that this node still leads
 // consensus, an index at or beyond every entry committed before the call:
 // a replica that has applied its log up to that index holds everything a
-// quorum read would have returned. Unlike ReadState it appends nothing to
-// the log, except for one barrier when this node has not yet completed one
-// in its current term, since until an entry of its own term commits a new
+// quorum read would have returned. It appends nothing to the log, except
+// for one barrier when this node has not yet completed one in its current
+// term, since until an entry of its own term commits a new
 // leader's commit index may miss entries its predecessor committed. It
 // fails with ErrNotLeader on a node that does not lead consensus.
 //
 // Raft counts toward the confirmation the answers to requests already in
 // flight when it was asked, so a follower's vote in it can be as old as
 // such an answer takes to arrive, which the transport bounds by
-// ApplyTimeout. Raft keeps LeaderLeaseTimeout within the heartbeat timeout
-// after which followers start electing another leader, so a leader that
-// has lost its majority steps down about when, and by default well
-// before, another can be elected and commit. The index can therefore miss
-// an entry only when leadership moves while it is being confirmed; a
-// caller that asks again later finds the entry then.
+// ApplyTimeout. A follower that has heard from its leader within the
+// heartbeat timeout votes for no one else, and Raft keeps
+// LeaderLeaseTimeout within that timeout, so a leader that has lost its
+// majority steps down about when, and by default well before, another can
+// be elected and commit. The index can therefore miss an entry only when
+// leadership moves by an election while it is being confirmed; a caller
+// that asks again later finds the entry then.
+//
+// The target of a leadership transfer asks for votes that followers grant
+// at once, so while this node transfers its leadership an old answer
+// shows nothing. ReadIndex then fails with ErrUnavailable, as a barrier
+// does, if a transfer ran at any time while the read was being confirmed.
+// A transfer that Raft gave up on can still be completed by a target whose
+// election outlasts it; that leaves the window of an election.
 func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	if s.closed.Load() {
 		return 0, ErrUnavailable
@@ -523,6 +579,11 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	}
 	if s.raft.State() != raft.Leader {
 		return 0, fmt.Errorf("%w: leader is %s", ErrNotLeader, s.Status().LeaderID)
+	}
+	// Read before transferring, which a transfer raises first.
+	transfers := s.transfers.Load()
+	if s.transferring.Load() != 0 {
+		return 0, errTransferring
 	}
 	term := s.raft.CurrentTerm()
 	if s.established.Load() != term {
@@ -539,7 +600,41 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 	if s.raft.CurrentTerm() != term {
 		return 0, fmt.Errorf("%w: leadership changed while it was being confirmed", ErrNotLeader)
 	}
+	if s.transfers.Load() != transfers {
+		return 0, errTransferring
+	}
 	return index, nil
+}
+
+// errTransferring refuses a read while this node transfers its leadership.
+var errTransferring = fmt.Errorf("%w: %s", ErrUnavailable, raft.ErrLeadershipTransferInProgress)
+
+// transferLeadership hands this node's consensus leadership to target. Read
+// index requests are refused from before Raft starts the transfer until it
+// has resolved it, whatever becomes of the caller; see ReadIndex. Raft's
+// future answers a single waiter, so the one returned waits for it here.
+func (s *Service) transferLeadership(target raft.ServerID, address raft.ServerAddress) raft.Future {
+	s.transferring.Add(1)
+	s.transfers.Add(1)
+	future := s.raft.LeadershipTransferToServer(target, address)
+	resolved := &sharedFuture{done: make(chan struct{})}
+	go func() {
+		resolved.err = future.Error()
+		s.transferring.Add(-1)
+		close(resolved.done)
+	}()
+	return resolved
+}
+
+// sharedFuture is a Raft future that any number of callers can wait for.
+type sharedFuture struct {
+	done chan struct{}
+	err  error
+}
+
+func (f *sharedFuture) Error() error {
+	<-f.done
+	return f.err
 }
 
 // establish completes a barrier in term unless one has completed since the
@@ -580,12 +675,33 @@ func fingerprint(kind string, input any) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// submit appends c to the log and returns its receipt, or the receipt of
+// the earlier command with c's ID.
+//
+// The state machine checks each command, against earlier receipts and
+// against the fences of its kind, as of its own place in the log, so
+// nothing submit reads beforehand decides a command's outcome. A barrier
+// first lets the receipt lookup below answer a retry of a command the
+// state machine has already applied without appending it again; it is
+// needed only while the leader has not yet committed an entry of its term,
+// when its state machine can lag entries its predecessors committed. Once
+// it has, a retry the lookup misses is appended and answered by the state
+// machine with the same receipt. A node that does not lead still fails at
+// the barrier, as before.
 func (s *Service) submit(ctx context.Context, c command) (Result, error) {
 	if strings.TrimSpace(c.ID) == "" || strings.TrimSpace(c.Actor) == "" {
 		return Result{}, fmt.Errorf("%w: command ID and actor are required", ErrInvalid)
 	}
-	if err := s.barrier(ctx); err != nil {
-		return Result{}, err
+	if s.closed.Load() {
+		return Result{}, ErrUnavailable
+	}
+	if !s.fsm.healthy() {
+		return Result{}, ErrApplication
+	}
+	if s.raft.State() != raft.Leader || s.established.Load() != s.raft.CurrentTerm() {
+		if err := s.barrier(ctx); err != nil {
+			return Result{}, err
+		}
 	}
 	if r, ok := s.fsm.lookupCommand(c); ok {
 		return r.Result, r.err()
@@ -926,7 +1042,7 @@ func (s *Service) Remove(ctx context.Context, request RemoveRequest) (Result, er
 			if err != nil || progress.AppliedIndex < state.AppliedIndex || progress.AppVersion < state.AppVersion {
 				continue
 			}
-			err = s.wait(ctx, s.raft.LeadershipTransferToServer(raft.ServerID(target), raft.ServerAddress(state.Voters[target])))
+			err = s.wait(ctx, s.transferLeadership(raft.ServerID(target), raft.ServerAddress(state.Voters[target])))
 			// Raft reports an unfinished transfer, such as its election
 			// timeout expiring or a failed TimeoutNow RPC, without a sentinel
 			// error. The target may still take over, so the caller should

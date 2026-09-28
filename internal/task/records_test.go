@@ -15,9 +15,12 @@ type taskReplicator struct {
 	book     *ledger.Ledger
 	payloads [][]byte
 	reject   error
+	// prepared counts the write transactions opened, written to or not.
+	prepared int
 }
 
 func (r *taskReplicator) Prepare(context.Context) (ledger.ReplicaPosition, error) {
+	r.prepared++
 	version, err := r.book.ReplicaVersion()
 	return ledger.ReplicaPosition{Version: version, CoordinatorEpoch: 1}, err
 }
