@@ -134,6 +134,14 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 			runErr = errors.New("business application exited unexpectedly")
 		}
 		close(done)
+		select {
+		case <-started:
+		default:
+			// An application that never started is this activation's
+			// failure, returned below: the runtime keeps the replica and
+			// builds the application again.
+			return
+		}
 		if ctx.Err() == nil && !expectedRestart {
 			if cluster.ApplicationAuthorityError(runErr) {
 				// RequestRebuild only refuses (ErrInactive) when this
@@ -160,13 +168,19 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 	}
 	select {
 	case <-started:
-		if ctx.Err() == nil {
-			stopRepair = p.StartContentRepair(activation, repairObserve)
-		}
-		return stop, nil
 	case <-done:
-		return stop, runErr
+		select {
+		case <-started:
+			// It started and has exited since: the runner deals with that
+			// exit as with any other once started.
+		default:
+			return stop, runErr
+		}
 	case <-ctx.Done():
 		return stop, ctx.Err()
 	}
+	if ctx.Err() == nil {
+		stopRepair = p.StartContentRepair(activation, repairObserve)
+	}
+	return stop, nil
 }
