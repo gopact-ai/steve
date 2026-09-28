@@ -302,7 +302,8 @@ func (s *Service) raiseHeld(index uint64) {
 }
 
 // LastIndex is the index of the last entry in this replica's Raft log. It
-// grows with every entry appended, including the barriers of quorum reads.
+// grows with every entry appended, including the barrier a leader appends
+// before its first quorum read or write of a term.
 func (s *Service) LastIndex() uint64 { return s.raft.LastIndex() }
 
 // LogProgress reads how far this replica's Raft log is committed and how

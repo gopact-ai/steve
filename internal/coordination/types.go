@@ -235,14 +235,14 @@ type Status struct {
 // knows it. Committed is the last entry it knows a majority stored; a
 // follower learns it from the leader's next entries, so it never runs ahead
 // of the entries the follower holds. Applied is the last committed entry
-// Raft handed to the state machine, including the barriers of quorum reads
-// and the entry each new leader starts with, which never reach it and
-// leave State.AppliedIndex behind; the state machine may still be applying
-// the entries it was handed last. Raft records the hand-off only after
-// making it, so the state machine can already have answered an entry, a
-// quorum read's barrier among them, while Applied still names an earlier
-// one: a reader must allow Applied a moment to reach Committed rather than
-// expect them equal once a read returns.
+// Raft handed to the state machine, including barriers and the entry each
+// new leader starts with, which never reach it and leave
+// State.AppliedIndex behind; the state machine may still be applying the
+// entries it was handed last. Raft records the hand-off only after making
+// it, so the state machine can already have answered an entry, a barrier
+// among them, while Applied still names an earlier one: a reader must
+// allow Applied a moment to reach Committed rather than expect them equal
+// once a barrier returns.
 type LogProgress struct {
 	Committed uint64
 	Applied   uint64

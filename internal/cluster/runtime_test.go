@@ -1051,11 +1051,13 @@ func ready(t *testing.T, r *Runtime) Activation {
 	return activation
 }
 
-// A quorum read appends a barrier entry to the Raft log, and from a member
-// that does not lead it is a request to the leader, over what may be a slow
-// link, for the whole cluster state. Once the business generation is ready
-// and nothing changes, no node's runtime keeps reading the state that way:
-// the log stops growing and no member asks the leader for the state.
+// A quorum read from a member that does not lead is a request to the
+// leader, over what may be a slow link, for the whole cluster state. Once
+// the business generation is ready and nothing changes, the log stops
+// growing and no member asks the leader for the state. A quorum read
+// appends nothing to the log once the leader's term has an entry, so the
+// log shows only writes here, and a leader that kept reading its own state
+// would go unseen.
 func TestIdleRuntimesAppendNothingAndAskTheLeaderForNothing(t *testing.T) {
 	nodes := testNodes(t, 2)
 	first := openNode(t, nodes[0])
