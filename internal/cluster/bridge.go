@@ -122,9 +122,9 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 	// barrier and apply timeouts; submission routed to the leader by the
 	// client's retry window plus one attempt's timeout, since an attempt
 	// started before the window ends runs to its own timeout (with the
-	// defaults, about ten seconds). The wait for local apply stops polling
-	// after ApplyTimeout. The generation's context bounds both. Any failure
-	// after submission revokes the generation.
+	// defaults, about ten seconds). The wait for local apply gives up after
+	// ApplyTimeout. The generation's context bounds both. Any failure after
+	// submission revokes the generation.
 	ctx, cancel := b.boundContext(context.WithoutCancel(parent))
 	defer cancel()
 	command := coordination.AppCommand{ID: write.ID, CallerNodeID: b.generation.NodeID, CoordinatorEpoch: write.CoordinatorEpoch, ExpectedVersion: write.ExpectedVersion, WriterGeneration: b.generation.WriterGeneration, Payload: write.Payload}
@@ -135,9 +135,12 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 		b.runtime.revoke(b.generation, err)
 		return nil, err
 	}
-	applied, stop := context.WithTimeout(ctx, b.runtime.config.Coordination.ApplyTimeout)
-	defer stop()
-	if _, err := b.runtime.waitApplied(applied, result.Index, result.AppVersion); err != nil {
+	if _, err := b.runtime.awaitApplied(ctx, result.Index, result.AppVersion); err != nil {
+		// The write is committed; this generation's caches show it only
+		// once this replica applies it.
+		if errors.Is(err, coordination.ErrUnavailable) {
+			err = fmt.Errorf("%w; write %s was committed", err, write.ID)
+		}
 		b.runtime.revoke(b.generation, err)
 		return nil, err
 	}
