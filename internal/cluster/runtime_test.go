@@ -795,7 +795,7 @@ func TestCommittedWriteThisReplicaCannotApplyFailsAsUnavailable(t *testing.T) {
 	if !errors.Is(err, coordination.ErrUnavailable) {
 		t.Fatalf("a committed write this replica could not apply failed with %v, not as unavailable", err)
 	}
-	if text := err.Error(); !strings.Contains(text, "local replica did not reach applied index") || !strings.Contains(text, "committed") {
+	if text := err.Error(); !strings.Contains(text, "local replica did not reach applied index") || !strings.Contains(text, "; write ") || !strings.Contains(text, " was committed") {
 		t.Fatalf("the failure does not say how far the replica got or that the write was committed: %v", err)
 	}
 	if active.Context.Err() == nil {
