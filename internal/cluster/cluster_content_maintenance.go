@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -150,12 +151,12 @@ func (w *contentRepairWorker) maintain(ctx context.Context) (checkpoint.GCResult
 		cancel()
 		total.Blobs += result.Blobs
 		total.Bytes += result.Bytes
-		if generationEnded(err) {
-			// Every other peer would answer the same.
-			return total, fmt.Errorf("content maintenance %s: %w", node, err)
-		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("content maintenance %s: %w", node, err))
+		}
+		if generationEnded(err) {
+			// Every other peer would answer the same.
+			return total, errors.Join(failures...)
 		}
 	}
 	return total, errors.Join(failures...)
@@ -177,7 +178,9 @@ func (w *contentRepairWorker) collectHere(ctx context.Context) (checkpoint.Reten
 func (w *contentRepairWorker) runMaintenance(ctx context.Context) {
 	result, err := w.maintain(ctx)
 	if generationEnded(err) {
-		// Nothing failed: the next generation maintains again.
+		// Nothing failed: the next generation maintains again. What
+		// failed before the round stopped is logged, not said.
+		slog.Info("content repair: maintenance stopped, its generation has ended", "writer_generation", w.active.WriterGeneration, "cause", err.Error())
 		return
 	}
 	if err != nil {
