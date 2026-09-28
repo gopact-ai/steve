@@ -1,9 +1,12 @@
 package coordination
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -176,4 +179,78 @@ func TestReadStateWaitsForEntriesCommittedBeforeIt(t *testing.T) {
 	if err := write.Error(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// A leader that hands its leadership to another voter can be replaced by it
+// without an election timeout: the target's vote request tells the voters to
+// drop the leader they follow, so an answer to a heartbeat sent before the
+// target took over no longer shows a majority behind the leader. As the
+// barrier a write starts with, a quorum read and a read index request are
+// refused while the transfer runs.
+func TestQuorumReadsAreRefusedWhileTheLeaderTransfersLeadership(t *testing.T) {
+	c := newTestCluster(t, 3)
+	leader := c.leader()
+	var others []string
+	for id := range leader.Status().Voters {
+		if id != leader.config.NodeID {
+			others = append(others, id)
+		}
+	}
+	sort.Strings(others)
+	// Remove tries targets in ID order; the first one receives the transfer.
+	target, coordinator := others[0], others[1]
+	eventually(t, 5*time.Second, func() bool {
+		_, err := leader.Transfer(t.Context(), TransferRequest{ID: "move-before-remove", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: coordinator})
+		if errors.Is(err, ErrNotReady) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return true
+	})
+	applied := leader.Status().AppliedIndex
+	eventually(t, 5*time.Second, func() bool { return c.nodes[target].Status().AppliedIndex >= applied })
+	// The target acknowledges no new entry, so the transfer keeps trying to
+	// catch it up until the election timeout ends the attempt.
+	if err := newRaftLoopPause(t, c.nodes[target]).pause(); err != nil {
+		t.Fatal(err)
+	}
+	transferring := func() bool {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		err := leader.barrier(ctx)
+		return errors.Is(err, ErrUnavailable) && strings.Contains(err.Error(), raft.ErrLeadershipTransferInProgress.Error())
+	}
+	// A transfer that ends between the reads and the check after them
+	// leaves the attempt without a verdict; the next attempt starts another.
+	for attempt := 0; attempt < 20; attempt++ {
+		removed := make(chan error, 1)
+		go func() {
+			_, err := leader.Remove(t.Context(), RemoveRequest{ID: "remove-leader", Actor: "owner", NodeID: leader.config.NodeID})
+			removed <- err
+		}()
+		started := time.Now()
+		for !transferring() && time.Since(started) < 5*time.Second {
+			time.Sleep(time.Millisecond)
+		}
+		_, readErr := leader.ReadState(t.Context())
+		_, indexErr := leader.ReadIndex(t.Context())
+		during := transferring()
+		<-removed
+		if !during {
+			continue
+		}
+		if readErr == nil {
+			t.Fatal("a quorum read was confirmed while the leader transferred its leadership")
+		}
+		if indexErr == nil {
+			t.Fatal("a read index was confirmed while the leader transferred its leadership")
+		}
+		if !errors.Is(readErr, ErrUnavailable) || !errors.Is(indexErr, ErrUnavailable) {
+			t.Fatalf("reads during a leadership transfer failed with %v and %v, want unavailable", readErr, indexErr)
+		}
+		return
+	}
+	t.Fatal("no read ran while a leadership transfer did")
 }
