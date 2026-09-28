@@ -1,10 +1,15 @@
 package coordination
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/raft"
 )
 
 // On a leader that has committed an entry of its term, a quorum read is
@@ -81,57 +86,65 @@ func TestAWriteOnAnEstablishedLeaderAppendsOneEntry(t *testing.T) {
 	}
 }
 
-// gatedCounter holds the application write whose payload is gate until
-// release is closed, reporting on entered that it has started.
-type gatedCounter struct {
+// snapshotGate holds the next application snapshot until release is
+// closed, reporting on entered that it has started. Raft takes snapshots
+// on the goroutine that applies committed entries, so none is applied
+// meanwhile, while the machine lets readers in.
+type snapshotGate struct {
 	*durableCounter
-	gate     string
+	armed    atomic.Bool
 	entered  chan struct{}
 	released chan struct{}
 }
 
-func (g *gatedCounter) Apply(command AppliedCommand) ([]byte, error) {
-	if string(command.Payload) == g.gate {
+func (g *snapshotGate) Snapshot() ([]byte, error) {
+	if g.armed.CompareAndSwap(true, false) {
 		close(g.entered)
 		<-g.released
 	}
-	return g.durableCounter.Apply(command)
+	return g.durableCounter.Snapshot()
 }
 
 // A quorum read holds every entry committed before it, including one the
-// leader's state machine is still applying: it waits for the state machine
-// rather than read around the entry.
+// leader's state machine has not yet applied: it waits for the state
+// machine rather than read around the entry.
 func TestReadStateWaitsForEntriesCommittedBeforeIt(t *testing.T) {
-	gated := &gatedCounter{gate: "7", entered: make(chan struct{}), released: make(chan struct{})}
+	gate := &snapshotGate{entered: make(chan struct{}), released: make(chan struct{})}
 	c := newTestCluster(t, 1, func(_ string, dir string) Application {
-		gated.durableCounter = openCounter(t, dir)
-		return gated
+		gate.durableCounter = openCounter(t, dir)
+		return gate
 	})
 	leader := c.leader()
-	released := false
-	release := func() {
-		if !released {
-			released = true
-			close(gated.released)
-		}
-	}
-	t.Cleanup(release)
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(gate.released) }) })
 	if _, err := leader.ReadState(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	written := make(chan error, 1)
-	go func() {
-		_, err := leader.ApplyApp(t.Context(), AppCommand{ID: "held", CallerNodeID: "node-1", CoordinatorEpoch: 1, WriterGeneration: 1, Payload: []byte(gated.gate)})
-		written <- err
-	}()
+	gate.armed.Store(true)
+	go leader.Snapshot(t.Context())
 	select {
-	case <-gated.entered:
-	case err := <-written:
-		t.Fatalf("the write returned %v before it was applied", err)
+	case <-gate.entered:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the write was not applied")
+		t.Fatal("the snapshot did not start")
 	}
-	// The single voter committed the entry before handing it over.
+	// Appended as submit appends a write, without what submit does first,
+	// so that only the write is waiting for the state machine.
+	request := AppCommand{ID: "held", CallerNodeID: "node-1", CoordinatorEpoch: 1, WriterGeneration: 1, Payload: []byte("7")}
+	encoded, err := json.Marshal(command{Kind: "app", ID: request.ID, Actor: request.CallerNodeID, Fingerprint: fingerprint("app", request), App: request, ClusterID: leader.config.ClusterID, Time: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := leader.LastIndex()
+	write := leader.raft.Apply(encoded, leader.config.ApplyTimeout)
+	eventually(t, 10*time.Second, func() bool {
+		for index := before + 1; index <= leader.raft.CommitIndex(); index++ {
+			var entry raft.Log
+			if leader.store.GetLog(index, &entry) == nil && entry.Type == raft.LogCommand {
+				return true
+			}
+		}
+		return false
+	})
 	read := make(chan State, 1)
 	failed := make(chan error, 1)
 	go func() {
@@ -144,12 +157,12 @@ func TestReadStateWaitsForEntriesCommittedBeforeIt(t *testing.T) {
 	}()
 	select {
 	case state := <-read:
-		t.Fatalf("a quorum read returned application version %d while a committed write was being applied", state.AppVersion)
+		t.Fatalf("a quorum read returned application version %d while a committed write waited to be applied", state.AppVersion)
 	case err := <-failed:
-		t.Fatalf("a quorum read failed while a committed write was being applied: %v", err)
+		t.Fatalf("a quorum read failed while a committed write waited to be applied: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	release()
+	release.Do(func() { close(gate.released) })
 	select {
 	case state := <-read:
 		if state.AppVersion != 1 {
@@ -160,7 +173,7 @@ func TestReadStateWaitsForEntriesCommittedBeforeIt(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the quorum read did not return once the write was applied")
 	}
-	if err := <-written; err != nil {
+	if err := write.Error(); err != nil {
 		t.Fatal(err)
 	}
 }
