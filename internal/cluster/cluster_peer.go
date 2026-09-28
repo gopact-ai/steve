@@ -518,7 +518,7 @@ func (p *Peer) ApplicationStoreFailure(active Activation, cause error) {
 }
 
 func ApplicationAuthorityError(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrInactive) || errors.Is(err, coordination.ErrUnavailable) || errors.Is(err, coordination.ErrNotLeader) || errors.Is(err, coordination.ErrNotCoordinator) || errors.Is(err, coordination.ErrConflict) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, coordination.ErrConflict) || authorityInDoubt(err)
 }
 
 func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
