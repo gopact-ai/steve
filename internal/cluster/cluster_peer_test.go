@@ -204,8 +204,7 @@ func PeerRequest(t *testing.T, peer *Peer, method, path string, body any) (int, 
 
 // A console request this node's own application answers reads the
 // committed state through the leader once: the read that finds this node
-// coordinating is the one that confirms its business generation. Each read
-// appends a barrier to the leader's log, and a GET writes nothing else.
+// coordinating is the one that confirms its business generation.
 func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
@@ -215,13 +214,13 @@ func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
 	if status, body := PeerRequest(t, peer, http.MethodGet, "/console/test?token="+peer.UIToken, nil); status != http.StatusOK {
 		t.Fatalf("application gateway: %d %s", status, body)
 	}
-	leader := peer.Runtime.Load().service
-	before := leader.LastIndex()
+	runtime := peer.Runtime.Load()
+	before := runtime.stateReads.Load()
 	if status, body := PeerRequest(t, peer, http.MethodGet, "/console/test?token="+peer.UIToken, nil); status != http.StatusOK {
 		t.Fatalf("application gateway: %d %s", status, body)
 	}
-	if appended := leader.LastIndex() - before; appended > 1 {
-		t.Fatalf("a console request answered by this node appended %d entries to the leader's log; want one read", appended)
+	if reads := runtime.stateReads.Load() - before; reads != 1 {
+		t.Fatalf("a console request answered by this node read the committed state %d times; want one read", reads)
 	}
 }
 
@@ -236,24 +235,23 @@ func TestRuntimeReadyAtConfirmsOnlyTheGenerationItsReadNames(t *testing.T) {
 	peer := StartTestPeer(t, options)
 	active := WaitPeerReady(t, peer)
 	runtime := peer.Runtime.Load()
-	leader := runtime.service
 	state, err := runtime.ReadState(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	before := leader.LastIndex()
+	before := runtime.stateReads.Load()
 	ready, err := runtime.readyAt(t.Context(), state)
-	if err != nil || ready.Generation != active.Generation || leader.LastIndex() != before {
-		t.Fatalf("a read naming the generation: generation %d (want %d) %v, %d entries appended; want it confirmed without another read", ready.Generation, active.Generation, err, leader.LastIndex()-before)
+	if reads := runtime.stateReads.Load() - before; err != nil || ready.Generation != active.Generation || reads != 0 {
+		t.Fatalf("a read naming the generation: generation %d (want %d) %v, %d more reads; want it confirmed without another read", ready.Generation, active.Generation, err, reads)
 	}
 
 	stale := state
 	stale.WriterGeneration++
-	before = leader.LastIndex()
+	before = runtime.stateReads.Load()
 	ready, err = runtime.readyAt(t.Context(), stale)
-	if err != nil || ready.Generation != active.Generation || leader.LastIndex() == before {
-		t.Fatalf("a read naming another writer: generation %d (want %d) %v, %d entries appended; want it confirmed by a read of its own", ready.Generation, active.Generation, err, leader.LastIndex()-before)
+	if reads := runtime.stateReads.Load() - before; err != nil || ready.Generation != active.Generation || reads == 0 {
+		t.Fatalf("a read naming another writer: generation %d (want %d) %v, %d more reads; want it confirmed by a read of its own", ready.Generation, active.Generation, err, reads)
 	}
 
 	ahead := state
