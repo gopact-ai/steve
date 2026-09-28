@@ -623,3 +623,50 @@ func TestContentRefusalPutsAnUncheckedPlacementBeforeARefusedOne(t *testing.T) {
 		}
 	}
 }
+
+// A repair that cannot store another copy because the peers asked to hold it
+// are behind the committed state says so: the notice names those peers,
+// not this node, whose own replica is current.
+func TestContentRepairPointsAtThePeersWhoseReplicasLagWhenItStoresACopy(t *testing.T) {
+	peers, active := contentPeers(t)
+	client, err := peers[0].ContentReplicator(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("content stored on lagging peers")
+	ref := checkpoint.Reference(data)
+	manifest, err := client.Prepare(t.Context(), "workspace", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordRepairManifest(t, active.Ledger, manifest)
+	var observations []string
+	worker, err := peers[0].newContentRepair(active, func(kind, _, message string, _ map[string]string) {
+		observations = append(observations, kind+": "+message)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The other copy is taken as out of reach, so the repair stores one on
+	// a peer; every peer it may ask is behind.
+	availability := map[string]bool{}
+	for _, receipt := range manifest.Receipts {
+		if receipt.NodeID != peers[0].Config.NodeID {
+			availability[receipt.NodeID] = false
+		}
+	}
+	for _, peer := range peers[1:] {
+		behind(peer)
+		t.Cleanup(func() { peer.readContentState.Store(nil) })
+	}
+	status, err := worker.repairOne(t.Context(), manifest, availability)
+	notices := strings.Join(observations, "\n")
+	if status != "degraded" || !errors.Is(err, contentreplica.ErrUnavailable) || !strings.Contains(notices, "content.degraded") || strings.Contains(notices, "本机") {
+		t.Fatalf("storing a copy on lagging peers: %s %v with %q; want degraded, pointing at the peers asked", status, err, observations)
+	}
+	for _, peer := range peers[1:] {
+		if !strings.Contains(notices, peer.Config.NodeID) {
+			t.Fatalf("the notice %q does not name the lagging peer %s", observations, peer.Config.NodeID)
+		}
+	}
+}
