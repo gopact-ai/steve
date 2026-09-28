@@ -50,6 +50,14 @@ func WithProbeKey(ctx context.Context, key Key) context.Context {
 	return context.WithValue(ctx, probeKey{}, key)
 }
 
+// WithoutScope is ctx with no running scope and no probe identity. Work
+// queued from an execution, such as a turn a child's result starts in its
+// parent's conversation, is not part of that execution and opens its own.
+func WithoutScope(ctx context.Context) context.Context {
+	ctx = context.WithValue(ctx, scopeKey{}, (*Scope)(nil))
+	return context.WithValue(ctx, probeKey{}, nil)
+}
+
 // Detached retains trace values while work belongs to the service lifetime.
 // It does not retain the parent prompt's cancellation, the cause it ended
 // on, its deadline or its silence clock.
