@@ -698,6 +698,16 @@ func (s *Service) establish(ctx context.Context, term uint64) error {
 
 // fingerprint identifies a command's input so a reused command ID with
 // different input is refused rather than answered from the receipt.
+//
+// A control request's input includes its Actor, whom the audit record of
+// the command names, so the same ID asked for again by another actor is
+// refused rather than answered with a receipt that names the first one.
+// A retry has to name the actor it first named. One that reaches the
+// leader through the RPC handler names the actor AuthorizeControl returns
+// there instead of its own, so a caller that retries a command both on its
+// own member and through another relies on the two naming the same actor:
+// the cluster names the owner on both paths, and the commands the service
+// submits by itself name the system under IDs of their own.
 func fingerprint(kind string, input any) string {
 	// Every input is one of the plain request structs above: strings,
 	// integers, booleans and byte slices, which Marshal cannot fail on.
