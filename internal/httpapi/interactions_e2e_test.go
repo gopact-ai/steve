@@ -138,6 +138,11 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 // first: under CPU contention the before-snapshot alone has taken over 5s.
 const interactionWait = 30 * time.Second
 
+// interactionPoll caps the pause between a wait's polls, which starts at
+// 5ms and doubles, so a long wait does not take CPU from the turn it waits
+// for.
+const interactionPoll = 100 * time.Millisecond
+
 func (f *interactionE2E) request(t *testing.T, method, path string, body []byte, mime, token string, want int) []byte {
 	t.Helper()
 	req, err := http.NewRequest(method, f.server.URL()+path, bytes.NewReader(body))
@@ -182,6 +187,7 @@ func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.Pen
 	t.Helper()
 	started := time.Now()
 	until := started.Add(interactionWait)
+	pause := 5 * time.Millisecond
 	for time.Now().Before(until) {
 		var data struct {
 			Questions []consoleapi.PendingQuestion `json:"questions"`
@@ -192,7 +198,8 @@ func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.Pen
 				return q
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(pause)
+		pause = min(2*pause, interactionPoll)
 	}
 	t.Fatalf("exchange %s asked no pending question%s", exchangeID, f.diagnose("console:e2e", time.Since(started)))
 	return consoleapi.PendingQuestion{}
@@ -201,6 +208,7 @@ func (f *interactionE2E) reply(t *testing.T, e consoleapi.Exchange) consoleapi.R
 	t.Helper()
 	started := time.Now()
 	until := started.Add(interactionWait)
+	pause := 5 * time.Millisecond
 	for time.Now().Before(until) {
 		var data struct {
 			Replies []consoleapi.Reply `json:"replies"`
@@ -213,7 +221,8 @@ func (f *interactionE2E) reply(t *testing.T, e consoleapi.Exchange) consoleapi.R
 				return r
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(pause)
+		pause = min(2*pause, interactionPoll)
 	}
 	t.Fatalf("exchange %s did not complete%s", e.ID, f.diagnose(e.Conversation, time.Since(started)))
 	return consoleapi.Reply{}
