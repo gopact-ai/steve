@@ -347,7 +347,7 @@ func (s *Service) ReadState(ctx context.Context) (State, error) {
 		}
 		return s.fsm.read(), nil
 	}
-	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	bounded, cancel := s.bound(ctx)
 	defer cancel()
 	index, err := s.ReadIndex(bounded)
 	if err != nil {
@@ -525,6 +525,30 @@ func (s *Service) waitConfigurationChange(ctx context.Context, description strin
 	return err
 }
 
+// applyBound is the cause of a context that bound limits to ApplyTimeout
+// when that limit, not the caller, ends it.
+type applyBound struct{ limit time.Duration }
+
+func (b applyBound) Error() string { return fmt.Sprintf("coordination: gave up after %s", b.limit) }
+
+// bound limits ctx to ApplyTimeout. Bounds nest: whichever ends first, the
+// caller's deadline or one of this service's limits, is the context's cause.
+func (s *Service) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(ctx, s.config.ApplyTimeout, applyBound{s.config.ApplyTimeout})
+}
+
+// gaveUp is err, which ended a wait on ctx, unless a limit set by bound ended
+// ctx: then it is ErrUnavailable saying that what did not happen within the
+// limit, and how far this node's log got. The caller's own cancellation or
+// deadline is returned unchanged.
+func (s *Service) gaveUp(ctx context.Context, err error, what string) error {
+	var limit applyBound
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(context.Cause(ctx), &limit) {
+		return err
+	}
+	return fmt.Errorf("%w: %s within %s; this node's log ends at index %d, committed %d, applied %d", ErrUnavailable, what, limit.limit, s.raft.LastIndex(), s.raft.CommitIndex(), s.fsm.applied.Load())
+}
+
 func (s *Service) barrier(ctx context.Context) error {
 	if s.closed.Load() {
 		return ErrUnavailable
@@ -532,11 +556,13 @@ func (s *Service) barrier(ctx context.Context) error {
 	if !s.fsm.healthy() {
 		return ErrApplication
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	ctx, cancel := s.bound(ctx)
 	defer cancel()
 	term := s.raft.CurrentTerm()
+	// A barrier completes once the state machine has applied every entry
+	// before it, so a held state machine holds it as well as a lost quorum.
 	if err := s.wait(ctx, s.raft.Barrier(s.config.ApplyTimeout)); err != nil {
-		return err
+		return s.gaveUp(ctx, err, fmt.Sprintf("in term %d, a barrier did not complete", term))
 	}
 	if s.raft.CurrentTerm() == term {
 		s.established.Store(term)
@@ -592,10 +618,10 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 		}
 	}
 	index := s.raft.CommitIndex()
-	ctx, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	ctx, cancel := s.bound(ctx)
 	defer cancel()
 	if err := s.wait(ctx, s.raft.VerifyLeader()); err != nil {
-		return 0, err
+		return 0, s.gaveUp(ctx, err, fmt.Sprintf("a majority did not confirm this node's leadership in term %d", term))
 	}
 	if s.raft.CurrentTerm() != term {
 		return 0, fmt.Errorf("%w: leadership changed while it was being confirmed", ErrNotLeader)
@@ -645,7 +671,7 @@ func (s *Service) establish(ctx context.Context, term uint64) error {
 	select {
 	case s.establishing <- struct{}{}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return s.gaveUp(ctx, ctx.Err(), fmt.Sprintf("term %d was not established: another request's barrier did not complete", term))
 	}
 	defer func() { <-s.establishing }()
 	if s.raft.CurrentTerm() != term {
