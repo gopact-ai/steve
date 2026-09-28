@@ -107,13 +107,13 @@ func (p *Peer) desktopProject(d platformconfig.Declaration) (string, config.Proj
 }
 
 // desktopError answers a refusal of the owner's input as a bad request and
-// anything else as this machine's failure.
-func desktopError(w http.ResponseWriter, err error) {
+// anything else as this machine's failure, either in text's language.
+func desktopError(w http.ResponseWriter, text i18n.Catalog, err error) {
 	if desktop.IsInputError(err) {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, text.Explain(err), http.StatusBadRequest)
 		return
 	}
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	http.Error(w, text.Explain(err), http.StatusInternalServerError)
 }
 
 // serveDesktopSetup records the guide page to open next, and
@@ -125,7 +125,7 @@ func (p *Peer) serveDesktopSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := desktop.SaveSetup(filepath.Dir(p.Options.ConfigPath), desktop.SetupProgress{Step: request.Step, Done: request.Done}); err != nil {
-		desktopError(w, err)
+		desktopError(w, p.text.For(r.Context()), err)
 		return
 	}
 	p.writeDesktopStatus(w)
@@ -141,9 +141,9 @@ func (p *Peer) serveDesktopWorkspace(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, err)
 		return
 	}
-	path, err := desktop.PrepareWorkspace(p.text.For(r.Context()), request.Path, filepath.Dir(p.Options.ConfigPath))
+	path, err := desktop.PrepareWorkspace(request.Path, filepath.Dir(p.Options.ConfigPath))
 	if err != nil {
-		desktopError(w, err)
+		desktopError(w, p.text.For(r.Context()), err)
 		return
 	}
 	// The directory the owner chose is this machine's workspace: where it

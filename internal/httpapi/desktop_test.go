@@ -75,7 +75,7 @@ func (d *desktopFixture) DesktopWorkspace(ctx context.Context, r consoleapi.Desk
 		return consoleapi.DesktopStatus{}, &desktop.InputError{Message: "/etc 属于系统目录"}
 	}
 	if r.Path == "/far" {
-		return consoleapi.DesktopStatus{}, desktop.CheckWorkspaceProject(i18n.FromContext(ctx), "default", false, "far")
+		return consoleapi.DesktopStatus{}, desktop.CheckWorkspaceProject("default", false, "far")
 	}
 	if r.Path == "/broken" {
 		return consoleapi.DesktopStatus{}, errors.New("创建工作目录失败：disk full")
