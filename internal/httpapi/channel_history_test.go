@@ -118,6 +118,7 @@ func TestChannelIdentityCannotReachConsoleMetadataOrReadAliases(t *testing.T) {
 		{"DELETE", "/console/conversations/native%2Ftopic", "", func(s *Server) http.HandlerFunc { return s.consoleDeleteConversation }},
 		{"PUT", "/console/conversations/native%2Ftopic/initialize", `{"project":"workspace"}`, func(s *Server) http.HandlerFunc { return s.consoleInitializeConversation }},
 		{"PUT", "/console/preferences", `{"conversation":"native/topic","agent":"agent","patch":{"model":"other"}}`, func(s *Server) http.HandlerFunc { return s.consoleSetPreferences }},
+		{"GET", "/console/selectors?conversation=native%2Ftopic&agent=agent", "", func(s *Server) http.HandlerFunc { return s.consoleSelectors }},
 		{"GET", "/console/replies?conversation=native%2Ftopic", "", func(s *Server) http.HandlerFunc { return s.consoleReplies }},
 		{"GET", "/console/context?conversation=native%2Ftopic", "", func(s *Server) http.HandlerFunc { return s.consoleContext }},
 		{"GET", "/console/setup?conversation=native%2Ftopic", "", func(s *Server) http.HandlerFunc { return s.consoleSetup }},
