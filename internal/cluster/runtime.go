@@ -326,16 +326,19 @@ func (r *Runtime) valid(g *generation) bool {
 	return !r.closed && !r.restoring && r.current == g && g.restore == r.restores && g.Context.Err() == nil
 }
 
+// revoke gives g up for err. A generation already ended keeps the reason
+// it ended for: what fails afterwards, as a write that finds it inactive or
+// a check whose read was canceled with it, fails because it ended.
 func (r *Runtime) revoke(g *generation, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.current == g {
 		if g.Context.Err() == nil {
 			r.logInactiveLocked(fmt.Sprintf("cluster: business generation %d revoked", g.Generation), err, false, g.Generation)
+			r.lastError = err
 		}
 		g.cancel()
 		r.ready = false
-		r.lastError = err
 		r.notifyLocked()
 	}
 }
