@@ -86,12 +86,14 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 		if err != nil {
 			return nil, fmt.Errorf("lease issuer on %s: %w", addr, err)
 		}
+		// A configured port 0 or host name is logged as what it bound.
+		bound := listener.Addr().String()
 		issuer := httpdrain.New(&http.Server{Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken), ReadHeaderTimeout: 10 * time.Second})
 		served := make(chan struct{})
 		go func() {
 			defer close(served)
 			if err := issuer.Serve(listener); err != nil {
-				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", addr, err))
+				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", bound, err))
 			}
 		}()
 		// The ledger closes after this step: a lease request already
@@ -103,7 +105,7 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 			_ = issuer.Shutdown(grace)
 			<-served
 		})
-		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), addr))
+		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), bound))
 	}
 	return &modelsValues{endpoints: endpoints, probeDir: probeDir, prober: prober, seen: seen}, nil
 }
