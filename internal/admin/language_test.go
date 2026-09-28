@@ -3,12 +3,14 @@ package admin
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/sshconnect"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -52,5 +54,31 @@ func TestRefusalsKeepTheirCause(t *testing.T) {
 	preparing := saidError{en.T(i18n.AdminCopyInProgress, "api", "node-b"), ErrWorkspacePreparing}
 	if !errors.Is(preparing, ErrWorkspacePreparing) || containsHan(preparing.Error()) || !strings.Contains(preparing.Error(), "node-b") {
 		t.Fatalf("preparing = %v", preparing)
+	}
+}
+
+// An installer that cannot be sent blocks the SSH plan with a reason in
+// the language of the request that asked for the plan.
+func TestSSHBinaryRefusalIsInTheRequestLanguage(t *testing.T) {
+	admin := nodeAdminFixture(t)
+	admin.cfg().Gateway.NodeBinary = filepath.Join(t.TempDir(), "missing")
+	req := sshconnect.InstallRequest{Name: "remote", Addr: "127.0.0.1:1"}
+	for _, tc := range []struct {
+		locale i18n.Locale
+		han    bool
+	}{{i18n.LocaleEN, false}, {i18n.LocaleZH, true}} {
+		plan, err := (sshNodeBackend{admin: admin}).Preview(i18n.WithLocale(t.Context(), tc.locale), req, SshCheckFixture())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var step *sshconnect.Step
+		for i := range plan.Steps {
+			if plan.Steps[i].ID == "binary" {
+				step = &plan.Steps[i]
+			}
+		}
+		if step == nil || step.Status != "blocked" || step.Message == "" || containsHan(step.Message) != tc.han {
+			t.Fatalf("%s binary step = %#v", tc.locale, step)
+		}
 	}
 }

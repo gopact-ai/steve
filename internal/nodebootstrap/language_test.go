@@ -39,3 +39,19 @@ func TestBinaryRefusalsAreSaidInTheOwnersLanguage(t *testing.T) {
 		}
 	}
 }
+
+// A refusal made where nobody's language is known is English: only the
+// place that answers the owner puts it in the owner's language.
+func TestBinaryRefusalsAreEnglishUntilSomeoneIsTold(t *testing.T) {
+	dir := t.TempDir()
+	unknown := filepath.Join(dir, "node")
+	if err := os.WriteFile(unknown, bytes.Repeat([]byte("not a binary"), 10), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(dir, "missing"), dir, unknown} {
+		_, err := InspectBinary(i18n.Catalog{}, path)
+		if err == nil || containsHan(err.Error()) {
+			t.Errorf("%s refusal %v is not English", path, err)
+		}
+	}
+}

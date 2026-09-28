@@ -281,3 +281,17 @@ func TestTheApplicationAnswersInTheLanguageTheConsoleChose(t *testing.T) {
 		}
 	}
 }
+
+// A bundled installer that cannot be sent is refused in the language of
+// the request that asked for the plan.
+func TestPeerSSHBinaryRefusalIsInTheRequestLanguage(t *testing.T) {
+	b, _, request, check := peerSSHFixture(t)
+	missing := filepath.Join(t.TempDir(), "missing")
+	b.findBinary = func(string) (string, bool) { return missing, true }
+	for _, locale := range []i18n.Locale{i18n.LocaleEN, i18n.LocaleZH} {
+		_, err := b.Preview(i18n.WithLocale(t.Context(), locale), request, check)
+		if err == nil || hasHan(err.Error()) != (locale == i18n.LocaleZH) {
+			t.Fatalf("%s refusal = %v", locale, err)
+		}
+	}
+}
