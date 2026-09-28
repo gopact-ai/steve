@@ -334,9 +334,11 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			} else {
 				landed, lerr = s.artifacts.LandPending(ctx, p)
 			}
+			committed := map[string]bool{}
 			for _, l := range landed {
 				switch l.State {
 				case artifact.LandCommitted:
+					committed[l.Artifact] = true
 					byArtifact[l.Artifact] = fmt.Sprintf("已落地主目录，%d 个路径", len(l.Paths))
 				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
 					byArtifact[l.Artifact] = conflicted(l.State, l.Error, l.Paths)
@@ -347,14 +349,18 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 					}
 				}
 			}
-			// A result still stuck on an earlier conflict is skipped by the
-			// pass and has no landing in it; the queue says why it waits.
-			stuck, err := s.artifacts.Stuck(ctx, p.ID)
+			// A result still stuck on a conflict is skipped by every pass
+			// until the canonical clears it, so its queue record says why it
+			// waits, in the words later passes will use: a conflict this pass
+			// reached through recovery carries recovery's cause in the
+			// landing. A result whose conflict has cleared is queued like any
+			// other, even when this pass did not reach it.
+			stuck, err := s.artifacts.StillStuck(ctx, p)
 			if err != nil {
 				slog.Warn(fmt.Sprintf("delegate: read stuck results of %s: %v", p.ID, err), "parent", parent.ID, "project", p.ID)
 			}
 			for _, st := range stuck {
-				if _, ok := byArtifact[st.Artifact]; !ok {
+				if !committed[st.Artifact] {
 					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths)
 				}
 			}
