@@ -18,12 +18,14 @@ import (
 // raftLoopPause parks a node's Raft main loop inside an observer filter.
 // requestVote reports the request to observers before it does anything else,
 // so a marked RequestVote holds the loop until release. The transport answers
-// heartbeats outside the main loop unless its heartbeat handler is cleared, so
-// pause clears it: heartbeats then wait behind the parked loop like every
-// other request, and the paused node acknowledges nothing, not even that it is
-// alive.
+// heartbeats outside the main loop, so a paused node keeps answering them
+// while it acknowledges no appended entry. A silent pause also clears the
+// transport's heartbeat handler: heartbeats then wait behind the parked loop
+// like every other request, and the node acknowledges nothing, not even that
+// it is alive.
 type raftLoopPause struct {
 	node      *Service
+	silent    bool
 	marker    []byte
 	transport *raft.NetworkTransport
 	observer  *raft.Observer
@@ -53,6 +55,15 @@ func newRaftLoopPause(t *testing.T, node *Service) *raftLoopPause {
 	return p
 }
 
+// newSilentRaftLoopPause is newRaftLoopPause for a pause that also withholds
+// the node's heartbeats.
+func newSilentRaftLoopPause(t *testing.T, node *Service) *raftLoopPause {
+	t.Helper()
+	p := newRaftLoopPause(t, node)
+	p.silent = true
+	return p
+}
+
 // pause returns once the node's main loop is parked. A zero term makes the
 // request lose on release, so it leaves no trace in the node's state.
 func (p *raftLoopPause) pause() error {
@@ -63,7 +74,9 @@ func (p *raftLoopPause) pause() error {
 	}()
 	select {
 	case <-p.entered:
-		p.node.transport.SetHeartbeatHandler(nil)
+		if p.silent {
+			p.node.transport.SetHeartbeatHandler(nil)
+		}
 		return nil
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("raft loop of %s did not pause", p.node.config.NodeID)
@@ -97,6 +110,29 @@ func pauseAll(pauses ...*raftLoopPause) error {
 	return nil
 }
 
+// A paused node keeps answering heartbeats; a silently paused one answers
+// none until it is released.
+func TestRaftLoopPauseWithholdsHeartbeatsOnlyWhenSilent(t *testing.T) {
+	c := newTestCluster(t, 3)
+	leader := c.leader()
+	var followers []*Service
+	for id, node := range c.nodes {
+		if id != leader.config.NodeID {
+			followers = append(followers, node)
+		}
+	}
+	pause, silent := newRaftLoopPause(t, followers[0]), newSilentRaftLoopPause(t, followers[1])
+	if err := pauseAll(pause, silent); err != nil {
+		t.Fatal(err)
+	}
+	if !pause.answersHeartbeat() {
+		t.Error("a paused node answered no heartbeat")
+	}
+	if silent.answersHeartbeat() {
+		t.Error("a silently paused node answered a heartbeat")
+	}
+}
+
 // leaseOutlastingApplyTimeout gives a node a lease of twice ApplyTimeout.
 // Raft sends heartbeats every tenth to fifth of the heartbeat timeout, which
 // may not be shorter than the lease, so a leader whose followers fall silent
@@ -127,7 +163,7 @@ func otherVoter(t *testing.T, c *testCluster, leader *Service) *Service {
 // call must end within ApplyTimeout instead of holding the locks until the
 // entry commits, and name the change it gave up waiting for.
 //
-// The paused followers answer no heartbeat either, so the leader keeps leading
+// The followers are paused silently: they answer no heartbeat either, so the leader keeps leading
 // only until its lease runs out; a leader that stepped down would end the wait
 // with ErrLeadershipLost, and the bound would go untested. The lease must
 // therefore outlast ApplyTimeout by itself, whatever the heartbeats did before
@@ -144,7 +180,7 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 		{"vote-grant", func(t *testing.T) (*Service, func(context.Context) error, string) {
 			c := newTunedTestCluster(t, 2, leaseOutlastingApplyTimeout)
 			leader, peer := joinNonvoter(t, c)
-			pauses := []*raftLoopPause{newRaftLoopPause(t, otherVoter(t, c, leader)), newRaftLoopPause(t, peer)}
+			pauses := []*raftLoopPause{newSilentRaftLoopPause(t, otherVoter(t, c, leader)), newSilentRaftLoopPause(t, peer)}
 			// The progress probe after the final barrier is the last step
 			// before AddVoter; the one before network validation must pass.
 			var validated atomic.Bool
@@ -168,7 +204,7 @@ func TestConfigurationChangeWaitIsBounded(t *testing.T) {
 			c := newTunedTestCluster(t, 2, leaseOutlastingApplyTimeout)
 			leader := c.leader()
 			peer := addUnjoinedTestReplica(t, c, "joining-domain")
-			pauses := []*raftLoopPause{newRaftLoopPause(t, otherVoter(t, c, leader)), newRaftLoopPause(t, peer)}
+			pauses := []*raftLoopPause{newSilentRaftLoopPause(t, otherVoter(t, c, leader)), newSilentRaftLoopPause(t, peer)}
 			leader.config.ValidateJoin = func(context.Context, Member) error { return pauseAll(pauses...) }
 			request := JoinRequest{ID: "join-voter", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}}
 			return leader, func(ctx context.Context) error { _, err := leader.Join(ctx, request); return err }, "add voter new-node"
