@@ -225,6 +225,12 @@ func (s *Store) replaceRecordsLocked(ctx context.Context, next *draft, guard fun
 		return err
 	}
 	changed := len(changes) > 0 || next.NextID != s.data.NextID
+	if !changed && guard == nil {
+		// Nothing to persist and nothing to check: skip the write transaction
+		// so an idle pass does not reach the ledger at all.
+		s.installLocked(next, changes)
+		return nil
+	}
 	err = s.book.Update(ctx, func(tx *ledger.Tx) error {
 		if guard != nil {
 			if err := guard(tx); err != nil {
