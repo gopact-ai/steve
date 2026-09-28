@@ -336,8 +336,12 @@ func (a *Service) ResumeProjectCopies(ctx context.Context) error {
 	}
 	a.ConfigStore.rlock()
 	declared := config.CloneProjects(a.cfg())
+	hub := i18n.FromLang(a.cfg().EffectiveLocale())
 	a.ConfigStore.runlock()
-	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(ctx, declared); err != nil {
+	// Startup names no reader, so a declaration that cannot be applied is
+	// explained in the Hub's language as it is now. Only that explanation
+	// gets it: the clones started below outlive startup.
+	if err := (configbuild.ProjectController{Store: a.Projects}).Ensure(i18n.WithLocale(ctx, hub), declared); err != nil {
 		return err
 	}
 	a.startProjectClonesLocked(ctx)
