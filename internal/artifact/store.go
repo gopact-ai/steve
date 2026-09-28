@@ -1427,9 +1427,10 @@ func (s *Store) Attempting(ctx context.Context, projectID, artifactID, taskID st
 	})
 }
 
-// Stuck lists the project's queued results that stopped at a merge or
-// apply conflict, oldest first. A result stays listed until a landing
-// pass retries it, even once the canonical has moved past its conflict.
+// Stuck lists the project's queued results whose landing stopped at a
+// merge or apply conflict, oldest first. The canonical moving past a
+// conflict does not take a result off the list; a pass retrying it,
+// resolving it or unblocking it does.
 func (s *Store) Stuck(ctx context.Context, projectID string) ([]Stuck, error) {
 	return s.blocked(ctx, projectID)
 }

@@ -327,6 +327,15 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 	}
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
+			// A pass skips the results still stuck on a conflict as it
+			// begins, so they are read first. A result the pass skipped is
+			// stuck, even once a result landed after it has moved the
+			// canonical on for the next pass to retry it. A result whose
+			// conflict had cleared before is queued like any other.
+			stuck, err := s.artifacts.StillStuck(ctx, p)
+			if err != nil {
+				slog.Warn(fmt.Sprintf("delegate: read stuck results of %s: %v", p.ID, err), "parent", parent.ID, "project", p.ID)
+			}
 			var landed []artifact.Landing
 			var lerr error
 			if lease != nil {
@@ -334,14 +343,14 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			} else {
 				landed, lerr = s.artifacts.LandPending(ctx, p)
 			}
-			committed := map[string]bool{}
+			// A conflict this pass reached reads as its queue record keeps
+			// it for later passes.
 			for _, l := range landed {
 				switch l.State {
 				case artifact.LandCommitted:
-					committed[l.Artifact] = true
 					byArtifact[l.Artifact] = fmt.Sprintf("已落地主目录，%d 个路径", len(l.Paths))
 				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
-					byArtifact[l.Artifact] = conflicted(l.State, l.Error, l.Paths)
+					byArtifact[l.Artifact] = conflicted(l.State, l.ConflictReason(), l.Paths)
 				default:
 					byArtifact[l.Artifact] = l.State
 					if l.Error != "" {
@@ -349,20 +358,8 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 					}
 				}
 			}
-			// A result still stuck on a conflict is skipped by every pass
-			// until the canonical clears it, so its queue record says why it
-			// waits, in the words later passes will use: a conflict this pass
-			// reached through recovery carries recovery's cause in the
-			// landing. A result whose conflict has cleared is queued like any
-			// other, even when this pass did not reach it. A result this pass
-			// committed keeps its landing: its queue record outlives it only
-			// when removing the record failed.
-			stuck, err := s.artifacts.StillStuck(ctx, p)
-			if err != nil {
-				slog.Warn(fmt.Sprintf("delegate: read stuck results of %s: %v", p.ID, err), "parent", parent.ID, "project", p.ID)
-			}
 			for _, st := range stuck {
-				if !committed[st.Artifact] {
+				if _, reached := byArtifact[st.Artifact]; !reached {
 					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths)
 				}
 			}
