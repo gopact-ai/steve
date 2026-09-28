@@ -103,6 +103,20 @@ func (f *longConnFeishu) next(t *testing.T) net.Conn {
 	}
 }
 
+// lose drops conn as a network failure would, once the official client has
+// sent its first ping on it. The client logs that ping outside its lock while
+// a loss rewrites what it logs under the lock; losing the connection only
+// after the ping keeps the race detector on this package's code.
+func lose(t *testing.T, conn net.Conn) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(waitDeadline))
+	if _, err := conn.Read(make([]byte, 1)); err != nil {
+		t.Fatalf("no ping on the long connection: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	_ = conn.Close()
+}
+
 // reconnectReports records what a channel reports about its connection.
 type reconnectReports struct {
 	mu      sync.Mutex
@@ -178,7 +192,7 @@ func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
 		t.Fatalf("a connected channel reported %s", describeReports(got))
 	}
 	lost := time.Now()
-	_ = first.Close()
+	lose(t, first)
 	f.next(t)
 	got := reports.waitFor(t, 3)
 	if len(got) != 3 || got[0] == nil || got[1] == nil || got[2] != nil {
@@ -211,7 +225,7 @@ func TestLongConnectionRefusedAfterALossEndsStart(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Start(t.Context()) }()
 
-	_ = f.next(t).Close()
+	lose(t, f.next(t))
 	select {
 	case err := <-errCh:
 		if err == nil || !strings.Contains(err.Error(), "application disabled") {

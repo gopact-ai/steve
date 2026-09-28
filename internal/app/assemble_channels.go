@@ -126,7 +126,17 @@ func connectFeishu(gw *gateway.Gateway, gate *agentmcp.Server, settings channelR
 // reportReconnect shows a Feishu long connection being established again
 // in the console, without secret, and withdraws it once it is back.
 func reportReconnect(settings channelRuntime, secret string) func(*feishu.Reconnect) {
-	return func(*feishu.Reconnect) {}
+	return func(r *feishu.Reconnect) {
+		if r == nil {
+			settings.SetReconnect(nil)
+			return
+		}
+		shown := &consoleapi.ChannelReconnect{Since: r.Since, Attempts: r.Failures}
+		if r.Err != nil {
+			shown.LastError = adminsvc.RedactChannelError(r.Err, secret).Error()
+		}
+		settings.SetReconnect(shown)
+	}
 }
 
 type channelsAssembly interface {

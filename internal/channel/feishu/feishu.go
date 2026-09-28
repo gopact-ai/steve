@@ -20,11 +20,9 @@ import (
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
-	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -146,6 +144,9 @@ type Channel struct {
 	onReady func()
 	// onReconnect is Options.OnReconnect.
 	onReconnect func(*Reconnect)
+	// watch follows the long connection for onReconnect; nil when ws is
+	// not the official client.
+	watch *connWatch
 	// botOpenID is written by Start before the long connection begins,
 	// which is the only source of inbound events that read it.
 	botOpenID string
@@ -225,15 +226,6 @@ func New(opts Options, handler Handler) *Channel {
 	return channel
 }
 
-// newLongConn is c's long connection to the Feishu at baseURL.
-func newLongConn(c *Channel, appID, appSecret, baseURL string, events *dispatcher.EventDispatcher) *larkws.Client {
-	return larkws.NewClient(appID, appSecret,
-		larkws.WithEventHandler(events),
-		larkws.WithDomain(baseURL),
-		larkws.WithLogLevel(larkcore.LogLevelInfo),
-	)
-}
-
 func (channel *Channel) messageHandler(botOpenID string, allowUnmentioned bool, handler Handler) func(context.Context, *larkim.P2MessageReceiveV1) error {
 	return func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 		policy := channel.loadAccess(allowUnmentioned)
@@ -286,12 +278,23 @@ func (c *Channel) Start(ctx context.Context) error {
 	}()
 	select {
 	case err := <-done:
+		c.watch.stop()
 		if ctx.Err() != nil {
 			c.ws.Close()
 			return ctx.Err()
 		}
 		return err
+	case err := <-c.watch.refusals():
+		// The official client gives up on a refused connection without
+		// returning from its Start.
+		c.watch.stop()
+		c.ws.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
 	case <-ctx.Done():
+		c.watch.stop()
 		c.ws.Close()
 		return ctx.Err()
 	}
