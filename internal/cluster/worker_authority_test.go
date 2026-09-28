@@ -321,12 +321,14 @@ func TestWorkerConfirmationWaitsForTheStateMachineToApply(t *testing.T) {
 	}
 }
 
-// An idle worker tunnel appends nothing to the consensus log, and a member
-// keeping one does not ask the leader for its state, the whole of which
-// may travel over a slow link: it confirms its replica with a read index
-// instead, which the measurement spans. A leader appends nothing for
-// either once it has established its term, so the member's requests are
-// counted on their way to the leader.
+// An idle worker tunnel appends nothing to the consensus log and has
+// neither end read the committed state; a member keeping one does not ask
+// the leader for that state, the whole of which may travel over a slow
+// link: it confirms its replica with a read index instead, which the
+// measurement spans. A leader appends nothing for a quorum read or a read
+// index once it has established its term, so the log shows only writes:
+// the reads are counted where each runtime makes them, and the member's
+// requests also on their way to the leader.
 func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
@@ -334,11 +336,12 @@ func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 	asked := countRequests(t, member, hub)
 	service := hub.Runtime.Load().service
 	span := hub.Runtime.Load().config.Coordination.ApplyTimeout + time.Second
-	growth := func() uint64 {
+	type idleSpan struct{ grew, hubReads, memberReads uint64 }
+	growth := func() idleSpan {
 		time.Sleep(time.Second)
-		before := service.LastIndex()
+		before := idleSpan{service.LastIndex(), hub.Runtime.Load().stateReads.Load(), member.Runtime.Load().stateReads.Load()}
 		time.Sleep(span)
-		return service.LastIndex() - before
+		return idleSpan{service.LastIndex() - before.grew, hub.Runtime.Load().stateReads.Load() - before.hubReads, member.Runtime.Load().stateReads.Load() - before.memberReads}
 	}
 	confirmed := func() time.Time {
 		workers := &member.Runtime.Load().workers
@@ -346,19 +349,19 @@ func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 		defer workers.mu.Unlock()
 		return workers.confirmed
 	}
-	if grew := growth(); grew != 0 {
-		t.Fatalf("with no worker tunnel open the leader's log grew by %d entries in %s; the measurement needs an idle cluster", grew, span)
+	if idle := growth(); idle != (idleSpan{}) {
+		t.Fatalf("with no worker tunnel open the leader's log grew by %d entries and the hub and the member read the committed state %d and %d times in %s; the measurement needs an idle cluster", idle.grew, idle.hubReads, idle.memberReads, span)
 	}
 	own := openWorkerTunnel(t, hub, hub)
-	if grew := growth(); grew != 0 {
-		t.Errorf("an idle tunnel to the coordinator's own worker grew the leader's log by %d entries in %s; its authority is being confirmed by quorum reads", grew, span)
+	if idle := growth(); idle != (idleSpan{}) {
+		t.Errorf("an idle tunnel to the coordinator's own worker grew the leader's log by %d entries and had the hub and the member read the committed state %d and %d times in %s; its authority is being confirmed by quorum reads", idle.grew, idle.hubReads, idle.memberReads, span)
 	}
 	own.Close()
 	openWorkerTunnel(t, hub, member)
 	opened := confirmed()
 	states, indexes := asked(coordination.RPCPath+"state"), asked(coordination.RPCPath+"readindex")
-	if grew := growth(); grew != 0 {
-		t.Errorf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries in %s", grew, span)
+	if idle := growth(); idle != (idleSpan{}) {
+		t.Errorf("an idle tunnel to a non-voting member's worker grew the leader's log by %d entries and had the hub and the member read the committed state %d and %d times in %s", idle.grew, idle.hubReads, idle.memberReads, span)
 	}
 	if n := asked(coordination.RPCPath+"state") - states; n != 0 {
 		t.Errorf("a member keeping an idle worker tunnel asked the leader for its state %d times in %s", n, span+time.Second)
