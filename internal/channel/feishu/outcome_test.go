@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	lark "github.com/larksuite/oapi-sdk-go/v3"
 )
 
 // outboundCalls are the Channel calls that change what a Feishu chat shows.
@@ -44,7 +43,7 @@ var outboundCalls = map[string]func(context.Context, *Channel) error{
 // channelAt is a Channel whose API calls go to url through client.
 func channelAt(t *testing.T, url string, client *http.Client) *Channel {
 	t.Helper()
-	return &Channel{api: lark.NewClient(t.Name(), "test-secret", lark.WithOpenBaseUrl(url), lark.WithHttpClient(client))}
+	return &Channel{api: apiAt(t.Name(), "test-secret", url, client)}
 }
 
 // dropConnection closes the request's connection without answering.

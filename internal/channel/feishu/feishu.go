@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -470,12 +471,13 @@ func (c *Channel) send(ctx context.Context, idType, receiveID, text string) (Sen
 			Build()).
 		Build()
 	_, confirm := c.effect("send", receiveID, content)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Create(ctx, req)
 	if err != nil {
-		return Sent{}, fmt.Errorf("feishu send: %w", err)
+		return Sent{}, call.failed("feishu send", err)
 	}
 	if !resp.Success() {
-		return Sent{}, fmt.Errorf("feishu send: code=%d msg=%s", resp.Code, resp.Msg)
+		return Sent{}, refused("feishu send", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
 		return Sent{}, fmt.Errorf("feishu send: empty response")
@@ -501,12 +503,13 @@ func (c *Channel) ReplyCard(ctx context.Context, messageID string, payload []byt
 			Build()).
 		Build()
 	_, confirm := c.effect("reply-card", messageID, payload)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("%w: feishu card reply: %w", messagechannel.ErrOutcomeUnknown, err)
+		return "", call.failed("feishu card reply", err)
 	}
 	if !resp.Success() {
-		return "", fmt.Errorf("feishu card reply: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", refused("feishu card reply", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil || deref(resp.Data.MessageId) == "" {
 		return "", fmt.Errorf("%w: feishu card reply: empty message id", messagechannel.ErrOutcomeUnknown)
@@ -526,12 +529,16 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 		MessageId(messageID).
 		Body(larkim.NewPatchMessageReqBodyBuilder().Content(content).Build()).
 		Build()
-	resp, err := c.api.Im.V1.Message.Patch(ctx, patch)
+	patchCtx, patchCall := tracked(ctx)
+	resp, err := c.api.Im.V1.Message.Patch(patchCtx, patch)
 	if err != nil {
-		return fmt.Errorf("%w: feishu card patch: %w", messagechannel.ErrOutcomeUnknown, err)
+		return patchCall.failed("feishu card patch", err)
 	}
 	if resp.Success() {
 		return nil
+	}
+	if err := refused("feishu card patch", resp.ApiResp, resp.Code, resp.Msg); errors.Is(err, messagechannel.ErrOutcomeUnknown) {
+		return err
 	}
 	upd := larkim.NewUpdateMessageReqBuilder().
 		MessageId(messageID).
@@ -540,12 +547,13 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 			Content(content).
 			Build()).
 		Build()
-	updated, updErr := c.api.Im.V1.Message.Update(ctx, upd)
-	if updErr != nil {
-		return fmt.Errorf("%w: feishu card update: %w", messagechannel.ErrOutcomeUnknown, updErr)
+	updateCtx, updateCall := tracked(ctx)
+	updated, err := c.api.Im.V1.Message.Update(updateCtx, upd)
+	if err != nil {
+		return updateCall.failed("feishu card update", err)
 	}
 	if !updated.Success() {
-		return fmt.Errorf("feishu card update: code=%d msg=%s", updated.Code, updated.Msg)
+		return refused("feishu card update", updated.ApiResp, updated.Code, updated.Msg)
 	}
 	return nil
 }
@@ -557,12 +565,13 @@ func (c *Channel) DeleteMessage(ctx context.Context, messageID string) error {
 		return fmt.Errorf("feishu delete: message id is required")
 	}
 	req := larkim.NewDeleteMessageReqBuilder().MessageId(messageID).Build()
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Delete(ctx, req)
 	if err != nil {
-		return fmt.Errorf("feishu delete: %w", err)
+		return call.failed("feishu delete", err)
 	}
 	if !resp.Success() {
-		return fmt.Errorf("feishu delete: code=%d msg=%s", resp.Code, resp.Msg)
+		return refused("feishu delete", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	return nil
 }
@@ -588,12 +597,13 @@ func (c *Channel) ReplyText(ctx context.Context, messageID, text string) (string
 			Build()).
 		Build()
 	_, confirm := c.effect("reply", messageID, content)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("%w: feishu reply: %w", messagechannel.ErrOutcomeUnknown, err)
+		return "", call.failed("feishu reply", err)
 	}
 	if !resp.Success() {
-		return "", fmt.Errorf("feishu reply: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", refused("feishu reply", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
 		confirm(nil)
@@ -621,12 +631,13 @@ func (c *Channel) ReplyThread(ctx context.Context, messageID, text string) (stri
 			Build()).
 		Build()
 	_, confirm := c.effect("reply-thread", messageID, content)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", "", fmt.Errorf("%w: feishu thread reply: %w", messagechannel.ErrOutcomeUnknown, err)
+		return "", "", call.failed("feishu thread reply", err)
 	}
 	if !resp.Success() {
-		return "", "", fmt.Errorf("feishu thread reply: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", "", refused("feishu thread reply", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
 		return "", "", fmt.Errorf("feishu thread reply: empty response")
