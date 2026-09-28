@@ -35,8 +35,9 @@ func accountedEnding(state attempt.State, outcome task.Outcome) bool {
 
 // ReadNodeReceiptProof joins owner readers under one committed local snapshot.
 // Callers on a follower must first wait for the required committed version.
-// Unsupported delivery owners, unknown usage and incomplete settlement retain
-// evidence; client fields and the task's latest attempt cannot authorize GC.
+// Unsupported delivery owners, turns without a channel message, unknown usage
+// and incomplete settlement retain evidence; client fields and the task's
+// latest attempt cannot authorize GC.
 // A task proved deleted leaves nothing to account or deliver, so its exact,
 // settled terminal receipt is released.
 func ReadNodeReceiptProof(ctx context.Context, book *ledger.Ledger, receipt nodewire.SessionReceipt) error {
@@ -93,6 +94,12 @@ func ReadNodeReceiptProof(ctx context.Context, book *ledger.Ledger, receipt node
 			!accountedEnding(record.State, accounting.Outcome) || accounting.UsageKnown == nil || !*accounting.UsageKnown ||
 			accounting.Model != u.Model || accounting.Tokens != (task.Tokens{Input: u.Input, Output: u.Output,
 			CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Total: u.Input + u.Output}) {
+			return ErrNodeReceiptPending
+		}
+		// Delivery owners confirm a reply to a channel message. A turn that
+		// answers none, the onboarding introduction sent straight to the
+		// owner, has no durable delivery to confirm: its evidence is kept.
+		if record.TurnID == "" {
 			return ErrNodeReceiptPending
 		}
 		// GetTx is the task owner's header-only port, never Store.Get/history.
