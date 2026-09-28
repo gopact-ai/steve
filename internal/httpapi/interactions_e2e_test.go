@@ -91,6 +91,18 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 		o.Tasks, o.Executions = tasks, registry
 	})
 	service := console.New(coordinator, "owner", nil)
+	// Drain the console before the ledger closes, so a turn still running at
+	// the end of a subtest settles instead of retrying its save forever. A
+	// turn that does not settle fails the test that left it, with where it
+	// is stuck; the ledger still closes, and that turn retries its save
+	// until the test process exits.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), interactionWait)
+		defer cancel()
+		if err := service.Shutdown(ctx); err != nil {
+			t.Errorf("console did not drain within %s before its ledger closes: %v\n--- goroutines in steve's internal packages\n%s", interactionWait, err, steveGoroutines(diagnoseLimit))
+		}
+	})
 	service.SetMaterials(materials, func(ctx context.Context, conversation, principal, projectID string) error {
 		if principal != "owner" || projectID != "scratch" {
 			return material.ErrScope
@@ -123,6 +135,18 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	return &interactionE2E{server: server, service: service, book: book, materials: materials, client: &http.Client{Timeout: 5 * time.Second}}
 }
 
+// interactionWait bounds how long a helper waits for a turn to reply or
+// ask, and how long a fixture waits for its console to drain. It is above
+// the fixture's 10s no-progress turn timeout, so a slow turn ends in the
+// product's own outcome instead of the test giving up first: under CPU
+// contention the before-snapshot alone has taken over 5s.
+const interactionWait = 30 * time.Second
+
+// interactionPoll caps the pause between a wait's polls, which starts at
+// 5ms and doubles, so a long wait does not take CPU from the turn it waits
+// for.
+const interactionPoll = 100 * time.Millisecond
+
 func (f *interactionE2E) request(t *testing.T, method, path string, body []byte, mime, token string, want int) []byte {
 	t.Helper()
 	req, err := http.NewRequest(method, f.server.URL()+path, bytes.NewReader(body))
@@ -134,16 +158,31 @@ func (f *interactionE2E) request(t *testing.T, method, path string, body []byte,
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	started := time.Now()
 	res, err := f.client.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s %s: %v%s", method, path, err, f.diagnose(requestConversation(path), time.Since(started)))
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(res.Body)
-	if err != nil || res.StatusCode != want {
-		t.Fatalf("%s %s status=%d want=%d body=%s err=%v", method, path, res.StatusCode, want, raw, err)
+	if err != nil {
+		t.Fatalf("%s %s status=%d: reading the body: %v%s", method, path, res.StatusCode, err, f.diagnose(requestConversation(path), time.Since(started)))
+	}
+	if res.StatusCode != want {
+		t.Fatalf("%s %s status=%d want=%d body=%s", method, path, res.StatusCode, want, raw)
 	}
 	return raw
+}
+
+// requestConversation is the conversation a request names in its query,
+// or else the one most of these requests are about.
+func requestConversation(path string) string {
+	if u, err := url.Parse(path); err == nil {
+		if conversation := u.Query().Get("conversation"); conversation != "" {
+			return conversation
+		}
+	}
+	return "console:e2e"
 }
 func (f *interactionE2E) json(t *testing.T, path string, value any, want int) []byte {
 	t.Helper()
@@ -164,7 +203,9 @@ func (f *interactionE2E) submit(t *testing.T, conversation, input, key string, r
 }
 func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.PendingQuestion {
 	t.Helper()
-	until := time.Now().Add(5 * time.Second)
+	started := time.Now()
+	until := started.Add(interactionWait)
+	pause := 5 * time.Millisecond
 	for time.Now().Before(until) {
 		var data struct {
 			Questions []consoleapi.PendingQuestion `json:"questions"`
@@ -175,14 +216,17 @@ func (f *interactionE2E) pending(t *testing.T, exchangeID string) consoleapi.Pen
 				return q
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(pause)
+		pause = min(2*pause, interactionPoll)
 	}
-	t.Fatalf("no pending question: queue=%+v replies=%+v", f.service.Queue("console:e2e"), f.service.Replies("console:e2e"))
+	t.Fatalf("exchange %s asked no pending question%s", exchangeID, f.diagnose("console:e2e", time.Since(started)))
 	return consoleapi.PendingQuestion{}
 }
 func (f *interactionE2E) reply(t *testing.T, e consoleapi.Exchange) consoleapi.Reply {
 	t.Helper()
-	until := time.Now().Add(5 * time.Second)
+	started := time.Now()
+	until := started.Add(interactionWait)
+	pause := 5 * time.Millisecond
 	for time.Now().Before(until) {
 		var data struct {
 			Replies []consoleapi.Reply `json:"replies"`
@@ -195,9 +239,10 @@ func (f *interactionE2E) reply(t *testing.T, e consoleapi.Exchange) consoleapi.R
 				return r
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(pause)
+		pause = min(2*pause, interactionPoll)
 	}
-	t.Fatalf("exchange %s did not complete", e.ID)
+	t.Fatalf("exchange %s did not complete%s", e.ID, f.diagnose(e.Conversation, time.Since(started)))
 	return consoleapi.Reply{}
 }
 
