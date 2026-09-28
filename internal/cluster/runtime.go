@@ -520,10 +520,7 @@ func (r *Runtime) keeps(state coordination.State) bool {
 // read confirms, once the local replica has caught up with that read. A read
 // that finds this node not coordinating is recorded in s.denied.
 func (r *Runtime) start(s *tickState) error {
-	started := time.Now()
-	ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
-	state, err := r.ReadState(ctx)
-	err = r.readGaveUp(r.ctx, err)
+	state, err := r.readAssignment(r.ctx)
 	if err == nil {
 		if err = r.coordinates(state); err != nil {
 			s.denied = state.AppliedIndex
@@ -531,10 +528,8 @@ func (r *Runtime) start(s *tickState) error {
 	}
 	var version uint64
 	if err == nil {
-		version, err = r.waitApplied(ctx, state.AppliedIndex, state.AppVersion)
-		err = r.applyGaveUp(r.ctx, err, started, state.AppliedIndex, state.AppVersion)
+		version, err = r.awaitApplied(r.ctx, state.AppliedIndex, state.AppVersion)
 	}
-	cancel()
 	if err != nil || r.keeps(state) {
 		return err
 	}
@@ -743,10 +738,7 @@ func (r *Runtime) invokeActivation(g *generation) (Deactivate, error) {
 			}
 			return late.stop, late.err
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(g.Context, r.config.Coordination.ApplyTimeout)
-			state, err := r.ReadState(ctx)
-			cancel()
-			err = r.readGaveUp(g.Context, err)
+			state, err := r.readAssignment(g.Context)
 			if err == nil {
 				if state.Coordinator != g.Assignment {
 					err = coordination.ErrStaleEpoch

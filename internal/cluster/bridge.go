@@ -180,11 +180,12 @@ func (r *Runtime) applyGaveUp(parent context.Context, err error, started time.Ti
 	return fmt.Errorf("%w: local replica did not reach applied index %d, application version %d within %s; it has %s", coordination.ErrUnavailable, index, version, time.Since(started).Round(time.Millisecond), reached)
 }
 
-// readGaveUp is err, which ended a quorum read, unless a limit of
-// ApplyTimeout this runtime set within parent ended the read: then it is
-// coordination.ErrUnavailable saying so. Once parent has ended, its
-// cancellation or deadline is returned unchanged, and a read that already
-// reports itself unavailable says why on its own.
+// readGaveUp is err, which ended a quorum read, unless the limit of
+// ApplyTimeout that readAssignment sets, within parent, on a read it asks
+// the consensus leader for ended it: then it is coordination.ErrUnavailable
+// saying so. Once parent has ended, its cancellation or deadline is
+// returned unchanged. A read on this node that gives up reports itself
+// unavailable and says why on its own.
 func (r *Runtime) readGaveUp(parent context.Context, err error) error {
 	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, coordination.ErrUnavailable) || parent.Err() != nil {
 		return err
