@@ -810,6 +810,29 @@ func TestCommittedWriteThisReplicaCannotApplyFailsAsUnavailable(t *testing.T) {
 	}
 }
 
+// A replica that does not catch up says which limit it was given, not how
+// long this wait happened to take, so the runtime loop, which reports a
+// reason once until it changes, reports a replica that stays behind once.
+func TestReplicaThatDoesNotCatchUpGivesTheSameReasonEachTime(t *testing.T) {
+	nodes := testNodes(t, 1)
+	// No wait measured to the millisecond comes out at this limit.
+	applyTimeout := time.Second + 300*time.Microsecond
+	nodes[0].config.Coordination.ApplyTimeout = applyTimeout
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	var reasons []string
+	for range 2 {
+		_, err := r.awaitApplied(t.Context(), 1<<62, 0)
+		if !errors.Is(err, coordination.ErrUnavailable) {
+			t.Fatalf("a wait for an index this replica does not reach failed with %v, not as unavailable", err)
+		}
+		reasons = append(reasons, err.Error())
+	}
+	if !strings.Contains(reasons[0], "within "+applyTimeout.String()+";") || reasons[1] != reasons[0] {
+		t.Fatalf("waits for the same index gave %q and %q, not the limit of %s", reasons[0], reasons[1], applyTimeout)
+	}
+}
+
 // Activation commits a writer fence and waits for this replica to apply it
 // before building any store. The runtime loop runs activation itself, so if
 // nothing bounded that wait the node would stay silently stuck, unable to
