@@ -105,6 +105,9 @@ type Runtime struct {
 	ready     bool
 	closed    bool
 	retryIn   time.Duration
+	// doubtIn is how long the runtime loop waits after the next build that
+	// meets lost or unconfirmed authority; see awaitAuthority.
+	doubtIn   time.Duration
 	lastError error
 	// inactive is the reason last logged for having no ready generation,
 	// so a follower polling the same answer logs it once.
@@ -323,16 +326,19 @@ func (r *Runtime) valid(g *generation) bool {
 	return !r.closed && !r.restoring && r.current == g && g.restore == r.restores && g.Context.Err() == nil
 }
 
+// revoke gives g up for err. A generation already ended keeps the reason
+// it ended for: what fails afterwards, as a write that finds it inactive or
+// a check whose read was canceled with it, fails because it ended.
 func (r *Runtime) revoke(g *generation, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.current == g {
 		if g.Context.Err() == nil {
 			r.logInactiveLocked(fmt.Sprintf("cluster: business generation %d revoked", g.Generation), err, false, g.Generation)
+			r.lastError = err
 		}
 		g.cancel()
 		r.ready = false
-		r.lastError = err
 		r.notifyLocked()
 	}
 }
@@ -517,8 +523,7 @@ func (r *Runtime) keeps(state coordination.State) bool {
 // read confirms, once the local replica has caught up with that read. A read
 // that finds this node not coordinating is recorded in s.denied.
 func (r *Runtime) start(s *tickState) error {
-	ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
-	state, err := r.ReadState(ctx)
+	state, err := r.readAssignment(r.ctx)
 	if err == nil {
 		if err = r.coordinates(state); err != nil {
 			s.denied = state.AppliedIndex
@@ -526,9 +531,8 @@ func (r *Runtime) start(s *tickState) error {
 	}
 	var version uint64
 	if err == nil {
-		version, err = r.waitApplied(ctx, state.AppliedIndex, state.AppVersion)
+		version, err = r.awaitApplied(r.ctx, state.AppliedIndex, state.AppVersion)
 	}
-	cancel()
 	if err != nil || r.keeps(state) {
 		return err
 	}
@@ -600,6 +604,16 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 			if errors.Is(err, context.Canceled) && !r.valid(g) {
 				return nil
 			}
+			// A build that failed on this generation's authority says
+			// nothing about the application. The generation is given up,
+			// as when its writer fence does not apply, and the runtime
+			// loop, which confirms the assignment and waits for this
+			// replica again first, activates another; see awaitAuthority.
+			if authorityInDoubt(err) {
+				r.revoke(g, err)
+				r.awaitAuthority(g, err)
+				return nil
+			}
 			return fmt.Errorf("activate business generation: %w", err)
 		}
 	}
@@ -616,11 +630,47 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 	g.Version = position.Version
 	r.ready = true
 	r.retryIn = 0
+	r.doubtIn = 0
 	r.lastError = nil
 	r.inactive = ""
 	r.notifyLocked()
 	slog.Info(fmt.Sprintf("cluster: business generation %d ready", g.Generation), "node", g.NodeID, "generation", g.Generation, "epoch", assignment.Epoch, "writer_generation", g.WriterGeneration, "took", time.Since(started).Round(time.Millisecond))
 	return nil
+}
+
+// authorityInDoubt reports whether err says that a generation lost its
+// authority, or that coordination could not confirm it just now.
+func authorityInDoubt(err error) bool {
+	return errors.Is(err, ErrInactive) || errors.Is(err, coordination.ErrUnavailable) || errors.Is(err, coordination.ErrNotLeader) || errors.Is(err, coordination.ErrNotCoordinator) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)
+}
+
+// awaitAuthority spaces out the builds that meet lost or unconfirmed
+// authority, g's the latest. The first is tried again on the next poll.
+// Each one after it, until a generation becomes ready, waits twice as long
+// as the one before, starting from the poll interval and growing to thirty
+// seconds: every attempt commits a writer fence and builds the whole
+// application, and a cause that returns at once would otherwise repeat them
+// every poll.
+func (r *Runtime) awaitAuthority(g *generation, cause error) {
+	r.mu.Lock()
+	delay := r.doubtIn
+	if r.doubtIn *= 2; r.doubtIn < r.config.PollInterval {
+		r.doubtIn = r.config.PollInterval
+	} else if r.doubtIn > 30*time.Second {
+		r.doubtIn = 30 * time.Second
+	}
+	r.mu.Unlock()
+	if delay == 0 {
+		return
+	}
+	slog.Warn(fmt.Sprintf("cluster: business generation %d met lost or unconfirmed authority again; next attempt in %s", g.Generation, delay), "node", r.config.Coordination.NodeID, "generation", g.Generation, "cause", cause.Error())
+	r.retire()
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-r.ctx.Done():
+	case <-timer.C:
+	}
 }
 
 // holdActivation keeps this replica in the cluster when its own application
@@ -691,9 +741,7 @@ func (r *Runtime) invokeActivation(g *generation) (Deactivate, error) {
 			}
 			return late.stop, late.err
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(g.Context, r.config.Coordination.ApplyTimeout)
-			state, err := r.ReadState(ctx)
-			cancel()
+			state, err := r.readAssignment(g.Context)
 			if err == nil {
 				if state.Coordinator != g.Assignment {
 					err = coordination.ErrStaleEpoch

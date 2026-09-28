@@ -122,7 +122,8 @@ type contentReads struct {
 // makes after the transfer under a context of its own, before it answers;
 // they are what stand between that change and the answer.
 //
-// A repair round shares its reads the same way; see sweep.
+// A repair round and a maintenance round share their reads the same way;
+// see sweep and maintain.
 func withContentReads(ctx context.Context) context.Context {
 	return context.WithValue(ctx, contentReadsKey{}, &contentReads{})
 }

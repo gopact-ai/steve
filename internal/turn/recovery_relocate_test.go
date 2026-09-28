@@ -2,6 +2,8 @@ package turn
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
@@ -102,6 +105,88 @@ func (m relocationContextManager) OpenSession(context.Context, harness.Placement
 
 func TestRelocationPersistsAttestedNativeContextForFollowingTurns(t *testing.T) {
 	c, _, _, old, req := retainedChatFixture(t)
+	record, req, session := preparedRelocation(t, c, old, req)
+	runner := &relocationContextRunner{fakeRunner: &fakeRunner{id: "ns_relocated"}}
+	c.runtime = relocationContextManager{fakeManager: &fakeManager{}, runner: runner}
+	_, _, _, known, err := c.openRelocation(t.Context(), req, record, agent.Agent{ID: "worker", Harness: "test", Node: "node-b"}, attempt.RelocationSessionConfig{}, session)
+	if err != nil || !known {
+		t.Fatalf("open relocated session: known=%v err=%v", known, err)
+	}
+	saved, err := c.attempts.Get(t.Context(), record.ID)
+	if err != nil || saved.State != attempt.Running || saved.Session != runner.ID() || saved.NativeContext != runner.NativeContextID() {
+		t.Fatalf("relocation lost attested context: session=%s context=%s state=%s err=%v", saved.Session, saved.NativeContext, saved.State, err)
+	}
+}
+
+// relocationServersManager records the servers each replacement is opened
+// with.
+type relocationServersManager struct {
+	relocationContextManager
+	opened *[]acp.MCPServer
+}
+
+func (m relocationServersManager) OpenSession(ctx context.Context, at harness.Placement, id, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
+	*m.opened = append([]acp.MCPServer(nil), servers...)
+	return m.relocationContextManager.OpenSession(ctx, at, id, workdir, servers)
+}
+
+// A replacement whose open is retried after its target node restarted on
+// another messaging port reaches the built-in server where the node listens
+// now, still with the bearer frozen for it; every other frozen server is
+// opened as frozen.
+func TestRelocationOpensTheMessagingServerWhereTheNodeListensNow(t *testing.T) {
+	c, _, _, old, req := retainedChatFixture(t)
+	record, req, session := preparedRelocation(t, c, old, req)
+	var opened []acp.MCPServer
+	c.runtime = relocationServersManager{relocationContextManager: relocationContextManager{fakeManager: &fakeManager{}, runner: &relocationContextRunner{fakeRunner: &fakeRunner{id: "ns_relocated"}}}, opened: &opened}
+	c.nodes = fakeEndpoints{port: map[string]int{"node-b": 20002}}
+	bearer := []acp.HTTPHeader{{Name: "Authorization", Value: "Bearer frozen-token"}}
+	other := acp.MCPServer{Name: "docs", Type: acp.MCPServerTypeHTTP, URL: "http://127.0.0.1:20001/docs"}
+	frozen := attempt.RelocationSessionConfig{MCPServers: []acp.MCPServer{
+		{Name: agentmcp.ServerName, Type: acp.MCPServerTypeHTTP, URL: "http://127.0.0.1:20001/mcp", Headers: bearer},
+		other,
+	}, AgentToken: "frozen-token"}
+	if _, _, _, _, err := c.openRelocation(t.Context(), req, record, agent.Agent{ID: "worker", Harness: "test", Node: "node-b"}, frozen, session); err != nil {
+		t.Fatal(err)
+	}
+	if len(opened) != 2 || opened[0].URL != "http://127.0.0.1:20002/mcp" || !reflect.DeepEqual(opened[0].Headers, bearer) || !reflect.DeepEqual(opened[1], other) {
+		t.Fatalf("the replacement was opened with %+v; want the messaging server on port 20002 with the frozen bearer, then %+v", opened, other)
+	}
+	if frozen.MCPServers[0].URL != "http://127.0.0.1:20001/mcp" {
+		t.Fatalf("opening rewrote the frozen configuration: %+v", frozen.MCPServers[0])
+	}
+}
+
+// A replacement is never opened with the messaging port it was frozen with:
+// when where its node listens now cannot be learned, the open is not tried,
+// and the attempt stays prepared with nothing started on the node.
+func TestRelocationDoesNotOpenWithoutTheNodesCurrentMessagingPort(t *testing.T) {
+	c, _, _, old, req := retainedChatFixture(t)
+	record, req, session := preparedRelocation(t, c, old, req)
+	var opened []acp.MCPServer
+	c.runtime = relocationServersManager{relocationContextManager: relocationContextManager{fakeManager: &fakeManager{}, runner: &relocationContextRunner{fakeRunner: &fakeRunner{id: "ns_relocated"}}}, opened: &opened}
+	unreachable := errors.New("node-b is not connected")
+	c.nodes = fakeEndpoints{fail: unreachable}
+	frozen := attempt.RelocationSessionConfig{MCPServers: []acp.MCPServer{
+		{Name: agentmcp.ServerName, Type: acp.MCPServerTypeHTTP, URL: "http://127.0.0.1:20001/mcp", Headers: []acp.HTTPHeader{{Name: "Authorization", Value: "Bearer frozen-token"}}},
+	}, AgentToken: "frozen-token"}
+	_, _, _, known, err := c.openRelocation(t.Context(), req, record, agent.Agent{ID: "worker", Harness: "test", Node: "node-b"}, frozen, session)
+	if !errors.Is(err, unreachable) || known {
+		t.Fatalf("open without the node's current port: known=%v err=%v; want the lookup failure with nothing known on the node", known, err)
+	}
+	if opened != nil {
+		t.Fatalf("the replacement was opened with %+v", opened)
+	}
+	saved, err := c.attempts.Get(t.Context(), record.ID)
+	if err != nil || saved.State != attempt.Prepared || saved.Session != "" {
+		t.Fatalf("attempt after a refused open: state=%s session=%q err=%v", saved.State, saved.Session, err)
+	}
+}
+
+// preparedRelocation is a replacement attempt prepared on node-b for a
+// tracked conversation, with the session the conversation records for it.
+func preparedRelocation(t *testing.T, c *Coordinator, old attempt.Record, req Request) (attempt.Record, Request, state.Session) {
+	t.Helper()
 	tracked, err := c.tasks.Create(task.Task{Channel: "console:relocation", Member: "worker", ProjectID: "p"})
 	if err != nil {
 		t.Fatal(err)
@@ -118,16 +203,7 @@ func TestRelocationPersistsAttestedNativeContextForFollowingTurns(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &relocationContextRunner{fakeRunner: &fakeRunner{id: "ns_relocated"}}
-	c.runtime = relocationContextManager{fakeManager: &fakeManager{}, runner: runner}
 	req.ConversationID = tracked.Channel
 	session := state.Session{ConversationID: tracked.Channel, AgentID: "worker", HarnessID: "test", NodeID: "node-b", ProjectID: "p"}
-	_, _, _, known, err := c.openRelocation(t.Context(), req, record, agent.Agent{ID: "worker", Harness: "test", Node: "node-b"}, attempt.RelocationSessionConfig{}, session)
-	if err != nil || !known {
-		t.Fatalf("open relocated session: known=%v err=%v", known, err)
-	}
-	saved, err := c.attempts.Get(t.Context(), record.ID)
-	if err != nil || saved.State != attempt.Running || saved.Session != runner.ID() || saved.NativeContext != runner.NativeContextID() {
-		t.Fatalf("relocation lost attested context: session=%s context=%s state=%s err=%v", saved.Session, saved.NativeContext, saved.State, err)
-	}
+	return record, req, session
 }

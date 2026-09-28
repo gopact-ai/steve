@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
 )
@@ -57,16 +58,37 @@ func control[Request any](r *Runtime, ctx context.Context, request Request, loca
 }
 
 func (r *Runtime) ReadState(ctx context.Context) (coordination.State, error) {
+	return r.readState(ctx, 0)
+}
+
+// readAssignment is the quorum read with which the runtime loop and the
+// check of a building generation confirm the assignment; ctx has no deadline
+// of its own. On the consensus leader the read is bounded by coordination,
+// which says what it waited for. One this node asks the leader for is
+// bounded by ApplyTimeout here; see readGaveUp.
+func (r *Runtime) readAssignment(ctx context.Context) (coordination.State, error) {
+	state, err := r.readState(ctx, r.config.Coordination.ApplyTimeout)
+	return state, r.readGaveUp(ctx, err)
+}
+
+// readState reads the state on this node or, when it does not lead
+// consensus, asks the leader, within limit if it is not zero.
+func (r *Runtime) readState(ctx context.Context, limit time.Duration) (coordination.State, error) {
 	if r.ctx.Err() != nil {
 		return coordination.State{}, ErrInactive
 	}
 	r.rememberMembers()
 	r.stateReads.Add(1)
 	state, err := r.service.ReadState(ctx)
-	if errors.Is(err, coordination.ErrNotLeader) && r.config.Client != nil {
-		return r.config.Client.ReadState(ctx)
+	if !errors.Is(err, coordination.ErrNotLeader) || r.config.Client == nil {
+		return state, err
 	}
-	return state, err
+	if limit != 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, limit)
+		defer cancel()
+	}
+	return r.config.Client.ReadState(ctx)
 }
 
 // readIndex asks the consensus leader for a read index; see
