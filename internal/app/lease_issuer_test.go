@@ -13,11 +13,54 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/runtime"
 )
+
+// A hub configured to issue leases to other regions does not start without
+// its issuer: an address it cannot bind fails the startup with the address
+// and the reason, and everything built before is released.
+func TestHubDoesNotStartWhenItsLeaseIssuerCannotBind(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	addr := taken.Addr().String()
+	installation, err := desktop.Bootstrap(desktop.Options{StateDir: filepath.Join(t.TempDir(), "desktop")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(installation.Paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Gateway.IssuerAddr = addr
+	cfg.Gateway.IssuerToken = "issuer-token"
+	if err := config.Save(installation.Paths.Config, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	application, err := Build(t.Context(), Config{Path: installation.Paths.Config})
+	if application != nil {
+		_ = application.Close()
+	}
+	if err == nil {
+		t.Fatalf("the hub started although its lease issuer could not bind %s", addr)
+	}
+	if want := "lease issuer on " + addr + ":"; !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("startup error %q does not name the issuer address (%q) and why it could not bind", err, want)
+	}
+	release, err := runtime.AcquireLock(filepath.Dir(cfg.Gateway.StatePath))
+	if err != nil {
+		t.Fatalf("the failed startup left its state directory locked: %v", err)
+	}
+	release()
+}
 
 // The ledger closes after the lease issuer's shutdown step, so that step may
 // not end while a lease request is still inside the ledger, and the request
