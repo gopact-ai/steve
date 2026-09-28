@@ -358,7 +358,12 @@ func TestLateProposalCannotCommitAfterBusinessCachesAreReconstructed(t *testing.
 }
 
 func TestUnknownProposalOutcomeRevokesCachedStoresBeforeAnotherWrite(t *testing.T) {
-	nodes := testNodesWith(t, 2, steadyTiming)
+	// The write whose response is dropped is retried until the clients'
+	// retry window ends, so they keep the default window, which outlasts an
+	// election under this timing, rather than steadyTiming's longer one.
+	timing := steadyTiming
+	timing.retryWindow = 0
+	nodes := testNodesWith(t, 2, timing)
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	second := joinNode(t, first, nodes[1], true, false)
