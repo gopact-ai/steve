@@ -568,18 +568,24 @@ func TestAChildWhoseResultHangsFailsWithinItsSilence(t *testing.T) {
 // hangingHome is node-a holding the project's main directory. Once armed,
 // a snapshot of that directory, which is how a landing there begins,
 // waits for the context that asked for it to end and fails with why.
+// cut, if set, runs once that context has ended, before the snapshot
+// fails.
 type hangingHome struct {
 	artifact.LocalNodes
 	home    string
 	armed   atomic.Bool
 	reached chan struct{}
 	once    sync.Once
+	cut     func()
 }
 
 func (h *hangingHome) Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
 	if h.armed.Load() && req.Op == ops.Snapshot && req.WorkTree == h.home {
 		h.once.Do(func() { close(h.reached) })
 		<-ctx.Done()
+		if h.cut != nil {
+			h.cut()
+		}
 		return ops.Result{}, context.Cause(ctx)
 	}
 	return h.LocalNodes.Artifact(ctx, node, req)
