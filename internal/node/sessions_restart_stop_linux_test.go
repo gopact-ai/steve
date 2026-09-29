@@ -269,25 +269,8 @@ func TestNodeSessionRestartLeavesAnUnprovenGroupUntilItEnds(t *testing.T) {
 // not grow with how many were left.
 func TestNodeSessionRestartEndsTheGroupsAKilledNodeLeftTogether(t *testing.T) {
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}}
-	killed := NewServer(cfg)
-	if err := killed.startSessions(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	req := nodeSessionRequest(nodewire.SessionActionOpen)
 	const left = 3
-	for i := range left {
-		// No process holds these ids: the groups are only ever handed to
-		// the stand-in below.
-		id := procgroup.Identity{Group: 1<<30 + i, Leader: 1<<30 + i, Start: 1, Mark: procgroup.NewMark()}
-		open := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, fmt.Sprintf("open-%d", i), "orphaning")
-		one := &ownedSession{service: killed.sessions, changed: make(chan struct{})}
-		if err := one.commitLocked(sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: fmt.Sprintf("open-%d", i), CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{},
-			Process: sessionProcess{Identity: id, Place: killed.sessions.place},
-			State:   nodewire.SessionState{ID: open, Binding: req.Binding, Harness: "orphaning", State: nodewire.SessionInterrupted, Questions: []nodewire.SessionQuestion{}}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	killed.sessions.Close()
+	leaveRecordedGroups(t, cfg, left)
 	var tried atomic.Int32
 	cfg.settleGroup = func(_ procgroup.Identity, _, _ procgroup.Place, within time.Duration) error {
 		// The group does not end, however long it is given.
@@ -311,6 +294,76 @@ func TestNodeSessionRestartEndsTheGroupsAKilledNodeLeftTogether(t *testing.T) {
 	if restarted.sessions.processesStopped() {
 		t.Fatal("a stop was confirmed while the groups did not end")
 	}
+}
+
+// Groups a killed node left that end are ended at once, and each record's
+// stop is committed as its group is found ended, all at the same time.
+// Every stop is recorded, and the restarted node reports none unconfirmed.
+func TestNodeSessionRestartRecordsTheStopsOfTheGroupsItEndsTogether(t *testing.T) {
+	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}}
+	const left = 3
+	ids := leaveRecordedGroups(t, cfg, left)
+	var arrived atomic.Int32
+	together := make(chan struct{})
+	cfg.settleGroup = func(_ procgroup.Identity, _, _ procgroup.Place, within time.Duration) error {
+		// Each group ends once all are being ended, so their stops are
+		// committed together.
+		if arrived.Add(1) == left {
+			close(together)
+		}
+		select {
+		case <-together:
+			return nil
+		case <-time.After(within):
+			return procgroup.ErrRunning
+		}
+	}
+	restarted := NewServer(cfg)
+	if err := restarted.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.sessions.Close()
+	select {
+	case <-together:
+	default:
+		t.Fatalf("the restarted node ended %d of the %d groups left together", arrived.Load(), left)
+	}
+	for _, id := range ids {
+		record, exists, err := restarted.sessions.readRecord(id)
+		if err != nil || !exists || !record.State.ProcessStopped {
+			t.Fatalf("the stop of %s was not recorded: exists=%v process_stopped=%v: %v", id, exists, record.State.ProcessStopped, err)
+		}
+	}
+	if !restarted.sessions.processesStopped() {
+		t.Fatal("a stop was left unconfirmed after every group ended")
+	}
+}
+
+// leaveRecordedGroups leaves in cfg's state what a killed node leaves: left
+// interrupted sessions whose records name a process group that has not been
+// ended. No process holds the groups' ids: they are only ever handed to a
+// stand-in for settling. It returns the sessions' ids.
+func leaveRecordedGroups(t *testing.T, cfg ServerConfig, left int) []string {
+	t.Helper()
+	killed := NewServer(cfg)
+	if err := killed.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer killed.sessions.Close()
+	req := nodeSessionRequest(nodewire.SessionActionOpen)
+	ids := make([]string, 0, left)
+	for i := range left {
+		id := procgroup.Identity{Group: 1<<30 + i, Leader: 1<<30 + i, Start: 1, Mark: procgroup.NewMark()}
+		open := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, fmt.Sprintf("open-%d", i), "orphaning")
+		one := &ownedSession{service: killed.sessions, changed: make(chan struct{})}
+		if err := one.commitLocked(sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: fmt.Sprintf("open-%d", i), CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{},
+			Process: sessionProcess{Identity: id, Place: killed.sessions.place},
+			State:   nodewire.SessionState{ID: open, Binding: req.Binding, Harness: "orphaning", State: nodewire.SessionInterrupted, Questions: []nodewire.SessionQuestion{}}}); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, open)
+	}
+	return ids
 }
 
 // A cancellation of an open that belongs to another execution is refused
