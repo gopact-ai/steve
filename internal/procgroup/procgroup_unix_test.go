@@ -123,10 +123,10 @@ func TestSettleEndsTheGroupOfARunningLeader(t *testing.T) {
 	}
 }
 
-// A killed leader its parent has not reaped still holds the group's id: the
-// kernel finds a process in the group, so its stop is not confirmed until
-// the leader is reaped.
-func TestSettleDoesNotConfirmAGroupWhoseLeaderIsNotReaped(t *testing.T) {
+// A killed leader its parent has not reaped is a zombie, as a leader is
+// under a PID 1 that reaps no orphans: it runs nothing, and the group it
+// alone is left in has stopped.
+func TestSettleConfirmsAGroupOnlyItsUnreapedLeaderIsLeftIn(t *testing.T) {
 	cmd, id := startGroup(t, "m", "m", `exec sleep "$1"`, pause())
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
@@ -135,11 +135,8 @@ func TestSettleDoesNotConfirmAGroupWhoseLeaderIsNotReaped(t *testing.T) {
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	if err := Settle(id, here(t), here(t), 200*time.Millisecond); !errors.Is(err, ErrRunning) {
-		t.Fatalf("Settle = %v, want %v", err, ErrRunning)
-	}
-	_ = cmd.Wait()
-	if err := Settle(id, here(t), here(t), 5*time.Second); err != nil {
+	awaitZombie(t, cmd.Process.Pid)
+	if err := Settle(id, here(t), here(t), 200*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -265,4 +262,22 @@ func cmdlineIs(pid int, argv ...string) bool {
 func running(pid int) bool {
 	p, found, err := status(pid)
 	return err == nil && found && p.live
+}
+
+// awaitZombie waits until the killed process pid is a zombie, still
+// holding its pid for want of a parent that reaps it.
+func awaitZombie(t *testing.T, pid int) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		p, found, err := status(pid)
+		if err != nil || !found {
+			t.Fatalf("process %d is not left a zombie: found %v, %v", pid, found, err)
+		}
+		if !p.live {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("process %d still runs after SIGKILL", pid)
+		}
+	}
 }
