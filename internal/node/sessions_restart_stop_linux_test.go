@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,6 +145,27 @@ func TestNodeSessionRestartEndsAKilledNodesProcessGroup(t *testing.T) {
 	}
 }
 
+// The agents a killed node left can no longer be reached, and until they end
+// the restarted node cannot show that its processes stopped. It ends them as
+// it loads the records, before anyone asks for a stop.
+func TestNodeSessionRestartEndsAKilledNodesProcessGroupOnLoad(t *testing.T) {
+	killed := killNode(t)
+	if !liveProcess(killed.member) {
+		t.Fatal("the group member ended with the node; the restart has nothing to stop")
+	}
+	restarted := NewServer(killed.cfg)
+	if err := restarted.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.sessions.Close()
+	if liveProcess(killed.member) {
+		t.Fatal("the restarted node left the killed node's agent process group running until a stop was asked for")
+	}
+	if !restarted.sessions.processesStopped() {
+		t.Fatal("the restarted node did not confirm that the killed node's processes stopped")
+	}
+}
+
 // Pids are handed out again while a node is down. A process that now has
 // the recorded leader's pid and leads a group of that id, but started at
 // another time, is not the agent, and the restarted node must not signal it.
@@ -192,9 +214,60 @@ func TestNodeSessionRestartLeavesAReusedProcessGroupAlone(t *testing.T) {
 	}
 }
 
+// When the recorded leader is gone and no member left in its group carries
+// the recorded mark, a restarted node cannot show the group is the
+// execution's. It signals nothing and the stop stays unconfirmed; once the
+// members are ended by hand, the next stop checks again and confirms it.
+func TestNodeSessionRestartLeavesAnUnprovenGroupUntilItEnds(t *testing.T) {
+	killed := killNode(t)
+	rewriteRecordedProcess(t, killed.cfg, killed.id, map[string]json.RawMessage{"mark": json.RawMessage(`"another-group"`)})
+	if cmdlineIs(killed.leader, killed.agent) {
+		_ = syscall.Kill(killed.leader, syscall.SIGKILL)
+	}
+	for deadline := time.Now().Add(10 * time.Second); processExists(killed.leader); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the recorded leader was not reaped")
+		}
+	}
+	if !liveProcess(killed.member) {
+		t.Fatal("the group member ended with its leader; nothing is left to prove")
+	}
+	restarted := NewServer(killed.cfg)
+	if err := restarted.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.sessions.Close()
+	req := nodeSessionRequest("abort")
+	req.ID = killed.id
+	state, err := restarted.sessions.Do(t.Context(), "cluster-1", req)
+	if err == nil || state.ProcessStopped {
+		t.Fatalf("a stop was confirmed for a group the node could not show was the execution's: state=%s process_stopped=%v", state.State, state.ProcessStopped)
+	}
+	if !liveProcess(killed.member) {
+		t.Fatal("the restarted node signalled a group it could not show was the execution's")
+	}
+	killed.end()
+	for deadline := time.Now().Add(10 * time.Second); liveProcess(killed.member); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the group member did not end")
+		}
+	}
+	state, err = restarted.sessions.Do(t.Context(), "cluster-1", req)
+	if err != nil || !state.ProcessStopped {
+		t.Fatalf("the stop was not confirmed after the group ended: state=%s process_stopped=%v: %v", state.State, state.ProcessStopped, err)
+	}
+}
+
 // recordProcessGroup points a session record's process identity at pid,
 // leaving the recorded start time as it was.
 func recordProcessGroup(t *testing.T, cfg ServerConfig, id string, pid int) {
+	t.Helper()
+	rewriteRecordedProcess(t, cfg, id, map[string]json.RawMessage{"leader": json.RawMessage(strconv.Itoa(pid)), "group": json.RawMessage(strconv.Itoa(pid))})
+}
+
+// rewriteRecordedProcess replaces fields of a session record's process
+// identity.
+func rewriteRecordedProcess(t *testing.T, cfg ServerConfig, id string, fields map[string]json.RawMessage) {
 	t.Helper()
 	store, err := openSessionRecords(filepath.Join(cfg.StateDir, "node-sessions", "sessions.db"))
 	if err != nil {
@@ -212,7 +285,7 @@ func recordProcessGroup(t *testing.T, cfg ServerConfig, id string, pid int) {
 	if err := json.Unmarshal(record["process"], &process); err != nil || process["leader"] == nil || process["group"] == nil || process["start"] == nil {
 		t.Fatal("session record keeps no process identity")
 	}
-	process["leader"], process["group"] = json.RawMessage(strconv.Itoa(pid)), json.RawMessage(strconv.Itoa(pid))
+	maps.Copy(process, fields)
 	raw, err := json.Marshal(process)
 	if err != nil {
 		t.Fatal(err)
@@ -238,6 +311,12 @@ func recordedPID(path string) int {
 func cmdlineIs(pid int, argv ...string) bool {
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	return err == nil && bytes.Equal(raw, []byte(strings.Join(argv, "\x00")+"\x00"))
+}
+
+// processExists is true while anything holds pid, a zombie included.
+func processExists(pid int) bool {
+	_, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
+	return err == nil
 }
 
 // liveProcess is false for a pid that is gone or a zombie: neither runs.
