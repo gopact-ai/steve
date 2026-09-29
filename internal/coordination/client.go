@@ -9,10 +9,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -242,8 +244,9 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 			return err
 		}
 	}
+	control := action != "app" && action != "writer" && action != "state" && action != "readindex"
 	var headers http.Header
-	if action != "app" && action != "writer" && action != "state" && action != "readindex" {
+	if control {
 		if c.config.ControlHeaders == nil {
 			return fmt.Errorf("%w: owner authorization is required", ErrInvalid)
 		}
@@ -257,6 +260,10 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 	visited := map[string]bool{}
 	pause := firstRetryPause
 	var last error // the latest retryable failure
+	// unanswered is the latest call a member was sent and did not answer
+	// in time, unless that member has since answered or failed otherwise.
+	// A control command may still be in progress there.
+	var unanswered *unansweredCall
 	for {
 		member, ok := c.nextMember(visited)
 		if !ok {
@@ -281,6 +288,9 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 		// No call starts once the window has ended, including after a pause
 		// the window cut short.
 		if last != nil && !time.Now().Before(deadline) {
+			if control && unanswered != nil {
+				return fmt.Errorf("%w: peer %s was sent %s and did not answer within %s; the command may still be in progress there, and retrying it with the same ID continues it: %w", ErrUnavailable, unanswered.peer, action, c.config.Timeout, unanswered)
+			}
 			return fmt.Errorf("%w: no member took %s within %s: %w", ErrUnavailable, action, c.config.RetryWindow, last)
 		}
 		visited[member.NodeID] = true
@@ -307,8 +317,27 @@ func (c *Client) route(ctx context.Context, action string, input, output any) er
 			return err
 		}
 		last = err
+		var call *unansweredCall
+		switch {
+		case errors.As(err, &call):
+			unanswered = call
+		case unanswered != nil && unanswered.peer == member.NodeID:
+			unanswered = nil
+		}
 	}
 }
+
+// unansweredCall is a call a peer was sent in full and did not answer within
+// the client's timeout. The peer may have received it and still be working
+// on it: a leader runs a control command in steps, each bounded by its apply
+// timeout, so the command can outlast the call.
+type unansweredCall struct {
+	peer string
+	err  error
+}
+
+func (u *unansweredCall) Error() string { return u.err.Error() }
+func (u *unansweredCall) Unwrap() error { return u.err }
 
 func (c *Client) nextMember(visited map[string]bool) (Member, bool) {
 	c.mu.Lock()
@@ -372,6 +401,20 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 	if action == "status" || action == "state" || action == "readindex" {
 		method = http.MethodGet
 	}
+	// sent records that the whole request went out, which tells a peer that
+	// did not answer in time from one the request never reached. When a
+	// reused connection fails before any of the request left it, the
+	// transport sends the request again on another connection, so sent
+	// starts over each time the transport asks for one.
+	var sent atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GetConn: func(string) { sent.Store(false) },
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				sent.Store(true)
+			}
+		},
+	})
 	request, err := http.NewRequestWithContext(ctx, method, origin+RPCPath+action, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -385,7 +428,12 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%w: peer %s request failed: %v", ErrUnavailable, member.NodeID, err)
+		failed := fmt.Errorf("%w: peer %s request failed: %v", ErrUnavailable, member.NodeID, err)
+		var timeout net.Error
+		if sent.Load() && errors.As(err, &timeout) && timeout.Timeout() {
+			return nil, &unansweredCall{peer: member.NodeID, err: failed}
+		}
+		return nil, failed
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, c.config.MaxResponseBytes+1))

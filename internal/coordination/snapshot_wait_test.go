@@ -81,6 +81,57 @@ func TestJoinGivesUpOnABaselineSnapshotThatDoesNotFinish(t *testing.T) {
 	}
 }
 
+// The baseline snapshot keeps the member a join adds from catching up by
+// replaying the log from its first entry: taken before the member is added,
+// it compacts that entry away, and with no trailing log kept the entry does
+// not come back. A retry of a join whose member an earlier attempt already
+// added, as when the leader's answer came too late for the caller, takes no
+// second snapshot. Each snapshot compacts the log again, so a member still
+// installing the last one would be sent the new one once it finished.
+func TestJoinRetryWhoseMemberWasAddedTakesNoSecondBaselineSnapshot(t *testing.T) {
+	c, app := stalledSnapshotCluster(t)
+	app.resume()
+	leader := c.leader()
+	source := app.Application.(*durableCounter)
+	source.mu.Lock()
+	source.count = 71
+	err := source.persist()
+	source.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := addUnjoinedTestReplica(t, c, "retry-domain")
+	var reachable atomic.Bool
+	leader.config.ValidateJoin = func(context.Context, Member) error {
+		if !reachable.Load() {
+			return errors.New("candidate cannot reach another member")
+		}
+		return nil
+	}
+	request := JoinRequest{ID: "join-retried", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}}
+	// The first attempt adds new-node as a nonvoter and waits for it to
+	// catch up, then fails before it can vote.
+	if _, err := leader.Join(t.Context(), request); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("a join whose candidate failed network verification returned %v", err)
+	}
+	if taken := app.taken.Load(); taken != 1 {
+		t.Fatalf("the first join attempt took %d application snapshots, not one baseline", taken)
+	}
+	reachable.Store(true)
+	if _, err := leader.Join(t.Context(), request); err != nil {
+		t.Fatalf("the same join failed once the candidate passed network verification: %v", err)
+	}
+	if taken := app.taken.Load(); taken != 1 {
+		t.Fatalf("a retry of a join whose member an earlier attempt added took %d more application snapshots", taken-1)
+	}
+	if len(leader.Status().Voters) != 2 {
+		t.Fatal("new-node did not become a voter")
+	}
+	if value := c.configs["new-node"].Application.(*durableCounter).value(); value != 71 {
+		t.Fatalf("new-node holds %d, not the leader's baseline", value)
+	}
+}
+
 // Snapshot is bounded the same way. Callers that give up leave at most one
 // snapshot request behind, which later callers share instead of queueing
 // another behind it.
