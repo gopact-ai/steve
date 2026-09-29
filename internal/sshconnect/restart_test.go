@@ -34,7 +34,10 @@ type restartBackend struct {
 	// context ends; restartHolding counts the calls that reached it.
 	restartHold    chan struct{}
 	restartHolding atomic.Int32
-	records        []RestartRecord
+	// restartLeft is how long the latest Restarted had to wait for the
+	// machine when it was called, or -1 for no limit.
+	restartLeft time.Duration
+	records     []RestartRecord
 	// watched are the machines automatic start looks after; answering
 	// ones answer the cluster and unreachable ones have no SSH session.
 	watched     []string
@@ -56,7 +59,12 @@ func (b *restartBackend) Restarted(ctx context.Context, nodeID string) error {
 	Report(ctx, "机器已回到集群")
 	b.mu.Lock()
 	hold := b.restartHold
+	b.restartLeft = timeLeft(ctx)
 	b.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		// Like the cluster, it waits for no machine once its context ended.
+		return err
+	}
 	if hold != nil {
 		b.restartHolding.Add(1)
 		select {
@@ -112,6 +120,15 @@ func (b *restartBackend) recorded() []RestartRecord {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Clone(b.records)
+}
+
+// timeLeft is how long ctx has until its deadline, or -1 without one.
+func timeLeft(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return -1
+	}
+	return time.Until(deadline)
 }
 
 type restartScript struct{ alias, script string }
@@ -316,6 +333,35 @@ func TestRestartReportsAMachineThatDoesNotComeBack(t *testing.T) {
 		t.Fatalf("the backend's reason is not carried to the owner: %q", step.Message)
 	}
 	if records := backend.recorded(); len(records) != 1 || records[0].Outcome != RestartFailed {
+		t.Fatalf("records = %#v", records)
+	}
+}
+
+// An owner closing the page once the peer was stopped and started again
+// does not cut the restart off there: the machine is still waited for, no
+// longer than a restart waits, and the restart is recorded as it went.
+func TestRestartStillWaitsForTheMachineOnceThePageThatAskedForItCloses(t *testing.T) {
+	svc, runner, backend := restartFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	runner.answerWith(func(scriptCtx context.Context, script string) (Output, error) {
+		cancel()
+		return peerRestarted(scriptCtx, script)
+	})
+	result, err := svc.Restart(ctx, "node-1")
+	if err != nil || !result.Connected || result.Status != "connected" {
+		t.Fatalf("a restart whose page closed once the peer restarted = %#v %v", result, err)
+	}
+	if nodes := backend.restartedNodes(); !slices.Equal(nodes, []string{"node-1"}) {
+		t.Fatalf("the machine was not waited for: %v", nodes)
+	}
+	backend.mu.Lock()
+	left := backend.restartLeft
+	backend.mu.Unlock()
+	if left <= 0 || left > restartVerifyLimit {
+		t.Fatalf("the machine was waited for with %v left, want no more than %v", left, restartVerifyLimit)
+	}
+	if records := backend.recorded(); len(records) != 1 || records[0].Outcome != RestartRestarted || records[0].Automatic {
 		t.Fatalf("records = %#v", records)
 	}
 }

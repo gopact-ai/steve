@@ -681,6 +681,28 @@ func TestClosingTheServiceEndsAutomaticStart(t *testing.T) {
 	}
 }
 
+// Closing the service also ends an automatic start waiting for the
+// machine to come back: it stopped nothing, so nothing is left half done.
+func TestClosingTheServiceEndsAnAutomaticStartWaitingForTheMachine(t *testing.T) {
+	svc, _, backend, clock := autoStartFixture(t)
+	backend.set(func(b *restartBackend) { b.restartHold = make(chan struct{}) })
+	sweepOnce(svc)
+	clock.Advance(autoStartAfter)
+	svc.sweep()
+	waitUntil(t, "the start never waited for the machine", func() bool { return backend.restartHolding.Load() == 1 })
+	closed := make(chan error, 1)
+	go func() { closed <- svc.Close() }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		backend.set(func(b *restartBackend) { close(b.restartHold); b.restartHold = nil })
+		t.Fatal("closing the service waited on an automatic start waiting for the machine")
+	}
+	if nodes := backend.restartedNodes(); len(nodes) != 0 {
+		t.Fatalf("a closed service still saw %v come back", nodes)
+	}
+}
+
 // The log of an automatic start says it was automatic and that a running
 // peer is not ended.
 func TestAutoStartSaysWhatItDoes(t *testing.T) {

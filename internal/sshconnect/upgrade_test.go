@@ -27,6 +27,9 @@ type upgradeBackend struct {
 	// calls waiting there.
 	hold    chan struct{}
 	holding atomic.Int32
+	// upgradedLeft is how long the latest Upgraded had to wait for the
+	// machine when it was called, or -1 for no limit.
+	upgradedLeft time.Duration
 }
 
 func (b *upgradeBackend) UpgradeTarget(_ context.Context, nodeID string) (UpgradeTarget, error) {
@@ -42,6 +45,11 @@ func (b *upgradeBackend) Knows(_ context.Context, nodeID string) bool {
 
 func (b *upgradeBackend) Upgraded(ctx context.Context, nodeID string) error {
 	Report(ctx, "隧道已恢复")
+	b.upgradedLeft = timeLeft(ctx)
+	if err := ctx.Err(); err != nil {
+		// Like the cluster, it waits for no machine once its context ended.
+		return err
+	}
 	if b.hold != nil {
 		b.holding.Add(1)
 		<-b.hold
@@ -291,6 +299,45 @@ func TestUpgradeReportsAnUnconfirmedReturn(t *testing.T) {
 	}
 	if !strings.Contains(step.Message, "5035948") {
 		t.Fatal("the backend's reason is not carried to the owner")
+	}
+}
+
+// swapThen runs everything as the recording runner does and calls then
+// once the upgrade script ran.
+type swapThen struct {
+	*recordingRunner
+	then func()
+}
+
+func (r *swapThen) Bind(_ context.Context, _ string, args []string) (Connection, error) {
+	return &fixtureConnection{runner: r, args: append([]string{}, args...)}, nil
+}
+
+func (r *swapThen) Run(ctx context.Context, args []string, input string) (Output, error) {
+	out, err := r.recordingRunner.Run(ctx, args, input)
+	if strings.Contains(input, "steve.previous") {
+		r.then()
+	}
+	return out, err
+}
+
+// An owner closing the page once the program was swapped does not cut the
+// upgrade off there: the machine is still waited for on the new build, no
+// longer than an upgrade waits.
+func TestUpgradeStillWaitsForTheMachineOnceThePageThatAskedForItCloses(t *testing.T) {
+	svc, runner, backend, _ := upgradeFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	svc.runner = &swapThen{recordingRunner: runner, then: cancel}
+	result, err := svc.Upgrade(ctx, "node-1")
+	if err != nil || !result.Connected || result.Status != "connected" {
+		t.Fatalf("an upgrade whose page closed once the program was swapped = %#v %v", result, err)
+	}
+	if len(backend.upgraded) != 1 {
+		t.Fatalf("the machine was not waited for: %v", backend.upgraded)
+	}
+	if left := backend.upgradedLeft; left <= 0 || left > upgradeVerifyLimit {
+		t.Fatalf("the machine was waited for with %v left, want no more than %v", left, upgradeVerifyLimit)
 	}
 }
 
