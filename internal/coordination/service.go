@@ -981,7 +981,8 @@ func (s *Service) waitForProgress(ctx context.Context, member Member, state Stat
 
 // Join first adds a nonvoter and verifies its actual applied progress before
 // changing the voting configuration. Interrupted joins can safely be retried
-// with the same ID. A failed member is never removed automatically.
+// with the same ID; a retry whose member an earlier attempt already added
+// goes on from there. A failed member is never removed automatically.
 func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error) {
 	s.membershipMu.Lock()
 	defer s.membershipMu.Unlock()
@@ -1003,11 +1004,9 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 	if err := s.prepareJoin(ctx, &request, fp); err != nil {
 		return Result{}, err
 	}
-	if s.config.Application != nil {
-		if err := s.snapshot(ctx, "of the application baseline for "+request.Member.NodeID); err != nil && !errors.Is(err, raft.ErrNothingNewToSnapshot) {
-			return Result{}, err
-		}
-	}
+	// This leader changes the configuration only under membershipMu, and
+	// AddNonvoter below adds the member only if the configuration read here
+	// is still the latest, so the baseline snapshot can come after the read.
 	configuration := s.raft.GetConfiguration()
 	if err := s.wait(ctx, configuration); err != nil {
 		return Result{}, err
@@ -1026,6 +1025,18 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 		}
 	}
 	if !present {
+		// The baseline snapshot compacts the log up to its index, and no
+		// trailing log is kept, so the new member cannot catch up by
+		// replaying the log from its first entry and installs the snapshot
+		// instead. A member already in the configuration started the
+		// cluster or was added after such a snapshot, and every member but
+		// the first joined by installing one, so no member's log holds that
+		// entry any more and a retry that finds the member there takes none.
+		if s.config.Application != nil {
+			if err := s.snapshot(ctx, "of the application baseline for "+request.Member.NodeID); err != nil && !errors.Is(err, raft.ErrNothingNewToSnapshot) {
+				return Result{}, err
+			}
+		}
 		if err := s.waitConfigurationChange(ctx, "add nonvoter "+request.Member.NodeID, s.raft.AddNonvoter(raft.ServerID(request.Member.NodeID), raft.ServerAddress(request.Member.Address), configuration.Index(), s.config.ApplyTimeout)); err != nil {
 			return Result{}, err
 		}
