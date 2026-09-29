@@ -32,6 +32,8 @@
 @property(nonatomic, assign) BOOL layerClosed;
 @property(nonatomic, assign) NSUInteger closeRequests;
 @property(nonatomic, strong) NSURLRequest *loadedRequest;
+/** The document the view shows, as WKWebView.URL reports it. */
+@property(nonatomic, strong) NSURL *URL;
 @end
 @implementation TestWebView
 - (void)loadRequest:(NSURLRequest *)request { self.loadedRequest = request; }
@@ -166,6 +168,38 @@ static void checkNavigationIsolation(TestApplication *app, TestWebView *web) {
     check([web.loadedRequest.URL isEqual:app.serviceURL], @"Trusted service link was not kept in the workspace");
 }
 
+// The console's sidebar links are fragment routes (#/tasks). WebKit reports
+// an empty source frame for them, so they must not depend on it.
+static void checkFragmentRoutes(TestApplication *app, TestWebView *web) {
+    TestFrame *unknown = [[TestFrame alloc] init];
+    unknown.mainFrame = YES;
+    unknown.request = [[NSURLRequest alloc] init];
+    unknown.securityOrigin = [[TestOrigin alloc] init];
+    TestNavigation *action = [[TestNavigation alloc] init];
+    action.navigationType = WKNavigationTypeLinkActivated;
+    action.sourceFrame = unknown;
+    action.targetFrame = unknown;
+    NSArray *cases = @[
+        @[@"http://127.0.0.1:12345/", @"http://127.0.0.1:12345/#/tasks", @YES],
+        @[@"http://127.0.0.1:12345/#/home", @"http://127.0.0.1:12345/#/console?view=board", @YES],
+        @[@"http://127.0.0.1:12345/#/home", @"http://127.0.0.1:12345/", @NO],
+        @[@"http://127.0.0.1:12345/", @"http://127.0.0.1:12345/other#/tasks", @NO],
+        @[@"about:blank", @"http://127.0.0.1:12345/#/tasks", @NO],
+    ];
+    for (NSArray *entry in cases) {
+        web.URL = [NSURL URLWithString:entry[0]];
+        action.request = [NSURLRequest requestWithURL:[NSURL URLWithString:entry[1]]];
+        web.loadedRequest = nil;
+        __block WKNavigationActionPolicy result = WKNavigationActionPolicyCancel;
+        [app webView:(WKWebView *)web decidePolicyForNavigationAction:(WKNavigationAction *)action
+            decisionHandler:^(WKNavigationActionPolicy policy) { result = policy; }];
+        check((result == WKNavigationActionPolicyAllow) == [entry[2] boolValue],
+            [NSString stringWithFormat:@"Unexpected fragment route policy from %@ to %@", entry[0], entry[1]]);
+        check(!web.loadedRequest, @"A fragment route was replayed with workspace credentials");
+    }
+    web.URL = nil;
+}
+
 // The page asks the shell to make sure the service runs while its live
 // connection is down. A service back at the same address keeps the view;
 // a new address replaces it; a failed check never covers the workspace.
@@ -257,6 +291,7 @@ int main(void) {
         check(content.closeRequests == 2 && app.windowCloses == 2, @"An empty workspace did not let the window close");
 
         checkNavigationIsolation(app, content);
+        checkFragmentRoutes(app, content);
         checkServiceWatch();
         puts("Desktop navigation recovery passed");
     }
