@@ -41,6 +41,10 @@ type Process interface {
 	// It is called exactly once. Remote stream loss alone does not prove
 	// process exit; Stopped is the evidence.
 	Wait() error
+	// Exited is closed once the agent's own process has exited. What it
+	// left running may outlive it: Wait returns only once that is settled
+	// too.
+	Exited() <-chan struct{}
 	// Kill forces the agent and everything it spawned to die — the escape
 	// hatch for a graceful close that did not settle.
 	Kill()
@@ -122,7 +126,7 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 	if t.group != nil {
 		group = *t.group
 	}
-	return &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group}, nil
+	return &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, exited: make(chan struct{})}, nil
 }
 
 type localProcess struct {
@@ -130,6 +134,7 @@ type localProcess struct {
 	stdout  io.ReadCloser
 	stdin   io.WriteCloser
 	group   groupCalls
+	exited  chan struct{}
 	stopped atomic.Bool
 	// mu keeps a kill from reaching the group's id once the leader is
 	// reaped: from then on the id can belong to another process's group.
@@ -137,14 +142,16 @@ type localProcess struct {
 	reaped bool
 }
 
-func (p *localProcess) Stdout() io.ReadCloser { return p.stdout }
-func (p *localProcess) Stdin() io.WriteCloser { return p.stdin }
+func (p *localProcess) Stdout() io.ReadCloser   { return p.stdout }
+func (p *localProcess) Stdin() io.WriteCloser   { return p.stdin }
+func (p *localProcess) Exited() <-chan struct{} { return p.exited }
 
 // Wait kills what the agent left running in its process group before
 // reaping the agent. Until the leader is reaped it holds its pid, so no
 // other process can lead a group of that id, and the kill reaches only
 // the agent's own. The stop is confirmed once the kernel finds no process
-// left in the group.
+// left in the group. Exited is closed as soon as the agent has exited, as
+// a member no kill ends can keep Wait waiting for as long as it runs.
 func (p *localProcess) Wait() error {
 	pid := p.cmd.Process.Pid
 	switch err := p.group.waitExit(pid); {
@@ -158,6 +165,7 @@ func (p *localProcess) Wait() error {
 		slog.Error(fmt.Sprintf("acphost: wait for agent process %d: %v", pid, err))
 		return p.reapRunning()
 	}
+	close(p.exited)
 	p.endGroup(pid)
 	p.mu.Lock()
 	err := p.cmd.Wait()
@@ -177,6 +185,7 @@ func (p *localProcess) reapRunning() error {
 	p.mu.Lock()
 	p.reaped = true
 	p.mu.Unlock()
+	close(p.exited)
 	return err
 }
 
@@ -184,16 +193,15 @@ func (p *localProcess) reapRunning() error {
 // this process can see runs. A member the kill cannot end, as one in
 // uninterruptible sleep until it wakes, keeps it waiting.
 func (p *localProcess) endGroup(group int) {
-	began, warned := time.Now(), false
-	for delay := time.Millisecond; ; delay = min(2*delay, time.Second) {
+	stuck := newStuckReport()
+	for delay := time.Millisecond; ; delay = min(2*delay, 2*time.Second) {
 		killErr := p.group.kill(group)
 		live, err := p.group.live(group)
 		if err == nil && !live {
 			return
 		}
-		if !warned && time.Since(began) > 5*time.Second {
-			warned = true
-			slog.Error(fmt.Sprintf("acphost: agent process group %d still runs after SIGKILL (kill: %v, check: %v)", group, killErr, err))
+		if waited, due := stuck.due(); due {
+			slog.Error(fmt.Sprintf("acphost: agent process group %d still runs %s after SIGKILL (kill: %v, check: %v)", group, waited, killErr, err))
 		}
 		time.Sleep(delay)
 	}
@@ -205,18 +213,37 @@ func (p *localProcess) endGroup(group int) {
 // is signalled any more, as the id stops being the agent's own once its
 // last member is gone.
 func (p *localProcess) awaitEmpty(group int) {
-	began, warned := time.Now(), false
-	for delay := time.Millisecond; ; delay = min(2*delay, time.Second) {
+	stuck := newStuckReport()
+	for delay := time.Millisecond; ; delay = min(2*delay, 2*time.Second) {
 		gone, err := p.group.gone(group)
 		if err == nil && gone {
 			return
 		}
-		if !warned && time.Since(began) > 5*time.Second {
-			warned = true
-			slog.Error(fmt.Sprintf("acphost: agent process group %d still has a process this one cannot end (check: %v)", group, err))
+		if waited, due := stuck.due(); due {
+			slog.Error(fmt.Sprintf("acphost: agent process group %d still has a process this one cannot end after %s (check: %v)", group, waited, err))
 		}
 		time.Sleep(delay)
 	}
+}
+
+// stuckReport paces the report of a group that does not settle: first
+// after five seconds, then once a minute for as long as it stays.
+type stuckReport struct{ began, next time.Time }
+
+func newStuckReport() *stuckReport {
+	now := time.Now()
+	return &stuckReport{began: now, next: now.Add(5 * time.Second)}
+}
+
+// due reports whether the group has waited long enough to be reported
+// again, and how long it has waited.
+func (r *stuckReport) due() (time.Duration, bool) {
+	now := time.Now()
+	if now.Before(r.next) {
+		return 0, false
+	}
+	r.next = now.Add(time.Minute)
+	return now.Sub(r.began).Round(time.Second), true
 }
 
 func (p *localProcess) Stopped() bool { return p.stopped.Load() }

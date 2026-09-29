@@ -108,15 +108,19 @@ type SessionConfig struct {
 type Host struct {
 	cfg Config
 
-	mu           sync.Mutex
-	proc         Process
-	processes    map[uint64]Process
-	conn         *acp.Conn
-	caller       *acp.AgentCaller
-	stdin        io.WriteCloser
-	isClosed     bool
-	alive        bool
-	exited       chan struct{}
+	mu        sync.Mutex
+	proc      Process
+	processes map[uint64]Process
+	conn      *acp.Conn
+	caller    *acp.AgentCaller
+	stdin     io.WriteCloser
+	isClosed  bool
+	alive     bool
+	exited    chan struct{}
+	// settling holds, for each process whose Wait has not returned, a
+	// channel closed once it has: what the agent left in its process group
+	// is settled, whether its stop is confirmed or not.
+	settling     map[uint64]chan struct{}
 	collectors   map[acp.SessionID]*collector
 	capabilities *acp.AgentCapabilities
 	sessions     map[acp.SessionID]*sessionState
@@ -138,8 +142,8 @@ func New(cfg Config) *Host {
 	}
 	return &Host{
 		cfg: cfg, collectors: map[acp.SessionID]*collector{}, sessions: map[acp.SessionID]*sessionState{},
-		processes: map[uint64]Process{},
-		opening:   map[acp.SessionID]uint64{}, active: map[acp.SessionID]uint64{},
+		processes: map[uint64]Process{}, settling: map[uint64]chan struct{}{},
+		opening: map[acp.SessionID]uint64{}, active: map[acp.SessionID]uint64{},
 	}
 }
 
@@ -762,12 +766,16 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		proc.Kill()
 		return fmt.Errorf("acp client: %w", err)
 	}
-	exited := make(chan struct{})
+	exited, settled := make(chan struct{}), make(chan struct{})
 	h.proc = proc
 	if h.processes == nil {
 		h.processes = map[uint64]Process{}
 	}
+	if h.settling == nil {
+		h.settling = map[uint64]chan struct{}{}
+	}
 	h.processes[generation] = proc
+	h.settling[generation] = settled
 	h.conn = conn
 	h.stdin = stdin
 	h.alive = true
@@ -782,34 +790,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	h.active = map[acp.SessionID]uint64{}
 	h.capabilities = nil
 
-	// Sole waiter for this process; broadcasts exit before taking the lock
-	// so shutdownLocked can wait on `exited` while holding h.mu.
-	go func() {
-		<-conn.Done()
-		connErr := conn.Err()
-		// Wait releases the transport; how the agent ended is read from
-		// the connection error, and Stopped carries the evidence.
-		_ = proc.Wait()
-		close(exited)
-		h.mu.Lock()
-		if proc.Stopped() {
-			delete(h.processes, generation)
-		}
-		if h.proc == proc {
-			h.alive = false
-			h.collectors = map[acp.SessionID]*collector{}
-			h.sessions = map[acp.SessionID]*sessionState{}
-			h.opening = map[acp.SessionID]uint64{}
-			h.active = map[acp.SessionID]uint64{}
-			h.capabilities = nil
-		}
-		h.mu.Unlock()
-		if connErr != nil && !errors.Is(connErr, io.EOF) {
-			slog.Error(fmt.Sprintf("acphost: connection closed: %v", connErr))
-		} else {
-			slog.Info("acphost: agent process exited")
-		}
-	}()
+	go h.watch(generation, proc, conn, exited, settled)
 
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -836,6 +817,51 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	h.adapter = name
 	slog.Info(fmt.Sprintf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion))
 	return nil
+}
+
+// watch is the sole waiter for one agent process. Once the agent has exited
+// the host is free to start another, even while Wait still settles what
+// the exited one left in its process group; the process stays on the books
+// until that stop is confirmed. Exit is broadcast before taking the lock so
+// shutdownLocked can wait on `exited` without holding h.mu.
+func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, settled chan struct{}) {
+	<-conn.Done()
+	connErr := conn.Err()
+	waited := make(chan struct{})
+	go func() {
+		// Wait releases the transport; how the agent ended is read from
+		// the connection error, and Stopped carries the evidence.
+		_ = proc.Wait()
+		close(waited)
+	}()
+	select {
+	case <-proc.Exited():
+	case <-waited:
+	}
+	close(exited)
+	h.mu.Lock()
+	if h.proc == proc {
+		h.alive = false
+		h.collectors = map[acp.SessionID]*collector{}
+		h.sessions = map[acp.SessionID]*sessionState{}
+		h.opening = map[acp.SessionID]uint64{}
+		h.active = map[acp.SessionID]uint64{}
+		h.capabilities = nil
+	}
+	h.mu.Unlock()
+	if connErr != nil && !errors.Is(connErr, io.EOF) {
+		slog.Error(fmt.Sprintf("acphost: connection closed: %v", connErr))
+	} else {
+		slog.Info("acphost: agent process exited")
+	}
+	<-waited
+	h.mu.Lock()
+	if proc.Stopped() {
+		delete(h.processes, generation)
+	}
+	delete(h.settling, generation)
+	h.mu.Unlock()
+	close(settled)
 }
 
 func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg SessionConfig) (acp.SessionID, uint64, error) {
@@ -1249,35 +1275,60 @@ func (h *Host) AllProcessesStopped() bool {
 // so in-flight session notifications can drain instead of blocking on the
 // lock (conn.Done waits for the notification loop, whose handler takes h.mu).
 // cmd.Wait is never called here — the monitor goroutine is the sole waiter.
+// Within the same grace, and the kill that ends it, it also waits for every
+// process this host started to settle what it left in its process group;
+// one that does not stays unconfirmed.
 func (h *Host) shutdownLocked() {
-	if !h.alive {
-		return
-	}
+	alive := h.alive
 	h.alive = false
 	conn, stdin, exited, proc := h.conn, h.stdin, h.exited, h.proc
 	// Shutdown: the closes tell the agent to leave, and the monitor
 	// goroutine reports how it went.
-	if conn != nil {
+	if alive && conn != nil {
 		_ = conn.Close()
 	}
-	if stdin != nil {
+	if alive && stdin != nil {
 		_ = stdin.Close()
 	}
-	if exited == nil {
+	settling := make([]chan struct{}, 0, len(h.settling))
+	for _, settled := range h.settling {
+		settling = append(settling, settled)
+	}
+	if (!alive || exited == nil) && len(settling) == 0 {
 		return
 	}
 	h.mu.Unlock()
-	select {
-	case <-exited:
-	case <-time.After(5 * time.Second):
-		proc.Kill()
-		select {
-		case <-exited:
-		case <-time.After(5 * time.Second):
-			slog.Error("acphost: process did not exit after kill")
+	defer h.mu.Lock()
+	grace := time.NewTimer(5 * time.Second)
+	defer grace.Stop()
+	killed := false
+	wait := func(done <-chan struct{}) bool {
+		for {
+			select {
+			case <-done:
+				return true
+			case <-grace.C:
+				if killed {
+					return false
+				}
+				killed = true
+				if alive {
+					proc.Kill()
+				}
+				grace.Reset(5 * time.Second)
+			}
 		}
 	}
-	h.mu.Lock()
+	if alive && exited != nil && !wait(exited) {
+		slog.Error("acphost: process did not exit after kill")
+		return
+	}
+	for _, settled := range settling {
+		if !wait(settled) {
+			slog.Error("acphost: an agent's process group still has members; its stop stays unconfirmed")
+			return
+		}
+	}
 }
 
 // applySettings files a session-scoped notification against the session it

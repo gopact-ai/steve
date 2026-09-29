@@ -19,11 +19,12 @@ type waitingReleaseProcess struct {
 	waitErr                        error
 }
 
-func (p *waitingReleaseProcess) Stdout() io.ReadCloser { return io.NopCloser(strings.NewReader("")) }
-func (p *waitingReleaseProcess) Stdin() io.WriteCloser { return releaseDiscardWriter{} }
-func (p *waitingReleaseProcess) Wait() error           { close(p.waitStarted); <-p.allowExit; return p.waitErr }
-func (p *waitingReleaseProcess) Kill()                 { p.killOnce.Do(func() { close(p.killed) }) }
-func (p *waitingReleaseProcess) finish()               { p.exitOnce.Do(func() { close(p.allowExit) }) }
+func (p *waitingReleaseProcess) Stdout() io.ReadCloser   { return io.NopCloser(strings.NewReader("")) }
+func (p *waitingReleaseProcess) Stdin() io.WriteCloser   { return releaseDiscardWriter{} }
+func (p *waitingReleaseProcess) Wait() error             { close(p.waitStarted); <-p.allowExit; return p.waitErr }
+func (p *waitingReleaseProcess) Exited() <-chan struct{} { return p.allowExit }
+func (p *waitingReleaseProcess) Kill()                   { p.killOnce.Do(func() { close(p.killed) }) }
+func (p *waitingReleaseProcess) finish()                 { p.exitOnce.Do(func() { close(p.allowExit) }) }
 
 // Stopped is never evidence here: the tests want a process whose exit
 // the node cannot vouch for.
