@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/text"
 )
@@ -55,7 +56,9 @@ type Delivered struct {
 	Refs    []string
 	Attempt string
 	// Landing says where the child's files are: landed, queued (with why),
-	// conflict, or empty when it changed nothing.
+	// conflict (with what the user can do about it, once the queue keeps
+	// the conflict; until then, not landed and still queued), or empty
+	// when it changed nothing.
 	Landing string
 	// Stopping says the child was stopped but its execution has not
 	// confirmed stopping: there is no result, only the stop on record.
@@ -315,15 +318,28 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 // between turns, so this is the moment; a turn composing its prompt lends
 // its own lease — and answers, per child, where its files are. The
 // message must not say "landed" for a child whose landing is still queued
-// behind someone else's lock or stuck on a conflict.
+// behind someone else's lock or stuck on a conflict. The parent can
+// neither settle a conflict nor land a result again, so a conflict the
+// queue keeps says what the user can do about it.
 func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.Lease) func(task.Task) string {
 	byArtifact := map[string]string{}
 	held := ""
-	conflicted := func(state, reason string, paths []string) string {
+	conflicted := func(state, reason string, paths []string, marked bool) string {
+		said := "落地冲突"
 		if detail := conflictDetail(state, reason, paths); detail != "" {
-			return "落地冲突：" + detail
+			said += "：" + detail
 		}
-		return "落地冲突"
+		// Only an apply conflict can be landed again, which the console
+		// offers. A merge conflict git kept a marked tree for is settled
+		// by /resolve or there; one without, only by hand on the machine
+		// the console lists it with.
+		switch {
+		case state == artifact.LandApplyConflicted:
+			return said + "。你不能自己重新落地；用户处理好原因后，可以在控制台「待处理」的「合并冲突」里点「重新落地」"
+		case marked:
+			return said + "。你不能自己解决；用户可以发 " + string(protocol.CommandResolve) + "，或在控制台「待处理」的「合并冲突」里处理"
+		}
+		return said + "。你不能自己解决；这次冲突没有留下可编辑的快照，用户只能到主目录所在的机器上直接处理，控制台「待处理」的「合并冲突」里列出了它和那台机器"
 	}
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
@@ -345,24 +361,39 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			} else {
 				landed, lerr = s.artifacts.LandPending(ctx, p)
 			}
-			// A conflict this pass reached reads as its queue record keeps
-			// it for later passes.
+			// A conflict this pass reached reads as later passes read it,
+			// from its queue record, if the queue keeps one of this landing.
+			queued := s.queuedConflicts(ctx, parent.ID, p.ID, landed)
 			for _, l := range landed {
-				switch l.State {
-				case artifact.LandCommitted:
+				st, kept := queued[l.Artifact]
+				switch {
+				case l.State == artifact.LandCommitted:
 					byArtifact[l.Artifact] = fmt.Sprintf("已落地主目录，%d 个路径", len(l.Paths))
-				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
-					byArtifact[l.Artifact] = conflicted(l.State, l.ConflictReason(), l.Paths)
+				case kept:
+					byArtifact[l.Artifact] = conflicted(st.State, st.Reason, st.Paths, st.Resolvable())
+				case l.State == artifact.LandApplyConflicted && !l.Unapplied:
+					// An apply conflict not stopped before apply is one
+					// recovery reached once the landing had begun writing,
+					// which leaves the paths written by then as they are.
+					byArtifact[l.Artifact] = "未落地：这次落地遇到冲突，没有完成；主目录里可能已经写入了一部分，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
 				default:
-					byArtifact[l.Artifact] = l.State
-					if l.Error != "" {
-						byArtifact[l.Artifact] += "：" + l.Error
-					}
+					// A pass returns no other landing unless one reached a
+					// conflict the queue does not keep, or one the landing
+					// could not record. If such a landing could still be
+					// closed, it reads as a merge conflict stopped before
+					// apply and keeps none of the conflict's kind, paths or
+					// marked tree; an apply conflict found before apply is
+					// marked as stopped before apply as well, so only the
+					// state tells them apart. If it could not, it is left
+					// locked. None of these wrote anything, and the result
+					// stays queued. Whether the queue records the conflict
+					// later, and who settles it then, is not known here.
+					byArtifact[l.Artifact] = "未落地：这次落地遇到冲突，没有完成；主目录没有改动，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
 				}
 			}
 			for _, st := range stuck {
 				if _, reached := byArtifact[st.Artifact]; !reached {
-					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths)
+					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths, st.Resolvable())
 				}
 			}
 			if lerr != nil {
@@ -403,6 +434,37 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 		}
 		return "已在此前落地或无改动"
 	}
+}
+
+// queuedConflicts reads, once a pass is over, the queue's record of each
+// conflict a landing of the pass recorded, by artifact. The console and
+// /resolve act on that record alone, and a landing can record a conflict
+// the queue then fails to keep, leaving the result with no record or
+// with an earlier landing's; only a record of that very landing counts.
+// A failed read counts none, so no conflict the pass reached is told as
+// one the user can act on.
+func (s *Service) queuedConflicts(ctx context.Context, parentID, projectID string, landed []artifact.Landing) map[string]artifact.Stuck {
+	recorded := map[string]string{}
+	for _, l := range landed {
+		if l.State == artifact.LandApplyConflicted || l.State == artifact.LandMergeConflicted && !l.Unapplied {
+			recorded[l.Artifact] = l.ID
+		}
+	}
+	if len(recorded) == 0 {
+		return nil
+	}
+	stuck, err := s.artifacts.Stuck(ctx, projectID)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("delegate: read queued conflicts of %s: %v", projectID, err), "parent", parentID, "project", projectID)
+		return nil
+	}
+	queued := map[string]artifact.Stuck{}
+	for _, st := range stuck {
+		if landing, ok := recorded[st.Artifact]; ok && st.Landing == landing {
+			queued[st.Artifact] = st
+		}
+	}
+	return queued
 }
 
 // conflictDetail says what a landing conflict is about: the paths, and
