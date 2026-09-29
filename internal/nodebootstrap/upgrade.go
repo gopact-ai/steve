@@ -100,12 +100,28 @@ mv -f "$binary_tmp" "$state_dir/bin/steve.new"
 
 // peerStartSection defines start_peer, which starts the installed program
 // in the background and succeeds when it is still running three seconds
-// later.
+// later, and exited_on_lock, which succeeds when the program start_peer
+// started last exited because another process holds the gateway lock.
+// Only what the log gained since that start tells: an earlier run's lines
+// say nothing about this one, and the peer holding the lock can write on
+// after the line the program exited with. A log cut shorter meanwhile is
+// read from its start.
 const peerStartSection = `start_peer() {
+  log_start=0
+  if [ -f "$state_dir/peer.log" ]; then
+    log_start=$(wc -c < "$state_dir/peer.log")
+  fi
   nohup "$state_dir/bin/steve" peer --config "$state_dir/config.json" --cluster-config "$state_dir/config.json.cluster.json" >> "$state_dir/peer.log" 2>&1 < /dev/null &
   peer_pid=$!
   sleep 3
   kill -0 "$peer_pid" 2>/dev/null
+}
+exited_on_lock() {
+  [ -f "$state_dir/peer.log" ] || return 1
+  if [ "$(wc -c < "$state_dir/peer.log")" -lt "$log_start" ]; then
+    log_start=0
+  fi
+  tail -c "+$((log_start + 1))" "$state_dir/peer.log" | grep -q 'another gateway already serves'
 }
 `
 
@@ -240,7 +256,7 @@ const peerUpgradeStartSection = `if start_peer; then
   echo 'Peer restarted on the new program; the coordinator still has to see it come back.'
   exit 0
 fi
-if tail -n 1 "$state_dir/peer.log" 2>/dev/null | grep -q 'another gateway already serves'; then
+if exited_on_lock; then
   mv -f "$state_dir/bin/$set_aside" "$state_dir/bin/steve"
   echo 'The peer process that was running was not stopped: it still holds the gateway lock, and the new program started beside it exited. The program that was installed is back in place; the machine was not upgraded. Last lines of ~/.steve-peer/peer.log:' >&2
   tail -n 20 "$state_dir/peer.log" >&2 || true

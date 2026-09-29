@@ -59,7 +59,7 @@ fi
   fi
   exit 0
 fi
-if tail -n 1 "$state_dir/peer.log" 2>/dev/null | grep -q 'another gateway already serves'; then
+if exited_on_lock; then
 `)
 	if spec.IfStopped {
 		b.WriteString(`  echo 'A peer process this script did not find holds the gateway lock; it is taken for running and left alone.'
