@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/channel"
@@ -66,8 +67,10 @@ func TestScheduledRunOnAnOpenAttemptTellsTheOwnerWhatToDo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The turn gets time to reach admission; with no idle timeout it
+	// would expire before the task is even looked at.
 	c := turntest.New(t, func(o *turntest.Options) {
-		o.Ledger, o.Catalog, o.Projects, o.Tasks = book, catalog, projects, tasks
+		o.Ledger, o.Catalog, o.Projects, o.Tasks, o.Timeout = book, catalog, projects, tasks, time.Minute
 		o.Owner, o.ChannelOwners, o.DefaultProject = f.Requester, map[string]string{"feishu": f.Requester}, f.ProjectID
 	})
 	if _, err := projects.Bind(t.Context(), f.ConversationID, f.ProjectID, f.Requester); err != nil {
