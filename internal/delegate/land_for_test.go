@@ -25,10 +25,12 @@ const busyText = "排队中：主目录正被别的回合占用，空出来就�
 
 // A parent cannot settle a conflict or land a result itself. What follows
 // a conflict's paths, and its reason for an apply conflict, is what the
-// user can do about it.
+// user can do about it. A merge conflict git kept no marked tree for can
+// be neither resolved nor edited, only dealt with on the machine.
 const (
-	mergeHint = "。你不能自己解决；用户可以发 /resolve，或在控制台「待处理」的「合并冲突」里处理"
-	applyHint = "。你不能自己重新落地；用户处理好原因后，可以在控制台「待处理」的「合并冲突」里点「重新落地」"
+	mergeHint  = "。你不能自己解决；用户可以发 /resolve，或在控制台「待处理」的「合并冲突」里处理"
+	noTreeHint = "。你不能自己解决；这次冲突没有留下可编辑的快照，用户只能到主目录所在的机器上直接处理，控制台「待处理」的「合并冲突」里列出了它和那台机器"
+	applyHint  = "。你不能自己重新落地；用户处理好原因后，可以在控制台「待处理」的「合并冲突」里点「重新落地」"
 )
 
 // unfinishedText is what a parent is told of a result whose landing
@@ -317,6 +319,21 @@ func queueAll(t *testing.T, w *world, results ...artifact.Manifest) {
 	}
 }
 
+// unmarkedConflict is conflictingResults on a ledger of the test's own
+// that refuses to record the marked tree of a merge conflict, so the
+// conflict is left with none to work from.
+func unmarkedConflict(t *testing.T, w *world) (project.Project, artifact.Manifest, artifact.Manifest) {
+	t.Helper()
+	ownStores(t, w, "", artifact.LocalNodes{Dir: t.TempDir()})
+	p, first, second := conflictingResults(t, w)
+	if _, err := w.book.DB().Exec(`CREATE TRIGGER refuse_marked BEFORE INSERT ON bindings
+		WHEN NEW.kind = 'artifact' AND json_extract(NEW.data, '$.message') LIKE 'conflict landing %'
+		BEGIN SELECT RAISE(ABORT, 'marked tree not recorded'); END`); err != nil {
+		t.Fatal(err)
+	}
+	return p, first, second
+}
+
 // An apply conflict says why it stopped. Reached in this pass, it reads as
 // the queue keeps it for every later pass.
 func TestLandForSaysAnApplyConflictAsLaterPassesDo(t *testing.T) {
@@ -471,6 +488,31 @@ func TestLandForTellsAParentWhatComesOfAResultThatDidNotLand(t *testing.T) {
 			return second
 		},
 		want: func(*testing.T, *world) string { return "落地冲突：notes.md" + mergeHint },
+	}, {
+		// With no marked tree, a merge conflict can be neither resolved
+		// nor edited in the console.
+		name: "merge conflict with no marked tree",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			_, first, second := unmarkedConflict(t, w)
+			queueAll(t, w, first, second)
+			return second
+		},
+		want: func(*testing.T, *world) string { return "落地冲突：notes.md" + noTreeHint },
+	}, {
+		name: "merge conflict with no marked tree, read from the queue",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			p, first, second := unmarkedConflict(t, w)
+			queueAll(t, w, first, second)
+			if _, err := w.artifacts.LandPending(t.Context(), p); err != nil {
+				t.Fatal(err)
+			}
+			stuck, err := w.artifacts.Stuck(t.Context(), "p")
+			if err != nil || len(stuck) != 1 || stuck[0].Artifact != second.ID || stuck[0].Resolvable() {
+				t.Fatalf("stuck results = %+v err=%v; want the one merge conflict, with no marked tree", stuck, err)
+			}
+			return second
+		},
+		want: func(*testing.T, *world) string { return "落地冲突：notes.md" + noTreeHint },
 	}, {
 		name: "apply conflict",
 		queue: func(t *testing.T, w *world) artifact.Manifest {
