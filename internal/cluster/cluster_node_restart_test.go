@@ -113,16 +113,16 @@ func TestWaitingForARestartedOrUpgradedMachineEndsWhenThisNodeCloses(t *testing.
 		name string
 		wait func(peerSSHBackend, context.Context) error
 	}{
-		{"restart", func(b peerSSHBackend, ctx context.Context) error { return b.Restarted(ctx, "node-1") }},
-		{"upgrade", func(b peerSSHBackend, ctx context.Context) error { return b.Upgraded(ctx, "node-1") }},
+		{"restart", func(b peerSSHBackend, ctx context.Context) error { return b.Restarted(ctx, "node-2") }},
+		{"upgrade", func(b peerSSHBackend, ctx context.Context) error { return b.Upgraded(ctx, "node-2") }},
 	} {
 		t.Run(wait.name, func(t *testing.T) {
-			// The machine is not a member and its session never opens, so
-			// neither wait ends on its own.
+			// The machine is not a member (the one node running is node-1)
+			// and its session never opens, so neither wait ends on its own.
 			peerCtx, closePeer := context.WithCancel(t.Context())
 			defer closePeer()
 			launcher := &linktest.Launcher{Refuse: errors.New("ssh: connect to host dev port 22: Connection refused")}
-			peer := &Peer{Options: PeerOptions{SSHLaunch: launcher}, Config: PeerConfig{NodeID: "node-hub", Links: map[string]PeerLink{"node-1": {Alias: "dev"}}}, client: nodes[0].client, routes: coordination.NewRouteTable(nil), ctx: peerCtx, linkCtx: t.Context()}
+			peer := &Peer{Options: PeerOptions{SSHLaunch: launcher}, Config: PeerConfig{NodeID: "node-hub", Links: map[string]PeerLink{"node-2": {Alias: "dev"}}}, client: nodes[0].client, routes: coordination.NewRouteTable(nil), ctx: peerCtx, linkCtx: t.Context()}
 			peer.Runtime.Store(r)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
