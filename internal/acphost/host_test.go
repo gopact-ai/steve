@@ -552,6 +552,36 @@ func TestAbandonedPromptDoesNotClaimTheWriterStopped(t *testing.T) {
 	}
 }
 
+// An error answer ends a prompt as surely as a result does. The agent that
+// gave it goes on running, and the prompt returns at once instead of
+// waiting for a stop that is not coming.
+func TestPromptAnsweredWithAnErrorIsSettledAtOnce(t *testing.T) {
+	h := New(Config{
+		Command:    buildMockAgent(t),
+		ProcessDir: t.TempDir(),
+		Env:        []string{"MOCKAGENT_MEMORY_DIR=" + t.TempDir()},
+	})
+	t.Cleanup(h.Stop)
+	sid, generation, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A native session with nothing remembered answers a recall with an
+	// error.
+	began := time.Now()
+	_, _, err = h.Prompt(t.Context(), sid, generation, "fixture-recall", nil)
+	took := time.Since(began)
+	if err == nil || errors.Is(err, ErrStopUnconfirmed) || !PromptSettled(err) {
+		t.Fatalf("prompt answered with an error returned %v, want a settled failure", err)
+	}
+	if took >= exitedGroupWait/2 {
+		t.Fatalf("prompt answered with an error returned after %v, want at once", took.Round(time.Millisecond))
+	}
+	if h.ProcessStopped(generation) {
+		t.Fatal("agent that answered with an error stopped")
+	}
+}
+
 func TestExplicitZeroUsageIsDifferentFromNoUsage(t *testing.T) {
 	var got view.Progress
 	col := &collector{progress: func(p view.Progress) { got = p }}
