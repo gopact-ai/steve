@@ -78,7 +78,9 @@ const steveToolSummaries: Record<string, string> = {
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">{tr("mcp.loading")}</div> : deployments.length === 0 ? (
                         <Nothing icon={Dataflow03} title={tr("mcp.empty")}>{tr("mcp.emptyHint")}</Nothing>
                     ) : (
-                        <Table aria-label="MCP" size="sm" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                        <Table aria-label="MCP" size="sm" selectionMode="single" selectionBehavior="replace"
+                            selectedKeys={opened ? [opened] : []}
+                            onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                             <Table.Header>
                                 <Table.Head id="name" label={tr("mcp.name")} isRowHeader />
                                 <Table.Head id="node" label={tr("mcp.machine")} />
