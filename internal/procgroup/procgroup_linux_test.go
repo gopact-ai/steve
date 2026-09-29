@@ -82,29 +82,32 @@ func TestSettleDoesNotConfirmZombiesWhereTheListingCanMissProcesses(t *testing.T
 	}
 }
 
-// /proc shows every process only as the proc filesystem last mounted on it,
-// without hidepid or with it off.
+// /proc shows every process only as the proc filesystem it resolves to is
+// mounted: without hidepid or with it off. Other mounts on /proc, whether
+// mounted before or after it, do not count.
 func TestMountShowsAllProcessesOnlyWithoutHidepid(t *testing.T) {
-	mount := func(point, options, filesystem, superOptions string) string {
-		return fmt.Sprintf("21 25 0:20 / %s %s shared:13 - %s %s %s\n", point, options, filesystem, filesystem, superOptions)
+	mount := func(id, point, options, filesystem, superOptions string) string {
+		return fmt.Sprintf("%s 25 0:20 / %s %s shared:13 - %s %s %s\n", id, point, options, filesystem, filesystem, superOptions)
 	}
 	for _, tc := range []struct {
 		name      string
 		mountinfo string
 		shows     bool
 	}{
-		{"without hidepid", mount("/proc", "rw,nosuid", "proc", "rw"), true},
-		{"with hidepid 0", mount("/proc", "rw", "proc", "rw,hidepid=0"), true},
-		{"with hidepid off", mount("/proc", "rw", "proc", "rw,hidepid=off"), true},
-		{"with hidepid 2", mount("/proc", "rw", "proc", "rw,hidepid=2,gid=10"), false},
-		{"with hidepid invisible", mount("/proc", "rw", "proc", "rw,hidepid=invisible"), false},
-		{"with hidepid among the mount options", mount("/proc", "rw,hidepid=1", "proc", "rw"), false},
+		{"without hidepid", mount("21", "/proc", "rw,nosuid", "proc", "rw"), true},
+		{"with hidepid 0", mount("21", "/proc", "rw", "proc", "rw,hidepid=0"), true},
+		{"with hidepid off", mount("21", "/proc", "rw", "proc", "rw,hidepid=off"), true},
+		{"with hidepid 2", mount("21", "/proc", "rw", "proc", "rw,hidepid=2,gid=10"), false},
+		{"with hidepid invisible", mount("21", "/proc", "rw", "proc", "rw,hidepid=invisible"), false},
+		{"with hidepid among the mount options", mount("21", "/proc", "rw,hidepid=1", "proc", "rw"), false},
 		{"without optional fields", "21 25 0:20 / /proc rw - proc proc rw,hidepid=2\n", false},
-		{"hidden by a later mount", mount("/proc", "rw", "proc", "rw") + mount("/proc", "rw", "proc", "rw,hidepid=2"), false},
-		{"shown by a later mount", mount("/proc", "rw", "proc", "rw,hidepid=2") + mount("/proc", "rw", "proc", "rw"), true},
-		{"with hidepid on another mount", mount("/proc", "rw", "proc", "rw") + mount("/srv/proc", "rw", "proc", "rw,hidepid=2"), true},
-		{"with another filesystem on /proc", mount("/proc", "rw", "tmpfs", "rw"), false},
-		{"without /proc", mount("/sys", "rw", "sysfs", "rw"), false},
+		{"with hidepid, another mounted on /proc later", mount("21", "/proc", "rw", "proc", "rw,hidepid=2") + mount("30", "/proc", "rw", "proc", "rw"), false},
+		{"without hidepid, another mounted on /proc later", mount("21", "/proc", "rw", "proc", "rw") + mount("30", "/proc", "rw", "proc", "rw,hidepid=2"), true},
+		{"with hidepid, another mounted on /proc earlier", mount("30", "/proc", "rw", "proc", "rw") + mount("21", "/proc", "rw", "proc", "rw,hidepid=2"), false},
+		{"with hidepid on another mount", mount("21", "/proc", "rw", "proc", "rw") + mount("30", "/srv/proc", "rw", "proc", "rw,hidepid=2"), true},
+		{"with another filesystem on /proc", mount("21", "/proc", "rw", "tmpfs", "rw"), false},
+		{"without the mount /proc resolves to", mount("30", "/proc", "rw", "proc", "rw"), false},
+		{"without /proc", mount("21", "/sys", "rw", "sysfs", "rw"), false},
 	} {
 		if shows := mountShowsAll([]byte(tc.mountinfo), "21"); shows != tc.shows {
 			t.Errorf("%s: shows all %v, want %v", tc.name, shows, tc.shows)
