@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -151,5 +152,115 @@ func TestReleaseProcessCancellationDoesNotConfirmExit(t *testing.T) {
 				t.Fatal("release ignored serving cancellation")
 			}
 		})
+	}
+}
+
+// lingeringProcess is an agent that has exited while a member of its
+// process group does not stop, as one in uninterruptible sleep: its output
+// is over and Exited is closed, but Wait returns, and the stop is
+// confirmed, only once the group is let go.
+type lingeringProcess struct {
+	exited, settled chan struct{}
+	settleOnce      sync.Once
+}
+
+func newLingeringProcess() *lingeringProcess {
+	p := &lingeringProcess{exited: make(chan struct{}), settled: make(chan struct{})}
+	close(p.exited)
+	return p
+}
+
+func (p *lingeringProcess) Stdout() io.ReadCloser   { return io.NopCloser(strings.NewReader("")) }
+func (p *lingeringProcess) Stdin() io.WriteCloser   { return releaseDiscardWriter{} }
+func (p *lingeringProcess) Wait() error             { <-p.settled; return nil }
+func (p *lingeringProcess) Exited() <-chan struct{} { return p.exited }
+func (p *lingeringProcess) Kill()                   {}
+func (p *lingeringProcess) settle()                 { p.settleOnce.Do(func() { close(p.settled) }) }
+
+func (p *lingeringProcess) Stopped() bool {
+	select {
+	case <-p.settled:
+		return true
+	default:
+		return false
+	}
+}
+
+func busyProcesses(s *Server) int {
+	s.restart.mu.Lock()
+	defer s.restart.mu.Unlock()
+	return s.restartStatusLocked().Processes
+}
+
+// An agent can exit while a member of its process group stays past every
+// kill. The hub is told the agent is gone, so it can start another, but
+// not that it exited: its stop is confirmed only once the group has
+// stopped, by the release the hub sends, and until then the node counts
+// the process as running.
+func TestNodeTellsTheHubAnAgentExitedWhileItsGroupHasNotStopped(t *testing.T) {
+	m := newMemoryNode(t, "/bin/cat")
+	agent := newLingeringProcess()
+	t.Cleanup(agent.settle)
+	cfg := m.s.conf()
+	// The release the hub sends waits this long for the node's answer.
+	cfg.SessionGrace = time.Minute
+	cfg.startAgent = func(context.Context, acphost.LocalTransport) (acphost.Process, error) { return agent, nil }
+	m.s.cfg.Store(&cfg)
+	r := memoryRegistry(t)
+	connectMemory(t, m, r)
+	p := startRemote(t, r)
+	select {
+	case <-p.Exited():
+	case <-time.After(15 * time.Second):
+		t.Fatal("the hub was not told the agent had exited while its process group did not stop")
+	}
+	if err := p.Wait(); err == nil || strings.HasPrefix(err.Error(), nodewire.ExitPrefix) {
+		t.Fatalf("the hub was told %v, want an end that is not an exit", err)
+	}
+	if p.Stopped() {
+		t.Fatal("the hub took the agent's end for its stop while its process group had not stopped")
+	}
+	if n := busyProcesses(m.s); n != 1 {
+		t.Fatalf("the node counts %d running processes while an exited agent's group has not stopped, want 1", n)
+	}
+	// Closing is how the hub lets the process go; it sends the release.
+	_ = p.Close()
+	time.Sleep(100 * time.Millisecond)
+	if p.Stopped() {
+		t.Fatal("the release confirmed the stop while the agent's process group had not stopped")
+	}
+	agent.settle()
+	waitFor(t, p.Stopped)
+	if n := busyProcesses(m.s); n != 0 {
+		t.Fatalf("the node counts %d running processes once the agent's group has stopped, want 0", n)
+	}
+}
+
+// A node that stops does not wait for an exited agent's process group that
+// does not stop: it stops without an exit recorded for the agent, so its
+// stop stays unconfirmed.
+func TestNodeStopsWithoutWaitingOutAnExitedAgentsGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s := NewServer(ServerConfig{StateDir: t.TempDir()})
+	agent := newLingeringProcess()
+	t.Cleanup(agent.settle)
+	p := &agentProcess{server: s, id: "lingering", proc: agent}
+	s.processes[p.id] = p
+	s.processWG.Add(1)
+	go p.run(ctx)
+	cancel()
+	stopped := make(chan struct{})
+	go func() { s.processWG.Wait(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the node did not stop while an exited agent's process group did not")
+	}
+	p.mu.Lock()
+	exit := p.exit
+	p.mu.Unlock()
+	if exit != "" {
+		t.Fatalf("the node recorded %q for an agent whose process group had not stopped", exit)
 	}
 }
