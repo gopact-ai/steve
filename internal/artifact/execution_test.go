@@ -64,6 +64,13 @@ func TestStoppedChildCannotLandUnderParentLeaseOrFromPending(t *testing.T) {
 	if read(t, canonical, "a") != "before" {
 		t.Fatal("stopped child changed canonical")
 	}
+	// Nor can it be queued again.
+	if err := s.Defer(t.Context(), p.ID, result.ID, "child", source); !errors.Is(err, task.ErrExecutionStopped) {
+		t.Fatalf("stopped result queued: %v", err)
+	}
+	if pending, err := s.ledger.Bindings(t.Context(), pendingKind); err != nil || len(pending) != 0 {
+		t.Fatalf("stopped result pending: %v %v", pending, err)
+	}
 	if err := s.ledger.Update(t.Context(), func(tx *ledger.Tx) error { return task.CheckExecutionTx(tx, &token) }); !errors.Is(err, task.ErrExecutionStopped) {
 		t.Fatal("stopped source remains valid")
 	}
