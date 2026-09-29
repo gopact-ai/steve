@@ -158,6 +158,38 @@ func TestPeerRestartScriptLeavesARunningPeerAloneWhenOnlyStartingAStoppedOne(t *
 	}
 }
 
+// A peer the script does not find can still hold the gateway lock, and
+// the program started beside it exits on that lock. Starting a peer only
+// when it is down takes this for a peer that runs and leaves it alone; a
+// restart says the peer that ran was not stopped, and exits 31. Only the
+// line the program just wrote counts: an earlier run's line further up
+// the log says nothing about this one.
+func TestPeerRestartScriptTellsALockHeldByAPeerItDidNotFind(t *testing.T) {
+	requirePeerPlatform(t)
+	home, _ := layoutPeer(t)
+	state := filepath.Join(home, ".steve-peer")
+	held := "#!/bin/sh\necho \"steve: another gateway already serves $HOME/.steve-peer/cluster (lock $HOME/.steve-peer/cluster/peer-process/gateway.lock is held)\" >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(state, "bin", "steve"), []byte(held), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runRestart(t, home, RestartSpec{IfStopped: true})
+	if err != nil || !strings.Contains(report, "STEVE_RESTART\trunning\n") {
+		t.Fatalf("a peer holding the lock was not left alone as running: %v\n%s", err, report)
+	}
+	report, err = runRestart(t, home, RestartSpec{})
+	if exitCode(err) != 31 || strings.Contains(report, "STEVE_RESTART") || !strings.Contains(report, "was not stopped") || !strings.Contains(report, "another gateway already serves") {
+		t.Fatalf("expected exit 31 saying the running peer was not stopped, got %v\n%s", err, report)
+	}
+	unreadable := "#!/bin/sh\necho 'config.json: cluster identity is unreadable' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(state, "bin", "steve"), []byte(unreadable), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	report, err = runRestart(t, home, RestartSpec{IfStopped: true})
+	if exitCode(err) != 28 || strings.Contains(report, "STEVE_RESTART") {
+		t.Fatalf("an earlier line about the lock was taken for this start's: %v\n%s", err, report)
+	}
+}
+
 // Bringing up a stopped peer when it is down starts it like a restart.
 func TestPeerRestartScriptStartsAStoppedPeerWhenOnlyStartingAStoppedOne(t *testing.T) {
 	requirePeerPlatform(t)
