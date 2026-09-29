@@ -36,7 +36,7 @@ var (
 	ErrUnproven = errors.New("process group cannot be shown to be the recorded one")
 	// ErrRunning is returned when members of a recorded group still run
 	// after being killed, as a process in uninterruptible sleep does until
-	// it wakes.
+	// it wakes, or its exited leader is still not reaped.
 	ErrRunning = errors.New("process group still has members after SIGKILL")
 )
 
@@ -71,9 +71,12 @@ func NewMark() string {
 // It signals the group only while it is shown to be the recorded one: its
 // recorded leader still holds its pid with its recorded start time, or,
 // the leader gone, every running member started after the leader and one
-// carries the recorded mark. It judges again before every signal. When it
+// carries the recorded mark. It judges again before every signal. The
+// group is taken for empty only when the kernel finds no process under its
+// id, so a member this process cannot see keeps it unconfirmed. When it
 // cannot show which group runs under the id it returns ErrUnproven, and
-// when members outlive within after being killed, ErrRunning.
+// when members, or a leader not yet reaped, outlive within after being
+// killed, ErrRunning.
 func Settle(id Identity, ran, here Place, within time.Duration) error {
 	return settle(id, ran, here, within, members)
 }
@@ -126,17 +129,21 @@ func recorded(id Identity, list func(group int) ([]process, error)) (bool, error
 		// has it as its group's id: the recorded group had emptied.
 		return false, nil
 	}
-	if found && leader.live {
+	if found {
+		// The leader, running or not yet reaped, keeps its pid, so the
+		// group is the one it started.
 		return true, nil
 	}
 	members, err := list(id.Group)
-	if err != nil || len(members) == 0 {
+	if err != nil {
 		return false, err
 	}
-	if found {
-		// A leader not yet reaped keeps its pid, so the group is the one
-		// it started.
-		return true, nil
+	if len(members) == 0 {
+		gone, err := Gone(id.Group)
+		if err != nil || gone {
+			return false, err
+		}
+		return false, fmt.Errorf("%w: a process this one cannot see is still in the group", ErrUnproven)
 	}
 	marked := false
 	for _, member := range members {

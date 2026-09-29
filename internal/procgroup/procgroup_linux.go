@@ -73,8 +73,10 @@ func WaitExit(pid int) error {
 	}
 }
 
-// Live reports whether any process in the group still runs. A zombie runs
-// nothing and does not count.
+// Live reports whether any process in the group that this process can see
+// still runs. A zombie runs nothing and does not count. A member hidden from
+// this process is not listed, so false does not show the group is empty;
+// Gone does.
 func Live(group int) (bool, error) {
 	members, err := members(group)
 	return len(members) > 0, err
@@ -129,7 +131,8 @@ func members(group int) ([]process, error) {
 		p, ok, err := status(pid)
 		if errors.Is(err, os.ErrPermission) {
 			// /proc mounted with hidepid shows nothing of another user's
-			// processes, which this user could not signal either.
+			// processes. Such a member is not listed; whether a group is
+			// empty is asked of the kernel instead.
 			continue
 		}
 		if err != nil {

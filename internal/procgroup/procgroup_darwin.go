@@ -92,8 +92,10 @@ func WaitExit(pid int) error {
 	}
 }
 
-// Live reports whether any process in the group still runs. A zombie runs
-// nothing and does not count.
+// Live reports whether any process in the group that this process can see
+// still runs. A zombie runs nothing and does not count. A member hidden from
+// this process is not listed, so false does not show the group is empty;
+// Gone does.
 func Live(group int) (bool, error) {
 	members, err := members(group)
 	return len(members) > 0, err

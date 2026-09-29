@@ -45,8 +45,8 @@ type Process interface {
 	// hatch for a graceful close that did not settle.
 	Kill()
 	// Stopped reports positive evidence that the agent process is gone: a
-	// reaped child whose process group has no running member left, or a
-	// node's confirmed exit. A transport that cannot tell answers false,
+	// reaped child whose process group the kernel finds no process left in,
+	// or a node's confirmed exit. A transport that cannot tell answers false,
 	// and the host keeps the process on its books.
 	Stopped() bool
 }
@@ -73,9 +73,10 @@ type groupCalls struct {
 	waitExit func(pid int) error
 	kill     func(group int) error
 	live     func(group int) (bool, error)
+	gone     func(group int) (bool, error)
 }
 
-var kernelGroup = groupCalls{waitExit: procgroup.WaitExit, kill: procgroup.Kill, live: procgroup.Live}
+var kernelGroup = groupCalls{waitExit: procgroup.WaitExit, kill: procgroup.Kill, live: procgroup.Live, gone: procgroup.Gone}
 
 func (t LocalTransport) Name() string { return t.Command }
 
@@ -142,7 +143,8 @@ func (p *localProcess) Stdin() io.WriteCloser { return p.stdin }
 // Wait kills what the agent left running in its process group before
 // reaping the agent. Until the leader is reaped it holds its pid, so no
 // other process can lead a group of that id, and the kill reaches only
-// the agent's own. The stop is confirmed once no member runs.
+// the agent's own. The stop is confirmed once the kernel finds no process
+// left in the group.
 func (p *localProcess) Wait() error {
 	pid := p.cmd.Process.Pid
 	ended := false
@@ -157,32 +159,54 @@ func (p *localProcess) Wait() error {
 	case err != nil:
 		slog.Error(fmt.Sprintf("acphost: wait for agent process %d: %v", pid, err))
 	default:
-		ended = p.endGroup(pid)
+		p.endGroup(pid)
+		ended = true
 	}
 	p.mu.Lock()
 	err := p.cmd.Wait()
 	p.reaped = true
 	p.mu.Unlock()
 	if ended {
+		p.awaitEmpty(pid)
 		p.stopped.Store(true)
 	}
 	return err
 }
 
-// endGroup kills the members of an exited leader's group until none runs.
-// A member the kill cannot end, as one in uninterruptible sleep until it
-// wakes, keeps it waiting and the stop unconfirmed.
-func (p *localProcess) endGroup(group int) bool {
+// endGroup kills the members of an exited leader's group until none that
+// this process can see runs. A member the kill cannot end, as one in
+// uninterruptible sleep until it wakes, keeps it waiting.
+func (p *localProcess) endGroup(group int) {
 	began, warned := time.Now(), false
 	for delay := time.Millisecond; ; delay = min(2*delay, time.Second) {
 		killErr := p.group.kill(group)
 		live, err := p.group.live(group)
 		if err == nil && !live {
-			return true
+			return
 		}
 		if !warned && time.Since(began) > 5*time.Second {
 			warned = true
 			slog.Error(fmt.Sprintf("acphost: agent process group %d still runs after SIGKILL (kill: %v, check: %v)", group, killErr, err))
+		}
+		time.Sleep(delay)
+	}
+}
+
+// awaitEmpty waits, the leader reaped, until the kernel finds no process
+// left in its group: a member hidden from this process, or one it may not
+// signal, is not listed as running but still holds the group's id. Nothing
+// is signalled any more, as the id stops being the agent's own once its
+// last member is gone.
+func (p *localProcess) awaitEmpty(group int) {
+	began, warned := time.Now(), false
+	for delay := time.Millisecond; ; delay = min(2*delay, time.Second) {
+		gone, err := p.group.gone(group)
+		if err == nil && gone {
+			return
+		}
+		if !warned && time.Since(began) > 5*time.Second {
+			warned = true
+			slog.Error(fmt.Sprintf("acphost: agent process group %d still has a process this one cannot end (check: %v)", group, err))
 		}
 		time.Sleep(delay)
 	}
