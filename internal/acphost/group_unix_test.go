@@ -315,6 +315,61 @@ func TestLocalTransportDoesNotPassOnAnInheritedMark(t *testing.T) {
 	}
 }
 
+// An agent whose process group cannot be identified, where the host is to
+// report it, is not served: no record could name the group, and nothing
+// could confirm its stop once the process that started it is gone. Its
+// group is ended, and it stays on the host's books until its stop is
+// confirmed.
+func TestHostEndsAnAgentWhoseProcessGroupCannotBeIdentified(t *testing.T) {
+	failed := errors.New("process group cannot be identified")
+	var leader atomic.Int64
+	var held, reported atomic.Bool
+	held.Store(true)
+	calls := kernelGroup
+	calls.capture = func(pid int, _ string) (procgroup.Identity, error) {
+		leader.Store(int64(pid))
+		return procgroup.Identity{}, failed
+	}
+	calls.inspect = func(group int) (procgroup.Remains, error) {
+		if held.Load() {
+			// As a member the kill cannot end yet.
+			return procgroup.Remains{Running: 1}, nil
+		}
+		return procgroup.Inspect(group)
+	}
+	h := New(Config{Transport: LocalTransport{
+		Command: buildMockAgent(t), ProcessDir: t.TempDir(),
+		Started: func(procgroup.Identity) { reported.Store(true) }, group: &calls,
+	}, NoRestart: true})
+	t.Cleanup(h.Close)
+	t.Cleanup(func() { held.Store(false) })
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	if _, _, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()}); !errors.Is(err, failed) {
+		t.Fatalf("OpenSession = %v, want %v", err, failed)
+	}
+	if reported.Load() {
+		t.Fatal("a process group that was not identified was reported")
+	}
+	pid := int(leader.Load())
+	for deadline := time.Now().Add(10 * time.Second); liveProcess(pid) && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if liveProcess(pid) {
+		t.Fatal("the agent whose process group was not identified still runs")
+	}
+	if h.AllProcessesStopped() {
+		t.Fatal("the stop was confirmed while the agent's process group still had a member")
+	}
+	held.Store(false)
+	for deadline := time.Now().Add(10 * time.Second); !h.AllProcessesStopped() && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !h.AllProcessesStopped() {
+		t.Fatal("the stop was not confirmed once the agent's process group was empty")
+	}
+}
+
 // When the agent's exit cannot be watched without reaping it, waiting for
 // the agent must still leave a close free to kill it: an agent that stays
 // past the grace is killed, and the close returns.
