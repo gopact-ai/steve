@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,6 +170,32 @@ func TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the exited agent's stop was not confirmed once its group was empty")
 		}
+	}
+}
+
+// A mark names one process group. An agent whose group is not recorded
+// does not carry on a mark this process inherited, as it would then share
+// it with the group that mark was recorded for.
+func TestLocalTransportDoesNotPassOnAnInheritedMark(t *testing.T) {
+	t.Setenv(procgroup.MarkVariable, "inherited")
+	dir := t.TempDir()
+	proc, err := LocalTransport{
+		Command: "/bin/sh", Args: []string{"-c", `echo "${` + procgroup.MarkVariable + `-none}" > "$1"`, "agent", filepath.Join(dir, "mark")}, ProcessDir: dir,
+	}.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = proc.Stdin().Close()
+	_, _ = io.Copy(io.Discard, proc.Stdout())
+	if err := proc.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "mark"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mark := strings.TrimSpace(string(raw)); mark != "none" {
+		t.Fatalf("the agent carries the mark %q", mark)
 	}
 }
 
