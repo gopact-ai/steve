@@ -5,6 +5,7 @@ package node
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/filedoc"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // orphaningShell starts the agent the way a harness can: through a shell
@@ -258,6 +260,62 @@ func TestNodeSessionRestartLeavesAnUnprovenGroupUntilItEnds(t *testing.T) {
 	}
 }
 
+// A cancellation of an open that belongs to another execution is refused
+// before anything is done for it: it does not retry ending the group a
+// killed node left. Once a cancellation is admitted, it retries, ends the
+// group and confirms the stop.
+func TestNodeSessionOpenCancellationRetriesAStopOnlyOnceAdmitted(t *testing.T) {
+	killed := killNode(t)
+	mark := recordedProcessField(t, killed.cfg, killed.id, "mark")
+	rewriteRecordedProcess(t, killed.cfg, killed.id, map[string]json.RawMessage{"mark": json.RawMessage(`"another-group"`)})
+	if cmdlineIs(killed.leader, killed.agent) {
+		_ = syscall.Kill(killed.leader, syscall.SIGKILL)
+	}
+	for deadline := time.Now().Add(10 * time.Second); processExists(killed.leader); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the recorded leader was not reaped")
+		}
+	}
+	restarted := NewServer(killed.cfg)
+	if err := restarted.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.sessions.Close()
+	if !liveProcess(killed.member) {
+		t.Fatal("the restarted node ended a group it could not show was the execution's")
+	}
+	// The group can be shown to be the execution's from here on, so the
+	// next attempt to end it succeeds.
+	store, err := restarted.sessions.recordsStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewriteStoredProcess(t, store, killed.id, map[string]json.RawMessage{"mark": mark})
+	req := nodeSessionRequest(nodewire.SessionActionCancelOpen)
+	req.Harness, req.CommandID = "orphaning", "open-orphaning"
+	req.Binding.TaskEpoch = 2
+	_, err = restarted.sessions.Do(t.Context(), "cluster-1", req)
+	var refused *SessionError
+	if !errors.As(err, &refused) || refused.Code != "forbidden" {
+		t.Fatalf("a cancellation for another execution was not refused: %v", err)
+	}
+	if !liveProcess(killed.member) {
+		t.Fatal("a refused cancellation ended the killed node's agent process group")
+	}
+	record, _, err := restarted.sessions.readRecord(killed.id)
+	if err != nil || record.State.ProcessStopped {
+		t.Fatalf("a refused cancellation recorded the stop: process_stopped=%v: %v", record.State.ProcessStopped, err)
+	}
+	req.Binding.TaskEpoch = 1
+	state, err := restarted.sessions.Do(t.Context(), "cluster-1", req)
+	if err != nil || state.State != nodewire.SessionClosed || !state.ProcessStopped {
+		t.Fatalf("an admitted cancellation did not end the group and confirm the stop: state=%s process_stopped=%v: %v", state.State, state.ProcessStopped, err)
+	}
+	if liveProcess(killed.member) {
+		t.Fatal("a stop was confirmed while a member of the agent's process group still ran")
+	}
+}
+
 // recordProcessGroup points a session record's process identity at pid,
 // leaving the recorded start time as it was.
 func recordProcessGroup(t *testing.T, cfg ServerConfig, id string, pid int) {
@@ -274,29 +332,60 @@ func rewriteRecordedProcess(t *testing.T, cfg ServerConfig, id string, fields ma
 		t.Fatal(err)
 	}
 	defer store.close()
-	var header []byte
-	if err := store.db.QueryRow(`SELECT header FROM sessions WHERE id=?`, id).Scan(&header); err != nil {
-		t.Fatal(err)
-	}
-	var record, process map[string]json.RawMessage
-	if err := json.Unmarshal(header, &record); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(record["process"], &process); err != nil || process["leader"] == nil || process["group"] == nil || process["start"] == nil {
-		t.Fatal("session record keeps no process identity")
-	}
+	rewriteStoredProcess(t, store, id, fields)
+}
+
+// rewriteStoredProcess replaces fields of the process identity of a record
+// in store.
+func rewriteStoredProcess(t *testing.T, store *sessionRecords, id string, fields map[string]json.RawMessage) {
+	t.Helper()
+	record, process := recordedProcess(t, store, id)
 	maps.Copy(process, fields)
 	raw, err := json.Marshal(process)
 	if err != nil {
 		t.Fatal(err)
 	}
 	record["process"] = raw
-	if header, err = json.Marshal(record); err != nil {
+	header, err := json.Marshal(record)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`UPDATE sessions SET header=? WHERE id=?`, header, id); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// recordedProcessField reads one field of a session record's process
+// identity.
+func recordedProcessField(t *testing.T, cfg ServerConfig, id, field string) json.RawMessage {
+	t.Helper()
+	store, err := openSessionRecords(filepath.Join(cfg.StateDir, "node-sessions", "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+	_, process := recordedProcess(t, store, id)
+	if process[field] == nil {
+		t.Fatalf("session record keeps no process %s", field)
+	}
+	return process[field]
+}
+
+// recordedProcess reads a session record's header and the process identity
+// in it.
+func recordedProcess(t *testing.T, store *sessionRecords, id string) (record, process map[string]json.RawMessage) {
+	t.Helper()
+	var header []byte
+	if err := store.db.QueryRow(`SELECT header FROM sessions WHERE id=?`, id).Scan(&header); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(header, &record); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(record["process"], &process); err != nil || process["leader"] == nil || process["group"] == nil || process["start"] == nil {
+		t.Fatal("session record keeps no process identity")
+	}
+	return record, process
 }
 
 func recordedPID(path string) int {
