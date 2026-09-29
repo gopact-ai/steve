@@ -155,6 +155,33 @@ func TestCompletionRefusesWhenALandingCannotBeRead(t *testing.T) {
 	}
 }
 
+// A landing of a result no task's execution produced, such as one landed by
+// hand, is no task's to finish: it does not keep a task from closing,
+// whatever state it is in, nor does it hide the task's own landings.
+func TestCompletionLeavesOutLandingsOfNoTask(t *testing.T) {
+	s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
+	begin := func(land Landing) {
+		t.Helper()
+		if _, err := s.ledger.Begin(t.Context(), land.ID, landKind, land.State, "test", land); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func() error {
+		return s.ledger.Update(t.Context(), func(tx *ledger.Tx) error {
+			return CheckTaskLandingsTx(tx, map[string]bool{"child": true})
+		})
+	}
+	begin(Landing{ID: "by-hand", Project: "p", Artifact: "by-hand", State: LandLocked, StartedAt: time.Now()})
+	begin(Landing{ID: "no-execution", Project: "p", Artifact: "no-execution", Source: &Source{AttemptID: "attempt"}, State: LandMergeConflicted, StartedAt: time.Now()})
+	if err := check(); err != nil {
+		t.Fatalf("a landing of no task's result kept the task from closing: %v", err)
+	}
+	begin(Landing{ID: "own", Project: "p", Artifact: "result", Source: &Source{AttemptID: "child-attempt", Execution: &task.ExecutionToken{TaskID: "child", Epoch: 1}}, State: LandLocked, StartedAt: time.Now()})
+	if err := check(); !errors.Is(err, task.ErrCompleteDelivery) {
+		t.Fatalf("with the task's own landing still locked, check = %v, want %v", err, task.ErrCompleteDelivery)
+	}
+}
+
 // The check reads the landings of the tasks it is asked about, not every
 // landing there is: what it costs does not grow with other tasks' results.
 func TestCompletionReadsOnlyTheTasksLandings(t *testing.T) {
