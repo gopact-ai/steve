@@ -506,11 +506,11 @@ func (c *Channel) send(ctx context.Context, idType, receiveID, text string) (Sen
 		return Sent{}, refused("feishu send", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
-		return Sent{}, fmt.Errorf("feishu send: empty response")
+		return Sent{}, fmt.Errorf("%w: feishu send: empty response", messagechannel.ErrOutcomeUnknown)
 	}
 	sent := Sent{ChatID: deref(resp.Data.ChatId), MessageID: deref(resp.Data.MessageId)}
 	if sent.ChatID == "" {
-		return Sent{}, fmt.Errorf("feishu send: empty chat id")
+		return Sent{}, fmt.Errorf("%w: feishu send: empty chat id", messagechannel.ErrOutcomeUnknown)
 	}
 	confirm(sent)
 	return sent, nil
@@ -666,7 +666,7 @@ func (c *Channel) ReplyThread(ctx context.Context, messageID, text string) (stri
 		return "", "", refused("feishu thread reply", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
-		return "", "", fmt.Errorf("feishu thread reply: empty response")
+		return "", "", fmt.Errorf("%w: feishu thread reply: empty response", messagechannel.ErrOutcomeUnknown)
 	}
 	confirm(map[string]string{"message_id": deref(resp.Data.MessageId), "thread_id": deref(resp.Data.ThreadId)})
 	return deref(resp.Data.MessageId), deref(resp.Data.ThreadId), nil
