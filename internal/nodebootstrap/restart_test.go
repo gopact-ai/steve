@@ -413,6 +413,28 @@ func TestPeerRestartScriptFindsThePeerHoldingTheGatewayLock(t *testing.T) {
 	}
 }
 
+// Where the gateway lock does not tell who holds it, as lsof may not, the
+// command line still does: a peer started by the path the installation
+// resolves to is found whether the lock records its pid or not.
+func TestPeerRestartScriptFindsAPeerStartedByTheResolvedPathByItsCommandLine(t *testing.T) {
+	requirePeerPlatform(t)
+	for _, recorded := range []bool{true, false} {
+		real, home := symlinkedPeer(t)
+		pid := startPeer(t, real)
+		if recorded {
+			lockedBy(t, real, pid)
+		}
+		report, err := runRestart(t, home, RestartSpec{IfStopped: true})
+		if err != nil || !strings.Contains(report, "Peer process "+pid+" is still running") {
+			t.Fatalf("recorded %v: the peer %s started by the resolved path was not found running: %v\n%s", recorded, pid, err, report)
+		}
+		report, err = runRestart(t, home, RestartSpec{})
+		if err != nil || !strings.Contains(report, "Stopping peer process "+pid) || !strings.Contains(report, "STEVE_RESTART\trestarted\n") {
+			t.Fatalf("recorded %v: the peer %s started by the resolved path was not restarted: %v\n%s", recorded, pid, err, report)
+		}
+	}
+}
+
 // An upgrade finds the same peer: it is stopped, the program it ran is
 // kept as the fallback in place of an earlier one, and the new program
 // runs.
