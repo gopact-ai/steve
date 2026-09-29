@@ -310,6 +310,50 @@ func TestPeerUpgradeScriptLeftDownKeepsTheFallbackInstalledAndTheNewProgramRejec
 	}
 }
 
+// A new program that exits without a word did not exit on the gateway
+// lock, however an earlier run left the log ending. The upgrade falls
+// back as for any new program that does not stay up, and exits 26 when
+// the fallback does or 28 when it does not either, rather than exit 31
+// with the programs put back and nothing started.
+func TestPeerUpgradeScriptFallsBackFromANewProgramThatExitsWithoutAWord(t *testing.T) {
+	requirePeerPlatform(t)
+	for _, fallbackUp := range []bool{true, false} {
+		home, program := layoutPeer(t)
+		state := filepath.Join(home, ".steve-peer")
+		bin := filepath.Join(state, "bin")
+		if err := os.WriteFile(filepath.Join(state, "peer.log"), []byte("gateway: serving\n"+lockMessage(state)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fallback, upgraded := string(program), "#!/bin/sh\nexit 1\n"
+		if !fallbackUp {
+			fallback = "#!/bin/sh\nexit 4\n"
+			if err := os.WriteFile(filepath.Join(bin, "steve.previous"), []byte(fallback), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(bin, "steve"), []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		spec := upgradeSpec()
+		spec.SHA256 = stageUpload(t, home, spec.UploadID, []byte(upgraded))
+		report, err := runUpgrade(t, home, spec)
+		want := 28
+		if fallbackUp {
+			want = 26
+		}
+		if exitCode(err) != want || strings.Contains(report, "was not stopped") {
+			t.Errorf("fallback up %v: expected exit %d after falling back, got %v\n%s", fallbackUp, want, err, report)
+			continue
+		}
+		if left := programs(t, home); !maps.Equal(left, map[string]string{"steve": fallback, "steve.rejected": upgraded}) {
+			t.Errorf("fallback up %v: the upgrade left %v\n%s", fallbackUp, slices.Sorted(maps.Keys(left)), report)
+		}
+		if pids := peerPIDs(t, home); (len(pids) == 1) != fallbackUp {
+			t.Errorf("fallback up %v: running afterwards %v\n%s", fallbackUp, pids, report)
+		}
+	}
+}
+
 func TestPeerUpgradeScriptRefusesAMachineWithoutAPeer(t *testing.T) {
 	home := t.TempDir()
 	out, err := runUpgrade(t, home, upgradeSpec())

@@ -161,8 +161,8 @@ func TestPeerRestartScriptLeavesARunningPeerAloneWhenOnlyStartingAStoppedOne(t *
 // A peer the script does not find can still hold the gateway lock, and
 // the program started beside it exits on that lock. Starting a peer only
 // when it is down takes this for a peer that runs and leaves it alone; a
-// restart says the peer that ran was not stopped, and exits 31. Only the
-// line the program just wrote counts: an earlier run's line further up
+// restart says the peer that ran was not stopped, and exits 31. Only
+// what the program just wrote counts: an earlier run's line further up
 // the log says nothing about this one.
 func TestPeerRestartScriptTellsALockHeldByAPeerItDidNotFind(t *testing.T) {
 	requirePeerPlatform(t)
@@ -187,6 +187,72 @@ func TestPeerRestartScriptTellsALockHeldByAPeerItDidNotFind(t *testing.T) {
 	report, err = runRestart(t, home, RestartSpec{IfStopped: true})
 	if exitCode(err) != 28 || strings.Contains(report, "STEVE_RESTART") {
 		t.Fatalf("an earlier line about the lock was taken for this start's: %v\n%s", err, report)
+	}
+}
+
+// lockMessage is the line a peer of the installation under state exits
+// with when another process holds its gateway lock.
+func lockMessage(state string) string {
+	dir := filepath.Join(state, "cluster", "peer-process")
+	return "steve: another gateway already serves " + dir + " (lock " + filepath.Join(dir, "gateway.lock") + " is held)\n"
+}
+
+// Whether the program just started exited on the gateway lock is told by
+// what it wrote to the log since it was started, and by nothing the log
+// held before. A program that exits without a word leaves the peer down,
+// however an earlier run left the log ending: an old line about the lock
+// is neither a peer that runs nor a peer the restart did not stop, and
+// no log at all is no error of the script's. What the peer holding the
+// lock writes after the program's line does not hide it, and a log cut
+// shorter while the program ran is read from its start.
+func TestPeerRestartScriptTellsTheLockByWhatThisStartWrote(t *testing.T) {
+	requirePeerPlatform(t)
+	home, _ := layoutPeer(t)
+	state := filepath.Join(home, ".steve-peer")
+	log := filepath.Join(state, "peer.log")
+	serving := strings.Repeat("gateway: serving\n", 100)
+	silent := "#!/bin/sh\nexit 1\n"
+	heldThenServing := "#!/bin/sh\nprintf '%s' '" + lockMessage(state) + "' >&2\n(sleep 1; echo 'gateway: still serving' >&2) &\nexit 1\n"
+	cutThenHeld := "#!/bin/sh\n: > \"$HOME/.steve-peer/peer.log\"\nprintf '%s' '" + lockMessage(state) + "' >&2\nexit 1\n"
+	for _, c := range []struct {
+		name, before, program string
+		held                  bool
+	}{
+		{name: "an earlier run's line about the lock ends the log", before: serving + lockMessage(state), program: silent},
+		{name: "no log", program: silent},
+		{name: "the peer holding the lock writes on", before: serving, program: heldThenServing, held: true},
+		{name: "the log is cut shorter", before: serving, program: cutThenHeld, held: true},
+	} {
+		for _, spec := range []RestartSpec{{IfStopped: true}, {}} {
+			if err := os.Remove(log); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if c.before != "" {
+				if err := os.WriteFile(log, []byte(c.before), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(state, "bin", "steve"), []byte(c.program), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			report, err := runRestart(t, home, spec)
+			switch {
+			case strings.Contains(report, "No such file") || strings.Contains(report, "expression expected"):
+				t.Errorf("%s, if stopped %v: the script failed reading the log: %v\n%s", c.name, spec.IfStopped, err, report)
+			case !c.held:
+				if exitCode(err) != 28 || strings.Contains(report, "STEVE_RESTART") || !strings.Contains(report, "the peer is down") {
+					t.Errorf("%s, if stopped %v: expected exit 28 with the peer down, got %v\n%s", c.name, spec.IfStopped, err, report)
+				}
+			case spec.IfStopped:
+				if err != nil || !strings.Contains(report, "STEVE_RESTART\trunning\n") {
+					t.Errorf("%s: a peer holding the lock was not left alone as running: %v\n%s", c.name, err, report)
+				}
+			default:
+				if exitCode(err) != 31 || strings.Contains(report, "STEVE_RESTART") || !strings.Contains(report, "was not stopped") {
+					t.Errorf("%s: expected exit 31 saying the running peer was not stopped, got %v\n%s", c.name, err, report)
+				}
+			}
+		}
 	}
 }
 
