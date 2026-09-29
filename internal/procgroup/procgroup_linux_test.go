@@ -6,6 +6,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -164,5 +166,54 @@ func TestParseStatTakesAZombieWithThreadsLeftForRunning(t *testing.T) {
 		if p.live != tc.live || p.group != 42 || p.start != 777 {
 			t.Errorf("state %s with %d threads: %+v, want live %v", tc.state, tc.threads, p, tc.live)
 		}
+	}
+}
+
+// Listings asked for while a read of every process is under way share the
+// next read, so settling many groups at once does not read every process
+// once for each of them. Each is of a read that began after it was asked
+// for, as the one under way may have missed what changed since.
+func TestListingsAskedForTogetherShareOneRead(t *testing.T) {
+	var reads atomic.Int32
+	began, finish := make(chan struct{}), make(chan struct{})
+	s := &passes{read: func() (pass, error) {
+		if reads.Add(1) == 1 {
+			close(began)
+			<-finish
+			return pass{groups: map[int][]process{7: {{pid: 7, group: 7, live: true}}}, complete: true}, nil
+		}
+		return pass{groups: map[int][]process{7: {{pid: 8, group: 7, live: true}}}, complete: true}, nil
+	}}
+	first := make(chan listing, 1)
+	go func() {
+		found, _ := s.list(7)
+		first <- found
+	}()
+	<-began
+	const later = 50
+	found := make([]listing, later)
+	var asked, done sync.WaitGroup
+	for i := range later {
+		asked.Add(1)
+		done.Go(func() {
+			asked.Done()
+			found[i], _ = s.list(7)
+		})
+	}
+	asked.Wait()
+	// As long as a listing takes to be asked for once it is called.
+	time.Sleep(100 * time.Millisecond)
+	close(finish)
+	done.Wait()
+	if got := <-first; len(got.members) != 1 || got.members[0].pid != 7 {
+		t.Fatalf("the first listing is %+v, want the read it began", got.members)
+	}
+	for i, got := range found {
+		if len(got.members) != 1 || got.members[0].pid != 8 {
+			t.Fatalf("listing %d is %+v, want a read that began after it was asked for", i, got.members)
+		}
+	}
+	if n := reads.Load(); n > 2 {
+		t.Fatalf("%d listings asked for together read every process %d times, want at most 2", later+1, n)
 	}
 }
