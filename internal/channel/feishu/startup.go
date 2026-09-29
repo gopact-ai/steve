@@ -23,10 +23,21 @@ const (
 // application's credentials or state change. Any other code may pass by
 // waiting, whatever HTTP status carries it: an overloaded or failing
 // Feishu answers with codes of its own.
+//
+// The SDK raises 7100-7104 itself when its client-assertion configuration
+// is missing or does not fit the call. The channel authenticates with the
+// app secret alone, so any of them means a configuration waiting does not
+// change.
 var rejectedCodes = map[int]bool{
 	10002: true, // the application is invalid
 	10003: true, // the app ID is invalid
 	10014: true, // the app secret is invalid
+
+	larkcore.ErrCodeClientAssertionProviderNotConfigured: true,
+	larkcore.ErrCodeClientAssertionTokenEmpty:            true,
+	larkcore.ErrCodeClientAssertionRetrieveFailed:        true,
+	larkcore.ErrCodeClientAssertionModeNotSupported:      true,
+	larkcore.ErrCodeAppSecretAndClientAssertionEmpty:     true,
 }
 
 // statusError is an HTTP status Feishu answered instead of a result.

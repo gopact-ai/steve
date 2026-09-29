@@ -256,3 +256,34 @@ func TestChannelsViewReportsAStartupRetry(t *testing.T) {
 		t.Fatalf("a started channel still reports a startup retry: %+v", view.StartupRetry)
 	}
 }
+
+// A started channel whose connection was lost shows since when, how many
+// attempts to establish it again failed and why the last failed. It is
+// withdrawn once the connection is back and replaced by a terminal runtime
+// error.
+func TestChannelsViewReportsAReconnect(t *testing.T) {
+	_, s := ChannelsAdminFixture(t)
+	since := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+	reconnect := consoleapi.ChannelReconnect{Since: since, Attempts: 2, LastError: "503: system busy"}
+	reported := reconnect
+	s.SetReconnect(&reported)
+	reported.Attempts = 99
+	view, err := s.Channels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Reconnect == nil || *view.Reconnect != reconnect || view.RuntimeError != "" || view.StartupRetry != nil {
+		t.Fatalf("reconnect %+v, runtime error %q, startup retry %+v; want %+v alone", view.Reconnect, view.RuntimeError, view.StartupRetry, reconnect)
+	}
+	AssertNoChannelSecrets(t, view)
+
+	s.SetReconnect(nil)
+	if view, _ = s.Channels(t.Context()); view.Reconnect != nil {
+		t.Fatalf("a connected channel still reports a reconnect: %+v", view.Reconnect)
+	}
+	s.SetReconnect(&reconnect)
+	s.SetRuntimeError("application disabled")
+	if view, _ = s.Channels(t.Context()); view.Reconnect != nil || view.RuntimeError != "application disabled" {
+		t.Fatalf("after a terminal failure: reconnect %+v, runtime error %q", view.Reconnect, view.RuntimeError)
+	}
+}

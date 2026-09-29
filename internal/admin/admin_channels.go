@@ -22,6 +22,7 @@ type hubChannelsService struct {
 	appliedSecret string
 	runtimeError  string
 	startupRetry  *consoleapi.ChannelStartupRetry
+	reconnect     *consoleapi.ChannelReconnect
 	accessUpdater func(config.Feishu)
 }
 
@@ -51,12 +52,13 @@ func channelAccess(f channelsettings.FeishuSetting) config.Feishu {
 }
 
 // SetRuntimeError reports a channel that stopped trying; it replaces a
-// startup retry.
+// startup retry or reconnect.
 func (s *hubChannelsService) SetRuntimeError(message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runtimeError = message
 	s.startupRetry = nil
+	s.reconnect = nil
 }
 
 // SetStartupRetry reports a channel startup that will be retried; nil
@@ -68,6 +70,18 @@ func (s *hubChannelsService) SetStartupRetry(retry *consoleapi.ChannelStartupRet
 	if retry != nil {
 		copied := *retry
 		s.startupRetry = &copied
+	}
+}
+
+// SetReconnect reports a started channel whose connection is being
+// established again; nil reports none.
+func (s *hubChannelsService) SetReconnect(reconnect *consoleapi.ChannelReconnect) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconnect = nil
+	if reconnect != nil {
+		copied := *reconnect
+		s.reconnect = &copied
 	}
 }
 
@@ -95,7 +109,7 @@ func (s *hubChannelsService) viewLocked() consoleapi.ChannelsView {
 		mode = "mixed"
 		liveFields = []string{"feishu.group_policy", "feishu.allow_unmentioned", "feishu.allowed_senders", "feishu.blocked_senders"}
 	}
-	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(s.admin.cfg()), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError, StartupRetry: s.startupRetryLocked()}
+	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(s.admin.cfg()), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: mode, LiveFields: liveFields, RuntimeError: s.runtimeError, StartupRetry: s.startupRetryLocked(), Reconnect: s.reconnectLocked()}
 }
 
 func (s *hubChannelsService) startupRetryLocked() *consoleapi.ChannelStartupRetry {
@@ -103,6 +117,14 @@ func (s *hubChannelsService) startupRetryLocked() *consoleapi.ChannelStartupRetr
 		return nil
 	}
 	copied := *s.startupRetry
+	return &copied
+}
+
+func (s *hubChannelsService) reconnectLocked() *consoleapi.ChannelReconnect {
+	if s.reconnect == nil {
+		return nil
+	}
+	copied := *s.reconnect
 	return &copied
 }
 

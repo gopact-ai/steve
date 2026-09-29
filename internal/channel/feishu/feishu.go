@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,11 +20,9 @@ import (
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
-	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -99,6 +98,22 @@ type Options struct {
 	// runs on Start's goroutine and is never called when verification
 	// fails or is stopped.
 	OnReady func()
+	// OnReconnect reports the long connection after Ready: a Reconnect
+	// while the official client is establishing it again, nil once it is
+	// back. Calls are ordered, run on the client's goroutines and must not
+	// block. A failure the client will not retry ends Start instead.
+	OnReconnect func(*Reconnect)
+}
+
+// Reconnect is a long connection that failed or was lost and is being
+// established again.
+type Reconnect struct {
+	// Since is when the connection failed or was lost.
+	Since time.Time
+	// Failures counts the attempts that failed since.
+	Failures int
+	// Err is the last failure; nil before an attempt failed.
+	Err error
 }
 
 // StartRetry is a startup failure Start will retry.
@@ -127,6 +142,11 @@ type Channel struct {
 	onRetry func(StartRetry)
 	// onReady is Options.OnReady.
 	onReady func()
+	// onReconnect is Options.OnReconnect.
+	onReconnect func(*Reconnect)
+	// watch follows the long connection for onReconnect; nil when ws is
+	// not the official client.
+	watch *connWatch
 	// botOpenID is written by Start before the long connection begins,
 	// which is the only source of inbound events that read it.
 	botOpenID string
@@ -169,7 +189,7 @@ var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
 // application and connects.
 func New(opts Options, handler Handler) *Channel {
 	api := newAPI(opts.AppID, opts.AppSecret, opts.Domain)
-	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry, onReady: opts.OnReady}
+	channel := &Channel{api: api, ready: make(chan struct{}), delay: startupRetryDelay, onRetry: opts.OnStartRetry, onReady: opts.OnReady, onReconnect: opts.OnReconnect}
 	channel.identify = func(ctx context.Context) (Identity, error) { return botIdentity(ctx, api) }
 	channel.SetAccess(opts.Access, opts.AllowUnmentioned)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
@@ -202,11 +222,7 @@ func New(opts Options, handler Handler) *Channel {
 			return resp, nil
 		})
 
-	channel.ws = larkws.NewClient(opts.AppID, opts.AppSecret,
-		larkws.WithEventHandler(eventHandler),
-		larkws.WithDomain(BaseURL(opts.Domain)),
-		larkws.WithLogLevel(larkcore.LogLevelInfo),
-	)
+	channel.ws = newLongConn(channel, opts.AppID, opts.AppSecret, BaseURL(opts.Domain), eventHandler)
 	return channel
 }
 
@@ -262,12 +278,23 @@ func (c *Channel) Start(ctx context.Context) error {
 	}()
 	select {
 	case err := <-done:
+		c.watch.stop()
 		if ctx.Err() != nil {
 			c.ws.Close()
 			return ctx.Err()
 		}
 		return err
+	case err := <-c.watch.refusals():
+		// The official client gives up on a refused connection without
+		// returning from its Start.
+		c.watch.stop()
+		c.ws.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
 	case <-ctx.Done():
+		c.watch.stop()
 		c.ws.Close()
 		return ctx.Err()
 	}
@@ -470,19 +497,20 @@ func (c *Channel) send(ctx context.Context, idType, receiveID, text string) (Sen
 			Build()).
 		Build()
 	_, confirm := c.effect("send", receiveID, content)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Create(ctx, req)
 	if err != nil {
-		return Sent{}, fmt.Errorf("feishu send: %w", err)
+		return Sent{}, call.failed("feishu send", err)
 	}
 	if !resp.Success() {
-		return Sent{}, fmt.Errorf("feishu send: code=%d msg=%s", resp.Code, resp.Msg)
+		return Sent{}, refused("feishu send", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
-		return Sent{}, fmt.Errorf("feishu send: empty response")
+		return Sent{}, fmt.Errorf("%w: feishu send: empty response", messagechannel.ErrOutcomeUnknown)
 	}
 	sent := Sent{ChatID: deref(resp.Data.ChatId), MessageID: deref(resp.Data.MessageId)}
 	if sent.ChatID == "" {
-		return Sent{}, fmt.Errorf("feishu send: empty chat id")
+		return Sent{}, fmt.Errorf("%w: feishu send: empty chat id", messagechannel.ErrOutcomeUnknown)
 	}
 	confirm(sent)
 	return sent, nil
@@ -501,12 +529,13 @@ func (c *Channel) ReplyCard(ctx context.Context, messageID string, payload []byt
 			Build()).
 		Build()
 	_, confirm := c.effect("reply-card", messageID, payload)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("%w: feishu card reply: %w", messagechannel.ErrOutcomeUnknown, err)
+		return "", call.failed("feishu card reply", err)
 	}
 	if !resp.Success() {
-		return "", fmt.Errorf("feishu card reply: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", refused("feishu card reply", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil || deref(resp.Data.MessageId) == "" {
 		return "", fmt.Errorf("%w: feishu card reply: empty message id", messagechannel.ErrOutcomeUnknown)
@@ -526,12 +555,16 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 		MessageId(messageID).
 		Body(larkim.NewPatchMessageReqBodyBuilder().Content(content).Build()).
 		Build()
-	resp, err := c.api.Im.V1.Message.Patch(ctx, patch)
+	patchCtx, patchCall := tracked(ctx)
+	resp, err := c.api.Im.V1.Message.Patch(patchCtx, patch)
 	if err != nil {
-		return fmt.Errorf("%w: feishu card patch: %w", messagechannel.ErrOutcomeUnknown, err)
+		return patchCall.failed("feishu card patch", err)
 	}
 	if resp.Success() {
 		return nil
+	}
+	if err := refused("feishu card patch", resp.ApiResp, resp.Code, resp.Msg); errors.Is(err, messagechannel.ErrOutcomeUnknown) {
+		return err
 	}
 	upd := larkim.NewUpdateMessageReqBuilder().
 		MessageId(messageID).
@@ -540,12 +573,13 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 			Content(content).
 			Build()).
 		Build()
-	updated, updErr := c.api.Im.V1.Message.Update(ctx, upd)
-	if updErr != nil {
-		return fmt.Errorf("%w: feishu card update: %w", messagechannel.ErrOutcomeUnknown, updErr)
+	updateCtx, updateCall := tracked(ctx)
+	updated, err := c.api.Im.V1.Message.Update(updateCtx, upd)
+	if err != nil {
+		return updateCall.failed("feishu card update", err)
 	}
 	if !updated.Success() {
-		return fmt.Errorf("feishu card update: code=%d msg=%s", updated.Code, updated.Msg)
+		return refused("feishu card update", updated.ApiResp, updated.Code, updated.Msg)
 	}
 	return nil
 }
@@ -557,12 +591,13 @@ func (c *Channel) DeleteMessage(ctx context.Context, messageID string) error {
 		return fmt.Errorf("feishu delete: message id is required")
 	}
 	req := larkim.NewDeleteMessageReqBuilder().MessageId(messageID).Build()
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Delete(ctx, req)
 	if err != nil {
-		return fmt.Errorf("feishu delete: %w", err)
+		return call.failed("feishu delete", err)
 	}
 	if !resp.Success() {
-		return fmt.Errorf("feishu delete: code=%d msg=%s", resp.Code, resp.Msg)
+		return refused("feishu delete", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	return nil
 }
@@ -588,12 +623,13 @@ func (c *Channel) ReplyText(ctx context.Context, messageID, text string) (string
 			Build()).
 		Build()
 	_, confirm := c.effect("reply", messageID, content)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("%w: feishu reply: %w", messagechannel.ErrOutcomeUnknown, err)
+		return "", call.failed("feishu reply", err)
 	}
 	if !resp.Success() {
-		return "", fmt.Errorf("feishu reply: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", refused("feishu reply", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
 		confirm(nil)
@@ -621,15 +657,16 @@ func (c *Channel) ReplyThread(ctx context.Context, messageID, text string) (stri
 			Build()).
 		Build()
 	_, confirm := c.effect("reply-thread", messageID, content)
+	ctx, call := tracked(ctx)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return "", "", fmt.Errorf("%w: feishu thread reply: %w", messagechannel.ErrOutcomeUnknown, err)
+		return "", "", call.failed("feishu thread reply", err)
 	}
 	if !resp.Success() {
-		return "", "", fmt.Errorf("feishu thread reply: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", "", refused("feishu thread reply", resp.ApiResp, resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
-		return "", "", fmt.Errorf("feishu thread reply: empty response")
+		return "", "", fmt.Errorf("%w: feishu thread reply: empty response", messagechannel.ErrOutcomeUnknown)
 	}
 	confirm(map[string]string{"message_id": deref(resp.Data.MessageId), "thread_id": deref(resp.Data.ThreadId)})
 	return deref(resp.Data.MessageId), deref(resp.Data.ThreadId), nil
