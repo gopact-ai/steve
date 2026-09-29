@@ -202,9 +202,10 @@ func lockMessage(state string) string {
 // held before. A program that exits without a word leaves the peer down,
 // however an earlier run left the log ending: an old line about the lock
 // is neither a peer that runs nor a peer the restart did not stop, and
-// no log at all is no error of the script's. What the peer holding the
-// lock writes after the program's line does not hide it, and a log cut
-// shorter while the program ran is read from its start.
+// no log, before the start or after it, is no error of the script's.
+// What the peer holding the lock writes after the program's line does not
+// hide it, and a log cut shorter while the program ran is read from its
+// start.
 func TestPeerRestartScriptTellsTheLockByWhatThisStartWrote(t *testing.T) {
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
@@ -214,12 +215,14 @@ func TestPeerRestartScriptTellsTheLockByWhatThisStartWrote(t *testing.T) {
 	silent := "#!/bin/sh\nexit 1\n"
 	heldThenServing := "#!/bin/sh\nprintf '%s' '" + lockMessage(state) + "' >&2\n(sleep 1; echo 'gateway: still serving' >&2) &\nexit 1\n"
 	cutThenHeld := "#!/bin/sh\n: > \"$HOME/.steve-peer/peer.log\"\nprintf '%s' '" + lockMessage(state) + "' >&2\nexit 1\n"
+	removing := "#!/bin/sh\nrm -f \"$HOME/.steve-peer/peer.log\"\nexit 1\n"
 	for _, c := range []struct {
 		name, before, program string
-		held                  bool
+		held, gone            bool
 	}{
 		{name: "an earlier run's line about the lock ends the log", before: serving + lockMessage(state), program: silent},
 		{name: "no log", program: silent},
+		{name: "the log is removed", before: serving, program: removing, gone: true},
 		{name: "the peer holding the lock writes on", before: serving, program: heldThenServing, held: true},
 		{name: "the log is cut shorter", before: serving, program: cutThenHeld, held: true},
 	} {
@@ -237,7 +240,7 @@ func TestPeerRestartScriptTellsTheLockByWhatThisStartWrote(t *testing.T) {
 			}
 			report, err := runRestart(t, home, spec)
 			switch {
-			case strings.Contains(report, "No such file") || strings.Contains(report, "expression expected"):
+			case !c.gone && strings.Contains(report, "No such file") || strings.Contains(report, "expression expected"):
 				t.Errorf("%s, if stopped %v: the script failed reading the log: %v\n%s", c.name, spec.IfStopped, err, report)
 			case !c.held:
 				if exitCode(err) != 28 || strings.Contains(report, "STEVE_RESTART") || !strings.Contains(report, "the peer is down") {
