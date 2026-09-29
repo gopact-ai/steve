@@ -230,10 +230,12 @@ fi
 `
 
 // peerUpgradeStartSection starts the peer on the new program and falls
-// back to the previous one when it does not stay up. A new program that
-// exits because the gateway lock is held was started beside a peer the
-// script did not stop: the program it replaced is put back in its place,
-// nothing more is started beside that peer, and the script exits 31.
+// back to steve.previous when it does not stay up. The rotation always
+// leaves one: the program it replaced, or the fallback it kept when that
+// program was set aside. A new program that exits because the gateway
+// lock is held was started beside a peer the script did not stop: the
+// program it replaced is put back in its place, nothing more is started
+// beside that peer, and the script exits 31.
 const peerUpgradeStartSection = `if start_peer; then
   echo 'Peer restarted on the new program; the coordinator still has to see it come back.'
   exit 0
@@ -246,10 +248,6 @@ if tail -n 1 "$state_dir/peer.log" 2>/dev/null | grep -q 'another gateway alread
 fi
 echo 'The new program did not stay running; restoring the previous one.' >&2
 mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.rejected"
-if [ ! -f "$state_dir/bin/steve.previous" ]; then
-  echo 'There is no previous program to restore; the peer is down. Inspect ~/.steve-peer/peer.log.' >&2
-  exit 28
-fi
 mv -f "$state_dir/bin/steve.previous" "$state_dir/bin/steve"
 if start_peer; then
   echo 'Previous program restarted; inspect ~/.steve-peer/peer.log for why the new one exited.' >&2
