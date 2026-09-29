@@ -294,10 +294,11 @@ func TestUpgradeReportsAnUnconfirmedReturn(t *testing.T) {
 	}
 }
 
-// The script tells a rollback apart from a peer it could not bring back;
-// the owner is told which of the two the machine is in.
+// The script tells a rollback apart from a peer it could not bring back,
+// and both from a peer it could not look for; the owner is told which of
+// these the machine is in.
 func TestUpgradeTellsARollbackFromAPeerLeftDown(t *testing.T) {
-	for exit, code := range map[int]string{26: "upgrade_rejected", 28: "upgrade_down", 22: "upgrade_uncertain"} {
+	for exit, code := range map[int]string{26: "upgrade_rejected", 28: "upgrade_down", 29: "upgrade_unlocated", 22: "upgrade_uncertain"} {
 		svc, runner, backend, _ := upgradeFixture(t)
 		runner.swapExit = exit
 		result, err := svc.Upgrade(t.Context(), "node-1")

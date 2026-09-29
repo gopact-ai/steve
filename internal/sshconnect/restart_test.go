@@ -278,7 +278,7 @@ func TestRestartSaysAPeerThatWasNotRunningWasStarted(t *testing.T) {
 // that ended some other way. None of them waits for the machine to come
 // back, and each is recorded as a failed restart with its reason.
 func TestRestartTellsWhatTheScriptFoundOnTheMachine(t *testing.T) {
-	for exit, code := range map[int]string{28: "restart_down", 30: "peer_missing", 21: "restart_busy", 1: "restart_uncertain", 0: "restart_uncertain"} {
+	for exit, code := range map[int]string{28: "restart_down", 30: "peer_missing", 21: "restart_busy", 29: "restart_unlocated", 1: "restart_uncertain", 0: "restart_uncertain"} {
 		svc, runner, backend := restartFixture(t)
 		if exit == 0 {
 			runner.answerWith(func(context.Context, string) (Output, error) { return Output{Stdout: "no verdict"}, nil })

@@ -13,11 +13,13 @@ import (
 	"time"
 )
 
-func runRestart(t *testing.T, home string, spec RestartSpec) (string, error) {
+// runRestart runs the restart script for the installation under home,
+// with env added to the test's environment.
+func runRestart(t *testing.T, home string, spec RestartSpec, env ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("bash", "-s")
 	cmd.Stdin = strings.NewReader(BuildPeerRestart(spec))
-	cmd.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	cmd.Env = append(append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1"), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -262,6 +264,71 @@ func TestPeerRestartScriptLeavesAnotherInstallationsPeerItsLockNames(t *testing.
 			}
 		}
 	}
+}
+
+// A search for the peer that cannot be made is not a search that found
+// none. Without pgrep or ps, with a pgrep that fails, or with a gateway
+// lock it cannot read, the script exits 29 before it stops or starts
+// anything: taking the peer for stopped would start a second one beside
+// it, or stop one that cannot start again over a lock it cannot open.
+func TestPeerRestartScriptFailsWhereItCannotLookForThePeer(t *testing.T) {
+	requirePeerPlatform(t)
+	failing := t.TempDir()
+	if err := os.WriteFile(filepath.Join(failing, "pgrep"), []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, spoil := range map[string]func(t *testing.T, home, pid string) []string{
+		"no pgrep": func(t *testing.T, _, _ string) []string { return []string{"PATH=" + pathWithout(t, "pgrep")} },
+		"no ps":    func(t *testing.T, _, _ string) []string { return []string{"PATH=" + pathWithout(t, "ps")} },
+		"failing pgrep": func(*testing.T, string, string) []string {
+			return []string{"PATH=" + failing + ":" + os.Getenv("PATH")}
+		},
+		"unreadable lock": func(t *testing.T, home, pid string) []string {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads a lock whatever its mode")
+			}
+			lockedBy(t, home, pid)
+			if err := os.Chmod(filepath.Join(home, ".steve-peer", "cluster", "peer-process", "gateway.lock"), 0); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, spec := range []RestartSpec{{IfStopped: true}, {}} {
+				home, pid := installedPeer(t)
+				report, err := runRestart(t, home, spec, spoil(t, home, pid)...)
+				if exitCode(err) != 29 || strings.Contains(report, "STEVE_RESTART") || strings.Contains(report, "Stopping peer process") || !strings.Contains(report, "nothing was stopped or started") {
+					t.Fatalf("IfStopped %v: expected exit 29 with nothing stopped or started, got %v\n%s", spec.IfStopped, err, report)
+				}
+				if pids := peerPIDs(t, home); len(pids) != 1 || pids[0] != pid {
+					t.Fatalf("IfStopped %v: the running peer %s was touched: %v\n%s", spec.IfStopped, pid, pids, report)
+				}
+			}
+		})
+	}
+}
+
+// pathWithout is a PATH with every program the test's PATH finds except
+// the one named.
+func pathWithout(t *testing.T, program string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, from := range filepath.SplitList(os.Getenv("PATH")) {
+		entries, _ := os.ReadDir(from)
+		for _, entry := range entries {
+			if entry.Name() == program || entry.IsDir() {
+				continue
+			}
+			if _, err := os.Lstat(filepath.Join(dir, entry.Name())); err == nil {
+				continue
+			}
+			if err := os.Symlink(filepath.Join(from, entry.Name()), filepath.Join(dir, entry.Name())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return dir
 }
 
 // relativePeer starts the installation's peer from its own directory as
