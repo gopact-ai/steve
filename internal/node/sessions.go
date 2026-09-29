@@ -58,10 +58,12 @@ type SessionService struct {
 	// has not ended yet; a stop of one of them tries again. place is where
 	// this node runs agents: without it, as where process groups are not
 	// tracked, records name no group to end. settleMu serializes ending
-	// recorded groups, each from a fresh read of its record.
+	// recorded groups, each from a fresh read of its record, which settle
+	// does.
 	place      procgroup.Place
 	placeKnown bool
 	settleMu   sync.Mutex
+	settle     func(id procgroup.Identity, ran, here procgroup.Place, within time.Duration) error
 }
 
 // harnessCapabilities is what starting a harness once said about the agent
@@ -191,7 +193,10 @@ func (s *Server) startSessions(ctx context.Context) error {
 		return sessionError("invalid", "node sessions require durable node state and identity")
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	service := &SessionService{server: s, ctx: ctx, cancel: cancel, sessions: map[string]*ownedSession{}, unverifiedProcesses: map[string]bool{}}
+	service := &SessionService{server: s, ctx: ctx, cancel: cancel, sessions: map[string]*ownedSession{}, unverifiedProcesses: map[string]bool{}, settle: procgroup.Settle}
+	if settle := s.conf().settleGroup; settle != nil {
+		service.settle = settle
+	}
 	if place, err := procgroup.Here(); err != nil {
 		slog.Warn("steve-node: agent process groups are not recorded; a node restart cannot confirm their stop", "error", err)
 	} else {

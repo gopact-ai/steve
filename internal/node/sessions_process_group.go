@@ -76,7 +76,7 @@ func (s *SessionService) endRecordedGroup(one *ownedSession, deadline time.Time)
 		return procgroup.ErrUnsupported
 	}
 	process := one.record.Process
-	if err := procgroup.Settle(process.Identity, process.Place, s.place, time.Until(deadline)); err != nil {
+	if err := s.settle(process.Identity, process.Place, s.place, time.Until(deadline)); err != nil {
 		return err
 	}
 	next := one.copyLocked()

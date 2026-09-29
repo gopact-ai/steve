@@ -13,6 +13,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/acceptloop"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/procgroup"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/skills"
 )
@@ -80,6 +81,10 @@ type ServerConfig struct {
 	StateRoot      string        `json:"state_root,omitempty"`
 	SessionGrace   time.Duration `json:"-"`
 	FaultDropAfter time.Duration `json:"-"`
+	// settleGroup ends a process group that a record an earlier node
+	// process left names, so a test can stand in for a group that cannot
+	// be ended; nil ends it on the kernel.
+	settleGroup func(id procgroup.Identity, ran, here procgroup.Place, within time.Duration) error
 }
 
 // MeasuredStateRoot is the directory this machine reports its own disk
