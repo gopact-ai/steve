@@ -95,9 +95,16 @@ func here(t *testing.T) Place {
 func TestSettleEndsTheGroupOfARunningLeader(t *testing.T) {
 	arg, file := pause(), filepath.Join(t.TempDir(), "member")
 	cmd, id := startGroup(t, "m", "m", `sleep "$1" </dev/null >/dev/null 2>&1 & echo $! > "$2"; exec sleep "$1"`, arg, file)
+	// The leader's parent reaps it once it is killed, as init does the
+	// leader an earlier node process left.
+	reaped := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(reaped)
+	}()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-reaped
 	})
 	endMember(t, file, arg)
 	var member int
@@ -113,6 +120,27 @@ func TestSettleEndsTheGroupOfARunningLeader(t *testing.T) {
 	}
 	if running(member) || running(cmd.Process.Pid) {
 		t.Fatal("the stop was confirmed while the group still ran")
+	}
+}
+
+// A killed leader its parent has not reaped still holds the group's id: the
+// kernel finds a process in the group, so its stop is not confirmed until
+// the leader is reaped.
+func TestSettleDoesNotConfirmAGroupWhoseLeaderIsNotReaped(t *testing.T) {
+	cmd, id := startGroup(t, "m", "m", `exec sleep "$1"`, pause())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Settle(id, here(t), here(t), 200*time.Millisecond); !errors.Is(err, ErrRunning) {
+		t.Fatalf("Settle = %v, want %v", err, ErrRunning)
+	}
+	_ = cmd.Wait()
+	if err := Settle(id, here(t), here(t), 5*time.Second); err != nil {
+		t.Fatal(err)
 	}
 }
 
