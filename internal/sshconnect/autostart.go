@@ -100,6 +100,10 @@ type autoWatch struct {
 	// were blocked, and zero once one was not: becoming blocked is recorded
 	// once, not once a try.
 	blockedWait time.Duration
+	// unrecordedStop is the record that automatic start stopped for the
+	// machine once its starts all came back and died again, until it is
+	// kept among the cluster's events.
+	unrecordedStop *RestartRecord
 	// cancel ends the start running for the machine; nil when none runs.
 	cancel context.CancelFunc
 }
@@ -145,6 +149,8 @@ func (s *Service) AutoStart() {
 
 // sweep looks at every watched machine once and starts the peers that are
 // due. A machine no longer watched is forgotten and its start cut off.
+// That automatic start stopped for a machine without a start failing is
+// recorded here, outside s.mu.
 func (s *Service) sweep() {
 	backend, ok := s.backend.(AutoStartBackend)
 	if !ok || s.autoCtx.Err() != nil {
@@ -161,9 +167,14 @@ func (s *Service) sweep() {
 	}
 	wg.Wait()
 	now := s.now()
+	type unrecorded struct {
+		watch  *autoWatch
+		record *RestartRecord
+	}
+	var stops []unrecorded
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return
 	}
 	for nodeID, watch := range s.watches {
@@ -190,6 +201,23 @@ func (s *Service) sweep() {
 		}
 		if s.due(text, watch, nodeID, looks[i].answers, looks[i].reachable, now) {
 			s.attempt(ctx, backend, watch, nodeID, now)
+		}
+		if watch.unrecordedStop != nil {
+			stops = append(stops, unrecorded{watch, watch.unrecordedStop})
+		}
+	}
+	s.mu.Unlock()
+	for _, stop := range stops {
+		// One that cannot be kept now is tried again on the next look.
+		recordCtx, cancel := context.WithTimeout(ctx, restartRecordLimit)
+		err := backend.RecordRestart(recordCtx, *stop.record)
+		cancel()
+		if err == nil {
+			s.mu.Lock()
+			if stop.watch.unrecordedStop == stop.record {
+				stop.watch.unrecordedStop = nil
+			}
+			s.mu.Unlock()
 		}
 	}
 }
@@ -226,10 +254,12 @@ func (s *Service) due(text i18n.Catalog, watch *autoWatch, nodeID string, answer
 		return false
 	case watch.state.Attempts >= autoStartLimit:
 		// Every start came back and died again before the machine stayed
-		// online long enough to be trusted.
+		// online long enough to be trusted. No start failed to say so; the
+		// stop is recorded on its own.
 		watch.stopped = true
 		watch.state.State, watch.state.NextAt = autoStopped, time.Time{}
 		watch.state.LastError = text.T(i18n.SSHAutoStartGaveUp, autoStartLimit, int(autoStartSettle/time.Minute))
+		watch.unrecordedStop = &RestartRecord{NodeID: nodeID, Automatic: true, Outcome: RestartStopped, Reason: watch.state.LastError, At: now.UTC()}
 		return false
 	case now.Before(watch.state.NextAt):
 		return false

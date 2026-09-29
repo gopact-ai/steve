@@ -43,8 +43,9 @@ const (
 	RestartRunning = "running"
 	// RestartFailed: the restart did not bring the machine back.
 	RestartFailed = "failed"
-	// RestartStopped: an automatic start failed and was the last one
-	// automatic start makes for the machine.
+	// RestartStopped: automatic start stopped for the machine, because
+	// its last start failed or because its starts all came back and died
+	// again.
 	RestartStopped = "stopped"
 )
 
