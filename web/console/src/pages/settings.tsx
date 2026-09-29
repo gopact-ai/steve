@@ -11,8 +11,8 @@ import { TextArea } from "@/components/base/textarea/textarea";
 import { Toggle } from "@/components/base/toggle/toggle";
 import { SettingsServices } from "@/components/steve/settings-services";
 import { fetchChannels, fetchHubSettings, saveChannels, saveHubSettings, syncApproval, type ApprovalSync, type ChannelSettings, type HubSettings, type SettingsField } from "@/lib/api/settings";
-import { channelInputs, channelPatch, changedInputs, followChannelStatus, type ChannelDraft } from "@/lib/settings-channels";
-import { number, when } from "@/lib/format";
+import { channelInputs, channelPatch, channelPollDelay, changedInputs, followChannelStatus, type ChannelDraft } from "@/lib/settings-channels";
+import { number, relative, when } from "@/lib/format";
 import { HTTPError } from "@/lib/http";
 import { errorText, type LocalePreference } from "@/lib/i18n";
 import { registerBackNavigationGuard } from "@/lib/navigation-guard";
@@ -24,8 +24,6 @@ type Group = "hub" | "channels";
 type Section = "approval" | "appearance" | "general" | "channels" | "policies" | "services";
 const sections = ["general", "appearance", "approval", "channels", "policies", "services"] as const;
 const servicesHref = "#/settings?section=services";
-// An attempt takes a moment after its scheduled time; polls stay between the bounds.
-const retryPollSettle = 1500, retryPollMin = 2000, retryPollMax = 30000, reconnectPoll = 5000;
 const icons = { approval: Shield01, appearance: Palette, general: Settings01, channels: Globe01, policies: Sliders04, services: Server01 };
 
 export function SettingsPage() {
@@ -103,26 +101,32 @@ export function SettingsPage() {
         loadedServerSettings.current = true;
         void read("hub"); void read("channels");
     }, [section]);
-    // A retrying or reconnecting channel changes on its own. Follow its status
-    // after each attempt, or steadily while reconnecting, until it connects
-    // or fails, without touching drafts.
-    const retryAt = section === "channels" ? channels?.startup_retry?.next_at : undefined;
-    const reconnecting = section === "channels" && !!channels?.reconnect;
-    const [retryPolls, setRetryPolls] = useState(0);
+    // A channel's connection changes on its own. Follow its status while the
+    // channels are shown, closely while it retries or reconnects and slowly
+    // once connected, without touching drafts. A hidden page waits and reads
+    // once shown again. A poll updates only the view it was sent from: a
+    // read or save since took a newer one.
+    const followed = section === "channels" && !!channels;
+    const retryAt = channels?.startup_retry?.next_at, reconnecting = !!channels?.reconnect;
+    const [channelPolls, setChannelPolls] = useState(0);
     useEffect(() => {
-        if (!retryAt && !reconnecting) return;
-        let cancelled = false;
-        const due = retryAt ? Date.parse(retryAt) - Date.now() : NaN;
-        const timer = window.setTimeout(async () => {
+        if (!followed) return;
+        let cancelled = false, polled = false;
+        const poll = async () => {
+            polled = true;
+            const base = latest.current.channels;
             try {
                 const next = await fetchChannels();
                 if (cancelled || !alive.current) return;
-                setChannels((current) => current && followChannelStatus(current, next));
+                setChannels((current) => current && current === base ? followChannelStatus(current, next) : current);
             } catch { /* The next poll tries again. */ }
-            if (!cancelled && alive.current) setRetryPolls((count) => count + 1);
-        }, !retryAt ? reconnectPoll : Number.isNaN(due) ? retryPollMax : Math.min(Math.max(due + retryPollSettle, retryPollMin), retryPollMax));
-        return () => { cancelled = true; window.clearTimeout(timer); };
-    }, [retryAt, reconnecting, retryPolls]);
+            if (!cancelled && alive.current) setChannelPolls((count) => count + 1);
+        };
+        const timer = window.setTimeout(() => { if (!document.hidden) void poll(); }, channelPollDelay(retryAt, reconnecting));
+        const shown = () => { if (!document.hidden && !polled) { window.clearTimeout(timer); void poll(); } };
+        document.addEventListener("visibilitychange", shown);
+        return () => { cancelled = true; window.clearTimeout(timer); document.removeEventListener("visibilitychange", shown); };
+    }, [followed, retryAt, reconnecting, channelPolls]);
     async function save(group: Group) {
         if (sending.current || loading[group] || stale[group]) return;
         sending.current = true; setSaving(group); setErrors((all) => ({ ...all, [group]: null }));
@@ -261,7 +265,7 @@ function ChannelForm({ view, draft, disabled, onChange }: { view: ChannelSetting
         <div className="settings-channel-summary"><div><strong>Console</strong><p>{t("settingsPage.consoleAlways")}</p></div><Badge size="sm" color="gray">{t("settingsPage.enabled")}</Badge></div>
         {view.runtime_error && <div className="settings-conflict" role="alert"><p>{t("settingsPage.channelStartupFailed")}</p><details><summary>{t("settingsPage.errorDetails")}</summary><p>{view.runtime_error}</p></details></div>}
         {view.startup_retry && <div className="settings-conflict" role="status"><p>{t("settingsPage.channelStartupRetrying", { attempts: view.startup_retry.attempts, time: when(view.startup_retry.next_at, locale) })}</p><details><summary>{t("settingsPage.errorDetails")}</summary><p>{view.startup_retry.last_error}</p></details></div>}
-        {view.reconnect && <div className="settings-conflict" role="status"><p>{t("settingsPage.channelReconnecting", { attempts: view.reconnect.attempts, time: when(view.reconnect.since, locale) })}</p>{view.reconnect.last_error && <details><summary>{t("settingsPage.errorDetails")}</summary><p>{view.reconnect.last_error}</p></details>}</div>}
+        {view.reconnect && <div className="settings-conflict" role="status"><p>{view.reconnect.last_attempt_at ? t("settingsPage.channelReconnecting", { attempts: view.reconnect.attempts, last: relative(view.reconnect.last_attempt_at, locale), time: when(view.reconnect.since, locale) }) : t("settingsPage.channelReconnectingFirst", { time: when(view.reconnect.since, locale) })}</p>{view.reconnect.last_error && <details><summary>{t("settingsPage.errorDetails")}</summary><p>{view.reconnect.last_error}</p></details>}</div>}
         <div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.defaultChannel")}</label><p className="settings-field-description">{t("settingsPage.defaultChannelHint")}</p>{applyHint("default_channel")}</div><Select size="sm" aria-label={t("settingsPage.defaultChannel")} selectedKey={draft.default_channel} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ default_channel: String(key) as "console" | "feishu" }); }} items={[{ id: "console", label: "Console" }, { id: "feishu", label: "Feishu / Lark" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
         <section className="settings-subsection"><div className="settings-channel-summary"><div><h3>Feishu / Lark</h3><p>{t(view.effective.feishu.enabled ? "settingsPage.channelEffectiveEnabled" : "settingsPage.channelEffectiveDisabled")}{view.pending_restart && view.desired.feishu.enabled !== view.effective.feishu.enabled && " · " + t("settingsPage.pendingRestart")}</p>{applyHint("feishu.enabled")}</div><Toggle size="sm" aria-label={t("settingsPage.enableFeishu")} isSelected={draft.enabled} isDisabled={disabled} onChange={(enabled) => update({ enabled })} /></div>
         <div className="settings-field"><div><label className="settings-field-label">{t("settingsPage.channel.domain")}</label>{applyHint("feishu.domain")}</div><Select size="sm" aria-label={t("settingsPage.channel.domain")} selectedKey={draft.domain} isDisabled={disabled} onSelectionChange={(key) => { if (key) update({ domain: String(key) as "feishu" | "lark" }); }} items={[{ id: "feishu", label: "Feishu · open.feishu.cn" }, { id: "lark", label: "Lark · open.larksuite.com" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>

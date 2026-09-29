@@ -16,6 +16,20 @@ export function followChannelStatus(current: ChannelSettings, next: ChannelSetti
     return { ...current, runtime_error: next.runtime_error, startup_retry: next.startup_retry, reconnect: next.reconnect, apply_mode: next.apply_mode, live_fields: next.live_fields };
 }
 
+// A retrying startup is read just after each scheduled attempt, within the
+// bounds; a reconnect with each failed attempt the official client reports;
+// a connected channel as often as the other management views refresh, so a
+// later loss shows without a reload.
+const retryPollSettle = 1500, retryPollMin = 2000, retryPollMax = 30000, reconnectPoll = 5000, connectedPoll = 30000;
+
+export function channelPollDelay(retryAt: string | undefined, reconnecting: boolean, now = Date.now()): number {
+    if (retryAt) {
+        const due = Date.parse(retryAt) - now;
+        return Number.isNaN(due) ? retryPollMax : Math.min(Math.max(due + retryPollSettle, retryPollMin), retryPollMax);
+    }
+    return reconnecting ? reconnectPoll : connectedPoll;
+}
+
 export function changedInputs<T extends object>(baseline: T, current: T): Partial<T> {
     return Object.fromEntries(Object.entries(current).filter(([key, value]) => value !== baseline[key as keyof T])) as Partial<T>;
 }

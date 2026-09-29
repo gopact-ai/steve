@@ -68,9 +68,13 @@ func (w *connWatch) lostLocked() {
 	w.publishLocked()
 }
 
-// failed records an attempt to connect that failed. A failure the client
-// retries is reported; one it does not ends the channel's Start instead.
-// The first connection after Ready failing starts a reconnect too.
+// failed records an attempt to connect that failed, and when. A failure the
+// client retries is reported; one it does not ends the channel's Start
+// instead. The first connection after Ready failing starts a reconnect too.
+//
+// The client calls back nothing as an attempt starts, and only waits
+// between reconnecting and the first attempt, so each failure is the one
+// sign it is still trying.
 func (w *connWatch) failed(err error) {
 	if clientErr := (*larkws.ClientError)(nil); errors.As(err, &clientErr) {
 		select {
@@ -84,10 +88,12 @@ func (w *connWatch) failed(err error) {
 	if w.stopped {
 		return
 	}
+	now := time.Now()
 	if w.current == nil {
-		w.current = &Reconnect{Since: time.Now()}
+		w.current = &Reconnect{Since: now}
 	}
 	w.current.Failures++
+	w.current.LastAttempt = now
 	w.current.Err = err
 	w.publishLocked()
 }
