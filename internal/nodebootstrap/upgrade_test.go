@@ -5,11 +5,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -332,5 +334,43 @@ func TestPeerUpgradeScriptStopsAPeerStartedByARelativePath(t *testing.T) {
 			t.Fatalf("the old peer kept running through the upgrade:\n%s", report)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// A peer the script cannot find, where the gateway lock does not tell who
+// holds it, keeps holding the lock, and the new program exits on it. That
+// program is not the one at fault and the one that ran is not down: the
+// upgrade puts the installed programs back as they were, starts nothing
+// beside the peer that runs, says that peer was not stopped and the
+// machine not upgraded, and exits 31.
+func TestPeerUpgradeScriptPutsTheProgramsBackWhenThePeerWasNotStopped(t *testing.T) {
+	requirePeerPlatform(t)
+	for _, earlier := range []bool{false, true} {
+		real, home := symlinkedPeer(t)
+		bin := filepath.Join(real, ".steve-peer", "bin")
+		if earlier {
+			if err := os.WriteFile(filepath.Join(bin, "steve.previous"), []byte("earlier program"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pid := spelledPeer(t, real, home, throughPath)
+		lockedBy(t, real, "")
+		before := programs(t, home)
+		running, _ := os.ReadFile(filepath.Join(bin, "steve"))
+		spec := upgradeSpec()
+		spec.SHA256 = stageUpload(t, home, spec.UploadID, append(slices.Clone(running), "\nnew program\n"...))
+		report, err := runUpgrade(t, home, spec, lockingStub)
+		if exitCode(err) != 31 || !strings.Contains(report, "was not stopped") || !strings.Contains(report, "not upgraded") || !strings.Contains(report, "another gateway already serves") {
+			t.Fatalf("earlier program %v: expected exit 31 saying the peer was not stopped and the machine not upgraded, got %v\n%s", earlier, err, report)
+		}
+		if after := programs(t, home); !maps.Equal(before, after) {
+			t.Fatalf("earlier program %v: the programs were not put back: before %v, after %v\n%s", earlier, slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)), report)
+		}
+		if exec.Command("kill", "-0", pid).Run() != nil {
+			t.Fatalf("earlier program %v: the peer %s holding the lock was stopped:\n%s", earlier, pid, report)
+		}
+		if pids := peerPIDs(t, home); len(pids) != 0 {
+			t.Fatalf("earlier program %v: a program was left running beside the peer: %v\n%s", earlier, pids, report)
+		}
 	}
 }

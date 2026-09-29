@@ -325,10 +325,12 @@ type peerSpelling struct {
 	name, launch string
 }
 
+var throughPath = peerSpelling{"through PATH", `PATH="$HOME/.steve-peer/bin:$PATH" exec steve peer --config "$HOME/.steve-peer/config.json"`}
+
 var peerSpellings = []peerSpelling{
 	{"by the resolved path", `exec "$REAL_HOME/.steve-peer/bin/steve" peer --config "$REAL_HOME/.steve-peer/config.json"`},
 	{"from the program's directory", `cd "$HOME/.steve-peer/bin" && exec ./steve peer --config "$HOME/.steve-peer/config.json"`},
-	{"through PATH", `PATH="$HOME/.steve-peer/bin:$PATH" exec steve peer --config "$HOME/.steve-peer/config.json"`},
+	throughPath,
 }
 
 // symlinkedPeer lays out an installation, without starting its peer, and
