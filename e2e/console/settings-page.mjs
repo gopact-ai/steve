@@ -84,6 +84,14 @@ const recovered = followChannelStatus(reconnectingChannel, { ...reconnectingChan
 assert.equal(recovered.reconnect, undefined);
 assert.equal(recovered.apply_mode, "mixed");
 assert.deepEqual(recovered.live_fields, channelLiveFields);
+// A connected channel is polled too: a loss after the page loaded is taken
+// with when its last attempt failed.
+const connectedChannel = channelView();
+const lostChannel = { ...channelView(), revision: "revision-b", reconnect: { since: "2026-09-29T00:00:00Z", attempts: 3, last_attempt_at: "2026-09-29T00:04:00Z", last_error: "503: system busy" } };
+lostChannel.desired.feishu.app_id = "saved-elsewhere";
+const lostLater = followChannelStatus(connectedChannel, lostChannel);
+assert.deepEqual(lostLater.reconnect, lostChannel.reconnect);
+for (const key of ["revision", "desired", "effective", "pending_restart"]) assert.equal(lostLater[key], connectedChannel[key], `a poll replaced ${key}`);
 console.log("PASS channel polls follow status and live fields, keeping what drafts are based on");
 
 if (process.env.PURE_ONLY !== "1") {
@@ -103,12 +111,13 @@ if (process.env.PURE_ONLY !== "1") {
         let state = fixtureView(), channels = channelView(), configRevision = "revision-a", conflict = false, loseRestart = true, restartUnknown = true;
         const writes = [], errors = [], external = [], operations = new Map(), restartPosts = [], queries = [], approvalSyncs = [];
         let settingsReads = 0, versionsReads = 0, channelReads = 0;
-        await page.addInitScript(() => {
+        const stubs = () => {
             localStorage.setItem("steve.ui.locale", "zh");
             window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
-        });
+        };
+        await page.addInitScript(stubs);
         page.on("pageerror", (error) => errors.push(String(error)));
-        await page.route("**/*", async (route) => {
+        const mock = async (route) => {
             const request = route.request(), url = new URL(request.url());
             if (url.origin !== origin) { external.push(url.href); return route.abort(); }
             if (url.pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
@@ -174,7 +183,66 @@ if (process.env.PURE_ONLY !== "1") {
             if (url.pathname === "/console/versions") { versionsReads++; return route.fulfill({ json: { hub: "v1", hub_id: "hub-fixture", protocol_min: 2, protocol_max: 2, automatic: false, discovery_configured: false, nodes: [], projects: [], peers: [] } }); }
             if (url.pathname.startsWith("/console/")) { errors.push(`Unexpected API ${url.pathname}`); return route.fulfill({ status: 501, json: { error: "Unmocked API" } }); }
             return route.continue();
-        });
+        };
+        await page.route("**/*", mock);
+
+        // A page opened on a connected channel follows it slowly, as often as
+        // the other management views refresh: a loss after the page loaded
+        // shows without a reload and is followed with each attempt until the
+        // connection is back, then slowly again, keeping drafts. A client that
+        // stopped trying shows as a last attempt that grows old.
+        {
+            const followContext = await browser.newContext({ locale: "zh-CN", reducedMotion: "reduce", viewport: { width: 1280, height: 960 } });
+            await followContext.clock.install();
+            const follow = await followContext.newPage(); follow.setDefaultTimeout(7000);
+            await follow.addInitScript(stubs);
+            follow.on("pageerror", (error) => errors.push(String(error)));
+            await follow.route("**/*", mock);
+            const readsReach = async (count, message) => {
+                for (const end = Date.now() + 7000; channelReads < count;) {
+                    assert.ok(Date.now() < end, message);
+                    await new Promise((resolve) => setTimeout(resolve, 20));
+                }
+            };
+            const pageNow = async () => new Date(await follow.evaluate(() => Date.now())).toISOString();
+            channels = channelView();
+            channels.desired.feishu = { ...channels.desired.feishu, enabled: true, app_id: "app-fixture", app_secret_configured: true };
+            channels.effective = structuredClone(channels.desired);
+            await follow.goto(`${origin}/#/settings?section=channels`);
+            const appID = follow.getByRole("textbox", { name: "App ID", exact: true });
+            await appID.waitFor();
+            await appID.fill("draft-app-fixture");
+            const loaded = channelReads;
+            await follow.clock.runFor(25_000);
+            assert.equal(channelReads, loaded, "a connected channel is read more often than every 30 seconds");
+            channels.reconnect = { since: await pageNow(), attempts: 0 };
+            await follow.clock.runFor(6_000);
+            await readsReach(loaded + 1, "a connected channel is not followed: a later loss needs a reload");
+            const lost = follow.getByRole("status").filter({ hasText: "正在自动重连" });
+            await lost.filter({ hasText: "尚无失败的尝试" }).waitFor();
+            assert.equal(await appID.inputValue(), "draft-app-fixture");
+            const reconnectReads = channelReads;
+            channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: await pageNow(), last_error: "503: system busy" };
+            await follow.clock.runFor(4_000);
+            assert.equal(channelReads, reconnectReads, "a reconnecting channel is read more often than every 5 seconds");
+            await follow.clock.runFor(1_500);
+            await lost.filter({ hasText: "已失败 2 次，最近一次尝试：" }).waitFor();
+            // The client stops trying: nothing changes but the time since.
+            await follow.clock.fastForward(3 * 60_000);
+            await lost.filter({ hasText: "最近一次尝试：3分钟前" }).waitFor();
+            delete channels.reconnect;
+            await follow.clock.runFor(5_500);
+            await lost.waitFor({ state: "detached" });
+            const backReads = channelReads;
+            await follow.clock.runFor(25_000);
+            assert.equal(channelReads, backReads, "a reconnected channel is read more often than every 30 seconds");
+            await follow.clock.runFor(6_000);
+            await readsReach(backReads + 1, "a reconnected channel is no longer followed");
+            assert.equal(await appID.inputValue(), "draft-app-fixture");
+            await followContext.close();
+        }
+        channels = channelView();
+
         await page.goto(`${origin}/#/projects`);
         await page.getByRole("link", { name: "设置", exact: true }).click();
         const nav = page.getByRole("navigation", { name: "设置分类", exact: true });
@@ -555,27 +623,28 @@ if (process.env.PURE_ONLY !== "1") {
         assert.equal(await page.getByRole("textbox", { name: "App ID", exact: true }).inputValue(), "draft-app-fixture");
         const readsAfter = channelReads;
         await page.waitForTimeout(2_500);
-        assert.equal(channelReads, readsAfter, "a connected channel is still being polled");
+        assert.equal(channelReads, readsAfter, "a connected channel is still read as often as a retrying one");
         // A started channel whose connection was lost is shown as reconnecting,
         // followed without a reload until the connection is back.
         channels.reconnect = { since: new Date().toISOString(), attempts: 0 };
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         await page.getByRole("button", { name: "Discard draft and reload", exact: true }).click();
         const reconnecting = page.getByRole("status").filter({ hasText: "reconnecting on its own" });
-        await reconnecting.filter({ hasText: "Failed attempts: 0." }).waitFor();
+        await reconnecting.filter({ hasText: "no attempt has failed yet" }).waitFor();
         assert.equal(await reconnecting.getByText("Error details", { exact: true }).count(), 0);
-        channels.reconnect = { ...channels.reconnect, attempts: 2, last_error: "503: system busy" };
-        await reconnecting.filter({ hasText: "Failed attempts: 2." }).waitFor({ timeout: 15_000 });
+        channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: new Date().toISOString(), last_error: "503: system busy" };
+        await reconnecting.filter({ hasText: "Failed attempts: 2. Last attempt:" }).waitFor({ timeout: 15_000 });
+        assert.match(await reconnecting.innerText(), /much older than that, reconnecting has stopped: restart the coordinator/);
         await reconnecting.getByText("Error details", { exact: true }).click();
         await reconnecting.getByText("503: system busy", { exact: true }).waitFor();
         delete channels.reconnect;
         await reconnecting.waitFor({ state: "detached", timeout: 15_000 });
         const readsConnected = channelReads;
         await page.waitForTimeout(6_000);
-        assert.equal(channelReads, readsConnected, "a reconnected channel is still being polled");
+        assert.equal(channelReads, readsConnected, "a reconnected channel is still read with each attempt");
         // A refused reconnect stops the channel: without a reload the page no
         // longer says access rules apply without a restart, and keeps drafts.
-        Object.assign(channels, { apply_mode: "mixed", live_fields: [...channelLiveFields], reconnect: { since: new Date().toISOString(), attempts: 1, last_error: "503: system busy" } });
+        Object.assign(channels, { apply_mode: "mixed", live_fields: [...channelLiveFields], reconnect: { since: new Date().toISOString(), attempts: 1, last_attempt_at: new Date().toISOString(), last_error: "503: system busy" } });
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         await reconnecting.waitFor();
         await channelHint("feishu.group_policy").filter({ hasText: /no restart/i }).waitFor();
