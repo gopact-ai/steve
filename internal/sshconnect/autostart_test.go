@@ -413,6 +413,42 @@ func TestAutoStartDoesNotRunBesideAnUpgradeOrAManualRestart(t *testing.T) {
 	}
 }
 
+// A machine whose installation lock another installation holds is tried
+// again every minute for as long as it is held: nothing counts against the
+// limit, and the wait is recorded once, not once a minute. The start that
+// follows once the lock is free is recorded and counted as usual.
+func TestAutoStartWaitsOutAnotherInstallationWithoutCountingOrRepeatingIt(t *testing.T) {
+	svc, runner, backend, clock := autoStartFixture(t)
+	runner.answerWith(peerExits(21))
+	zh := i18n.New(i18n.LocaleZH)
+	sweepOnce(svc)
+	clock.Advance(autoStartAfter)
+	sweepOnce(svc)
+	for try := 1; try <= 2*autoStartLimit; try++ {
+		state := autoState(t, svc, "node-1")
+		if state.State != "retrying" || state.Attempts != 0 || state.LastError != zh.T(i18n.SSHRestartBusy) || !state.NextAt.Equal(clock.Now().Add(autoStartBackoff)) {
+			t.Fatalf("after try %d: %#v", try, state)
+		}
+		clock.Advance(autoStartBackoff)
+		sweepOnce(svc)
+		if scripts := runner.restarts(); len(scripts) != try+1 {
+			t.Fatalf("try %d was not followed after %s: %d runs", try, autoStartBackoff, len(scripts))
+		}
+	}
+	if records := backend.recorded(); len(records) != 1 || records[0].Outcome != RestartFailed || !records[0].Automatic || records[0].Reason != zh.T(i18n.SSHRestartBusy) {
+		t.Fatalf("records while the lock is held = %#v", records)
+	}
+	runner.answerWith(peerStarted)
+	clock.Advance(autoStartBackoff)
+	sweepOnce(svc)
+	if state := autoState(t, svc, "node-1"); state.State != "watching" || state.Attempts != 1 {
+		t.Fatalf("after the lock was freed: %#v", state)
+	}
+	if records := backend.recorded(); len(records) != 2 || records[1].Outcome != RestartStarted || !records[1].Automatic {
+		t.Fatalf("records once the lock was freed = %#v", records)
+	}
+}
+
 // Automatic start does not try a machine whose SSH session is down, and
 // a machine it cannot reach over SSH is not counted as a failed start.
 func TestAutoStartDoesNotTryAMachineItCannotReach(t *testing.T) {
