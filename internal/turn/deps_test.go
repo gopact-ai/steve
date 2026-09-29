@@ -350,7 +350,7 @@ func TestNewWiresEveryDependency(t *testing.T) {
 	deps.Text = i18n.New(i18n.LocaleEN)
 	deps.OfflineAfter = time.Minute
 	guarded := errors.New("guarded")
-	deps.ConsoleCompletionGuard = func(*ledger.Tx, map[string]bool, string, string) error { return guarded }
+	deps.ConsoleCompletionGuard = func(*ledger.Tx, map[string]bool, string, string, bool) error { return guarded }
 	deps.Nodes = &idleNodes{}
 	deps.Prober = &recordProbes{}
 	deps.Fleet = roster.New(deps.Catalog)
@@ -375,7 +375,7 @@ func TestNewWiresEveryDependency(t *testing.T) {
 		c.defaultProject != "p" || c.homeProject != "home" || c.text.Locale() != i18n.LocaleEN || c.offlineAfter != time.Minute {
 		t.Fatal("New dropped an identity, placement, locale or reminder setting")
 	}
-	if err := c.checkConsoleCompletionTx(nil, nil, "", ""); !errors.Is(err, guarded) {
+	if err := c.checkConsoleCompletionTx(nil, nil, "", "", false); !errors.Is(err, guarded) {
 		t.Fatalf("completion guard = %v, want the one Deps gave", err)
 	}
 	native, err := c.forChannel("feishu")

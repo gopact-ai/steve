@@ -247,10 +247,10 @@ func TestCompletionOwnerGuardSharesTaskWriteTransaction(t *testing.T) {
 			var f completionFixture
 			var child task.Task
 			called := false
-			f = assembledCompletionGuardedBy(t, func(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
+			f = assembledCompletionGuardedBy(t, func(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error {
 				called = true
-				if !ids[f.root.ID] || !ids[child.ID] || conversation != "chat" || currentExchange != "current" {
-					t.Errorf("guard lost completion identity: ids=%v conversation=%q exchange=%q", ids, conversation, currentExchange)
+				if !ids[f.root.ID] || !ids[child.ID] || conversation != "chat" || currentExchange != "current" || spareQueued {
+					t.Errorf("guard lost completion identity: ids=%v conversation=%q exchange=%q spare queued=%v", ids, conversation, currentExchange, spareQueued)
 				}
 				questions := map[string]consoleapi.PendingQuestion{}
 				if stage == "guard-refusal" {
@@ -260,7 +260,7 @@ func TestCompletionOwnerGuardSharesTaskWriteTransaction(t *testing.T) {
 					return err
 				}
 				// This is the real owner, reading a fact visible only in tx.
-				return console.CheckTaskCompletionTx(tx, ids, conversation, currentExchange)
+				return console.CheckTaskCompletionTx(tx, ids, conversation, currentExchange, spareQueued)
 			})
 			child, err := f.tasks.Spawn(f.root.ID, task.Task{Member: "child"})
 			if err != nil {

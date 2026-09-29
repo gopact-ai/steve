@@ -38,7 +38,7 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 	// hand it to an agent, in the half-merged tree git kept.
 	background.Go(func(ctx context.Context) { sweepLandings(ctx, projects, artifacts, view, coordinator) })
 	background.Go(repos.Run)
-	background.Go(func(ctx context.Context) { sweepIdleTasks(ctx, tasks, attempts, view) })
+	background.Go(func(ctx context.Context) { sweepIdleTasks(ctx, boot.Book(), tasks, attempts, view) })
 	// Discover models for whatever nobody has run yet. It is discovery,
 	// not work: a session opened and closed, no prompt sent. Done off the
 	// startup path so a slow adapter never delays the first message.

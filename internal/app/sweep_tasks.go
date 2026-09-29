@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
 // idleTaskAge is how long a chat thread may go unspoken to before its
@@ -16,12 +19,13 @@ import (
 const idleTaskAge = 24 * time.Hour
 
 // sweepIdleTasks closes chat tasks that have gone quiet, at start and
-// then hourly, and puts each closing in the history.
-func sweepIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model) {
+// then hourly, and puts each closing in the history. book is the ledger
+// tasks are kept in.
+func sweepIdleTasks(ctx context.Context, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
-		closeIdleTasks(ctx, tasks, attempts, view, idleTaskAge)
+		closeIdleTasks(ctx, book, tasks, attempts, view, idleTaskAge)
 		select {
 		case <-ctx.Done():
 			return
@@ -31,12 +35,23 @@ func sweepIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Se
 }
 
 // closeIdleTasks is one pass of the sweep.
-func closeIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model, age time.Duration) {
+func closeIdleTasks(ctx context.Context, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model, age time.Duration) {
 	live := func(id string) (bool, error) {
 		_, ok, err := attempts.LiveAttemptOf(ctx, id)
 		return ok, err
 	}
-	closed, err := tasks.CloseIdle(age, live)
+	// A quiet task still stays open while anything of it is unsettled — a
+	// turn waiting on the owner, say — by the ledger checks /complete makes.
+	// No input asked for this close, so none is spared, not even a line
+	// still queued: it is about to continue the task. Each quiet task is
+	// checked and closed in a transaction of its own; the console is read
+	// once for the pass, before any of them, and read again in a task's
+	// transaction only if it has been written since.
+	read := console.ReadCompletion(book)
+	settled := func(tx *ledger.Tx, t task.Task) error {
+		return turn.CheckTaskCompletionTx(tx, map[string]bool{t.ID: true}, t.Channel, "", false, read.CheckTaskCompletionTx)
+	}
+	closed, err := tasks.CloseIdle(age, live, settled)
 	if err != nil && ctx.Err() == nil {
 		// Each named task stays open; the next pass looks at it again.
 		slog.Warn(fmt.Sprintf("steve: idle sweep left tasks open: %v", err))

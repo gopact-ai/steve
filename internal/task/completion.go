@@ -15,6 +15,12 @@ var (
 	ErrCompleteChildren  = errors.New("child tasks are not closed")
 	ErrCompleteDelivery  = errors.New("results are not durably delivered and acknowledged")
 	ErrCompleteAttention = errors.New("a user answer or reconciliation is pending")
+	// ErrCompleteConversation comes with ErrCompleteDelivery or
+	// ErrCompleteAttention, never alone, when what is pending is the
+	// conversation's rather than a task's being checked: a question or a
+	// line of another task, or of none. Ending or cancelling a task being
+	// checked does not settle it.
+	ErrCompleteConversation = errors.New("held by the conversation, not by the tasks checked")
 )
 
 func completionTree(root Task, all []Task) []Task {
@@ -102,6 +108,64 @@ func completionBlocker(root Task, tree []Task) error {
 		}
 	}
 	return nil
+}
+
+// CompletionRefused reports whether err is a completion check saying no,
+// because something of the task is still unsettled, rather than a failure
+// to check at all.
+func CompletionRefused(err error) bool {
+	for _, refusal := range []error{ErrCompleteRoot, ErrCompleteState, ErrCompleteBusy, ErrCompleteChildren, ErrCompleteDelivery, ErrCompleteAttention} {
+		if errors.Is(err, refusal) {
+			return true
+		}
+	}
+	return false
+}
+
+// CloseChecked ends the tasks as done when their conversation lets go of
+// them, not because anyone claimed the work succeeded: a session reset, a
+// project switch, a schedule's next run. check runs once for each task, as
+// it was and in the order of ids, within the transaction that closes them,
+// so they close together or not at all: one the check refuses leaves every
+// one of them as it was. The execution epoch is kept, as Advance keeps it.
+func (s *Store) CloseChecked(ctx context.Context, ids []string, check func(*ledger.Tx, Task) error) ([]Task, error) {
+	if check == nil {
+		return nil, errors.New("closing a task requires a completion check")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.draft()
+	before := make([]Task, 0, len(ids))
+	closed := make([]*Task, 0, len(ids))
+	for _, id := range ids {
+		stored := next.edit(id)
+		if stored == nil {
+			return nil, fmt.Errorf("task %s not found", id)
+		}
+		if !stored.State.CanMoveTo(StateDone) {
+			return nil, fmt.Errorf("task %s cannot move %s -> %s", id, stored.State, StateDone)
+		}
+		before = append(before, *stored.clone())
+		stored.State = StateDone
+		stored.UpdatedAt = s.now()
+		closed = append(closed, stored)
+	}
+	err := s.replaceRecordsLocked(ctx, next, func(tx *ledger.Tx) error {
+		for _, t := range before {
+			if err := check(tx, t); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Task, 0, len(closed))
+	for _, stored := range closed {
+		out = append(out, *stored.clone())
+	}
+	return out, nil
 }
 
 func (s *Store) CompleteRoot(ctx context.Context, id, channel string, guard func(*ledger.Tx, map[string]bool) error) (Task, error) {
