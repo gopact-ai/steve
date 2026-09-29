@@ -367,8 +367,9 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 					// A pass returns no other landing unless one reached a
 					// conflict it could neither record nor close, which
 					// leaves it locked: nothing was written, and the result
-					// stays queued for later passes.
-					byArtifact[l.Artifact] = "未落地：这次落地没能完成，结果仍在落地队列里，Steve 会接着处理"
+					// stays queued. Whether the conflict is recorded later,
+					// and who settles it then, is not known here.
+					byArtifact[l.Artifact] = "未落地：这次落地遇到冲突，没有完成；主目录没有改动，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
 				}
 			}
 			for _, st := range stuck {
