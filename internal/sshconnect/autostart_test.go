@@ -349,6 +349,100 @@ func TestAManualRestartResumesAutomaticStart(t *testing.T) {
 	}
 }
 
+// heldLook holds the next look automatic start takes at a machine until
+// released, so the look can be taken before something happens to the
+// machine and read after it.
+type heldLook struct {
+	*restartBackend
+	mu     sync.Mutex
+	gate   chan struct{}
+	looked chan struct{}
+}
+
+func (b *heldLook) hold() (looked <-chan struct{}, release func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.gate, b.looked = make(chan struct{}), make(chan struct{})
+	gate := b.gate
+	return b.looked, func() { close(gate) }
+}
+
+func (b *heldLook) Answers(ctx context.Context, nodeID string) bool {
+	b.mu.Lock()
+	gate, looked := b.gate, b.looked
+	b.gate, b.looked = nil, nil
+	b.mu.Unlock()
+	answers := b.restartBackend.Answers(ctx, nodeID)
+	if gate != nil {
+		close(looked)
+		select {
+		case <-gate:
+		case <-ctx.Done():
+		}
+	}
+	return answers
+}
+
+// A look automatic start took at a machine before a manual restart or an
+// upgrade of it settled saw the machine as it was before: it is set aside
+// rather than taken for the machine being offline all along, and the
+// machine's time offline counts afresh from the next look. No start is
+// made beside the peer that was just started.
+func TestAutoStartSetsAsideALookTakenBeforeAManualRestartOrAnUpgradeSettled(t *testing.T) {
+	for _, operation := range []struct {
+		name    string
+		run     func(*Service) error
+		scripts int
+	}{
+		{name: "manual restart", run: func(svc *Service) error { _, err := svc.Restart(context.Background(), "node-1"); return err }, scripts: 1},
+		{name: "upgrade", run: func(svc *Service) error { _, err := svc.Upgrade(context.Background(), "node-1"); return err }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			svc, runner, inner, clock := autoStartFixture(t)
+			backend := &heldLook{restartBackend: inner}
+			svc.backend = backend
+			sweepOnce(svc)
+			clock.Advance(autoStartAfter)
+			looked, release := backend.hold()
+			swept := make(chan struct{})
+			go func() { defer close(swept); sweepOnce(svc) }()
+			<-looked
+			clock.Advance(time.Second)
+			runner.answerWith(peerRestarted)
+			if err := operation.run(svc); err != nil {
+				t.Fatal(err)
+			}
+			inner.set(func(b *restartBackend) { b.answering = map[string]bool{"node-1": true} })
+			runner.answerWith(peerStarted)
+			release()
+			<-swept
+			if scripts := runner.restarts(); len(scripts) != operation.scripts {
+				t.Fatalf("a look from before the %s started the machine: %d restart scripts, want %d", operation.name, len(scripts), operation.scripts)
+			}
+			for _, record := range inner.recorded() {
+				if record.Automatic {
+					t.Fatalf("an automatic start was recorded: %#v", inner.recorded())
+				}
+			}
+			if state := autoState(t, svc, "node-1"); state.State != "watching" || !state.OfflineSince.IsZero() {
+				t.Fatalf("after the %s: %#v", operation.name, state)
+			}
+			inner.set(func(b *restartBackend) { b.answering = nil })
+			clock.Advance(time.Second)
+			sweepOnce(svc)
+			since := clock.Now()
+			clock.Advance(autoStartAfter - time.Second)
+			sweepOnce(svc)
+			if state := autoState(t, svc, "node-1"); state.State != "waiting" || !state.OfflineSince.Equal(since) {
+				t.Fatalf("time offline did not count afresh after the %s: %#v", operation.name, state)
+			}
+			if scripts := runner.restarts(); len(scripts) != operation.scripts {
+				t.Fatalf("a machine offline for less than %s since the %s was started", autoStartAfter, operation.name)
+			}
+		})
+	}
+}
+
 // Automatic start leaves a machine alone while it is being upgraded or
 // restarted by hand, and a manual restart or an upgrade is refused while
 // automatic start runs for it.
@@ -384,6 +478,10 @@ func TestAutoStartDoesNotRunBesideAnUpgradeOrAManualRestart(t *testing.T) {
 	if err := <-restarted; err != nil {
 		t.Fatal(err)
 	}
+	// The manual restart just started the peer: the machine's time offline
+	// counts afresh.
+	sweepOnce(svc)
+	clock.Advance(autoStartAfter)
 
 	release := make(chan struct{})
 	runner.answerWith(func(ctx context.Context, script string) (Output, error) {
