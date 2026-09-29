@@ -135,8 +135,9 @@ func TestIdleSweepKeepsATaskALineIsQueuedFor(t *testing.T) {
 
 // What a pass costs for each quiet task is what that task holds, not the
 // history the ledger holds for other tasks and other conversations: the
-// check for one task does not read every attempt and every console line
-// there is, and a pass does not repeat for each task what it can read once.
+// check for one task does not read every attempt, effect, landing and
+// console line there is, and a pass does not repeat for each task what it
+// can read once.
 func TestIdleSweepPerTaskCostDoesNotGrowWithHistory(t *testing.T) {
 	book := testLedger(t)
 	tasks, err := task.OpenLedger(book)
@@ -183,6 +184,20 @@ func TestIdleSweepPerTaskCostDoesNotGrowWithHistory(t *testing.T) {
 	if _, err := book.DB().Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<5000)
 		INSERT INTO operations SELECT 'history-'||n,'attempt','bound',1,1,
 		json_object('id','history-'||n,'task_id','other-'||n,'turn_id','other-'||n,'started_at','2026-09-01T00:00:00Z','session_settled',json('true')),
+		'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z' FROM seq`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := book.DB().Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<3000)
+		INSERT INTO operations SELECT 'effect-'||n,'intent','succeeded',1,1,
+		json_object('id','effect-'||n,'task_id','other-'||n,'tool','steve_send','state','succeeded','at','2026-09-01T00:00:00Z'),
+		'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z' FROM seq`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := book.DB().Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<1000)
+		INSERT INTO operations SELECT 'landing-'||n,'landing','committed',1,1,
+		json_object('id','landing-'||n,'project','p','artifact','landing-'||n,
+			'source',json_object('execution',json_object('task_id','other-'||n,'epoch',1),'attempt_id','history-'||n),
+			'state','committed','round',0,'started_at','2026-09-01T00:00:00Z','ended_at','2026-09-01T00:00:00Z'),
 		'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z' FROM seq`); err != nil {
 		t.Fatal(err)
 	}
