@@ -20,7 +20,9 @@ type UpgradeSpec struct {
 // program found not running is not trusted that far: it is set aside as
 // steve.rejected and an earlier steve.previous stays the fallback, so
 // upgrading again after a failed upgrade cannot lose the last program
-// known to work.
+// known to work. A new program that exits on the gateway lock of a peer
+// the script did not stop is not at fault: the replaced program goes back
+// in place of it, and the script exits 31.
 func BuildPeerUpgrade(spec UpgradeSpec) (string, error) {
 	if !uploadShape.MatchString(spec.UploadID) {
 		return "", fmt.Errorf("invalid peer upload ID")
@@ -196,13 +198,14 @@ fi
 
 // peerRotateSection puts the verified program in place. The program it
 // replaces becomes the fallback when it was running or there is none yet,
-// and is set aside otherwise.
+// and is set aside otherwise; set_aside names where it went.
 const peerRotateSection = `if [ -n "$running" ] || [ ! -f "$state_dir/bin/steve.previous" ]; then
-  mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.previous"
+  set_aside=steve.previous
 else
   echo 'No peer is running; the installed program is set aside and the earlier one stays the fallback.'
-  mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.rejected"
+  set_aside=steve.rejected
 fi
+mv -f "$state_dir/bin/steve" "$state_dir/bin/$set_aside"
 mv -f "$state_dir/bin/steve.new" "$state_dir/bin/steve"
 `
 
@@ -224,10 +227,19 @@ fi
 `
 
 // peerUpgradeStartSection starts the peer on the new program and falls
-// back to the previous one when it does not stay up.
+// back to the previous one when it does not stay up. A new program that
+// exits because the gateway lock is held was started beside a peer the
+// script did not stop: the program it replaced is put back in its place,
+// nothing more is started beside that peer, and the script exits 31.
 const peerUpgradeStartSection = `if start_peer; then
   echo 'Peer restarted on the new program; the coordinator still has to see it come back.'
   exit 0
+fi
+if tail -n 1 "$state_dir/peer.log" 2>/dev/null | grep -q 'another gateway already serves'; then
+  mv -f "$state_dir/bin/$set_aside" "$state_dir/bin/steve"
+  echo 'The peer process that was running was not stopped: it still holds the gateway lock, and the new program started beside it exited. The program that was installed is back in place; the machine was not upgraded. Last lines of ~/.steve-peer/peer.log:' >&2
+  tail -n 20 "$state_dir/peer.log" >&2 || true
+  exit 31
 fi
 echo 'The new program did not stay running; restoring the previous one.' >&2
 mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.rejected"

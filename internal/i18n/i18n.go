@@ -1230,6 +1230,8 @@ const (
 	SSHPeerUnlocatedFix           Key = "ssh_peer_unlocated_fix"
 	SSHRestartNotStopped          Key = "ssh_restart_not_stopped"
 	SSHRestartNotStoppedFix       Key = "ssh_restart_not_stopped_fix"
+	SSHUpgradeNotStopped          Key = "ssh_upgrade_not_stopped"
+	SSHUpgradeNotStoppedFix       Key = "ssh_upgrade_not_stopped_fix"
 	SSHRestartScriptExited        Key = "ssh_restart_script_exited"
 	SSHRestartNoVerdict           Key = "ssh_restart_no_verdict"
 	SSHRestartScriptExitedFix     Key = "ssh_restart_script_exited_fix"

@@ -244,6 +244,8 @@ func (s *Service) swapProgram(ctx context.Context, result *InstallResult, connec
 		return Fail(text, "installation", "upgrade_down", text.T(i18n.SSHUpgradeDown), text.T(i18n.SSHUpgradeDownFix))
 	case 29:
 		return Fail(text, "installation", "upgrade_unlocated", text.T(i18n.SSHUpgradeUnlocated), text.T(i18n.SSHPeerUnlocatedFix))
+	case 31:
+		return Fail(text, "installation", "upgrade_not_stopped", text.T(i18n.SSHUpgradeNotStopped), text.T(i18n.SSHUpgradeNotStoppedFix))
 	default:
 		return Fail(text, "installation", "upgrade_uncertain", text.T(i18n.SSHUpgradeScriptExited, err.Error()), text.T(i18n.SSHUpgradeScriptExitedFix))
 	}
