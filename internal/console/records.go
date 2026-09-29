@@ -49,13 +49,13 @@ type DurableState struct {
 func durableExchange(e *queuedExchange) DurableExchange {
 	return DurableExchange{Exchange: e.Exchange, PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases,
 		Receipt: e.Receipt, RecoveryStopTarget: e.RecoveryStopTarget, RecoveryStop: e.RecoveryStop,
-		RecoveryStopPending: e.RecoveryStopPending, RecoveryPending: e.RecoveryPending, ContinuationRejected: e.ContinuationRejected}
+		RecoveryStopPending: e.RecoveryStopPending, RecoveryStopTask: e.RecoveryStopTask, RecoveryPending: e.RecoveryPending, ContinuationRejected: e.ContinuationRejected}
 }
 
 func (e DurableExchange) queued() *queuedExchange {
 	return &queuedExchange{Exchange: e.Exchange, PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases,
 		Receipt: e.Receipt, RecoveryStopTarget: e.RecoveryStopTarget, RecoveryStop: e.RecoveryStop,
-		RecoveryStopPending: e.RecoveryStopPending, RecoveryPending: e.RecoveryPending, ContinuationRejected: e.ContinuationRejected}
+		RecoveryStopPending: e.RecoveryStopPending, RecoveryStopTask: e.RecoveryStopTask, RecoveryPending: e.RecoveryPending, ContinuationRejected: e.ContinuationRejected}
 }
 
 func (d DurableState) transcript() transcript {

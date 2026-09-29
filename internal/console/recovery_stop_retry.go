@@ -98,6 +98,25 @@ func (s *Service) retryRecoveryStopLocked(e *queuedExchange) (*queuedExchange, e
 	return e, nil
 }
 
+// recoveryStopCandidateLocked reports whether e is what a bare stop control
+// in conversation stops: an exchange still recovering or waiting on the
+// owner. One that only waits on the stop of a task set aside is passed over
+// while a line runs past it, since the stop is then meant for that line.
+func (s *Service) recoveryStopCandidateLocked(conversation, controlID string, e *queuedExchange) bool {
+	if e.ID == controlID || (e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) {
+		return false
+	}
+	if !s.stopSettlingLocked(e) {
+		return true
+	}
+	for _, other := range s.exchanges[conversation] {
+		if other.ID != controlID && other.State == consoleapi.ExchangeRunning {
+			return false
+		}
+	}
+	return true
+}
+
 // Stop targets are fixed in the control's first durable admission. A crash
 // before the coordinator is called or a failed lookup cannot turn a retry
 // into a new target.
@@ -111,7 +130,7 @@ func (s *Service) bindRecoveryStopTargetLocked(control *queuedExchange) {
 	}
 	var target *queuedExchange
 	for _, e := range s.exchanges[control.Conversation] {
-		if e.ID == control.ID || (e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) {
+		if !s.recoveryStopCandidateLocked(control.Conversation, control.ID, e) {
 			continue
 		}
 		if target != nil {

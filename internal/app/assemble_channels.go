@@ -110,7 +110,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	routes.AfterCancel = func(c turn.TaskCancel) {
 		// Only the page asks a person whether to resume a task; a chat has
 		// no such question for a cancellation to settle.
-		err := routeTask(c.Transport, func() error { cons.TasksCancelled(c.Tasks); return nil }, func() error { return nil })
+		err := routeTask(c.Transport, func() error { cons.TasksCancelled(); return nil }, func() error { return nil })
 		if err != nil {
 			slog.Error("task cancellation not routed", "tasks", c.Tasks, "error", err)
 		}

@@ -734,7 +734,7 @@ func (d *cancelledTaskDriver) setAside(state task.State, ids ...string) {
 // records it, then the console is told.
 func cancelTasks(s *Service, d *cancelledTaskDriver, ids ...string) {
 	d.setAside(task.StateCancelled, ids...)
-	s.TasksCancelled(ids)
+	s.TasksCancelled()
 }
 
 func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
@@ -780,8 +780,10 @@ func questionByID(s *Service, id string) consoleapi.PendingQuestion {
 // A task cancelled while its exchange runs or recovers can no longer be
 // resumed, so the recovery stops offering to and turns to confirming that
 // the original execution stopped: the exchange closes as cancelled once
-// the stop is confirmed, and until then it holds the queue on a card that
-// says the stop is being confirmed.
+// the stop is confirmed, and until then it waits on a card that says the
+// stop is being confirmed. These consoles keep no task store to read, so
+// the queue behind that card stays held; TestStopWaitExchangeDoesNotHoldQueue
+// covers the line moving past it.
 func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 	t.Run("stop confirms", func(t *testing.T) {
 		s := impatient(New(&echo{}, "owner", nil))
@@ -943,9 +945,9 @@ func TestCancelledTaskStopIsRecordedBeforeItIsTried(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitOffer(t, s, "retry")
-	// The pass that sees the cancellation still finds the original; the
-	// stop that follows it does not.
-	driver.left.Store(1)
+	// The watch that reads the cancellation off the task store and the pass
+	// after it still find the original; the stop that follows does not.
+	driver.left.Store(2)
 	driver.limited.Store(true)
 	cancelTasks(s, driver.cancelledTaskDriver, "task-1")
 	awaitOffer(t, s, "recheck")
@@ -988,14 +990,18 @@ func TestRecoveryQuestionWithdrawnBeforeItIsPut(t *testing.T) {
 		t.Run(why, func(t *testing.T) {
 			s := impatient(New(&echo{}, "owner", nil))
 			e := &queuedExchange{Exchange: Exchange{ID: "e1", Conversation: "console:main", State: consoleapi.ExchangeAwaitingUser}}
-			driver := &probingDriver{}
+			var driver RetainedChatDriver
 			cancels := make(chan struct{}, 1)
 			switch why {
 			case "task cancelled":
-				e.cancelledTasks = map[string]bool{"task-1": true}
+				cancelled := newCancelledTaskDriver()
+				cancelled.setAside(task.StateCancelled, "task-1")
+				driver = cancelled
 				cancels <- struct{}{}
 			case "original back":
-				driver.reachable.Store(true)
+				back := &probingDriver{}
+				back.reachable.Store(true)
+				driver = back
 			}
 			r := &exchangeRecovery{s: s, ctx: t.Context(), e: e, exchange: e.Exchange, driver: driver, cancels: cancels}
 			identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: "console:main", ExchangeID: "e1", TaskID: "task-1", AttemptID: "attempt-1"}}

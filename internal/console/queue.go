@@ -40,13 +40,11 @@ type queuedExchange struct {
 	done                 chan struct{}
 	outcome              outcome
 
-	// cancelledTasks are tasks a person cancelled while this exchange was
-	// in progress, held under the service lock. taskCancels wakes its
-	// recovery worker when one is added; it is made under the lock when a
-	// recovery first opens and never replaced, so the worker keeps the
-	// channel it was handed without taking the lock again.
-	cancelledTasks map[string]bool
-	taskCancels    chan struct{}
+	// taskCancels wakes the exchange's recovery worker when a person
+	// cancels a task; it is made under the lock when a recovery first opens
+	// and never replaced, so the worker keeps the channel it was handed
+	// without taking the lock again.
+	taskCancels chan struct{}
 }
 
 // ConversationID is a conversation's full identity: the console's own
@@ -330,7 +328,7 @@ func (s *Service) acceptExchange(e *queuedExchange, front, deferred bool) (*queu
 		}
 	} else if s.immediate(e.Input) {
 		err = s.startLocked(e)
-	} else if s.running[conversation] == 0 {
+	} else if s.busyLocked(conversation) == 0 {
 		err = s.startNextLocked(conversation)
 	} else {
 		err = s.save()
@@ -512,15 +510,42 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	return nil
 }
 
+// busyLocked counts the reservations that hold the conversation's line:
+// every exchange at work, less those that only wait on the stop of a task
+// set aside. Only retained recovery reserves the line for an exchange left
+// recovering or waiting; without it, such an exchange holds no reservation
+// to discount.
+func (s *Service) busyLocked(conversation string) int {
+	busy := s.running[conversation]
+	if s.recoveryLifetime == nil {
+		return busy
+	}
+	for _, e := range s.exchanges[conversation] {
+		if e.done == nil {
+			continue
+		}
+		select {
+		case <-e.done:
+			// Released: it holds no reservation to discount.
+			continue
+		default:
+		}
+		if s.stopSettlingLocked(e) {
+			busy--
+		}
+	}
+	return busy
+}
+
 func (s *Service) startNextLocked(conversation string) error {
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		return nil
 	}
-	if s.running[conversation] != 0 {
+	if s.busyLocked(conversation) != 0 {
 		return nil
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.RecoveryPending || e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser {
+		if (e.RecoveryPending || e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser) && !s.stopSettlingLocked(e) {
 			err := s.save()
 			if err == nil {
 				s.publishQueue(conversation)

@@ -53,7 +53,7 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 		if tracked.Origin != "plan" || tracked.Channel == "" || tracked.AnchorMessage == "" {
 			continue
 		}
-		item := RetainedPlan{TaskID: tracked.ID, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, ProjectID: tracked.ProjectID}
+		item := RetainedPlan{TaskID: tracked.ID, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, ProjectID: tracked.ProjectID, TaskState: tracked.State}
 		if stored, ok := c.plans.ForTask(tracked.ID); ok {
 			item.PlanID = stored.ID
 		}

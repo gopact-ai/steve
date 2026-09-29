@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -39,7 +42,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	}
 	var target *queuedExchange
 	for _, e := range s.exchanges[control.Conversation] {
-		if e.ID == control.ID || (bound != nil && e.ID != bound.ExchangeID) || (bound == nil && e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) {
+		if e.ID == control.ID || (bound != nil && e.ID != bound.ExchangeID) || (bound == nil && !s.recoveryStopCandidateLocked(control.Conversation, control.ID, e)) {
 			continue
 		}
 		if target != nil {
@@ -118,10 +121,10 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	if controlRecord != nil {
 		controlRecord.RecoveryStopTarget = &recoveryStopTarget{Conversation: control.Conversation, ExchangeID: target.ID, TaskID: candidate.TaskID, Requester: requester}
 	}
-	previousPending := target.RecoveryStopPending
-	target.RecoveryStopPending = stopRequested
+	previousPending, previousTask := target.RecoveryStopPending, target.RecoveryStopTask
+	target.RecoveryStopPending, target.RecoveryStopTask = stopRequested, candidate.TaskID
 	if err := s.save(); err != nil {
-		target.RecoveryStopPending = previousPending
+		target.RecoveryStopPending, target.RecoveryStopTask = previousPending, previousTask
 		s.mu.Unlock()
 		return turn.Result{}, true, err
 	}
@@ -201,10 +204,10 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 		return errors.New("stopping the original recovery task is unavailable")
 	}
 	s.mu.Lock()
-	previous := target.RecoveryStopPending
-	target.RecoveryStopPending = stopRequested
+	previous, previousTask := target.RecoveryStopPending, target.RecoveryStopTask
+	target.RecoveryStopPending, target.RecoveryStopTask = stopRequested, candidate.TaskID
 	if saveErr := s.save(); saveErr != nil {
-		target.RecoveryStopPending = previous
+		target.RecoveryStopPending, target.RecoveryStopTask = previous, previousTask
 		s.mu.Unlock()
 		return saveErr
 	}
@@ -264,24 +267,17 @@ func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange
 	}
 }
 
-// TasksCancelled tells the exchanges still in progress that a person
-// cancelled these tasks. An exchange bound to one of them can no longer
-// resume it: its recovery, whether already under way or begun only when
-// the turn leaves the execution behind, stops offering to and turns to
-// confirming the execution stopped.
-func (s *Service) TasksCancelled(ids []string) {
+// TasksCancelled wakes the recoveries still in progress because a person
+// cancelled tasks, so one bound to such a task looks at once instead of at
+// its next pass. What it does then goes by the task store, the same as for
+// a task set aside by anything else: the wake is only a nudge to look.
+func (s *Service) TasksCancelled() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, list := range s.exchanges {
 		for _, e := range list {
 			if e.State.Terminal() {
 				continue
-			}
-			if e.cancelledTasks == nil {
-				e.cancelledTasks = map[string]bool{}
-			}
-			for _, id := range ids {
-				e.cancelledTasks[id] = true
 			}
 			select {
 			case e.taskCancels <- struct{}{}:
@@ -291,25 +287,20 @@ func (s *Service) TasksCancelled(ids []string) {
 	}
 }
 
-func (s *Service) taskCancelled(e *queuedExchange, id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return id != "" && e.cancelledTasks[id]
-}
-
-// abandon turns the recovery of an exchange whose task was cancelled into
-// waiting for the original execution to stop. It records the stop request
-// first, so a restart goes on waiting for the stop instead of offering to
-// resume the task again, then tries the stop at once and, until it is
-// confirmed, holds the exchange on the card that says the stop is being
-// confirmed; a stop already confirmed is simply delivered.
-func (r *exchangeRecovery) abandon() {
+// abandon turns the recovery of an exchange whose task, taskID, was set
+// aside into waiting for the original execution to stop. It records the
+// stop request and its task first, so a restart goes on waiting for the
+// stop instead of offering to resume the task again, then tries the stop
+// at once and, until it is confirmed, holds the exchange on the card that
+// says the stop is being confirmed; a stop already confirmed is simply
+// delivered.
+func (r *exchangeRecovery) abandon(taskID string) {
 	r.stream.Close()
 	r.s.mu.Lock()
 	if r.e.RecoveryStop == nil && r.e.RecoveryStopPending == "" {
-		r.e.RecoveryStopPending = stopRequested
+		r.e.RecoveryStopPending, r.e.RecoveryStopTask = stopRequested, taskID
 		if err := r.s.save(); err != nil {
-			r.e.RecoveryStopPending = ""
+			r.e.RecoveryStopPending, r.e.RecoveryStopTask = "", ""
 			r.s.mu.Unlock()
 			r.s.detachRecovery(r.e, err)
 			return
@@ -317,6 +308,44 @@ func (r *exchangeRecovery) abandon() {
 	}
 	r.s.mu.Unlock()
 	r.s.waitRecoveryStop(r.e, true)
+}
+
+// stopSettling reports whether an exchange only waits on the stop of a task
+// the owner set aside: its stop was asked for and is not yet confirmed, and
+// the task store has the task cancelled or paused. Nothing is left for it
+// to do with the conversation — the task can no longer be resumed through
+// it, and settling the stop needs neither the line nor the conversation's
+// tasks — so it holds neither the conversation's queue nor the end of the
+// conversation's tasks. Its card stays until the stop is confirmed.
+func stopSettling(tx ledger.Reader, state consoleapi.ExchangeState, recoveryPending bool, stopPending, stopTask string) (bool, error) {
+	if (state != consoleapi.ExchangeRecovering && state != consoleapi.ExchangeAwaitingUser) || recoveryPending || stopPending == "" || stopTask == "" {
+		return false, nil
+	}
+	tracked, found, err := task.GetTx(tx, stopTask)
+	if err != nil || !found {
+		return false, err
+	}
+	return setAside(tracked.State), nil
+}
+
+// stopSettlingLocked is stopSettling for e as the task store has it now. A
+// console without a ledger cannot tell, so its exchanges hold the line as
+// before, and so does one whose task cannot be read.
+func (s *Service) stopSettlingLocked(e *queuedExchange) bool {
+	if s.book == nil || e.RecoveryStopPending == "" || e.RecoveryStopTask == "" {
+		return false
+	}
+	var settling bool
+	err := s.book.Read(context.Background(), func(tx *ledger.ReadTx) error {
+		var err error
+		settling, err = stopSettling(tx, e.State, e.RecoveryPending, e.RecoveryStopPending, e.RecoveryStopTask)
+		return err
+	})
+	if err != nil {
+		slog.Error("console: read the task of a pending stop", "conversation", e.Conversation, "exchange", e.ID, "task", e.RecoveryStopTask, "error", err)
+		return false
+	}
+	return settling
 }
 
 // A parent observer can finish before the stop of one of its children is
@@ -341,6 +370,13 @@ func (s *Service) waitRecoveryStop(e *queuedExchange, checkNow bool) {
 	w := &recoveryStopWait{s: s, e: e, ctx: e.ctx, requester: requester, reason: e.RecoveryStopPending, changed: make(chan struct{}, 1)}
 	e.State = consoleapi.ExchangeAwaitingUser
 	saveErr := s.save()
+	if saveErr == nil {
+		// Waiting on the stop of a task set aside, the exchange no longer
+		// holds the line; what is queued behind it goes ahead.
+		if err := s.startNextLocked(e.Conversation); err != nil {
+			slog.Error("console: start the line past a pending stop", "conversation", e.Conversation, "exchange", e.ID, "error", err)
+		}
+	}
 	s.publishQueue(e.Conversation)
 	w.base = consoleapi.PendingQuestion{Conversation: e.Conversation, ExchangeID: e.ID, Project: e.ExpectedProject, Locale: e.Locale}
 	s.mu.Unlock()
@@ -440,6 +476,15 @@ func (w *recoveryStopWait) check() {
 	go func() {
 		defer w.s.workers.Done()
 		err := w.s.cancelRecovering(ctx, w.e, w.requester)
+		// The pass may have been what set the task aside, which lets the
+		// line move past this exchange.
+		w.s.mu.Lock()
+		if !w.e.State.Terminal() {
+			if startErr := w.s.startNextLocked(w.e.Conversation); startErr != nil {
+				slog.Error("console: start the line past a pending stop", "conversation", w.e.Conversation, "exchange", w.e.ID, "error", startErr)
+			}
+		}
+		w.s.mu.Unlock()
 		w.mu.Lock()
 		w.busy = false
 		if err != nil {
@@ -479,9 +524,10 @@ func (w *recoveryStopWait) quiet() bool {
 // here: check right now, or let the recheck run itself.
 func (w *recoveryStopWait) ask() (string, bool) {
 	text := i18n.New(i18n.FromLang(w.base.Locale))
+	paused := w.paused()
 	w.mu.Lock()
 	w.asked = w.reason
-	message := w.messageLocked(text)
+	message := w.messageLocked(text, paused)
 	w.mu.Unlock()
 	question := view.Question{
 		Kind:          "recovery",
@@ -505,8 +551,26 @@ func (w *recoveryStopWait) ask() (string, bool) {
 	return answer.Value, true
 }
 
-func (w *recoveryStopWait) messageLocked(text i18n.Catalog) string {
+// paused reports whether the task store has the task whose execution this
+// waits on paused rather than cancelled, so the card says the task stays
+// paused instead of calling it stopped.
+func (w *recoveryStopWait) paused() bool {
+	w.s.mu.Lock()
+	driver := w.s.recoveryDriver
+	original := copyExchange(w.e.Exchange)
+	w.s.mu.Unlock()
+	if driver == nil {
+		return false
+	}
+	candidate, found, err := w.s.findRetained(w.ctx, driver, original)
+	return err == nil && found && candidate.TaskState == task.StatePaused
+}
+
+func (w *recoveryStopWait) messageLocked(text i18n.Catalog, paused bool) string {
 	message := text.T(i18n.ConsoleStopRecorded)
+	if paused {
+		message = text.T(i18n.ConsolePauseRecorded)
+	}
 	if w.reason != "" {
 		message += "\n\n" + text.T(i18n.ConsoleStopUnconfirmed, w.reason)
 	}

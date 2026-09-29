@@ -11,6 +11,8 @@ import (
 
 // StopRetainedTask stops the original recovery task, including its delegated
 // children. No active turn or currently selected Agent is needed to identify it.
+// A task the owner paused stays paused, to be picked back up later; any
+// other is cancelled.
 func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req Request) (Result, error) {
 	ctx = turnContext(ctx)
 	c.requestMu.RLock()
@@ -33,7 +35,11 @@ func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req R
 	if tracked.Requester != "" && tracked.Requester != req.SenderOpenID {
 		return Result{}, errors.New("recovery stop requires the original requester")
 	}
-	result, _, stopErr := c.setTaskAside(ctx, c.text.T(i18n.CardTasks), tracked, task.StateCancelled, true)
+	to := task.StateCancelled
+	if tracked.State == task.StatePaused {
+		to = task.StatePaused
+	}
+	result, _, stopErr := c.setTaskAside(ctx, c.text.T(i18n.CardTasks), tracked, to, true)
 	if stopErr != nil {
 		return result, errors.Join(harness.ErrStopUnconfirmed, stopErr)
 	}
