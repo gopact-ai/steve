@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 )
 
 const (
@@ -116,6 +118,25 @@ func TestStartReportsAPermanentStartupFailureWithoutRetrying(t *testing.T) {
 				t.Fatalf("permanent failure: %d attempts, err %v, connected %t, ready %t; want one attempt reported as the error", got.attempts, got.err, got.started, got.ready)
 			}
 		})
+	}
+}
+
+// The SDK raises 7100-7104 itself when its client-assertion configuration is
+// missing or does not fit the call. Steve authenticates with the app secret
+// alone, so none of them passes by waiting.
+func TestStartupDoesNotRetryTheSDKClientAssertionCodes(t *testing.T) {
+	for _, code := range []int{
+		larkcore.ErrCodeClientAssertionProviderNotConfigured,
+		larkcore.ErrCodeClientAssertionTokenEmpty,
+		larkcore.ErrCodeClientAssertionRetrieveFailed,
+		larkcore.ErrCodeClientAssertionModeNotSupported,
+		larkcore.ErrCodeAppSecretAndClientAssertionEmpty,
+	} {
+		for _, err := range []error{&larkcore.CodeError{Code: code}, larkcore.CodeError{Code: code}} {
+			if retryable(fmt.Errorf("get feishu bot identity: %w", err)) {
+				t.Errorf("SDK code %d as %T is retried; want it reported once", code, err)
+			}
+		}
 	}
 }
 

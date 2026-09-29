@@ -41,7 +41,8 @@ export interface ChannelValues {
     feishu: { enabled: boolean; app_id: string; app_secret_configured: boolean; domain: "feishu" | "lark"; owner_open_id: string; group_policy: "open" | "allowlist" | "disabled"; allow_unmentioned: boolean; allowed_senders: string[]; blocked_senders: string[] };
 }
 export interface ChannelStartupRetry { attempts: number; next_at: string; last_error: string }
-export interface ChannelSettings { revision: string; desired: ChannelValues; effective: ChannelValues; pending_restart: boolean; apply_mode: "restart" | "mixed"; live_fields?: string[]; warning?: string; runtime_error?: string; startup_retry?: ChannelStartupRetry }
+export interface ChannelReconnect { since: string; attempts: number; last_error?: string }
+export interface ChannelSettings { revision: string; desired: ChannelValues; effective: ChannelValues; pending_restart: boolean; apply_mode: "restart" | "mixed"; live_fields?: string[]; warning?: string; runtime_error?: string; startup_retry?: ChannelStartupRetry; reconnect?: ChannelReconnect }
 export interface ChannelPatch { default_channel?: "console" | "feishu"; feishu?: Partial<Omit<ChannelValues["feishu"], "app_secret_configured">> & { app_secret?: { action: "replace" | "clear"; value?: string } } }
 export const fetchChannels = (signal?: AbortSignal) => request<ChannelSettings>("/console/channels", { signal });
 export const saveChannels = (revision: string, channels: ChannelPatch) => request<ChannelSettings>("/console/channels", { method: "PUT", body: { base_revision: revision, channels } });
