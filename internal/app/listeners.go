@@ -45,6 +45,10 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 		stops := newApplicationStops(attempts, tasks, manager, work.CatalogText())
 		stops.executions = work.Executions()
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile requested task stops", stops.Reconcile) })
+		// Sessions a conversation let go of while their node could not be
+		// reached are closed once it can be.
+		owed := newApplicationOwedCloses(storage.Store(), attempts, tasks, manager)
+		reconciliations.Go(func() { runReconciler(ctx, "reconcile owed session closes", owed.Reconcile) })
 	}
 	if err := services.Ready(); err != nil {
 		return fmt.Errorf("record service readiness: %w", err)
