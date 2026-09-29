@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +129,74 @@ func TestIdleSweepKeepsATaskALineIsQueuedFor(t *testing.T) {
 	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateDone {
 		t.Fatalf("quiet task after the queued line ran = %s, want done", got.State)
+	}
+}
+
+// What a pass costs for each quiet task is what that task holds, not the
+// history the ledger holds for other tasks and other conversations: the
+// check for one task does not read every attempt and every console line
+// there is, and a pass does not repeat for each task what it can read once.
+func TestIdleSweepPerTaskCostDoesNotGrowWithHistory(t *testing.T) {
+	book := testLedger(t)
+	tasks, err := task.OpenLedger(book)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := attempt.New(book)
+	quiet := 0
+	// pass sweeps n newly quiet tasks and returns what it allocated.
+	pass := func(n int) int64 {
+		t.Helper()
+		ids := make([]string, n)
+		for i := range ids {
+			quiet++
+			tracked, err := tasks.Create(task.Task{Transport: "console", Goal: "quiet chat", Channel: fmt.Sprintf("console:quiet-%d", quiet), Member: "worker"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tasks.Begin(tracked.ID, "worker", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			ids[i] = tracked.ID
+		}
+		time.Sleep(5 * time.Millisecond)
+		defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		closeIdleTasks(t.Context(), tasks, attempts, nil, time.Millisecond)
+		runtime.ReadMemStats(&after)
+		for _, id := range ids {
+			if got, _ := tasks.Get(id); got.State != task.StateDone {
+				t.Fatalf("quiet task %s after the pass = %s, want done", id, got.State)
+			}
+		}
+		return int64(after.Mallocs - before.Mallocs)
+	}
+	perTask := func() int64 {
+		t.Helper()
+		one := pass(1)
+		return (pass(6) - one) / 5
+	}
+	fresh := perTask()
+
+	if _, err := book.DB().Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<5000)
+		INSERT INTO operations SELECT 'history-'||n,'attempt','bound',1,1,
+		json_object('id','history-'||n,'task_id','other-'||n,'turn_id','other-'||n,'started_at','2026-09-01T00:00:00Z','session_settled',json('true')),
+		'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z' FROM seq`); err != nil {
+		t.Fatal(err)
+	}
+	history := console.DurableState{Exchanges: map[string][]console.DurableExchange{}}
+	for i := range 1000 {
+		conversation := fmt.Sprintf("console:history-%d", i)
+		history.Exchanges[conversation] = []console.DurableExchange{{Exchange: consoleapi.Exchange{ID: fmt.Sprintf("history-%d", i), Conversation: conversation, Input: "long done", State: consoleapi.ExchangeDone}}}
+	}
+	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, history) }); err != nil {
+		t.Fatal(err)
+	}
+	aged := perTask()
+	t.Logf("allocations per quiet task: %d fresh, %d with history", fresh, aged)
+	if aged > fresh+2000 {
+		t.Fatalf("a pass costs more for each quiet task as history grows: %d allocations per task, %d without the history", aged, fresh)
 	}
 }
 
