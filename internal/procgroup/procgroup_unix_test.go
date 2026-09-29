@@ -230,6 +230,81 @@ func TestSettleDoesNotTakeAHiddenMemberForAnEmptyGroup(t *testing.T) {
 	}
 }
 
+// absent is a pid no process holds: Linux gives out none of 2^22 or above,
+// and macOS none above 99999.
+const absent = 1 << 22
+
+// shifting is a kernel whose group changes between the calls settling
+// makes: the nth look for the group, and the nth listing of it, answer
+// the nth of gone and listings, the last answering every later call. A
+// member listed as running holds a pid no process holds, so its mark reads
+// as a member's that ended does. It counts the signals it would send.
+func shifting(gone []bool, listings [][]process, signals *int) kernel {
+	looks, lists := 0, 0
+	return kernel{
+		gone: func(int) (bool, error) {
+			looks++
+			return gone[min(looks, len(gone))-1], nil
+		},
+		list: func(int) (listing, error) {
+			lists++
+			return listing{members: listings[min(lists, len(listings))-1], complete: true}, nil
+		},
+		kill: func(int) error {
+			*signals++
+			return nil
+		},
+	}
+}
+
+// A recorded group whose leader is gone can end while it is looked at: the
+// kernel still finds a member that is reaped before the processes are
+// listed, a zombie the first listing shows is reaped before the second,
+// or a member listed as running ends before its mark is read. None shows
+// another group under the recorded id, so the group is looked at again,
+// without a signal, until it is shown to have ended.
+func TestSettleLooksAgainAtAGroupThatEndsWhileItIsLookedAt(t *testing.T) {
+	id := Identity{Group: absent, Leader: absent, Start: 1, Mark: "m"}
+	zombie := process{pid: absent + 1, start: 2, group: absent}
+	other := process{pid: absent + 2, start: 3, group: absent}
+	running := process{pid: absent + 1, start: 2, group: absent, live: true}
+	for _, tc := range []struct {
+		name     string
+		gone     []bool
+		listings [][]process
+	}{
+		{"its last member reaped before it is listed", []bool{false, true}, [][]process{{}}},
+		{"a zombie reaped between the listings", []bool{false, true}, [][]process{{zombie}, {}}},
+		{"a member ended before its mark is read", []bool{false, true}, [][]process{{running}}},
+		{"a zombie left beside one the first listing did not show", []bool{false}, [][]process{{zombie}, {zombie, other}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signals := 0
+			if err := settle(id, here(t), here(t), 5*time.Second, shifting(tc.gone, tc.listings, &signals)); err != nil || signals > 0 {
+				t.Fatalf("settle = %v after %d signals, want nil after none", err, signals)
+			}
+		})
+	}
+}
+
+// A group nothing shows to be the recorded one is looked at again until
+// within runs out, and is then left alone.
+func TestSettleLeavesAGroupItCannotShowToBeTheRecordedOneOnceWithinRunsOut(t *testing.T) {
+	id := Identity{Group: absent, Leader: absent, Start: 1, Mark: "m"}
+	running := process{pid: absent + 1, start: 2, group: absent, live: true}
+	signals := 0
+	within := 300 * time.Millisecond
+	began := time.Now()
+	err := settle(id, here(t), here(t), within, shifting([]bool{false}, [][]process{{running}}, &signals))
+	took := time.Since(began)
+	if !errors.Is(err, ErrUnproven) || signals > 0 {
+		t.Fatalf("settle = %v after %d signals, want %v after none", err, signals, ErrUnproven)
+	}
+	if took < within || took > within+2*time.Second {
+		t.Fatalf("settle answered after %v, want it to look for %v", took, within)
+	}
+}
+
 // settleIdentity carries the identity a process started inside the
 // recorded group settles.
 const settleIdentity = "PROCGROUP_TEST_SETTLE_IDENTITY"
