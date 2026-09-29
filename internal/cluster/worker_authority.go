@@ -21,37 +21,12 @@ const workerAuthorityInterval = 100 * time.Millisecond
 // the members change, and whether it still hears a consensus leader; the
 // tunnels judge it as the runtime loop judges the business generation.
 // They share one judgment, which also admits new tunnels, so a tunnel is
-// never admitted on a view that has just closed another.
-//
-// A replica whose log entries stop arriving while heartbeats still do
-// shows none of this: it keeps naming the coordinator it last applied.
-// Its commands, file writes and agents need no check of their own on the
-// worker, so while any tunnel is open a node that does not lead consensus
-// confirms its replica with a quorum every ApplyTimeout: it asks the
-// leader for a read index and waits, at most ApplyTimeout, for the state
-// machine of its replica to have applied its log up to it. The tunnels
-// close when a confirmation fails, or when none has succeeded for three
-// ApplyTimeouts. A confirmation appends nothing to the consensus log but
-// the barrier a leader completes once in each term, which the runtime's
-// own quorum reads have usually completed already. The leader needs none:
-// its replica holds every committed entry, and it gives the tunnels up as
-// soon as it stops leading without knowing another leader.
+// never admitted on a view that has just closed another. A node that does
+// not lead consensus keeps them only while a quorum confirms its replica,
+// as it keeps its business generation; see replicaConfirmation.
 type workerAuthority struct {
 	mu   sync.Mutex
 	live liveness
-	// confirmed is when the latest confirmation that succeeded started:
-	// a quorum read that opened a tunnel, a read index this replica then
-	// caught up with, or an observation of this node leading consensus.
-	confirmed time.Time
-	// failure is why the latest confirmation failed, if it started after
-	// confirmed, at failedFrom; nil otherwise.
-	failure    error
-	failedFrom time.Time
-	// confirming is set while a confirmation runs, and confirmations
-	// counts it until it returns. Once stopped is set none starts.
-	confirming    bool
-	confirmations sync.WaitGroup
-	stopped       bool
 }
 
 // workerGrant is the authority a worker tunnel was opened under: the
@@ -73,7 +48,7 @@ func (r *Runtime) grantWorker(ctx context.Context, asked time.Time, state coordi
 	if _, err := r.awaitApplied(ctx, state.AppliedIndex, 0); err != nil {
 		return workerGrant{}, err
 	}
-	r.workers.settle(asked, nil)
+	r.confirmation.settle(asked, nil)
 	grant := workerGrant{runtime: r, worker: worker, assignment: state.Coordinator, writer: state.WriterGeneration}
 	if err := grant.check(); err != nil {
 		return workerGrant{}, err
@@ -87,10 +62,7 @@ func (g *workerGrant) check() error {
 	seen := observation{Status: g.runtime.service.Status(), log: g.runtime.service.LogProgress(), at: time.Now()}
 	confirm, err := g.runtime.authorizesWorker(seen, g.worker, g.assignment, g.writer)
 	if confirm {
-		go func() {
-			defer g.runtime.workers.confirmations.Done()
-			g.runtime.confirmWorkers()
-		}()
+		g.runtime.startConfirmation()
 	}
 	return err
 }
@@ -117,108 +89,16 @@ func (r *Runtime) authorizesWorker(seen observation, worker string, assignment c
 }
 
 // keepsWorkers records seen in the judgment the node's tunnels share and
-// reports why it no longer keeps them, or whether a confirmation is due.
+// reports why it no longer keeps them, or whether a confirmation of the
+// replica is due.
 func (r *Runtime) keepsWorkers(seen observation) (confirm bool, err error) {
-	timeout := r.config.Coordination.ApplyTimeout
-	w := &r.workers
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if _, err := r.judge(&w.live, seen); err != nil {
+	r.workers.mu.Lock()
+	_, err = r.judge(&r.workers.live, seen)
+	r.workers.mu.Unlock()
+	if err != nil {
 		return false, err
 	}
-	if seen.LeaderID == r.config.Coordination.NodeID {
-		if seen.at.After(w.confirmed) {
-			w.confirmed = seen.at
-		}
-		w.failure = nil
-		return false, nil
-	}
-	if w.failure != nil {
-		return false, w.failure
-	}
-	unconfirmed := seen.at.Sub(w.confirmed)
-	if unconfirmed > 3*timeout {
-		return false, fmt.Errorf("%w: no quorum has confirmed this replica for %s", coordination.ErrUnavailable, unconfirmed.Round(time.Millisecond))
-	}
-	if unconfirmed >= timeout && !w.confirming && !w.stopped {
-		w.confirming = true
-		w.confirmations.Add(1)
-		return true, nil
-	}
-	return false, nil
-}
-
-// confirmWorkers confirms the local replica with a quorum for the node's
-// worker tunnels: it asks the consensus leader for a read index and waits
-// for the replica to apply its log up to it, within ApplyTimeout in all.
-func (r *Runtime) confirmWorkers() {
-	started := time.Now()
-	ctx, cancel := context.WithTimeout(r.ctx, r.config.Coordination.ApplyTimeout)
-	defer cancel()
-	index, err := r.readIndex(ctx)
-	if err == nil {
-		err = r.awaitLog(ctx, index)
-	}
-	if err != nil {
-		err = fmt.Errorf("%w: the replica could not be confirmed with a quorum: %w", coordination.ErrUnavailable, err)
-	}
-	r.workers.mu.Lock()
-	defer r.workers.mu.Unlock()
-	r.workers.confirming = false
-	r.workers.settleLocked(started, err)
-}
-
-// stop waits for the confirmation running, if any, and starts no other.
-func (w *workerAuthority) stop() {
-	w.mu.Lock()
-	w.stopped = true
-	w.mu.Unlock()
-	w.confirmations.Wait()
-}
-
-// settle records the result of a confirmation that started at started.
-func (w *workerAuthority) settle(started time.Time, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.settleLocked(started, err)
-}
-
-func (w *workerAuthority) settleLocked(started time.Time, err error) {
-	if err != nil {
-		if started.After(w.confirmed) {
-			w.failure, w.failedFrom = err, started
-		}
-		return
-	}
-	if started.After(w.confirmed) {
-		w.confirmed = started
-	}
-	if w.failure != nil && !w.failedFrom.After(started) {
-		w.failure = nil
-	}
-}
-
-// awaitLog waits for the state machine of the local replica to have
-// applied its log up to index, so an observation of the replica once
-// awaitLog returns sees every entry committed by then. Raft hands entries
-// to the state machine before it applies them; awaitLog waits for the
-// state machine, however long it takes to apply them.
-func (r *Runtime) awaitLog(ctx context.Context, index uint64) error {
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if r.service.StateHolds(index) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			if r.ctx.Err() != nil {
-				return ErrInactive
-			}
-			return fmt.Errorf("%w: this replica did not apply its log up to read index %d within %s; it has applied %d", coordination.ErrUnavailable, index, r.config.Coordination.ApplyTimeout, r.service.Status().AppliedIndex)
-		case <-ticker.C:
-		}
-	}
+	return r.replicaConfirmed(seen)
 }
 
 // running is the business generation running here: its assignment and
@@ -250,7 +130,7 @@ func (r *Runtime) generationDone(assignment coordination.Assignment, writer uint
 // watchWorkerAuthority closes a worker tunnel once its grant lapses: when
 // the local replica names another coordinator or writer generation, no
 // longer lists the worker's machine, stops being recent enough to tell, or
-// cannot be confirmed with a quorum (see workerAuthority), and, on the
+// cannot be confirmed with a quorum (see replicaConfirmation), and, on the
 // coordinator's side, as soon as the business generation that opened it
 // ends. It returns without closing when ctx ends or done is closed.
 func (p *Peer) watchWorkerAuthority(ctx context.Context, grant workerGrant, done, ended <-chan struct{}, closeConnection func()) {

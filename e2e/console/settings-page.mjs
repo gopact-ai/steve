@@ -2,7 +2,7 @@ import { workState } from "./work-fixture.mjs";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { channelInputs, channelPatch, changedInputs } from "../../web/console/src/lib/settings-channels.ts";
+import { channelInputs, channelPatch, changedInputs, followChannelStatus } from "../../web/console/src/lib/settings-channels.ts";
 import { settingsInputs, settingsPatch } from "../../web/console/src/lib/settings-values.ts";
 import { loadLocale } from "../../web/console/src/lib/i18n.ts";
 await Promise.all([loadLocale("zh"), loadLocale("en")]);
@@ -65,6 +65,26 @@ assert.equal(channelPatch(configured, { ...channelInputs(configured), app_id: "c
 assert.deepEqual(channelPatch(configured, { ...channelInputs(configured), clearSecret: true }).feishu.app_secret, { action: "clear" });
 assert.deepEqual(changedInputs({ one: "old", two: "stay" }, { one: "typed", two: "stay" }), { one: "typed" });
 console.log("PASS channel raw drafts, credential keep/replace/clear and invalid default channel");
+
+// A poll follows what changes without a save. A channel that stops, as on a
+// refused reconnect, no longer applies access rules without a restart; the
+// rest of the view, which the drafts are based on, stays as last loaded.
+const channelLiveFields = ["feishu.group_policy", "feishu.allow_unmentioned", "feishu.allowed_senders", "feishu.blocked_senders"];
+const reconnectingChannel = { ...channelView(), apply_mode: "mixed", live_fields: channelLiveFields, reconnect: { since: "2026-09-29T00:00:00Z", attempts: 2, last_error: "503: system busy" } };
+const stoppedChannel = { ...channelView(), revision: "revision-b", pending_restart: true, apply_mode: "restart", runtime_error: "Feishu connection failed: application disabled" };
+stoppedChannel.desired.feishu.app_id = "saved-elsewhere";
+const followed = followChannelStatus(reconnectingChannel, stoppedChannel);
+assert.equal(followed.runtime_error, stoppedChannel.runtime_error);
+assert.equal(followed.reconnect, undefined);
+assert.equal(followed.apply_mode, "restart", "a stopped channel still applies access rules without a restart");
+assert.equal(followed.live_fields, undefined);
+for (const key of ["revision", "desired", "effective", "pending_restart"]) assert.equal(followed[key], reconnectingChannel[key], `a poll replaced ${key}`);
+assert.deepEqual(channelInputs(followed), channelInputs(reconnectingChannel));
+const recovered = followChannelStatus(reconnectingChannel, { ...reconnectingChannel, reconnect: undefined });
+assert.equal(recovered.reconnect, undefined);
+assert.equal(recovered.apply_mode, "mixed");
+assert.deepEqual(recovered.live_fields, channelLiveFields);
+console.log("PASS channel polls follow status and live fields, keeping what drafts are based on");
 
 if (process.env.PURE_ONLY !== "1") {
     const { chromium } = await import("../../web/console/node_modules/playwright/index.mjs");
@@ -536,6 +556,35 @@ if (process.env.PURE_ONLY !== "1") {
         const readsAfter = channelReads;
         await page.waitForTimeout(2_500);
         assert.equal(channelReads, readsAfter, "a connected channel is still being polled");
+        // A started channel whose connection was lost is shown as reconnecting,
+        // followed without a reload until the connection is back.
+        channels.reconnect = { since: new Date().toISOString(), attempts: 0 };
+        await page.getByRole("button", { name: "Reload", exact: true }).click();
+        await page.getByRole("button", { name: "Discard draft and reload", exact: true }).click();
+        const reconnecting = page.getByRole("status").filter({ hasText: "reconnecting on its own" });
+        await reconnecting.filter({ hasText: "Failed attempts: 0." }).waitFor();
+        assert.equal(await reconnecting.getByText("Error details", { exact: true }).count(), 0);
+        channels.reconnect = { ...channels.reconnect, attempts: 2, last_error: "503: system busy" };
+        await reconnecting.filter({ hasText: "Failed attempts: 2." }).waitFor({ timeout: 15_000 });
+        await reconnecting.getByText("Error details", { exact: true }).click();
+        await reconnecting.getByText("503: system busy", { exact: true }).waitFor();
+        delete channels.reconnect;
+        await reconnecting.waitFor({ state: "detached", timeout: 15_000 });
+        const readsConnected = channelReads;
+        await page.waitForTimeout(6_000);
+        assert.equal(channelReads, readsConnected, "a reconnected channel is still being polled");
+        // A refused reconnect stops the channel: without a reload the page no
+        // longer says access rules apply without a restart, and keeps drafts.
+        Object.assign(channels, { apply_mode: "mixed", live_fields: [...channelLiveFields], reconnect: { since: new Date().toISOString(), attempts: 1, last_error: "503: system busy" } });
+        await page.getByRole("button", { name: "Reload", exact: true }).click();
+        await reconnecting.waitFor();
+        await channelHint("feishu.group_policy").filter({ hasText: /no restart/i }).waitFor();
+        await page.getByRole("textbox", { name: "Blocked senders", exact: true }).fill("draft-blocked-fixture");
+        channels.apply_mode = "restart"; delete channels.live_fields; delete channels.reconnect;
+        channels.runtime_error = "Feishu connection failed: application disabled";
+        await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).waitFor({ timeout: 15_000 });
+        for (const path of channelLiveFields) assert.match(await channelHint(path).innerText(), restartHint, `${path} still applies without a restart`);
+        assert.equal(await page.getByRole("textbox", { name: "Blocked senders", exact: true }).inputValue(), "draft-blocked-fixture");
         assert.deepEqual(errors, []); assert.deepEqual(external, []);
         console.log("PASS settings center browser: drafts/CAS, next-operation/task modes, zero budgets, landing schema, mixed/restart channel capabilities, restart receipts, English and narrow layout");
         await context.close();
