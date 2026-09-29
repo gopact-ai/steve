@@ -360,20 +360,26 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			} else {
 				landed, lerr = s.artifacts.LandPending(ctx, p)
 			}
-			// A conflict this pass reached reads as its queue record keeps
-			// it for later passes.
+			// A conflict this pass reached and recorded reads as its queue
+			// record keeps it for later passes.
 			for _, l := range landed {
-				switch l.State {
-				case artifact.LandCommitted:
+				switch {
+				case l.State == artifact.LandCommitted:
 					byArtifact[l.Artifact] = fmt.Sprintf("已落地主目录，%d 个路径", len(l.Paths))
-				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
+				case l.State == artifact.LandApplyConflicted, l.State == artifact.LandMergeConflicted && !l.Unapplied:
 					byArtifact[l.Artifact] = conflicted(l.State, l.ConflictReason(), l.Paths, l.Conflict != "")
 				default:
 					// A pass returns no other landing unless one reached a
-					// conflict it could neither record nor close, which
-					// leaves it locked: nothing was written, and the result
-					// stays queued. Whether the conflict is recorded later,
-					// and who settles it then, is not known here.
+					// conflict it could not record on the landing. If the
+					// landing could still be closed, it reads as a merge
+					// conflict stopped before apply and keeps none of the
+					// conflict's kind, paths or marked tree; a recorded
+					// apply conflict is marked as stopped before apply as
+					// well, so only the state tells them apart. If it could
+					// not, the landing is left locked. Either way nothing
+					// was written, and the result stays queued. Whether the
+					// queue records the conflict, and who settles it then,
+					// is not known here.
 					byArtifact[l.Artifact] = "未落地：这次落地遇到冲突，没有完成；主目录没有改动，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
 				}
 			}
