@@ -43,7 +43,10 @@ type Config struct {
 	// PollInterval is how often the runtime compares its business generation
 	// with the local replica, which reads nothing from other nodes and
 	// appends nothing to the Raft log. The poll itself makes quorum reads
-	// only while a generation starts; writes make their own.
+	// only while a generation starts and, on a node that does not lead
+	// consensus, asks the leader for a read index once every ApplyTimeout
+	// while a generation runs (see replicaConfirmation); writes make their
+	// own.
 	PollInterval time.Duration
 	// ShutdownTimeout is how long a business generation may take to stop
 	// before the runtime reports it as slow and records every goroutine's
