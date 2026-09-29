@@ -187,13 +187,11 @@ func TestAutoStartBacksOffAndStopsAfterItsLimit(t *testing.T) {
 	}
 }
 
-// A peer that starts and comes back but dies again before the machine has
-// stayed online for ten minutes counts against the limit like a failed
-// start: after five such starts automatic start stops for the machine and
-// says why.
-func TestAutoStartGivesUpOnAPeerThatKeepsDying(t *testing.T) {
-	svc, runner, backend, clock := autoStartFixture(t)
-	zh := i18n.New(i18n.LocaleZH)
+// startUntilGivenUp starts a machine's peer as many times as automatic
+// start makes starts, each coming back and dying again two minutes later,
+// and looks at the machine once more after the last one died.
+func startUntilGivenUp(t *testing.T, svc *Service, runner *restartRunner, backend *restartBackend, clock *fakeClock) {
+	t.Helper()
 	sweepOnce(svc)
 	clock.Advance(autoStartAfter)
 	sweepOnce(svc)
@@ -209,17 +207,59 @@ func TestAutoStartGivesUpOnAPeerThatKeepsDying(t *testing.T) {
 		clock.Advance(8 * time.Minute)
 		sweepOnce(svc)
 	}
+}
+
+// A peer that starts and comes back but dies again before the machine has
+// stayed online for ten minutes counts against the limit like a failed
+// start: after five such starts automatic start stops for the machine,
+// says why and records that it stopped, once.
+func TestAutoStartGivesUpOnAPeerThatKeepsDying(t *testing.T) {
+	svc, runner, backend, clock := autoStartFixture(t)
+	zh := i18n.New(i18n.LocaleZH)
+	startUntilGivenUp(t, svc, runner, backend, clock)
 	if scripts := runner.restarts(); len(scripts) != autoStartLimit {
 		t.Fatalf("automatic start went past its limit: %d starts", len(scripts))
 	}
 	state := autoState(t, svc, "node-1")
-	if state.State != "stopped" || state.Attempts != autoStartLimit || state.LastError != zh.T(i18n.SSHAutoStartGaveUp, autoStartLimit, int(autoStartSettle/time.Minute)) {
+	gaveUp := zh.T(i18n.SSHAutoStartGaveUp, autoStartLimit, int(autoStartSettle/time.Minute))
+	if state.State != "stopped" || state.Attempts != autoStartLimit || state.LastError != gaveUp {
 		t.Fatalf("after a peer that kept dying: %#v", state)
 	}
-	for _, record := range backend.recorded() {
+	records := backend.recorded()
+	if len(records) != autoStartLimit+1 {
+		t.Fatalf("records = %#v, want each start and the stop", records)
+	}
+	for _, record := range records[:autoStartLimit] {
 		if record.Outcome != RestartStarted {
-			t.Fatalf("records = %#v", backend.recorded())
+			t.Fatalf("records = %#v", records)
 		}
+	}
+	if stop := records[autoStartLimit]; !stop.Automatic || stop.NodeID != "node-1" || stop.Outcome != RestartStopped || stop.Reason != gaveUp || !stop.At.Equal(clock.Now().UTC()) {
+		t.Fatalf("the stop was recorded as %#v", stop)
+	}
+	clock.Advance(time.Hour)
+	sweepOnce(svc)
+	if records := backend.recorded(); len(records) != autoStartLimit+1 {
+		t.Fatalf("the stop was recorded again: %#v", records[autoStartLimit:])
+	}
+}
+
+// A stop that could not be recorded when automatic start gave up is
+// recorded on a later look, once.
+func TestAutoStartRecordsAStopItCouldNotRecordAtFirstLater(t *testing.T) {
+	svc, runner, backend, clock := autoStartFixture(t)
+	backend.set(func(b *restartBackend) { b.recordErr = errors.New("集群暂时没有 leader") })
+	startUntilGivenUp(t, svc, runner, backend, clock)
+	if state := autoState(t, svc, "node-1"); state.State != "stopped" {
+		t.Fatalf("automatic start did not stop: %#v", state)
+	}
+	backend.set(func(b *restartBackend) { b.recordErr = nil })
+	clock.Advance(autoStartEvery)
+	sweepOnce(svc)
+	sweepOnce(svc)
+	records := backend.recorded()
+	if len(records) != 1 || records[0].Outcome != RestartStopped || !records[0].Automatic {
+		t.Fatalf("records = %#v, want the stop once", records)
 	}
 }
 

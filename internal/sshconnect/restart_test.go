@@ -38,6 +38,8 @@ type restartBackend struct {
 	// machine when it was called, or -1 for no limit.
 	restartLeft time.Duration
 	records     []RestartRecord
+	// recordErr fails every RecordRestart, which then keeps nothing.
+	recordErr error
 	// watched are the machines automatic start looks after; answering
 	// ones answer the cluster and unreachable ones have no SSH session.
 	watched     []string
@@ -82,6 +84,9 @@ func (b *restartBackend) Restarted(ctx context.Context, nodeID string) error {
 func (b *restartBackend) RecordRestart(_ context.Context, record RestartRecord) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.recordErr != nil {
+		return b.recordErr
+	}
 	b.records = append(b.records, record)
 	return nil
 }
