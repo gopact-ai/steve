@@ -34,9 +34,10 @@ const (
 )
 
 // unfinishedText is what a parent is told of a result whose landing
-// stopped at a conflict it could neither record nor close. Whether the
-// conflict is recorded later, and who settles it then, is not known, so
-// it says only what is certain and where a recorded conflict is listed.
+// reached a conflict it could not record: the landing is left locked, or
+// closed with nothing of the conflict. Whether the conflict is recorded
+// later, and who settles it then, is not known, so it says only what is
+// certain and where a recorded conflict is listed.
 const unfinishedText = "未落地：这次落地遇到冲突，没有完成；主目录没有改动，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
 
 // conflictingResults publishes two results that change notes.md from the
@@ -543,6 +544,46 @@ func TestLandForTellsAParentWhatComesOfAResultThatDidNotLand(t *testing.T) {
 			return second
 		},
 		want: func(*testing.T, *world) string { return unfinishedText },
+	}, {
+		// The landing cannot record the conflict it reached, but closes
+		// itself as stopped before apply, with neither the paths nor the
+		// marked tree of the conflict. The queue keeps both.
+		name: "conflict the landing could only close",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			ownStores(t, w, "", artifact.LocalNodes{Dir: t.TempDir()})
+			_, first, second := conflictingResults(t, w)
+			if _, err := w.book.DB().Exec(`CREATE TRIGGER refuse_conflict BEFORE UPDATE ON operations
+				WHEN NEW.kind = 'landing' AND NEW.state = 'merge-conflicted' AND NEW.data NOT LIKE '%interrupted before apply%'
+				BEGIN SELECT RAISE(ABORT, 'conflict not recorded'); END`); err != nil {
+				t.Fatal(err)
+			}
+			queueAll(t, w, first, second)
+			return second
+		},
+		want: func(t *testing.T, w *world) string {
+			stuck, err := w.artifacts.Stuck(t.Context(), "p")
+			if err != nil || len(stuck) != 1 || !stuck[0].Resolvable() || len(stuck[0].Paths) == 0 {
+				t.Fatalf("stuck results = %+v err=%v; want the one merge conflict, with its paths and marked tree", stuck, err)
+			}
+			landings, err := w.artifacts.Landings(t.Context(), "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			closed := 0
+			for _, l := range landings {
+				if l.Artifact != stuck[0].Artifact {
+					continue
+				}
+				if l.State != artifact.LandMergeConflicted || !l.Unapplied || l.Conflict != "" || len(l.Paths) != 0 {
+					t.Fatalf("landing = %+v; want it closed before apply, with nothing of the conflict", l)
+				}
+				closed++
+			}
+			if closed != 1 {
+				t.Fatalf("landings of the conflicted result = %d; want the one it closed", closed)
+			}
+			return unfinishedText
+		},
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t)
