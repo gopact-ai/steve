@@ -30,6 +30,7 @@ const nodes = [
     { name: "node-old", display_name: "old-node", role: "worker", up: true, version: "test", addr: "10.0.0.11:7701",
         last_restart: { at, by: "my-desktop", trigger: "manual", outcome: "failed", reason: "SSH 连不上这台机器" } },
     { name: "node-far", display_name: "far-node", role: "worker", up: true, version: "test", addr: "10.0.0.12:7701" },
+    { name: "node-lag", display_name: "lag-node", role: "worker", up: true, version: "test", addr: "10.0.0.13:7701" },
 ];
 const f = {
     errors: [], reads: {}, posts: [], states: 0, hold: false, release: null, refuse: null,
@@ -37,6 +38,7 @@ const f = {
         "node-build": { restartable: true, auto_start: { state: "watching", attempts: 0, limit: 5 } },
         "node-gpu": { restartable: true, auto_start: { state: "stopped", attempts: 5, limit: 5, last_error: "连续 5 次自动拉起后，这台机器都没能保持在线 10 分钟，已停止自动拉起" } },
         "node-far": { restartable: false, reason: far },
+        "node-lag": { auto_start: { state: "watching", attempts: 0, limit: 5 } },
     },
     result: { "node-build": restarted, "node-gpu": { ...restarted, node_id: "node-gpu", steps: [{ id: "restart", status: "ready", message: "节点进程原本没有运行，已启动" }, { id: "connectivity", status: "ready", message: "节点进程已启动，机器已回到集群" }] } },
 };
@@ -100,7 +102,12 @@ try {
     assert.equal(await drawer.getByText(/重启会中断它上面正在运行的执行/).count(), 0);
     assert.deepEqual(f.posts, [], "a restart this node cannot run is never asked for");
     await close(drawer);
-    console.log("PASS a machine this node cannot restart shows the restart disabled and says where to turn");
+    drawer = await open("lag-node");
+    await drawer.getByText("提供控制台的节点没有说明能否从这里重启这台机器，可能它运行的版本与本页面不同；刷新页面后再看", { exact: true }).waitFor();
+    assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), true, "a machine whose status does not say it can be restarted is not restarted from here");
+    assert.deepEqual(f.posts, []);
+    await close(drawer);
+    console.log("PASS a machine this node cannot restart, or does not say it can, shows the restart disabled and says why");
 
     drawer = await open("build-node");
     const restart = drawer.getByRole("button", { name: "重启节点", exact: true });

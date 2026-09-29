@@ -85,10 +85,15 @@ test("a running peer is left alone and pointed at the manual restart; a stopped 
 });
 
 test("a machine this console's node cannot restart says why, and a machine's last restart shows whoever serves the console", () => {
-    assert.equal(restartRefusal({ restartable: true }), null);
-    assert.equal(restartRefusal(null), null, "nothing is said before the node answered, or after it refused");
-    assert.equal(restartRefusal({ restartable: false, reason: "不能从这里重启当前提供控制台的节点" }), "不能从这里重启当前提供控制台的节点");
-    assert.equal(restartRefusal({}), "", "a status that does not say the machine can be restarted offers no restart");
+    assert.equal(restartRefusal({ restartable: true }, zh), null);
+    assert.equal(restartRefusal(null, zh), null, "nothing is said before the node answered, or after it refused");
+    assert.equal(restartRefusal({ restartable: false, reason: "不能从这里重启当前提供控制台的节点" }, zh), "不能从这里重启当前提供控制台的节点");
+    for (const tr of [zh, en]) {
+        const said = restartRefusal({ auto_start: auto({ state: "watching" }) }, tr);
+        assert.ok(said && said !== "fleet.restartUnstated", "a status that does not say whether the machine can be restarted offers no restart, and says so beside it");
+        assert.equal(said, tr("fleet.restartUnstated"));
+    }
+    assert.notEqual(restartRefusal({}, zh), restartRefusal({}, en));
     const last = { at: "2026-09-29T08:00:00Z", by: "node-hub", trigger: "manual", outcome: "restarted" };
     assert.equal(nodeProcessShown("worker", { restartable: false, reason: "x" }, undefined), true, "a restart this node cannot run is shown, disabled, with why");
     assert.equal(nodeProcessShown("hub", null, last), true, "the coordinator's last restart shows though it is not restarted from here");
