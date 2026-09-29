@@ -68,6 +68,8 @@ func (b peerSSHBackend) MachineAlias(ctx context.Context, nodeID string) (string
 // Upgraded reopens the link so the machine's end of it runs the new
 // program too, then waits until the machine itself reports this build.
 func (b peerSSHBackend) Upgraded(ctx context.Context, nodeID string) error {
+	ctx, cancel := b.peer.whileOpen(ctx)
+	defer cancel()
 	text := b.peer.text.For(ctx)
 	link, ok := b.peer.link(nodeID)
 	if !ok {
@@ -79,6 +81,18 @@ func (b peerSSHBackend) Upgraded(ctx context.Context, nodeID string) error {
 	}
 	sshconnect.Report(ctx, text.T(i18n.ClusterUpgradeAwaitBuild))
 	return awaitBuildWithin(ctx, b.peer.askBuild(nodeID), awaitAskLimit, time.Second, nodewire.Version())
+}
+
+// whileOpen is ctx, ended as well when this node closes: a restart or an
+// upgrade waits for its machine past the page that asked for it, but not
+// past the node, whose shutdown waits for the request.
+func (p *Peer) whileOpen(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(p.ctx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 func (p *Peer) link(nodeID string) (PeerLink, bool) {

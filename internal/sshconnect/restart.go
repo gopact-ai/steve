@@ -25,7 +25,9 @@ type RestartBackend interface {
 	Knows(ctx context.Context, nodeID string) bool
 	// Restarted runs once the machine's peer was started: it returns when
 	// the machine is back in the cluster, on whatever build it runs. It may
-	// Report progress.
+	// Report progress. After a manual restart ctx does not end with the
+	// request that asked for it, only when a restart stops waiting: the
+	// backend ends the wait itself when it closes.
 	Restarted(ctx context.Context, nodeID string) error
 	// RecordRestart keeps what a restart did among the cluster's events.
 	RecordRestart(ctx context.Context, record RestartRecord) error
@@ -273,7 +275,15 @@ func (s *Service) restart(ctx context.Context, backend RestartBackend, id, nodeI
 	}
 	s.enter(&result, PhaseConnectivity, text.T(i18n.SSHRestartReconnecting))
 	reporter := &phaseReporter{s: s, result: &result}
-	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, reporter.report), restartVerifyLimit)
+	confirmCtx := ctx
+	if !spec.IfStopped {
+		// The peer was stopped and started again whether or not the page
+		// that asked for it is still open; so the machine is waited for.
+		// Starting a peer only where none ran stopped nothing, and ends
+		// when automatic start lets go of the machine.
+		confirmCtx = context.WithoutCancel(ctx)
+	}
+	verifyCtx, cancel := context.WithTimeout(WithReporter(confirmCtx, reporter.report), restartVerifyLimit)
 	err = backend.Restarted(verifyCtx, nodeID)
 	cancel()
 	reporter.close()

@@ -27,6 +27,9 @@ type UpgradeBackend interface {
 	// Upgraded runs once the machine's program was swapped and its peer
 	// restarted: the backend brings its own side up to date and returns
 	// when the machine is back on the new build. It may Report progress.
+	// ctx does not end with the request that asked for the upgrade, only
+	// when an upgrade stops waiting: the backend ends the wait itself when
+	// it closes.
 	Upgraded(ctx context.Context, nodeID string) error
 }
 
@@ -191,7 +194,9 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 	}
 	s.enter(&result, PhaseConnectivity, text.T(i18n.SSHUpgradeReconnecting))
 	reporter := &phaseReporter{s: s, result: &result}
-	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, reporter.report), upgradeVerifyLimit)
+	// The program was swapped whether or not the page that asked for it
+	// is still open; so the machine is waited for.
+	verifyCtx, cancel := context.WithTimeout(WithReporter(context.WithoutCancel(ctx), reporter.report), upgradeVerifyLimit)
 	err = backend.Upgraded(verifyCtx, nodeID)
 	cancel()
 	reporter.close()

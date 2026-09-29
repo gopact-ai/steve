@@ -33,6 +33,8 @@ func (b peerSSHBackend) RestartTarget(ctx context.Context, nodeID string) (strin
 // as it is; its end on the machine is a process of its own and was not
 // stopped.
 func (b peerSSHBackend) Restarted(ctx context.Context, nodeID string) error {
+	ctx, cancel := b.peer.whileOpen(ctx)
+	defer cancel()
 	sshconnect.Report(ctx, b.peer.text.For(ctx).T(i18n.ClusterRestartAwait))
 	return awaitAnswerWithin(ctx, b.peer.askBuild(nodeID), awaitAskLimit, time.Second)
 }
