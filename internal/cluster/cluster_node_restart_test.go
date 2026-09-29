@@ -157,6 +157,20 @@ func TestAutoStartWatchesLinkedMembersThatStillBelong(t *testing.T) {
 	}
 }
 
+// Of the machines with a link here, automatic start watches the members
+// other than this node, and stops watching one as soon as its removal
+// begins, before it has left the cluster.
+func TestAutoStartDoesNotWatchAMemberBeingRemoved(t *testing.T) {
+	state := coordination.State{
+		Members:  map[string]coordination.Member{"node-hub": {NodeID: "node-hub"}, "node-1": {NodeID: "node-1"}, "node-2": {NodeID: "node-2"}, "node-3": {NodeID: "node-3"}},
+		Removing: map[string]bool{"node-2": true},
+	}
+	links := map[string]PeerLink{"node-hub": {Alias: "hub"}, "node-1": {Alias: "dev"}, "node-2": {Alias: "dev2"}, "node-gone": {Alias: "gone"}}
+	if watched := watchedMembers(state, links, "node-hub"); !slices.Equal(watched, []string{"node-1"}) {
+		t.Fatalf("watched = %v, want only the linked member that stays", watched)
+	}
+}
+
 // A machine is reachable while the SSH session this node keeps to it is up;
 // one whose session cannot start, or that has none, is not.
 func TestAutoStartReachesAMachineOnlyThroughItsLiveSession(t *testing.T) {
