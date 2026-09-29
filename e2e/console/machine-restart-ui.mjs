@@ -131,6 +131,9 @@ try {
     await drawer.getByText("重启进度", { exact: true }).waitFor();
     await drawer.getByText("第 2/3 步 · 重启节点进程", { exact: true }).waitFor();
     await drawer.getByText("Stopping peer process 4242.", { exact: true }).waitFor();
+    assert.equal(await drawer.getByText("重启日志 · 1 行", { exact: true }).count(), 1, "a restart's log is named a restart log");
+    assert.equal(await drawer.getByLabel("重启日志", { exact: true }).count(), 1, "a restart's log is labelled a restart log");
+    assert.equal(await drawer.getByText(/安装日志/).count(), 0, "a restart's log is not named an installation log");
     assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), true, "a machine is restarted one restart at a time");
     f.hold = false; f.release();
     await drawer.getByText("全部 3 步已完成", { exact: true }).waitFor();
