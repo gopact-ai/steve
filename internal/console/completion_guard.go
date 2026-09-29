@@ -9,8 +9,12 @@ import (
 )
 
 // CheckTaskCompletionTx checks durable questions and delivery in the caller's
-// transaction. Only the completion command's own exchange can be exempted.
-func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
+// transaction. The exchange of the command asking for the end,
+// currentExchange, is exempted. With spareQueued, so is every line of the
+// conversation still queued that no task has claimed — input typed behind
+// the command, a scheduled prompt: it has not started, and runs after the
+// end under whichever task then holds the conversation.
+func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error {
 	records, err := loadConsoleRecordsTx(tx)
 	if err != nil {
 		return fmt.Errorf("read completion console: %w", err)
@@ -33,6 +37,9 @@ func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, cur
 				return task.ErrCompleteAttention
 			}
 			if exchange.Conversation == conversation && !exchange.State.Terminal() {
+				if spareQueued && exchange.State == consoleapi.ExchangeQueued && exchange.ExpectedTask == "" {
+					continue
+				}
 				if currentExchange == "" || exchange.ID != currentExchange {
 					return task.ErrCompleteDelivery
 				}

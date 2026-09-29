@@ -40,10 +40,11 @@ func closeIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Se
 		return ok, err
 	}
 	// A quiet task still stays open while anything of it is unsettled — a
-	// turn waiting on the owner, say — by the check /complete makes. No
-	// input asked for this close, so none is spared.
+	// turn waiting on the owner, say — by the ledger checks /complete makes.
+	// No input asked for this close, so none is spared, not even a line
+	// still queued: it is about to continue the task.
 	settled := func(tx *ledger.Tx, t task.Task) error {
-		return turn.CheckTaskCompletionTx(tx, map[string]bool{t.ID: true}, t.Channel, "", console.CheckTaskCompletionTx)
+		return turn.CheckTaskCompletionTx(tx, map[string]bool{t.ID: true}, t.Channel, "", false, console.CheckTaskCompletionTx)
 	}
 	closed, err := tasks.CloseIdle(age, live, settled)
 	if err != nil && ctx.Err() == nil {

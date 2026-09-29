@@ -20,7 +20,10 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 		question consoleapi.PendingQuestion
 		exchange Exchange
 		current  string
-		want     error
+		// spare is a close some input asked for, which lets lines queued
+		// behind it go on to what follows.
+		spare bool
+		want  error
 	}{
 		{name: "empty"},
 		{name: "root question", question: consoleapi.PendingQuestion{TaskID: "root", State: "pending"}, want: task.ErrCompleteAttention},
@@ -42,6 +45,16 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 		{name: "failed", exchange: Exchange{ExpectedTask: "child", Conversation: "chat", State: consoleapi.ExchangeFailed}},
 		{name: "cancelled", exchange: Exchange{ExpectedTask: "root", Conversation: "chat", State: consoleapi.ExchangeCancelled}},
 		{name: "unrelated exchange", exchange: Exchange{ExpectedTask: "other", Conversation: "elsewhere", State: consoleapi.ExchangeRunning}},
+		{name: "close spares a queued line", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", spare: true},
+		{name: "close without a command spares a queued line", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, spare: true},
+		{name: "close spares its own command", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", spare: true},
+		{name: "close waits for another running command", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", spare: true, want: task.ErrCompleteDelivery},
+		{name: "close waits for an unknown state", exchange: Exchange{ID: "other", Conversation: "chat", State: "future"}, current: "current", spare: true, want: task.ErrCompleteDelivery},
+		{name: "close waits for a queued continuation", exchange: Exchange{ID: "other", ExpectedTask: "root", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", spare: true, want: task.ErrCompleteDelivery},
+		{name: "close waits for another task's queued continuation", exchange: Exchange{ID: "other", ExpectedTask: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", spare: true, want: task.ErrCompleteDelivery},
+		{name: "close waits for recovery", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRecovering}, current: "current", spare: true, want: task.ErrCompleteAttention},
+		{name: "close waits for the owner", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeAwaitingUser}, current: "current", spare: true, want: task.ErrCompleteAttention},
+		{name: "close waits for a question", question: consoleapi.PendingQuestion{Conversation: "chat", State: "pending"}, current: "current", spare: true, want: task.ErrCompleteAttention},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			saved := DurableState{}
@@ -60,7 +73,7 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 				if err := StoreStateTx(tx, saved); err != nil {
 					return err
 				}
-				err := CheckTaskCompletionTx(tx, map[string]bool{"root": true, "child": true}, "chat", tc.current)
+				err := CheckTaskCompletionTx(tx, map[string]bool{"root": true, "child": true}, "chat", tc.current, tc.spare)
 				if !errors.Is(err, tc.want) {
 					t.Errorf("guard = %v, want %v", err, tc.want)
 				}
@@ -87,7 +100,9 @@ func TestCompletionGuardRejectsUnreadableRecords(t *testing.T) {
 			if _, err := book.DB().Exec(`INSERT INTO bindings(kind,id,data,updated_at) VALUES('console-store','state',?,'now')`, raw); err != nil {
 				t.Fatal(err)
 			}
-			if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "") }); err == nil {
+			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+				return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "", false)
+			}); err == nil {
 				t.Fatal("unreadable owner records admitted completion")
 			}
 		})
@@ -107,7 +122,7 @@ func TestCompletionGuardAllowsMissingOrEmptyRecords(t *testing.T) {
 					return err
 				}
 			}
-			return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "")
+			return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "", false)
 		}); err != nil {
 			t.Fatal(err)
 		}

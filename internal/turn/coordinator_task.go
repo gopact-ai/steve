@@ -173,13 +173,14 @@ func (c *Coordinator) releaseLeftover(req Request, tracked task.Task, projectID 
 
 // closeTask releases the tasks the agents hold in the conversation when
 // their sessions are archived. Ordinary work ends as done, but only once
-// nothing of it is left unsettled, by the check /complete makes: a task
-// whose execution still runs, or still waits on the owner, would otherwise
-// be continued under a task that says it finished. One such task refuses
-// the whole release before anything changes; its id and the refusal are
-// returned. Failed or blocked work is set aside for a deliberate resume, not
-// reported as completed. Every lineage leaves the conversation slot,
-// including unattended work, so new inputs cannot charge old work.
+// nothing of it is left unsettled, by the ledger checks /complete makes: a
+// task whose execution still runs, or still waits on the owner, would
+// otherwise be continued under a task that says it finished. One such task
+// refuses the whole release before anything changes; its id and the
+// refusal are returned. Failed or blocked work is set aside for a
+// deliberate resume, not reported as completed. Every lineage leaves the
+// conversation slot, including unattended work, so new inputs cannot
+// charge old work.
 func (c *Coordinator) closeTask(ctx context.Context, conversationID string, agents []string, currentExchange string) (string, error) {
 	var closing []string
 	var aside []task.Task
@@ -225,7 +226,10 @@ func (c *Coordinator) setAside(tracked task.Task) error {
 // check finds nothing of any of them unsettled. Each is checked alone, not
 // with the work it delegated: a child keeps running and delivering on its
 // own terms. currentExchange is the input asking for the close, which the
-// check spares. On a refusal the task it is about is returned with it.
+// check spares; so are the conversation's lines still queued that no task
+// has claimed, such as input typed behind that one: they have not started,
+// and run after the close under whichever task then holds the
+// conversation. On a refusal the task it is about is returned with it.
 func (c *Coordinator) closeSettled(ctx context.Context, ids []string, currentExchange string) (string, error) {
 	if len(ids) == 0 {
 		return "", nil
@@ -233,7 +237,7 @@ func (c *Coordinator) closeSettled(ctx context.Context, ids []string, currentExc
 	refused := ids[0]
 	_, err := c.tasks.CloseChecked(ctx, ids, func(tx *ledger.Tx, tracked task.Task) error {
 		refused = tracked.ID
-		return c.checkTaskCompletionTx(tx, map[string]bool{tracked.ID: true}, tracked.Channel, currentExchange)
+		return c.checkTaskCompletionTx(tx, map[string]bool{tracked.ID: true}, tracked.Channel, currentExchange, true)
 	})
 	if err != nil {
 		return refused, err

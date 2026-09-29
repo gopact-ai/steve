@@ -14,8 +14,9 @@ import (
 // ConsoleCompletionGuard checks console-owned attention and delivery facts
 // within the transaction closing a task tree. Console depends on turn, so
 // turn cannot import the console's storage interpreter; the application
-// passes it in Deps.
-type ConsoleCompletionGuard func(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error
+// passes it in Deps. currentExchange and spareQueued are as for
+// CheckTaskCompletionTx.
+type ConsoleCompletionGuard func(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error
 
 // CheckTaskCompletionTx refuses, within tx, to let the tasks in ids end
 // while any of them still has something unsettled: an execution running,
@@ -25,8 +26,11 @@ type ConsoleCompletionGuard func(tx *ledger.Tx, ids map[string]bool, conversatio
 // succeeded — a session reset, a project switch, an idle close, a
 // schedule's next run — so none of them can end a task its continuation
 // still runs under. console checks what the conversation's console holds,
-// sparing its currentExchange, the input that asked for the close.
-func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, console ConsoleCompletionGuard) error {
+// sparing its currentExchange, the input that asked for the close. With
+// spareQueued it also spares the conversation's lines still queued that no
+// task has claimed: a reset, a project switch or a rotation hands them to
+// what comes next, while /complete and the idle close wait for them.
+func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool, console ConsoleCompletionGuard) error {
 	if err := attempt.CheckTaskCompletionTx(tx, ids); err != nil {
 		return err
 	}
@@ -42,16 +46,16 @@ func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, cur
 	if err := plan.CheckTaskCompletionTx(tx, ids); err != nil {
 		return err
 	}
-	return console(tx, ids, conversation, currentExchange)
+	return console(tx, ids, conversation, currentExchange, spareQueued)
 }
 
-func (c *Coordinator) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
-	return CheckTaskCompletionTx(tx, ids, conversation, currentExchange, c.checkConsoleCompletionTx)
+func (c *Coordinator) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error {
+	return CheckTaskCompletionTx(tx, ids, conversation, currentExchange, spareQueued, c.checkConsoleCompletionTx)
 }
 
-func (c *Coordinator) checkConsoleCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
+func (c *Coordinator) checkConsoleCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error {
 	if c.consoleCompletionGuard != nil {
-		return c.consoleCompletionGuard(tx, ids, conversation, currentExchange)
+		return c.consoleCompletionGuard(tx, ids, conversation, currentExchange, spareQueued)
 	}
 	// A standalone turn coordinator needs no console. Existing console
 	// facts, however, must never be silently ignored by an unwired owner.

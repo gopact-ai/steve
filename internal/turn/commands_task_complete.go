@@ -24,7 +24,7 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 			return task.ErrCompleteRoot
 		}
 		guard := func(tx *ledger.Tx, ids map[string]bool) error {
-			return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID)
+			return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID, false)
 		}
 		_, err := c.tasks.CompleteRoot(ctx, current.ID, current.Channel, guard)
 		return err
