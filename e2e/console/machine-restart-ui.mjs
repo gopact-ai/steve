@@ -160,13 +160,18 @@ try {
     await drawer.getByText("节点进程已启动，机器已回到集群", { exact: true }).waitFor();
     console.log("PASS an offline machine is restarted at once, and a stopped automatic start says why and how it resumes");
 
+    const autoStatus = drawer.locator('[aria-live="polite"]').filter({ hasText: "已停止自动拉起" });
+    assert.equal(await autoStatus.count(), 1, "how automatic start stands is in a polite live region, so its changes are announced");
+    const announced = await autoStatus.elementHandle();
     f.status["node-gpu"] = { restartable: true, ...running(true, "restart-2"), auto_start: { state: "attempting", attempts: 1, limit: 5, last_at: at } };
     await drawer.getByText("正在自动启动（第 2/5 次）", { exact: true }).waitFor({ timeout: 8000 });
+    assert.match(await announced.innerText(), /正在自动启动（第 2\/5 次）/, "the live region already there announces the next state");
     await drawer.getByText("自动拉起进度", { exact: true }).waitFor();
     await drawer.getByText("第 2/3 步 · 重启节点进程", { exact: true }).waitFor();
     assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), true, "a machine being started automatically is not restarted by hand meanwhile");
     f.status["node-gpu"] = { restartable: true, restart: { ...f.result["node-gpu"], plan_id: "restart-2" }, automatic: true, auto_start: { state: "watching", attempts: 1, limit: 5 } };
     await drawer.getByText("已自动启动，等待机器稳定在线（第 1/5 次）", { exact: true }).waitFor();
+    assert.match(await announced.innerText(), /已自动启动，等待机器稳定在线（第 1\/5 次）/, "the same live region announces the machine started");
     assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), false);
     assert.equal(await drawer.getByText("节点进程已启动，机器已回到集群", { exact: true }).count(), 0, "a restart asked here is not shown once a later one ran");
     await close(drawer);
