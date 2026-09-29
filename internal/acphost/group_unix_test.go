@@ -114,6 +114,50 @@ func TestHostDoesNotConfirmAStopWhileAHiddenMemberRuns(t *testing.T) {
 	}
 }
 
+// When the agent's exit cannot be watched without reaping it, waiting for
+// the agent must still leave a close free to kill it: an agent that stays
+// past the grace is killed, and the close returns.
+func TestHostCloseKillsAnAgentWhoseExitCannotBeWatched(t *testing.T) {
+	pause := fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000)
+	var leader atomic.Int64
+	t.Cleanup(func() {
+		if pid := int(leader.Load()); pid > 0 && cmdlineIs(pid, "sleep", pause) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	calls := kernelGroup
+	calls.waitExit = func(int) error { return errors.New("exit cannot be watched") }
+	// The agent leaves its session when its input closes, and its process
+	// then stays on without ever answering again.
+	h := New(Config{Transport: LocalTransport{
+		Command: "/bin/sh", Args: []string{"-c", `"$1"; exec sleep "$2"`, "agent", buildMockAgent(t), pause}, ProcessDir: t.TempDir(),
+		Started: func(id procgroup.Identity) { leader.Store(int64(id.Leader)) }, group: &calls,
+	}, NoRestart: true})
+	t.Cleanup(h.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, generation, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	go func() {
+		h.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the close did not return while the agent's exit could not be watched")
+	}
+	if liveProcess(int(leader.Load())) {
+		t.Fatal("the close returned while the agent still ran")
+	}
+	if h.ProcessStopped(generation) {
+		t.Fatal("a stop was confirmed although the agent's process group was never checked")
+	}
+}
+
 func recordedPID(path string) int {
 	raw, err := os.ReadFile(path)
 	if err != nil {
