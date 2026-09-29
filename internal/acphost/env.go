@@ -26,3 +26,14 @@ func mergeEnv(base, overrides []string) []string {
 	}
 	return append(merged, overrides...)
 }
+
+// withoutEnv returns env with the variable key left out.
+func withoutEnv(env []string, key string) []string {
+	kept := make([]string, 0, len(env))
+	for _, kv := range env {
+		if name, _, _ := strings.Cut(kv, "="); name != key {
+			kept = append(kept, kv)
+		}
+	}
+	return kept
+}

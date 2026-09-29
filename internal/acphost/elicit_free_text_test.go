@@ -166,6 +166,8 @@ func (p *elicitationTestProcess) Wait() error {
 	return p.output.Close()
 }
 
+func (p *elicitationTestProcess) Exited() <-chan struct{} { return p.conn.Done() }
+
 // Stopped never reports evidence: the fixture stands in for a process
 // whose exit the host cannot confirm.
 func (p *elicitationTestProcess) Stopped() bool { return false }
