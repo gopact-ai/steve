@@ -14,9 +14,6 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		return nodewire.SessionState{}, sessionError("invalid", "open recovery requires the original open command and harness")
 	}
 	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
-	if req.Action == nodewire.SessionActionCancelOpen {
-		s.settleUnverified(id)
-	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -24,46 +21,14 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 	}
 	one := s.sessions[id]
 	if one == nil {
-		defer s.mu.Unlock()
-		record, exists, err := s.readRecord(id)
-		if err != nil {
-			return nodewire.SessionState{}, err
+		state, retry, err := s.reconcileRecordedOpenLocked(id, req)
+		s.mu.Unlock()
+		// Only an admitted cancellation tries again to end what a killed
+		// node left: a refused one must not signal anything.
+		if retry && s.settleUnverified(id) {
+			return s.reconcileOpen(ctx, req)
 		}
-		if !exists {
-			if req.Action != nodewire.SessionActionCancelOpen {
-				return nodewire.SessionState{}, sessionError("absent", "original open is not recorded; absence alone does not confirm cancellation")
-			}
-			one = &ownedSession{service: s, changed: make(chan struct{})}
-			record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenCancelled: true, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}, State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionClosed, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}}
-			if err := one.commitLocked(record); err != nil {
-				return nodewire.SessionState{}, err
-			}
-			record = one.record
-		}
-		if record.ClusterID != req.Authority.ClusterID || record.OpenID != req.CommandID || record.State.Binding != req.Binding || record.State.Harness != req.Harness {
-			return nodewire.SessionState{}, sessionError("forbidden", "open receipt belongs to another execution")
-		}
-		one = &ownedSession{service: s, record: record, changed: make(chan struct{})}
-		check := req
-		check.ID, check.Action = id, nodewire.SessionActionAttach
-		if err := one.admitLocked(check); err != nil {
-			return nodewire.SessionState{}, err
-		}
-		if req.Action == nodewire.SessionActionCancelOpen && !one.record.State.ProcessStopped {
-			return nodewire.SessionState{}, sessionError("uncertain", "original native process stop is not confirmed")
-		}
-		if req.Action == nodewire.SessionActionCancelOpen {
-			next := one.copyLocked()
-			var saveErr error
-			if next.State.State != nodewire.SessionClosed {
-				next.State.State = nodewire.SessionClosed
-				saveErr = one.commitLocked(next)
-			}
-			if err := errors.Join(saveErr, s.endStoppedRuntime(next)); err != nil {
-				return nodewire.SessionState{}, err
-			}
-		}
-		return openRecoveryReceipt(one.stateLocked(""), req, record.OpenCancelled), nil
+		return state, err
 	}
 	s.mu.Unlock()
 	one.mu.Lock()
@@ -88,6 +53,52 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		}
 	}
 	return openRecoveryReceipt(state, req, false), nil
+}
+
+// reconcileRecordedOpenLocked answers an open recovery from the open's
+// record alone; the caller holds s.mu. retry reports an admitted
+// cancellation refused only because the record's process stop is not
+// confirmed.
+func (s *SessionService) reconcileRecordedOpenLocked(id string, req nodewire.SessionRequest) (_ nodewire.SessionState, retry bool, _ error) {
+	record, exists, err := s.readRecord(id)
+	if err != nil {
+		return nodewire.SessionState{}, false, err
+	}
+	if !exists {
+		if req.Action != nodewire.SessionActionCancelOpen {
+			return nodewire.SessionState{}, false, sessionError("absent", "original open is not recorded; absence alone does not confirm cancellation")
+		}
+		cancelled := &ownedSession{service: s, changed: make(chan struct{})}
+		record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenCancelled: true, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}, State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionClosed, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}}
+		if err := cancelled.commitLocked(record); err != nil {
+			return nodewire.SessionState{}, false, err
+		}
+		record = cancelled.record
+	}
+	if record.ClusterID != req.Authority.ClusterID || record.OpenID != req.CommandID || record.State.Binding != req.Binding || record.State.Harness != req.Harness {
+		return nodewire.SessionState{}, false, sessionError("forbidden", "open receipt belongs to another execution")
+	}
+	one := &ownedSession{service: s, record: record, changed: make(chan struct{})}
+	check := req
+	check.ID, check.Action = id, nodewire.SessionActionAttach
+	if err := one.admitLocked(check); err != nil {
+		return nodewire.SessionState{}, false, err
+	}
+	if req.Action == nodewire.SessionActionCancelOpen && !one.record.State.ProcessStopped {
+		return nodewire.SessionState{}, true, sessionError("uncertain", "original native process stop is not confirmed")
+	}
+	if req.Action == nodewire.SessionActionCancelOpen {
+		next := one.copyLocked()
+		var saveErr error
+		if next.State.State != nodewire.SessionClosed {
+			next.State.State = nodewire.SessionClosed
+			saveErr = one.commitLocked(next)
+		}
+		if err := errors.Join(saveErr, s.endStoppedRuntime(next)); err != nil {
+			return nodewire.SessionState{}, false, err
+		}
+	}
+	return openRecoveryReceipt(one.stateLocked(""), req, record.OpenCancelled), false, nil
 }
 
 func openRecoveryReceipt(state nodewire.SessionState, req nodewire.SessionRequest, cancelled bool) nodewire.SessionState {
