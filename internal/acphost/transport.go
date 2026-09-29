@@ -147,29 +147,36 @@ func (p *localProcess) Stdin() io.WriteCloser { return p.stdin }
 // left in the group.
 func (p *localProcess) Wait() error {
 	pid := p.cmd.Process.Pid
-	ended := false
 	switch err := p.group.waitExit(pid); {
 	case errors.Is(err, procgroup.ErrUnsupported):
-		err := p.cmd.Wait()
-		p.mu.Lock()
-		p.reaped = true
-		p.mu.Unlock()
+		err := p.reapRunning()
 		p.stopped.Store(true)
 		return err
 	case err != nil:
+		// Nothing then shows the group is empty, so the stop stays
+		// unconfirmed.
 		slog.Error(fmt.Sprintf("acphost: wait for agent process %d: %v", pid, err))
-	default:
-		p.endGroup(pid)
-		ended = true
+		return p.reapRunning()
 	}
+	p.endGroup(pid)
 	p.mu.Lock()
 	err := p.cmd.Wait()
 	p.reaped = true
 	p.mu.Unlock()
-	if ended {
-		p.awaitEmpty(pid)
-		p.stopped.Store(true)
-	}
+	p.awaitEmpty(pid)
+	p.stopped.Store(true)
+	return err
+}
+
+// reapRunning reaps an agent whose exit cannot be watched without reaping
+// it. The agent may still run, so the lock stays free and a kill can reach
+// it; a kill that comes just as the agent is reaped can then reach the
+// group's id after it is let go.
+func (p *localProcess) reapRunning() error {
+	err := p.cmd.Wait()
+	p.mu.Lock()
+	p.reaped = true
+	p.mu.Unlock()
 	return err
 }
 
