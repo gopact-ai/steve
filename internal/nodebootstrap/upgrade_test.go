@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -19,18 +20,66 @@ import (
 // waits for SIGTERM the way a peer would, so the upgrade script has a real
 // process, with a real command line, to stop and restart. With
 // STEVE_NODEBOOTSTRAP_STUB_LINGER it takes that long to exit once asked,
-// as a peer winding down its executions does.
+// as a peer winding down its executions does. With
+// STEVE_NODEBOOTSTRAP_STUB_LOCK it first takes its installation's gateway
+// lock, as a peer does, and holds it until it exits.
 func TestMain(m *testing.M) {
 	if os.Getenv("STEVE_NODEBOOTSTRAP_STUB") == "1" && len(os.Args) > 1 && os.Args[1] == "peer" {
+		var lock *os.File
+		if os.Getenv("STEVE_NODEBOOTSTRAP_STUB_LOCK") == "1" {
+			lock = holdGatewayLock()
+		}
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, syscall.SIGTERM)
 		<-stop
 		if linger, err := time.ParseDuration(os.Getenv("STEVE_NODEBOOTSTRAP_STUB_LINGER")); err == nil {
 			time.Sleep(linger)
 		}
+		runtime.KeepAlive(lock)
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// lockingStub is the environment that makes the stub peer take its
+// installation's gateway lock.
+const lockingStub = "STEVE_NODEBOOTSTRAP_STUB_LOCK=1"
+
+// holdGatewayLock takes the gateway lock beside the configuration the
+// stub peer was started with, the way a peer takes it, and records the
+// stub's pid in it. When another process holds the lock the stub exits
+// with the message a peer exits with.
+func holdGatewayLock() *os.File {
+	config := ""
+	for i, arg := range os.Args {
+		if arg == "--config" && i+1 < len(os.Args) {
+			config = os.Args[i+1]
+		}
+	}
+	dir := filepath.Join(filepath.Dir(config), "cluster", "peer-process")
+	path := filepath.Join(dir, "gateway.lock")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintf(os.Stderr, "steve: another gateway already serves %s (lock %s is held)\n", dir, path)
+		os.Exit(1)
+	}
+	if err := file.Truncate(0); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	return file
 }
 
 func upgradeSpec() UpgradeSpec {
@@ -121,7 +170,9 @@ func stageUpload(t *testing.T, home, id string, content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func runUpgrade(t *testing.T, home string, spec UpgradeSpec) (string, error) {
+// runUpgrade runs the upgrade script for the installation under home,
+// with env added to the test's environment.
+func runUpgrade(t *testing.T, home string, spec UpgradeSpec, env ...string) (string, error) {
 	t.Helper()
 	script, err := BuildPeerUpgrade(spec)
 	if err != nil {
@@ -129,7 +180,7 @@ func runUpgrade(t *testing.T, home string, spec UpgradeSpec) (string, error) {
 	}
 	cmd := exec.Command("bash", "-s")
 	cmd.Stdin = strings.NewReader(script)
-	cmd.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	cmd.Env = append(append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1"), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

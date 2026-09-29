@@ -278,19 +278,21 @@ func TestPeerRestartScriptWaitsForEveryPeerProcessItStops(t *testing.T) {
 // The pid a gateway lock records outlives the peer that wrote it, and the
 // number can come back as another process of the same account, here the
 // peer of a second installation, started by its path or from its own
-// directory. That peer belongs to its own installation: a restart of this
-// one neither stops it nor takes it for this installation's peer, and
-// starts this installation's own.
+// directory and holding that installation's gateway lock. That peer
+// belongs to its own installation: a restart or an upgrade of this one
+// neither stops it nor takes it for this installation's peer, and starts
+// this installation's own.
 func TestPeerRestartScriptLeavesAnotherInstallationsPeerItsLockNames(t *testing.T) {
 	requirePeerPlatform(t)
-	byPath, byPathPID := installedPeer(t)
+	byPath, _ := layoutPeer(t)
 	fromItsDirectory, _ := layoutPeer(t)
-	others := map[string]string{byPath: byPathPID, fromItsDirectory: relativePeer(t, fromItsDirectory)}
+	others := map[string]string{byPath: startPeer(t, byPath, lockingStub), fromItsDirectory: relativePeer(t, fromItsDirectory, lockingStub)}
 	for other, otherPID := range others {
+		awaitGatewayLock(t, other, otherPID)
 		for _, spec := range []RestartSpec{{IfStopped: true}, {}} {
 			home, _ := layoutPeer(t)
 			lockedBy(t, home, otherPID)
-			report, err := runRestart(t, home, spec)
+			report, err := runRestart(t, home, spec, lockingStub)
 			if err != nil || strings.Contains(report, "Stopping peer process") || !strings.Contains(report, "STEVE_RESTART\tstarted\n") {
 				t.Fatalf("IfStopped %v: the peer %s of another installation was taken for this one's: %v\n%s", spec.IfStopped, otherPID, err, report)
 			}
@@ -301,6 +303,151 @@ func TestPeerRestartScriptLeavesAnotherInstallationsPeerItsLockNames(t *testing.
 				t.Fatalf("IfStopped %v: expected this installation's peer to be started, got %v\n%s", spec.IfStopped, pids, report)
 			}
 		}
+		home, program := layoutPeer(t)
+		lockedBy(t, home, otherPID)
+		spec := upgradeSpec()
+		spec.SHA256 = stageUpload(t, home, spec.UploadID, program)
+		report, err := runUpgrade(t, home, spec, lockingStub)
+		if err != nil || strings.Contains(report, "Stopping peer process") {
+			t.Fatalf("an upgrade took the peer %s of another installation for this one's: %v\n%s", otherPID, err, report)
+		}
+		if exec.Command("kill", "-0", otherPID).Run() != nil {
+			t.Fatalf("an upgrade stopped the peer %s of the installation under %s:\n%s", otherPID, other, report)
+		}
+	}
+}
+
+// peerSpelling is a way an owner may start the installed program by hand
+// that the program's path does not show: launch is run by bash with HOME
+// reaching the installation through a symlink and REAL_HOME the directory
+// the symlink resolves to.
+type peerSpelling struct {
+	name, launch string
+}
+
+var peerSpellings = []peerSpelling{
+	{"by the resolved path", `exec "$REAL_HOME/.steve-peer/bin/steve" peer --config "$REAL_HOME/.steve-peer/config.json"`},
+	{"from the program's directory", `cd "$HOME/.steve-peer/bin" && exec ./steve peer --config "$HOME/.steve-peer/config.json"`},
+	{"through PATH", `PATH="$HOME/.steve-peer/bin:$PATH" exec steve peer --config "$HOME/.steve-peer/config.json"`},
+}
+
+// symlinkedPeer lays out an installation, without starting its peer, and
+// returns the directory holding it and a symlink to that directory, the
+// way a home directory can be reached through a symlink.
+func symlinkedPeer(t *testing.T) (real, home string) {
+	t.Helper()
+	real, _ = layoutPeer(t)
+	home = filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(real, home); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = exec.Command("pkill", "-KILL", "-f", "^"+home+"/.steve-peer/bin/steve peer ").Run() })
+	return real, home
+}
+
+// spelledPeer starts the installation's peer as spelling says, holding
+// its gateway lock, and returns its pid once the lock records it.
+func spelledPeer(t *testing.T, real, home string, spelling peerSpelling) string {
+	t.Helper()
+	start := exec.Command("bash", "-c", `(`+spelling.launch+`) >> "$HOME/.steve-peer/peer.log" 2>&1 < /dev/null & echo $!`)
+	start.Env = append(os.Environ(), "HOME="+home, "REAL_HOME="+real, "STEVE_NODEBOOTSTRAP_STUB=1", lockingStub)
+	out, err := start.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{real, home} {
+		config := filepath.Join(dir, ".steve-peer", "config.json")
+		t.Cleanup(func() { _ = exec.Command("pkill", "-KILL", "-f", "steve peer --config "+config).Run() })
+	}
+	pid := strings.TrimSpace(string(out))
+	awaitGatewayLock(t, real, pid)
+	return pid
+}
+
+// awaitGatewayLock waits until the gateway lock of the installation under
+// home records pid, as it does once that peer holds it.
+func awaitGatewayLock(t *testing.T, home, pid string) {
+	t.Helper()
+	lock := filepath.Join(home, ".steve-peer", "cluster", "peer-process", "gateway.lock")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if recorded, _ := os.ReadFile(lock); strings.TrimSpace(string(recorded)) == pid {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the peer %s did not take the gateway lock %s", pid, lock)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A process holding the installation's gateway lock is the installation's
+// peer, whatever its command line says: a peer started by hand by the path
+// the installation resolves to, as ./steve or through PATH is found. A
+// restart stops it and starts the installed program, and starting a peer
+// only when it is down finds it running and leaves it alone.
+func TestPeerRestartScriptFindsThePeerHoldingTheGatewayLock(t *testing.T) {
+	requirePeerPlatform(t)
+	for _, spelling := range peerSpellings {
+		t.Run(spelling.name, func(t *testing.T) {
+			real, home := symlinkedPeer(t)
+			pid := spelledPeer(t, real, home, spelling)
+			report, err := runRestart(t, home, RestartSpec{IfStopped: true}, lockingStub)
+			if err != nil || !strings.Contains(report, "Peer process "+pid+" is still running") || !strings.Contains(report, "STEVE_RESTART\trunning\n") {
+				t.Fatalf("the peer %s holding the gateway lock was not found running: %v\n%s", pid, err, report)
+			}
+			if exec.Command("kill", "-0", pid).Run() != nil {
+				t.Fatalf("the peer %s was stopped where it was to be left alone:\n%s", pid, report)
+			}
+			report, err = runRestart(t, home, RestartSpec{}, lockingStub)
+			if err != nil || !strings.Contains(report, "Stopping peer process "+pid) || !strings.Contains(report, "STEVE_RESTART\trestarted\n") {
+				t.Fatalf("the peer %s holding the gateway lock was not restarted: %v\n%s", pid, err, report)
+			}
+			if exec.Command("kill", "-0", pid).Run() == nil {
+				t.Fatalf("the peer %s kept running through the restart:\n%s", pid, report)
+			}
+			if pids := peerPIDs(t, home); len(pids) != 1 {
+				t.Fatalf("expected the installed program to run as the peer, got %v\n%s", pids, report)
+			}
+		})
+	}
+}
+
+// An upgrade finds the same peer: it is stopped, the program it ran is
+// kept as the fallback in place of an earlier one, and the new program
+// runs.
+func TestPeerUpgradeScriptStopsThePeerHoldingTheGatewayLock(t *testing.T) {
+	requirePeerPlatform(t)
+	for _, spelling := range peerSpellings {
+		t.Run(spelling.name, func(t *testing.T) {
+			real, home := symlinkedPeer(t)
+			bin := filepath.Join(real, ".steve-peer", "bin")
+			running, err := os.ReadFile(filepath.Join(bin, "steve"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			earlier := append(slices.Clone(running), "\nearlier program\n"...)
+			if err := os.WriteFile(filepath.Join(bin, "steve.previous"), earlier, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			pid := spelledPeer(t, real, home, spelling)
+			upgraded := append(slices.Clone(running), "\nnew program\n"...)
+			spec := upgradeSpec()
+			spec.SHA256 = stageUpload(t, home, spec.UploadID, upgraded)
+			report, err := runUpgrade(t, home, spec, lockingStub)
+			if err != nil || !strings.Contains(report, "Stopping peer process "+pid) {
+				t.Fatalf("the peer %s holding the gateway lock was not stopped for the upgrade: %v\n%s", pid, err, report)
+			}
+			if kept := programs(t, home); len(kept) != 2 || kept["steve"] != string(upgraded) || kept["steve.previous"] != string(running) {
+				t.Fatalf("expected the new program installed and the one that ran kept as the fallback, got %v\n%s", slices.Sorted(maps.Keys(kept)), report)
+			}
+			if exec.Command("kill", "-0", pid).Run() == nil {
+				t.Fatalf("the peer %s kept running through the upgrade:\n%s", pid, report)
+			}
+			if pids := peerPIDs(t, home); len(pids) != 1 {
+				t.Fatalf("expected the new program to run as the peer, got %v\n%s", pids, report)
+			}
+		})
 	}
 }
 
@@ -370,14 +517,14 @@ func pathWithout(t *testing.T, program string) string {
 }
 
 // relativePeer starts the installation's peer from its own directory as
-// ./bin/steve, the way its owner may start it by hand, and returns its
-// pid. Its config path names the installation, so it is ended by its
-// command line when the test ends, never by a pid a later process may
-// have taken.
-func relativePeer(t *testing.T, home string) string {
+// ./bin/steve, the way its owner may start it by hand, with env added to
+// the test's environment, and returns its pid. Its config path names the
+// installation, so it is ended by its command line when the test ends,
+// never by a pid a later process may have taken.
+func relativePeer(t *testing.T, home string, env ...string) string {
 	t.Helper()
 	start := exec.Command("bash", "-c", `cd "$HOME/.steve-peer"; nohup ./bin/steve peer --config "$HOME/.steve-peer/config.json" >> peer.log 2>&1 < /dev/null & echo $!`)
-	start.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	start.Env = append(append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1"), env...)
 	out, err := start.Output()
 	if err != nil {
 		t.Fatal(err)
