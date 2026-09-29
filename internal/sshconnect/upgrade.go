@@ -52,13 +52,11 @@ func unknownNode(text i18n.Catalog, nodeID string) *StepError {
 // expired.
 const UnknownUpgrade = "unknown_upgrade"
 
-// UpgradeUnsupported is the code of the failure an upgrade, or its
-// status, returns for any node ID where the backend upgrades no machine:
-// there is no upgrade to start or to read here.
-const UpgradeUnsupported = "upgrade_unsupported"
-
+// upgradeUnsupported is the failure an upgrade, or its status, returns
+// for any node ID where the backend upgrades no machine: there is no
+// upgrade to start or to read here.
 func upgradeUnsupported(text i18n.Catalog) *StepError {
-	return Fail(text, "preflight", UpgradeUnsupported, text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
+	return Fail(text, "preflight", "upgrade_unsupported", text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
 }
 
 // upgradeVerifyLimit bounds how long the coordinator waits for a machine
