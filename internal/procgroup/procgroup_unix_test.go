@@ -3,6 +3,7 @@
 package procgroup
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -168,6 +169,49 @@ func TestSettleDoesNotTakeAHiddenMemberForAnEmptyGroup(t *testing.T) {
 	}
 	if !running(member) {
 		t.Fatal("a member nothing showed to be of the recorded group was signalled")
+	}
+}
+
+// settleIdentity carries the identity a process started inside the
+// recorded group settles.
+const settleIdentity = "PROCGROUP_TEST_SETTLE_IDENTITY"
+
+// A process inside the recorded group, as a node an agent started, would
+// end itself with it: the group is not ended from there.
+func TestSettleDoesNotEndTheGroupItRunsIn(t *testing.T) {
+	if raw := os.Getenv(settleIdentity); raw != "" {
+		var id Identity
+		place, err := Here()
+		if err == nil {
+			err = json.Unmarshal([]byte(raw), &id)
+		}
+		if err == nil {
+			err = Settle(id, place, place, time.Second)
+		}
+		fmt.Println("settle:", err)
+		if !errors.Is(err, ErrUnproven) {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	arg := pause()
+	cmd, id := startGroup(t, "m", "m", `exec sleep "$1"`, arg)
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	raw, err := json.Marshal(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inside := exec.Command(os.Args[0], "-test.run=^TestSettleDoesNotEndTheGroupItRunsIn$")
+	inside.Env = append(os.Environ(), settleIdentity+"="+string(raw))
+	inside.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: id.Group}
+	if out, err := inside.CombinedOutput(); err != nil {
+		t.Fatalf("settling from inside the group: %v\n%s", err, out)
+	}
+	if !running(cmd.Process.Pid) {
+		t.Fatal("the group was signalled from inside it")
 	}
 }
 
