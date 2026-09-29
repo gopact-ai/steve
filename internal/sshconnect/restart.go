@@ -307,6 +307,8 @@ func (s *Service) startPeer(ctx context.Context, result *InstallResult, connecti
 			return RestartFailed, Fail(text, "restart", "restart_busy", text.T(i18n.SSHRestartBusy), text.T(i18n.SSHRestartBusyFix))
 		case 28:
 			return RestartFailed, Fail(text, "restart", "restart_down", text.T(i18n.SSHRestartDown), text.T(i18n.SSHRestartDownFix))
+		case 29:
+			return RestartFailed, Fail(text, "restart", "restart_unlocated", text.T(i18n.SSHRestartUnlocated), text.T(i18n.SSHPeerUnlocatedFix))
 		case 30:
 			return RestartFailed, Fail(text, "restart", "peer_missing", text.T(i18n.SSHUpgradeNotPeer), text.T(i18n.SSHUpgradeNotPeerFix))
 		default:

@@ -105,7 +105,8 @@ const peerStartSection = `start_peer() {
 `
 
 // peerLocateSection sets running to the pids of the peer this
-// installation runs, or to nothing when it runs none.
+// installation runs, or to nothing when it runs none, and exits 29 when
+// it cannot look.
 const peerLocateSection = `# Only this account's peer started from this installation is stopped; the
 # link session the coordinator holds open is replaced from its side. The
 # peer may have been started from its own directory as ./bin/steve, so a
@@ -119,6 +120,30 @@ const peerLocateSection = `# Only this account's peer started from this installa
 # under a different state directory, are left alone. Missing the process
 # would leave it holding the gateway lock, and the program started next
 # would exit on it and be taken for one that cannot run.
+#
+# A search that cannot be made is not a search that found nothing: without
+# pgrep, ps, or lsof where there is no /proc, with a pgrep that fails, or
+# with a gateway lock that cannot be read, the script exits 29 before it
+# stops or starts anything. Taking the peer for stopped would start a
+# second one beside it, or stop one that cannot start again over a lock it
+# cannot open.
+unlocatable() {
+  echo "$1; nothing was stopped or started." >&2
+  exit 29
+}
+for tool in pgrep ps; do
+  command -v "$tool" >/dev/null 2>&1 || unlocatable "Finding the peer process needs $tool, which this machine does not have"
+done
+if [ ! -d /proc/self ] && ! command -v lsof >/dev/null 2>&1; then
+  unlocatable 'Finding the peer process needs lsof on a machine without /proc'
+fi
+lock_file="$state_dir/cluster/peer-process/gateway.lock"
+if [ -e "$lock_file" ] && [ ! -r "$lock_file" ]; then
+  unlocatable 'The gateway lock ~/.steve-peer/cluster/peer-process/gateway.lock cannot be read'
+fi
+peer_search() {
+  pgrep -u "$(id -u)" -f "$1" || [ $? -eq 1 ]
+}
 pattern=$(printf '%s' "$state_dir/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
 state_real=$(cd "$state_dir" && pwd -P)
 process_dir() {
@@ -138,15 +163,16 @@ installation_peer() {
   return 1
 }
 running=""
-locked=$(head -n 1 "$state_dir/cluster/peer-process/gateway.lock" 2>/dev/null | tr -dc '0-9')
+locked=$(head -n 1 "$lock_file" 2>/dev/null | tr -dc '0-9')
 if [ -n "$locked" ] && kill -0 "$locked" 2>/dev/null && installation_peer "$locked"; then
   running="$locked"
 fi
 if [ -z "$running" ]; then
-  running=$(pgrep -u "$(id -u)" -f "^$pattern" || true)
+  running=$(peer_search "^$pattern") || unlocatable 'Looking for the peer process with pgrep failed'
 fi
 if [ -z "$running" ]; then
-  for candidate in $(pgrep -u "$(id -u)" -f '^\./bin/steve peer ' || true); do
+  relative=$(peer_search '^\./bin/steve peer ') || unlocatable 'Looking for the peer process with pgrep failed'
+  for candidate in $relative; do
     if installation_peer "$candidate"; then running="${running:+$running }$candidate"; fi
   done
 fi

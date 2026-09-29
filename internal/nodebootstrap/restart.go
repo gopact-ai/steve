@@ -16,7 +16,7 @@ type RestartSpec struct {
 // last line is STEVE_RESTART with what it did: restarted a peer that was
 // running, started one that was not, or, with IfStopped, found one running
 // and left it. A peer that does not stay up exits 28 with the last lines
-// of its log.
+// of its log, and a machine where the peer cannot be looked for exits 29.
 func BuildPeerRestart(spec RestartSpec) string {
 	var b strings.Builder
 	b.WriteString(`#!/bin/bash
