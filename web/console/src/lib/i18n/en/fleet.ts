@@ -224,6 +224,7 @@ export const fleetEn = {
     "fleet.nodeProcess": "Node process",
     "fleet.restartNode": "Restart node",
     "fleet.restartHint": "Stops and starts the node process on this machine over SSH; its program stays the same.",
+    "fleet.restartUnstated": "The node serving the console did not say whether this machine can be restarted from here; it may run a different version from this page. Reload the page and look again",
     "fleet.restartConfirmHint": "This machine is online. Restarting interrupts the executions running on it; they are confirmed through the normal stop process.",
     "fleet.confirmRestart": "Confirm restart",
     "fleet.restartProgress": "Restart progress",

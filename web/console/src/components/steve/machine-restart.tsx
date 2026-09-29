@@ -68,7 +68,7 @@ export function MachineRestart({ n, onChanged }: { n: Node; onChanged: () => voi
     const last = n.last_restart && restartLine(n.last_restart, nodeLabel(n), t, nodeName);
     if (!nodeProcessShown(n.role, state, last)) return null;
     const offered = restartOffered(n.role, state);
-    const refusal = restartRefusal(state);
+    const refusal = restartRefusal(state, t);
     async function restart() {
         setConfirming(false); setError(""); setResult(null); setPosting(true);
         try {

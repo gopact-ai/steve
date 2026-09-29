@@ -19,10 +19,13 @@ export const restartOffered = (role: string | undefined, state: SSHRestartState 
 /**
  * restartRefusal is why the node serving the console cannot restart a
  * machine it answered for, as that node says: the node itself, or a
- * machine whose SSH link another node keeps. null where it can, and before
- * it answered. The restart is shown disabled beside it.
+ * machine whose SSH link another node keeps. A status that does not say
+ * the machine can be restarted, as from a node on another version than
+ * the page, is not taken for one that can, and says so. null where it
+ * can, and before it answered. The restart is shown disabled beside it.
  */
-export const restartRefusal = (state: SSHRestartState | null | undefined) => !state || state.restartable ? null : state.reason || "";
+export const restartRefusal = (state: SSHRestartState | null | undefined, tr: Translator) =>
+    !state || state.restartable ? null : state.reason || tr("fleet.restartUnstated");
 
 /**
  * nodeProcessShown is whether the drawer shows a machine's node process:

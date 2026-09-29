@@ -222,6 +222,7 @@ export const fleetZh = {
     "fleet.nodeProcess": "节点进程",
     "fleet.restartNode": "重启节点",
     "fleet.restartHint": "经 SSH 停止并重新启动这台机器上的节点进程，程序保持不变。",
+    "fleet.restartUnstated": "提供控制台的节点没有说明能否从这里重启这台机器，可能它运行的版本与本页面不同；刷新页面后再看",
     "fleet.restartConfirmHint": "这台机器在线。重启会中断它上面正在运行的执行，这些执行会按正常的停止流程确认结果。",
     "fleet.confirmRestart": "确认重启",
     "fleet.restartProgress": "重启进度",
