@@ -74,21 +74,24 @@ if [ "${actual%%%% *}" != '%s' ]; then
   exit 24
 fi
 `, spec.UploadID, unamePattern(spec.OS, spec.Arch), spec.SHA256)
-	b.WriteString(peerStageSection)
 	b.WriteString(peerStartSection)
 	b.WriteString(peerLocateSection)
+	b.WriteString(peerStageSection)
 	b.WriteString(peerRotateSection)
 	b.WriteString(peerStopSection)
 	b.WriteString(peerUpgradeStartSection)
 	return b.String(), nil
 }
 
-// peerStageSection opens the second half of an upgrade: the verified
-// program takes the installed program's place, the peer that was running
-// is stopped and started again on it, and the previous program comes back
-// when the new one does not stay up. Starting, finding and stopping the
-// peer are sections of their own, shared with a restart, which runs them
-// without touching the programs.
+// peerStageSection opens the second half of an upgrade, once the peer
+// has been looked for: the verified program takes the installed program's
+// place, the peer that was running is stopped and started again on it,
+// and the previous program comes back when the new one does not stay up.
+// Until then the verified program is still the upload, which the upgrade
+// removes however it exits, so an upgrade that cannot look for the peer
+// leaves no program staged. Starting, finding and stopping the peer are
+// sections of their own, shared with a restart, which runs them without
+// touching the programs.
 const peerStageSection = `chmod 700 "$binary_tmp"
 # Staged next to the installed program first: from here on every move is
 # a rename within one directory, so the installed path is never half a file.
