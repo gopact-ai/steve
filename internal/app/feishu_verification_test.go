@@ -205,8 +205,8 @@ func TestFeishuWorkWaitsForAVerifiedChannel(t *testing.T) {
 }
 
 // A Feishu long connection being established again is shown in the console
-// with the attempts that failed and the last failure, never the secret, and
-// withdrawn once it is back.
+// with the attempts that failed, when the last failed and why, never the
+// secret, and withdrawn once it is back.
 func TestFeishuReconnectIsShownWithoutTheSecret(t *testing.T) {
 	settings := &startupRetrySettings{}
 	report := reportReconnect(settings, "app-secret-value")
@@ -216,8 +216,9 @@ func TestFeishuReconnectIsShownWithoutTheSecret(t *testing.T) {
 	if got := settings.reconnecting(); got == nil || *got != (consoleapi.ChannelReconnect{Since: since}) {
 		t.Fatalf("the loss is shown as %+v", got)
 	}
-	report(&feishu.Reconnect{Since: since, Failures: 2, Err: errors.New("bootstrap app-secret-value: 503: system busy")})
-	want := consoleapi.ChannelReconnect{Since: since, Attempts: 2, LastError: "bootstrap [redacted]: 503: system busy"}
+	lastAttempt := since.Add(4 * time.Minute)
+	report(&feishu.Reconnect{Since: since, Failures: 2, LastAttempt: lastAttempt, Err: errors.New("bootstrap app-secret-value: 503: system busy")})
+	want := consoleapi.ChannelReconnect{Since: since, Attempts: 2, LastAttemptAt: lastAttempt, LastError: "bootstrap [redacted]: 503: system busy"}
 	if got := settings.reconnecting(); got == nil || *got != want {
 		t.Fatalf("the failed attempts are shown as %+v, want %+v", got, want)
 	}

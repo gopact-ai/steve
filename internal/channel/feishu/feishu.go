@@ -112,6 +112,10 @@ type Reconnect struct {
 	Since time.Time
 	// Failures counts the attempts that failed since.
 	Failures int
+	// LastAttempt is when the last attempt failed; zero before one did.
+	// The official client reports nothing when it stops trying, so a
+	// LastAttempt that stops advancing is how that shows.
+	LastAttempt time.Time
 	// Err is the last failure; nil before an attempt failed.
 	Err error
 }
