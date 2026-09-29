@@ -2838,15 +2838,34 @@ checks["fleet-synthesized-snapshot"] = async (f) => {
     await close(opened);
 };
 
-// A row's drawer opens as often as its row is clicked: closing the drawer
-// lets go of the row, so clicking the same row again opens it again.
+// A row's drawer opens as often as its row is clicked or entered. The row is
+// selected only while its drawer is open: however the drawer was closed (its
+// close button, Escape, or a click beside it), closing it lets go of the row,
+// so the same row opens it again.
 async function reopensDrawer(row, drawer, what) {
-    await row.click();
-    await drawer.waitFor();
-    await drawer.getByRole("button", { name: "关闭", exact: true }).click();
-    await drawer.waitFor({ state: "detached" });
-    await row.click();
-    await drawer.waitFor().catch(() => assert.fail(`${what} does not open again after its drawer was closed`));
+    const page = row.page();
+    const closes = [
+        ["its close button", () => drawer.getByRole("button", { name: "关闭", exact: true }).click()],
+        // Escape reaches the drawer once focus has moved into it.
+        ["Escape", async () => {
+            await page.waitForFunction((el) => el.contains(document.activeElement), await drawer.elementHandle());
+            await page.keyboard.press("Escape");
+        }],
+        ["a click beside it", () => page.mouse.click(2, 2)],
+    ];
+    let since = "";
+    for (const [how, close] of closes) {
+        await row.click();
+        await drawer.waitFor().catch(() => assert.fail(`${what} does not open${since}`));
+        assert.equal(await row.getAttribute("aria-selected"), "true", `${what} is not selected while its drawer is open`);
+        await close();
+        await drawer.waitFor({ state: "detached" });
+        assert.equal(await row.getAttribute("aria-selected"), "false", `${what} stays selected after ${how} closed its drawer`);
+        since = ` again after ${how} closed its drawer`;
+    }
+    await row.focus();
+    await page.keyboard.press("Enter");
+    await drawer.waitFor().catch(() => assert.fail(`${what} does not open from the keyboard${since}`));
 }
 
 checks["fleet-machine-reopens"] = async (f) => {
