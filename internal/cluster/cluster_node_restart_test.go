@@ -12,6 +12,7 @@ import (
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 	"github.com/gopact-ai/steve/internal/sshconnect/linktest"
@@ -76,7 +77,7 @@ func TestRestartedWaitsForTheMachineToAnswerTheCluster(t *testing.T) {
 	nodes := testNodes(t, 1)
 	r := openNode(t, nodes[0])
 	ready(t, r)
-	peer := &Peer{Config: PeerConfig{NodeID: "node-hub"}, client: nodes[0].client}
+	peer := &Peer{Config: PeerConfig{NodeID: "node-hub"}, client: nodes[0].client, ctx: t.Context()}
 	peer.Runtime.Store(r)
 	backend := peerSSHBackend{peer: peer}
 	var reported []string
@@ -91,6 +92,44 @@ func TestRestartedWaitsForTheMachineToAnswerTheCluster(t *testing.T) {
 	defer cancel()
 	if err := backend.Restarted(short, "node-absent"); err == nil || !strings.Contains(err.Error(), "还没有重新应答") {
 		t.Fatalf("a machine outside the cluster was taken as back: %v", err)
+	}
+}
+
+// A restart or an upgrade waits for its machine past the page that asked
+// for it, but not past this node: closing the node ends the wait at once.
+func TestWaitingForARestartedOrUpgradedMachineEndsWhenThisNodeCloses(t *testing.T) {
+	nodes := testNodes(t, 1)
+	r := openNode(t, nodes[0])
+	ready(t, r)
+	for _, wait := range []struct {
+		name string
+		wait func(peerSSHBackend, context.Context) error
+	}{
+		{"restart", func(b peerSSHBackend, ctx context.Context) error { return b.Restarted(ctx, "node-1") }},
+		{"upgrade", func(b peerSSHBackend, ctx context.Context) error { return b.Upgraded(ctx, "node-1") }},
+	} {
+		t.Run(wait.name, func(t *testing.T) {
+			// The machine is not a member and its session never opens, so
+			// neither wait ends on its own.
+			peerCtx, closePeer := context.WithCancel(t.Context())
+			defer closePeer()
+			launcher := &linktest.Launcher{Refuse: errors.New("ssh: connect to host dev port 22: Connection refused")}
+			peer := &Peer{Options: PeerOptions{SSHLaunch: launcher}, Config: PeerConfig{NodeID: "node-hub", Links: map[string]PeerLink{"node-1": {Alias: "dev"}}}, client: nodes[0].client, routes: coordination.NewRouteTable(nil), ctx: peerCtx, linkCtx: t.Context()}
+			peer.Runtime.Store(r)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- wait.wait(peerSSHBackend{peer: peer}, ctx) }()
+			closePeer()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("a machine that never came back was taken as back")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("closing this node did not end the wait for the machine")
+			}
+		})
 	}
 }
 
