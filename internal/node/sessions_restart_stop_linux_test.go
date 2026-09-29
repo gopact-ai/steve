@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -263,8 +264,9 @@ func TestNodeSessionRestartLeavesAnUnprovenGroupUntilItEnds(t *testing.T) {
 
 // A killed node can leave the process groups of several agents, and ending
 // each may take all of recordedGroupWithin only to find it cannot be
-// confirmed. The restarted node tries them all at once, so how long it
-// takes to start does not grow with how many were left.
+// confirmed, as a member that does not die of SIGKILL keeps it. The
+// restarted node tries them all at once, so how long it takes to start does
+// not grow with how many were left.
 func TestNodeSessionRestartEndsTheGroupsAKilledNodeLeftTogether(t *testing.T) {
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}}
 	killed := NewServer(cfg)
@@ -274,24 +276,9 @@ func TestNodeSessionRestartEndsTheGroupsAKilledNodeLeftTogether(t *testing.T) {
 	req := nodeSessionRequest(nodewire.SessionActionOpen)
 	const left = 3
 	for i := range left {
-		// A leader killed but not yet reaped keeps its group's id, so no
-		// attempt to end the group confirms it.
-		leader := exec.Command("sleep", fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000))
-		leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := leader.Start(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			_ = leader.Process.Kill()
-			_ = leader.Wait()
-		})
-		id, err := procgroup.Capture(leader.Process.Pid, procgroup.NewMark())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := leader.Process.Kill(); err != nil {
-			t.Fatal(err)
-		}
+		// No process holds these ids: the groups are only ever handed to
+		// the stand-in below.
+		id := procgroup.Identity{Group: 1<<30 + i, Leader: 1<<30 + i, Start: 1, Mark: procgroup.NewMark()}
 		open := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, fmt.Sprintf("open-%d", i), "orphaning")
 		one := &ownedSession{service: killed.sessions, changed: make(chan struct{})}
 		if err := one.commitLocked(sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: fmt.Sprintf("open-%d", i), CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{},
@@ -301,6 +288,13 @@ func TestNodeSessionRestartEndsTheGroupsAKilledNodeLeftTogether(t *testing.T) {
 		}
 	}
 	killed.sessions.Close()
+	var tried atomic.Int32
+	cfg.settleGroup = func(_ procgroup.Identity, _, _ procgroup.Place, within time.Duration) error {
+		// The group does not end, however long it is given.
+		tried.Add(1)
+		time.Sleep(within)
+		return procgroup.ErrRunning
+	}
 	restarted := NewServer(cfg)
 	began := time.Now()
 	if err := restarted.startSessions(t.Context()); err != nil {
@@ -311,8 +305,11 @@ func TestNodeSessionRestartEndsTheGroupsAKilledNodeLeftTogether(t *testing.T) {
 	if took >= (left-1)*recordedGroupWithin {
 		t.Fatalf("the restarted node took %s to try ending %d groups given %s each", took, left, recordedGroupWithin)
 	}
+	if n := tried.Load(); n != left {
+		t.Fatalf("the restarted node tried ending %d of the %d groups left", n, left)
+	}
 	if restarted.sessions.processesStopped() {
-		t.Fatal("a stop was confirmed while the recorded leaders were not reaped")
+		t.Fatal("a stop was confirmed while the groups did not end")
 	}
 }
 
