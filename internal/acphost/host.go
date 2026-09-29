@@ -1277,7 +1277,9 @@ func (h *Host) AllProcessesStopped() bool {
 // cmd.Wait is never called here — the monitor goroutine is the sole waiter.
 // Within the same grace, and the kill that ends it, it also waits for every
 // process this host started to settle what it left in its process group;
-// one that does not stays unconfirmed.
+// one that does not stays unconfirmed. With no agent running there is
+// nothing to ask to leave or to kill, so it waits only exitedGroupWait for
+// the groups of the agents that exited.
 func (h *Host) shutdownLocked() {
 	alive := h.alive
 	h.alive = false
@@ -1294,11 +1296,16 @@ func (h *Host) shutdownLocked() {
 	for _, settled := range h.settling {
 		settling = append(settling, settled)
 	}
-	if (!alive || exited == nil) && len(settling) == 0 {
+	running := alive && exited != nil
+	if !running && len(settling) == 0 {
 		return
 	}
 	h.mu.Unlock()
 	defer h.mu.Lock()
+	if !running {
+		awaitSettled(settling)
+		return
+	}
 	grace := time.NewTimer(5 * time.Second)
 	defer grace.Stop()
 	killed := false
@@ -1312,20 +1319,42 @@ func (h *Host) shutdownLocked() {
 					return false
 				}
 				killed = true
-				if alive {
-					proc.Kill()
-				}
+				proc.Kill()
 				grace.Reset(5 * time.Second)
 			}
 		}
 	}
-	if alive && exited != nil && !wait(exited) {
+	if !wait(exited) {
 		slog.Error("acphost: process did not exit after kill")
 		return
 	}
 	for _, settled := range settling {
 		if !wait(settled) {
 			slog.Error("acphost: an agent's process group still has members; its stop stays unconfirmed")
+			return
+		}
+	}
+}
+
+// exitedGroupWait bounds how long a stop with no agent running waits for
+// the process groups of the agents that exited. The transport killed what
+// each left in its group as the agent exited, and a group the kill ends
+// empties within milliseconds, well inside it. One that no kill ends is not
+// waited out: its stop is confirmed later, once the group is empty.
+const exitedGroupWait = 2 * time.Second
+
+// awaitSettled waits up to exitedGroupWait for the processes whose Wait
+// has not returned to settle what they left in their process groups. One
+// that has not stays unconfirmed, for ProcessStopped to confirm once its
+// group is empty.
+func awaitSettled(settling []chan struct{}) {
+	brief := time.NewTimer(exitedGroupWait)
+	defer brief.Stop()
+	for _, settled := range settling {
+		select {
+		case <-settled:
+		case <-brief.C:
+			slog.Error("acphost: an exited agent's process group still has members; its stop stays unconfirmed")
 			return
 		}
 	}
