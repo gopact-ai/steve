@@ -133,3 +133,83 @@ func TestCompletionBlocksQueuedResultsBeforeLandingHasStarted(t *testing.T) {
 		}
 	}
 }
+
+// A landing that cannot be read, of whichever task, keeps the check from
+// finding the tasks' results landed: for all anyone knows, it is theirs.
+func TestCompletionRefusesWhenALandingCannotBeRead(t *testing.T) {
+	for _, tc := range []struct{ name, row string }{
+		{"undecodable", `INSERT INTO operations VALUES('bad','landing','committed',1,1,'{','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`},
+		{"corrupt envelope", `INSERT INTO operations VALUES('bad','landing','committed',1,1,'{"id":"bad","source":{"execution":{"task_id":"other","epoch":1}}}','not a time','2026-09-01T00:00:00Z')`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
+			if _, err := s.ledger.DB().Exec(tc.row); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ledger.Update(t.Context(), func(tx *ledger.Tx) error {
+				return CheckTaskLandingsTx(tx, map[string]bool{"child": true})
+			}); err == nil {
+				t.Fatal("found the task's results landed with a landing that cannot be read")
+			}
+		})
+	}
+}
+
+// A landing of a result no task's execution produced, such as one landed by
+// hand, is no task's to finish: it does not keep a task from closing,
+// whatever state it is in, nor does it hide the task's own landings.
+func TestCompletionLeavesOutLandingsOfNoTask(t *testing.T) {
+	s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
+	begin := func(land Landing) {
+		t.Helper()
+		if _, err := s.ledger.Begin(t.Context(), land.ID, landKind, land.State, "test", land); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func() error {
+		return s.ledger.Update(t.Context(), func(tx *ledger.Tx) error {
+			return CheckTaskLandingsTx(tx, map[string]bool{"child": true})
+		})
+	}
+	begin(Landing{ID: "by-hand", Project: "p", Artifact: "by-hand", State: LandLocked, StartedAt: time.Now()})
+	begin(Landing{ID: "no-execution", Project: "p", Artifact: "no-execution", Source: &Source{AttemptID: "attempt"}, State: LandMergeConflicted, StartedAt: time.Now()})
+	if err := check(); err != nil {
+		t.Fatalf("a landing of no task's result kept the task from closing: %v", err)
+	}
+	begin(Landing{ID: "own", Project: "p", Artifact: "result", Source: &Source{AttemptID: "child-attempt", Execution: &task.ExecutionToken{TaskID: "child", Epoch: 1}}, State: LandLocked, StartedAt: time.Now()})
+	if err := check(); !errors.Is(err, task.ErrCompleteDelivery) {
+		t.Fatalf("with the task's own landing still locked, check = %v, want %v", err, task.ErrCompleteDelivery)
+	}
+}
+
+// The check reads the landings of the tasks it is asked about, not every
+// landing there is: what it costs does not grow with other tasks' results.
+func TestCompletionReadsOnlyTheTasksLandings(t *testing.T) {
+	s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
+	landed := Landing{ID: "landed", Project: "p", Artifact: "result", Source: &Source{AttemptID: "child-attempt", Execution: &task.ExecutionToken{TaskID: "child", Epoch: 1}}, State: LandCommitted, EndedAt: time.Now()}
+	if _, err := s.ledger.Begin(t.Context(), landed.ID, landKind, landed.State, "test", landed); err != nil {
+		t.Fatal(err)
+	}
+	check := func() {
+		t.Helper()
+		if err := s.ledger.Update(t.Context(), func(tx *ledger.Tx) error {
+			return CheckTaskLandingsTx(tx, map[string]bool{"child": true})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := testing.AllocsPerRun(3, check)
+	if _, err := s.ledger.DB().Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<5000)
+		INSERT INTO operations SELECT 'history-'||n,'landing','committed',1,1,
+		json_object('id','history-'||n,'project','p','artifact','history-'||n,
+			'source',json_object('execution',json_object('task_id','other-'||n,'epoch',1),'attempt_id','history-'||n),
+			'state','committed','round',0,'started_at','2026-09-01T00:00:00Z','ended_at','2026-09-01T00:00:00Z'),
+		'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z' FROM seq`); err != nil {
+		t.Fatal(err)
+	}
+	after := testing.AllocsPerRun(3, check)
+	t.Logf("completion check allocations: %.0f -> %.0f", before, after)
+	if after > before+30 {
+		t.Fatalf("other tasks' landings are read for the check: %.0f -> %.0f allocations", before, after)
+	}
+}

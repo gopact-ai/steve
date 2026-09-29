@@ -97,7 +97,7 @@ func scanIdentityRecord(row interface{ Scan(...any) error }) (Record, error) {
 	return decodeIdentityRecord(op)
 }
 
-func checkIdentityRows(tx *ledger.ReadTx) error {
+func checkIdentityRows(tx ledger.Reader) error {
 	if err := ledger.CheckOperationEnvelopesTx(tx, kind); err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func checkIdentityRows(tx *ledger.ReadTx) error {
 // CheckReadable fails when any attempt cannot be decoded or is filed under
 // another identity. It reads only the identity index's invalid range.
 func (s *Service) CheckReadable(ctx context.Context) error {
-	return s.l.Read(ctx, checkIdentityRows)
+	return s.l.Read(ctx, func(tx *ledger.ReadTx) error { return checkIdentityRows(tx) })
 }
 
 func (s *Service) identityRecords(ctx context.Context, query, key string) ([]Record, error) {

@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -74,12 +75,8 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		}
 	}
 	if ok && tracked.ProjectID != "" && binding.ProjectID != "" && tracked.ProjectID != binding.ProjectID {
-		// The binding moved under a task that was never closed (an older
-		// switch, a crash between the two): the task stays with its
-		// project, and this turn opens its own.
-		slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID), "task", tracked.ID, "conversation", req.ConversationID, "project", binding.ProjectID)
-		if err := c.releaseConversationTask(tracked); err != nil {
-			return "", fmt.Errorf("close previous project task %s: %w", tracked.ID, err)
+		if err := c.releaseLeftover(req, tracked, binding.ProjectID); err != nil {
+			return "", err
 		}
 		ok = false
 	}
@@ -150,32 +147,153 @@ func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error)
 	}
 }
 
-// closeTask releases the member's tasks when their session is archived.
-// Ordinary work closes; failed or blocked work is set aside for a deliberate
-// resume, not reported as completed. Every lineage leaves the conversation
-// slot, including unattended work, so new inputs cannot charge old work.
-func (c *Coordinator) closeTask(conversationID, agentID string) {
-	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
-		if err := c.releaseConversationTask(tracked); err != nil {
-			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
+// releaseLeftover lets go of a task the binding moved under without it
+// being closed (an older switch, a crash between the two): the task stays
+// with its project, and this turn opens its own. One whose continuation is
+// still unsettled keeps running until it settles, rather than ending as
+// done under it.
+func (c *Coordinator) releaseLeftover(req Request, tracked task.Task, projectID string) error {
+	slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, projectID), "task", tracked.ID, "conversation", req.ConversationID, "project", projectID)
+	if setsAside(tracked) {
+		if err := c.setAside(tracked); err != nil {
+			return fmt.Errorf("close previous project task %s: %w", tracked.ID, err)
 		}
-	}
-}
-
-func (c *Coordinator) releaseConversationTask(tracked task.Task) error {
-	// Resetting or switching projects cannot turn blocked or failed work into a
-	// success. Keep it available to resume, with its original history,
-	// but revoke its old execution and release the conversation slot.
-	if tracked.State == task.StateBlocked || tracked.State == task.StateFailed {
-		ids, err := c.tasks.SetAside(tracked.ID, task.StatePaused)
-		if err != nil {
-			return err
-		}
-		c.executions.Stop(ids, task.ErrExecutionStopped)
 		return nil
 	}
-	_, err := c.tasks.Advance(tracked.ID, task.StateDone)
-	return err
+	_, err := c.closeSettled(context.Background(), []string{tracked.ID}, req.ExchangeID)
+	if task.CompletionRefused(err) {
+		slog.Info(fmt.Sprintf("turn: task %s of project %s stays open: %v", tracked.ID, tracked.ProjectID, err), "task", tracked.ID, "conversation", req.ConversationID, "project", tracked.ProjectID)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("close previous project task %s: %w", tracked.ID, err)
+	}
+	return nil
+}
+
+// closeTask releases the tasks the agents hold in the conversation when
+// their sessions are archived. Ordinary work ends as done, but only once
+// nothing of it is left unsettled, by the ledger checks /complete makes: a
+// task whose execution still runs, or still waits on the owner, would
+// otherwise be continued under a task that says it finished. One such task
+// refuses the whole release before anything changes; the refusal is
+// returned, with the id of the task it is about when it is about one. Failed or blocked work is set aside for a
+// deliberate resume, not reported as completed. Every lineage leaves the
+// conversation slot, including unattended work, so new inputs cannot
+// charge old work.
+func (c *Coordinator) closeTask(ctx context.Context, conversationID string, agents []string, currentExchange string) (string, error) {
+	var closing []string
+	var aside []task.Task
+	for _, agentID := range agents {
+		for _, tracked := range c.tasks.Holding(conversationID, agentID) {
+			if setsAside(tracked) {
+				aside = append(aside, tracked)
+			} else {
+				closing = append(closing, tracked.ID)
+			}
+		}
+	}
+	if refused, err := c.closeSettled(ctx, closing, currentExchange); err != nil {
+		return refused, err
+	}
+	for _, tracked := range aside {
+		if err := c.setAside(tracked); err != nil {
+			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", tracked.Member)
+		}
+	}
+	return "", nil
+}
+
+// setsAside reports whether releasing the task sets it aside. Resetting or
+// switching projects cannot turn blocked or failed work into a success.
+func setsAside(tracked task.Task) bool {
+	return tracked.State == task.StateBlocked || tracked.State == task.StateFailed
+}
+
+// setAside keeps blocked or failed work available to resume, with its
+// original history, but revokes its old execution and releases the
+// conversation slot.
+func (c *Coordinator) setAside(tracked task.Task) error {
+	ids, err := c.tasks.SetAside(tracked.ID, task.StatePaused)
+	if err != nil {
+		return err
+	}
+	c.executions.Stop(ids, task.ErrExecutionStopped)
+	return nil
+}
+
+// closeSettled ends the tasks as done, all together, once the completion
+// check finds nothing of any of them unsettled. Each is checked alone, not
+// with the work it delegated: a child keeps running and delivering on its
+// own terms. currentExchange is the input asking for the close, which the
+// check spares; so are the conversation's lines still queued that no task
+// has claimed, such as input typed behind that one: they have not started,
+// and run after the close under whichever task then holds the
+// conversation. On a refusal the task it is about is returned with it: the
+// one the check refused for what is its own, or the only one closing when
+// the close fails otherwise. What the conversation holds for none of them
+// is about none of them, and neither is a close of several that fails
+// otherwise: no task is returned.
+func (c *Coordinator) closeSettled(ctx context.Context, ids []string, currentExchange string) (string, error) {
+	if len(ids) == 0 {
+		return "", nil
+	}
+	var refused string
+	// The conversation's refusal waits until every task has been checked,
+	// so a later one whose own line or question it is gets the name.
+	var held error
+	checked := 0
+	_, err := c.tasks.CloseChecked(ctx, ids, func(tx *ledger.Tx, tracked task.Task) error {
+		checked++
+		err := c.checkTaskCompletionTx(tx, map[string]bool{tracked.ID: true}, tracked.Channel, currentExchange, true)
+		switch {
+		case errors.Is(err, task.ErrCompleteConversation):
+			if held == nil {
+				held = err
+			}
+		case err != nil:
+			refused = tracked.ID
+			return err
+		}
+		if checked == len(ids) {
+			return held
+		}
+		return nil
+	})
+	if err == nil {
+		return "", nil
+	}
+	if refused == "" && len(ids) == 1 && !errors.Is(err, task.ErrCompleteConversation) {
+		refused = ids[0]
+	}
+	return refused, err
+}
+
+// closeRefusal tells the user why a reset or a project switch did nothing,
+// and how to let the task go: settle what it still waits for, or cancel it.
+// Without taskID no one task is to blame: the conversation still holds
+// something for none of them, or the close of its tasks failed as a whole.
+func (c *Coordinator) closeRefusal(conversationID, taskID string, err error) UserError {
+	if taskID == "" {
+		if errors.Is(err, task.ErrCompleteConversation) {
+			slog.Info(fmt.Sprintf("turn: close tasks: %v", err), "conversation", conversationID)
+			return UserError{Text: c.text.T(i18n.TaskCloseConversation)}
+		}
+		slog.Warn(fmt.Sprintf("turn: close tasks: %v", err), "conversation", conversationID)
+		return UserError{Text: c.text.T(i18n.TaskCloseSeveralFailed, protocol.CommandTasks)}
+	}
+	key := i18n.TaskCloseFailed
+	switch {
+	case errors.Is(err, task.ErrCompleteBusy):
+		key = i18n.TaskCloseBusy
+	case errors.Is(err, task.ErrCompleteDelivery):
+		key = i18n.TaskCloseDelivery
+	case errors.Is(err, task.ErrCompleteAttention):
+		key = i18n.TaskCloseAttention
+	default:
+		slog.Warn(fmt.Sprintf("turn: close task %s: %v", taskID, err), "task", taskID, "conversation", conversationID)
+	}
+	return UserError{Text: c.text.T(key, taskID, protocol.CommandTasks)}
 }
 
 func goal(prompt string) string {

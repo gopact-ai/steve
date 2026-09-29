@@ -4,13 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gopact-ai/steve/internal/artifact"
-	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/i18n"
-	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/plan"
-	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -29,7 +24,7 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 			return task.ErrCompleteRoot
 		}
 		guard := func(tx *ledger.Tx, ids map[string]bool) error {
-			return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID)
+			return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID, false)
 		}
 		_, err := c.tasks.CompleteRoot(ctx, current.ID, current.Channel, guard)
 		return err
@@ -60,23 +55,4 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 		return Result{Title: title, Text: text}, UserError{Text: text}
 	}
 	return Result{Title: title, Text: c.text.T(i18n.TaskCompleted, tracked.ID)}, nil
-}
-
-func (c commands) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
-	if err := attempt.CheckTaskCompletionTx(tx, ids); err != nil {
-		return err
-	}
-	if err := artifact.CheckTaskLandingsTx(tx, ids); err != nil {
-		return err
-	}
-	if err := intent.CheckTaskCompletionTx(tx, ids); err != nil {
-		return err
-	}
-	if err := project.CheckTaskCompletionTx(tx, ids); err != nil {
-		return err
-	}
-	if err := plan.CheckTaskCompletionTx(tx, ids); err != nil {
-		return err
-	}
-	return c.checkConsoleCompletionTx(tx, ids, conversation, currentExchange)
 }
