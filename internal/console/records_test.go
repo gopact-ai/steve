@@ -345,7 +345,7 @@ func TestConsoleRecordsAndCompletionFailClosedOnCorruption(t *testing.T) {
 				t.Error("corrupt records loaded")
 			}
 			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
-				return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "unrelated", "")
+				return CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "unrelated", "", false)
 			}); err == nil {
 				t.Error("corrupt owner state admitted completion")
 			}

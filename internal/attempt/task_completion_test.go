@@ -99,3 +99,44 @@ func TestCompletionChecksAllAttemptStatesAndSettlement(t *testing.T) {
 		})
 	}
 }
+
+// The check reads the attempts of the tasks it is asked about, not every
+// attempt there is: what it costs does not grow with other tasks' history.
+func TestCompletionCheckReadsOnlyTheTasksAttempts(t *testing.T) {
+	s := identityStore(t)
+	insertIdentityRecord(t, s, "wanted", "bound", `{"id":"wanted","task_id":"task","session_settled":true}`)
+	check := func() {
+		t.Helper()
+		if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return CheckTaskCompletionTx(tx, map[string]bool{"task": true}) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := testing.AllocsPerRun(3, check)
+	seedIdentityHistory(t, s, 10000)
+	after := testing.AllocsPerRun(3, check)
+	t.Logf("completion check allocations: %.0f -> %.0f", before, after)
+	if after > before+30 {
+		t.Fatalf("other tasks' attempts are read for the check: %.0f -> %.0f allocations", before, after)
+	}
+}
+
+// An attempt that cannot be read, of whichever task, keeps the check from
+// finding the tasks settled: for all anyone knows, it is theirs.
+func TestCompletionCheckRefusesWhenAnAttemptCannotBeRead(t *testing.T) {
+	for _, tc := range []struct{ name, row string }{
+		{"undecodable", `INSERT INTO operations VALUES('bad','attempt','bound',1,1,'{','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`},
+		{"corrupt envelope", `INSERT INTO operations VALUES('bad','attempt','bound',1,1,'{"id":"bad","task_id":"other"}','not a time','2026-09-01T00:00:00Z')`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := identityStore(t)
+			insertIdentityRecord(t, s, "wanted", "bound", `{"id":"wanted","task_id":"task","session_settled":true}`)
+			if _, err := s.l.DB().Exec(tc.row); err != nil {
+				t.Fatal(err)
+			}
+			err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return CheckTaskCompletionTx(tx, map[string]bool{"task": true}) })
+			if err == nil {
+				t.Fatal("found the task settled with an attempt that cannot be read")
+			}
+		})
+	}
+}

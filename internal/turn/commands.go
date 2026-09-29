@@ -32,7 +32,7 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 	handled = true
 	switch cmd {
 	case protocol.CommandNew, protocol.CommandClear:
-		result, err = c.reset(ctx, req.ConversationID, selected)
+		result, err = c.reset(ctx, req, selected)
 	case protocol.CommandStatus:
 		result = c.status(req, selected)
 	case protocol.CommandCancel:
@@ -77,12 +77,19 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 	return result, handled, err
 }
 
-func (c commands) reset(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
+func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) (Result, error) {
+	conversationID := req.ConversationID
 	c.mu.Lock()
 	busy := c.cancels[sessionKey(conversationID, selected.ID)] != nil
 	c.mu.Unlock()
 	if busy {
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
+	}
+	// The tasks go first: one still unsettled refuses the reset while the
+	// session is intact, instead of leaving it archived under a task that
+	// cannot end.
+	if refused, err := c.closeTask(ctx, conversationID, []string{selected.ID}, req.ExchangeID); err != nil {
+		return Result{}, c.closeRefusal(conversationID, refused, err)
 	}
 	session := c.store.Conversation(conversationID).Sessions[selected.ID]
 	if err := c.runtime.CloseSession(ctx, harness.Placement{Node: session.NodeID, Harness: session.HarnessID}, session.UpstreamID); err != nil {
@@ -103,7 +110,6 @@ func (c commands) reset(ctx context.Context, conversationID string, selected age
 	if err := c.store.ArchiveSession(conversationID, selected.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return Result{}, err
 	}
-	c.closeTask(conversationID, selected.ID)
 	return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID), Recover: true}, nil
 }
 

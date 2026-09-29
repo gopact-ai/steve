@@ -221,3 +221,51 @@ func TestAutomaticDoneIsNotAnExplicitCompletionReceipt(t *testing.T) {
 		t.Fatalf("normal done no longer permits accepted results: %v", err)
 	}
 }
+
+// Tasks a conversation lets go of close together, and only if the check
+// finds nothing of any of them unsettled: a refusal about one leaves every
+// one as it was. Closing claims nothing about the work, so it is not a
+// completion receipt, and it keeps the epoch their results arrive under.
+func TestCloseCheckedClosesTogetherOrNotAtAll(t *testing.T) {
+	store, _ := newStore(t)
+	first := idleCompletionRoot(t, store)
+	second := idleCompletionRoot(t, store)
+	ids := []string{first.ID, second.ID}
+	token, _ := store.ExecutionToken(first.ID)
+	checked := map[string]bool{}
+	_, err := store.CloseChecked(t.Context(), ids, func(_ *ledger.Tx, tracked Task) error {
+		checked[tracked.ID] = true
+		if tracked.ID == second.ID {
+			return ErrCompleteAttention
+		}
+		return nil
+	})
+	if !errors.Is(err, ErrCompleteAttention) || !checked[first.ID] || !checked[second.ID] {
+		t.Fatalf("close with #%s unsettled = %v, checked %v", second.ID, err, checked)
+	}
+	for _, id := range ids {
+		if got, _ := store.Get(id); got.State != StateRunning {
+			t.Fatalf("task %s after a refused close = %s, want running", id, got.State)
+		}
+	}
+	closed, err := store.CloseChecked(t.Context(), ids, func(_ *ledger.Tx, tracked Task) error {
+		if tracked.State != StateRunning {
+			t.Errorf("check saw task %s as %s, want it as it was", tracked.ID, tracked.State)
+		}
+		return nil
+	})
+	if err != nil || len(closed) != len(ids) {
+		t.Fatalf("settled close = %+v, %v", closed, err)
+	}
+	for _, id := range ids {
+		if got, _ := store.Get(id); got.State != StateDone || got.CompletedByUser {
+			t.Fatalf("task %s after close = %s by user %v, want done by no one", id, got.State, got.CompletedByUser)
+		}
+	}
+	if err := store.CheckExecution(token); err != nil {
+		t.Fatalf("closing revoked the epoch: %v", err)
+	}
+	if _, err := store.CloseChecked(t.Context(), ids, nil); err == nil {
+		t.Fatal("closed without a completion check")
+	}
+}
