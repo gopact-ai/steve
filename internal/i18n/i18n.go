@@ -160,6 +160,7 @@ const (
 	TaskCloseAttention     Key = "task_close_attention"
 	TaskCloseFailed        Key = "task_close_unavailable"
 	TaskCloseSeveralFailed Key = "task_close_several_unavailable"
+	TaskCloseConversation  Key = "task_close_conversation"
 	TaskResumeNotice       Key = "task_resume_notice"
 	TaskResumeManual       Key = "task_resume_manual"
 	TaskStuck              Key = "task_stuck"

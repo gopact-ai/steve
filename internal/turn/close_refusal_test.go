@@ -35,16 +35,22 @@ func TestCloseRefusalSaysWhy(t *testing.T) {
 }
 
 // A refused close names the task it is about, the one the user is told
-// to cancel. When the check refuses a task, it is that one. When closing
-// several fails otherwise — one of them can no longer end, the change is
-// not saved — none of them is to blame more than the others, and the
-// refusal names none.
+// to cancel. When the check refuses a task for what is its own, it is that
+// one, even if the check found what the conversation holds for none of
+// them first. What the conversation holds is no task's to answer for, not
+// even the only one closing. When closing several fails otherwise — one of
+// them can no longer end, the change is not saved — none of them is to
+// blame more than the others, and the refusal names none.
 func TestCloseSettledNamesOnlyTheTaskItIsAbout(t *testing.T) {
 	var refuse string
+	var conversationHolds bool
 	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "ok"}, withDeps(func(d *Deps) {
 		d.ConsoleCompletionGuard = func(_ *ledger.Tx, ids map[string]bool, _, _ string, _ bool) error {
 			if ids[refuse] {
 				return task.ErrCompleteAttention
+			}
+			if conversationHolds {
+				return fmt.Errorf("%w: exchange e1: %w", task.ErrCompleteDelivery, task.ErrCompleteConversation)
 			}
 			return nil
 		}
@@ -69,8 +75,11 @@ func TestCloseSettledNamesOnlyTheTaskItIsAbout(t *testing.T) {
 			return
 		}
 		text := c.text.T(key, protocol.CommandTasks)
-		if want != "" {
+		switch {
+		case want != "":
 			text = c.text.T(key, want, protocol.CommandTasks)
+		case key == i18n.TaskCloseConversation:
+			text = c.text.T(key)
 		}
 		if got := c.closeRefusal("chat", refused, err).Text; got != text {
 			t.Errorf("%s: refusal = %q, want %q", name, got, text)
@@ -79,7 +88,12 @@ func TestCloseSettledNamesOnlyTheTaskItIsAbout(t *testing.T) {
 
 	refuse = second
 	closing("the check refuses the second", []string{first, second}, second, i18n.TaskCloseAttention)
+	conversationHolds = true
+	closing("the check refuses the second after the conversation's", []string{first, second}, second, i18n.TaskCloseAttention)
 	refuse = ""
+	closing("the conversation holds something for neither", []string{first, second}, "", i18n.TaskCloseConversation)
+	closing("the conversation holds something for the one closing", []string{first}, "", i18n.TaskCloseConversation)
+	conversationHolds = false
 	closing("the second can no longer end", []string{first, cancelled}, "", i18n.TaskCloseSeveralFailed)
 
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_close BEFORE UPDATE ON bindings WHEN NEW.kind = 'task-store' AND NEW.id = 'state' BEGIN SELECT RAISE(ABORT, 'close write unavailable'); END`); err != nil {

@@ -2,7 +2,6 @@ package app
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/agent"
@@ -109,7 +108,8 @@ func TestCloseRefusalNamesATaskOnlyForWhatIsItsOwn(t *testing.T) {
 		name  string
 		input string
 		held  func(f sharedConversation) console.DurableState
-		// owner is the task the refusal names, with key; "" names none.
+		// owner, when set, is the task the refusal names, with key;
+		// without it, the refusal names none.
 		owner func(f sharedConversation) string
 		key   i18n.Key
 	}{
@@ -165,15 +165,8 @@ func TestCloseRefusalNamesATaskOnlyForWhatIsItsOwn(t *testing.T) {
 				if want := en.T(tc.key, owner, protocol.CommandTasks); refusal.Text != want {
 					t.Errorf("refusal = %q, want %q", refusal.Text, want)
 				}
-			} else {
-				for _, id := range []string{f.worker, f.helper} {
-					if strings.Contains(refusal.Text, "#"+id) {
-						t.Errorf("refusal names task %s, which holds nothing up: %q", id, refusal.Text)
-					}
-				}
-				if strings.Contains(refusal.Text, string(protocol.CommandTasks)+" cancel") {
-					t.Errorf("refusal says to cancel a task that holds nothing up: %q", refusal.Text)
-				}
+			} else if want := en.T(i18n.TaskCloseConversation); refusal.Text != want {
+				t.Errorf("refusal = %q, want %q, naming no task", refusal.Text, want)
 			}
 			for _, id := range []string{f.worker, f.helper} {
 				if tracked, _ := f.tasks.Get(id); tracked.State != task.StateDraft {

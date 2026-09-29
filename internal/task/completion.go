@@ -15,6 +15,12 @@ var (
 	ErrCompleteChildren  = errors.New("child tasks are not closed")
 	ErrCompleteDelivery  = errors.New("results are not durably delivered and acknowledged")
 	ErrCompleteAttention = errors.New("a user answer or reconciliation is pending")
+	// ErrCompleteConversation comes with ErrCompleteDelivery or
+	// ErrCompleteAttention, never alone, when what is pending is the
+	// conversation's rather than a task's being checked: a question or a
+	// line of another task, or of none. Ending or cancelling a task being
+	// checked does not settle it.
+	ErrCompleteConversation = errors.New("held by the conversation, not by the tasks checked")
 )
 
 func completionTree(root Task, all []Task) []Task {
@@ -118,10 +124,10 @@ func CompletionRefused(err error) bool {
 
 // CloseChecked ends the tasks as done when their conversation lets go of
 // them, not because anyone claimed the work succeeded: a session reset, a
-// project switch, a schedule's next run. check runs for each task, as it
-// was, within the transaction that closes them, so they close together or
-// not at all: one the check refuses leaves every one of them as it was. The
-// execution epoch is kept, as Advance keeps it.
+// project switch, a schedule's next run. check runs once for each task, as
+// it was and in the order of ids, within the transaction that closes them,
+// so they close together or not at all: one the check refuses leaves every
+// one of them as it was. The execution epoch is kept, as Advance keeps it.
 func (s *Store) CloseChecked(ctx context.Context, ids []string, check func(*ledger.Tx, Task) error) ([]Task, error) {
 	if check == nil {
 		return nil, errors.New("closing a task requires a completion check")

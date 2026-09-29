@@ -176,8 +176,8 @@ func (c *Coordinator) releaseLeftover(req Request, tracked task.Task, projectID 
 // nothing of it is left unsettled, by the ledger checks /complete makes: a
 // task whose execution still runs, or still waits on the owner, would
 // otherwise be continued under a task that says it finished. One such task
-// refuses the whole release before anything changes; its id and the
-// refusal are returned. Failed or blocked work is set aside for a
+// refuses the whole release before anything changes; the refusal is
+// returned, with the id of the task it is about when it is about one. Failed or blocked work is set aside for a
 // deliberate resume, not reported as completed. Every lineage leaves the
 // conversation slot, including unattended work, so new inputs cannot
 // charge old work.
@@ -230,24 +230,40 @@ func (c *Coordinator) setAside(tracked task.Task) error {
 // has claimed, such as input typed behind that one: they have not started,
 // and run after the close under whichever task then holds the
 // conversation. On a refusal the task it is about is returned with it: the
-// one the check refused, or the only one closing. A close of several that
-// fails otherwise is about none of them, and no task is returned.
+// one the check refused for what is its own, or the only one closing when
+// the close fails otherwise. What the conversation holds for none of them
+// is about none of them, and neither is a close of several that fails
+// otherwise: no task is returned.
 func (c *Coordinator) closeSettled(ctx context.Context, ids []string, currentExchange string) (string, error) {
 	if len(ids) == 0 {
 		return "", nil
 	}
 	var refused string
+	// The conversation's refusal waits until every task has been checked,
+	// so a later one whose own line or question it is gets the name.
+	var held error
+	checked := 0
 	_, err := c.tasks.CloseChecked(ctx, ids, func(tx *ledger.Tx, tracked task.Task) error {
+		checked++
 		err := c.checkTaskCompletionTx(tx, map[string]bool{tracked.ID: true}, tracked.Channel, currentExchange, true)
-		if err != nil {
+		switch {
+		case errors.Is(err, task.ErrCompleteConversation):
+			if held == nil {
+				held = err
+			}
+		case err != nil:
 			refused = tracked.ID
+			return err
 		}
-		return err
+		if checked == len(ids) {
+			return held
+		}
+		return nil
 	})
 	if err == nil {
 		return "", nil
 	}
-	if refused == "" && len(ids) == 1 {
+	if refused == "" && len(ids) == 1 && !errors.Is(err, task.ErrCompleteConversation) {
 		refused = ids[0]
 	}
 	return refused, err
@@ -255,9 +271,14 @@ func (c *Coordinator) closeSettled(ctx context.Context, ids []string, currentExc
 
 // closeRefusal tells the user why a reset or a project switch did nothing,
 // and how to let the task go: settle what it still waits for, or cancel it.
-// Without taskID the close of the conversation's tasks failed as a whole.
+// Without taskID no one task is to blame: the conversation still holds
+// something for none of them, or the close of its tasks failed as a whole.
 func (c *Coordinator) closeRefusal(conversationID, taskID string, err error) UserError {
 	if taskID == "" {
+		if errors.Is(err, task.ErrCompleteConversation) {
+			slog.Info(fmt.Sprintf("turn: close tasks: %v", err), "conversation", conversationID)
+			return UserError{Text: c.text.T(i18n.TaskCloseConversation)}
+		}
 		slog.Warn(fmt.Sprintf("turn: close tasks: %v", err), "conversation", conversationID)
 		return UserError{Text: c.text.T(i18n.TaskCloseSeveralFailed, protocol.CommandTasks)}
 	}

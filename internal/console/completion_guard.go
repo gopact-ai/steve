@@ -14,6 +14,12 @@ import (
 // conversation still queued that no task has claimed — input typed behind
 // the command, a scheduled prompt: it has not started, and runs after the
 // end under whichever task then holds the conversation.
+//
+// What the tasks themselves hold is looked for first: a question one of
+// them asked, a line one of them expects. The rest of what is pending in
+// the conversation — a question or a line of another task, or of none — is
+// refused with task.ErrCompleteConversation, since ending or cancelling
+// these tasks does not settle it.
 func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error {
 	records, err := loadConsoleRecordsTx(tx)
 	if err != nil {
@@ -24,7 +30,7 @@ func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, cur
 		return fmt.Errorf("read completion console: %w", err)
 	}
 	for _, question := range state.Questions {
-		if question.State == "pending" && (ids[question.TaskID] || question.Conversation == conversation) {
+		if question.State == "pending" && ids[question.TaskID] {
 			return task.ErrCompleteAttention
 		}
 	}
@@ -33,16 +39,26 @@ func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, cur
 			if ids[exchange.ExpectedTask] && !exchange.State.Terminal() {
 				return task.ErrCompleteDelivery
 			}
-			if exchange.Conversation == conversation && (exchange.State == consoleapi.ExchangeAwaitingUser || exchange.State == consoleapi.ExchangeRecovering) {
-				return task.ErrCompleteAttention
+		}
+	}
+	for _, question := range state.Questions {
+		if question.State == "pending" && question.Conversation == conversation {
+			return fmt.Errorf("%w: question %s: %w", task.ErrCompleteAttention, question.ID, task.ErrCompleteConversation)
+		}
+	}
+	for _, list := range state.Exchanges {
+		for _, exchange := range list {
+			if exchange.Conversation != conversation || exchange.State.Terminal() {
+				continue
 			}
-			if exchange.Conversation == conversation && !exchange.State.Terminal() {
-				if spareQueued && exchange.State == consoleapi.ExchangeQueued && exchange.ExpectedTask == "" {
-					continue
-				}
-				if currentExchange == "" || exchange.ID != currentExchange {
-					return task.ErrCompleteDelivery
-				}
+			if exchange.State == consoleapi.ExchangeAwaitingUser || exchange.State == consoleapi.ExchangeRecovering {
+				return fmt.Errorf("%w: exchange %s (%s): %w", task.ErrCompleteAttention, exchange.ID, exchange.State, task.ErrCompleteConversation)
+			}
+			if spareQueued && exchange.State == consoleapi.ExchangeQueued && exchange.ExpectedTask == "" {
+				continue
+			}
+			if currentExchange == "" || exchange.ID != currentExchange {
+				return fmt.Errorf("%w: exchange %s (%s): %w", task.ErrCompleteDelivery, exchange.ID, exchange.State, task.ErrCompleteConversation)
 			}
 		}
 	}

@@ -24,20 +24,23 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 		// behind it go on to what follows.
 		spare bool
 		want  error
+		// conversation is a refusal for what the conversation holds, not
+		// root or child: ending or cancelling them does not settle it.
+		conversation bool
 	}{
 		{name: "empty"},
 		{name: "root question", question: consoleapi.PendingQuestion{TaskID: "root", State: "pending"}, want: task.ErrCompleteAttention},
 		{name: "child question", question: consoleapi.PendingQuestion{TaskID: "child", Conversation: "elsewhere", State: "pending"}, want: task.ErrCompleteAttention},
-		{name: "conversation question", question: consoleapi.PendingQuestion{Conversation: "chat", State: "pending"}, want: task.ErrCompleteAttention},
+		{name: "conversation question", question: consoleapi.PendingQuestion{Conversation: "chat", State: "pending"}, want: task.ErrCompleteAttention, conversation: true},
 		{name: "answered", question: consoleapi.PendingQuestion{TaskID: "root", State: "answered"}},
 		{name: "unrelated question", question: consoleapi.PendingQuestion{TaskID: "other", Conversation: "elsewhere", State: "pending"}},
 		{name: "own command", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current"},
-		{name: "missing command identity", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeRunning}, want: task.ErrCompleteDelivery},
-		{name: "another queued command", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", want: task.ErrCompleteDelivery},
-		{name: "another running command", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", want: task.ErrCompleteDelivery},
-		{name: "recovering", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeRecovering}, current: "current", want: task.ErrCompleteAttention},
-		{name: "awaiting user", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeAwaitingUser}, current: "current", want: task.ErrCompleteAttention},
-		{name: "unknown state", exchange: Exchange{ID: "other", Conversation: "chat", State: "future"}, current: "current", want: task.ErrCompleteDelivery},
+		{name: "missing command identity", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeRunning}, want: task.ErrCompleteDelivery, conversation: true},
+		{name: "another queued command", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", want: task.ErrCompleteDelivery, conversation: true},
+		{name: "another running command", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", want: task.ErrCompleteDelivery, conversation: true},
+		{name: "recovering", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeRecovering}, current: "current", want: task.ErrCompleteAttention, conversation: true},
+		{name: "awaiting user", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeAwaitingUser}, current: "current", want: task.ErrCompleteAttention, conversation: true},
+		{name: "unknown state", exchange: Exchange{ID: "other", Conversation: "chat", State: "future"}, current: "current", want: task.ErrCompleteDelivery, conversation: true},
 		{name: "root continuation", exchange: Exchange{ExpectedTask: "root", Conversation: "elsewhere", State: consoleapi.ExchangeQueued}, want: task.ErrCompleteDelivery},
 		{name: "child continuation", exchange: Exchange{ExpectedTask: "child", Conversation: "elsewhere", State: consoleapi.ExchangeRunning}, want: task.ErrCompleteDelivery},
 		{name: "own continuation is not exempt", exchange: Exchange{ID: "current", ExpectedTask: "root", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", want: task.ErrCompleteDelivery},
@@ -48,13 +51,13 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 		{name: "close spares a queued line", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", spare: true},
 		{name: "close without a command spares a queued line", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, spare: true},
 		{name: "close spares its own command", exchange: Exchange{ID: "current", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", spare: true},
-		{name: "close waits for another running command", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", spare: true, want: task.ErrCompleteDelivery},
-		{name: "close waits for an unknown state", exchange: Exchange{ID: "other", Conversation: "chat", State: "future"}, current: "current", spare: true, want: task.ErrCompleteDelivery},
+		{name: "close waits for another running command", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRunning}, current: "current", spare: true, want: task.ErrCompleteDelivery, conversation: true},
+		{name: "close waits for an unknown state", exchange: Exchange{ID: "other", Conversation: "chat", State: "future"}, current: "current", spare: true, want: task.ErrCompleteDelivery, conversation: true},
 		{name: "close waits for a queued continuation", exchange: Exchange{ID: "other", ExpectedTask: "root", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", spare: true, want: task.ErrCompleteDelivery},
-		{name: "close waits for another task's queued continuation", exchange: Exchange{ID: "other", ExpectedTask: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", spare: true, want: task.ErrCompleteDelivery},
-		{name: "close waits for recovery", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRecovering}, current: "current", spare: true, want: task.ErrCompleteAttention},
-		{name: "close waits for the owner", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeAwaitingUser}, current: "current", spare: true, want: task.ErrCompleteAttention},
-		{name: "close waits for a question", question: consoleapi.PendingQuestion{Conversation: "chat", State: "pending"}, current: "current", spare: true, want: task.ErrCompleteAttention},
+		{name: "close waits for another task's queued continuation", exchange: Exchange{ID: "other", ExpectedTask: "other", Conversation: "chat", State: consoleapi.ExchangeQueued}, current: "current", spare: true, want: task.ErrCompleteDelivery, conversation: true},
+		{name: "close waits for recovery", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRecovering}, current: "current", spare: true, want: task.ErrCompleteAttention, conversation: true},
+		{name: "close waits for the owner", exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeAwaitingUser}, current: "current", spare: true, want: task.ErrCompleteAttention, conversation: true},
+		{name: "close waits for a question", question: consoleapi.PendingQuestion{Conversation: "chat", State: "pending"}, current: "current", spare: true, want: task.ErrCompleteAttention, conversation: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			saved := DurableState{}
@@ -77,6 +80,9 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 				if !errors.Is(err, tc.want) {
 					t.Errorf("guard = %v, want %v", err, tc.want)
 				}
+				if held := errors.Is(err, task.ErrCompleteConversation); held != tc.conversation {
+					t.Errorf("guard = %v, the conversation's = %v, want %v", err, held, tc.conversation)
+				}
 				return rollback
 			})
 			if !errors.Is(err, rollback) {
@@ -84,6 +90,63 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 			}
 			if records, err := loadConsoleRecords(book); err != nil || records.revision != 0 {
 				t.Fatalf("guard committed caller's transaction: revision=%v err=%v", records.revision, err)
+			}
+		})
+	}
+}
+
+// What a task being checked holds itself is what a refusal is about, even
+// when the conversation holds something else as well: ending or cancelling
+// that task settles it.
+func TestCompletionGuardFindsWhatTheTaskHoldsFirst(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	continuation := DurableExchange{Exchange: Exchange{ID: "continuation", ExpectedTask: "root", Conversation: "chat", State: consoleapi.ExchangeQueued}}
+	recovering := DurableExchange{Exchange: Exchange{ID: "other", Conversation: "chat", State: consoleapi.ExchangeRecovering}}
+	for _, tc := range []struct {
+		name  string
+		saved DurableState
+		want  error
+	}{
+		{
+			name: "its line and the conversation's question",
+			saved: DurableState{
+				Questions: map[string]consoleapi.PendingQuestion{"q": {ID: "q", Conversation: "chat", State: "pending"}},
+				Exchanges: map[string][]DurableExchange{"chat": {continuation}},
+			},
+			want: task.ErrCompleteDelivery,
+		},
+		{
+			name:  "its line behind one recovering in the conversation",
+			saved: DurableState{Exchanges: map[string][]DurableExchange{"chat": {recovering, continuation}}},
+			want:  task.ErrCompleteDelivery,
+		},
+		{
+			name: "its question and the conversation's line",
+			saved: DurableState{
+				Questions: map[string]consoleapi.PendingQuestion{"q": {ID: "q", Conversation: "chat", TaskID: "root", State: "pending"}},
+				Exchanges: map[string][]DurableExchange{"chat": {recovering}},
+			},
+			want: task.ErrCompleteAttention,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rollback := errors.New("rollback test transcript")
+			err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+				if err := StoreStateTx(tx, tc.saved); err != nil {
+					return err
+				}
+				err := CheckTaskCompletionTx(tx, map[string]bool{"root": true}, "chat", "", true)
+				if !errors.Is(err, tc.want) || errors.Is(err, task.ErrCompleteConversation) {
+					t.Errorf("guard = %v, want %v held by the task", err, tc.want)
+				}
+				return rollback
+			})
+			if !errors.Is(err, rollback) {
+				t.Fatal(err)
 			}
 		})
 	}
