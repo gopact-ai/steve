@@ -166,7 +166,7 @@ func TestInspectDoesNotTakeZombiesOfAChangingGroupForAnEndedOne(t *testing.T) {
 				passes++
 				return listing{members: tc.listings[passes-1], complete: true}, nil
 			}
-			remains, _, err := inspect(id.Group, list)
+			remains, _, err := inspect(id.Group, kernel{gone: gone, list: list, kill: Kill})
 			if err != nil || remains.Ended() != tc.ended {
 				t.Fatalf("inspect = %v, %v; want ended %v", remains, err, tc.ended)
 			}
@@ -222,7 +222,7 @@ func TestSettleLeavesAnUnmarkedGroupAlone(t *testing.T) {
 func TestSettleDoesNotTakeAHiddenMemberForAnEmptyGroup(t *testing.T) {
 	member, id, _ := orphan(t, "m", "m")
 	hidden := func(int) (listing, error) { return listing{}, nil }
-	if err := settle(id, here(t), here(t), time.Second, kernel{list: hidden, kill: Kill}); !errors.Is(err, ErrUnproven) {
+	if err := settle(id, here(t), here(t), time.Second, kernel{gone: gone, list: hidden, kill: Kill}); !errors.Is(err, ErrUnproven) {
 		t.Fatalf("settle = %v, want %v", err, ErrUnproven)
 	}
 	if !running(member) {
@@ -293,7 +293,7 @@ func cmdlineIs(pid int, argv ...string) bool {
 
 // counting is the kernel settling asks, counting the signals it sends.
 func counting(signals *int) kernel {
-	return kernel{list: members, kill: func(group int) error {
+	return kernel{gone: gone, list: members, kill: func(group int) error {
 		*signals++
 		return Kill(group)
 	}}

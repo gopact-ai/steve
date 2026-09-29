@@ -68,7 +68,7 @@ func TestSettleDoesNotConfirmZombiesWhereTheListingCanMissProcesses(t *testing.T
 		t.Fatal(err)
 	}
 	awaitZombie(t, cmd.Process.Pid)
-	hiding := kernel{list: func(group int) (listing, error) {
+	hiding := kernel{gone: gone, list: func(group int) (listing, error) {
 		found, err := members(group)
 		found.complete = false
 		return found, err

@@ -88,15 +88,20 @@ func NewMark() string {
 // returns ErrUnproven, and when members outlive within after being killed,
 // ErrRunning.
 func Settle(id Identity, ran, here Place, within time.Duration) error {
-	return settle(id, ran, here, within, kernel{list: members, kill: Kill})
+	return settle(id, ran, here, within, system)
 }
 
 // kernel is what settling asks of the kernel, so a test can stand in for
-// one that hides processes, and see what is signalled.
+// one that hides processes, or whose processes change between the calls,
+// and see what is signalled.
 type kernel struct {
+	gone func(group int) (bool, error)
 	list func(group int) (listing, error)
 	kill func(group int) error
 }
+
+// system is the kernel this process runs on.
+var system = kernel{gone: gone, list: members, kill: Kill}
 
 // settle is Settle asking k.
 func settle(id Identity, ran, here Place, within time.Duration, k kernel) error {
@@ -119,7 +124,7 @@ func settle(id Identity, ran, here Place, within time.Duration, k kernel) error 
 	}
 	deadline := time.Now().Add(within)
 	for delay := time.Millisecond; ; delay = min(2*delay, 100*time.Millisecond) {
-		owned, err := recorded(id, k.list)
+		owned, err := recorded(id, k)
 		if err != nil || !owned {
 			return err
 		}
@@ -139,8 +144,8 @@ func settle(id Identity, ran, here Place, within time.Duration, k kernel) error 
 
 // recorded reports whether a process in the group id names still runs and
 // the group is shown to be the recorded one; false means no process of the
-// recorded group runs. list names the group's members.
-func recorded(id Identity, list func(group int) (listing, error)) (bool, error) {
+// recorded group runs. k finds and lists the group's members.
+func recorded(id Identity, k kernel) (bool, error) {
 	leader, found, err := status(id.Leader)
 	if err != nil {
 		return false, err
@@ -155,7 +160,7 @@ func recorded(id Identity, list func(group int) (listing, error)) (bool, error) 
 		// started.
 		return true, nil
 	}
-	remains, listed, err := inspect(id.Group, list)
+	remains, listed, err := inspect(id.Group, k)
 	if err != nil {
 		return false, err
 	}
@@ -233,17 +238,16 @@ func (r Remains) String() string {
 
 // Inspect reports what is left of a process group.
 func Inspect(group int) (Remains, error) {
-	remains, _, err := inspect(group, members)
+	remains, _, err := inspect(group, system)
 	return remains, err
 }
 
-// inspect is Inspect listing the group's members with list. It returns the
-// listing it judged by too.
-func inspect(group int, list func(group int) (listing, error)) (Remains, listing, error) {
-	if gone, err := gone(group); err != nil || gone {
+// inspect is Inspect asking k. It returns the listing it judged by too.
+func inspect(group int, k kernel) (Remains, listing, error) {
+	if gone, err := k.gone(group); err != nil || gone {
 		return Remains{Gone: gone}, listing{}, err
 	}
-	first, err := list(group)
+	first, err := k.list(group)
 	if err != nil {
 		return Remains{}, listing{}, err
 	}
@@ -255,7 +259,7 @@ func inspect(group int, list func(group int) (listing, error)) (Remains, listing
 	// not listed. A second listing shows that child, or, had it done the
 	// same, a zombie the first did not: only a group that no longer
 	// changes is listed alike twice.
-	second, err := list(group)
+	second, err := k.list(group)
 	if err != nil {
 		return Remains{}, listing{}, err
 	}
