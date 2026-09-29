@@ -49,16 +49,15 @@ func TestIdleSweepKeepsTasksWhoseLivenessCannotBeRead(t *testing.T) {
 	}
 }
 
-// Nothing in flight is not the same as nothing left: a quiet task whose
-// console turn still waits on the owner's answer is not closed as done, and
-// is closed by a later pass once that turn has settled.
-func TestIdleSweepKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
+// quietConsoleTask opens a running console task in conversation that the
+// sweep finds quiet.
+func quietConsoleTask(t *testing.T, conversation string) (*ledger.Ledger, *task.Store, task.Task) {
+	t.Helper()
 	book := testLedger(t)
 	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const conversation = "console:quiet"
 	quiet, err := tasks.Create(task.Task{Transport: "console", Goal: "quiet chat", Channel: conversation, Member: "worker"})
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +65,15 @@ func TestIdleSweepKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
 	if _, err := tasks.Begin(quiet.ID, "worker", "", ""); err != nil {
 		t.Fatal(err)
 	}
+	return book, tasks, quiet
+}
+
+// Nothing in flight is not the same as nothing left: a quiet task whose
+// console turn still waits on the owner's answer is not closed as done, and
+// is closed by a later pass once that turn has settled.
+func TestIdleSweepKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
+	const conversation = "console:quiet"
+	book, tasks, quiet := quietConsoleTask(t, conversation)
 	store := func(exchange consoleapi.ExchangeState, question string) {
 		t.Helper()
 		state := console.DurableState{
@@ -88,6 +96,37 @@ func TestIdleSweepKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
 	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateDone {
 		t.Fatalf("quiet task after its turn settled = %s, want done", got.State)
+	}
+}
+
+// A reset goes ahead of a line queued behind it, and the line runs under
+// the task that comes next. Nothing comes next after an idle close: a line
+// still queued in the conversation is about to continue the quiet task, so
+// the task stays open until the line has run.
+func TestIdleSweepKeepsATaskALineIsQueuedFor(t *testing.T) {
+	const conversation = "console:quiet"
+	book, tasks, quiet := quietConsoleTask(t, conversation)
+	store := func(exchange consoleapi.ExchangeState) {
+		t.Helper()
+		state := console.DurableState{
+			Exchanges: map[string][]console.DurableExchange{conversation: {{Exchange: consoleapi.Exchange{ID: "e1", Conversation: conversation, Input: "one more thing", State: exchange}}}},
+		}
+		if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return console.StoreStateTx(tx, state) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store(consoleapi.ExchangeQueued)
+	time.Sleep(5 * time.Millisecond)
+
+	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
+	if got, _ := tasks.Get(quiet.ID); got.State != task.StateRunning {
+		t.Fatalf("quiet task closed with a line queued for it: %s, want running", got.State)
+	}
+
+	store(consoleapi.ExchangeDone)
+	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
+	if got, _ := tasks.Get(quiet.ID); got.State != task.StateDone {
+		t.Fatalf("quiet task after the queued line ran = %s, want done", got.State)
 	}
 }
 

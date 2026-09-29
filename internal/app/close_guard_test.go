@@ -2,11 +2,11 @@ package app
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -36,7 +36,8 @@ func (f cancelledRecovery) command(t *testing.T, exchange, input string) (turn.R
 // A reset or a project switch ends the conversation's task as done, and a
 // task whose original execution still waits on the owner is not done: the
 // continuation would carry on under a task that says it finished. Either is
-// refused before anything changes, and the refusal says how to get out.
+// refused before anything changes, and the refusal says why — the execution
+// has not settled — and how to get out.
 func TestSessionResetKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
 	for name, input := range map[string]string{"reset": "/new", "switch": "/project use p2"} {
 		t.Run(name, func(t *testing.T) {
@@ -45,8 +46,9 @@ func TestSessionResetKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
 			f.keepSession(t)
 			result, err := f.command(t, "e2", input)
 			var refusal turn.UserError
-			if !errors.As(err, &refusal) || !strings.Contains(refusal.Text, string(protocol.CommandTasks)+" cancel "+f.taskID) {
-				t.Fatalf("%s with an unsettled continuation = %+v, %v; want a refusal naming %s cancel %s", input, result, err, protocol.CommandTasks, f.taskID)
+			want := i18n.New(i18n.LocaleEN).T(i18n.TaskCloseBusy, f.taskID, protocol.CommandTasks)
+			if !errors.As(err, &refusal) || refusal.Text != want {
+				t.Fatalf("%s with an unsettled continuation = %+v, %v; want the refusal %q", input, result, err, want)
 			}
 			if tracked, _ := f.tasks.Get(f.taskID); tracked.State != task.StateRunning {
 				t.Fatalf("task after the refused %s = %s, want running", input, tracked.State)
