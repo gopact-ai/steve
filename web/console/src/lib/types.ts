@@ -15,8 +15,12 @@ export interface AbilitySnapshot {
 export interface Node {
     name: string; display_name?: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string; snapshot?: AbilitySnapshot;
-    features?: string[]; health?: Health; projects_root?: string; protocol_mismatch?: ProtocolMismatch;
+    features?: string[]; health?: Health; projects_root?: string; protocol_mismatch?: ProtocolMismatch; last_restart?: NodeRestart;
 }
+// NodeRestart is the latest restart of a machine's node process, by hand or
+// by automatic start, as the fleet's events recorded it: which node ran it
+// and what it did.
+export interface NodeRestart { at: string; by?: string; trigger: "manual" | "automatic"; outcome: string; reason?: string }
 // ProtocolMismatch is set on a machine the hub refused because they share no
 // node protocol version: the version the machine speaks, the range the hub
 // speaks, and the side that has to be upgraded for the two to connect.

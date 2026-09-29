@@ -23,10 +23,13 @@ type upgradeBackend struct {
 	binaryPath  string
 	// unknown is a node ID no machine of the backend has.
 	unknown string
-	// hold keeps Upgraded from returning until closed; holding counts the
-	// calls waiting there.
+	// hold keeps Upgraded from returning until closed or its context
+	// ends; holding counts the calls waiting there.
 	hold    chan struct{}
 	holding atomic.Int32
+	// upgradedLeft is how long the latest Upgraded had to wait for the
+	// machine when it was called, or -1 for no limit.
+	upgradedLeft time.Duration
 }
 
 func (b *upgradeBackend) UpgradeTarget(_ context.Context, nodeID string) (UpgradeTarget, error) {
@@ -42,9 +45,18 @@ func (b *upgradeBackend) Knows(_ context.Context, nodeID string) bool {
 
 func (b *upgradeBackend) Upgraded(ctx context.Context, nodeID string) error {
 	Report(ctx, "隧道已恢复")
+	b.upgradedLeft = timeLeft(ctx)
+	if err := ctx.Err(); err != nil {
+		// Like the cluster, it waits for no machine once its context ended.
+		return err
+	}
 	if b.hold != nil {
 		b.holding.Add(1)
-		<-b.hold
+		select {
+		case <-b.hold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	b.upgraded = append(b.upgraded, nodeID)
 	return b.upgradedErr
@@ -294,16 +306,88 @@ func TestUpgradeReportsAnUnconfirmedReturn(t *testing.T) {
 	}
 }
 
-// The script tells a rollback apart from a peer it could not bring back;
-// the owner is told which of the two the machine is in.
+// swapThen runs everything as the recording runner does and calls then
+// once the upgrade script ran.
+type swapThen struct {
+	*recordingRunner
+	then func()
+}
+
+func (r *swapThen) Bind(_ context.Context, _ string, args []string) (Connection, error) {
+	return &fixtureConnection{runner: r, args: append([]string{}, args...)}, nil
+}
+
+func (r *swapThen) Run(ctx context.Context, args []string, input string) (Output, error) {
+	out, err := r.recordingRunner.Run(ctx, args, input)
+	if strings.Contains(input, "steve.previous") {
+		r.then()
+	}
+	return out, err
+}
+
+// An owner closing the page once the program was swapped does not cut the
+// upgrade off there: the machine is still waited for on the new build, no
+// longer than an upgrade waits.
+func TestUpgradeStillWaitsForTheMachineOnceThePageThatAskedForItCloses(t *testing.T) {
+	svc, runner, backend, _ := upgradeFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	svc.runner = &swapThen{recordingRunner: runner, then: cancel}
+	result, err := svc.Upgrade(ctx, "node-1")
+	if err != nil || !result.Connected || result.Status != "connected" {
+		t.Fatalf("an upgrade whose page closed once the program was swapped = %#v %v", result, err)
+	}
+	if len(backend.upgraded) != 1 {
+		t.Fatalf("the machine was not waited for: %v", backend.upgraded)
+	}
+	if left := backend.upgradedLeft; left <= 0 || left > upgradeVerifyLimit {
+		t.Fatalf("the machine was waited for with %v left, want no more than %v", left, upgradeVerifyLimit)
+	}
+}
+
+// The script tells a rollback apart from a peer it could not bring back,
+// both from a peer it could not look for, and all of these from a peer it
+// did not stop, which kept the machine from being upgraded; the owner is
+// told which of these the machine is in.
 func TestUpgradeTellsARollbackFromAPeerLeftDown(t *testing.T) {
-	for exit, code := range map[int]string{26: "upgrade_rejected", 28: "upgrade_down", 22: "upgrade_uncertain"} {
+	for exit, code := range map[int]string{26: "upgrade_rejected", 28: "upgrade_down", 29: "upgrade_unlocated", 31: "upgrade_not_stopped", 22: "upgrade_uncertain"} {
 		svc, runner, backend, _ := upgradeFixture(t)
 		runner.swapExit = exit
 		result, err := svc.Upgrade(t.Context(), "node-1")
 		var step *StepError
 		if !errors.As(err, &step) || step.Code != code || result.Connected || len(backend.upgraded) != 0 {
 			t.Fatalf("exit %d: %#v %v", exit, result, err)
+		}
+	}
+}
+
+// An upgrade that leaves the peer down has put the program it fell back
+// to in place as ~/.steve-peer/bin/steve and the new one aside as
+// steve.rejected, with no steve.previous left; the owner is told so,
+// in either language: the fallback was put back and did not stay up
+// either, rather than that it could not be put back, and the fix points
+// at those programs.
+func TestUpgradeLeftDownNamesTheProgramsTheMachineHas(t *testing.T) {
+	for _, said := range []struct {
+		locale          i18n.Locale
+		fallback, wrong string
+	}{
+		{i18n.LocaleZH, "后备程序", "没能换回"},
+		{i18n.LocaleEN, "fallback", "could not be restored"},
+	} {
+		locale := said.locale
+		svc, runner, _, _ := upgradeFixture(t)
+		runner.swapExit = 28
+		_, err := svc.Upgrade(i18n.WithLocale(t.Context(), locale), "node-1")
+		var step *StepError
+		if !errors.As(err, &step) || step.Code != "upgrade_down" {
+			t.Fatalf("%s: %v", locale, err)
+		}
+		if !strings.Contains(step.Message, said.fallback) || !strings.Contains(step.Message, "steve.rejected") || strings.Contains(step.Message, said.wrong) {
+			t.Fatalf("%s: the message does not say the fallback was put back and the new program set aside: %q", locale, step.Message)
+		}
+		if strings.Contains(step.Suggestion, "steve.previous") || !strings.Contains(step.Suggestion, "~/.steve-peer/bin/steve.rejected") || !strings.Contains(step.Suggestion, "~/.steve-peer/peer.log") {
+			t.Fatalf("%s: the fix does not name the programs an upgrade left down leaves: %q", locale, step.Suggestion)
 		}
 	}
 }

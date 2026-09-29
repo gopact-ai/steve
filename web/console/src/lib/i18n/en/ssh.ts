@@ -132,7 +132,10 @@ export const sshEn = {
     "ssh.phase.link": "Open SSH tunnel",
     "ssh.phase.upload": "Upload node program",
     "ssh.phase.installation": "Run the installer",
+    "ssh.phase.restart": "Restart the node process",
     "ssh.phase.connectivity": "Wait for the node",
     "ssh.log": "Installation log",
     "ssh.logCount": "Installation log · {count} lines",
+    "ssh.restartLog": "Restart log",
+    "ssh.restartLogCount": "Restart log · {count} lines",
 } as const satisfies Record<keyof typeof sshZh, string>;

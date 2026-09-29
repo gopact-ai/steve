@@ -8,7 +8,7 @@ await Promise.all([loadLocale("zh"), loadLocale("en")]);
 
 const zh = (key, params) => translate("zh", key, params);
 const en = (key, params) => translate("en", key, params);
-const named = { "node-9e10": "dev-sg" };
+const named = { "node-9e10": "dev-sg", "node-4bbf": "Steve's MacBook" };
 const name = (id) => named[id] || id;
 const state = (locale) => (value) => stateWordIn(value, locale === "zh" ? zh : en);
 
@@ -108,4 +108,44 @@ test("an unrecognised failure keeps its words but loses the plumbing", () => {
     // A node nobody can name keeps its ID: it is still searchable.
     const unknown = read({ at: "", kind: "observe.node.skills", subject: "node-abcd", text: "…", data: { error: "node-0123456789abcdef0123456789abcdef refused the bundle" } });
     assert.equal(unknown.note, "node-0123456789abcdef0123456789abcdef refused the bundle");
+});
+
+test("a restart names the machine, whether a person or automatic start ran it and from where", () => {
+    const manual = read({
+        at: "", kind: "observe.node.restart", subject: "node-9e10", text: "node-9e10: restart by node-4bbf: restarted",
+        data: { by: "node-4bbf", trigger: "manual", outcome: "restarted" },
+    });
+    assert.equal(manual.family, "machine");
+    assert.equal(familyOf({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "" }), "machine");
+    assert.equal(manual.tone, "good");
+    assert.equal(manual.label, "节点重启");
+    assert.equal(manual.title, "dev-sg 的节点进程已重启");
+    assert.deepEqual(manual.facts, ["手动", "由 Steve's MacBook 执行"]);
+    assert.equal(manual.note, undefined);
+    const started = read({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "…", data: { by: "node-4bbf", trigger: "automatic", outcome: "started" } });
+    assert.equal(started.tone, "good");
+    assert.equal(started.title, "dev-sg 的节点进程已启动");
+    assert.deepEqual(started.facts, ["自动拉起", "由 Steve's MacBook 执行"]);
+    const english = read({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "…", data: { by: "node-4bbf", trigger: "automatic", outcome: "started" } }, "en");
+    assert.equal(english.title, "The node process on dev-sg was started");
+    assert.deepEqual(english.facts, ["Automatic start", "Run by Steve's MacBook"]);
+});
+
+test("a restart that found the process running, failed, or ended automatic start says so and keeps why", () => {
+    const running = read({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "…", data: { by: "node-4bbf", trigger: "automatic", outcome: "running", reason: "The peer process 4242 is still running" } });
+    assert.equal(running.tone, "warn");
+    assert.equal(running.title, "dev-sg 的节点进程仍在运行，没有自动重启");
+    assert.equal(running.note, "The peer process 4242 is still running");
+    const failed = read({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "…", data: { by: "node-4bbf", trigger: "manual", outcome: "failed", reason: "The peer did not stay running" } });
+    assert.equal(failed.tone, "bad");
+    assert.equal(failed.title, "dev-sg 的节点重启没有成功");
+    assert.equal(failed.note, "The peer did not stay running");
+    const stopped = read({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "…", data: { by: "node-4bbf", trigger: "automatic", outcome: "stopped", reason: "The peer did not stay running" } });
+    assert.equal(stopped.tone, "bad");
+    assert.equal(stopped.title, "dev-sg 的自动拉起已停止");
+    assert.equal(read({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "…", data: { outcome: "stopped" } }, "en").title, "Automatic start stopped for dev-sg");
+    // An outcome this page does not know is shown as the server wrote it.
+    const unknown = read({ at: "", kind: "observe.node.restart", subject: "node-9e10", text: "node-9e10: restart by node-4bbf: paused", data: { by: "node-4bbf", trigger: "manual", outcome: "paused" } });
+    assert.equal(unknown.title, "node-9e10: restart by node-4bbf: paused");
+    assert.equal(unknown.family, "machine");
 });

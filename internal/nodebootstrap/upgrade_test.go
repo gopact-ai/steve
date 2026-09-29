@@ -4,11 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -17,15 +20,68 @@ import (
 
 // The test binary doubles as the peer program: started as `steve peer` it
 // waits for SIGTERM the way a peer would, so the upgrade script has a real
-// process, with a real command line, to stop and restart.
+// process, with a real command line, to stop and restart. With
+// STEVE_NODEBOOTSTRAP_STUB_LINGER it takes that long to exit once asked,
+// as a peer winding down its executions does. With
+// STEVE_NODEBOOTSTRAP_STUB_LOCK it first takes its installation's gateway
+// lock, as a peer does, and holds it until it exits.
 func TestMain(m *testing.M) {
 	if os.Getenv("STEVE_NODEBOOTSTRAP_STUB") == "1" && len(os.Args) > 1 && os.Args[1] == "peer" {
+		var lock *os.File
+		if os.Getenv("STEVE_NODEBOOTSTRAP_STUB_LOCK") == "1" {
+			lock = holdGatewayLock()
+		}
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, syscall.SIGTERM)
 		<-stop
+		if linger, err := time.ParseDuration(os.Getenv("STEVE_NODEBOOTSTRAP_STUB_LINGER")); err == nil {
+			time.Sleep(linger)
+		}
+		runtime.KeepAlive(lock)
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// lockingStub is the environment that makes the stub peer take its
+// installation's gateway lock.
+const lockingStub = "STEVE_NODEBOOTSTRAP_STUB_LOCK=1"
+
+// holdGatewayLock takes the gateway lock beside the configuration the
+// stub peer was started with, the way a peer takes it, and records the
+// stub's pid in it. When another process holds the lock the stub exits
+// with the message a peer exits with.
+func holdGatewayLock() *os.File {
+	config := ""
+	for i, arg := range os.Args {
+		if arg == "--config" && i+1 < len(os.Args) {
+			config = os.Args[i+1]
+		}
+	}
+	dir := filepath.Join(filepath.Dir(config), "cluster", "peer-process")
+	path := filepath.Join(dir, "gateway.lock")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintf(os.Stderr, "steve: another gateway already serves %s (lock %s is held)\n", dir, path)
+		os.Exit(1)
+	}
+	if err := file.Truncate(0); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	return file
 }
 
 func upgradeSpec() UpgradeSpec {
@@ -86,13 +142,21 @@ func layoutPeer(t *testing.T) (home string, program []byte) {
 func installedPeer(t *testing.T) (home string, pid string) {
 	t.Helper()
 	home, _ = layoutPeer(t)
+	return home, startPeer(t, home)
+}
+
+// startPeer starts the installed program of the installation under home
+// as its peer, with env added to the test's environment, and returns its
+// pid.
+func startPeer(t *testing.T, home string, env ...string) string {
+	t.Helper()
 	start := exec.Command("bash", "-c", `nohup "$HOME/.steve-peer/bin/steve" peer --config "$HOME/.steve-peer/config.json" >> "$HOME/.steve-peer/peer.log" 2>&1 < /dev/null & echo $!`)
-	start.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	start.Env = append(append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1"), env...)
 	out, err := start.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return home, strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out))
 }
 
 func stageUpload(t *testing.T, home, id string, content []byte) string {
@@ -108,7 +172,9 @@ func stageUpload(t *testing.T, home, id string, content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func runUpgrade(t *testing.T, home string, spec UpgradeSpec) (string, error) {
+// runUpgrade runs the upgrade script for the installation under home,
+// with env added to the test's environment.
+func runUpgrade(t *testing.T, home string, spec UpgradeSpec, env ...string) (string, error) {
 	t.Helper()
 	script, err := BuildPeerUpgrade(spec)
 	if err != nil {
@@ -116,7 +182,7 @@ func runUpgrade(t *testing.T, home string, spec UpgradeSpec) (string, error) {
 	}
 	cmd := exec.Command("bash", "-s")
 	cmd.Stdin = strings.NewReader(script)
-	cmd.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	cmd.Env = append(append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1"), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -218,6 +284,76 @@ func TestPeerUpgradeScriptKeepsTheLastWorkingProgramWhenNoPeerRuns(t *testing.T)
 	}
 }
 
+// When neither the new program nor the one it falls back to stays up, the
+// peer is down: the fallback is left installed as steve, the new program
+// set aside as steve.rejected, and nothing else, neither steve.previous
+// nor a staged steve.new, is left beside them.
+func TestPeerUpgradeScriptLeftDownKeepsTheFallbackInstalledAndTheNewProgramRejected(t *testing.T) {
+	requirePeerPlatform(t)
+	home, _ := layoutPeer(t)
+	bin := filepath.Join(home, ".steve-peer", "bin")
+	fallback, installed, upgraded := "#!/bin/sh\nexit 4\n", "#!/bin/sh\nexit 3\n", "#!/bin/sh\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "steve.previous"), []byte(fallback), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "steve"), []byte(installed), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spec := upgradeSpec()
+	spec.SHA256 = stageUpload(t, home, spec.UploadID, []byte(upgraded))
+	out, err := runUpgrade(t, home, spec)
+	if exitCode(err) != 28 {
+		t.Fatalf("expected exit 28 with the peer down, got %v\n%s", err, out)
+	}
+	if left := programs(t, home); !maps.Equal(left, map[string]string{"steve": fallback, "steve.rejected": upgraded}) {
+		t.Fatalf("an upgrade left down left %v\n%s", slices.Sorted(maps.Keys(left)), out)
+	}
+}
+
+// A new program that exits without a word did not exit on the gateway
+// lock, however an earlier run left the log ending. The upgrade falls
+// back as for any new program that does not stay up, and exits 26 when
+// the fallback does or 28 when it does not either, rather than exit 31
+// with the programs put back and nothing started.
+func TestPeerUpgradeScriptFallsBackFromANewProgramThatExitsWithoutAWord(t *testing.T) {
+	requirePeerPlatform(t)
+	for _, fallbackUp := range []bool{true, false} {
+		home, program := layoutPeer(t)
+		state := filepath.Join(home, ".steve-peer")
+		bin := filepath.Join(state, "bin")
+		if err := os.WriteFile(filepath.Join(state, "peer.log"), []byte("gateway: serving\n"+lockMessage(state)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fallback, upgraded := string(program), "#!/bin/sh\nexit 1\n"
+		if !fallbackUp {
+			fallback = "#!/bin/sh\nexit 4\n"
+			if err := os.WriteFile(filepath.Join(bin, "steve.previous"), []byte(fallback), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(bin, "steve"), []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		spec := upgradeSpec()
+		spec.SHA256 = stageUpload(t, home, spec.UploadID, []byte(upgraded))
+		report, err := runUpgrade(t, home, spec)
+		want := 28
+		if fallbackUp {
+			want = 26
+		}
+		if exitCode(err) != want || strings.Contains(report, "was not stopped") {
+			t.Errorf("fallback up %v: expected exit %d after falling back, got %v\n%s", fallbackUp, want, err, report)
+			continue
+		}
+		if left := programs(t, home); !maps.Equal(left, map[string]string{"steve": fallback, "steve.rejected": upgraded}) {
+			t.Errorf("fallback up %v: the upgrade left %v\n%s", fallbackUp, slices.Sorted(maps.Keys(left)), report)
+		}
+		if pids := peerPIDs(t, home); (len(pids) == 1) != fallbackUp {
+			t.Errorf("fallback up %v: running afterwards %v\n%s", fallbackUp, pids, report)
+		}
+	}
+}
+
 func TestPeerUpgradeScriptRefusesAMachineWithoutAPeer(t *testing.T) {
 	home := t.TempDir()
 	out, err := runUpgrade(t, home, upgradeSpec())
@@ -268,5 +404,76 @@ func TestPeerUpgradeScriptStopsAPeerStartedByARelativePath(t *testing.T) {
 			t.Fatalf("the old peer kept running through the upgrade:\n%s", report)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// A peer the script cannot find, where the gateway lock does not tell who
+// holds it, keeps holding the lock, and the new program exits on it. That
+// program is not the one at fault and the one that ran is not down: the
+// upgrade puts the installed programs back as they were, starts nothing
+// beside the peer that runs, says that peer was not stopped and the
+// machine not upgraded, and exits 31.
+func TestPeerUpgradeScriptPutsTheProgramsBackWhenThePeerWasNotStopped(t *testing.T) {
+	requirePeerPlatform(t)
+	for _, earlier := range []bool{false, true} {
+		real, home := symlinkedPeer(t)
+		bin := filepath.Join(real, ".steve-peer", "bin")
+		if earlier {
+			if err := os.WriteFile(filepath.Join(bin, "steve.previous"), []byte("earlier program"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pid := spelledPeer(t, real, home, throughPath)
+		lockedBy(t, real, "")
+		before := programs(t, home)
+		running, _ := os.ReadFile(filepath.Join(bin, "steve"))
+		spec := upgradeSpec()
+		spec.SHA256 = stageUpload(t, home, spec.UploadID, append(slices.Clone(running), "\nnew program\n"...))
+		report, err := runUpgrade(t, home, spec, lockingStub)
+		if exitCode(err) != 31 || !strings.Contains(report, "was not stopped") || !strings.Contains(report, "not upgraded") || !strings.Contains(report, "another gateway already serves") {
+			t.Fatalf("earlier program %v: expected exit 31 saying the peer was not stopped and the machine not upgraded, got %v\n%s", earlier, err, report)
+		}
+		if after := programs(t, home); !maps.Equal(before, after) {
+			t.Fatalf("earlier program %v: the programs were not put back: before %v, after %v\n%s", earlier, slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)), report)
+		}
+		if exec.Command("kill", "-0", pid).Run() != nil {
+			t.Fatalf("earlier program %v: the peer %s holding the lock was stopped:\n%s", earlier, pid, report)
+		}
+		if pids := peerPIDs(t, home); len(pids) != 0 {
+			t.Fatalf("earlier program %v: a program was left running beside the peer: %v\n%s", earlier, pids, report)
+		}
+	}
+}
+
+// An upgrade that cannot look for the peer exits 29 as a restart does,
+// and leaves the machine as it found it: the programs as they were, no
+// staged program beside them, no upload and no installation lock.
+func TestPeerUpgradeScriptLeavesTheMachineAsItWasWhereItCannotLookForThePeer(t *testing.T) {
+	requirePeerPlatform(t)
+	for name, spoil := range unsearchable(t) {
+		t.Run(name, func(t *testing.T) {
+			home, pid := installedPeer(t)
+			before := programs(t, home)
+			running, _ := os.ReadFile(filepath.Join(home, ".steve-peer", "bin", "steve"))
+			spec := upgradeSpec()
+			spec.SHA256 = stageUpload(t, home, spec.UploadID, append(slices.Clone(running), "\nnew program\n"...))
+			report, err := runUpgrade(t, home, spec, spoil(t, home, pid)...)
+			if exitCode(err) != 29 || strings.Contains(report, "Stopping peer process") || !strings.Contains(report, "nothing was stopped or started") {
+				t.Fatalf("expected exit 29 with nothing stopped or started, got %v\n%s", err, report)
+			}
+			if after := programs(t, home); !maps.Equal(before, after) {
+				t.Fatalf("the programs were not left as they were: before %v, after %v\n%s", slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)), report)
+			}
+			left, err := os.ReadDir(filepath.Join(home, "steve-bin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(left) != 0 {
+				t.Fatalf("the upload or the installation lock was left behind: %v\n%s", left, report)
+			}
+			if pids := peerPIDs(t, home); len(pids) != 1 || pids[0] != pid {
+				t.Fatalf("the running peer %s was touched: %v\n%s", pid, pids, report)
+			}
+		})
 	}
 }

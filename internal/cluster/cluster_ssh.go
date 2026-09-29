@@ -25,10 +25,7 @@ func (p *Peer) serveSSHLocal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, p.text.For(r.Context()).T(i18n.ClusterNodeClosing), http.StatusServiceUnavailable)
 		return
 	}
-	if p.localSSH == nil {
-		p.localSSH = sshconnect.New(sshconnect.Options{Backend: peerSSHBackend{peer: p}, InstallationMode: sshconnect.InstallPeer, Text: p.text})
-	}
-	service := p.localSSH
+	service := p.localSSHLocked()
 	p.Mu.Unlock()
 	handler, err := p.Options.SSHHandler(peerSSHService{service}, p.UIToken, p.UiURL)
 	if err != nil {
@@ -36,6 +33,29 @@ func (p *Peer) serveSSHLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler.ServeHTTP(w, r)
+}
+
+// localSSHLocked is this node's SSH service, made on first use: by the
+// console, or at start where the node starts the peers of the machines it
+// keeps links to. p.Mu is held and the node is not closing.
+func (p *Peer) localSSHLocked() *sshconnect.Service {
+	if p.localSSH == nil {
+		p.localSSH = sshconnect.New(sshconnect.Options{Backend: peerSSHBackend{peer: p}, InstallationMode: sshconnect.InstallPeer, Text: p.text})
+	}
+	return p.localSSH
+}
+
+// startAutoStart has this node start the peer of a machine it keeps a link
+// to once the machine stopped answering and no peer runs on it, where the
+// node's options ask for that.
+func (p *Peer) startAutoStart() {
+	if !p.Options.AutoStartPeers {
+		return
+	}
+	p.Mu.Lock()
+	service := p.localSSHLocked()
+	p.Mu.Unlock()
+	service.AutoStart()
 }
 
 type peerSSHService struct{ service *sshconnect.Service }
@@ -66,6 +86,12 @@ func (s peerSSHService) SSHUpgrade(ctx context.Context, nodeID string) (sshconne
 }
 func (s peerSSHService) SSHUpgradeStatus(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
 	return s.service.UpgradeStatus(ctx, nodeID)
+}
+func (s peerSSHService) SSHRestart(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return s.service.Restart(ctx, nodeID)
+}
+func (s peerSSHService) SSHRestartStatus(ctx context.Context, nodeID string) (sshconnect.RestartState, error) {
+	return s.service.RestartStatus(ctx, nodeID)
 }
 
 type peerEnrollmentService interface {
@@ -386,4 +412,6 @@ type SSHControl interface {
 	SSHBrowse(context.Context, sshconnect.BrowseRequest) (sshconnect.Listing, error)
 	SSHUpgrade(context.Context, string) (sshconnect.InstallResult, error)
 	SSHUpgradeStatus(context.Context, string) (sshconnect.InstallResult, error)
+	SSHRestart(context.Context, string) (sshconnect.InstallResult, error)
+	SSHRestartStatus(context.Context, string) (sshconnect.RestartState, error)
 }

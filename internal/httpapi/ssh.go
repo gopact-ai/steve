@@ -24,6 +24,11 @@ type SSHService interface {
 	// that has settled; SSHUpgradeStatus reads how far it has come.
 	SSHUpgrade(context.Context, string) (sshconnect.InstallResult, error)
 	SSHUpgradeStatus(context.Context, string) (sshconnect.InstallResult, error)
+	// SSHRestart restarts an enrolled machine's peer on the program it has
+	// and returns when that has settled; SSHRestartStatus reads how far it
+	// has come and how automatic start stands for the machine.
+	SSHRestart(context.Context, string) (sshconnect.InstallResult, error)
+	SSHRestartStatus(context.Context, string) (sshconnect.RestartState, error)
 }
 
 func (s *Server) SetSSH(service SSHService) { s.ssh = service }
@@ -51,6 +56,8 @@ func (s *Server) sshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /console/ssh/browse", s.guard(s.sshBrowse))
 	mux.HandleFunc("POST /console/ssh/upgrades/{node}", s.guard(s.sshUpgrade))
 	mux.HandleFunc("GET /console/ssh/upgrades/{node}", s.guard(s.sshUpgradeStatus))
+	mux.HandleFunc("POST /console/ssh/restarts/{node}", s.guard(s.sshRestart))
+	mux.HandleFunc("GET /console/ssh/restarts/{node}", s.guard(s.sshRestartStatus))
 }
 
 func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
@@ -225,4 +232,30 @@ func (s *Server) sshUpgradeStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, result)
+}
+
+// sshRestart answers with how a restart went, failed or not, once it ran;
+// a restart refused before it started answers as an error.
+func (s *Server) sshRestart(w http.ResponseWriter, r *http.Request) {
+	if !s.sshAvailable(w, r) {
+		return
+	}
+	result, err := s.ssh.SSHRestart(r.Context(), r.PathValue("node"))
+	if err != nil && result.Status == "" {
+		s.sshError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) sshRestartStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.sshAvailable(w, r) {
+		return
+	}
+	state, err := s.ssh.SSHRestartStatus(r.Context(), r.PathValue("node"))
+	if err != nil {
+		s.sshError(w, err)
+		return
+	}
+	writeJSON(w, state)
 }

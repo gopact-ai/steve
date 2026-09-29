@@ -110,6 +110,7 @@ async function fixture({ history = false, running = false, sandboxed = false } =
         }
         if (pathname === "/console/setup") return route.fulfill({ json: { enabled: true, setup: f.setup ?? { agent: "test-agent", node: "test-node", harness: "test", applied: true, instructions: "", sections: [], mcp_servers: [] } } });
         if (pathname === "/console/verbs" || pathname === "/console/suggest") return route.fulfill({ json: { verbs: [], suggestions: [] } });
+        if (pathname.startsWith("/console/ssh/restarts/")) return route.fulfill({ json: {} });
         f.errors.push(`Unhandled API: ${req.method()} ${pathname}`);
         return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
     });

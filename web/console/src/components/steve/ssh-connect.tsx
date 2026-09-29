@@ -253,7 +253,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     </ModalOverlay>;
 }
 
-const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase.registration", link: "ssh.phase.link", upload: "ssh.phase.upload", installation: "ssh.phase.installation", connectivity: "ssh.phase.connectivity" } as const;
+const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase.registration", link: "ssh.phase.link", upload: "ssh.phase.upload", installation: "ssh.phase.installation", restart: "ssh.phase.restart", connectivity: "ssh.phase.connectivity" } as const;
 
 // InstallProgress shows where an installation is among its phases: the
 // ones behind it, the one it is in, and, for one that stopped, where.
@@ -277,11 +277,19 @@ export function InstallProgress({ result }: { result: SSHInstallResult }) {
     </div>;
 }
 
-// InstallLog is what the installation said, in order: Steve narrating each
-// phase and the machine's own output. Open by default when something went
-// wrong, since that is when the lines matter.
-export function InstallLog({ result }: { result: SSHInstallResult }) {
+const logNames = {
+    install: { name: "ssh.log", count: "ssh.logCount" },
+    restart: { name: "ssh.restartLog", count: "ssh.restartLogCount" },
+} as const;
+
+// InstallLog is what an installation, an upgrade or a restart said, in
+// order: Steve narrating each phase and the machine's own output. label
+// names the log for what produced it; an upgrade's is named as an
+// installation's. Open by default when something went wrong, since that
+// is when the lines matter.
+export function InstallLog({ result, label = "install" }: { result: SSHInstallResult; label?: keyof typeof logNames }) {
     const { t, locale } = useI18n();
+    const named = logNames[label];
     const lines = result.log ?? [];
     const box = useRef<HTMLDivElement>(null);
     const stopped = result.status === "needs_attention";
@@ -289,8 +297,8 @@ export function InstallLog({ result }: { result: SSHInstallResult }) {
     useEffect(() => { if (result.status === "installing" && box.current) box.current.scrollTop = box.current.scrollHeight; }, [lines.length, result.status]);
     if (lines.length === 0) return null;
     return <details className="rounded-lg bg-secondary p-3" open={stopped || result.status === "installing"}>
-        <summary className="cursor-pointer text-xs font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.logCount", { count: lines.length })}</summary>
-        <div ref={box} className="mt-2 max-h-56 overflow-auto font-mono text-xs leading-5" aria-label={t("ssh.log")}>
+        <summary className="cursor-pointer text-xs font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t(named.count, { count: lines.length })}</summary>
+        <div ref={box} className="mt-2 max-h-56 overflow-auto font-mono text-xs leading-5" aria-label={t(named.name)}>
             {lines.map((line, i) => <div key={i} className={`flex gap-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${line.stream === "stderr" ? "text-error-primary" : line.stream === "steve" ? "text-primary" : "text-secondary"}`}><span className="shrink-0 tabular-nums text-quaternary">{dateTime(line.at, locale, { timeStyle: "medium" })}</span><span className="min-w-0">{line.text}</span></div>)}
         </div>
     </details>;
