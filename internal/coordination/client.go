@@ -402,13 +402,19 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 		method = http.MethodGet
 	}
 	// sent records that the whole request went out, which tells a peer that
-	// did not answer in time from one the request never reached.
+	// did not answer in time from one the request never reached. When a
+	// reused connection fails before any of the request left it, the
+	// transport sends the request again on another connection, so sent
+	// starts over each time the transport asks for one.
 	var sent atomic.Bool
-	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
-		if info.Err == nil {
-			sent.Store(true)
-		}
-	}})
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GetConn: func(string) { sent.Store(false) },
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				sent.Store(true)
+			}
+		},
+	})
 	request, err := http.NewRequestWithContext(ctx, method, origin+RPCPath+action, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
