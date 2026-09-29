@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
 // bootstrap is how the long-connection endpoint answers one request for a
@@ -188,8 +189,8 @@ func longConnChannel(t *testing.T, f *longConnFeishu) (*Channel, *reconnectRepor
 }
 
 // A lost long connection is reported while the official client establishes
-// it again, with each failed attempt, and withdrawn once it is back.
-// Stopping the channel reports nothing more.
+// it again, with each failed attempt, and withdrawn once it is back. A later
+// loss is reported afresh.
 func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
 	f := newLongConnFeishu(t, bootstrapOK, bootstrapBusy, bootstrapOKOnce, bootstrapBusy)
 	c, reports := longConnChannel(t, f)
@@ -216,19 +217,26 @@ func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
 		t.Fatalf("the failed attempt was reported as %s", describeReports(got[1:2]))
 	}
 
+	lostAgain := time.Now()
+	_ = second.Close()
+	got = reports.waitFor(t, 5)
+	if len(got) != 5 || got[3] == nil || got[4] == nil || got[3].Failures != 0 || got[3].Since.Before(lostAgain) ||
+		got[4].Failures != 1 || got[4].Since != got[3].Since || got[4].Err == nil || !strings.Contains(got[4].Err.Error(), "system busy") {
+		t.Fatalf("reports %s; want the second loss, then its failed attempt", describeReports(got))
+	}
+
 	// Closing the official client with a connection open races its own
 	// logging, so the channel stops once the client has lost the connection
-	// again and made its one attempt.
-	_ = second.Close()
-	reports.waitFor(t, 5)
+	// again and made its one attempt. TestStoppingTheChannelReportsNothingMore
+	// stops a channel with its connection open.
 	cancel()
 	select {
-	case <-errCh:
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start() = %v, want context.Canceled", err)
+		}
 	case <-time.After(waitDeadline):
 		t.Fatal("Start did not return after cancel")
-	}
-	if after := reports.snapshot(); len(after) != 5 {
-		t.Fatalf("a stopped channel reported %s", describeReports(after[5:]))
 	}
 }
 
@@ -302,5 +310,85 @@ func TestAStoppedWatchReportsNothing(t *testing.T) {
 	reconnecting()
 	if got := reports.snapshot(); len(got) != 1 {
 		t.Fatalf("a stopped watch reported %s", describeReports(got[1:]))
+	}
+}
+
+// closingConn is a long connection that stays up until it is closed and
+// calls back a loss as it closes, as the official client does when it is
+// closed with a connection open. A refusal, if any, is called back once it
+// starts, as a failure the client does not retry.
+type closingConn struct {
+	watch   *connWatch
+	refusal error
+	started chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (c *closingConn) Start(context.Context) error {
+	close(c.started)
+	if c.refusal != nil {
+		c.watch.failed(c.refusal)
+	}
+	<-c.closed
+	return nil
+}
+
+func (c *closingConn) Close() {
+	c.once.Do(func() {
+		c.watch.lost()
+		close(c.closed)
+	})
+}
+
+// Stopping the channel reports nothing more: whether it is cancelled or
+// its connection is refused, the channel stops reporting before it closes
+// the official client, whose Close calls back a loss.
+func TestStoppingTheChannelReportsNothingMore(t *testing.T) {
+	refusal := larkws.NewClientError(403, "application disabled")
+	for _, tc := range []struct {
+		name    string
+		refusal error
+		want    error
+	}{
+		{name: "cancelled", want: context.Canceled},
+		{name: "refused", refusal: refusal, want: refusal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reports := &reconnectReports{}
+			watch := &connWatch{report: reports.add, refused: make(chan error, 1)}
+			conn := &closingConn{watch: watch, refusal: tc.refusal, started: make(chan struct{}), closed: make(chan struct{})}
+			c := startingChannel(conn, knownBot)
+			c.watch = watch
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			errCh := make(chan error, 1)
+			go func() { errCh <- c.Start(ctx) }()
+
+			select {
+			case <-conn.started:
+			case <-time.After(waitDeadline):
+				t.Fatal("the long connection was not started")
+			}
+			if tc.refusal == nil {
+				cancel()
+			}
+			select {
+			case err := <-errCh:
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("Start() = %v, want %v", err, tc.want)
+				}
+			case <-time.After(waitDeadline):
+				t.Fatal("Start did not return")
+			}
+			select {
+			case <-conn.closed:
+			default:
+				t.Fatal("the stopped channel left its long connection open")
+			}
+			if got := reports.snapshot(); len(got) != 0 {
+				t.Fatalf("a stopped channel reported %s", describeReports(got))
+			}
+		})
 	}
 }
