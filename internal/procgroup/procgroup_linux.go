@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -122,8 +123,25 @@ func members(group int) (listing, error) { return procPasses.list(group) }
 var procPasses = &passes{read: readProc}
 
 // passes lists groups by passes over every process, which read calls for.
+// The listings asked for while a pass is under way wait for the next one
+// and share it, so however many groups are listed at once, one pass runs
+// at a time, and each listing is of a pass that began after it was asked
+// for.
 type passes struct {
 	read func() (pass, error)
+
+	mu sync.Mutex
+	// next is the pass the listings asked for since the last one began
+	// wait for, and passing is true while passes run.
+	next    *awaited
+	passing bool
+}
+
+// awaited is a pass listings wait for: done is closed once it is over.
+type awaited struct {
+	done chan struct{}
+	pass pass
+	err  error
 }
 
 // pass is what one read of every process shows: the processes of each
@@ -136,13 +154,40 @@ type pass struct {
 // list lists the processes of a group by a pass that begins after it is
 // called.
 func (s *passes) list(group int) (listing, error) {
-	read, err := s.read()
-	if err != nil {
-		return listing{}, err
+	s.mu.Lock()
+	if s.next == nil {
+		s.next = &awaited{done: make(chan struct{})}
 	}
-	found := listing{members: slices.Clone(read.groups[group]), complete: read.complete}
+	wait := s.next
+	if !s.passing {
+		s.passing = true
+		go s.run()
+	}
+	s.mu.Unlock()
+	<-wait.done
+	if wait.err != nil {
+		return listing{}, wait.err
+	}
+	found := listing{members: slices.Clone(wait.pass.groups[group]), complete: wait.pass.complete}
 	slices.SortFunc(found.members, byPid)
 	return found, nil
+}
+
+// run makes the passes listings wait for, one at a time, until none does.
+func (s *passes) run() {
+	for {
+		s.mu.Lock()
+		wait := s.next
+		s.next = nil
+		if wait == nil {
+			s.passing = false
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+		wait.pass, wait.err = s.read()
+		close(wait.done)
+	}
 }
 
 // readProc reads every process /proc shows.
