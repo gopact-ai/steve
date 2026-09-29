@@ -65,7 +65,11 @@ type LocalTransport struct {
 	// Started, when set, learns the identity of each process group this
 	// transport starts as soon as its leader runs. The leader's environment
 	// then carries the group's mark, and what it spawns inherits it; without
-	// it the leader carries no mark.
+	// it the leader carries no mark. A group whose identity cannot be read
+	// where this platform can read one is not reported, and a host ends its
+	// agent before serving it, as nothing could confirm the group's stop
+	// once this process is gone. Where no identity can be read at all, the
+	// agent runs unreported.
 	Started func(procgroup.Identity)
 	// group makes the calls on the agent's process group; nil makes them
 	// on the kernel.
@@ -122,16 +126,20 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 	if t.group != nil {
 		group = *t.group
 	}
+	var unidentified error
 	if t.Started != nil {
 		// The leader is not waited for before Start returns, so it still
 		// holds its pid and its start time can be read.
-		if id, err := group.capture(cmd.Process.Pid, mark); err != nil {
+		switch id, err := group.capture(cmd.Process.Pid, mark); {
+		case errors.Is(err, procgroup.ErrUnsupported):
 			slog.Warn(fmt.Sprintf("acphost: agent process group not identified: %v", err))
-		} else {
+		case err != nil:
+			unidentified = err
+		default:
 			t.Started(id)
 		}
 	}
-	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, exited: make(chan struct{}), observed: make(chan struct{})}
+	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, unidentified: unidentified, exited: make(chan struct{}), observed: make(chan struct{})}
 	go p.observe()
 	return p, nil
 }
@@ -141,7 +149,10 @@ type localProcess struct {
 	stdout io.ReadCloser
 	stdin  io.WriteCloser
 	group  groupCalls
-	exited chan struct{}
+	// unidentified is why the identity of the group, where it was to be
+	// reported, could not be read.
+	unidentified error
+	exited       chan struct{}
 	// observed is closed once observe is over, err then holding how the
 	// agent ended.
 	observed chan struct{}

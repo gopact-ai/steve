@@ -791,6 +791,14 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	h.capabilities = nil
 
 	go h.watch(generation, proc, conn, exited, settled)
+	if local, ok := proc.(*localProcess); ok && local.unidentified != nil {
+		// No record can name the group, so nothing could confirm its stop
+		// once this process is gone. The agent is ended before it serves
+		// anything, and stays on the books until its stop is confirmed.
+		proc.Kill()
+		h.shutdownLocked()
+		return fmt.Errorf("identify agent process group: %w", local.unidentified)
+	}
 
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
