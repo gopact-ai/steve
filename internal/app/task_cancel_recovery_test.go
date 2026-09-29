@@ -19,15 +19,19 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
 const cancelledRecoveryConversation = "console:main"
 
 type cancelledRecovery struct {
-	tasks  *task.Store
-	cons   *console.Service
-	taskID string
+	coordinator *turn.Coordinator
+	tasks       *task.Store
+	sessions    *state.Store
+	projects    *project.Store
+	cons        *console.Service
+	taskID      string
 }
 
 // openCancelledRecovery restarts into a console exchange whose original
@@ -35,6 +39,13 @@ type cancelledRecovery struct {
 // production channels and callbacks wired. Its recovery puts the block to
 // the owner at once.
 func openCancelledRecovery(t *testing.T) cancelledRecovery {
+	t.Helper()
+	return openRetainedRecovery(t, "")
+}
+
+// openRetainedRecovery is openCancelledRecovery for a turn opened by
+// origin, which is empty for one a person asked for.
+func openRetainedRecovery(t *testing.T, origin string) cancelledRecovery {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -59,7 +70,7 @@ func openCancelledRecovery(t *testing.T) cancelledRecovery {
 	}
 	t.Cleanup(manager.Stop)
 	projects := project.Open(book)
-	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}}}); err != nil {
+	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}}, {ID: "p2", Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
 	attempts := attempt.New(book)
@@ -67,8 +78,9 @@ func openCancelledRecovery(t *testing.T) cancelledRecovery {
 		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout = book, catalog, sessions, manager, 10*time.Second
 		o.Tasks, o.Node, o.Executions, o.Attempts = tasks, "hub", execution.New(t.Context(), tasks), attempts
 		o.Projects, o.DefaultProject = projects, "p"
+		o.ConsoleCompletionGuard = console.CheckTaskCompletionTx
 	})
-	f := cancelledRecovery{tasks: tasks, taskID: seedCancelledRecovery(t, book, tasks, attempts)}
+	f := cancelledRecovery{coordinator: coordinator, tasks: tasks, sessions: sessions, projects: projects, taskID: seedCancelledRecovery(t, book, tasks, attempts, origin)}
 	if _, err := attempts.PrepareRecovery(t.Context(), "startup"); err != nil {
 		t.Fatal(err)
 	}
@@ -106,12 +118,12 @@ func openCancelledRecovery(t *testing.T) cancelledRecovery {
 	return f
 }
 
-// seedCancelledRecovery records a console turn whose native command was
-// accepted on node-a before the restart, and the exchange still waiting
-// for it. It returns the turn's task.
-func seedCancelledRecovery(t *testing.T, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service) string {
+// seedCancelledRecovery records a console turn opened by origin whose
+// native command was accepted on node-a before the restart, and the
+// exchange still waiting for it. It returns the turn's task.
+func seedCancelledRecovery(t *testing.T, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service, origin string) string {
 	t.Helper()
-	tracked, err := tasks.Create(task.Task{Transport: "console", Channel: cancelledRecoveryConversation, Member: "worker", Requester: "owner", ProjectID: "p", Goal: "original goal"})
+	tracked, err := tasks.Create(task.Task{Transport: "console", Channel: cancelledRecoveryConversation, Member: "worker", Requester: "owner", ProjectID: "p", Origin: origin, Goal: "original goal"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +147,7 @@ func seedCancelledRecovery(t *testing.T, book *ledger.Ledger, tasks *task.Store,
 			t.Fatal(err)
 		}
 	}
-	e := consoleapi.Exchange{ID: "e1", Conversation: cancelledRecoveryConversation, Input: "original goal", Requester: "owner", State: consoleapi.ExchangeRecovering, EnqueuedAt: time.Now(), StartedAt: time.Now()}
+	e := consoleapi.Exchange{ID: "e1", Conversation: cancelledRecoveryConversation, Input: "original goal", Requester: "owner", Origin: origin, State: consoleapi.ExchangeRecovering, EnqueuedAt: time.Now(), StartedAt: time.Now()}
 	if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
 		return console.StoreStateTx(tx, console.DurableState{Exchanges: map[string][]console.DurableExchange{cancelledRecoveryConversation: {{Exchange: e}}}})
 	}); err != nil {
@@ -157,6 +169,21 @@ func (f cancelledRecovery) pendingOffering(choice string) (consoleapi.PendingQue
 		}
 	}
 	return consoleapi.PendingQuestion{}, false
+}
+
+// awaitOffering waits until the exchange asks a question that offers choice.
+func (f cancelledRecovery) awaitOffering(t *testing.T, choice string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, ok := f.pendingOffering(choice); ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recovery never offered %q: questions %+v, exchange %+v", choice, f.cons.Questions(cancelledRecoveryConversation), f.exchange())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (f cancelledRecovery) exchange() consoleapi.Exchange {
