@@ -23,6 +23,18 @@ import (
 // turn working in the main directory.
 const busyText = "排队中：主目录正被别的回合占用，空出来就落地"
 
+// A parent cannot settle a conflict or land a result itself. What follows
+// a conflict's paths, and its reason for an apply conflict, is what the
+// user can do about it.
+const (
+	mergeHint = "。你不能自己解决；用户可以发 /resolve，或在控制台「待处理」的「合并冲突」里处理"
+	applyHint = "。你不能自己重新落地；用户处理好原因后，可以在控制台「待处理」的「合并冲突」里点「重新落地」"
+)
+
+// unfinishedText is what a parent is told of a result whose landing
+// stopped at a conflict it could neither record nor close.
+const unfinishedText = "未落地：这次落地没能完成，结果仍在落地队列里，Steve 会接着处理"
+
 // conflictingResults publishes two results that change notes.md from the
 // same canonical base in different ways: whichever lands second conflicts.
 func conflictingResults(t *testing.T, w *world) (project.Project, artifact.Manifest, artifact.Manifest) {
@@ -78,7 +90,7 @@ func TestLandForSaysAResultStuckOnAConflictIsStuck(t *testing.T) {
 		t.Fatalf("second landing did not conflict: %v", err)
 	}
 
-	if got := w.service.landFor(t.Context(), parent, nil)(childWith(second.ID)); got != "落地冲突：notes.md" {
+	if got := w.service.landFor(t.Context(), parent, nil)(childWith(second.ID)); got != "落地冲突：notes.md"+mergeHint {
 		t.Fatalf("landing text for a stuck result = %q; want the conflict and its path", got)
 	}
 }
@@ -99,7 +111,7 @@ func TestLandForSaysAConflictReachedNowIsAConflict(t *testing.T) {
 	if got := landing(childWith(first.ID)); !strings.HasPrefix(got, "已落地主目录") {
 		t.Fatalf("landing text for the landed result = %q", got)
 	}
-	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md" {
+	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md"+mergeHint {
 		t.Fatalf("landing text for a result that conflicted now = %q; want the conflict and its path", got)
 	}
 }
@@ -125,7 +137,7 @@ func TestLandForSaysAConflictReachedNowIsAConflictOnceTheCanonicalMoves(t *testi
 	if got := landing(childWith(later.ID)); !strings.HasPrefix(got, "已落地主目录") {
 		t.Fatalf("landing text for the result landed after the conflict = %q", got)
 	}
-	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md" {
+	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md"+mergeHint {
 		t.Fatalf("landing text for a result that conflicted before the canonical moved = %q; want the conflict and its path", got)
 	}
 }
@@ -153,7 +165,7 @@ func TestLandForSaysAResultThePassSkippedAsStuckIsStuck(t *testing.T) {
 	if got := landing(childWith(other.ID)); !strings.HasPrefix(got, "已落地主目录") {
 		t.Fatalf("landing text for the result landed in the pass = %q", got)
 	}
-	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md" {
+	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md"+mergeHint {
 		t.Fatalf("landing text for a result the pass skipped as stuck = %q; want the conflict and its path", got)
 	}
 }
@@ -243,7 +255,7 @@ func TestLandForSaysAStuckResultIsStuckWhileTheMainDirectoryIsBusy(t *testing.T)
 	busyMainDirectory(t, w)
 
 	landing := w.service.landFor(t.Context(), parent, nil)
-	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md" {
+	if got := landing(childWith(second.ID)); got != "落地冲突：notes.md"+mergeHint {
 		t.Fatalf("landing text for a stuck result while the main directory is busy = %q; want the conflict and its path", got)
 	}
 	if got := landing(childWith(queued.ID)); got != busyText {
@@ -251,14 +263,14 @@ func TestLandForSaysAStuckResultIsStuckWhileTheMainDirectoryIsBusy(t *testing.T)
 	}
 }
 
-// An apply conflict says why it stopped. Reached in this pass, it reads as
-// the queue keeps it for every later pass.
-func TestLandForSaysAnApplyConflictAsLaterPassesDo(t *testing.T) {
+// nestedRepoResult publishes a result that writes inner/lib.go, which the
+// main directory keeps in a nested git repository: landing it stops at an
+// apply conflict.
+func nestedRepoResult(t *testing.T, w *world) artifact.Manifest {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
-	w := newWorld(t)
-	parent := w.running(t, "codex")
 	ctx := t.Context()
 	inner := filepath.Join(w.home, "inner")
 	if err := os.MkdirAll(inner, 0o755); err != nil {
@@ -290,12 +302,30 @@ func TestLandForSaysAnApplyConflictAsLaterPassesDo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.artifacts.Defer(ctx, "p", m.ID, "test"); err != nil {
-		t.Fatal(err)
+	return m
+}
+
+// queueAll queues results for project p's next landing pass, in order.
+func queueAll(t *testing.T, w *world, results ...artifact.Manifest) {
+	t.Helper()
+	for _, m := range results {
+		if err := w.artifacts.Defer(t.Context(), "p", m.ID, "test"); err != nil {
+			t.Fatal(err)
+		}
 	}
+}
+
+// An apply conflict says why it stopped. Reached in this pass, it reads as
+// the queue keeps it for every later pass.
+func TestLandForSaysAnApplyConflictAsLaterPassesDo(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	ctx := t.Context()
+	m := nestedRepoResult(t, w)
+	queueAll(t, w, m)
 
 	now := w.service.landFor(ctx, parent, nil)(childWith(m.ID))
-	if !strings.HasPrefix(now, "落地冲突：") || !strings.Contains(now, "nested git repository (inner)") || !strings.HasSuffix(now, ": inner/lib.go") {
+	if !strings.HasPrefix(now, "落地冲突：") || !strings.Contains(now, "nested git repository (inner)") || !strings.HasSuffix(now, ": inner/lib.go"+applyHint) {
 		t.Fatalf("landing text for an apply conflict reached now = %q; want the conflict, why and its path", now)
 	}
 	if later := w.service.landFor(ctx, parent, nil)(childWith(m.ID)); later != now {
@@ -319,6 +349,14 @@ func (n hookedNodes) Artifact(ctx context.Context, node string, req ops.Request)
 // go through nodes, so this is how a test acts in the middle of a landing.
 func homeOnNode(t *testing.T, w *world, before func(ops.Request)) {
 	t.Helper()
+	ownStores(t, w, "node-a", hookedNodes{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, before: before})
+}
+
+// ownStores gives the world's landings a ledger of the test's own, w.book,
+// with project p's main directory on node ("" is here) and its artifact
+// operations run by nodes.
+func ownStores(t *testing.T, w *world, node string, nodes artifact.Nodes) {
+	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -326,11 +364,11 @@ func homeOnNode(t *testing.T, w *world, before func(ops.Request)) {
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
 	home := t.TempDir()
-	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: "node-a", Path: home}}}); err != nil {
+	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: node, Path: home}}}); err != nil {
 		t.Fatal(err)
 	}
-	nodes := hookedNodes{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, before: before}
-	w.artifacts, w.attempts, w.home = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, nodes), attempt.New(book), home
+	w.book, w.home = book, home
+	w.artifacts, w.attempts = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, nodes), attempt.New(book)
 	w.service.SetLedger(w.attempts, w.artifacts)
 }
 
@@ -362,7 +400,7 @@ func TestLandForSaysARecoveredApplyConflictAsLaterPassesDo(t *testing.T) {
 	}
 
 	now := w.service.landFor(t.Context(), parent, nil)(childWith(m.ID))
-	if !strings.HasPrefix(now, "落地冲突：") || strings.Contains(now, "recovery:") || !strings.HasSuffix(now, ": a.txt") {
+	if !strings.HasPrefix(now, "落地冲突：") || strings.Contains(now, "recovery:") || !strings.HasSuffix(now, ": a.txt"+applyHint) {
 		t.Fatalf("landing text for an apply conflict recovery reached now = %q; want the conflict, why and its path", now)
 	}
 	if later := w.service.landFor(t.Context(), parent, nil)(childWith(m.ID)); later != now {
@@ -407,7 +445,70 @@ func TestLandForSaysARecoveredApplyConflictWithoutItsCauseOnceItsPathMoves(t *te
 	if got := landing(childWith(other.ID)); !strings.HasPrefix(got, "已落地主目录") {
 		t.Fatalf("landing text for the result landed after the conflict = %q", got)
 	}
-	if got := landing(childWith(m.ID)); !strings.HasPrefix(got, "落地冲突：") || strings.Contains(got, "recovery:") || !strings.HasSuffix(got, ": a.txt") {
+	if got := landing(childWith(m.ID)); !strings.HasPrefix(got, "落地冲突：") || strings.Contains(got, "recovery:") || !strings.HasSuffix(got, ": a.txt"+applyHint) {
 		t.Fatalf("landing text for an apply conflict recovery reached before its path moved = %q; want the conflict, why and its path", got)
+	}
+}
+
+// A result that did not land is one its parent can do nothing about: it
+// cannot settle a conflict, nor land a result again. It is told what the
+// user can do, and never the landing's internal state.
+func TestLandForTellsAParentWhatComesOfAResultThatDidNotLand(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// queue queues the result the parent hears about, among what
+		// stops it from landing.
+		queue func(t *testing.T, w *world) artifact.Manifest
+		// want is what the parent is told, once the pass is over.
+		want func(t *testing.T, w *world) string
+	}{{
+		name: "merge conflict",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			_, first, second := conflictingResults(t, w)
+			queueAll(t, w, first, second)
+			return second
+		},
+		want: func(*testing.T, *world) string { return "落地冲突：notes.md" + mergeHint },
+	}, {
+		name: "apply conflict",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			m := nestedRepoResult(t, w)
+			queueAll(t, w, m)
+			return m
+		},
+		want: func(t *testing.T, w *world) string {
+			stuck, err := w.artifacts.Stuck(t.Context(), "p")
+			if err != nil || len(stuck) != 1 || !strings.Contains(stuck[0].Reason, "nested git repository (inner)") {
+				t.Fatalf("stuck results = %+v err=%v; want the one apply conflict", stuck, err)
+			}
+			return "落地冲突：" + stuck[0].Reason + ": inner/lib.go" + applyHint
+		},
+	}, {
+		// The landing can write neither the conflict it reached nor its
+		// own close: it is left where it stopped.
+		name: "conflict the landing could not record",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			ownStores(t, w, "", artifact.LocalNodes{Dir: t.TempDir()})
+			_, first, second := conflictingResults(t, w)
+			if _, err := w.book.DB().Exec(`CREATE TRIGGER refuse_conflict BEFORE UPDATE ON operations
+				WHEN NEW.kind = 'landing' AND NEW.state = 'merge-conflicted'
+				BEGIN SELECT RAISE(ABORT, 'conflict not recorded'); END`); err != nil {
+				t.Fatal(err)
+			}
+			queueAll(t, w, first, second)
+			return second
+		},
+		want: func(*testing.T, *world) string { return unfinishedText },
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			parent := w.running(t, "codex")
+			m := tc.queue(t, w)
+
+			got := w.service.landFor(t.Context(), parent, nil)(childWith(m.ID))
+			if want := tc.want(t, w); got != want {
+				t.Fatalf("landing text = %q; want %q", got, want)
+			}
+		})
 	}
 }
