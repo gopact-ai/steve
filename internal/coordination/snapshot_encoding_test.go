@@ -4,7 +4,16 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log/slog"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/gopact-ai/steve/internal/logs"
+	"github.com/hashicorp/raft"
 )
 
 type snapshotBytesApplication struct{ data []byte }
@@ -104,6 +113,75 @@ func TestSnapshotEnvelopeRejectsDamageAndCancelsFailedSink(t *testing.T) {
 				t.Fatal("damaged snapshot changed application")
 			}
 		})
+	}
+}
+
+// logBuffer holds log output that a goroutine left by an earlier test may
+// also write to.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A restored snapshot leaves one line in the process log with the applied
+// index it restores, the bytes read and how long it took, so the log shows
+// how often a replica catches up through a whole snapshot. A snapshot that
+// is refused leaves no such line.
+func TestRestoreLogsItsAppliedIndexBytesAndDuration(t *testing.T) {
+	output := &logBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(logs.NewHandler(output)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	source := newMachine("snapshot", &snapshotBytesApplication{data: bytes.Repeat([]byte("x"), 4096)})
+	source.StoreConfiguration(42, raft.Configuration{Servers: []raft.Server{{ID: "a", Address: "a", Suffrage: raft.Voter}}})
+	snapshot, err := source.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Release()
+	sink := &snapshotMemorySink{}
+	if err := snapshot.Persist(sink); err != nil {
+		t.Fatal(err)
+	}
+	raw := sink.Bytes()
+	for name, refused := range map[string]struct {
+		cluster string
+		input   []byte
+	}{
+		"truncated":     {"snapshot", raw[:len(raw)-1]},
+		"other-cluster": {"other", raw},
+	} {
+		target := newMachine(refused.cluster, &snapshotBytesApplication{})
+		if err := target.Restore(io.NopCloser(bytes.NewReader(refused.input))); err == nil {
+			t.Fatalf("%s snapshot accepted", name)
+		}
+	}
+	if strings.Contains(output.String(), "snapshot restored") {
+		t.Fatalf("a refused snapshot was logged as restored:\n%s", output.String())
+	}
+	target := newMachine("snapshot", &snapshotBytesApplication{})
+	if err := target.Restore(io.NopCloser(bytes.NewReader(raw))); err != nil {
+		t.Fatal(err)
+	}
+	line := regexp.MustCompile(`(?m)^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} coordination: snapshot restored applied_index=42 bytes=` + strconv.Itoa(len(raw)) + ` took=(\S+)$`)
+	logged := line.FindAllStringSubmatch(output.String(), -1)
+	if len(logged) != 1 {
+		t.Fatalf("restore of %d bytes at applied index 42 logged %d matching lines, want 1:\n%s", len(raw), len(logged), output.String())
+	}
+	if _, err := time.ParseDuration(logged[0][1]); err != nil {
+		t.Fatalf("took=%q is not a duration: %v", logged[0][1], err)
 	}
 }
 
