@@ -362,10 +362,9 @@ func (r *Runtime) revoke(g *generation, err error) {
 // entry the replica committed stays unapplied for longer than ApplyTimeout.
 // A follower learns its commit index only with entries it holds, so one
 // whose replication falls behind while heartbeats still arrive looks caught
-// up here. Its next write finds out: the quorum read it starts with gives
-// the generation up if another node was named meanwhile, and otherwise
-// fails the write as unavailable once the replica has not caught up within
-// ApplyTimeout.
+// up here; a node that does not lead consensus therefore also keeps its
+// generation only while a quorum confirms its replica, which it asks the
+// leader for once every ApplyTimeout (see replicaConfirmation).
 func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
