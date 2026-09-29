@@ -318,6 +318,37 @@ func TestClientSaysNoMemberTookACommandItNeverSent(t *testing.T) {
 	}
 }
 
+// Only a call that runs out of time is one the member did not answer. A
+// member that was sent the command in full and closes the connection
+// without answering failed at once, as when its process stops, so the call
+// still says that no member took the command.
+func TestClientSaysNoMemberTookACommandTheLeaderDroppedWithoutAnswering(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	var dropped atomic.Int32
+	peers.answer = func(w http.ResponseWriter) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		dropped.Add(1)
+		conn.Close()
+	}
+	peers.elected.Store(true)
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: time.Second})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	_, err := client.Join(t.Context(), JoinRequest{ID: "join-dropped", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if dropped.Load() == 0 {
+		t.Fatalf("the leader never got the join: %v", err)
+	}
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no member took join within 1s") || strings.Contains(err.Error(), "was sent") {
+		t.Fatalf("a join the leader dropped without answering returned %v", err)
+	}
+}
+
 // A member that refuses the command later in the window names the leader,
 // which may still be working on it, so that refusal does not hide that the
 // leader was sent the command and did not answer.
