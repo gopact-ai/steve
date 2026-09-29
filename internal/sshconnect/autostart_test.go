@@ -720,6 +720,42 @@ func TestAutoStartDoesNotTryAMachineItCannotReach(t *testing.T) {
 	}
 }
 
+// SSH refusing the machine's host key or the account's credentials is not
+// something a later try gets past on its own, nor something to count
+// against the machine: automatic start stays blocked, says what SSH
+// refused and what to do about it, records that once, and tries again no
+// more often than every ten minutes.
+func TestAutoStartStaysBlockedWhileSSHRefusesTheMachineAndSaysWhy(t *testing.T) {
+	zh := i18n.New(i18n.LocaleZH)
+	for stderr, refused := range map[string][2]i18n.Key{
+		"Host key verification failed.":                     {i18n.SSHHostKey, i18n.SSHHostKeyFix},
+		"owner@dev.example: Permission denied (publickey).": {i18n.SSHAuthFailed, i18n.SSHAuthFailedFix},
+	} {
+		svc, runner, _, clock := autoStartFixture(t)
+		runner.stderr = stderr
+		sweepOnce(svc)
+		clock.Advance(autoStartAfter)
+		for range 8 {
+			sweepOnce(svc)
+			clock.Advance(autoStartBlockedBackoff)
+		}
+		sweepOnce(svc)
+		state := autoState(t, svc, "node-1")
+		if state.State != "blocked" || state.Attempts != 0 || state.LastError != zh.T(refused[0]) || autoSuggestion(t, svc, "node-1") != zh.T(refused[1]) {
+			t.Fatalf("%q: %#v", stderr, state)
+		}
+		if !state.NextAt.Equal(clock.Now().Add(autoStartBlockedBackoff)) {
+			t.Fatalf("%q: tried again at %v, %v after the last try", stderr, state.NextAt, state.NextAt.Sub(clock.Now()))
+		}
+		if len(runner.restarts()) != 0 {
+			t.Fatalf("%q: a machine SSH refuses was started", stderr)
+		}
+		if records := svc.backend.(*restartBackend).recorded(); len(records) != 1 || records[0].Reason != zh.T(refused[0]) {
+			t.Fatalf("%q: records = %#v", stderr, records)
+		}
+	}
+}
+
 // A machine that answers the cluster is only watched.
 func TestAutoStartLeavesAnAnsweringMachineAlone(t *testing.T) {
 	svc, runner, backend, clock := autoStartFixture(t)
