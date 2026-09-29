@@ -30,6 +30,7 @@ await page.route("**/*", async (route) => {
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0 } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
     if (p === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });
+    if (p === "/console/ssh/restarts/build-node") return route.fulfill({ json: {} });
     if (p === "/console/nodes/build-node/agents") {
         if (req.method() === "GET") { f.reads++; return f.discoveryError ? route.fulfill({ status: 503, json: { error: "The node is temporarily unreachable" } }) : route.fulfill({ json: { revision: f.revision, agents: f.agents } }); }
         const body = req.postDataJSON(); f.posts.push(body);
