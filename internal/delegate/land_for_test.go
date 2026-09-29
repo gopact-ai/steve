@@ -32,8 +32,10 @@ const (
 )
 
 // unfinishedText is what a parent is told of a result whose landing
-// stopped at a conflict it could neither record nor close.
-const unfinishedText = "未落地：这次落地没能完成，结果仍在落地队列里，Steve 会接着处理"
+// stopped at a conflict it could neither record nor close. Whether the
+// conflict is recorded later, and who settles it then, is not known, so
+// it says only what is certain and where a recorded conflict is listed.
+const unfinishedText = "未落地：这次落地遇到冲突，没有完成；主目录没有改动，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
 
 // conflictingResults publishes two results that change notes.md from the
 // same canonical base in different ways: whichever lands second conflicts.
