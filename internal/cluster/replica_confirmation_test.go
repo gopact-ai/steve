@@ -11,12 +11,6 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 )
 
-// settleConfirmation records the result of a confirmation of r's replica
-// that started at started.
-func settleConfirmation(r *Runtime, started time.Time, err error) {
-	r.confirmation.settle(started, err)
-}
-
 // A coordinator that does not lead consensus keeps its business generation
 // only while a quorum keeps confirming its replica: it gives the generation
 // up when a confirmation fails, or when none has succeeded for three
@@ -52,9 +46,9 @@ func TestCoordinatorThatDoesNotLeadConsensusKeepsItsGenerationWhileAQuorumConfir
 				current: &generation{Activation: Activation{NodeID: self, Assignment: assignment, WriterGeneration: 7, Context: ctx}, cancel: cancel},
 			}
 			// The generation started on a quorum read at 0.
-			settleConfirmation(runtime, started, nil)
+			runtime.confirmation.settle(started, nil)
 			if tc.failed {
-				settleConfirmation(runtime, started.Add(timeout), failed)
+				runtime.confirmation.settle(started.Add(timeout), failed)
 			}
 			seen := observation{at: started.Add(tc.after), log: coordination.LogProgress{Committed: 10, Applied: 10}}
 			seen.Healthy, seen.LeaderID, seen.IsLeader = true, tc.leader, tc.leader == self
