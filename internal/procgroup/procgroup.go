@@ -84,9 +84,11 @@ func NewMark() string {
 // group has stopped when the kernel finds no process under its id, or when
 // only zombies are left under it as Inspect judges, so a member this
 // process cannot see keeps it unconfirmed. When it cannot show which group
-// runs under the id, or this process runs in the group it would signal, it
-// returns ErrUnproven, and when members outlive within after being killed,
-// ErrRunning.
+// runs under the id, it looks again, signalling nothing, until within has
+// passed, as the group may have ended while it was looked at, and then
+// returns ErrUnproven; it returns ErrUnproven at once when this process
+// runs in the group it would signal, and when members outlive within after
+// being killed, ErrRunning.
 func Settle(id Identity, ran, here Place, within time.Duration) error {
 	return settle(id, ran, here, within, system)
 }
@@ -125,6 +127,15 @@ func settle(id Identity, ran, here Place, within time.Duration, k kernel) error 
 	deadline := time.Now().Add(within)
 	for delay := time.Millisecond; ; delay = min(2*delay, 100*time.Millisecond) {
 		owned, err := recorded(id, k)
+		if errors.Is(err, ErrUnproven) && !time.Now().After(deadline) {
+			// A group can end while it is looked at: its last member
+			// reaped between the kernel finding it and the listing, a
+			// zombie between two listings, a running member before its
+			// mark is read. Nothing is signalled until a later look shows
+			// which group runs under the id.
+			time.Sleep(delay)
+			continue
+		}
 		if err != nil || !owned {
 			return err
 		}

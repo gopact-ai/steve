@@ -208,7 +208,7 @@ func TestSettleEndsAMarkedGroupItsLeaderLeft(t *testing.T) {
 // recorded one, so nothing is signalled and the stop stays unconfirmed.
 func TestSettleLeavesAnUnmarkedGroupAlone(t *testing.T) {
 	member, id, _ := orphan(t, "other", "m")
-	if err := Settle(id, here(t), here(t), 5*time.Second); !errors.Is(err, ErrUnproven) {
+	if err := Settle(id, here(t), here(t), 200*time.Millisecond); !errors.Is(err, ErrUnproven) {
 		t.Fatalf("Settle = %v, want %v", err, ErrUnproven)
 	}
 	if !running(member) {
@@ -222,7 +222,7 @@ func TestSettleLeavesAnUnmarkedGroupAlone(t *testing.T) {
 func TestSettleDoesNotTakeAHiddenMemberForAnEmptyGroup(t *testing.T) {
 	member, id, _ := orphan(t, "m", "m")
 	hidden := func(int) (listing, error) { return listing{}, nil }
-	if err := settle(id, here(t), here(t), time.Second, kernel{gone: gone, list: hidden, kill: Kill}); !errors.Is(err, ErrUnproven) {
+	if err := settle(id, here(t), here(t), 200*time.Millisecond, kernel{gone: gone, list: hidden, kill: Kill}); !errors.Is(err, ErrUnproven) {
 		t.Fatalf("settle = %v, want %v", err, ErrUnproven)
 	}
 	if !running(member) {
