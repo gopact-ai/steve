@@ -192,15 +192,24 @@ func (s *Service) running(ids map[string]string, nodeID string) bool {
 }
 
 // settle ends a running upgrade or restart with its result, readable for
-// as long as an installation plan would be.
+// as long as an installation plan would be. A manual restart or an upgrade
+// notes when it settled, for automatic start to set aside what it saw of
+// the machine before.
 func (s *Service) settle(stored *storedPlan, result InstallResult, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now()
 	stored.running, stored.done = false, true
 	stored.result, stored.err = cloneResult(result), err
-	stored.plan.ExpiresAt = s.now().Add(s.ttl).UTC()
+	stored.plan.ExpiresAt = now.Add(s.ttl).UTC()
 	id := stored.plan.ID
 	stored.timer = time.AfterFunc(s.ttl, func() { s.expire(id) })
+	if !stored.automatic {
+		if s.settled == nil {
+			s.settled = map[string]time.Time{}
+		}
+		s.settled[stored.plan.Request.Name] = now
+	}
 }
 
 // record hands a restart to the backend to keep among the cluster's

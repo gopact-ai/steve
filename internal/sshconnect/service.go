@@ -215,6 +215,10 @@ type Service struct {
 	// each machine, by node ID.
 	upgrades map[string]string
 	restarts map[string]string
+	// settled is when each machine's latest manual restart or upgrade
+	// settled: a look automatic start took at it before then saw it as it
+	// was before.
+	settled map[string]time.Time
 	// watches is what automatic start keeps of each machine it watches;
 	// autoCtx ends with the service, and with it every start it runs.
 	watches          map[string]*autoWatch

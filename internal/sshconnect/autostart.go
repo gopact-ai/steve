@@ -139,6 +139,7 @@ func (s *Service) sweep() {
 		return
 	}
 	ctx, text := s.speak(s.autoCtx)
+	began := s.now()
 	watched := backend.Watched(ctx)
 	type look struct{ answers, reachable bool }
 	looks := make([]look, len(watched))
@@ -169,6 +170,11 @@ func (s *Service) sweep() {
 		if watch == nil {
 			watch = &autoWatch{state: AutoStartState{State: autoWatching, Limit: autoStartLimit}}
 			s.watches[nodeID] = watch
+		}
+		if s.settled[nodeID].After(began) {
+			// A manual restart or an upgrade settled while the machine was
+			// looked at: what the look saw is from before it.
+			continue
 		}
 		if s.due(text, watch, nodeID, looks[i].answers, looks[i].reachable, now) {
 			s.attempt(ctx, backend, watch, nodeID, now)
@@ -306,6 +312,21 @@ func (s *Service) concluded(ctx context.Context, watch *autoWatch, nodeID, outco
 func (s *Service) resumeAutoStart(nodeID string) {
 	if watch := s.watches[nodeID]; watch != nil {
 		watch.forget()
+		watch.state.State = autoWatching
+	}
+	s.offlineAfresh(nodeID)
+}
+
+// offlineAfresh counts a machine's time offline, and online, afresh from
+// the next look: its peer was just stopped and started by hand or by an
+// upgrade, or that was tried. s.mu is held.
+func (s *Service) offlineAfresh(nodeID string) {
+	watch := s.watches[nodeID]
+	if watch == nil {
+		return
+	}
+	watch.state.OfflineSince, watch.onlineSince = time.Time{}, time.Time{}
+	if watch.state.State == autoWaiting {
 		watch.state.State = autoWatching
 	}
 }

@@ -101,6 +101,9 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 	s.upgrades[nodeID] = id
 	s.mu.Unlock()
 	result, err := s.upgrade(ctx, backend, id, nodeID)
+	s.mu.Lock()
+	s.offlineAfresh(nodeID)
+	s.mu.Unlock()
 	s.settle(stored, result, err)
 	return result, err
 }
