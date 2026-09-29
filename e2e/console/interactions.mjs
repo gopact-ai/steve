@@ -2838,6 +2838,41 @@ checks["fleet-synthesized-snapshot"] = async (f) => {
     await close(opened);
 };
 
+// A row's drawer opens as often as its row is clicked: closing the drawer
+// lets go of the row, so clicking the same row again opens it again.
+async function reopensDrawer(row, drawer, what) {
+    await row.click();
+    await drawer.waitFor();
+    await drawer.getByRole("button", { name: "关闭", exact: true }).click();
+    await drawer.waitFor({ state: "detached" });
+    await row.click();
+    await drawer.waitFor().catch(() => assert.fail(`${what} does not open again after its drawer was closed`));
+}
+
+checks["fleet-machine-reopens"] = async (f) => {
+    const nodes = [{ name: "hub", role: "hub", up: true, version: "test", harnesses: [] }, { name: "worker", role: "node", up: true, version: "test", harnesses: [] }];
+    const state = { ...usageState(), hub: { node: "hub", version: "test", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
+    await reopensDrawer(f.page.locator("#fleet-machines").getByRole("row", { name: /worker/ }), f.page.getByRole("dialog", { name: "worker", exact: true }), "A machine");
+};
+
+checks["fleet-agent-reopens"] = async (f) => {
+    const state = { ...usageState(), agents: [{ id: "builder", harness: "mock", eligible: true, activities: [] }] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
+    await reopensDrawer(f.page.getByRole("row", { name: /builder/ }), f.page.getByRole("dialog", { name: "builder", exact: true }), "An agent");
+};
+
+checks["mcp-deployment-reopens"] = async (f) => {
+    await f.page.route("**/console/mcp", (route) => route.fulfill({ json: {
+        platform: [], machines: [],
+        deployments: [{ node: "test-node", name: "example-service", type: "http", url: "https://example.test/mcp", agents: [] }],
+    } }));
+    await f.page.getByRole("link", { name: "MCP", exact: true }).click();
+    await reopensDrawer(f.page.getByRole("row").filter({ hasText: "example-service" }), f.page.getByRole("dialog", { name: "example-service", exact: true }), "An installed MCP service");
+};
+
 async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";
