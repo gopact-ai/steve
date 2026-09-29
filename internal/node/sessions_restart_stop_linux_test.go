@@ -19,6 +19,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/procgroup"
 )
 
 // orphaningShell starts the agent the way a harness can: through a shell
@@ -257,6 +258,61 @@ func TestNodeSessionRestartLeavesAnUnprovenGroupUntilItEnds(t *testing.T) {
 	state, err = restarted.sessions.Do(t.Context(), "cluster-1", req)
 	if err != nil || !state.ProcessStopped {
 		t.Fatalf("the stop was not confirmed after the group ended: state=%s process_stopped=%v: %v", state.State, state.ProcessStopped, err)
+	}
+}
+
+// A killed node can leave the process groups of several agents, and ending
+// each may take all of recordedGroupWithin only to find it cannot be
+// confirmed. The restarted node tries them all at once, so how long it
+// takes to start does not grow with how many were left.
+func TestNodeSessionRestartEndsTheGroupsAKilledNodeLeftTogether(t *testing.T) {
+	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}}
+	killed := NewServer(cfg)
+	if err := killed.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	req := nodeSessionRequest(nodewire.SessionActionOpen)
+	const left = 3
+	for i := range left {
+		// A leader killed but not yet reaped keeps its group's id, so no
+		// attempt to end the group confirms it.
+		leader := exec.Command("sleep", fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000))
+		leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := leader.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_ = leader.Process.Kill()
+			_ = leader.Wait()
+		})
+		id, err := procgroup.Capture(leader.Process.Pid, procgroup.NewMark())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := leader.Process.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		open := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, fmt.Sprintf("open-%d", i), "orphaning")
+		one := &ownedSession{service: killed.sessions, changed: make(chan struct{})}
+		if err := one.commitLocked(sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: fmt.Sprintf("open-%d", i), CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{},
+			Process: sessionProcess{Identity: id, Place: killed.sessions.place},
+			State:   nodewire.SessionState{ID: open, Binding: req.Binding, Harness: "orphaning", State: nodewire.SessionInterrupted, Questions: []nodewire.SessionQuestion{}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	killed.sessions.Close()
+	restarted := NewServer(cfg)
+	began := time.Now()
+	if err := restarted.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	took := time.Since(began)
+	defer restarted.sessions.Close()
+	if took >= (left-1)*recordedGroupWithin {
+		t.Fatalf("the restarted node took %s to try ending %d groups given %s each", took, left, recordedGroupWithin)
+	}
+	if restarted.sessions.processesStopped() {
+		t.Fatal("a stop was confirmed while the recorded leaders were not reaped")
 	}
 }
 
