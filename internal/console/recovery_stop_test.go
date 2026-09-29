@@ -677,22 +677,23 @@ func TestHistoricalStopDoesNotInferAnUnrelatedRecoveryTarget(t *testing.T) {
 
 // cancelledTaskDriver holds the original execution of a task a person
 // cancelled: nothing resumes it any more, and its stop is confirmed once
-// confirmed says so.
+// confirmed says so. exchange is the exchange the execution answers.
 type cancelledTaskDriver struct {
 	*recoveryDriver
+	exchange  string
 	stops     atomic.Int32
 	confirmed atomic.Bool
 }
 
 func newCancelledTaskDriver() *cancelledTaskDriver {
-	return &cancelledTaskDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
+	return &cancelledTaskDriver{exchange: "e1", recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
 		return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "The task's authorization changed.", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}, Cause: errors.New("task execution was stopped")}
 	}}}
 }
 
 func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
 	d.stops.Add(1)
-	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != "web-e1" || req.SenderOpenID != "owner" {
+	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != AnchorMark+d.exchange || req.SenderOpenID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
 	}
 	if !d.confirmed.Load() {
@@ -727,11 +728,11 @@ func questionByID(s *Service, id string) consoleapi.PendingQuestion {
 	return consoleapi.PendingQuestion{}
 }
 
-// A task cancelled while its exchange was recovering can no longer be
-// resumed, so the recovery stops offering to and does what a stop asked
-// for from its question would: the exchange closes as cancelled once the
-// original execution is confirmed stopped, and until then it holds the
-// queue on a card that says the stop is being confirmed.
+// A task cancelled while its exchange runs or recovers can no longer be
+// resumed, so the recovery stops offering to and turns to confirming that
+// the original execution stopped: the exchange closes as cancelled once
+// the stop is confirmed, and until then it holds the queue on a card that
+// says the stop is being confirmed.
 func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 	t.Run("stop confirms", func(t *testing.T) {
 		s := impatient(New(&echo{}, "owner", nil))
@@ -819,4 +820,79 @@ func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 			t.Fatal("the stop of the cancelled task was not attempted")
 		}
 	})
+	t.Run("cancelled while still running", func(t *testing.T) {
+		h := &queueHandler{started: make(chan *queueCall, 1)}
+		s := impatient(New(h, "owner", nil))
+		s.EnableRetainedRecovery(t.Context())
+		if err := s.Persist(&memDoc{}); err != nil {
+			t.Fatal(err)
+		}
+		driver := newCancelledTaskDriver()
+		driver.confirmed.Store(true)
+		if err := s.RecoverChats(t.Context(), driver); err != nil {
+			t.Fatal(err)
+		}
+		e := enqueueForTest(t, s, "main", "original prompt")
+		call := nextCall(t, h)
+		driver.exchange = e.ID
+		driver.candidates = []turn.RetainedChat{{AttemptID: "attempt-1", TaskID: "task-1", Conversation: e.Conversation, MessageID: AnchorMark + e.ID}}
+		// The task is cancelled while the turn still runs, and only then
+		// does the turn leave its execution to recovery.
+		s.TasksCancelled([]string{"task-1"})
+		call.finish <- harness.ErrStopUnconfirmed
+		for deadline := time.Now().Add(2 * time.Second); driver.stops.Load() == 0; time.Sleep(time.Millisecond) {
+			for _, q := range s.Questions("main") {
+				for _, option := range q.Options {
+					if option.ID == "retry" {
+						t.Fatalf("the recovery of a task cancelled while it ran offered to retry it: state=%s options=%+v", q.State, q.Options)
+					}
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the stop of a task cancelled while it ran was not attempted: %+v", s.Queue("main"))
+			}
+		}
+		if got := awaitExchange(t, s, e.ID); got.State != consoleapi.ExchangeCancelled {
+			t.Fatalf("exchange of a task cancelled while it ran = %+v, want cancelled", got)
+		}
+		if driver.calls.Load() != 0 {
+			t.Fatalf("a task cancelled while it ran was resumed %d times", driver.calls.Load())
+		}
+	})
+}
+
+// A question the watch withdraws before it even reaches the owner was
+// never answered either, so the recovery treats it as withdrawn instead
+// of detaching as though its own lifetime had ended.
+func TestRecoveryQuestionWithdrawnBeforeItIsPut(t *testing.T) {
+	for _, why := range []string{"task cancelled", "original back"} {
+		t.Run(why, func(t *testing.T) {
+			s := impatient(New(&echo{}, "owner", nil))
+			e := &queuedExchange{Exchange: Exchange{ID: "e1", Conversation: "console:main", State: consoleapi.ExchangeAwaitingUser}}
+			driver := &probingDriver{}
+			cancels := make(chan struct{}, 1)
+			switch why {
+			case "task cancelled":
+				e.cancelledTasks = map[string]bool{"task-1": true}
+				cancels <- struct{}{}
+			case "original back":
+				driver.reachable.Store(true)
+			}
+			r := &exchangeRecovery{s: s, ctx: t.Context(), e: e, exchange: e.Exchange, driver: driver, cancels: cancels}
+			identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: "console:main", ExchangeID: "e1", TaskID: "task-1", AttemptID: "attempt-1"}}
+			// The watch settles the question before it is put to the owner.
+			put := func(ctx context.Context, binding consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
+				<-ctx.Done()
+				return s.turnQuestion(ctx, binding, question)
+			}
+			question := view.Question{Kind: "recovery", Message: "offline", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}
+			answer, err := r.ask(identity, question, put)
+			if err != nil || answer != (view.Answer{}) || !r.withdrawn {
+				t.Fatalf("question withdrawn before it was put: answer %+v, err %v, withdrawn %v", answer, err, r.withdrawn)
+			}
+			if got := s.Questions("main"); len(got) != 0 {
+				t.Fatalf("a withdrawn question reached the owner: %+v", got)
+			}
+		})
+	}
 }
