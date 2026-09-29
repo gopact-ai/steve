@@ -358,9 +358,12 @@ func TestClientReportsTheUnansweredLeaderAfterAnotherMemberRefuses(t *testing.T)
 	holdLeader(t, peers)
 	// node-2 holds the first call until the client's 1s timeout; node-1
 	// takes the second inside the window and refuses it after the window.
-	peers.refusal = 800 * time.Millisecond
+	// The second call starts 1s in, 400ms before the window ends, and
+	// node-1 refuses it 600ms later, 400ms inside that call's own timeout
+	// and no earlier than 200ms after the window.
+	peers.refusal = 600 * time.Millisecond
 	peers.elected.Store(true)
-	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: 1500 * time.Millisecond})
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: 1400 * time.Millisecond})
 	client.mu.Lock()
 	client.leader = "node-2"
 	client.mu.Unlock()
