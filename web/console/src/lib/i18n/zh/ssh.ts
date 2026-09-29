@@ -134,4 +134,6 @@ export const sshZh = {
     "ssh.phase.connectivity": "等待节点连通",
     "ssh.log": "安装日志",
     "ssh.logCount": "安装日志 · {count} 行",
+    "ssh.restartLog": "重启日志",
+    "ssh.restartLogCount": "重启日志 · {count} 行",
 } as const;

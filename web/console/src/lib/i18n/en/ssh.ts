@@ -136,4 +136,6 @@ export const sshEn = {
     "ssh.phase.connectivity": "Wait for the node",
     "ssh.log": "Installation log",
     "ssh.logCount": "Installation log · {count} lines",
+    "ssh.restartLog": "Restart log",
+    "ssh.restartLogCount": "Restart log · {count} lines",
 } as const satisfies Record<keyof typeof sshZh, string>;

@@ -111,7 +111,7 @@ export function MachineRestart({ n, onChanged }: { n: Node; onChanged: () => voi
             <h4 className="text-xs font-medium text-secondary">{t(automatic ? "fleet.autoStartProgress" : "fleet.restartProgress")}</h4>
             <InstallProgress result={shown} />
             {shown.steps.length > 0 && <SSHSteps steps={shown.steps} />}
-            <InstallLog result={shown} />
+            <InstallLog result={shown} label="restart" />
         </div>}
     </section>;
 }
