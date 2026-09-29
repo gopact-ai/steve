@@ -3,6 +3,9 @@ package procgroup
 import (
 	"errors"
 	"fmt"
+	"os"
+	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -113,6 +116,31 @@ func TestMountShowsAllProcessesOnlyWithoutHidepid(t *testing.T) {
 			t.Errorf("%s: shows all %v, want %v", tc.name, shows, tc.shows)
 		}
 	}
+}
+
+// The mount /proc resolves to is found among the mounts, as the proc
+// filesystem on /proc.
+func TestProcMountIsTheProcFilesystemOnProc(t *testing.T) {
+	mount, err := procMount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mountinfo, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for line := range strings.SplitSeq(string(mountinfo), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] != mount {
+			continue
+		}
+		dash := slices.Index(fields, "-")
+		if fields[4] != "/proc" || dash < 0 || len(fields) <= dash+1 || fields[dash+1] != "proc" {
+			t.Fatalf("/proc resolves to mount %s, which is not the proc filesystem on /proc: %s", mount, line)
+		}
+		return
+	}
+	t.Fatalf("/proc resolves to mount %s, which the mount table does not list", mount)
 }
 
 // A process whose first thread has ended shows as a zombie while its other

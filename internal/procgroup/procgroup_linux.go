@@ -154,30 +154,52 @@ func procShowsAll() bool {
 	if err != nil || self != strconv.Itoa(os.Getpid()) {
 		return false
 	}
+	mount, err := procMount()
+	if err != nil {
+		return false
+	}
 	mountinfo, err := os.ReadFile("/proc/self/mountinfo")
-	return err == nil && mountShowsAll(mountinfo, "")
+	return err == nil && mountShowsAll(mountinfo, mount)
 }
 
-// mountShowsAll reports whether the mount table in the format of
-// /proc/self/mountinfo has a proc filesystem on /proc, the last mounted
-// there, without hidepid on. mount is to name the mount /proc resolves to,
-// as /proc/self/mountinfo numbers mounts; it is not used yet, and the last
-// mounted on /proc is taken for that mount.
+// procMount returns the id of the mount /proc resolves to, the one a
+// listing of /proc reads, as /proc/self/mountinfo numbers mounts.
+func procMount() (string, error) {
+	dir, err := os.Open("/proc")
+	if err != nil {
+		return "", err
+	}
+	defer dir.Close()
+	info, err := os.ReadFile("/proc/self/fdinfo/" + strconv.FormatUint(uint64(dir.Fd()), 10))
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.SplitSeq(string(info), "\n") {
+		if id, ok := strings.CutPrefix(line, "mnt_id:"); ok {
+			return strings.TrimSpace(id), nil
+		}
+	}
+	return "", errors.New("the kernel names no mount for /proc")
+}
+
+// mountShowsAll reports whether, in the mount table in the format of
+// /proc/self/mountinfo, the mount whose id is mount is a proc filesystem on
+// /proc without hidepid on. Other mounts on /proc, which /proc does not
+// resolve to, do not count.
 func mountShowsAll(mountinfo []byte, mount string) bool {
-	shows := false
 	for line := range strings.SplitSeq(string(mountinfo), "\n") {
 		// Fields are: id, parent, device, root, mount point, mount
 		// options, optional fields, "-", filesystem, source and the
 		// filesystem's options.
 		fields := strings.Fields(line)
-		if len(fields) < 5 || fields[4] != "/proc" {
+		if len(fields) < 5 || fields[0] != mount {
 			continue
 		}
 		dash := slices.Index(fields, "-")
-		shows = dash >= 6 && len(fields) >= dash+4 && fields[dash+1] == "proc" &&
+		return fields[4] == "/proc" && dash >= 6 && len(fields) >= dash+4 && fields[dash+1] == "proc" &&
 			!hidesPids(fields[5]) && !hidesPids(fields[dash+3])
 	}
-	return shows
+	return false
 }
 
 // hidesPids reports whether mount options turn hidepid on.
