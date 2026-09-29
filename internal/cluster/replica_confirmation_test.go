@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // A coordinator that does not lead consensus keeps its business generation
@@ -159,5 +161,85 @@ func TestCoordinatorWhoseReplicationLagsGivesUpItsGenerationUntilItCatchesUp(t *
 	}
 	if fresh := WaitPeerReady(t, member); fresh.Generation <= active.Generation {
 		t.Fatalf("generation %d was published, not a new one after generation %d", fresh.Generation, active.Generation)
+	}
+}
+
+// A confirmation holds the replica to what its state machine has applied,
+// not to what Raft has handed it: a state machine that has yet to apply a
+// committed entry does not show it, so the replica is not confirmed until
+// it has applied the entry, however long that takes.
+func TestReplicaConfirmationWaitsForTheStateMachineToApply(t *testing.T) {
+	hub := startTestHub(t)
+	member := joinNonvoter(t, hub, nil)
+	active := WaitPeerReady(t, hub)
+	runtime := member.Runtime.Load()
+	// The member's state machine is held in a snapshot of the ledger, which
+	// waits for one of the ledger's four read connections; these reads hold
+	// all of them.
+	const readConnections = 4
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	holding := make(chan struct{}, readConnections)
+	for range readConnections {
+		go runtime.book.Read(context.Background(), func(*ledger.ReadTx) error {
+			holding <- struct{}{}
+			<-hold
+			return nil
+		})
+	}
+	for range readConnections {
+		select {
+		case <-holding:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the member's ledger reads did not start")
+		}
+	}
+	go runtime.service.Snapshot(context.Background())
+	if err := active.Ledger.PutBinding(t.Context(), "test", "held", "written"); err != nil {
+		t.Fatal(err)
+	}
+	entry := hub.Runtime.Load().service.Status().AppliedIndex
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.service.LogProgress().Applied < entry {
+		if time.Now().After(deadline) {
+			t.Fatalf("Raft on the member did not hand entry %d to its state machine within 5s", entry)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if applied := runtime.service.Status().AppliedIndex; applied >= entry {
+		t.Fatalf("the member's state machine applied entry %d while it was held", entry)
+	}
+	confirmed := make(chan struct{})
+	go func() {
+		defer close(confirmed)
+		runtime.confirmReplica()
+	}()
+	select {
+	case <-confirmed:
+		runtime.confirmation.mu.Lock()
+		failure := runtime.confirmation.failure
+		runtime.confirmation.mu.Unlock()
+		if failure == nil {
+			t.Fatalf("a quorum confirmed the replica while its state machine had not applied entry %d", entry)
+		}
+		t.Fatalf("the confirmation failed before the state machine was released: %v", failure)
+	case <-time.After(time.Second):
+	}
+	release()
+	select {
+	case <-confirmed:
+	case <-time.After(runtime.config.Coordination.ApplyTimeout + time.Second):
+		t.Fatal("the confirmation did not return once the state machine was released")
+	}
+	runtime.confirmation.mu.Lock()
+	failure := runtime.confirmation.failure
+	runtime.confirmation.mu.Unlock()
+	if failure != nil {
+		t.Fatalf("the replica was not confirmed once its state machine applied entry %d: %v", entry, failure)
+	}
+	if applied := runtime.service.Status().AppliedIndex; applied < entry {
+		t.Fatalf("the replica was confirmed with entry %d still unapplied", entry)
 	}
 }
