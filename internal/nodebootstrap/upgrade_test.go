@@ -374,3 +374,36 @@ func TestPeerUpgradeScriptPutsTheProgramsBackWhenThePeerWasNotStopped(t *testing
 		}
 	}
 }
+
+// An upgrade that cannot look for the peer exits 29 as a restart does,
+// and leaves the machine as it found it: the programs as they were, no
+// staged program beside them, no upload and no installation lock.
+func TestPeerUpgradeScriptLeavesTheMachineAsItWasWhereItCannotLookForThePeer(t *testing.T) {
+	requirePeerPlatform(t)
+	for name, spoil := range unsearchable(t) {
+		t.Run(name, func(t *testing.T) {
+			home, pid := installedPeer(t)
+			before := programs(t, home)
+			running, _ := os.ReadFile(filepath.Join(home, ".steve-peer", "bin", "steve"))
+			spec := upgradeSpec()
+			spec.SHA256 = stageUpload(t, home, spec.UploadID, append(slices.Clone(running), "\nnew program\n"...))
+			report, err := runUpgrade(t, home, spec, spoil(t, home, pid)...)
+			if exitCode(err) != 29 || strings.Contains(report, "Stopping peer process") || !strings.Contains(report, "nothing was stopped or started") {
+				t.Fatalf("expected exit 29 with nothing stopped or started, got %v\n%s", err, report)
+			}
+			if after := programs(t, home); !maps.Equal(before, after) {
+				t.Fatalf("the programs were not left as they were: before %v, after %v\n%s", slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)), report)
+			}
+			left, err := os.ReadDir(filepath.Join(home, "steve-bin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(left) != 0 {
+				t.Fatalf("the upload or the installation lock was left behind: %v\n%s", left, report)
+			}
+			if pids := peerPIDs(t, home); len(pids) != 1 || pids[0] != pid {
+				t.Fatalf("the running peer %s was touched: %v\n%s", pid, pids, report)
+			}
+		})
+	}
+}

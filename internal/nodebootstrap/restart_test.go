@@ -482,11 +482,32 @@ func TestPeerUpgradeScriptStopsThePeerHoldingTheGatewayLock(t *testing.T) {
 // it, or stop one that cannot start again over a lock it cannot open.
 func TestPeerRestartScriptFailsWhereItCannotLookForThePeer(t *testing.T) {
 	requirePeerPlatform(t)
+	for name, spoil := range unsearchable(t) {
+		t.Run(name, func(t *testing.T) {
+			for _, spec := range []RestartSpec{{IfStopped: true}, {}} {
+				home, pid := installedPeer(t)
+				report, err := runRestart(t, home, spec, spoil(t, home, pid)...)
+				if exitCode(err) != 29 || strings.Contains(report, "STEVE_RESTART") || strings.Contains(report, "Stopping peer process") || !strings.Contains(report, "nothing was stopped or started") {
+					t.Fatalf("IfStopped %v: expected exit 29 with nothing stopped or started, got %v\n%s", spec.IfStopped, err, report)
+				}
+				if pids := peerPIDs(t, home); len(pids) != 1 || pids[0] != pid {
+					t.Fatalf("IfStopped %v: the running peer %s was touched: %v\n%s", spec.IfStopped, pid, pids, report)
+				}
+			}
+		})
+	}
+}
+
+// unsearchable spoils, each in its own way, the search for the peer of
+// the installation under home whose peer runs as pid, and returns the
+// environment the script is then run with.
+func unsearchable(t *testing.T) map[string]func(t *testing.T, home, pid string) []string {
+	t.Helper()
 	failing := t.TempDir()
 	if err := os.WriteFile(filepath.Join(failing, "pgrep"), []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, spoil := range map[string]func(t *testing.T, home, pid string) []string{
+	return map[string]func(t *testing.T, home, pid string) []string{
 		"no pgrep": func(t *testing.T, _, _ string) []string { return []string{"PATH=" + pathWithout(t, "pgrep")} },
 		"no ps":    func(t *testing.T, _, _ string) []string { return []string{"PATH=" + pathWithout(t, "ps")} },
 		"failing pgrep": func(*testing.T, string, string) []string {
@@ -502,19 +523,6 @@ func TestPeerRestartScriptFailsWhereItCannotLookForThePeer(t *testing.T) {
 			}
 			return nil
 		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			for _, spec := range []RestartSpec{{IfStopped: true}, {}} {
-				home, pid := installedPeer(t)
-				report, err := runRestart(t, home, spec, spoil(t, home, pid)...)
-				if exitCode(err) != 29 || strings.Contains(report, "STEVE_RESTART") || strings.Contains(report, "Stopping peer process") || !strings.Contains(report, "nothing was stopped or started") {
-					t.Fatalf("IfStopped %v: expected exit 29 with nothing stopped or started, got %v\n%s", spec.IfStopped, err, report)
-				}
-				if pids := peerPIDs(t, home); len(pids) != 1 || pids[0] != pid {
-					t.Fatalf("IfStopped %v: the running peer %s was touched: %v\n%s", spec.IfStopped, pid, pids, report)
-				}
-			}
-		})
 	}
 }
 
