@@ -1386,6 +1386,7 @@ const (
 	ClusterTunnelCloseFailed         Key = "cluster_tunnel_close_failed"
 	ClusterUpgradeSelf               Key = "cluster_upgrade_self"
 	ClusterRestartSelf               Key = "cluster_restart_self"
+	ClusterRestartElsewhere          Key = "cluster_restart_elsewhere"
 	ClusterBrowseSelf                Key = "cluster_browse_self"
 	ClusterNoTunnel                  Key = "cluster_no_tunnel"
 	ClusterUpgradeReopen             Key = "cluster_upgrade_reopen"

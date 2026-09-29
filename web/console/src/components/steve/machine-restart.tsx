@@ -6,7 +6,7 @@ import { restartSSH, restartStatusSSH, type SSHInstallResult, type SSHRestartSta
 import { HTTPError, message } from "@/lib/http";
 import { relative, when } from "@/lib/format";
 import { restartLine, type HistoryTone } from "@/lib/history-lines";
-import { autoStartLine, restartConfirms, restartHiddenBy, restartOffered, restartPollDelay, restartRunning, restartShown, type AutoStartTone } from "@/lib/machine-restart";
+import { autoStartLine, nodeProcessShown, restartConfirms, restartHiddenBy, restartOffered, restartPollDelay, restartRefusal, restartRunning, restartShown, type AutoStartTone } from "@/lib/machine-restart";
 import { nodeLabel, useNodeLabel } from "@/lib/node-name";
 import type { Node } from "@/lib/types";
 
@@ -18,8 +18,10 @@ const toneText: Record<AutoStartTone | HistoryTone, string> = {
 // drawer, where the node serving the console restarts that machine: an
 // online machine asks first, since its running executions are interrupted
 // and confirmed through the normal stop; an offline one restarts at once.
-// It follows a running restart, manual or automatic, and says how
-// automatic start stands and what the machine's last restart did.
+// Where that node answers for the machine but cannot restart it, the
+// restart shows disabled with why and where to turn. It follows a running
+// restart, manual or automatic, and says how automatic start stands; and
+// what the machine's last restart did, from the fleet, wherever it shows.
 export function MachineRestart({ n, onChanged }: { n: Node; onChanged: () => void }) {
     const { t, locale } = useI18n();
     const nodeName = useNodeLabel();
@@ -63,7 +65,10 @@ export function MachineRestart({ n, onChanged }: { n: Node; onChanged: () => voi
         void read();
         return () => { stopped = true; window.clearTimeout(timer); reading?.abort(); document.removeEventListener("visibilitychange", shown); };
     }, [node, coordinator, posting]);
-    if (!restartOffered(n.role, state)) return null;
+    const last = n.last_restart && restartLine(n.last_restart, nodeLabel(n), t, nodeName);
+    if (!nodeProcessShown(n.role, state, last)) return null;
+    const offered = restartOffered(n.role, state);
+    const refusal = restartRefusal(state);
     async function restart() {
         setConfirming(false); setError(""); setResult(null); setPosting(true);
         try {
@@ -79,17 +84,17 @@ export function MachineRestart({ n, onChanged }: { n: Node; onChanged: () => voi
     const running = restartRunning(state);
     const { restart: shown, automatic } = restartShown(state, result, posting);
     const auto = autoStartLine(state?.auto_start, t, (at) => when(at, locale));
-    const last = n.last_restart && restartLine(n.last_restart, nodeLabel(n), t, nodeName);
     return <section aria-label={t("fleet.nodeProcess")} className="space-y-3 rounded-lg border border-secondary p-3">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-medium text-primary">{t("fleet.nodeProcess")}</h3>
-                <p className="text-xs text-tertiary">{t("fleet.restartHint")}</p>
+                {offered && <p className="text-xs text-tertiary">{t("fleet.restartHint")}</p>}
             </div>
-            {confirming
+            {offered && (confirming
                 ? <><Button size="sm" color="secondary" onClick={() => setConfirming(false)}>{t("common.cancel")}</Button><Button size="sm" color="primary-destructive" onClick={() => void restart()}>{t("fleet.confirmRestart")}</Button></>
-                : <Button size="sm" color="secondary" isLoading={posting} showTextWhileLoading isDisabled={posting || running} onClick={() => restartConfirms(n.up) ? setConfirming(true) : void restart()}>{t("fleet.restartNode")}</Button>}
+                : <Button size="sm" color="secondary" isLoading={posting} showTextWhileLoading isDisabled={posting || running || refusal !== null} onClick={() => restartConfirms(n.up) ? setConfirming(true) : void restart()}>{t("fleet.restartNode")}</Button>)}
         </div>
+        {refusal && <p className="break-words text-xs text-tertiary">{refusal}</p>}
         {confirming && <p className="text-xs leading-5 text-warning-primary">{t("fleet.restartConfirmHint")}</p>}
         {error && <p role="alert" className="break-words text-xs text-error-primary">{error}</p>}
         {auto && <div className="space-y-0.5 text-xs">

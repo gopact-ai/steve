@@ -19,13 +19,20 @@ import (
 const clusterNodeRestartPath = "/cluster/node-restart"
 
 // RestartTarget names how a member is reached to restart its peer: the
-// alias of the link this node keeps to it. This node's own process
-// restarts with the App, not over SSH.
+// alias of the link this node keeps to it. This node's own process is not
+// restarted over SSH; a member without a link here is restarted, and its
+// automatic start watched, by the node that added it over SSH, which
+// keeps its link.
 func (b peerSSHBackend) RestartTarget(ctx context.Context, nodeID string) (string, error) {
+	text := b.peer.text.For(ctx)
 	if nodeID == b.peer.Config.NodeID {
-		return "", errors.New(b.peer.text.For(ctx).T(i18n.ClusterRestartSelf))
+		return "", errors.New(text.T(i18n.ClusterRestartSelf))
 	}
-	return b.MachineAlias(ctx, nodeID)
+	link, ok := b.peer.link(nodeID)
+	if !ok {
+		return "", errors.New(text.T(i18n.ClusterRestartElsewhere))
+	}
+	return link.Alias, nil
 }
 
 // Restarted waits until the machine answers the cluster again, on

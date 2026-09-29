@@ -27,8 +27,9 @@ export const upgradeStatusSSH = (nodeID: string, signal?: AbortSignal) => reques
 // machine last stayed online, why it stopped when it did, and what clears
 // what blocks it.
 export interface SSHAutoStart { state: string; attempts: number; limit: number; last_error?: string; suggestion?: string; reason?: string; last_at?: string; next_at?: string; offline_since?: string }
-// SSHRestartState is a machine's latest restart on that node, running or
+// SSHRestartState is whether that node can restart a machine, and why not
+// where it cannot; the machine's latest restart on that node, running or
 // settled, whether automatic start ran it, and how automatic start stands.
-export interface SSHRestartState { restart?: SSHInstallResult; automatic?: boolean; auto_start?: SSHAutoStart }
+export interface SSHRestartState { restartable?: boolean; reason?: string; restart?: SSHInstallResult; automatic?: boolean; auto_start?: SSHAutoStart }
 export const restartSSH = (nodeID: string) => request<SSHInstallResult>(`/console/ssh/restarts/${encodeURIComponent(nodeID)}`, { method: "POST" });
 export const restartStatusSSH = (nodeID: string, signal?: AbortSignal) => request<SSHRestartState>(`/console/ssh/restarts/${encodeURIComponent(nodeID)}`, { signal, cache: "no-store" });

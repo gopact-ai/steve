@@ -16,6 +16,22 @@ export interface AutoStartLine { tone: AutoStartTone; title: string; detail?: st
  */
 export const restartOffered = (role: string | undefined, state: SSHRestartState | null | undefined) => role !== "hub" && !!state;
 
+/**
+ * restartRefusal is why the node serving the console cannot restart a
+ * machine it answered for, as that node says: the node itself, or a
+ * machine whose SSH link another node keeps. null where it can, and before
+ * it answered. The restart is shown disabled beside it.
+ */
+export const restartRefusal = (state: SSHRestartState | null | undefined) => !state || state.restartable ? null : state.reason || "";
+
+/**
+ * nodeProcessShown is whether the drawer shows a machine's node process:
+ * where a restart is offered, and wherever the machine has a last
+ * restart, which comes with the fleet and so shows whatever the role and
+ * whether or not the restart status answered.
+ */
+export const nodeProcessShown = (role: string | undefined, state: SSHRestartState | null | undefined, last: unknown) => restartOffered(role, state) || !!last;
+
 /** restartConfirms is whether a restart is confirmed first: an online machine has executions to interrupt. */
 export const restartConfirms = (up: boolean) => up;
 

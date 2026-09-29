@@ -18,7 +18,9 @@ import (
 // their peer restarted over the SSH alias they were enrolled through, on
 // the program they already have.
 type RestartBackend interface {
-	// RestartTarget names the alias a machine is reached through.
+	// RestartTarget names the alias a machine is reached through. Its
+	// refusal is shown where a restart of the machine is not offered, so
+	// it says where to turn instead.
 	RestartTarget(ctx context.Context, nodeID string) (string, error)
 	// Knows reports whether nodeID names a machine the backend knows of,
 	// as UpgradeBackend.Knows does.
@@ -60,13 +62,16 @@ type RestartRecord struct {
 	At        time.Time `json:"at"`
 }
 
-// RestartState is how a machine's restarts stand on this node: its latest
+// RestartState is how a machine's restarts stand on this node: whether
+// this node can restart it, and why not where it cannot; its latest
 // restart, running or finished, and whether automatic start ran it; and
 // how automatic start stands for the machine where this node watches it.
 type RestartState struct {
-	Restart   *InstallResult  `json:"restart,omitempty"`
-	Automatic bool            `json:"automatic,omitempty"`
-	AutoStart *AutoStartState `json:"auto_start,omitempty"`
+	Restartable bool            `json:"restartable"`
+	Reason      string          `json:"reason,omitempty"`
+	Restart     *InstallResult  `json:"restart,omitempty"`
+	Automatic   bool            `json:"automatic,omitempty"`
+	AutoStart   *AutoStartState `json:"auto_start,omitempty"`
 }
 
 // restartUnsupported is the failure a restart, or its status, returns for
@@ -127,10 +132,11 @@ func (s *Service) Restart(ctx context.Context, nodeID string) (InstallResult, er
 	return result, err
 }
 
-// RestartStatus reads a machine's latest restart, running or finished
-// until its record expires, and how automatic start stands for it. A
-// machine never restarted from here has neither. Where the backend
-// restarts no machine, it is refused as Restart is.
+// RestartStatus reads whether this node can restart a machine, and why
+// not as the backend refuses a restart of it; its latest restart, running
+// or finished until its record expires; and how automatic start stands
+// for it. A machine never restarted from here has no restart. Where the
+// backend restarts no machine, it is refused as Restart is.
 func (s *Service) RestartStatus(ctx context.Context, nodeID string) (RestartState, error) {
 	ctx, text := s.speak(ctx)
 	backend, ok := s.backend.(RestartBackend)
@@ -140,9 +146,12 @@ func (s *Service) RestartStatus(ctx context.Context, nodeID string) (RestartStat
 	if !backend.Knows(ctx, nodeID) {
 		return RestartState{}, unknownNode(text, nodeID, i18n.SSHRestartUnknownNodeFix)
 	}
+	state := RestartState{Restartable: true}
+	if _, err := backend.RestartTarget(ctx, nodeID); err != nil {
+		state.Restartable, state.Reason = false, err.Error()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var state RestartState
 	if stored := s.plans[s.restarts[nodeID]]; stored != nil {
 		result := cloneResult(stored.result)
 		state.Restart, state.Automatic = &result, stored.automatic
