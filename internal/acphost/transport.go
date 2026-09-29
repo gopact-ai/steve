@@ -156,7 +156,9 @@ func (p *localProcess) Exited() <-chan struct{} { return p.exited }
 // the agent's own. The stop is confirmed once nothing of the group runs,
 // as procgroup.Remains.Ended judges. Exited is closed as soon as the agent
 // has exited, as a member no kill ends can keep Wait waiting for as long
-// as it runs.
+// as it runs. Nothing cuts that wait short: a host's Close waits for it
+// only a bounded time, so Wait, and the checks in endGroup and awaitEmpty,
+// can run past the Close until the group is empty.
 func (p *localProcess) Wait() error {
 	pid := p.cmd.Process.Pid
 	switch err := p.group.waitExit(pid); {

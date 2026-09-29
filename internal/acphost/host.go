@@ -823,7 +823,10 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 // the host is free to start another, even while Wait still settles what
 // the exited one left in its process group; the process stays on the books
 // until that stop is confirmed. Exit is broadcast before taking the lock so
-// shutdownLocked can wait on `exited` without holding h.mu.
+// shutdownLocked can wait on `exited` without holding h.mu. Close waits
+// for Wait only a bounded time: while a member of the group runs, this
+// goroutine and the one in Wait outlive the host's Close, and end once the
+// group has.
 func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, settled chan struct{}) {
 	<-conn.Done()
 	connErr := conn.Err()
