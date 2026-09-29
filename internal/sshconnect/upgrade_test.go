@@ -361,6 +361,25 @@ func TestUpgradeTellsARollbackFromAPeerLeftDown(t *testing.T) {
 	}
 }
 
+// An upgrade that leaves the peer down has put the program it fell back
+// to in place as ~/.steve-peer/bin/steve and the new one aside as
+// steve.rejected, with no steve.previous left; the owner is pointed at
+// those, in either language.
+func TestUpgradeLeftDownNamesTheProgramsTheMachineHas(t *testing.T) {
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		svc, runner, _, _ := upgradeFixture(t)
+		runner.swapExit = 28
+		_, err := svc.Upgrade(i18n.WithLocale(t.Context(), locale), "node-1")
+		var step *StepError
+		if !errors.As(err, &step) || step.Code != "upgrade_down" {
+			t.Fatalf("%s: %v", locale, err)
+		}
+		if strings.Contains(step.Suggestion, "steve.previous") || !strings.Contains(step.Suggestion, "~/.steve-peer/bin/steve.rejected") || !strings.Contains(step.Suggestion, "~/.steve-peer/peer.log") {
+			t.Fatalf("%s: the fix does not name the programs an upgrade left down leaves: %q", locale, step.Suggestion)
+		}
+	}
+}
+
 // A second upgrade of a machine still being upgraded is refused outright,
 // while its status reads how the first is going; the record of a finished
 // upgrade goes away like a plan does.

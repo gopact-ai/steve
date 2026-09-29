@@ -284,6 +284,32 @@ func TestPeerUpgradeScriptKeepsTheLastWorkingProgramWhenNoPeerRuns(t *testing.T)
 	}
 }
 
+// When neither the new program nor the one it falls back to stays up, the
+// peer is down: the fallback is left installed as steve, the new program
+// set aside as steve.rejected, and nothing else, neither steve.previous
+// nor a staged steve.new, is left beside them.
+func TestPeerUpgradeScriptLeftDownKeepsTheFallbackInstalledAndTheNewProgramRejected(t *testing.T) {
+	requirePeerPlatform(t)
+	home, _ := layoutPeer(t)
+	bin := filepath.Join(home, ".steve-peer", "bin")
+	fallback, installed, upgraded := "#!/bin/sh\nexit 4\n", "#!/bin/sh\nexit 3\n", "#!/bin/sh\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "steve.previous"), []byte(fallback), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "steve"), []byte(installed), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spec := upgradeSpec()
+	spec.SHA256 = stageUpload(t, home, spec.UploadID, []byte(upgraded))
+	out, err := runUpgrade(t, home, spec)
+	if exitCode(err) != 28 {
+		t.Fatalf("expected exit 28 with the peer down, got %v\n%s", err, out)
+	}
+	if left := programs(t, home); !maps.Equal(left, map[string]string{"steve": fallback, "steve.rejected": upgraded}) {
+		t.Fatalf("an upgrade left down left %v\n%s", slices.Sorted(maps.Keys(left)), out)
+	}
+}
+
 func TestPeerUpgradeScriptRefusesAMachineWithoutAPeer(t *testing.T) {
 	home := t.TempDir()
 	out, err := runUpgrade(t, home, upgradeSpec())
