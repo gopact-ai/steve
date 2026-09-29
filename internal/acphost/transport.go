@@ -64,7 +64,8 @@ type LocalTransport struct {
 	Env        []string
 	// Started, when set, learns the identity of each process group this
 	// transport starts as soon as its leader runs. The leader's environment
-	// then carries the group's mark, and what it spawns inherits it.
+	// then carries the group's mark, and what it spawns inherits it; without
+	// it the leader carries no mark.
 	Started func(procgroup.Identity)
 	// group makes the calls on the agent's process group; nil makes them
 	// on the kernel.
@@ -100,6 +101,10 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 	if t.Started != nil {
 		mark = procgroup.NewMark()
 		cmd.Env = mergeEnv(cmd.Env, []string{procgroup.MarkVariable + "=" + mark})
+	} else {
+		// A mark names one recorded group; one this process inherited
+		// would make the agent's group pass for that one.
+		cmd.Env = withoutEnv(cmd.Env, procgroup.MarkVariable)
 	}
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
