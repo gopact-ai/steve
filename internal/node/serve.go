@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acceptloop"
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/procgroup"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
@@ -85,6 +86,10 @@ type ServerConfig struct {
 	// process left names, so a test can stand in for a group that cannot
 	// be ended; nil ends it on the kernel.
 	settleGroup func(id procgroup.Identity, ran, here procgroup.Place, within time.Duration) error
+	// startAgent starts the agent of a process stream a hub opens, so a
+	// test can stand in for an agent whose process group does not stop;
+	// nil starts it on the transport.
+	startAgent func(ctx context.Context, transport acphost.LocalTransport) (acphost.Process, error)
 }
 
 // MeasuredStateRoot is the directory this machine reports its own disk

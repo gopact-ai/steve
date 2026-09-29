@@ -112,7 +112,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 			return
 		}
 	}
-	proc, err := transport.Start(ctx)
+	proc, err := s.startAgent(ctx, transport)
 	if err != nil {
 		if req.Plugin != nil {
 			err = errors.Join(err, s.pluginStore().EndRuntimeUse(context.WithoutCancel(ctx), *req.Plugin, "stream/"+req.Stream))
@@ -154,6 +154,14 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	if err == nil {
 		p.serveAttachment(a, req)
 	}
+}
+
+// startAgent starts the agent of a process stream on transport.
+func (s *Server) startAgent(ctx context.Context, transport acphost.LocalTransport) (acphost.Process, error) {
+	if start := s.conf().startAgent; start != nil {
+		return start(ctx, transport)
+	}
+	return transport.Start(ctx)
 }
 
 func (p *agentProcess) kill() { p.killOnce.Do(func() { p.proc.Kill() }) }
