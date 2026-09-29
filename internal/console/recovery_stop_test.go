@@ -861,6 +861,75 @@ func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 	})
 }
 
+// unreachableStopDriver finds the original execution of a cancelled task
+// only as many more times as left allows once limited is set; every
+// lookup after that fails.
+type unreachableStopDriver struct {
+	*cancelledTaskDriver
+	limited atomic.Bool
+	left    atomic.Int32
+}
+
+func (d *unreachableStopDriver) RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]turn.RetainedChat, error) {
+	if d.limited.Load() && d.left.Add(-1) < 0 {
+		return nil, errors.New("retained lookup unavailable")
+	}
+	return d.cancelledTaskDriver.RetainedChatsFor(ctx, conversation, messageID)
+}
+
+// The stop of a cancelled task is recorded before it is tried, so even a
+// stop that cannot find the original execution to stop leaves a restart
+// waiting on the stop instead of offering to resume the task again.
+func TestCancelledTaskStopIsRecordedBeforeItIsTried(t *testing.T) {
+	lifetime, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	doc := recoveryDocument()
+	s := impatient(New(&echo{}, "owner", nil))
+	s.EnableRetainedRecovery(lifetime)
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	driver := &unreachableStopDriver{cancelledTaskDriver: newCancelledTaskDriver()}
+	if err := s.RecoverChats(lifetime, driver); err != nil {
+		t.Fatal(err)
+	}
+	awaitOffer(t, s, "retry")
+	// The pass that sees the cancellation still finds the original; the
+	// stop that follows it does not.
+	driver.left.Store(1)
+	driver.limited.Store(true)
+	s.TasksCancelled([]string{"task-1"})
+	awaitOffer(t, s, "recheck")
+	if raw, _, _ := doc.Load(); !strings.Contains(string(raw), `"recovery_stop_pending"`) {
+		t.Fatalf("the stop of the cancelled task was not recorded: %s", raw)
+	}
+	if driver.stops.Load() != 0 {
+		t.Fatalf("a stop that could not find the original reached it %d times", driver.stops.Load())
+	}
+	cancel()
+	s.workers.Wait()
+	restored := impatient(New(&echo{}, "owner", nil))
+	restored.EnableRetainedRecovery(t.Context())
+	if err := restored.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	restart := newCancelledTaskDriver()
+	if err := restored.RecoverChats(t.Context(), restart); err != nil {
+		t.Fatal(err)
+	}
+	awaitOffer(t, restored, "recheck")
+	for _, q := range restored.Questions("main") {
+		for _, option := range q.Options {
+			if q.State == "pending" && option.ID == "retry" {
+				t.Fatalf("a restart offered to retry a cancelled task: %+v", q)
+			}
+		}
+	}
+	if got := restored.Queue("main"); got[0].State != consoleapi.ExchangeAwaitingUser || got[1].State != consoleapi.ExchangeQueued || restart.calls.Load() != 0 {
+		t.Fatalf("a restart did not wait on the stop of a cancelled task: queue %+v, resumes %d", got, restart.calls.Load())
+	}
+}
+
 // A question the watch withdraws before it even reaches the owner was
 // never answered either, so the recovery treats it as withdrawn instead
 // of detaching as though its own lifetime had ended.
