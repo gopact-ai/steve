@@ -278,7 +278,8 @@ func TestUpgradeTellsARollbackFromAPeerLeftDown(t *testing.T) {
 }
 
 // A second upgrade of a machine still being upgraded is refused outright,
-// and the record of a finished upgrade goes away like a plan does.
+// while its status reads how the first is going; the record of a finished
+// upgrade goes away like a plan does.
 func TestUpgradeRunsOncePerMachineAndItsRecordExpires(t *testing.T) {
 	svc, runner, backend, _ := upgradeFixture(t)
 	svc.ttl = 50 * time.Millisecond
@@ -297,6 +298,10 @@ func TestUpgradeRunsOncePerMachineAndItsRecordExpires(t *testing.T) {
 	var step *StepError
 	if !errors.As(err, &step) || step.Code != "in_progress" || result.Status != "" {
 		t.Fatalf("second upgrade = %#v %v", result, err)
+	}
+	status, err := svc.UpgradeStatus(t.Context(), "node-1")
+	if err != nil || status.Status != "installing" || status.PlanID == "" || len(status.Phases) != 4 {
+		t.Fatalf("status while upgrading = %#v %v", status, err)
 	}
 	close(release)
 	if err := <-first; err != nil {
