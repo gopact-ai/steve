@@ -372,3 +372,20 @@ func TestClientSaysNoMemberTookACommandTheLeaderRefusedAfterNotAnswering(t *test
 		t.Fatalf("a join the leader refused after it did not answer an earlier call returned %v", err)
 	}
 }
+
+// A read the leader did not answer leaves nothing in progress there to
+// continue, so it still says that no member took it.
+func TestClientSaysNoMemberTookAReadTheLeaderDidNotAnswer(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	holdLeader(t, peers)
+	peers.elected.Store(true)
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: time.Second})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	_, err := client.ReadState(t.Context())
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no member took state within 1s") || strings.Contains(err.Error(), "was sent") {
+		t.Fatalf("a read the leader did not answer returned %v", err)
+	}
+}
