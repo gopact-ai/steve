@@ -243,12 +243,15 @@ func TestRecoveryStopChoiceUnconfirmedShowsRecheckCard(t *testing.T) {
 // storedTaskDriver finds the original execution of exchange e1 under a task
 // kept in a task store, with the state the store holds. The execution
 // cannot be resumed, and its stop is confirmed only once confirmed says so.
+// While hold is set, a stop does not come back until held is closed.
 type storedTaskDriver struct {
 	tasks     *task.Store
 	id        string
 	calls     atomic.Int32
 	stops     atomic.Int32
 	confirmed atomic.Bool
+	hold      atomic.Bool
+	held      chan struct{}
 }
 
 func (d *storedTaskDriver) CheckRetainedChats(context.Context) error { return nil }
@@ -266,10 +269,17 @@ func (d *storedTaskDriver) ResumeRetainedChat(context.Context, string, turn.Requ
 	return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "The original machine is away.", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}}
 }
 
-func (d *storedTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
+func (d *storedTaskDriver) StopRetainedTask(ctx context.Context, id string, req turn.Request) (turn.Result, error) {
 	d.stops.Add(1)
 	if id != d.id || req.ConversationID != "console:main" || req.MessageID != "web-e1" {
 		return turn.Result{}, errors.New("stop targeted another execution")
+	}
+	if d.hold.Load() {
+		select {
+		case <-d.held:
+		case <-ctx.Done():
+			return turn.Result{}, ctx.Err()
+		}
 	}
 	if !d.confirmed.Load() {
 		return turn.Result{}, harness.ErrStopUnconfirmed
@@ -331,7 +341,7 @@ func openStopWaitConsole(t *testing.T, state task.State, stopping bool) (*Servic
 		}
 		book.Close()
 	})
-	driver := &storedTaskDriver{tasks: tasks, id: tracked.ID}
+	driver := &storedTaskDriver{tasks: tasks, id: tracked.ID, held: make(chan struct{})}
 	if err := s.RecoverChats(lifetime, driver); err != nil {
 		t.Fatal(err)
 	}
@@ -377,6 +387,33 @@ func TestStopWaitExchangeDoesNotHoldQueue(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The exchange stands aside the moment it starts waiting on the stop of a
+// task set aside, not once a stop pass comes back: a node slow to answer
+// the stop does not hold what is queued behind it in the meantime.
+func TestLineMovesWhileTheStopIsTried(t *testing.T) {
+	s, h, driver := openStopWaitConsole(t, task.StateRunning, false)
+	awaitOffer(t, s, "retry")
+	if err := s.Drain(); err != nil {
+		t.Fatal(err)
+	}
+	noCall(t, h)
+	driver.hold.Store(true)
+	defer close(driver.held)
+	if _, err := driver.tasks.SetAside(driver.id, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	s.TasksCancelled()
+	call := nextCall(t, h)
+	defer release(call)
+	if call.req.Input != "follow-up" {
+		t.Fatalf("started %q, want the line queued behind the stop wait", call.req.Input)
+	}
+	awaitStops(t, &driver.stops)
+	awaitStopWait(t, s)
+	release(call)
+	awaitExchange(t, s, "e2")
 }
 
 // What still needs the owner holds the conversation as before: a recovery
