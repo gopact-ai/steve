@@ -19,7 +19,7 @@ func newLongConn(c *Channel, appID, appSecret, baseURL string, events *dispatche
 		larkws.WithDomain(baseURL),
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
 		larkws.WithOnDisconnected(c.watch.lost),
-		larkws.WithOnReconnecting(c.watch.lost),
+		larkws.WithOnReconnecting(c.watch.reconnecting),
 		larkws.WithOnError(c.watch.failed),
 		larkws.WithOnReconnected(c.watch.back),
 	)
@@ -36,6 +36,10 @@ type connWatch struct {
 	mu sync.Mutex
 	// current is the reconnect in progress; nil while connected.
 	current *Reconnect
+	// rounds counts the client's reconnect rounds not yet back. A
+	// connection that drops as soon as it is made starts the next round
+	// before the round that made it reports back.
+	rounds int
 	// stopped is set once the channel stops; nothing is reported after.
 	stopped bool
 }
@@ -45,6 +49,18 @@ type connWatch struct {
 func (w *connWatch) lost() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.lostLocked()
+}
+
+// reconnecting starts a round of attempts to connect again.
+func (w *connWatch) reconnecting() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.rounds++
+	w.lostLocked()
+}
+
+func (w *connWatch) lostLocked() {
 	if w.stopped || w.current != nil {
 		return
 	}
@@ -76,11 +92,12 @@ func (w *connWatch) failed(err error) {
 	w.publishLocked()
 }
 
-// back ends the reconnect in progress.
+// back ends a round; the reconnect in progress ends with the last round.
 func (w *connWatch) back() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.stopped || w.current == nil {
+	w.rounds--
+	if w.stopped || w.current == nil || w.rounds > 0 {
 		return
 	}
 	w.current = nil

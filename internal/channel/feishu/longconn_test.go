@@ -240,7 +240,7 @@ func TestLongConnectionRefusedAfterALossEndsStart(t *testing.T) {
 // clientCallbacks are the watch's handlers for the official client's
 // connection callbacks, as newLongConn installs them.
 func clientCallbacks(w *connWatch) (disconnected, reconnecting func(), failed func(error), reconnected func()) {
-	return w.lost, w.lost, w.failed, w.back
+	return w.lost, w.reconnecting, w.failed, w.back
 }
 
 // The official client reports a reconnect round as reconnecting, each
