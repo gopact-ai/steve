@@ -633,6 +633,39 @@ func TestAutoStartKeepsTryingAMachineTheInstallationLockBlocks(t *testing.T) {
 	}
 }
 
+// A machine that answers the cluster again is no longer blocked: when it
+// later goes offline and is blocked once more, that is a block of its own,
+// recorded once and tried again after a minute, not a later try of the one
+// before.
+func TestAutoStartCountsABlockAfreshOnceTheMachineAnswers(t *testing.T) {
+	svc, runner, backend, clock := autoStartFixture(t)
+	runner.answerWith(peerExits(21))
+	sweepOnce(svc)
+	clock.Advance(autoStartAfter)
+	sweepOnce(svc)
+	clock.Advance(autoStartBackoff)
+	sweepOnce(svc)
+	if state := autoState(t, svc, "node-1"); state.State != "blocked" || !state.NextAt.Equal(clock.Now().Add(2*autoStartBackoff)) || len(runner.restarts()) != 2 {
+		t.Fatalf("blocked twice: %#v", state)
+	}
+	backend.set(func(b *restartBackend) { b.answering = map[string]bool{"node-1": true} })
+	sweepOnce(svc)
+	if state := autoState(t, svc, "node-1"); state.State != "watching" || autoSuggestion(t, svc, "node-1") != "" {
+		t.Fatalf("a blocked machine that answers again: %#v", state)
+	}
+	backend.set(func(b *restartBackend) { b.answering = nil })
+	sweepOnce(svc)
+	clock.Advance(2 * autoStartBackoff)
+	sweepOnce(svc)
+	zh := i18n.New(i18n.LocaleZH)
+	if state := autoState(t, svc, "node-1"); state.State != "blocked" || len(runner.restarts()) != 3 || !state.NextAt.Equal(clock.Now().Add(autoStartBackoff)) {
+		t.Fatalf("blocked again once the machine had answered: %#v, %d runs", state, len(runner.restarts()))
+	}
+	if records := backend.recorded(); len(records) != 2 || records[1].Outcome != RestartFailed || !records[1].Automatic || records[1].Reason != zh.T(i18n.SSHRestartBusy) {
+		t.Fatalf("becoming blocked again once the machine had answered was not recorded: %#v", records)
+	}
+}
+
 // autoSuggestion is what the fleet is told to do about how automatic
 // start stands for nodeID.
 func autoSuggestion(t *testing.T, svc *Service, nodeID string) string {
