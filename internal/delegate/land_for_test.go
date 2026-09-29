@@ -319,6 +319,13 @@ func (n hookedNodes) Artifact(ctx context.Context, node string, req ops.Request)
 // go through nodes, so this is how a test acts in the middle of a landing.
 func homeOnNode(t *testing.T, w *world, before func(ops.Request)) {
 	t.Helper()
+	homeOnNodeWith(t, w, func(n artifact.LocalNodes) artifact.Nodes { return hookedNodes{LocalNodes: n, before: before} })
+}
+
+// homeOnNodeWith is homeOnNode whose node operations are nodes'. A
+// delegation's worktree comes from the same store its result lands from.
+func homeOnNodeWith(t *testing.T, w *world, nodes func(artifact.LocalNodes) artifact.Nodes) {
+	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -329,9 +336,9 @@ func homeOnNode(t *testing.T, w *world, before func(ops.Request)) {
 	if err := projects.Declare(t.Context(), []project.Project{{ID: "p", Home: project.Home{Node: "node-a", Path: home}}}); err != nil {
 		t.Fatal(err)
 	}
-	nodes := hookedNodes{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, before: before}
-	w.artifacts, w.attempts, w.home = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, nodes), attempt.New(book), home
+	w.artifacts, w.attempts, w.home = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, nodes(artifact.LocalNodes{Dir: t.TempDir()})), attempt.New(book), home
 	w.service.SetLedger(w.attempts, w.artifacts)
+	w.service.workspaces = w.artifacts
 }
 
 // editBy writes body to name in the main directory, as someone working
