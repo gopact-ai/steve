@@ -157,6 +157,20 @@ func TestSettleLeavesAnUnmarkedGroupAlone(t *testing.T) {
 	}
 }
 
+// A member this process cannot list, as a /proc mounted with hidepid hides
+// another user's process, still keeps the group's id. The group is taken for
+// empty only when the kernel finds no process in it.
+func TestSettleDoesNotTakeAHiddenMemberForAnEmptyGroup(t *testing.T) {
+	member, id, _ := orphan(t, "m", "m")
+	hidden := func(int) ([]process, error) { return nil, nil }
+	if err := settle(id, here(t), here(t), time.Second, hidden); !errors.Is(err, ErrUnproven) {
+		t.Fatalf("settle = %v, want %v", err, ErrUnproven)
+	}
+	if !running(member) {
+		t.Fatal("a member nothing showed to be of the recorded group was signalled")
+	}
+}
+
 // A group that is gone needs nothing ended.
 func TestSettleConfirmsAGroupThatIsGone(t *testing.T) {
 	cmd, id := startGroup(t, "m", "m", `exit 0`)
