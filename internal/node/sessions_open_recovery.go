@@ -14,6 +14,9 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		return nodewire.SessionState{}, sessionError("invalid", "open recovery requires the original open command and harness")
 	}
 	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
+	if req.Action == nodewire.SessionActionCancelOpen {
+		s.settleUnverified(id)
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()

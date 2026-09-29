@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/gopact-ai/acp"
@@ -202,10 +203,14 @@ func (s *SessionService) loadRecord(store *sessionRecords, id string) error {
 	}
 	// After node restart no old native callback is resumable. Keep its
 	// receipt on disk and load it on demand rather than consuming a live slot.
-	if !record.State.ProcessStopped {
-		s.unverifiedProcesses = true
+	// Its agent can no longer be reached, only ended.
+	if !one.record.State.ProcessStopped {
+		if err := s.endRecordedGroup(one); err != nil {
+			slog.Warn("steve-node: native process stop is not confirmed after restart", "session", id, "error", err)
+			s.unverifiedProcesses[id] = true
+		}
 	}
-	if err := s.endStoppedRuntime(record); err != nil {
+	if err := s.endStoppedRuntime(one.record); err != nil {
 		return err
 	}
 
@@ -263,6 +268,9 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 		return state, nil
 	case nodewire.SessionActionClose, nodewire.SessionActionCancel, nodewire.SessionActionAbort:
 		if !state.ProcessStopped {
+			if s.settleUnverified(req.ID) {
+				return s.closedState(req)
+			}
 			return state, sessionError("uncertain", "native process stop is not confirmed")
 		}
 		return state, nil

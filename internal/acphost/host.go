@@ -19,6 +19,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/procgroup"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -89,6 +90,9 @@ type Config struct {
 	ProcessDir string
 	Env        []string
 	Permission *permission.Broker
+	// Started learns the identity of each local agent process group; see
+	// LocalTransport.Started.
+	Started func(procgroup.Identity)
 	// NoRestart binds this host to its original native process. Recovery must
 	// create a new, explicitly admitted execution rather than reuse this host.
 	NoRestart bool
@@ -129,7 +133,7 @@ func New(cfg Config) *Host {
 	}
 	if cfg.Transport == nil {
 		cfg.Transport = LocalTransport{
-			Command: cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env,
+			Command: cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env, Started: cfg.Started,
 		}
 	}
 	return &Host{
