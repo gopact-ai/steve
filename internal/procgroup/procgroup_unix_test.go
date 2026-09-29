@@ -1,7 +1,8 @@
+//go:build linux || darwin
+
 package procgroup
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -158,9 +159,11 @@ func TestSettleConfirmsAGroupThatIsGone(t *testing.T) {
 	}
 }
 
+// cmdlineIs reads the arguments pid runs with as ps shows them, which both
+// Linux and macOS do alike.
 func cmdlineIs(pid int, argv ...string) bool {
-	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	return err == nil && bytes.Equal(raw, []byte(strings.Join(argv, "\x00")+"\x00"))
+	out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	return err == nil && strings.TrimSpace(string(out)) == strings.Join(argv, " ")
 }
 
 // running is false for a pid that is gone or a zombie: neither runs.

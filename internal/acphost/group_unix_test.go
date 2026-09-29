@@ -1,12 +1,12 @@
-//go:build linux
+//go:build linux || darwin
 
 package acphost
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -64,18 +64,15 @@ func recordedPID(path string) int {
 	return pid
 }
 
+// cmdlineIs reads the arguments pid runs with as ps shows them, which both
+// Linux and macOS do alike.
 func cmdlineIs(pid int, argv ...string) bool {
-	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	return err == nil && bytes.Equal(raw, []byte(strings.Join(argv, "\x00")+"\x00"))
+	out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	return err == nil && strings.TrimSpace(string(out)) == strings.Join(argv, " ")
 }
 
 // liveProcess is false for a pid that is gone or a zombie: neither runs.
 func liveProcess(pid int) bool {
-	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return false
-	}
-	end := bytes.LastIndexByte(raw, ')')
-	fields := strings.Fields(string(raw[end+1:]))
-	return len(fields) > 0 && fields[0] != "Z" && fields[0] != "X"
+	state, err := processState(pid)
+	return err == nil && state != "" && !strings.HasPrefix(state, "Z")
 }
