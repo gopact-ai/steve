@@ -21,6 +21,11 @@ func TestSentencesNameButtonsAsTheyAreLabelled(t *testing.T) {
 				t.Errorf("%s %s = %q, want the stop choice %q quoted", locale, key, table[key], table[ConsoleStopChoice])
 			}
 		}
+		for _, key := range []Key{TaskOpenAttempt, TurnWriterUnconfirmed} {
+			if !quotes(table[key], table[RecoveryRetry]) {
+				t.Errorf("%s %s = %q, want the recovery choice %q quoted", locale, key, table[key], table[RecoveryRetry])
+			}
+		}
 		resume := consoleLabel(t, locale, "ssh", "ssh.resumeRegistration")
 		for _, key := range []Key{ClusterWaitStoppedFix, ClusterWaitStoppedLastFix} {
 			if !quotes(table[key], resume) {
