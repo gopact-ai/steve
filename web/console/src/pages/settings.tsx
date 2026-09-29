@@ -103,22 +103,29 @@ export function SettingsPage() {
     }, [section]);
     // A channel's connection changes on its own. Follow its status while the
     // channels are shown, closely while it retries or reconnects and slowly
-    // once connected, without touching drafts.
+    // once connected, without touching drafts. A hidden page waits and reads
+    // once shown again. A poll updates only the view it was sent from: a
+    // read or save since took a newer one.
     const followed = section === "channels" && !!channels;
     const retryAt = channels?.startup_retry?.next_at, reconnecting = !!channels?.reconnect;
     const [channelPolls, setChannelPolls] = useState(0);
     useEffect(() => {
         if (!followed) return;
-        let cancelled = false;
-        const timer = window.setTimeout(async () => {
+        let cancelled = false, polled = false;
+        const poll = async () => {
+            polled = true;
+            const base = latest.current.channels;
             try {
                 const next = await fetchChannels();
                 if (cancelled || !alive.current) return;
-                setChannels((current) => current && followChannelStatus(current, next));
+                setChannels((current) => current && current === base ? followChannelStatus(current, next) : current);
             } catch { /* The next poll tries again. */ }
             if (!cancelled && alive.current) setChannelPolls((count) => count + 1);
-        }, channelPollDelay(retryAt, reconnecting));
-        return () => { cancelled = true; window.clearTimeout(timer); };
+        };
+        const timer = window.setTimeout(() => { if (!document.hidden) void poll(); }, channelPollDelay(retryAt, reconnecting));
+        const shown = () => { if (!document.hidden && !polled) { window.clearTimeout(timer); void poll(); } };
+        document.addEventListener("visibilitychange", shown);
+        return () => { cancelled = true; window.clearTimeout(timer); document.removeEventListener("visibilitychange", shown); };
     }, [followed, retryAt, reconnecting, channelPolls]);
     async function save(group: Group) {
         if (sending.current || loading[group] || stale[group]) return;
