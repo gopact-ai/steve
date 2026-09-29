@@ -218,6 +218,7 @@ export const settingsPageEn = {
     "settingsPage.waitingOn.unknown": "Waiting for the work in progress",
     "settingsPage.channelStartupFailed": "Channel startup failed. Check the application credentials, save, then restart the coordinator.",
     "settingsPage.channelStartupRetrying": "The channel cannot connect yet and is retrying on its own. Failed attempts: {attempts}; next attempt at {time}. No restart is needed.",
-    "settingsPage.channelReconnecting": "The channel has not been connected since {time} and is reconnecting on its own. Failed attempts: {attempts}. It recovers once connected; if the count stops growing for a long time, restart the coordinator.",
+    "settingsPage.channelReconnecting": "The channel has not been connected since {time} and is reconnecting on its own. Failed attempts: {attempts}. Last attempt: {last}. It recovers once connected. Feishu sets the wait between attempts, 2 minutes by default; if the last attempt is much older than that, reconnecting has stopped: restart the coordinator.",
+    "settingsPage.channelReconnectingFirst": "The channel has not been connected since {time} and is reconnecting on its own; no attempt has failed yet. It recovers once connected. Feishu has the first attempt wait a random time, up to 30 seconds by default; if there is still no result long after that, restart the coordinator.",
     "settingsPage.errorDetails": "Error details"
 } as const satisfies Record<keyof typeof settingsPageZh,string>;
