@@ -75,6 +75,11 @@ func NewMark() string {
 // cannot show which group runs under the id it returns ErrUnproven, and
 // when members outlive within after being killed, ErrRunning.
 func Settle(id Identity, ran, here Place, within time.Duration) error {
+	return settle(id, ran, here, within, members)
+}
+
+// settle is Settle listing a group's running members with list.
+func settle(id Identity, ran, here Place, within time.Duration, list func(group int) ([]process, error)) error {
 	if id.Group <= 0 || id.Leader != id.Group || id.Start == 0 || id.Mark == "" {
 		return fmt.Errorf("%w: its identity is incomplete", ErrUnproven)
 	}
@@ -94,7 +99,7 @@ func Settle(id Identity, ran, here Place, within time.Duration) error {
 	}
 	deadline := time.Now().Add(within)
 	for delay := time.Millisecond; ; delay = min(2*delay, 100*time.Millisecond) {
-		owned, err := recorded(id)
+		owned, err := recorded(id, list)
 		if err != nil || !owned {
 			return err
 		}
@@ -110,8 +115,8 @@ func Settle(id Identity, ran, here Place, within time.Duration) error {
 
 // recorded reports whether a process in the group id names still runs and
 // the group is shown to be the recorded one; false means no process of the
-// recorded group runs.
-func recorded(id Identity) (bool, error) {
+// recorded group runs. list names the group's running members.
+func recorded(id Identity, list func(group int) ([]process, error)) (bool, error) {
 	leader, found, err := status(id.Leader)
 	if err != nil {
 		return false, err
@@ -124,7 +129,7 @@ func recorded(id Identity) (bool, error) {
 	if found && leader.live {
 		return true, nil
 	}
-	members, err := members(id.Group)
+	members, err := list(id.Group)
 	if err != nil || len(members) == 0 {
 		return false, err
 	}
