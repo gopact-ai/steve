@@ -83,16 +83,18 @@ type autoWatch struct {
 	state       AutoStartState
 	onlineSince time.Time
 	stopped     bool
-	// peerRunning is set while the last start found the peer running, so
-	// finding it running again is not recorded again.
+	// peerRunning is set while the last start found the peer running, and
+	// held while another installation held the machine's installation lock,
+	// so finding either again is not recorded again.
 	peerRunning bool
+	held        bool
 	// cancel ends the start running for the machine; nil when none runs.
 	cancel context.CancelFunc
 }
 
 // forget drops what failed or short-lived starts left behind.
 func (w *autoWatch) forget() {
-	w.stopped, w.peerRunning = false, false
+	w.stopped, w.peerRunning, w.held = false, false, false
 	w.state.Attempts, w.state.LastError, w.state.Reason, w.state.NextAt = 0, "", "", time.Time{}
 }
 
@@ -262,8 +264,9 @@ func (s *Service) concluded(ctx context.Context, watch *autoWatch, nodeID, outco
 	var failure *StepError
 	errors.As(err, &failure)
 	running := outcome == RestartRunning
-	recorded := !running || !watch.peerRunning
-	watch.peerRunning = running
+	held := failure != nil && failure.Code == "restart_busy"
+	recorded := !(running && watch.peerRunning) && !(held && watch.held)
+	watch.peerRunning, watch.held = running, held
 	switch {
 	case err == nil:
 		watch.state.Attempts++
@@ -278,8 +281,9 @@ func (s *Service) concluded(ctx context.Context, watch *autoWatch, nodeID, outco
 		watch.state.State, watch.state.LastError = autoUnreachable, record.Reason
 		watch.state.NextAt = now.Add(autoStartBackoff)
 		return record, false
-	case failure != nil && failure.Code == "restart_busy":
-		// Another installation holds the machine; its turn comes first.
+	case held:
+		// Another installation holds the machine; its turn comes first,
+		// however long it takes.
 		watch.state.State, watch.state.LastError = autoRetrying, record.Reason
 		watch.state.NextAt = now.Add(autoStartBackoff)
 	default:
