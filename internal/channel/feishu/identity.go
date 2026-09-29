@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/gopact-ai/steve/internal/config"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -24,7 +25,13 @@ func BaseURL(domain string) string {
 }
 
 func newAPI(appID, appSecret, domain string) *lark.Client {
-	return lark.NewClient(appID, appSecret, lark.WithOpenBaseUrl(BaseURL(domain)))
+	return apiAt(appID, appSecret, BaseURL(domain), http.DefaultClient)
+}
+
+// apiAt is the API client of a Feishu at baseURL. Its HTTP client records
+// what each tracked call sent, which is how a failed call is classified.
+func apiAt(appID, appSecret, baseURL string, client larkcore.HttpClient) *lark.Client {
+	return lark.NewClient(appID, appSecret, lark.WithOpenBaseUrl(baseURL), lark.WithHttpClient(trackingClient{next: client}))
 }
 
 func Probe(ctx context.Context, appID, appSecret, domain string) (Identity, error) {

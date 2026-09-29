@@ -56,7 +56,8 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 					LastError: adminsvc.RedactChannelError(r.Err, cfg.Feishu.AppSecret).Error(),
 				})
 			},
-			OnReady: func() { connectFeishu(gw, gate, channelSettings, channel) },
+			OnReady:     func() { connectFeishu(gw, gate, channelSettings, channel) },
+			OnReconnect: reportReconnect(channelSettings, cfg.Feishu.AppSecret),
 		}, gw.HandleMessage)
 		channel.SetJournal(book.Journal())
 		channelSettings.BindAccessUpdater(func(f config.Feishu) {
@@ -120,6 +121,22 @@ func connectFeishu(gw *gateway.Gateway, gate *agentmcp.Server, settings channelR
 		gate.BindChannel("feishu", feishu.Messenger{API: ch})
 	}
 	settings.SetStartupRetry(nil)
+}
+
+// reportReconnect shows a Feishu long connection being established again
+// in the console, without secret, and withdraws it once it is back.
+func reportReconnect(settings channelRuntime, secret string) func(*feishu.Reconnect) {
+	return func(r *feishu.Reconnect) {
+		if r == nil {
+			settings.SetReconnect(nil)
+			return
+		}
+		shown := &consoleapi.ChannelReconnect{Since: r.Since, Attempts: r.Failures}
+		if r.Err != nil {
+			shown.LastError = adminsvc.RedactChannelError(r.Err, secret).Error()
+		}
+		settings.SetReconnect(shown)
+	}
 }
 
 type channelsAssembly interface {

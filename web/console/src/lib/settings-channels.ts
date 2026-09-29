@@ -8,6 +8,14 @@ export function channelInputs(view: ChannelSettings): ChannelDraft {
     return { default_channel: view.desired.default_channel, enabled: feishu.enabled, app_id: feishu.app_id || "", domain: feishu.domain || "feishu", owner_open_id: feishu.owner_open_id || "", group_policy: feishu.group_policy || "open", allow_unmentioned: feishu.allow_unmentioned, allowed_senders: (feishu.allowed_senders || []).join("\n"), blocked_senders: (feishu.blocked_senders || []).join("\n"), secret: "", clearSecret: false };
 }
 
+// A poll takes what changes without a save: the connection status and,
+// since a channel that stops no longer applies access rules live, which
+// fields apply without a restart. The rest of the view stays as last loaded:
+// the drafts are based on it.
+export function followChannelStatus(current: ChannelSettings, next: ChannelSettings): ChannelSettings {
+    return { ...current, runtime_error: next.runtime_error, startup_retry: next.startup_retry, reconnect: next.reconnect, apply_mode: next.apply_mode, live_fields: next.live_fields };
+}
+
 export function changedInputs<T extends object>(baseline: T, current: T): Partial<T> {
     return Object.fromEntries(Object.entries(current).filter(([key, value]) => value !== baseline[key as keyof T])) as Partial<T>;
 }
