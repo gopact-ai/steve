@@ -34,11 +34,18 @@ const (
 )
 
 // unfinishedText is what a parent is told of a result whose landing
-// reached a conflict it could not record: the landing is left locked, or
-// closed with nothing of the conflict. Whether the conflict is recorded
-// later, and who settles it then, is not known, so it says only what is
-// certain and where a recorded conflict is listed.
+// reached a conflict the queue does not keep, which is all the console
+// and /resolve act on: the landing recorded it but the queue did not, or
+// the landing could not record it either and is left locked, or closed
+// with nothing of the conflict. Whether the conflict is recorded later,
+// and who settles it then, is not known, so it says only what is certain
+// and where a recorded conflict is listed.
 const unfinishedText = "未落地：这次落地遇到冲突，没有完成；主目录没有改动，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
+
+// unfinishedWritingText is unfinishedText for an apply conflict recovery
+// reached once the landing had begun writing the main directory, which the
+// paths written by then are left in.
+const unfinishedWritingText = "未落地：这次落地遇到冲突，没有完成；主目录里可能已经写入了一部分，结果仍在落地队列里。你不能自己处理；冲突记下后，会和其他落地冲突一样列在控制台「待处理」的「合并冲突」里"
 
 // conflictingResults publishes two results that change notes.md from the
 // same canonical base in different ways: whichever lands second conflicts.
@@ -335,6 +342,45 @@ func unmarkedConflict(t *testing.T, w *world) (project.Project, artifact.Manifes
 	return p, first, second
 }
 
+// refuseQueuedConflicts has the ledger of the test's own refuse to keep
+// any conflict on the landing queue, as a failed write would, while the
+// landings record theirs as usual.
+func refuseQueuedConflicts(t *testing.T, w *world) {
+	t.Helper()
+	for _, event := range []string{"INSERT", "UPDATE"} {
+		if _, err := w.book.DB().Exec(`CREATE TRIGGER refuse_queued_conflict_` + event + ` BEFORE ` + event + ` ON bindings
+			WHEN NEW.kind = 'pending-landing' AND json_extract(NEW.data, '$.blocked') IS NOT NULL
+			BEGIN SELECT RAISE(ABORT, 'conflict not queued'); END`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// unqueuedConflict checks that the queue keeps no conflict of project p
+// and returns the one landing that did not commit, which recorded a
+// conflict in state.
+func unqueuedConflict(t *testing.T, w *world, state string) artifact.Landing {
+	t.Helper()
+	stuck, err := w.artifacts.Stuck(t.Context(), "p")
+	if err != nil || len(stuck) != 0 {
+		t.Fatalf("stuck results = %+v err=%v; want none", stuck, err)
+	}
+	landings, err := w.artifacts.Landings(t.Context(), "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conflicted []artifact.Landing
+	for _, l := range landings {
+		if l.State != artifact.LandCommitted {
+			conflicted = append(conflicted, l)
+		}
+	}
+	if len(conflicted) != 1 || conflicted[0].State != state {
+		t.Fatalf("landings not committed = %+v; want one, %s", conflicted, state)
+	}
+	return conflicted[0]
+}
+
 // An apply conflict says why it stopped. Reached in this pass, it reads as
 // the queue keeps it for every later pass.
 func TestLandForSaysAnApplyConflictAsLaterPassesDo(t *testing.T) {
@@ -581,6 +627,110 @@ func TestLandForTellsAParentWhatComesOfAResultThatDidNotLand(t *testing.T) {
 			}
 			if closed != 1 {
 				t.Fatalf("landings of the conflicted result = %d; want the one it closed", closed)
+			}
+			return unfinishedText
+		},
+	}, {
+		// The landing records the conflict it reached, with its paths
+		// and marked tree, but the queue does not keep it: neither the
+		// console nor /resolve has it to act on.
+		name: "merge conflict the queue could not keep",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			ownStores(t, w, "", artifact.LocalNodes{Dir: t.TempDir()})
+			_, first, second := conflictingResults(t, w)
+			refuseQueuedConflicts(t, w)
+			queueAll(t, w, first, second)
+			return second
+		},
+		want: func(t *testing.T, w *world) string {
+			if l := unqueuedConflict(t, w, artifact.LandMergeConflicted); l.Unapplied || l.Conflict == "" || len(l.Paths) == 0 {
+				t.Fatalf("landing = %+v; want the merge conflict recorded, with its paths and marked tree", l)
+			}
+			return unfinishedText
+		},
+	}, {
+		// An apply conflict found before apply wrote nothing either.
+		name: "apply conflict the queue could not keep",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			ownStores(t, w, "", artifact.LocalNodes{Dir: t.TempDir()})
+			m := nestedRepoResult(t, w)
+			refuseQueuedConflicts(t, w)
+			queueAll(t, w, m)
+			return m
+		},
+		want: func(t *testing.T, w *world) string {
+			if l := unqueuedConflict(t, w, artifact.LandApplyConflicted); !l.Unapplied || !strings.Contains(l.ConflictReason(), "nested git repository (inner)") {
+				t.Fatalf("landing = %+v; want the apply conflict recorded as found before apply", l)
+			}
+			return unfinishedText
+		},
+	}, {
+		// An apply conflict recovery reached — a.txt edited by hand as
+		// the landing starts writing it — comes once the landing has
+		// begun writing the main directory.
+		name: "apply conflict recovered the queue could not keep",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			var once sync.Once
+			homeOnNode(t, w, func(req ops.Request) {
+				if req.Op == ops.Apply {
+					once.Do(func() { editBy(t, w, "a.txt", "by hand\n") })
+				}
+			})
+			editBy(t, w, "a.txt", "base\n")
+			m := publishFile(t, w, "att-1", "a.txt", "mine\n")
+			refuseQueuedConflicts(t, w)
+			queueAll(t, w, m)
+			return m
+		},
+		want: func(t *testing.T, w *world) string {
+			if l := unqueuedConflict(t, w, artifact.LandApplyConflicted); l.Unapplied || len(l.Paths) != 1 || l.Paths[0] != "a.txt" {
+				t.Fatalf("landing = %+v; want the apply conflict recovery reached on a.txt", l)
+			}
+			return unfinishedWritingText
+		},
+	}, {
+		// Retried once another result has moved the canonical on, the
+		// result reaches its merge conflict again, but the queue keeps
+		// the record of its earlier landing, not of this one.
+		name: "merge conflict the queue kept of an earlier landing only",
+		queue: func(t *testing.T, w *world) artifact.Manifest {
+			ownStores(t, w, "", artifact.LocalNodes{Dir: t.TempDir()})
+			p, first, second := conflictingResults(t, w)
+			if land, err := w.artifacts.Land(t.Context(), p, first.ID, "test"); err != nil || land.State != artifact.LandCommitted {
+				t.Fatalf("first landing = %+v err=%v", land, err)
+			}
+			var conflict artifact.Conflict
+			if _, err := w.artifacts.Land(t.Context(), p, second.ID, "test"); !errors.As(err, &conflict) {
+				t.Fatalf("second landing did not conflict: %v", err)
+			}
+			other := publishFile(t, w, "att-3", "other.md", "other\n")
+			if land, err := w.artifacts.Land(t.Context(), p, other.ID, "test"); err != nil || land.State != artifact.LandCommitted {
+				t.Fatalf("other landing = %+v err=%v", land, err)
+			}
+			refuseQueuedConflicts(t, w)
+			return second
+		},
+		want: func(t *testing.T, w *world) string {
+			stuck, err := w.artifacts.Stuck(t.Context(), "p")
+			if err != nil || len(stuck) != 1 || !stuck[0].Resolvable() {
+				t.Fatalf("stuck results = %+v err=%v; want the one merge conflict, with its marked tree", stuck, err)
+			}
+			landings, err := w.artifacts.Landings(t.Context(), "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			retried := 0
+			for _, l := range landings {
+				if l.Artifact != stuck[0].Artifact || l.ID == stuck[0].Landing {
+					continue
+				}
+				if l.State != artifact.LandMergeConflicted || l.Unapplied || l.Conflict == "" {
+					t.Fatalf("landing = %+v; want the retry's merge conflict recorded, with its marked tree", l)
+				}
+				retried++
+			}
+			if retried != 1 {
+				t.Fatalf("landings of the conflicted result besides the queued one = %d; want the retry", retried)
 			}
 			return unfinishedText
 		},
