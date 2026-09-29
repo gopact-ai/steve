@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 
 	"github.com/gopact-ai/steve/internal/channel"
 )
@@ -57,58 +60,131 @@ func dropConnection(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	_ = conn.Close()
 }
 
-// A call whose request never reached Feishu is a definite failure, also to
-// callers that read transport errors as an uncertain outcome: nothing was
-// posted, so the caller may post again.
-func TestOutboundCallsThatNeverReachFeishuAreDefinite(t *testing.T) {
-	causes := map[string]func(t *testing.T) (url string, client *http.Client, reached *atomic.Int32){
-		"token refused": func(t *testing.T) (string, *http.Client, *atomic.Int32) {
-			var reached atomic.Int32
+// A call Feishu never took is a definite failure, also to callers that read
+// transport errors as an uncertain outcome: its request never reached
+// Feishu, or Feishu turned it away for its token, so nothing was posted and
+// the caller may post again.
+func TestOutboundCallsFeishuNeverTookAreDefinite(t *testing.T) {
+	causes := map[string]func(t *testing.T) (c *Channel, posted *atomic.Int32){
+		"token refused": func(t *testing.T) (*Channel, *atomic.Int32) {
+			var posted atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == tokenPath {
 					jsonReply(w, http.StatusOK, `{"code":10014,"msg":"app secret invalid"}`)
 					return
 				}
-				reached.Add(1)
+				posted.Add(1)
 				jsonReply(w, http.StatusOK, `{"code":0,"data":{"message_id":"om_sent","chat_id":"oc_chat"}}`)
 			}))
 			t.Cleanup(server.Close)
-			return server.URL, server.Client(), &reached
+			return channelAt(t, server.URL, server.Client()), &posted
 		},
-		"token lost": func(t *testing.T) (string, *http.Client, *atomic.Int32) {
-			var reached atomic.Int32
+		"token lost": func(t *testing.T) (*Channel, *atomic.Int32) {
+			var posted atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == tokenPath {
 					dropConnection(t, w, r)
 					return
 				}
-				reached.Add(1)
+				posted.Add(1)
 				jsonReply(w, http.StatusOK, `{"code":0,"data":{"message_id":"om_sent","chat_id":"oc_chat"}}`)
 			}))
 			t.Cleanup(server.Close)
-			return server.URL, server.Client(), &reached
+			return channelAt(t, server.URL, server.Client()), &posted
 		},
-		"unreachable": func(t *testing.T) (string, *http.Client, *atomic.Int32) {
+		"unreachable": func(t *testing.T) (*Channel, *atomic.Int32) {
 			server := httptest.NewServer(http.NotFoundHandler())
 			server.Close()
-			return server.URL, server.Client(), new(atomic.Int32)
+			return channelAt(t, server.URL, server.Client()), new(atomic.Int32)
+		},
+		// With a token cached, the request that cannot be dialed is the API
+		// request itself.
+		"unreachable with a cached token": func(t *testing.T) (*Channel, *atomic.Int32) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == tokenPath {
+					jsonReply(w, http.StatusOK, tokenOK)
+					return
+				}
+				jsonReply(w, http.StatusOK, `{"code":0,"data":{"message_id":"om_sent","chat_id":"oc_chat"}}`)
+			}))
+			c := channelAt(t, server.URL, server.Client())
+			if _, err := c.SendChat(t.Context(), "oc_chat", "hello"); err != nil {
+				t.Fatalf("cache a token: %v", err)
+			}
+			server.Close()
+			return c, new(atomic.Int32)
+		},
+		// Feishu rejects the token the API request carried, and the token
+		// fetched to retry it is refused.
+		"token rejected, then refused": func(t *testing.T) (*Channel, *atomic.Int32) {
+			var tokens, rejected, posted atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == tokenPath {
+					if tokens.Add(1) == 1 {
+						// Expiring at once, the token is fetched again for the retry.
+						jsonReply(w, http.StatusOK, `{"code":0,"tenant_access_token":"test-token","expire":0}`)
+						return
+					}
+					jsonReply(w, http.StatusOK, `{"code":10014,"msg":"app secret invalid"}`)
+					return
+				}
+				rejected.Add(1)
+				jsonReply(w, http.StatusBadRequest, `{"code":99991663,"msg":"invalid access token"}`)
+			}))
+			t.Cleanup(server.Close)
+			t.Cleanup(func() {
+				if rejected.Load() != 1 || tokens.Load() != 2 {
+					t.Errorf("Feishu rejected %d API requests after %d token requests; want 1 after 2", rejected.Load(), tokens.Load())
+				}
+			})
+			return channelAt(t, server.URL, server.Client()), &posted
+		},
+		// The SDK refuses the call before sending anything.
+		"no app id": func(t *testing.T) (*Channel, *atomic.Int32) {
+			var posted atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				posted.Add(1)
+				jsonReply(w, http.StatusOK, tokenOK)
+			}))
+			t.Cleanup(server.Close)
+			return &Channel{api: apiAt("", "test-secret", server.URL, server.Client())}, &posted
 		},
 	}
 	for cause, serve := range causes {
 		for name, call := range outboundCalls {
 			t.Run(cause+"/"+name, func(t *testing.T) {
-				url, client, reached := serve(t)
-				err := call(t.Context(), channelAt(t, url, client))
+				c, posted := serve(t)
+				err := call(t.Context(), c)
 				if err == nil {
-					t.Fatal("a call that never reached Feishu succeeded")
+					t.Fatal("a call Feishu never took succeeded")
 				}
-				if reached.Load() != 0 {
-					t.Fatalf("the API request reached Feishu %d times", reached.Load())
+				if posted.Load() != 0 {
+					t.Fatalf("the API request was posted %d times", posted.Load())
 				}
 				if errors.Is(err, channel.ErrOutcomeUnknown) || errors.Is(messageOutcome(err), channel.ErrOutcomeUnknown) {
-					t.Fatalf("a request that never reached Feishu is reported as possibly delivered: %v", err)
+					t.Fatalf("a request Feishu never took is reported as possibly delivered: %v", err)
 				}
 			})
+		}
+	}
+}
+
+// A CodeError from the SDK means Feishu never took the request: the token
+// it needed was refused, or the SDK's own checks stopped it. A refused
+// token request returns it as a value; the client-assertion checks return
+// it as a pointer. Steve authenticates with the app secret and never
+// reaches those checks, so the pointer form is tested here directly.
+func TestAnSDKCodeErrorIsDefiniteInEitherForm(t *testing.T) {
+	for _, cause := range []error{
+		larkcore.CodeError{Code: 10014, Msg: "app secret invalid"},
+		&larkcore.CodeError{Code: larkcore.ErrCodeClientAssertionRetrieveFailed, Msg: "retrieve failed"},
+	} {
+		c := &call{}
+		c.token.Store(true)
+		c.api.Store(true)
+		err := c.failed("feishu send", fmt.Errorf("wrapped: %w", cause))
+		if errors.Is(err, channel.ErrOutcomeUnknown) {
+			t.Errorf("SDK code error %T is reported as possibly delivered: %v", cause, err)
 		}
 	}
 }
