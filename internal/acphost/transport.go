@@ -62,7 +62,20 @@ type LocalTransport struct {
 	// transport starts as soon as its leader runs. The leader's environment
 	// then carries the group's mark, and what it spawns inherits it.
 	Started func(procgroup.Identity)
+	// group makes the calls on the agent's process group; nil makes them
+	// on the kernel.
+	group *groupCalls
 }
+
+// groupCalls are the calls a local process makes on its process group, so a
+// test can stand in for a kernel that hides a member or cannot end one.
+type groupCalls struct {
+	waitExit func(pid int) error
+	kill     func(group int) error
+	live     func(group int) (bool, error)
+}
+
+var kernelGroup = groupCalls{waitExit: procgroup.WaitExit, kill: procgroup.Kill, live: procgroup.Live}
 
 func (t LocalTransport) Name() string { return t.Command }
 
@@ -104,13 +117,18 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 			t.Started(id)
 		}
 	}
-	return &localProcess{cmd: cmd, stdout: stdout, stdin: stdin}, nil
+	group := kernelGroup
+	if t.group != nil {
+		group = *t.group
+	}
+	return &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group}, nil
 }
 
 type localProcess struct {
 	cmd     *exec.Cmd
 	stdout  io.ReadCloser
 	stdin   io.WriteCloser
+	group   groupCalls
 	stopped atomic.Bool
 	// mu keeps a kill from reaching the group's id once the leader is
 	// reaped: from then on the id can belong to another process's group.
@@ -128,7 +146,7 @@ func (p *localProcess) Stdin() io.WriteCloser { return p.stdin }
 func (p *localProcess) Wait() error {
 	pid := p.cmd.Process.Pid
 	ended := false
-	switch err := procgroup.WaitExit(pid); {
+	switch err := p.group.waitExit(pid); {
 	case errors.Is(err, procgroup.ErrUnsupported):
 		err := p.cmd.Wait()
 		p.mu.Lock()
@@ -139,7 +157,7 @@ func (p *localProcess) Wait() error {
 	case err != nil:
 		slog.Error(fmt.Sprintf("acphost: wait for agent process %d: %v", pid, err))
 	default:
-		ended = endGroup(pid)
+		ended = p.endGroup(pid)
 	}
 	p.mu.Lock()
 	err := p.cmd.Wait()
@@ -154,11 +172,11 @@ func (p *localProcess) Wait() error {
 // endGroup kills the members of an exited leader's group until none runs.
 // A member the kill cannot end, as one in uninterruptible sleep until it
 // wakes, keeps it waiting and the stop unconfirmed.
-func endGroup(group int) bool {
+func (p *localProcess) endGroup(group int) bool {
 	began, warned := time.Now(), false
 	for delay := time.Millisecond; ; delay = min(2*delay, time.Second) {
-		killErr := procgroup.Kill(group)
-		live, err := procgroup.Live(group)
+		killErr := p.group.kill(group)
+		live, err := p.group.live(group)
 		if err == nil && !live {
 			return true
 		}
