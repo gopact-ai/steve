@@ -134,6 +134,29 @@ func TestRefusedArchiveOwingCloseChangesNothing(t *testing.T) {
 	}
 }
 
+// A settle the cluster refuses leaves the close owed.
+func TestRefusedSettleKeepsTheCloseOwed(t *testing.T) {
+	store, book, replicator := replicatedState(t)
+	owed := owedSession(t, store, "c1", "agent", "ns_1")
+	if err := store.ArchiveSessionOwingClose("c1", "agent", "2026-09-30T10:00:00Z", owed); err != nil {
+		t.Fatal(err)
+	}
+	replicator.reject = errors.New("no quorum")
+	if err := store.SettleOwedClose(owed); err == nil {
+		t.Fatal("a refused settle was reported as done")
+	}
+	replicator.reject = nil
+	reopened, err := OpenLedger(book)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, s := range map[string]*Store{"in memory": store, "reopened": reopened} {
+		if got := s.OwedCloses(); !reflect.DeepEqual(got, []OwedClose{owed}) {
+			t.Fatalf("%s: owed %+v after a refused settle, want %+v", name, got, []OwedClose{owed})
+		}
+	}
+}
+
 // The close owed must name the session being archived; anything else is
 // refused whole.
 func TestArchiveOwingCloseRefusesAnotherSession(t *testing.T) {
