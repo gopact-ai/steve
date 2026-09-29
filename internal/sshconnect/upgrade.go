@@ -52,6 +52,13 @@ func unknownNode(text i18n.Catalog, nodeID string) *StepError {
 // expired.
 const UnknownUpgrade = "unknown_upgrade"
 
+// upgradeUnsupported is the failure an upgrade, or its status, returns
+// for any node ID where the backend upgrades no machine: there is no
+// upgrade to start or to read here.
+func upgradeUnsupported(text i18n.Catalog) *StepError {
+	return Fail(text, "preflight", "upgrade_unsupported", text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
+}
+
 // upgradeVerifyLimit bounds how long the coordinator waits for a machine
 // to come back on the new build once its program was swapped.
 const upgradeVerifyLimit = 3 * time.Minute
@@ -68,7 +75,7 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 	ctx, text := s.speak(ctx)
 	backend, ok := s.backend.(UpgradeBackend)
 	if !ok {
-		return InstallResult{}, Fail(text, "preflight", "upgrade_unsupported", text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
+		return InstallResult{}, upgradeUnsupported(text)
 	}
 	if !backend.Knows(ctx, nodeID) {
 		return InstallResult{}, unknownNode(text, nodeID)
@@ -105,10 +112,15 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 
 // UpgradeStatus reads how a machine's latest upgrade is going, or how its
 // last one went until that record expires. A machine whose record expired
-// has no upgrade, like one never upgraded from here.
+// has no upgrade, like one never upgraded from here. Where the backend
+// upgrades no machine, it is refused as Upgrade is.
 func (s *Service) UpgradeStatus(ctx context.Context, nodeID string) (InstallResult, error) {
 	ctx, text := s.speak(ctx)
-	if backend, ok := s.backend.(UpgradeBackend); ok && !backend.Knows(ctx, nodeID) {
+	backend, ok := s.backend.(UpgradeBackend)
+	if !ok {
+		return InstallResult{}, upgradeUnsupported(text)
+	}
+	if !backend.Knows(ctx, nodeID) {
 		return InstallResult{}, unknownNode(text, nodeID)
 	}
 	s.mu.Lock()
