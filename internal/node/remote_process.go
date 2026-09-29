@@ -97,8 +97,15 @@ func (p *remoteProcess) Wait() error {
 	}
 	return p.err
 }
-func (p *remoteProcess) Kill()         { _ = p.Close() }
-func (p *remoteProcess) Stopped() bool { return p.stopped.Load() }
+
+// Exited is closed with Wait's return: the node reports the agent's exit
+// only once it has settled the agent's process group. A group that does
+// not stop within the node's grace after the agent exits ends the stream
+// with a reason that is not an exit, and the stop is left to the release
+// Close sends.
+func (p *remoteProcess) Exited() <-chan struct{} { return p.done }
+func (p *remoteProcess) Kill()                   { _ = p.Close() }
+func (p *remoteProcess) Stopped() bool           { return p.stopped.Load() }
 
 func (p *remoteProcess) wakeLocked() { close(p.changed); p.changed = make(chan struct{}) }
 

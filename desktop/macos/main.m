@@ -353,6 +353,15 @@
     return [self isServiceURL:parts.URL];
 }
 
+- (BOOL)isWorkspaceFragment:(NSURL *)url of:(NSURL *)current {
+    if (!url.fragment || !current || ![self isServiceURL:current]) return NO;
+    NSURLComponents *next = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+    NSURLComponents *here = [NSURLComponents componentsWithURL:current resolvingAgainstBaseURL:NO];
+    next.fragment = nil;
+    here.fragment = nil;
+    return [next.URL isEqual:here.URL];
+}
+
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     if (webView != self.webView) { decisionHandler(WKNavigationActionPolicyCancel); return; }
     NSURL *url = action.request.URL;
@@ -366,6 +375,13 @@
         return;
     }
     if ([self isServiceURL:url]) {
+        // The console routes by fragment (#/tasks). WebKit reports an empty
+        // source frame for such a same-document change, and sandboxed
+        // previews cannot navigate the top document, so allow it in place.
+        if (action.targetFrame.isMainFrame && [self isWorkspaceFragment:url of:webView.URL]) {
+            decisionHandler(WKNavigationActionPolicyAllow);
+            return;
+        }
         // Keep trusted target=_blank service links on the existing workspace
         // via the UI delegate instead of opening an unauthenticated browser.
         if (!action.targetFrame) {

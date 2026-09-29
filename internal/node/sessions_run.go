@@ -158,6 +158,7 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 		return one.stateAfterFailedOpen(err)
 	}
 	native, generation, openErr := host.OpenSession(openCtx, acp.SessionID(upstream), acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
+	one.recording.Wait()
 	httpMCP := false
 	if openErr == nil {
 		// The agent that actually runs is the authority on what it accepts:
@@ -573,7 +574,7 @@ func serverIdentities(servers []acp.MCPServer) []acp.MCPServer {
 
 func (s *SessionService) processesStopped() bool {
 	s.mu.Lock()
-	if s.unverifiedProcesses {
+	if len(s.unverifiedProcesses) > 0 {
 		s.mu.Unlock()
 		return false
 	}

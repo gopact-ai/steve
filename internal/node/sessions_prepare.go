@@ -71,8 +71,12 @@ func (s *SessionService) prepareOwnedSession(ctx context.Context, id, hash strin
 	if err != nil {
 		return nil, acphost.Config{}, err
 	}
+	one := &ownedSession{pluginInstructions: pluginInstructions, processConfigHash: processHash, service: s, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
+	if s.placeKnown {
+		hostCfg.Started = one.observeProcess
+	}
 	host := acphost.New(hostCfg)
-	one := &ownedSession{pluginInstructions: pluginInstructions, processConfigHash: processHash, service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
+	one.host = host
 	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, ContextID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
 	if source != nil {
 		one.record.UpstreamID, one.record.ResumedFrom, one.record.RuntimeSession = source.UpstreamID, source.State.ID, runtimeID

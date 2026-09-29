@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/procgroup"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -44,13 +45,25 @@ type SessionService struct {
 	mu                  sync.Mutex
 	sessions            map[string]*ownedSession
 	closed              bool
-	unverifiedProcesses bool
+	unverifiedProcesses map[string]bool
 	wg                  sync.WaitGroup
 	capMu               sync.Mutex
 	capabilities        map[string]harnessCapabilities
 	recordsMu           sync.Mutex
 	records             *sessionRecords
 	recordsErr          error
+
+	// unverifiedProcesses names, under mu, the records a previous node
+	// process left without a confirmed stop whose process group this one
+	// has not ended yet; a stop of one of them tries again. place is where
+	// this node runs agents: without it, as where process groups are not
+	// tracked, records name no group to end. settleMu serializes ending
+	// recorded groups, each from a fresh read of its record, which settle
+	// does.
+	place      procgroup.Place
+	placeKnown bool
+	settleMu   sync.Mutex
+	settle     func(id procgroup.Identity, ran, here procgroup.Place, within time.Duration) error
 }
 
 // harnessCapabilities is what starting a harness once said about the agent
@@ -119,6 +132,10 @@ type ownedSession struct {
 	pendingProgress    *view.Progress
 	progressTimer      *time.Timer
 
+	// recording counts identities of started process groups not yet
+	// committed; an open publishes its agent only after they are.
+	recording sync.WaitGroup
+
 	// processConfigHash is processConfigHash of the open that started this
 	// session. Only this node process holds sessions it opened, and its
 	// messaging listener never moves, so requests for them must name the
@@ -144,6 +161,9 @@ type sessionRecord struct {
 	CommandHashes  map[string]string                  `json:"command_hashes"`
 	Commands       map[string]nodewire.SessionCommand `json:"commands"`
 	CurrentCommand string                             `json:"current_command,omitempty"`
+	// Process is the native process group the open started, recorded once
+	// it runs, so a later node process can end it and confirm the stop.
+	Process sessionProcess `json:"process,omitzero"`
 	// Rebinding fixes the consumed-input floor for the new execution. Missing
 	// receipts after that execution accepted input cannot become new inputs.
 	BindingInputStart uint64 `json:"binding_input_start,omitempty"`
@@ -173,7 +193,15 @@ func (s *Server) startSessions(ctx context.Context) error {
 		return sessionError("invalid", "node sessions require durable node state and identity")
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	service := &SessionService{server: s, ctx: ctx, cancel: cancel, sessions: map[string]*ownedSession{}}
+	service := &SessionService{server: s, ctx: ctx, cancel: cancel, sessions: map[string]*ownedSession{}, unverifiedProcesses: map[string]bool{}, settle: procgroup.Settle}
+	if settle := s.conf().settleGroup; settle != nil {
+		service.settle = settle
+	}
+	if place, err := procgroup.Here(); err != nil {
+		slog.Warn("steve-node: agent process groups are not recorded; a node restart cannot confirm their stop", "error", err)
+	} else {
+		service.place, service.placeKnown = place, true
+	}
 	if err := service.load(); err != nil {
 		cancel()
 		service.closeRecords()
