@@ -186,6 +186,42 @@ func TestAutoStartBacksOffAndStopsAfterItsLimit(t *testing.T) {
 	}
 }
 
+// A peer that starts and comes back but dies again before the machine has
+// stayed online for ten minutes counts against the limit like a failed
+// start: after five such starts automatic start stops for the machine and
+// says why.
+func TestAutoStartGivesUpOnAPeerThatKeepsDying(t *testing.T) {
+	svc, runner, backend, clock := autoStartFixture(t)
+	zh := i18n.New(i18n.LocaleZH)
+	sweepOnce(svc)
+	clock.Advance(autoStartAfter)
+	sweepOnce(svc)
+	for start := 1; start <= autoStartLimit; start++ {
+		if scripts := runner.restarts(); len(scripts) != start {
+			t.Fatalf("expected %d starts, got %d", start, len(scripts))
+		}
+		backend.set(func(b *restartBackend) { b.answering = map[string]bool{"node-1": true} })
+		sweepOnce(svc)
+		clock.Advance(2 * time.Minute)
+		backend.set(func(b *restartBackend) { b.answering = nil })
+		sweepOnce(svc)
+		clock.Advance(8 * time.Minute)
+		sweepOnce(svc)
+	}
+	if scripts := runner.restarts(); len(scripts) != autoStartLimit {
+		t.Fatalf("automatic start went past its limit: %d starts", len(scripts))
+	}
+	state := autoState(t, svc, "node-1")
+	if state.State != "stopped" || state.Attempts != autoStartLimit || state.LastError != zh.T(i18n.SSHAutoStartGaveUp, autoStartLimit, int(autoStartSettle/time.Minute)) {
+		t.Fatalf("after a peer that kept dying: %#v", state)
+	}
+	for _, record := range backend.recorded() {
+		if record.Outcome != RestartStarted {
+			t.Fatalf("records = %#v", backend.recorded())
+		}
+	}
+}
+
 // A machine that leaves the cluster is dropped at once: the start running
 // for it is cut off and nothing is recorded or tried for it again.
 func TestAutoStartStopsForAMachineThatWasRemoved(t *testing.T) {

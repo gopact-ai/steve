@@ -1229,6 +1229,8 @@ const (
 	SSHStarted                    Key = "ssh_started"
 	SSHRestartFailedFix           Key = "ssh_restart_failed_fix"
 	SSHRestartRecordFailed        Key = "ssh_restart_record_failed"
+	SSHAutoStartGaveUp            Key = "ssh_auto_start_gave_up"
+	SSHClosedRestartFix           Key = "ssh_closed_restart_fix"
 	SSHBrowsePathFix              Key = "ssh_browse_path_fix"
 	SSHBrowseAmbiguous            Key = "ssh_browse_ambiguous"
 	SSHBrowseAmbiguousFix         Key = "ssh_browse_ambiguous_fix"
