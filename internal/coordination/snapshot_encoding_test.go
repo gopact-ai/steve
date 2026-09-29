@@ -2,6 +2,7 @@ package coordination
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -145,7 +146,16 @@ func TestRestoreLogsItsAppliedIndexBytesAndDuration(t *testing.T) {
 	slog.SetDefault(slog.New(logs.NewHandler(output)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	source := newMachine("snapshot", &snapshotBytesApplication{data: bytes.Repeat([]byte("x"), 4096)})
-	source.StoreConfiguration(42, raft.Configuration{Servers: []raft.Server{{ID: "a", Address: "a", Suffrage: raft.Voter}}})
+	source.StoreConfiguration(41, raft.Configuration{Servers: []raft.Server{{ID: "a", Address: "a", Suffrage: raft.Voter}}})
+	// A command after the configuration takes the applied index past the
+	// configuration index, which the line must not report instead.
+	initialize, err := json.Marshal(command{Kind: "initialize", ID: "init", ClusterID: "snapshot", Member: Member{NodeID: "a", Address: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := source.Apply(&raft.Log{Index: 42, Data: initialize}).(receipt); !ok || r.err() != nil {
+		t.Fatalf("initialize: %#v", r)
+	}
 	snapshot, err := source.Snapshot()
 	if err != nil {
 		t.Fatal(err)
