@@ -77,7 +77,7 @@ func TestSetTaskAsideResolvesOnlyAccountedOriginalExecution(t *testing.T) {
 				unresolvedResolutionScope(t, c, execution.Key{TaskID: old.TaskID, AttemptID: old.ID, InstanceID: "new-epoch"})
 			}
 			tracked, _ := c.tasks.Get(old.TaskID)
-			_, err := c.setTaskAside(t.Context(), "pause", tracked, task.StatePaused, true)
+			_, _, err := c.setTaskAside(t.Context(), "pause", tracked, task.StatePaused, true)
 			if mode == "settlement-failure" {
 				if err == nil || !strings.Contains(err.Error(), "isolated settlement write failure") {
 					t.Errorf("uncommitted accounting was treated as resolved: %v", err)
@@ -90,7 +90,7 @@ func TestSetTaskAsideResolvesOnlyAccountedOriginalExecution(t *testing.T) {
 					t.Fatal("failed settlement changed the task accounting row")
 				}
 				restore()
-				_, err = c.setTaskAside(t.Context(), "retry pause", tracked, task.StatePaused, true)
+				_, _, err = c.setTaskAside(t.Context(), "retry pause", tracked, task.StatePaused, true)
 			}
 			var want []string
 			if mode == "other-task" || mode == "new-epoch" {

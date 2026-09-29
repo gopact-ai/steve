@@ -126,8 +126,8 @@ var errNoCallback = errors.New("nothing behind this callback in this test")
 
 // fillCallbacks fills every callback Wire requires that cb leaves unset:
 // a supervisor that plans nothing and has no runs, a workspace attach that
-// refuses, a resumer that accepts, and a notifier and dispatcher that
-// drop what they are given.
+// refuses, a resumer that accepts, and a notifier, dispatcher and
+// cancellation hook that drop what they are given.
 //
 // It repeats turntest.Callbacks, which imports this package and so cannot
 // be used from its own tests; change both together.
@@ -146,6 +146,9 @@ func fillCallbacks(cb Callbacks) Callbacks {
 	}
 	if cb.ResumeDispatcher == nil {
 		cb.ResumeDispatcher = func(TaskResume) {}
+	}
+	if cb.AfterCancel == nil {
+		cb.AfterCancel = func(TaskCancel) {}
 	}
 	return cb
 }

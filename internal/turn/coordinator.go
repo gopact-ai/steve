@@ -242,11 +242,9 @@ type coordinatorState struct {
 	// supervisor, attach, gate and the callbacks below are set once by
 	// Wire. gate, afterTurn and turnPreface may be nil and are checked
 	// where they are used; the rest are never nil once wired.
-	resumer          func(TaskResume) error
-	resumeDispatcher func(TaskResume)
-	notifier         func(TaskNotice)
-	afterTurn        func(taskID string)
-	turnPreface      func(ctx context.Context, taskID string) Preface
+	routes      taskRoutes
+	afterTurn   func(taskID string)
+	turnPreface func(ctx context.Context, taskID string) Preface
 	// offlineAfter is how long a turn runs before its completion also earns
 	// a plain-text ping; zero keeps Steve quiet.
 	offlineAfter time.Duration

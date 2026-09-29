@@ -18,6 +18,10 @@ type retainedStopDriver interface {
 	StopRetainedTask(context.Context, string, turn.Request) (turn.Result, error)
 }
 
+// stopRequested is what an exchange waits on once a stop of its original
+// task has been asked for and nothing has confirmed it yet.
+const stopRequested = "Stop requested; waiting for confirmation from the original task and its children."
+
 // A recovery question is owned by the console after the coordinator's turn
 // has detached. Stop must reach that original task, not an empty turn slot.
 func (s *Service) stopRecovering(ctx context.Context, control Exchange, requester string) (turn.Result, bool, error) {
@@ -115,7 +119,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 		controlRecord.RecoveryStopTarget = &recoveryStopTarget{Conversation: control.Conversation, ExchangeID: target.ID, TaskID: candidate.TaskID, Requester: requester}
 	}
 	previousPending := target.RecoveryStopPending
-	target.RecoveryStopPending = "Stop requested; waiting for confirmation from the original task and its children."
+	target.RecoveryStopPending = stopRequested
 	if err := s.save(); err != nil {
 		target.RecoveryStopPending = previousPending
 		s.mu.Unlock()
@@ -198,7 +202,7 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 	}
 	s.mu.Lock()
 	previous := target.RecoveryStopPending
-	target.RecoveryStopPending = "Stop requested; waiting for confirmation from the original task and its children."
+	target.RecoveryStopPending = stopRequested
 	if saveErr := s.save(); saveErr != nil {
 		target.RecoveryStopPending = previous
 		s.mu.Unlock()
@@ -260,13 +264,69 @@ func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange
 	}
 }
 
+// TasksCancelled tells the exchanges still in progress that a person
+// cancelled these tasks. An exchange bound to one of them can no longer
+// resume it: its recovery, whether already under way or begun only when
+// the turn leaves the execution behind, stops offering to and turns to
+// confirming the execution stopped.
+func (s *Service) TasksCancelled(ids []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, list := range s.exchanges {
+		for _, e := range list {
+			if e.State.Terminal() {
+				continue
+			}
+			if e.cancelledTasks == nil {
+				e.cancelledTasks = map[string]bool{}
+			}
+			for _, id := range ids {
+				e.cancelledTasks[id] = true
+			}
+			select {
+			case e.taskCancels <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func (s *Service) taskCancelled(e *queuedExchange, id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return id != "" && e.cancelledTasks[id]
+}
+
+// abandon turns the recovery of an exchange whose task was cancelled into
+// waiting for the original execution to stop. It records the stop request
+// first, so a restart goes on waiting for the stop instead of offering to
+// resume the task again, then tries the stop at once and, until it is
+// confirmed, holds the exchange on the card that says the stop is being
+// confirmed; a stop already confirmed is simply delivered.
+func (r *exchangeRecovery) abandon() {
+	r.stream.Close()
+	r.s.mu.Lock()
+	if r.e.RecoveryStop == nil && r.e.RecoveryStopPending == "" {
+		r.e.RecoveryStopPending = stopRequested
+		if err := r.s.save(); err != nil {
+			r.e.RecoveryStopPending = ""
+			r.s.mu.Unlock()
+			r.s.detachRecovery(r.e, err)
+			return
+		}
+	}
+	r.s.mu.Unlock()
+	r.s.waitRecoveryStop(r.e, true)
+}
+
 // A parent observer can finish before the stop of one of its children is
 // confirmed. waitRecoveryStop keeps that stop moving instead of parking the
 // exchange on a card the owner can only read: it rechecks on its own cadence,
 // says what is still unconfirmed, and settles the exchange the moment the
 // stop confirms — including when the durable task-stop reconciliation running
-// behind the console confirmed it while nobody was watching.
-func (s *Service) waitRecoveryStop(e *queuedExchange) {
+// behind the console confirmed it while nobody was watching. checkNow makes
+// the first check at once instead of a cadence later.
+func (s *Service) waitRecoveryStop(e *queuedExchange, checkNow bool) {
 	s.mu.Lock()
 	if e.RecoveryStop != nil {
 		reply := *e.RecoveryStop
@@ -287,6 +347,9 @@ func (s *Service) waitRecoveryStop(e *queuedExchange) {
 	if saveErr != nil {
 		s.detachRecovery(e, saveErr)
 		return
+	}
+	if checkNow {
+		w.check()
 	}
 	w.run()
 }

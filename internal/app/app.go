@@ -140,6 +140,7 @@ func coordinatorCallbacks(supervisor turn.Supervisor, attach func(ctx context.Co
 		Notifier:         routes.Notifier,
 		Resumer:          routes.Resumer,
 		ResumeDispatcher: routes.ResumeDispatcher,
+		AfterCancel:      routes.AfterCancel,
 	}
 }
 

@@ -38,6 +38,14 @@ type queuedExchange struct {
 	cancel               context.CancelFunc
 	done                 chan struct{}
 	outcome              outcome
+
+	// cancelledTasks are tasks a person cancelled while this exchange was
+	// in progress, held under the service lock. taskCancels wakes its
+	// recovery worker when one is added; it is made under the lock when a
+	// recovery first opens and never replaced, so the worker keeps the
+	// channel it was handed without taking the lock again.
+	cancelledTasks map[string]bool
+	taskCancels    chan struct{}
 }
 
 // ConversationID is a conversation's full identity: the console's own
@@ -560,7 +568,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	}
 	if e.RecoveryStop == nil && e.RecoveryStopPending != "" {
 		s.mu.Unlock()
-		s.waitRecoveryStop(e)
+		s.waitRecoveryStop(e, false)
 		return
 	}
 	if e.RecoveryStop != nil {
