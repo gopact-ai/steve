@@ -1114,17 +1114,13 @@ func (h *Host) PromptTurn(
 	sameGeneration := h.generation == generation
 	h.mu.Unlock()
 	if !sameGeneration {
-		cause := fmt.Errorf("agent process changed during prompt")
-		if PromptSettled(err) {
-			return out, activity, settledPromptError{cause}
-		}
-		return out, activity, promptFailure(cause, h.ProcessStopped(generation))
+		return out, activity, h.failedPrompt(ctx, generation, err, fmt.Errorf("agent process changed during prompt"))
 	}
 	if err != nil {
 		if abandoned.Load() {
 			return out, activity, promptFailure(errors.Join(err, ctx.Err()), h.ProcessStopped(generation))
 		}
-		return out, activity, promptFailure(fmt.Errorf("session/prompt: %w", err), h.ProcessStopped(generation))
+		return out, activity, h.failedPrompt(ctx, generation, err, fmt.Errorf("session/prompt: %w", err))
 	}
 	col.promptUsage(resp.Usage)
 	if resp.StopReason == acp.StopReasonCanceled {
@@ -1134,6 +1130,33 @@ func (h *Host) PromptTurn(
 		activity = append(activity, fmt.Sprintf("(stopReason: %s)", resp.StopReason))
 	}
 	return out, activity, nil
+}
+
+// failedPrompt is the error of a prompt that did not end as asked, on
+// cause, its call having returned err. An answer from the agent, an error
+// included, settles it. One that no answer ended is settled only by the
+// stop of the agent's process, and the agent's exit ends the call before
+// the transport has ended what the agent left in its process group: the
+// stop is read once that has settled, waiting for it at most
+// exitedGroupWait and no longer than ctx lasts. A group that has not
+// emptied by then leaves the stop unconfirmed.
+func (h *Host) failedPrompt(ctx context.Context, generation uint64, err, cause error) error {
+	if PromptSettled(err) {
+		return settledPromptError{cause}
+	}
+	h.mu.Lock()
+	settling := h.settling[generation]
+	h.mu.Unlock()
+	if settling != nil {
+		brief := time.NewTimer(exitedGroupWait)
+		defer brief.Stop()
+		select {
+		case <-settling:
+		case <-brief.C:
+		case <-ctx.Done():
+		}
+	}
+	return promptFailure(cause, h.ProcessStopped(generation))
 }
 
 func validatePromptMedia(images []Image, caps *acp.AgentCapabilities) error {
@@ -1376,10 +1399,11 @@ func (h *Host) shutdownLocked() {
 }
 
 // exitedGroupWait bounds how long a stop with no agent running waits for
-// the process groups of the agents that exited. The transport killed what
-// each left in its group as the agent exited, and a group the kill ends
-// empties within milliseconds, well inside it. One that no kill ends is not
-// waited out: its stop is confirmed later, once the group is empty.
+// the process groups of the agents that exited, and how long a prompt that
+// no answer ended waits for its agent's. The transport killed what each
+// left in its group as the agent exited, and a group the kill ends empties
+// within milliseconds, well inside it. One that no kill ends is not waited
+// out: its stop is confirmed later, once the group is empty.
 const exitedGroupWait = 2 * time.Second
 
 // awaitSettled waits up to exitedGroupWait for the processes whose Wait
