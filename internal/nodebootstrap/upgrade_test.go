@@ -17,12 +17,17 @@ import (
 
 // The test binary doubles as the peer program: started as `steve peer` it
 // waits for SIGTERM the way a peer would, so the upgrade script has a real
-// process, with a real command line, to stop and restart.
+// process, with a real command line, to stop and restart. With
+// STEVE_NODEBOOTSTRAP_STUB_LINGER it takes that long to exit once asked,
+// as a peer winding down its executions does.
 func TestMain(m *testing.M) {
 	if os.Getenv("STEVE_NODEBOOTSTRAP_STUB") == "1" && len(os.Args) > 1 && os.Args[1] == "peer" {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, syscall.SIGTERM)
 		<-stop
+		if linger, err := time.ParseDuration(os.Getenv("STEVE_NODEBOOTSTRAP_STUB_LINGER")); err == nil {
+			time.Sleep(linger)
+		}
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -86,13 +91,21 @@ func layoutPeer(t *testing.T) (home string, program []byte) {
 func installedPeer(t *testing.T) (home string, pid string) {
 	t.Helper()
 	home, _ = layoutPeer(t)
+	return home, startPeer(t, home)
+}
+
+// startPeer starts the installed program of the installation under home
+// as its peer, with env added to the test's environment, and returns its
+// pid.
+func startPeer(t *testing.T, home string, env ...string) string {
+	t.Helper()
 	start := exec.Command("bash", "-c", `nohup "$HOME/.steve-peer/bin/steve" peer --config "$HOME/.steve-peer/config.json" >> "$HOME/.steve-peer/peer.log" 2>&1 < /dev/null & echo $!`)
-	start.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	start.Env = append(append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1"), env...)
 	out, err := start.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return home, strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out))
 }
 
 func stageUpload(t *testing.T, home, id string, content []byte) string {

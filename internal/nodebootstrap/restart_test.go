@@ -269,6 +269,25 @@ func TestPeerRestartScriptStopsAPeerStartedByARelativePath(t *testing.T) {
 	}
 }
 
+// Every peer process of the installation is given its time to stop. One
+// that exits at once does not let the stop pass over another still
+// winding down, and the program is started again only once all are gone:
+// started earlier, it would find the gateway lock still held.
+func TestPeerRestartScriptWaitsForEveryPeerProcessItStops(t *testing.T) {
+	requirePeerPlatform(t)
+	home, quick := installedPeer(t)
+	slow := startPeer(t, home, "STEVE_NODEBOOTSTRAP_STUB_LINGER=8s")
+	report, err := runRestart(t, home, RestartSpec{})
+	if err != nil || !strings.Contains(report, "STEVE_RESTART\trestarted\n") {
+		t.Fatalf("restart failed: %v\n%s", err, report)
+	}
+	for _, pid := range []string{quick, slow} {
+		if exec.Command("kill", "-0", pid).Run() == nil {
+			t.Fatalf("the peer process %s was still running when the program was started again:\n%s", pid, report)
+		}
+	}
+}
+
 // The pid a gateway lock records outlives the peer that wrote it, and the
 // number can come back as another process of the same account, here the
 // peer of a second installation, started by its path or from its own
