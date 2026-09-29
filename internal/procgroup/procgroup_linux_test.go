@@ -106,7 +106,7 @@ func TestMountShowsAllProcessesOnlyWithoutHidepid(t *testing.T) {
 		{"with another filesystem on /proc", mount("/proc", "rw", "tmpfs", "rw"), false},
 		{"without /proc", mount("/sys", "rw", "sysfs", "rw"), false},
 	} {
-		if shows := mountShowsAll([]byte(tc.mountinfo)); shows != tc.shows {
+		if shows := mountShowsAll([]byte(tc.mountinfo), "21"); shows != tc.shows {
 			t.Errorf("%s: shows all %v, want %v", tc.name, shows, tc.shows)
 		}
 	}

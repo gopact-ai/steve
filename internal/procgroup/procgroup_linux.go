@@ -155,13 +155,15 @@ func procShowsAll() bool {
 		return false
 	}
 	mountinfo, err := os.ReadFile("/proc/self/mountinfo")
-	return err == nil && mountShowsAll(mountinfo)
+	return err == nil && mountShowsAll(mountinfo, "")
 }
 
 // mountShowsAll reports whether the mount table in the format of
 // /proc/self/mountinfo has a proc filesystem on /proc, the last mounted
-// there, without hidepid on.
-func mountShowsAll(mountinfo []byte) bool {
+// there, without hidepid on. mount is to name the mount /proc resolves to,
+// as /proc/self/mountinfo numbers mounts; it is not used yet, and the last
+// mounted on /proc is taken for that mount.
+func mountShowsAll(mountinfo []byte, mount string) bool {
 	shows := false
 	for line := range strings.SplitSeq(string(mountinfo), "\n") {
 		// Fields are: id, parent, device, root, mount point, mount
