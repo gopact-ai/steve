@@ -179,14 +179,20 @@ func (s *Store) List(channel string) []Task {
 // thread that stopped being spoken to has finished, and a task that
 // keeps counting as running for it misleads every list. Only tasks a
 // person opened by talking (no origin) are closed, only when live
-// reports nothing in flight on them, and only past the age.
+// reports nothing in flight on them, only when check, run within the
+// closing transaction as CloseChecked runs it, finds nothing of them left
+// unsettled, and only past the age.
 //
 // A task whose liveness cannot be read stays open. Liveness is read
 // without the store lock, so each close re-checks the task under it: one
 // that was spoken to in the meantime is no longer quiet and stays open.
+// One the check refuses stays open too, for a later pass to look again.
 // The closed tasks are returned; the error names every task that could
 // not be checked or closed.
-func (s *Store) CloseIdle(age time.Duration, live func(id string) (bool, error)) ([]Task, error) {
+func (s *Store) CloseIdle(age time.Duration, live func(id string) (bool, error), check func(*ledger.Tx, Task) error) ([]Task, error) {
+	if check == nil {
+		return nil, errors.New("closing a task requires a completion check")
+	}
 	cutoff := s.now().Add(-age)
 	var closed []Task
 	var errs []error
@@ -204,7 +210,10 @@ func (s *Store) CloseIdle(age time.Duration, live func(id string) (bool, error))
 				continue
 			}
 		}
-		done, ok, err := s.closeQuiet(t.ID, cutoff)
+		done, ok, err := s.closeQuiet(t.ID, cutoff, check)
+		if CompletionRefused(err) {
+			continue
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("task %s: close: %w", t.ID, err))
 			continue
@@ -222,8 +231,9 @@ func quietChat(t *Task, cutoff time.Time) bool {
 	return t.State == StateRunning && t.Origin == "" && t.UpdatedAt.Before(cutoff)
 }
 
-// closeQuiet ends the task only if it is still quiet when the write is made.
-func (s *Store) closeQuiet(id string, cutoff time.Time) (Task, bool, error) {
+// closeQuiet ends the task only if it is still quiet when the write is made
+// and check lets it.
+func (s *Store) closeQuiet(id string, cutoff time.Time, check func(*ledger.Tx, Task) error) (Task, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if stored, ok := s.data.Tasks[id]; !ok || !quietChat(stored, cutoff) {
@@ -231,9 +241,10 @@ func (s *Store) closeQuiet(id string, cutoff time.Time) (Task, bool, error) {
 	}
 	next := s.draft()
 	stored := next.edit(id)
+	before := *stored.clone()
 	stored.State = StateDone
 	stored.UpdatedAt = s.now()
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceRecordsLocked(context.Background(), next, func(tx *ledger.Tx) error { return check(tx, before) }); err != nil {
 		return Task{}, false, err
 	}
 	return *stored.clone(), true, nil

@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -45,6 +47,15 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 			return Result{Title: title, Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}, nil
 		}
 	}
+	// A task belongs to the project it was opened in; the next turn here
+	// runs in another. What this conversation still held is closed, so it is
+	// not silently continued under a different directory and a different
+	// data level — and before the binding moves, so one still unsettled
+	// refuses the switch with nothing changed.
+	if refused, err := c.closeTask(ctx, req.ConversationID, slices.Sorted(maps.Keys(conversation.Sessions)), req.ExchangeID); err != nil {
+		refusal := c.closeRefusal(req.ConversationID, refused, err)
+		return Result{Title: title, Text: refusal.Text}, refusal
+	}
 	binding, err := c.projects.Bind(ctx, req.ConversationID, p.ID, req.SenderOpenID)
 	if err != nil {
 		return Result{}, err
@@ -54,11 +65,6 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 		if err := c.store.ArchiveSession(req.ConversationID, agentID, now); err != nil {
 			slog.Error(fmt.Sprintf("turn: archive %s session on project switch: %v", agentID, err), "conversation", req.ConversationID, "agent", agentID, "project", p.ID)
 		}
-		// A task belongs to the project it was opened in; the next turn
-		// here runs in another. What this conversation still held is
-		// closed, so it is not silently continued under a different
-		// directory and a different data level.
-		c.closeTask(req.ConversationID, agentID)
 	}
 	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s (v%d) by %s", req.ConversationID, p.ID, binding.Version, req.SenderOpenID), "conversation", req.ConversationID, "project", p.ID)
 	return Result{Title: title, Text: c.text.T(i18n.ProjectSwitched, p.ID, homeLabel(p))}, nil

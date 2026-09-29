@@ -1,6 +1,7 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -499,6 +500,9 @@ func TestListingOrdersIdsNumerically(t *testing.T) {
 	}
 }
 
+// settled is a completion check that finds nothing left unsettled.
+func settled(*ledger.Tx, Task) error { return nil }
+
 // A chat task nobody has spoken to for a day is closed; one with a live
 // attempt, one spoken to recently, and one a schedule or delegation
 // opened are left alone.
@@ -520,7 +524,7 @@ func TestCloseIdleEndsQuietChatTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	*clock = now
-	closed, err := s.CloseIdle(24*time.Hour, func(id string) (bool, error) { return id == busy.ID, nil })
+	closed, err := s.CloseIdle(24*time.Hour, func(id string) (bool, error) { return id == busy.ID, nil }, settled)
 	if err != nil || len(closed) != 1 || closed[0].ID != old.ID {
 		t.Fatalf("closed = %+v err=%v", closed, err)
 	}
@@ -528,6 +532,41 @@ func TestCloseIdleEndsQuietChatTasks(t *testing.T) {
 		if got, _ := s.Get(id); got.State != StateRunning {
 			t.Fatalf("task %s = %s, want running", id, got.State)
 		}
+	}
+}
+
+// A quiet task the check still finds unsettled stays running for a later
+// pass and is not reported as a failure to close; a check that cannot be
+// made is.
+func TestCloseIdleLeavesATaskItsCheckRefuses(t *testing.T) {
+	s, clock := newStore(t)
+	now := *clock
+	*clock = now.Add(-30 * time.Hour)
+	waiting, _ := s.Create(Task{Goal: "waiting chat", Channel: "c1", Member: "worker"})
+	unreadable, _ := s.Create(Task{Goal: "unreadable chat", Channel: "c2", Member: "worker"})
+	for _, id := range []string{waiting.ID, unreadable.ID} {
+		if _, err := s.Begin(id, "worker", "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	*clock = now
+	broken := errors.New("ledger unavailable")
+	closed, err := s.CloseIdle(24*time.Hour, nil, func(_ *ledger.Tx, tracked Task) error {
+		if tracked.ID == waiting.ID {
+			return fmt.Errorf("question pending: %w", ErrCompleteAttention)
+		}
+		return broken
+	})
+	if len(closed) != 0 || !errors.Is(err, broken) || errors.Is(err, ErrCompleteAttention) {
+		t.Fatalf("closed = %+v err=%v; want nothing closed and only the unreadable check reported", closed, err)
+	}
+	for _, id := range []string{waiting.ID, unreadable.ID} {
+		if got, _ := s.Get(id); got.State != StateRunning {
+			t.Fatalf("task %s = %s, want running", id, got.State)
+		}
+	}
+	if _, err := s.CloseIdle(24*time.Hour, nil, nil); err == nil {
+		t.Fatal("closed idle tasks without a completion check")
 	}
 }
 
@@ -551,7 +590,7 @@ func TestCloseIdleSparesATaskThatResumedAfterItsLivenessCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 		return false, nil
-	})
+	}, settled)
 	if err != nil || len(closed) != 0 {
 		t.Fatalf("closed a task whose new turn began after the check: %+v err=%v", closed, err)
 	}

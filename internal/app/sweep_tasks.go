@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
 // idleTaskAge is how long a chat thread may go unspoken to before its
@@ -36,7 +39,13 @@ func closeIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Se
 		_, ok, err := attempts.LiveAttemptOf(ctx, id)
 		return ok, err
 	}
-	closed, err := tasks.CloseIdle(age, live)
+	// A quiet task still stays open while anything of it is unsettled — a
+	// turn waiting on the owner, say — by the check /complete makes. No
+	// input asked for this close, so none is spared.
+	settled := func(tx *ledger.Tx, t task.Task) error {
+		return turn.CheckTaskCompletionTx(tx, map[string]bool{t.ID: true}, t.Channel, "", console.CheckTaskCompletionTx)
+	}
+	closed, err := tasks.CloseIdle(age, live, settled)
 	if err != nil && ctx.Err() == nil {
 		// Each named task stays open; the next pass looks at it again.
 		slog.Warn(fmt.Sprintf("steve: idle sweep left tasks open: %v", err))
