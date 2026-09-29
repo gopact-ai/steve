@@ -677,6 +677,11 @@ var zh = map[Key]string{
 	DelegateStateCancelled:      "已取消",
 	DelegateUnrecordedAnswer:    "子任务在开始执行前中断，没有执行记录。如果仍需要这项工作，请重新委派。",
 
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed: "父任务 #%s 已结束（%s）。送进它会话的结果消息尚未确认处理完（例如仍在等你回答恢复问题），不会再次发送；结果保留在本任务中。",
+	DelegateSuppressedEnded:       "父任务 #%s 在收到这个结果前已结束（%s），结果不再发送；结果保留在本任务中。",
+	DelegateSuppressedMissing:     "父任务 #%s 的记录已不存在，结果不会发送；结果保留在本任务中。",
+
 	// Resume and replacement recovery questions.
 	ResumeTitle:                        "继续任务需要你的决定",
 	ResumeAttemptedSeparator:           "；",
@@ -1123,6 +1128,8 @@ var zh = map[Key]string{
 	SSHUpgradeRunningFix:          "等待本次升级返回结果",
 	SSHUpgradeUnknown:             "这台机器没有进行中或刚结束的升级",
 	SSHUpgradeUnknownFix:          "从机器列表发起升级",
+	SSHUpgradeUnknownNode:         "本机不知道节点 ID 为 %q 的机器：它不是本机，本机没有记录到它的 SSH 隧道，本机副本的集群成员里也没有它",
+	SSHUpgradeUnknownNodeFix:      "升级按节点 ID（形如 node-…）指定机器，机器详情里可以看到；机器刚加入，或本机暂时与集群多数成员失联时，本机副本可能还没有它，稍后重试",
 	SSHUpgradePreflight:           "确认这台机器的 SSH 别名、平台和要发送的程序",
 	SSHUpgradeTargetFix:           "只有经 SSH 加入桌面 App 集群、且隧道仍记录在本机的机器可以从这里升级；其他机器需在该机器上替换 steve 或 steve-node 并重启",
 	SSHUpgradePlatformUnknown:     "无法识别这台机器的平台",
@@ -1339,6 +1346,8 @@ var zh = map[Key]string{
 	ClusterContentNoVerifiedCopy:     "项目 %s 的内容 %s 当前无法取得已验证副本，请检查原节点连接与内容状态；恢复后会重新核对。",
 	ClusterContentReadIncomplete:     "项目 %s 的内容 %s 的读取或本机保存尚未完成，已有副本记录保持不变，请检查存储和连接。",
 	ClusterContentFewCopies:          "项目 %s 的内容 %s 当前只有 %d 个独立可达副本，需要 %d 个；等待符合存储授权的节点恢复后继续补齐。",
+	ClusterContentStoreUncheckedOne:  "项目 %s 的内容 %s 当前只有 %d 个独立可达副本，需要 %d 个；被请求存放副本的节点 %s 暂时无法核对存储授权（该节点副本落后或无法读取集群状态），请检查该节点与集群的连接；下一轮将继续补齐。",
+	ClusterContentStoreUncheckedMany: "项目 %s 的内容 %s 当前只有 %d 个独立可达副本，需要 %d 个；被请求存放副本的节点 %s 暂时无法核对存储授权（这些节点副本落后或无法读取集群状态），请检查这些节点与集群的连接；下一轮将继续补齐。",
 	ClusterContentRemoteQuota:        "项目 %s 的内容 %s 暂时无法增加独立副本，请检查可用节点的存储配额。",
 	ClusterContentRecordPending:      "项目 %s 的内容 %s 的本机内容已恢复，但副本记录尚未提交，后续会重新核对。",
 	ClusterMaintenanceFailed:         "内容回执清理未完成，未知上传仍保留：%v",
@@ -2022,6 +2031,11 @@ var en = map[Key]string{
 	DelegateStateCancelled:      "cancelled",
 	DelegateUnrecordedAnswer:    "The subtask was interrupted before it started and left no execution record. Delegate it again if the work is still needed.",
 
+	// Why a delegated child's result was settled without reaching its parent.
+	DelegateSuppressedUnconfirmed: "Parent task #%s has ended (%s). The result message in its conversation has not been confirmed as processed (it may still be waiting for your answer to a recovery question); it will not be sent again, and the result stays on this task.",
+	DelegateSuppressedEnded:       "Parent task #%s ended (%s) before receiving this result; it will not be sent, and the result stays on this task.",
+	DelegateSuppressedMissing:     "Parent task #%s no longer exists; this result will not be sent, and it stays on this task.",
+
 	// Resume and replacement recovery questions.
 	ResumeTitle:                        "Continuing this task needs your decision",
 	ResumeAttemptedSeparator:           "; ",
@@ -2468,6 +2482,8 @@ var en = map[Key]string{
 	SSHUpgradeRunningFix:          "Wait for this upgrade to finish",
 	SSHUpgradeUnknown:             "This machine has no upgrade running or just finished",
 	SSHUpgradeUnknownFix:          "Start an upgrade from the machine list",
+	SSHUpgradeUnknownNode:         "This node does not know a machine with node ID %q: it is not this node, has no SSH tunnel recorded here, and is not a member in this node's replica",
+	SSHUpgradeUnknownNodeFix:      "Upgrades name a machine by its node ID (node-…), shown in the machine's details; a machine that joined recently, or while this node is cut off from most of the cluster, may not be in this node's replica yet, so try again later",
 	SSHUpgradePreflight:           "Confirming the machine's SSH alias, platform and the program to send",
 	SSHUpgradeTargetFix:           "Only machines that joined the desktop app's cluster over SSH, with their tunnel still recorded here, can be upgraded from here; on other machines replace steve or steve-node on the machine itself and restart it",
 	SSHUpgradePlatformUnknown:     "The machine's platform is not recognised",
@@ -2684,6 +2700,8 @@ var en = map[Key]string{
 	ClusterContentNoVerifiedCopy:     "Project %s, content %s: no verified copy can be obtained right now; check the original node's connection and the content's state. It is checked again once they recover.",
 	ClusterContentReadIncomplete:     "Project %s, content %s: reading it or saving it on this machine did not finish; existing copy records stay unchanged. Check storage and connections.",
 	ClusterContentFewCopies:          "Project %s, content %s: only %d independent reachable copies exist and %d are needed; restoring continues once nodes allowed to store it recover.",
+	ClusterContentStoreUncheckedOne:  "Project %s, content %s: only %d independent reachable copies exist and %d are needed; node %s, asked to store a copy, cannot check its storage grant right now (its replica is behind or it cannot read the cluster state). Check that node's connection to the cluster; the next round tries again.",
+	ClusterContentStoreUncheckedMany: "Project %s, content %s: only %d independent reachable copies exist and %d are needed; nodes %s, asked to store copies, cannot check their storage grant right now (their replicas are behind or they cannot read the cluster state). Check those nodes' connections to the cluster; the next round tries again.",
 	ClusterContentRemoteQuota:        "Project %s, content %s: no independent copy can be added right now; check the storage quota on available nodes.",
 	ClusterContentRecordPending:      "Project %s, content %s: the local content is restored, but the copy record is not committed yet; it will be checked again.",
 	ClusterMaintenanceFailed:         "Content receipt cleanup did not finish; unknown uploads are kept: %v",

@@ -169,9 +169,9 @@ func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "blocked", Message: text.T(i18n.ClusterPlanNoPackage), Suggestion: text.T(i18n.ClusterPlanNoPackageFix, check.OS+"/"+check.Arch)})
 		return template, nodebootstrap.PeerSpec{}, plan, nil
 	}
-	metadata, err := nodebootstrap.InspectBinary(text, path)
+	metadata, err := nodebootstrap.InspectBinary(path)
 	if err != nil {
-		return template, nodebootstrap.PeerSpec{}, plan, err
+		return template, nodebootstrap.PeerSpec{}, plan, errors.New(text.Explain(err))
 	}
 	if metadata.OS != check.OS || metadata.Arch != check.Arch {
 		template.Steps = append(template.Steps, sshconnect.Step{ID: "binary", Status: "blocked", Message: text.T(i18n.ClusterPlanPackageMismatch), Suggestion: text.T(i18n.ClusterPlanPackageMismatchFix)})

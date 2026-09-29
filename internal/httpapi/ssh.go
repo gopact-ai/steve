@@ -177,7 +177,11 @@ func (s *Server) sshAvailable(w http.ResponseWriter, r *http.Request) bool {
 func (s *Server) sshError(w http.ResponseWriter, err error) {
 	var step *sshconnect.StepError
 	if errors.As(err, &step) {
-		w.WriteHeader(http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if step.Code == sshconnect.UnknownNode {
+			status = http.StatusNotFound
+		}
+		w.WriteHeader(status)
 		writeJSON(w, map[string]any{"error": step.Error(), "step": step})
 		return
 	}
@@ -189,11 +193,11 @@ func decodeSSH(w http.ResponseWriter, r *http.Request, value any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
-		writeDesktopError(w, err, http.StatusBadRequest)
+		writeDesktopError(w, r, err, http.StatusBadRequest)
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		writeDesktopError(w, errors.New("expected one request object"), http.StatusBadRequest)
+		writeDesktopError(w, r, errors.New("expected one request object"), http.StatusBadRequest)
 		return false
 	}
 	return true

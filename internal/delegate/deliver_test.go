@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -204,6 +205,45 @@ func TestAClosedParentGetsNoContinuation(t *testing.T) {
 	}
 	if box.count() != 0 {
 		t.Fatalf("a closed parent was sent %d message(s)", box.count())
+	}
+}
+
+// A result its parent never received before ending is suppressed with a
+// reason in the Hub's language: the parent ended, or its record is gone.
+func TestASuppressedResultSaysWhyItsParentNeverReceivedIt(t *testing.T) {
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		for _, end := range []task.State{task.StateDone, task.StateCancelled} {
+			t.Run(string(locale)+"/"+string(end), func(t *testing.T) {
+				w := newWorld(t)
+				w.service.text = i18n.New(locale)
+				parent := w.running(t, "codex")
+				child := completedChild(t, w, parent, "finished after its parent")
+				if _, err := w.tasks.Advance(parent.ID, end); err != nil {
+					t.Fatal(err)
+				}
+				w.service.SetDeliverer(func(context.Context, Delivery) error { t.Error("an ended parent was sent a result"); return nil })
+				w.service.reconcileDeliveries(t.Context(), time.Now())
+				got, _ := w.tasks.Get(child.ID)
+				if got.Delivery == nil || got.Delivery.State != task.DeliverySuppressed {
+					t.Fatalf("delivery = %+v, want suppressed", got.Delivery)
+				}
+				checkSuppressedReason(t, *got.Delivery, locale, parent.ID, end)
+			})
+		}
+		t.Run(string(locale)+"/missing", func(t *testing.T) {
+			w := newWorld(t)
+			w.service.text = i18n.New(locale)
+			child := completedChild(t, w, task.Task{ID: "404", Channel: "chat"}, "its parent is gone")
+			w.service.SetDeliverer(func(context.Context, Delivery) error { t.Error("a missing parent was sent a result"); return nil })
+			w.service.reconcileDeliveries(t.Context(), time.Now())
+			got, _ := w.tasks.Get(child.ID)
+			if got.Delivery == nil || got.Delivery.State != task.DeliverySuppressed {
+				t.Fatalf("delivery = %+v, want suppressed", got.Delivery)
+			}
+			if !strings.Contains(got.Delivery.Error, "#404") || containsHan(got.Delivery.Error) != (locale == i18n.LocaleZH) {
+				t.Errorf("reason %q does not name #404 in %s", got.Delivery.Error, locale)
+			}
+		})
 	}
 }
 

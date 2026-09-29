@@ -139,7 +139,10 @@ try {
  console.log('PASS minimum native window overlays side chat, wide toolbar stays bounded, and closing preserves diff context');
  await page.getByRole('button',{name:'Source',exact:true}).click();
  await select(page.locator('.source-code'),'third');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();
- await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);await side.getByRole('button',{name:'Close side chat',exact:true}).click();await select(page.locator('.source-code'),'second');const box=await bar.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=390&&box.y>=0&&box.y+box.height<=844);
+ // Measure the phone layout: the app bar and the review's file toggle
+ // replace their desktop forms only once the breakpoint change renders,
+ // and the side chat is still open, now over the review.
+ await page.setViewportSize({width:390,height:844});await page.locator('.app-mobile-bar').waitFor();await page.locator('.review-mobile-files').waitFor({state:'attached'});await side.waitFor();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);await side.getByRole('button',{name:'Close side chat',exact:true}).click();await select(page.locator('.source-code'),'second');const box=await bar.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=390&&box.y>=0&&box.y+box.height<=844);
  await page.screenshot({path:'/tmp/steve-selection-review-mobile.png'});console.log('PASS source/deleted-side references, Review side chat and narrow toolbar placement');
  await page.keyboard.press('Escape');await page.getByRole('dialog',{name:'Artifact workspace',exact:true}).getByRole('button',{name:'Back',exact:true}).click();await page.setViewportSize({width:1600,height:1000});
  const draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep this draft while the project changes');

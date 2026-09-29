@@ -11,11 +11,37 @@ import (
 )
 
 // InputError is a refusal of what the owner asked for, as opposed to a
-// failure of this machine. Callers answer it as a bad request and show the
-// message as is.
-type InputError struct{ Message string }
+// failure of this machine. Callers answer it as a bad request. A refusal
+// this package makes is English until Say puts it in the owner's language;
+// Message is one already worded, said as it is.
+type InputError struct {
+	Message string
+	key     i18n.Key
+	args    []any
+}
 
-func (e *InputError) Error() string { return e.Message }
+func (e *InputError) Error() string { return e.Say(i18n.New(i18n.LocaleEN)) }
+
+// Say is the refusal in text's language.
+func (e *InputError) Say(text i18n.Catalog) string {
+	if e.key == "" {
+		return e.Message
+	}
+	return text.T(e.key, e.args...)
+}
+
+// failure is this machine failing to prepare a workspace: English until
+// Say puts it in the owner's language, and still its cause underneath.
+type failure struct {
+	key   i18n.Key
+	cause error
+}
+
+func (e failure) Error() string { return e.Say(i18n.New(i18n.LocaleEN)) }
+
+// Say is the failure in text's language.
+func (e failure) Say(text i18n.Catalog) string { return text.Errorf(e.key, e.cause).Error() }
+func (e failure) Unwrap() error                { return e.cause }
 
 // IsInputError reports whether err is a refusal the owner can act on.
 func IsInputError(err error) bool {
@@ -23,19 +49,19 @@ func IsInputError(err error) bool {
 	return errors.As(err, &input)
 }
 
-func refuse(text i18n.Catalog, key i18n.Key, args ...any) error {
-	return &InputError{Message: text.T(key, args...)}
+func refuse(key i18n.Key, args ...any) error {
+	return &InputError{key: key, args: args}
 }
 
 // CheckWorkspaceProject confirms there is a default project and that it
 // lives on this computer; the workspace page only ever moves a local one.
 // local tells whether the project's home node is this machine.
-func CheckWorkspaceProject(text i18n.Catalog, id string, local bool, node string) error {
+func CheckWorkspaceProject(id string, local bool, node string) error {
 	if id == "" {
-		return refuse(text, i18n.DesktopWorkspaceNoProject)
+		return refuse(i18n.DesktopWorkspaceNoProject)
 	}
 	if !local {
-		return refuse(text, i18n.DesktopWorkspaceRemoteProject, id, node)
+		return refuse(i18n.DesktopWorkspaceRemoteProject, id, node)
 	}
 	return nil
 }
@@ -56,13 +82,13 @@ func ManagedWorkspace(stateDir, path string) bool {
 // the operating system, the home directory itself, and the desktop's own
 // state directory are refused, because agents will create and delete files
 // there. stateDir is where the desktop keeps its configuration.
-func PrepareWorkspace(text i18n.Catalog, input, stateDir string) (string, error) {
+func PrepareWorkspace(input, stateDir string) (string, error) {
 	path := strings.TrimSpace(input)
 	if path == "" {
-		return "", refuse(text, i18n.DesktopWorkspaceEmpty)
+		return "", refuse(i18n.DesktopWorkspaceEmpty)
 	}
 	if strings.ContainsRune(path, 0) {
-		return "", refuse(text, i18n.DesktopWorkspaceInvalid)
+		return "", refuse(i18n.DesktopWorkspaceInvalid)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -72,26 +98,26 @@ func PrepareWorkspace(text i18n.Catalog, input, stateDir string) (string, error)
 		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 	}
 	if !filepath.IsAbs(path) {
-		return "", refuse(text, i18n.DesktopWorkspaceRelative)
+		return "", refuse(i18n.DesktopWorkspaceRelative)
 	}
 	path = filepath.Clean(path)
-	if err := checkWorkspacePlace(text, resolveExisting(path), resolveExisting(filepath.Clean(home)), stateDir); err != nil {
+	if err := checkWorkspacePlace(resolveExisting(path), resolveExisting(filepath.Clean(home)), stateDir); err != nil {
 		return "", err
 	}
 	info, err := os.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return "", text.Errorf(i18n.DesktopWorkspaceCreateFailed, err)
+			return "", failure{i18n.DesktopWorkspaceCreateFailed, err}
 		}
 	case err != nil:
-		return "", text.Errorf(i18n.DesktopWorkspaceCheckFailed, err)
+		return "", failure{i18n.DesktopWorkspaceCheckFailed, err}
 	case !info.IsDir():
-		return "", refuse(text, i18n.DesktopWorkspaceNotFolder, path)
+		return "", refuse(i18n.DesktopWorkspaceNotFolder, path)
 	}
 	probe, err := os.CreateTemp(path, ".steve-write-*")
 	if err != nil {
-		return "", refuse(text, i18n.DesktopWorkspaceNotWritable, err)
+		return "", refuse(i18n.DesktopWorkspaceNotWritable, err)
 	}
 	probe.Close()
 	os.Remove(probe.Name())
@@ -101,14 +127,14 @@ func PrepareWorkspace(text i18n.Catalog, input, stateDir string) (string, error)
 // checkWorkspacePlace judges the resolved path: not the home or a volume
 // root, not inside a system root, and not the desktop's state directory or
 // any directory that contains it.
-func checkWorkspacePlace(text i18n.Catalog, path, home, stateDir string) error {
+func checkWorkspacePlace(path, home, stateDir string) error {
 	if path == home || path == filepath.VolumeName(path)+string(filepath.Separator) {
-		return refuse(text, i18n.DesktopWorkspaceHomeOrRoot)
+		return refuse(i18n.DesktopWorkspaceHomeOrRoot)
 	}
 	if stateDir != "" {
 		state := resolveExisting(filepath.Clean(stateDir))
 		if path == state || within(path, state) || within(state, path) {
-			return refuse(text, i18n.DesktopWorkspaceStateDir)
+			return refuse(i18n.DesktopWorkspaceStateDir)
 		}
 	}
 	if within(path, home) {
@@ -116,7 +142,7 @@ func checkWorkspacePlace(text i18n.Catalog, path, home, stateDir string) error {
 	}
 	for _, reserved := range reservedRoots() {
 		if path == reserved || within(path, reserved) {
-			return refuse(text, i18n.DesktopWorkspaceSystem, reserved)
+			return refuse(i18n.DesktopWorkspaceSystem, reserved)
 		}
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -45,10 +46,13 @@ func (a *Service) ProjectOf(ctx context.Context, conversation string) string {
 }
 
 // Selectors are what an agent offers in a thread, with what is chosen.
+// The page may name the thread by its short name, as it does for its
+// context and setup; discovery binds the console thread, never a bare ID.
 func (a *Service) Selectors(ctx context.Context, conversation, agent string) (consoleapi.Selectors, error) {
 	if a.Coordinator == nil {
 		return consoleapi.Selectors{}, errors.New("coordinator is not wired")
 	}
+	conversation = console.ConversationID(conversation)
 	sel, err := a.Coordinator.Selectors(ctx, conversation, agent)
 	if err != nil {
 		return consoleapi.Selectors{}, err
@@ -62,5 +66,5 @@ func (a *Service) SetPreferences(ctx context.Context, conversation, agent string
 	if a.Coordinator == nil {
 		return false, errors.New("coordinator is not wired")
 	}
-	return a.Coordinator.SetPreferences(ctx, conversation, agent, patch)
+	return a.Coordinator.SetPreferences(ctx, console.ConversationID(conversation), agent, patch)
 }

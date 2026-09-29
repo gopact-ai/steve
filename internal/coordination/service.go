@@ -339,7 +339,8 @@ func (s *Service) TransportPeers() map[string]string {
 // index, which it usually already does. The confirmation shares
 // ReadIndex's limits. Any other node refuses the read with ErrNotLeader.
 // Either gives up within ApplyTimeout, which a caller holding a lock
-// through the read may rely on.
+// through the read may rely on; giving up at that limit, rather than at the
+// caller's deadline, fails as ErrUnavailable saying what the read waited for.
 func (s *Service) ReadState(ctx context.Context) (State, error) {
 	if s.raft.State() != raft.Leader {
 		if err := s.barrier(ctx); err != nil {
@@ -347,7 +348,7 @@ func (s *Service) ReadState(ctx context.Context) (State, error) {
 		}
 		return s.fsm.read(), nil
 	}
-	bounded, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	bounded, cancel := s.bound(ctx)
 	defer cancel()
 	index, err := s.ReadIndex(bounded)
 	if err != nil {
@@ -363,13 +364,26 @@ func (s *Service) ReadState(ctx context.Context) (State, error) {
 }
 
 // awaitState waits, until ctx ends, for the state machine to hold the log
-// up to index; see StateHolds. index must be committed.
+// up to index; see StateHolds. index must be at most this node's commit
+// index, as the one ReadIndex returns on the leader is. The log up to index
+// is then here and committed, so what StateHolds finds between the applied
+// index and index is settled: the entries that never reach the state
+// machine are already there, and compaction drops only entries the state
+// machine holds, having applied them or restored a snapshot that covers
+// them. Only the state machine applying more of the log can make it hold
+// index, so awaitState looks again each time the state machine publishes
+// its progress. That is not so for an index this node has yet to commit,
+// such as the leader's read index on a follower: committing entries that
+// never reach the state machine can make it hold index without anything
+// being published.
 func (s *Service) awaitState(ctx context.Context, index uint64) error {
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	for !s.StateHolds(index) {
+	for {
+		changed := s.fsm.appliedChanged()
+		if s.StateHolds(index) {
+			return nil
+		}
 		select {
-		case <-ticker.C:
+		case <-changed:
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-s.ctx.Done():
@@ -378,7 +392,6 @@ func (s *Service) awaitState(ctx context.Context, index uint64) error {
 			return ErrApplication
 		}
 	}
-	return nil
 }
 
 func (s *Service) Snapshot(ctx context.Context) error {
@@ -525,6 +538,30 @@ func (s *Service) waitConfigurationChange(ctx context.Context, description strin
 	return err
 }
 
+// applyBound is the cause of a context that bound limits to ApplyTimeout
+// when that limit, not the caller, ends it.
+type applyBound struct{ limit time.Duration }
+
+func (b applyBound) Error() string { return fmt.Sprintf("coordination: gave up after %s", b.limit) }
+
+// bound limits ctx to ApplyTimeout. Bounds nest: whichever ends first, the
+// caller's deadline or one of this service's limits, is the context's cause.
+func (s *Service) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(ctx, s.config.ApplyTimeout, applyBound{s.config.ApplyTimeout})
+}
+
+// gaveUp is err, which ended a wait on ctx, unless a limit set by bound ended
+// ctx: then it is ErrUnavailable saying what did not happen within the limit
+// and how far this node's log got. The caller's own cancellation or
+// deadline is returned unchanged.
+func (s *Service) gaveUp(ctx context.Context, err error, what string) error {
+	var limit applyBound
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(context.Cause(ctx), &limit) {
+		return err
+	}
+	return fmt.Errorf("%w: %s within %s; this node's log ends at index %d, committed %d, applied %d", ErrUnavailable, what, limit.limit, s.raft.LastIndex(), s.raft.CommitIndex(), s.fsm.applied.Load())
+}
+
 func (s *Service) barrier(ctx context.Context) error {
 	if s.closed.Load() {
 		return ErrUnavailable
@@ -532,11 +569,13 @@ func (s *Service) barrier(ctx context.Context) error {
 	if !s.fsm.healthy() {
 		return ErrApplication
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	ctx, cancel := s.bound(ctx)
 	defer cancel()
 	term := s.raft.CurrentTerm()
+	// A barrier completes once the state machine has applied every entry
+	// before it, so a held state machine holds it as well as a lost quorum.
 	if err := s.wait(ctx, s.raft.Barrier(s.config.ApplyTimeout)); err != nil {
-		return err
+		return s.gaveUp(ctx, err, fmt.Sprintf("in term %d, a barrier did not complete", term))
 	}
 	if s.raft.CurrentTerm() == term {
 		s.established.Store(term)
@@ -592,10 +631,10 @@ func (s *Service) ReadIndex(ctx context.Context) (uint64, error) {
 		}
 	}
 	index := s.raft.CommitIndex()
-	ctx, cancel := context.WithTimeout(ctx, s.config.ApplyTimeout)
+	ctx, cancel := s.bound(ctx)
 	defer cancel()
 	if err := s.wait(ctx, s.raft.VerifyLeader()); err != nil {
-		return 0, err
+		return 0, s.gaveUp(ctx, err, fmt.Sprintf("a majority did not confirm this node's leadership in term %d", term))
 	}
 	if s.raft.CurrentTerm() != term {
 		return 0, fmt.Errorf("%w: leadership changed while it was being confirmed", ErrNotLeader)
@@ -645,7 +684,7 @@ func (s *Service) establish(ctx context.Context, term uint64) error {
 	select {
 	case s.establishing <- struct{}{}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return s.gaveUp(ctx, ctx.Err(), fmt.Sprintf("term %d was not established: another request's barrier did not complete", term))
 	}
 	defer func() { <-s.establishing }()
 	if s.raft.CurrentTerm() != term {
@@ -664,6 +703,11 @@ func (s *Service) establish(ctx context.Context, term uint64) error {
 
 // fingerprint identifies a command's input so a reused command ID with
 // different input is refused rather than answered from the receipt.
+//
+// A control request's input includes its Actor, whom the command's audit
+// record names, so the same ID asked for again by another actor is refused,
+// and a retry has to name the actor it first named. Through the RPC handler
+// the actor is the one AuthorizeControl returns; see RPCOptions.
 func fingerprint(kind string, input any) string {
 	// Every input is one of the plain request structs above: strings,
 	// integers, booleans and byte slices, which Marshal cannot fail on.

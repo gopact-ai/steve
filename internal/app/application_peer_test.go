@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -11,9 +12,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/node"
@@ -210,4 +213,57 @@ func TestClusterPeerDesktopEnrollmentKeepsTheNameTheOwnerChose(t *testing.T) {
 	if _, taken := declaration.Agents["grok"]; taken {
 		t.Fatal("a renamed agent must not also hold the tool's own ID")
 	}
+}
+
+// A business application that cannot be built on this node is this node's
+// to retry: the replica stays in the cluster, the generation stays inactive
+// with the reason readable, and it starts once the cause is gone, without
+// the peer stopping.
+func TestClusterPeerKeepsItsReplicaWhileItsApplicationCannotBeBuilt(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = taken.Close() })
+	addr := taken.Addr().String()
+	options, installed := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	cfg, err := config.Load(installed.Paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Gateway.IssuerAddr = addr
+	cfg.Gateway.IssuerToken = "issuer-token"
+	if err := config.Save(installed.Paths.Config, cfg); err != nil {
+		t.Fatal(err)
+	}
+	peer := StartTestPeer(t, options)
+	runtime := peer.Runtime.Load()
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(runtime.Status().LastError, "lease issuer on "+addr) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the application was not refused its lease issuer; status=%+v", runtime.Status())
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	// The next build starts only after a wait, long after the runner of the
+	// one that failed has done whatever it does to the runtime.
+	generation := runtime.Status().Generation
+	for runtime.Status().Generation == generation && !runtime.Status().Closed {
+		if time.Now().After(deadline) {
+			t.Fatalf("the application was not built again; status=%+v", runtime.Status())
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if status := runtime.Status(); status.Closed {
+		t.Fatalf("a build that failed ended the runtime; status=%+v", status)
+	}
+	select {
+	case err := <-peer.Errors:
+		t.Fatalf("a build that failed stopped the peer: %v", err)
+	default:
+	}
+	if err := taken.Close(); err != nil {
+		t.Fatal(err)
+	}
+	WaitPeerReady(t, peer)
 }

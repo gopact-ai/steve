@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/cluster/clustertest"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/i18n"
 )
 
@@ -128,7 +129,8 @@ func TestPeerEnrollmentTakesADisplayNameAndAWorkspaceForTheMachine(t *testing.T)
 
 // A new node is set up in Chinese, the language its configuration names,
 // and the import refuses a workspace in that language: it is that node's
-// owner who reads the refusal, on that machine.
+// owner who reads the refusal, on that machine. It is still the owner's
+// input that is refused, not the machine failing.
 func TestPeerImportRefusesAWorkspaceInTheLanguageOfTheNodeItSetsUp(t *testing.T) {
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var starts atomic.Int32
@@ -161,6 +163,9 @@ func TestPeerImportRefusesAWorkspaceInTheLanguageOfTheNodeItSetsUp(t *testing.T)
 	_, err = ImportPeerPackage(payload, filepath.Join(t.TempDir(), "peer-state"))
 	if want := i18n.New(i18n.LocaleZH).T(i18n.DesktopWorkspaceRelative); err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("import refusal = %v, want it to say %q", err, want)
+	}
+	if !desktop.IsInputError(err) {
+		t.Fatalf("import refusal %v is no longer a refusal of the owner's input", err)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -131,7 +132,7 @@ func TestDesktopWorkspaceLeavesAProjectOnAnotherMachineAlone(t *testing.T) {
 	item.Home = config.ProjectHome{Node: "gpu-box", Path: "/srv/steve"}
 	admin.cfg().Projects["workspace"] = item
 	_, err = admin.DesktopWorkspace(t.Context(), consoleapi.DesktopWorkspaceRequest{Path: "~/Elsewhere"})
-	if err == nil || !desktop.IsInputError(err) || !strings.Contains(err.Error(), "另一台机器（gpu-box）") {
+	if err == nil || !desktop.IsInputError(err) || !strings.Contains(i18n.New(i18n.LocaleZH).Explain(err), "另一台机器（gpu-box）") {
 		t.Fatalf("a remote default project is refused naming the machine: %v", err)
 	}
 	home, _ := os.UserHomeDir()

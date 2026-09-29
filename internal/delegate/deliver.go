@@ -238,9 +238,14 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	}
 	if !ok || parent.State.Terminal() {
 		// Nobody to continue: the results stay on the children's records;
-		// the listing shows them. Mark them so they are not retried.
+		// the listing shows them. Mark them so they are not retried, and
+		// say why in the Hub's language.
+		reason := s.text.T(i18n.DelegateSuppressedMissing, parentID)
+		if ok {
+			reason = s.text.T(i18n.DelegateSuppressedEnded, parentID, noticeState(s.text, parent.State))
+		}
 		for _, c := range waiting {
-			if err := s.tasks.SetDelivery(c.ID, task.DeliverySuppressed); err != nil {
+			if err := s.tasks.SuppressDelivery(c.ID, reason); err != nil {
 				slog.Error(fmt.Sprintf("delegate: suppress delivery for task #%s: %v", c.ID, err), "task", c.ID, "parent", parentID)
 			}
 		}
@@ -310,12 +315,29 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 // between turns, so this is the moment; a turn composing its prompt lends
 // its own lease — and answers, per child, where its files are. The
 // message must not say "landed" for a child whose landing is still queued
-// behind someone else's lock.
+// behind someone else's lock or stuck on a conflict.
 func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.Lease) func(task.Task) string {
 	byArtifact := map[string]string{}
 	held := ""
+	conflicted := func(state, reason string, paths []string) string {
+		if detail := conflictDetail(state, reason, paths); detail != "" {
+			return "落地冲突：" + detail
+		}
+		return "落地冲突"
+	}
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
+			// A pass skips the results still stuck on a conflict as it
+			// begins, so they are read first. A result the pass skipped is
+			// stuck, even once a result landed after it has moved the
+			// canonical on for the next pass to retry it. A result whose
+			// conflict had cleared before is queued like any other. One
+			// that another pass lands or drops between this read and this
+			// pass still reads as stuck.
+			stuck, err := s.artifacts.StillStuck(ctx, p)
+			if err != nil {
+				slog.Warn(fmt.Sprintf("delegate: read stuck results of %s: %v", p.ID, err), "parent", parent.ID, "project", p.ID)
+			}
 			var landed []artifact.Landing
 			var lerr error
 			if lease != nil {
@@ -323,17 +345,24 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			} else {
 				landed, lerr = s.artifacts.LandPending(ctx, p)
 			}
+			// A conflict this pass reached reads as its queue record keeps
+			// it for later passes.
 			for _, l := range landed {
 				switch l.State {
-				case "committed":
+				case artifact.LandCommitted:
 					byArtifact[l.Artifact] = fmt.Sprintf("已落地主目录，%d 个路径", len(l.Paths))
-				case "conflict":
-					byArtifact[l.Artifact] = "落地冲突：" + l.Error
+				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
+					byArtifact[l.Artifact] = conflicted(l.State, l.ConflictReason(), l.Paths)
 				default:
 					byArtifact[l.Artifact] = l.State
 					if l.Error != "" {
 						byArtifact[l.Artifact] += "：" + l.Error
 					}
+				}
+			}
+			for _, st := range stuck {
+				if _, reached := byArtifact[st.Artifact]; !reached {
+					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths)
 				}
 			}
 			if lerr != nil {
@@ -374,6 +403,20 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 		}
 		return "已在此前落地或无改动"
 	}
+}
+
+// conflictDetail says what a landing conflict is about: the paths, and
+// for an apply conflict the reason it stopped. A merge conflict needs no
+// reason — both sides changed those paths.
+func conflictDetail(state, reason string, paths []string) string {
+	detail := strings.Join(paths, ", ")
+	if state == artifact.LandApplyConflicted && reason != "" {
+		if detail == "" {
+			return reason
+		}
+		return reason + ": " + detail
+	}
+	return detail
 }
 
 // RedeliverPending is the start-up pass: children that ended before the

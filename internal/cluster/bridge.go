@@ -122,9 +122,9 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 	// barrier and apply timeouts; submission routed to the leader by the
 	// client's retry window plus one attempt's timeout, since an attempt
 	// started before the window ends runs to its own timeout (with the
-	// defaults, about ten seconds). The wait for local apply stops polling
-	// after ApplyTimeout. The generation's context bounds both. Any failure
-	// after submission revokes the generation.
+	// defaults, about ten seconds). The wait for local apply gives up after
+	// ApplyTimeout. The generation's context bounds both. Any failure after
+	// submission revokes the generation.
 	ctx, cancel := b.boundContext(context.WithoutCancel(parent))
 	defer cancel()
 	command := coordination.AppCommand{ID: write.ID, CallerNodeID: b.generation.NodeID, CoordinatorEpoch: write.CoordinatorEpoch, ExpectedVersion: write.ExpectedVersion, WriterGeneration: b.generation.WriterGeneration, Payload: write.Payload}
@@ -135,9 +135,17 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 		b.runtime.revoke(b.generation, err)
 		return nil, err
 	}
-	applied, stop := context.WithTimeout(ctx, b.runtime.config.Coordination.ApplyTimeout)
-	defer stop()
-	if _, err := b.runtime.waitApplied(applied, result.Index, result.AppVersion); err != nil {
+	if _, err := b.runtime.awaitApplied(ctx, result.Index, result.AppVersion); err != nil {
+		// The write is committed; this generation's caches show it only
+		// once this replica applies it. Callers take an unavailable error
+		// for a write that did not happen, not for an unknown outcome, and
+		// may record that verdict with a later write. The revoke below,
+		// made before this returns, fails every later write of this
+		// generation with ErrInactive, so no such verdict is recorded; it
+		// must stay ahead of the return.
+		if errors.Is(err, coordination.ErrUnavailable) {
+			err = fmt.Errorf("%w; write %s was committed", err, write.ID)
+		}
 		b.runtime.revoke(b.generation, err)
 		return nil, err
 	}
@@ -145,23 +153,45 @@ func (b *replicator) Propose(parent context.Context, write ledger.ReplicatedWrit
 }
 
 // awaitApplied is waitApplied bounded by ApplyTimeout. Giving up is reported
-// as coordination.ErrUnavailable naming the index and application version
-// waited for, how far this replica got and how long it waited. The caller's
-// own cancellation or deadline is returned unchanged.
+// as coordination.ErrUnavailable; see applyGaveUp. The caller's own
+// cancellation or deadline is returned unchanged.
 func (r *Runtime) awaitApplied(ctx context.Context, index, version uint64) (uint64, error) {
-	started := time.Now()
 	bounded, cancel := context.WithTimeout(ctx, r.config.Coordination.ApplyTimeout)
 	defer cancel()
 	local, err := r.waitApplied(bounded, index, version)
-	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-		progress := r.service.Status()
-		reached := fmt.Sprintf("applied index %d, application version %d", progress.AppliedIndex, progress.AppVersion)
-		if book, readErr := r.book.ReplicaVersion(); readErr == nil {
-			reached += fmt.Sprintf(", ledger version %d", book)
-		}
-		return 0, fmt.Errorf("%w: local replica did not reach applied index %d, application version %d within %s; it has %s", coordination.ErrUnavailable, index, version, time.Since(started).Round(time.Millisecond), reached)
+	return local, r.applyGaveUp(ctx, err, index, version)
+}
+
+// applyGaveUp is err, which ended a wait for this replica to apply index
+// and version, unless the limit of ApplyTimeout that awaitApplied set within
+// parent ended the wait: then it is coordination.ErrUnavailable naming what
+// was waited for, the limit and how far this replica got. The text names the
+// limit rather than how long the wait took, so a replica that stays where it
+// was gives the same reason again. Once parent has ended, its cancellation or
+// deadline is returned unchanged.
+func (r *Runtime) applyGaveUp(parent context.Context, err error, index, version uint64) error {
+	if !errors.Is(err, context.DeadlineExceeded) || parent.Err() != nil {
+		return err
 	}
-	return local, err
+	progress := r.service.Status()
+	reached := fmt.Sprintf("applied index %d, application version %d", progress.AppliedIndex, progress.AppVersion)
+	if book, readErr := r.book.ReplicaVersion(); readErr == nil {
+		reached += fmt.Sprintf(", ledger version %d", book)
+	}
+	return fmt.Errorf("%w: local replica did not reach applied index %d, application version %d within %s; it has %s", coordination.ErrUnavailable, index, version, r.config.Coordination.ApplyTimeout, reached)
+}
+
+// readGaveUp is err, which ended a quorum read, unless the limit of
+// ApplyTimeout that readAssignment sets, within parent, on a read it asks
+// the consensus leader for ended it: then it is coordination.ErrUnavailable
+// saying so. Once parent has ended, its cancellation or deadline is
+// returned unchanged. A read on this node that gives up reports itself
+// unavailable and says why on its own.
+func (r *Runtime) readGaveUp(parent context.Context, err error) error {
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, coordination.ErrUnavailable) || parent.Err() != nil {
+		return err
+	}
+	return fmt.Errorf("%w: the quorum read of the coordinator assignment did not finish within %s", coordination.ErrUnavailable, r.config.Coordination.ApplyTimeout)
 }
 
 func (r *Runtime) waitApplied(ctx context.Context, index, version uint64) (uint64, error) {
