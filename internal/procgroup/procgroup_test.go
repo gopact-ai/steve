@@ -20,6 +20,7 @@ func TestSettleComparesWhereTheGroupRan(t *testing.T) {
 	}{
 		{"a reboot of this machine ended everything", id, Place{Machine: "machine", Boot: "boot-1", Namespace: "pid:[1]"}, nil},
 		{"another machine", id, Place{Machine: "other", Boot: "boot-1", Namespace: "pid:[1]"}, ErrUnproven},
+		{"another machine in this boot", id, Place{Machine: "other", Boot: "boot-2", Namespace: "pid:[1]"}, ErrUnproven},
 		{"an unknown machine", id, Place{Boot: "boot-1", Namespace: "pid:[1]"}, ErrUnproven},
 		{"an unknown boot", id, Place{Machine: "machine", Namespace: "pid:[1]"}, ErrUnproven},
 		{"another pid namespace", id, Place{Machine: "machine", Boot: "boot-2", Namespace: "pid:[2]"}, ErrUnproven},

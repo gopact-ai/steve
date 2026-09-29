@@ -216,6 +216,26 @@ func TestSettleLeavesAnUnmarkedGroupAlone(t *testing.T) {
 	}
 }
 
+// A machine restored from another's snapshot, or cloned from it, can start
+// in the boot the other runs in. What another machine recorded proves
+// nothing about a group here, even a running one its pids name.
+func TestSettleLeavesAGroupAnotherMachineRecordedInThisBootAlone(t *testing.T) {
+	cmd, id := startGroup(t, "m", "m", `exec sleep "$1"`, pause())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	ran, place := here(t), here(t)
+	ran.Machine, place.Machine = "recorded", "here"
+	signals := 0
+	if err := settle(id, ran, place, 200*time.Millisecond, counting(&signals)); !errors.Is(err, ErrUnproven) || signals > 0 {
+		t.Fatalf("settle = %v after %d signals, want %v after none", err, signals, ErrUnproven)
+	}
+	if !running(cmd.Process.Pid) {
+		t.Fatal("a group another machine recorded was signalled")
+	}
+}
+
 // A member this process cannot list, as a /proc mounted with hidepid hides
 // another user's process, still keeps the group's id. The group is taken for
 // empty only when the kernel finds no process in it.
