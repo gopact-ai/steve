@@ -72,34 +72,50 @@ if [ "${actual%%%% *}" != '%s' ]; then
   exit 24
 fi
 `, spec.UploadID, unamePattern(spec.OS, spec.Arch), spec.SHA256)
-	b.WriteString(peerSwapSection)
+	b.WriteString(peerStageSection)
+	b.WriteString(peerStartSection)
+	b.WriteString(peerLocateSection)
+	b.WriteString(peerRotateSection)
+	b.WriteString(peerStopSection)
+	b.WriteString(peerUpgradeStartSection)
 	return b.String(), nil
 }
 
-// peerSwapSection is the second half of the upgrade: the verified program
-// takes the installed program's place, the peer that was running is
-// stopped and started again on it, and the previous program comes back
-// when the new one does not stay up.
-const peerSwapSection = `chmod 700 "$binary_tmp"
+// peerStageSection opens the second half of an upgrade: the verified
+// program takes the installed program's place, the peer that was running
+// is stopped and started again on it, and the previous program comes back
+// when the new one does not stay up. Starting, finding and stopping the
+// peer are sections of their own, shared with a restart, which runs them
+// without touching the programs.
+const peerStageSection = `chmod 700 "$binary_tmp"
 # Staged next to the installed program first: from here on every move is
 # a rename within one directory, so the installed path is never half a file.
 mv -f "$binary_tmp" "$state_dir/bin/steve.new"
-start_peer() {
+`
+
+// peerStartSection defines start_peer, which starts the installed program
+// in the background and succeeds when it is still running three seconds
+// later.
+const peerStartSection = `start_peer() {
   nohup "$state_dir/bin/steve" peer --config "$state_dir/config.json" --cluster-config "$state_dir/config.json.cluster.json" >> "$state_dir/peer.log" 2>&1 < /dev/null &
   peer_pid=$!
   sleep 3
   kill -0 "$peer_pid" 2>/dev/null
 }
-# Only this account's peer started from this installation is stopped; the
+`
+
+// peerLocateSection sets running to the pids of the peer this
+// installation runs, or to nothing when it runs none.
+const peerLocateSection = `# Only this account's peer started from this installation is stopped; the
 # link session the coordinator holds open is replaced from its side. The
 # peer may have been started from its own directory as ./bin/steve, so the
 # process is identified by what the installation itself records — the pid
 # in its gateway lock, confirmed to still be a peer — then by the program
 # path, and last by a relative launch whose working directory is this
 # installation. Another account's peer, and this account's peer under a
-# different state directory, are none of this upgrade's business. Missing
-# the process would leave it holding the gateway lock, and the new program
-# would exit on it and be taken for a broken build.
+# different state directory, are left alone. Missing the process would
+# leave it holding the gateway lock, and the program started next would
+# exit on it and be taken for one that cannot run.
 pattern=$(printf '%s' "$state_dir/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
 state_real=$(cd "$state_dir" && pwd -P)
 process_dir() {
@@ -124,14 +140,23 @@ if [ -z "$running" ]; then
     esac
   done
 fi
-if [ -n "$running" ] || [ ! -f "$state_dir/bin/steve.previous" ]; then
+`
+
+// peerRotateSection puts the verified program in place. The program it
+// replaces becomes the fallback when it was running or there is none yet,
+// and is set aside otherwise.
+const peerRotateSection = `if [ -n "$running" ] || [ ! -f "$state_dir/bin/steve.previous" ]; then
   mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.previous"
 else
   echo 'No peer is running; the installed program is set aside and the earlier one stays the fallback.'
   mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.rejected"
 fi
 mv -f "$state_dir/bin/steve.new" "$state_dir/bin/steve"
-if [ -n "$running" ]; then
+`
+
+// peerStopSection stops the peer found running: asked first, ended after
+// 30 seconds.
+const peerStopSection = `if [ -n "$running" ]; then
   echo "Stopping peer process $running."
   kill -TERM $running 2>/dev/null || true
   for _ in $(seq 1 60); do
@@ -144,7 +169,11 @@ if [ -n "$running" ]; then
     sleep 0.5
   fi
 fi
-if start_peer; then
+`
+
+// peerUpgradeStartSection starts the peer on the new program and falls
+// back to the previous one when it does not stay up.
+const peerUpgradeStartSection = `if start_peer; then
   echo 'Peer restarted on the new program; the coordinator still has to see it come back.'
   exit 0
 fi
