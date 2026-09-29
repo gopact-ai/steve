@@ -21,6 +21,7 @@ const (
 	PhaseUpload       = "upload"
 	PhaseInstallation = "installation"
 	PhaseConnectivity = "connectivity"
+	PhaseRestart      = "restart"
 )
 
 // LogLine is one line of the installation record: Steve narrating a phase

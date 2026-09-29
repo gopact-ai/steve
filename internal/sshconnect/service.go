@@ -211,6 +211,8 @@ type Service struct {
 	plans      map[string]*storedPlan
 	// upgrades is the latest upgrade operation of each machine, by node ID.
 	upgrades         map[string]string
+	restarts         map[string]string
+	autoRuns         sync.WaitGroup
 	closed           bool
 	installationMode InstallationMode
 	text             i18n.Catalog
