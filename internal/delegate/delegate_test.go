@@ -3,9 +3,11 @@ package delegate
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +39,9 @@ func (f fakeNodes) Statuses() []node.Status                    { return f.status
 func (f fakeNodes) EnsureConnected(context.Context, ...string) {}
 
 type fakeSessions struct {
+	// id, when set, is the child's session ID in place of "child-session":
+	// one with the managed prefix is a session its node keeps.
+	id      string
 	mu      sync.Mutex
 	opened  []harness.Placement
 	prompts []string
@@ -62,7 +67,12 @@ func (f *fakeSessions) CloseSession(context.Context, harness.Placement, string) 
 
 type fakeRunner struct{ owner *fakeSessions }
 
-func (r *fakeRunner) ID() string { return "child-session" }
+func (r *fakeRunner) ID() string {
+	if r.owner.id != "" {
+		return r.owner.id
+	}
+	return "child-session"
+}
 func (r *fakeRunner) Prompt(ctx context.Context, text string, progress func(view.Progress)) (string, []string, error) {
 	r.owner.mu.Lock()
 	r.owner.prompts = append(r.owner.prompts, text)
@@ -552,6 +562,119 @@ func TestAChildWhoseResultHangsFailsWithinItsSilence(t *testing.T) {
 	records, err := w.attempts.ForTask(context.Background(), got.res.TaskID)
 	if err != nil || len(records) != 1 || records[0].State != attempt.Failed || records[0].Unsettled {
 		t.Fatalf("attempts = %+v err=%v, want one that failed", records, err)
+	}
+}
+
+// hangingHome is node-a holding the project's main directory. Once armed,
+// a snapshot of that directory, which is how a landing there begins,
+// waits for the context that asked for it to end and fails with why.
+// cut, if set, runs once that context has ended, before the snapshot
+// fails.
+type hangingHome struct {
+	artifact.LocalNodes
+	home    string
+	armed   atomic.Bool
+	reached chan struct{}
+	once    sync.Once
+	cut     func()
+}
+
+func (h *hangingHome) Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
+	if h.armed.Load() && req.Op == ops.Snapshot && req.WorkTree == h.home {
+		h.once.Do(func() { close(h.reached) })
+		<-ctx.Done()
+		if h.cut != nil {
+			h.cut()
+		}
+		return ops.Result{}, context.Cause(ctx)
+	}
+	return h.LocalNodes.Artifact(ctx, node, req)
+}
+
+// A result the silence cuts off while it lands in its in-place parent's
+// directory is already the child's committed result: it is queued to land
+// once the parent's turn is over, and the child ends with it, whether the
+// hub or the node keeps the child's session.
+func TestAChildWhoseLandingHangsQueuesItsResult(t *testing.T) {
+	for _, session := range []string{"child-session", "ns_child-session"} {
+		t.Run(session, func(t *testing.T) {
+			w := newWorld(t)
+			w.sessions.id = session
+			// A session its node keeps would need its tools bound to the
+			// execution; the child here needs no tools.
+			w.service.SetGate(nil)
+			hang := &hangingHome{reached: make(chan struct{})}
+			homeOnNodeWith(t, w, func(n artifact.LocalNodes) artifact.Nodes {
+				hang.LocalNodes = n
+				return hang
+			})
+			hang.home = w.home
+			parent := w.running(t, "codex")
+			turn, err := w.attempts.Open(t.Context(), attempt.Spec{TaskID: parent.ID, Kind: attempt.KindChat, Project: "p", Node: "node-a", Agent: "codex", Harness: "mock",
+				Workspace: project.Workspace{ID: "canonical:p", Project: "p", Node: "node-a", Path: w.home, Kind: project.KindCanonical}, Scope: attempt.ScopeUnrestricted})
+			if err != nil {
+				t.Fatal(err)
+			}
+			held, ok := artifact.CanonicalLease(turn.Leases, "p")
+			if !ok {
+				t.Fatal("the in-place turn holds no canonical lock")
+			}
+			// Room for the setup under the race detector, as above.
+			const silence = 3 * time.Second
+			w.service.MaxSilence = silence
+
+			first, release := startBlocked(t, w, "codex")
+			w.service.mu.Lock()
+			entry := w.service.pending[first.TaskID]
+			w.service.mu.Unlock()
+			child, ok := w.tasks.Get(first.TaskID)
+			if entry == nil || !ok || child.Workspace == "" {
+				t.Fatalf("child unknown: tracked=%v task=%+v", entry != nil, child)
+			}
+			if err := os.WriteFile(filepath.Join(child.Workspace, "notes.md"), []byte("by the child\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			hang.armed.Store(true)
+			release()
+			select {
+			case <-hang.reached:
+			case <-time.After(3 * silence):
+				child, _ = w.tasks.Get(first.TaskID)
+				t.Fatalf("the result was not landed under the parent's lock: child=%s result=%+v", child.State, child.Result)
+			}
+			select {
+			case <-entry.done:
+			case <-time.After(3 * silence):
+				t.Fatal("the child still runs once its landing was cut")
+			}
+			// What the parent reads, as the synchronous form returns it.
+			res, err := w.service.settle(w.service.snapshot(entry))
+			refs := strings.Join(res.Refs, " | ")
+			if err != nil || res.State != task.StateDone || res.Outcome != task.OutcomeOK {
+				t.Fatalf("parent reads state=%s outcome=%s refs=%q err=%v; want a done child whose result is queued to land", res.State, res.Outcome, refs, err)
+			}
+			if !strings.Contains(refs, "not landed yet: ") || !strings.Contains(refs, "silent past the idle timeout") || !strings.HasSuffix(refs, "queued to land; Steve lands it and tells you when it has") {
+				t.Fatalf("refs = %q; want the landing cut by the silence, then queued", refs)
+			}
+			if child, _ = w.tasks.Get(first.TaskID); child.State != task.StateDone || child.Result == nil || child.Result.Outcome != task.OutcomeOK {
+				t.Fatalf("child task = %s result=%+v", child.State, child.Result)
+			}
+
+			// The queue holds it: the parent's next landing takes it into
+			// the main directory.
+			hang.armed.Store(false)
+			p, _, err := w.artifacts.Project(t.Context(), "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			landed, err := w.artifacts.LandPendingUnder(t.Context(), p, held)
+			if err != nil || len(landed) != 1 || landed[0].State != artifact.LandCommitted {
+				t.Fatalf("queued landings = %+v err=%v; want the child's result", landed, err)
+			}
+			if got, err := os.ReadFile(filepath.Join(w.home, "notes.md")); err != nil || string(got) != "by the child\n" {
+				t.Fatalf("main directory notes.md = %q err=%v", got, err)
+			}
+		})
 	}
 }
 

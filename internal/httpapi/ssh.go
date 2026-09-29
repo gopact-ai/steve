@@ -178,7 +178,7 @@ func (s *Server) sshError(w http.ResponseWriter, err error) {
 	var step *sshconnect.StepError
 	if errors.As(err, &step) {
 		status := http.StatusBadRequest
-		if step.Code == sshconnect.UnknownNode {
+		if step.Code == sshconnect.UnknownNode || step.Code == sshconnect.UnknownUpgrade {
 			status = http.StatusNotFound
 		}
 		w.WriteHeader(status)

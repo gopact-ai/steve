@@ -415,12 +415,19 @@ func (n hookedNodes) Artifact(ctx context.Context, node string, req ops.Request)
 // go through nodes, so this is how a test acts in the middle of a landing.
 func homeOnNode(t *testing.T, w *world, before func(ops.Request)) {
 	t.Helper()
-	ownStores(t, w, "node-a", hookedNodes{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, before: before})
+	homeOnNodeWith(t, w, func(n artifact.LocalNodes) artifact.Nodes { return hookedNodes{LocalNodes: n, before: before} })
 }
 
-// ownStores gives the world's landings a ledger of the test's own, w.book,
-// with project p's main directory on node ("" is here) and its artifact
-// operations run by nodes.
+// homeOnNodeWith is homeOnNode whose node operations are nodes'. A
+// delegation's worktree comes from the same store its result lands from.
+func homeOnNodeWith(t *testing.T, w *world, nodes func(artifact.LocalNodes) artifact.Nodes) {
+	t.Helper()
+	ownStores(t, w, "node-a", nodes(artifact.LocalNodes{Dir: t.TempDir()}))
+}
+
+// ownStores gives the world's landings, and the worktrees its delegations
+// work in, a ledger of the test's own, w.book, with project p's main
+// directory on node ("" is here) and its artifact operations run by nodes.
 func ownStores(t *testing.T, w *world, node string, nodes artifact.Nodes) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
@@ -436,6 +443,7 @@ func ownStores(t *testing.T, w *world, node string, nodes artifact.Nodes) {
 	w.book, w.home = book, home
 	w.artifacts, w.attempts = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, nodes), attempt.New(book)
 	w.service.SetLedger(w.attempts, w.artifacts)
+	w.service.workspaces = w.artifacts
 }
 
 // editBy writes body to name in the main directory, as someone working
