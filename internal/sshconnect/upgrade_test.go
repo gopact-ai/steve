@@ -363,16 +363,28 @@ func TestUpgradeTellsARollbackFromAPeerLeftDown(t *testing.T) {
 
 // An upgrade that leaves the peer down has put the program it fell back
 // to in place as ~/.steve-peer/bin/steve and the new one aside as
-// steve.rejected, with no steve.previous left; the owner is pointed at
-// those, in either language.
+// steve.rejected, with no steve.previous left; the owner is told so,
+// in either language: the fallback was put back and did not stay up
+// either, rather than that it could not be put back, and the fix points
+// at those programs.
 func TestUpgradeLeftDownNamesTheProgramsTheMachineHas(t *testing.T) {
-	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+	for _, said := range []struct {
+		locale          i18n.Locale
+		fallback, wrong string
+	}{
+		{i18n.LocaleZH, "后备程序", "没能换回"},
+		{i18n.LocaleEN, "fallback", "could not be restored"},
+	} {
+		locale := said.locale
 		svc, runner, _, _ := upgradeFixture(t)
 		runner.swapExit = 28
 		_, err := svc.Upgrade(i18n.WithLocale(t.Context(), locale), "node-1")
 		var step *StepError
 		if !errors.As(err, &step) || step.Code != "upgrade_down" {
 			t.Fatalf("%s: %v", locale, err)
+		}
+		if !strings.Contains(step.Message, said.fallback) || !strings.Contains(step.Message, "steve.rejected") || strings.Contains(step.Message, said.wrong) {
+			t.Fatalf("%s: the message does not say the fallback was put back and the new program set aside: %q", locale, step.Message)
 		}
 		if strings.Contains(step.Suggestion, "steve.previous") || !strings.Contains(step.Suggestion, "~/.steve-peer/bin/steve.rejected") || !strings.Contains(step.Suggestion, "~/.steve-peer/peer.log") {
 			t.Fatalf("%s: the fix does not name the programs an upgrade left down leaves: %q", locale, step.Suggestion)
