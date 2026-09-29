@@ -209,7 +209,11 @@ func TestOwedCloseIsNotSentToAnotherExecution(t *testing.T) {
 			f.replaceOwed(t)
 		},
 		"the execution is another task's": func(t *testing.T, f *owedCloseFixture) {
-			f.owed.TaskID = f.tracked.ID + "0"
+			other, err := f.tasks.Create(task.Task{Goal: "another", Channel: "console:other", Member: "mock", ProjectID: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.owed.TaskID = other.ID
 			f.replaceOwed(t)
 		},
 		"the task is gone": func(t *testing.T, f *owedCloseFixture) {
