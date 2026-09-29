@@ -116,11 +116,41 @@ func parseStat(pid int, raw []byte) (process, error) {
 }
 
 // members lists the processes of a group, zombies included.
-func members(group int) (listing, error) {
-	found := listing{complete: procShowsAll()}
-	entries, err := os.ReadDir("/proc")
+func members(group int) (listing, error) { return procPasses.list(group) }
+
+// procPasses reads the processes /proc shows.
+var procPasses = &passes{read: readProc}
+
+// passes lists groups by passes over every process, which read calls for.
+type passes struct {
+	read func() (pass, error)
+}
+
+// pass is what one read of every process shows: the processes of each
+// group, and whether the read misses no process.
+type pass struct {
+	groups   map[int][]process
+	complete bool
+}
+
+// list lists the processes of a group by a pass that begins after it is
+// called.
+func (s *passes) list(group int) (listing, error) {
+	read, err := s.read()
 	if err != nil {
 		return listing{}, err
+	}
+	found := listing{members: slices.Clone(read.groups[group]), complete: read.complete}
+	slices.SortFunc(found.members, byPid)
+	return found, nil
+}
+
+// readProc reads every process /proc shows.
+func readProc() (pass, error) {
+	read := pass{groups: map[int][]process{}, complete: procShowsAll()}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return pass{}, err
 	}
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
@@ -132,18 +162,17 @@ func members(group int) (listing, error) {
 			// /proc mounted with hidepid shows nothing of another user's
 			// processes: such a member is not listed, and the listing can
 			// miss one.
-			found.complete = false
+			read.complete = false
 			continue
 		}
 		if err != nil {
-			return listing{}, err
+			return pass{}, err
 		}
-		if ok && p.group == group {
-			found.members = append(found.members, p)
+		if ok {
+			read.groups[p.group] = append(read.groups[p.group], p)
 		}
 	}
-	slices.SortFunc(found.members, byPid)
-	return found, nil
+	return read, nil
 }
 
 // procShowsAll reports whether /proc shows every process of this process's
