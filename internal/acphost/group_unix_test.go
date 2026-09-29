@@ -179,6 +179,72 @@ func TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded(t *testing.T) {
 	}
 }
 
+// Once its agent has exited, a host has no agent left to ask to leave or to
+// kill: the transport kills what the agent left in its process group as the
+// agent exits. An abort, stop or close then waits only briefly for that
+// group to empty, and a group no kill ends leaves the stop unconfirmed until
+// ProcessStopped finds the group empty.
+func TestHostStopWaitsOnlyBrieflyForAnExitedAgentsGroup(t *testing.T) {
+	dir := t.TempDir()
+	pause := fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000)
+	endMembers := func() {
+		raw, _ := os.ReadFile(filepath.Join(dir, "members"))
+		for _, line := range strings.Fields(string(raw)) {
+			if pid, _ := strconv.Atoi(line); pid > 0 && cmdlineIs(pid, "sleep", pause) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	}
+	calls := kernelGroup
+	calls.kill = func(int) error { return nil }
+	var leader atomic.Int64
+	h := New(Config{Transport: LocalTransport{
+		Command: "/bin/sh", Args: []string{"-c", `sleep "$3" </dev/null >/dev/null 2>&1 & echo $! >> "$2/members"; exec "$1"`, "agent", buildMockAgent(t), dir, pause},
+		ProcessDir: t.TempDir(), Started: func(id procgroup.Identity) { leader.Store(int64(id.Leader)) }, group: &calls,
+	}})
+	t.Cleanup(h.Close)
+	t.Cleanup(endMembers)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, generation, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(int(leader.Load()), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		h.mu.Lock()
+		alive := h.alive
+		h.mu.Unlock()
+		if !alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the host did not see its agent exit")
+		}
+	}
+	for _, stop := range []struct {
+		name string
+		call func()
+	}{{"abort", func() { h.Abort(generation) }}, {"stop", h.Stop}, {"close", h.Close}} {
+		began := time.Now()
+		stop.call()
+		if took := time.Since(began); took > 4*time.Second {
+			t.Fatalf("%s took %v once the agent had exited", stop.name, took.Round(time.Millisecond))
+		}
+		if h.ProcessStopped(generation) {
+			t.Fatalf("%s confirmed the stop while a member of the exited agent's group still ran", stop.name)
+		}
+	}
+	endMembers()
+	for deadline := time.Now().Add(10 * time.Second); !h.ProcessStopped(generation); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the exited agent's stop was not confirmed once its group was empty")
+		}
+	}
+}
+
 // A mark names one process group. An agent whose group is not recorded
 // does not carry on a mark this process inherited, as it would then share
 // it with the group that mark was recorded for.
