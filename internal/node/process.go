@@ -21,6 +21,18 @@ import (
 const SessionGrace = 10 * time.Minute
 const liveBufferBytes = 16 << 20
 
+// exitGrace is how long an agent's process group is given to stop once
+// the agent has exited, before its attachment is told the agent is gone
+// with unsettledReason: as long as a host gives a closed agent to leave
+// before it kills it, and as the transport waits before it first reports
+// a group that does not stop.
+const exitGrace = 5 * time.Second
+
+// unsettledReason closes the attachment of an agent that has exited while
+// its process group has not stopped. It is not an exit, so a hub takes the
+// agent for gone without taking it for stopped.
+const unsettledReason = "agent exited; its process group has not stopped"
+
 type agentProcess struct {
 	pluginRuntimeID    string
 	server             *Server
@@ -34,12 +46,16 @@ type agentProcess struct {
 	attached    *attachment
 	haveIn, out uint64
 	exit        string
-	exitReady   chan struct{}
-	ended       time.Time
-	released    bool
-	grace       *time.Timer
-	graceEpoch  uint64
-	killOnce    sync.Once
+	// unsettled is unsettledReason once the agent has exited and its
+	// process group has not stopped within exitGrace. The exit is recorded
+	// only once the group has stopped.
+	unsettled  string
+	exitReady  chan struct{}
+	ended      time.Time
+	released   bool
+	grace      *time.Timer
+	graceEpoch uint64
+	killOnce   sync.Once
 }
 
 type outputLine struct {
@@ -259,7 +275,7 @@ func (p *agentProcess) serveAttachment(a *attachment, req nodewire.OpenRequest) 
 				// This lock also guards emit. Every later output enters live;
 				// every earlier output was in the replay snapshot just drained.
 				a.replaying = false
-				exit := p.exit
+				exit := p.closedWith()
 				p.mu.Unlock()
 				if exit != "" {
 					closeStream(a.stream, exit)
@@ -354,7 +370,7 @@ func (p *agentProcess) readInput(a *attachment) {
 	_ = readLines(a.stream, func(line []byte, complete bool) error {
 		p.inputMu.Lock()
 		p.mu.Lock()
-		if p.attached != a || p.exit != "" {
+		if p.attached != a || p.closedWith() != "" {
 			p.mu.Unlock()
 			p.inputMu.Unlock()
 			return io.EOF
@@ -434,7 +450,10 @@ func (p *agentProcess) run(ctx context.Context) {
 	// Output ends with the process; Wait below is where its fate is read,
 	// so the pump's own error adds nothing.
 	_ = readLines(p.proc.Stdout(), func(b []byte, complete bool) error { p.emit(outputLine{data: b}, complete); return nil })
-	err := p.proc.Wait()
+	waited, err := p.await(ctx)
+	if !waited {
+		return
+	}
 	p.kill()
 	code := 0
 	if err != nil {
@@ -473,6 +492,76 @@ func (p *agentProcess) run(ctx context.Context) {
 	p.mu.Unlock()
 	p.emit(outputLine{exit: fmt.Sprintf("exit %d", code)}, true)
 	slog.Info(fmt.Sprintf("steve-node: stream %s ended: exit %d", p.id, code), "stream", p.id)
+}
+
+// await reports true with what Wait returns, once the agent has exited
+// and what it left in its process group has stopped. A group that has not
+// stopped within exitGrace of the agent's exit gets the attachment told
+// the agent is gone; a node that stops then waits no longer, and await
+// reports false with no exit recorded, so the stop stays unconfirmed.
+// Wait's goroutine lives on until the group has stopped.
+func (p *agentProcess) await(ctx context.Context) (bool, error) {
+	waited := make(chan error, 1)
+	go func() { waited <- p.proc.Wait() }()
+	select {
+	case err := <-waited:
+		return true, err
+	case <-p.proc.Exited():
+	}
+	grace := time.NewTimer(exitGrace)
+	defer grace.Stop()
+	select {
+	case err := <-waited:
+		return true, err
+	case <-grace.C:
+	}
+	p.unsettle()
+	select {
+	case err := <-waited:
+		return true, err
+	case <-ctx.Done():
+	}
+	p.mu.Lock()
+	if p.grace != nil {
+		p.grace.Stop()
+	}
+	if p.journal != nil {
+		// No exit is recorded, so the stream stays unended; Close does the
+		// last sync, and a fault there is latched by the journal itself.
+		_ = p.journal.Close()
+	}
+	p.mu.Unlock()
+	slog.Error(fmt.Sprintf("steve-node: stream %s: stopping while the agent's process group has not stopped; its stop stays unconfirmed", p.id), "stream", p.id)
+	return false, nil
+}
+
+// unsettle tells the attachment the agent is gone while its process group
+// has not stopped. Nothing goes to the output log: the exit is recorded,
+// and a release answered, only once the group has stopped.
+func (p *agentProcess) unsettle() {
+	slog.Error(fmt.Sprintf("steve-node: stream %s: the agent exited and its process group has not stopped after %s; the hub is told the agent is gone, and its stop stays unconfirmed until the group stops", p.id, exitGrace), "stream", p.id)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.unsettled = unsettledReason
+	a := p.attached
+	if a == nil || a.replaying || a.failed {
+		return
+	}
+	a.exit = p.unsettled
+	select {
+	case a.available <- struct{}{}:
+	default:
+	}
+}
+
+// closedWith is why an attachment is closed once the agent is over: its
+// exit, or, while its process group has not stopped, unsettledReason. The
+// caller holds p.mu.
+func (p *agentProcess) closedWith() string {
+	if p.exit != "" {
+		return p.exit
+	}
+	return p.unsettled
 }
 
 // readLines discards a trailing partial line on loss. An oversized line is
