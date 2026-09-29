@@ -359,6 +359,52 @@ func TestHostCloseKillsAnAgentWhoseExitCannotBeWatched(t *testing.T) {
 	}
 }
 
+// An agent whose exit cannot be watched without reaping it is reaped only
+// while no kill of its group is under way. A kill checks that the leader
+// is not reaped and signals the group's id under one lock, and once the
+// leader is reaped the id can be given to another process's group.
+func TestLocalProcessReapsAnAgentWhoseExitCannotBeWatchedOnlyBetweenKills(t *testing.T) {
+	pause := fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000)
+	calls := kernelGroup
+	calls.waitExit = func(int) error { return errors.New("exit cannot be watched") }
+	proc, err := LocalTransport{Command: "sleep", Args: []string{pause}, ProcessDir: t.TempDir(), group: &calls}.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := proc.(*localProcess)
+	pid := local.cmd.Process.Pid
+	waited := make(chan error, 1)
+	go func() { waited <- proc.Wait() }()
+	t.Cleanup(func() {
+		if cmdlineIs(pid, "sleep", pause) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+		<-waited
+	})
+	// As a kill does between its check and its signal.
+	local.mu.Lock()
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		local.mu.Unlock()
+		t.Fatal(err)
+	}
+	reaped := false
+	for deadline := time.Now().Add(time.Second); !reaped && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		reaped = errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+	}
+	local.mu.Unlock()
+	if reaped {
+		t.Fatal("the agent was reaped while a kill of its group was under way")
+	}
+	select {
+	case <-proc.Exited():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the agent was not reaped once no kill was under way")
+	}
+	if !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		t.Fatal("Exited was closed before the agent was reaped")
+	}
+}
+
 func recordedPID(path string) int {
 	raw, err := os.ReadFile(path)
 	if err != nil {
