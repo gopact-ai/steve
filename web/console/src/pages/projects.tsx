@@ -1,5 +1,6 @@
 import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { useI18n } from "@/providers/locale-provider";
 import { labelsFor } from "@/lib/labels";
 import { DotsHorizontal, Folder, GitBranch01, Loading01, Plus, Trash01, X } from "@untitledui/icons";
@@ -48,20 +49,22 @@ export function ProjectsPage() {
         await removeProject(p.id);
         refresh();
     }
-    // The question stands alone: whatever was being read about the project
-    // closes first, so the only thing left on screen is the decision. The
-    // threads are counted only now, for this one question, and until they
-    // arrive the question does not claim a number it does not have.
-    async function ask(p: Project) {
-        rows.close();
-        setThreads(null);
-        setRemoving(p);
-        try { setThreads((await fetchConversations()).conversations || []); } catch { setThreads(null); }
-    }
     const work = snap.projects.filter((p) => !p.home).sort((a, b) => a.node.localeCompare(b.node) || a.id.localeCompare(b.id));
     const home = snap.projects.find((p) => p.home);
     const rows = useRowDrawer(work.map((p) => p.id));
     const current = rows.opened ? snap.projects.find((p) => p.id === rows.opened) : undefined;
+    // The question stands alone: whatever was being read about the project
+    // closes first, so the only thing left on screen is the decision. It
+    // closes at once, so focus is back on the project's row when the
+    // question opens, and the question gives focus back there when it goes.
+    // The threads are counted only now, for this one question, and until
+    // they arrive the question does not claim a number it does not have.
+    async function ask(p: Project) {
+        flushSync(rows.close);
+        setThreads(null);
+        setRemoving(p);
+        try { setThreads((await fetchConversations()).conversations || []); } catch { setThreads(null); }
+    }
     const newSession = (id: string) => navigate(`/console?new=1&project=${encodeURIComponent(id)}`);
     return (
         <div className="workbench-page flex min-w-0 flex-col">
