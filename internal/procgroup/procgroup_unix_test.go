@@ -136,8 +136,41 @@ func TestSettleConfirmsAGroupOnlyItsUnreapedLeaderIsLeftIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitZombie(t, cmd.Process.Pid)
-	if err := Settle(id, here(t), here(t), 200*time.Millisecond); err != nil {
-		t.Fatal(err)
+	signals := 0
+	if err := settle(id, here(t), here(t), 200*time.Millisecond, counting(&signals)); err != nil || signals > 0 {
+		t.Fatalf("settle = %v after %d signals, want nil after none", err, signals)
+	}
+}
+
+// A member that forks and exits while the processes are read can be listed
+// as a zombie while its child is not listed. Zombies show that nothing of a
+// group runs only once a second listing agrees.
+func TestInspectDoesNotTakeZombiesOfAChangingGroupForAnEndedOne(t *testing.T) {
+	cmd, id := startGroup(t, "m", "m", `exec sleep "$1"`, pause())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	zombie := func(pid int) process { return process{pid: pid, start: 1, group: id.Group} }
+	for _, tc := range []struct {
+		name     string
+		listings [][]process
+		ended    bool
+	}{
+		{"agreeing listings", [][]process{{zombie(7)}, {zombie(7)}}, true},
+		{"a zombie the first listing did not show", [][]process{{zombie(7)}, {zombie(7), zombie(9)}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			passes := 0
+			list := func(int) (listing, error) {
+				passes++
+				return listing{members: tc.listings[passes-1], complete: true}, nil
+			}
+			remains, _, err := inspect(id.Group, list)
+			if err != nil || remains.Ended() != tc.ended {
+				t.Fatalf("inspect = %v, %v; want ended %v", remains, err, tc.ended)
+			}
+		})
 	}
 }
 
@@ -256,6 +289,14 @@ func TestSettleConfirmsAGroupThatIsGone(t *testing.T) {
 func cmdlineIs(pid int, argv ...string) bool {
 	out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
 	return err == nil && strings.TrimSpace(string(out)) == strings.Join(argv, " ")
+}
+
+// counting is the kernel settling asks, counting the signals it sends.
+func counting(signals *int) kernel {
+	return kernel{list: members, kill: func(group int) error {
+		*signals++
+		return Kill(group)
+	}}
 }
 
 // running is false for a pid that is gone or a zombie: neither runs.

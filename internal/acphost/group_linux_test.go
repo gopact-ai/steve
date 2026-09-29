@@ -37,13 +37,18 @@ func reapOrphans(t *testing.T, file, arg string) {
 			if cmdlineIs(pid, "sleep", arg) {
 				_ = syscall.Kill(pid, syscall.SIGKILL)
 			}
-			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-				if reaped, err := unix.Wait4(pid, nil, unix.WNOHANG, nil); reaped == pid || err != nil {
-					break
-				}
-			}
+			reap(pid)
 		}
 	})
+}
+
+// reap reaps the orphan pid left to this process once it has exited.
+func reap(pid int) {
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if reaped, err := unix.Wait4(pid, nil, unix.WNOHANG, nil); reaped == pid || err != nil {
+			return
+		}
+	}
 }
 
 func recordedPIDs(file string) []int {
@@ -99,6 +104,59 @@ func TestHostConfirmsAStopOnceOnlyZombiesAreLeftInTheAgentsGroup(t *testing.T) {
 		cancel()
 		if time.Now().After(deadline) {
 			t.Fatalf("no new agent started after the exited one stopped (generation %d, %v)", second, err)
+		}
+	}
+}
+
+// Where the listing of processes can miss one, as under /proc mounted with
+// hidepid, zombies left in an exited agent's group do not show that nothing
+// else is: its stop is confirmed only once the kernel finds no process in
+// the group.
+func TestHostDoesNotConfirmAStopOnZombiesWhereTheListingCanMissProcesses(t *testing.T) {
+	adoptOrphans(t)
+	dir := t.TempDir()
+	member := filepath.Join(dir, "member")
+	pause := fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000)
+	reapOrphans(t, member, pause)
+	calls := kernelGroup
+	calls.inspect = func(group int) (procgroup.Remains, error) {
+		remains, err := procgroup.Inspect(group)
+		remains.Complete = false
+		return remains, err
+	}
+	var leader atomic.Int64
+	h := New(Config{Transport: LocalTransport{
+		Command: "/bin/sh", Args: []string{"-c", leavingMember, "agent", buildMockAgent(t), dir, pause}, ProcessDir: t.TempDir(),
+		Started: func(id procgroup.Identity) { leader.Store(int64(id.Leader)) }, group: &calls,
+	}, NoRestart: true})
+	t.Cleanup(h.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, generation, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(int(leader.Load()), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	pid := recordedPID(member)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if state, err := processState(pid); err == nil && strings.HasPrefix(state, "Z") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the agent's member was not left a zombie")
+		}
+	}
+	for until := time.Now().Add(500 * time.Millisecond); time.Now().Before(until); time.Sleep(10 * time.Millisecond) {
+		if h.ProcessStopped(generation) {
+			t.Fatal("a stop was confirmed on zombies where the listing could miss processes")
+		}
+	}
+	reap(pid)
+	for deadline := time.Now().Add(10 * time.Second); !h.ProcessStopped(generation); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the stop was not confirmed once the group was empty")
 		}
 	}
 }
