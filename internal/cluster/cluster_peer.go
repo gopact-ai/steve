@@ -97,6 +97,9 @@ type PeerOptions struct {
 	RaftConfig           *raft.Config
 	PollInterval         time.Duration
 	AllowAutoFailover    bool
+	// AutoStartPeers starts the peer of a machine this node keeps a link to
+	// when its process is gone.
+	AutoStartPeers bool
 	// Only local process tests supply virtual independent failure domains.
 	TestFailureDomain     func() (string, error)
 	ContentRepairInterval time.Duration

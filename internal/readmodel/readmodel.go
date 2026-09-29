@@ -262,6 +262,17 @@ type Node struct {
 	// ProjectsRoot is the directory this machine keeps projects under; a
 	// project names a directory relative to it.
 	ProjectsRoot string `json:"projects_root,omitempty"`
+	// LastRestart is the latest restart of the machine's peer.
+	LastRestart *NodeRestart `json:"last_restart,omitempty"`
+}
+
+// NodeRestart is one restart of a machine's peer as recorded.
+type NodeRestart struct {
+	At      time.Time `json:"at"`
+	By      string    `json:"by,omitempty"`
+	Trigger string    `json:"trigger"`
+	Outcome string    `json:"outcome"`
+	Reason  string    `json:"reason,omitempty"`
 }
 
 // ProtocolMismatch is the protocol version a machine speaks, Node, against

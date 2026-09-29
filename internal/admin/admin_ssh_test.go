@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -165,6 +167,24 @@ func TestManualBootstrapKeepsExplicitAdapterPortable(t *testing.T) {
 // no upgrade record, in the API's usual error body and in the language
 // the request names.
 func TestServerCoordinatorRefusesAnUpgradeAndItsStatusAsUnsupported(t *testing.T) {
+	refusesAsUnsupported(t, "/console/ssh/upgrades/", func(text i18n.Catalog) *sshconnect.StepError {
+		return sshconnect.Fail(text, "preflight", "upgrade_unsupported", text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
+	})
+}
+
+// A server coordination node restarts no machine either, and refuses a
+// restart and its status the way it refuses an upgrade.
+func TestServerCoordinatorRefusesARestartAndItsStatusAsUnsupported(t *testing.T) {
+	refusesAsUnsupported(t, "/console/ssh/restarts/", func(text i18n.Catalog) *sshconnect.StepError {
+		return sshconnect.Fail(text, "preflight", "restart_unsupported", text.T(i18n.SSHRestartUnsupported), text.T(i18n.SSHRestartUnsupportedFix))
+	})
+}
+
+// refusesAsUnsupported asks a server coordination node's console to start
+// and to read an operation at path for several node IDs in both languages,
+// and expects each refused with 400 and what refusal says in that language.
+func refusesAsUnsupported(t *testing.T, path string, refusal func(i18n.Catalog) *sshconnect.StepError) {
+	t.Helper()
 	admin := nodeAdminFixture(t)
 	t.Cleanup(admin.CloseSSH)
 	token := strings.Repeat("t", 40)
@@ -180,10 +200,10 @@ func TestServerCoordinatorRefusesAnUpgradeAndItsStatusAsUnsupported(t *testing.T
 		locale   i18n.Locale
 	}{{"zh-CN", i18n.LocaleZH}, {"en", i18n.LocaleEN}} {
 		text := i18n.New(tc.locale)
-		want := sshconnect.Fail(text, "preflight", "upgrade_unsupported", text.T(i18n.SSHUpgradeUnsupported), text.T(i18n.SSHUpgradeUnsupportedFix))
+		want := refusal(text)
 		for _, node := range []string{"node-test", admin.NodeName, "Mac mini"} {
 			for _, method := range []string{http.MethodPost, http.MethodGet} {
-				request, err := http.NewRequestWithContext(t.Context(), method, server.URL()+"/console/ssh/upgrades/"+url.PathEscape(node), nil)
+				request, err := http.NewRequestWithContext(t.Context(), method, server.URL()+path+url.PathEscape(node), nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -210,5 +230,26 @@ func TestServerCoordinatorRefusesAnUpgradeAndItsStatusAsUnsupported(t *testing.T
 				}
 			}
 		}
+	}
+}
+
+// A restart is kept among the fleet's events under the machine it
+// restarted, with who ran it, whether by hand, what it did and why it
+// failed, dated when it happened.
+func TestARestartIsKeptAmongTheFleetEvents(t *testing.T) {
+	admin := &Service{View: readmodel.New(readmodel.Sources{})}
+	at := time.Date(2026, 9, 29, 8, 30, 0, 0, time.UTC)
+	admin.RecordNodeRestart(sshconnect.RestartRecord{NodeID: "node-dev", By: "node-hub", Outcome: sshconnect.RestartFailed, Reason: "The peer did not stay running", At: at})
+	history, _, err := admin.View.History(t.Context(), "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history = %#v", history)
+	}
+	got := history[0]
+	want := map[string]string{"by": "node-hub", "trigger": "manual", "outcome": sshconnect.RestartFailed, "reason": "The peer did not stay running"}
+	if got.Kind != "observe.node.restart" || got.Subject != "node-dev" || !got.At.Equal(at) || !maps.Equal(got.Data, want) || !strings.Contains(got.Text, "node-dev") {
+		t.Fatalf("recorded restart = %#v", got)
 	}
 }

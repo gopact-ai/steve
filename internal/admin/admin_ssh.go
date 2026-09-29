@@ -174,3 +174,7 @@ func (a *Service) SSHUpgrade(ctx context.Context, nodeID string) (sshconnect.Ins
 func (a *Service) SSHUpgradeStatus(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
 	return a.sshService().UpgradeStatus(ctx, nodeID)
 }
+
+// RecordNodeRestart keeps a restart of a machine's peer among the fleet's
+// events.
+func (a *Service) RecordNodeRestart(sshconnect.RestartRecord) {}
