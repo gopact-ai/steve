@@ -558,14 +558,10 @@ func TestAutoStartDoesNotRunBesideAnUpgradeOrAManualRestart(t *testing.T) {
 		var step *StepError
 		return errors.As(err, &step) && step.Code == "in_progress" && step.Message == zh.T(i18n.SSHRestartRunning)
 	}
-	// A restart let through would run its script into the held answer;
-	// the deadline makes that a failure rather than a hang.
-	asked, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if _, err := svc.Restart(asked, "node-1"); !refused(err) {
+	if _, err := refusedAtOnce(t, "a manual restart during automatic start", func() (InstallResult, error) { return svc.Restart(ctx, "node-1") }); !refused(err) {
 		t.Fatalf("manual restart during automatic start: %v", err)
 	}
-	if _, err := svc.Upgrade(asked, "node-1"); !refused(err) {
+	if _, err := refusedAtOnce(t, "an upgrade during automatic start", func() (InstallResult, error) { return svc.Upgrade(ctx, "node-1") }); !refused(err) {
 		t.Fatalf("upgrade during automatic start: %v", err)
 	}
 	close(release)

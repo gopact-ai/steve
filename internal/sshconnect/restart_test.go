@@ -227,6 +227,31 @@ func waitUntil(t *testing.T, what string, done func() bool) {
 	}
 }
 
+// refusedAtOnce runs call, an upgrade or restart that should be refused
+// before it runs anything, and fails the test unless it returns within a
+// few seconds: one let through would wait on a held script or
+// confirmation for as long as its limit allows, whatever call's own
+// context says.
+func refusedAtOnce(t *testing.T, what string, call func() (InstallResult, error)) (InstallResult, error) {
+	t.Helper()
+	type returned struct {
+		result InstallResult
+		err    error
+	}
+	done := make(chan returned, 1)
+	go func() {
+		result, err := call()
+		done <- returned{result, err}
+	}()
+	select {
+	case r := <-done:
+		return r.result, r.err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s was let through", what)
+		return InstallResult{}, nil
+	}
+}
+
 func stepCode(err error) string {
 	var step *StepError
 	if errors.As(err, &step) {
@@ -469,7 +494,7 @@ func TestRestartAndUpgradeOfAMachineExcludeEachOther(t *testing.T) {
 	upgraded := make(chan error, 1)
 	go func() { _, err := svc.Upgrade(context.Background(), "node-1"); upgraded <- err }()
 	waitUntil(t, "the upgrade never reached the backend", func() bool { return backend.holding.Load() == 1 })
-	if result, err := svc.Restart(ctx, "node-1"); !refusedAs(err, i18n.SSHUpgradeRunning) || result.Status != "" {
+	if result, err := refusedAtOnce(t, "a restart during an upgrade", func() (InstallResult, error) { return svc.Restart(ctx, "node-1") }); !refusedAs(err, i18n.SSHUpgradeRunning) || result.Status != "" {
 		t.Fatalf("restart during an upgrade = %#v %v", result, err)
 	}
 	if _, err := svc.Restart(ctx, "node-2"); err != nil {
@@ -492,10 +517,10 @@ func TestRestartAndUpgradeOfAMachineExcludeEachOther(t *testing.T) {
 	if err != nil || state.Restart == nil || state.Restart.Status != "installing" || state.Restart.Phase != PhaseConnectivity || !slices.Equal(state.Restart.Phases, restartPhases) {
 		t.Fatalf("status while restarting = %#v %v", state, err)
 	}
-	if result, err := svc.Upgrade(ctx, "node-1"); !refusedAs(err, i18n.SSHRestartRunning) || result.Status != "" {
+	if result, err := refusedAtOnce(t, "an upgrade during a restart", func() (InstallResult, error) { return svc.Upgrade(ctx, "node-1") }); !refusedAs(err, i18n.SSHRestartRunning) || result.Status != "" {
 		t.Fatalf("upgrade during a restart = %#v %v", result, err)
 	}
-	if result, err := svc.Restart(ctx, "node-1"); !refusedAs(err, i18n.SSHRestartRunning) || result.Status != "" {
+	if result, err := refusedAtOnce(t, "a second restart", func() (InstallResult, error) { return svc.Restart(ctx, "node-1") }); !refusedAs(err, i18n.SSHRestartRunning) || result.Status != "" {
 		t.Fatalf("second restart = %#v %v", result, err)
 	}
 	backend.set(func(b *restartBackend) { close(b.restartHold); b.restartHold = nil })
