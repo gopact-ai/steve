@@ -19,6 +19,7 @@ func TestRecordTransferPreservesRecoveryObligationsAndRemapsTargets(t *testing.T
 		RecoveryStopTarget:  &recoveryStopTarget{Conversation: "console:source", ExchangeID: "original", TaskID: "task", Requester: "owner"},
 		RecoveryStop:        &consoleapi.Reply{ID: "stop", Conversation: "console:source", ProjectID: "p", Text: "stable stop evidence"},
 		RecoveryStopPending: "waiting for original task",
+		RecoveryStopTask:    "task",
 	}}}}
 	storeConsoleState(t, source, state)
 	exported, err := ExportProject(source, "p", nil)
@@ -45,7 +46,7 @@ func TestRecordTransferPreservesRecoveryObligationsAndRemapsTargets(t *testing.T
 	if !e.RecoveryPending || e.RecoveryStopTarget == nil || e.RecoveryStopTarget.Conversation != "console:target" ||
 		e.RecoveryStopTarget.TaskID != "target-task" || e.RecoveryStopTarget.ExchangeID != "original" ||
 		e.RecoveryStop == nil || e.RecoveryStop.Conversation != "console:target" || e.RecoveryStop.Text != "stable stop evidence" ||
-		e.RecoveryStopPending != "waiting for original task" {
+		e.RecoveryStopPending != "waiting for original task" || e.RecoveryStopTask != "target-task" {
 		t.Fatalf("transfer lost or failed to remap recovery obligations: %+v", e)
 	}
 }

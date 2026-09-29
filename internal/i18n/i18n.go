@@ -795,6 +795,7 @@ const (
 	ConsoleStopLetItCheck         Key = "console_stop_let_it_check"
 	ConsoleStopLetItCheckDetail   Key = "console_stop_let_it_check_detail"
 	ConsoleStopRecorded           Key = "console_stop_recorded"
+	ConsolePauseRecorded          Key = "console_pause_recorded"
 	ConsoleStopUnconfirmed        Key = "console_stop_unconfirmed"
 	ConsoleStopChecked            Key = "console_stop_checked"
 	ConsoleStopPreserved          Key = "console_stop_preserved"

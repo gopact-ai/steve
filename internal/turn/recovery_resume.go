@@ -28,6 +28,9 @@ type RetainedChat struct {
 	NodeID       string
 	ProjectID    string
 	Completed    bool
+	// TaskState is the task's durable state when the execution was found:
+	// a task set aside by the owner is not the execution's to carry on.
+	TaskState task.State
 }
 
 // retainedBlocked leaves the original attempt and exchange unresolved. The

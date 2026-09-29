@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -676,13 +677,18 @@ func TestHistoricalStopDoesNotInferAnUnrelatedRecoveryTarget(t *testing.T) {
 }
 
 // cancelledTaskDriver holds the original execution of a task a person
-// cancelled: nothing resumes it any more, and its stop is confirmed once
-// confirmed says so. exchange is the exchange the execution answers.
+// may set aside: nothing resumes it any more, and its stop is confirmed
+// once confirmed says so. exchange is the exchange the execution answers.
+// states is what the task store holds for each task, running unless set;
+// like the task store, stopping a task that is not paused cancels it.
 type cancelledTaskDriver struct {
 	*recoveryDriver
 	exchange  string
 	stops     atomic.Int32
 	confirmed atomic.Bool
+
+	mu     sync.Mutex
+	states map[string]task.State
 }
 
 func newCancelledTaskDriver() *cancelledTaskDriver {
@@ -691,10 +697,53 @@ func newCancelledTaskDriver() *cancelledTaskDriver {
 	}}}
 }
 
+// RetainedChatsFor finds the execution with its task's durable state.
+func (d *cancelledTaskDriver) RetainedChatsFor(ctx context.Context, conversation, messageID string) ([]turn.RetainedChat, error) {
+	items, err := d.recoveryDriver.RetainedChatsFor(ctx, conversation, messageID)
+	out := make([]turn.RetainedChat, 0, len(items))
+	for _, item := range items {
+		item.TaskState = d.state(item.TaskID)
+		out = append(out, item)
+	}
+	return out, err
+}
+
+func (d *cancelledTaskDriver) state(id string) task.State {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if state, ok := d.states[id]; ok {
+		return state
+	}
+	return task.StateRunning
+}
+
+// setAside records ids as moved to state in the task store, without the
+// console hearing of it.
+func (d *cancelledTaskDriver) setAside(state task.State, ids ...string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.states == nil {
+		d.states = map[string]task.State{}
+	}
+	for _, id := range ids {
+		d.states[id] = state
+	}
+}
+
+// cancelTasks cancels ids the way the task list does: the task store
+// records it, then the console is told.
+func cancelTasks(s *Service, d *cancelledTaskDriver, ids ...string) {
+	d.setAside(task.StateCancelled, ids...)
+	s.TasksCancelled(ids)
+}
+
 func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
 	d.stops.Add(1)
 	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != AnchorMark+d.exchange || req.SenderOpenID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
+	}
+	if d.state(id) != task.StatePaused {
+		d.setAside(task.StateCancelled, id)
 	}
 	if !d.confirmed.Load() {
 		return turn.Result{}, harness.ErrStopUnconfirmed
@@ -747,12 +796,12 @@ func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 		}
 		asked := awaitOffer(t, s, "retry")
 		// Another task's cancellation leaves this question to the owner.
-		s.TasksCancelled([]string{"task-9"})
+		cancelTasks(s, driver, "task-9")
 		time.Sleep(30 * time.Millisecond)
 		if q := questionByID(s, asked.ID); q.State != "pending" || driver.stops.Load() != 0 {
 			t.Fatalf("another task's cancellation settled this recovery: question %+v, stops %d", q, driver.stops.Load())
 		}
-		s.TasksCancelled([]string{"task-1", "task-2"})
+		cancelTasks(s, driver, "task-1", "task-2")
 		if got := awaitExchange(t, s, "e1"); got.State != consoleapi.ExchangeCancelled {
 			t.Fatalf("exchange of a cancelled task whose stop confirmed = %+v, want cancelled", got)
 		}
@@ -774,7 +823,7 @@ func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 			t.Fatal(err)
 		}
 		asked := awaitOffer(t, s, "retry")
-		s.TasksCancelled([]string{"task-1"})
+		cancelTasks(s, driver, "task-1")
 		awaitOffer(t, s, "recheck")
 		if q := questionByID(s, asked.ID); q.State != "cancelled" {
 			t.Fatalf("the offer to retry a cancelled task is still open: %+v", q)
@@ -814,7 +863,7 @@ func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 		time.Sleep(10 * time.Millisecond)
-		s.TasksCancelled([]string{"task-1"})
+		cancelTasks(s, driver, "task-1")
 		awaitOffer(t, s, "recheck")
 		if driver.stops.Load() == 0 {
 			t.Fatal("the stop of the cancelled task was not attempted")
@@ -838,7 +887,7 @@ func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 		driver.candidates = []turn.RetainedChat{{AttemptID: "attempt-1", TaskID: "task-1", Conversation: e.Conversation, MessageID: AnchorMark + e.ID}}
 		// The task is cancelled while the turn still runs, and only then
 		// does the turn leave its execution to recovery.
-		s.TasksCancelled([]string{"task-1"})
+		cancelTasks(s, driver, "task-1")
 		call.finish <- harness.ErrStopUnconfirmed
 		for deadline := time.Now().Add(2 * time.Second); driver.stops.Load() == 0; time.Sleep(time.Millisecond) {
 			for _, q := range s.Questions("main") {
@@ -898,7 +947,7 @@ func TestCancelledTaskStopIsRecordedBeforeItIsTried(t *testing.T) {
 	// stop that follows it does not.
 	driver.left.Store(1)
 	driver.limited.Store(true)
-	s.TasksCancelled([]string{"task-1"})
+	cancelTasks(s, driver.cancelledTaskDriver, "task-1")
 	awaitOffer(t, s, "recheck")
 	if raw, _, _ := doc.Load(); !strings.Contains(string(raw), `"recovery_stop_pending"`) {
 		t.Fatalf("the stop of the cancelled task was not recorded: %s", raw)
@@ -914,6 +963,7 @@ func TestCancelledTaskStopIsRecordedBeforeItIsTried(t *testing.T) {
 		t.Fatal(err)
 	}
 	restart := newCancelledTaskDriver()
+	restart.setAside(task.StateCancelled, "task-1")
 	if err := restored.RecoverChats(t.Context(), restart); err != nil {
 		t.Fatal(err)
 	}

@@ -23,6 +23,8 @@ type RetainedPlan struct {
 	TaskID, Conversation, MessageID, PlanID, RunID string
 	AttemptID, AgentID, NodeID, ProjectID          string
 	Completed                                      bool
+	// TaskState is the plan task's durable state when the plan was found.
+	TaskState task.State
 }
 
 func (c *Coordinator) retainedPlanRuns(ctx context.Context) ([]exec.RunRecord, error) {

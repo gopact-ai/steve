@@ -299,3 +299,93 @@ func TestCompletionGuardAllowsMissingOrEmptyRecords(t *testing.T) {
 		}
 	}
 }
+
+// An exchange that only waits for the original execution of a task set
+// aside to confirm its stop leaves nothing for anyone to decide: the stop
+// goes on being confirmed by itself. It holds up no other task's end, so a
+// reset, a project switch or a close of another task the member holds in
+// the conversation goes ahead beside it. A stop asked for a task that was
+// not set aside, and any question someone still has to answer, hold the
+// end as before.
+func TestCompletionGuardIgnoresStopWaitExchange(t *testing.T) {
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	tasks, err := task.OpenLedger(book)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTask := func(state task.State) string {
+		t.Helper()
+		tracked, err := tasks.Create(task.Task{Transport: "console", Channel: "chat", Member: "worker", Goal: string(state)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state == task.StateDraft {
+			return tracked.ID
+		}
+		if _, err := tasks.Begin(tracked.ID, "worker", "node-a", "session-"+tracked.ID); err != nil {
+			t.Fatal(err)
+		}
+		if state == task.StateCancelled || state == task.StatePaused {
+			if _, err := tasks.SetAside(tracked.ID, state); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return tracked.ID
+	}
+	cancelled, paused, running, draft := newTask(task.StateCancelled), newTask(task.StatePaused), newTask(task.StateRunning), newTask(task.StateDraft)
+	held := newTask(task.StateRunning)
+	waiting := func(state consoleapi.ExchangeState, pending, id string) DurableExchange {
+		return DurableExchange{Exchange: Exchange{ID: "e1", Conversation: "chat", State: state}, RecoveryStopPending: pending, RecoveryStopTask: id}
+	}
+	card := consoleapi.PendingQuestion{ID: "q", Conversation: "chat", ExchangeID: "e1", Kind: "recovery", State: "pending"}
+	for _, tc := range []struct {
+		name     string
+		exchange DurableExchange
+		question consoleapi.PendingQuestion
+		want     error
+	}{
+		{name: "cancelled task", exchange: waiting(consoleapi.ExchangeAwaitingUser, stopRequested, cancelled), question: card},
+		{name: "paused task", exchange: waiting(consoleapi.ExchangeAwaitingUser, stopRequested, paused), question: card},
+		{name: "stop left unconfirmed", exchange: waiting(consoleapi.ExchangeAwaitingUser, "attempt writer is quarantined until physically confirmed stopped", cancelled), question: card},
+		{name: "restarted", exchange: waiting(consoleapi.ExchangeRecovering, stopRequested, cancelled)},
+		{name: "no stop asked for", exchange: waiting(consoleapi.ExchangeAwaitingUser, "", cancelled), question: card, want: task.ErrCompleteAttention},
+		{name: "stop of no known task", exchange: waiting(consoleapi.ExchangeAwaitingUser, stopRequested, ""), question: card, want: task.ErrCompleteAttention},
+		{name: "stop of a running task", exchange: waiting(consoleapi.ExchangeAwaitingUser, stopRequested, running), question: card, want: task.ErrCompleteAttention},
+		{name: "stop of a task not begun", exchange: waiting(consoleapi.ExchangeAwaitingUser, stopRequested, draft), question: card, want: task.ErrCompleteAttention},
+		{name: "stop of a missing task", exchange: waiting(consoleapi.ExchangeAwaitingUser, stopRequested, "missing"), question: card, want: task.ErrCompleteAttention},
+		{name: "another exchange's question", exchange: waiting(consoleapi.ExchangeAwaitingUser, stopRequested, cancelled), question: consoleapi.PendingQuestion{ID: "q", Conversation: "chat", ExchangeID: "e9", State: "pending"}, want: task.ErrCompleteAttention},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saved := DurableState{Exchanges: map[string][]DurableExchange{"chat": {tc.exchange}}}
+			if tc.question.ID != "" {
+				saved.Questions = map[string]consoleapi.PendingQuestion{tc.question.ID: tc.question}
+			}
+			if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return StoreStateTx(tx, saved) }); err != nil {
+				t.Fatal(err)
+			}
+			read := ReadCompletion(book)
+			for _, spare := range []bool{false, true} {
+				for name, check := range map[string]func(*ledger.Tx) error{
+					"transaction": func(tx *ledger.Tx) error {
+						return CheckTaskCompletionTx(tx, map[string]bool{held: true}, "chat", "", spare)
+					},
+					"read": func(tx *ledger.Tx) error {
+						return read.CheckTaskCompletionTx(tx, map[string]bool{held: true}, "chat", "", spare)
+					},
+				} {
+					err := book.Update(t.Context(), check)
+					if tc.want == nil && err != nil {
+						t.Errorf("%s with spare %v: guard = %v, want the end to go ahead", name, spare, err)
+					}
+					if tc.want != nil && (!errors.Is(err, tc.want) || !errors.Is(err, task.ErrCompleteConversation)) {
+						t.Errorf("%s with spare %v: guard = %v, want %v held by the conversation", name, spare, err, tc.want)
+					}
+				}
+			}
+		})
+	}
+}
