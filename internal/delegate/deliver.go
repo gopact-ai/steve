@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/text"
 )
@@ -55,7 +56,8 @@ type Delivered struct {
 	Refs    []string
 	Attempt string
 	// Landing says where the child's files are: landed, queued (with why),
-	// conflict, or empty when it changed nothing.
+	// conflict (with what the user can do about it), or empty when it
+	// changed nothing.
 	Landing string
 	// Stopping says the child was stopped but its execution has not
 	// confirmed stopping: there is no result, only the stop on record.
@@ -315,15 +317,23 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 // between turns, so this is the moment; a turn composing its prompt lends
 // its own lease — and answers, per child, where its files are. The
 // message must not say "landed" for a child whose landing is still queued
-// behind someone else's lock or stuck on a conflict.
+// behind someone else's lock or stuck on a conflict. The parent can
+// neither settle a conflict nor land a result again, so a conflict says
+// what the user can do about it.
 func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.Lease) func(task.Task) string {
 	byArtifact := map[string]string{}
 	held := ""
 	conflicted := func(state, reason string, paths []string) string {
+		said := "落地冲突"
 		if detail := conflictDetail(state, reason, paths); detail != "" {
-			return "落地冲突：" + detail
+			said += "：" + detail
 		}
-		return "落地冲突"
+		// Only an apply conflict can be landed again, which the console
+		// offers; a merge conflict is settled, by /resolve or there.
+		if state == artifact.LandApplyConflicted {
+			return said + "。你不能自己重新落地；用户处理好原因后，可以在控制台「待处理」的「合并冲突」里点「重新落地」"
+		}
+		return said + "。你不能自己解决；用户可以发 " + string(protocol.CommandResolve) + "，或在控制台「待处理」的「合并冲突」里处理"
 	}
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
@@ -354,10 +364,11 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
 					byArtifact[l.Artifact] = conflicted(l.State, l.ConflictReason(), l.Paths)
 				default:
-					byArtifact[l.Artifact] = l.State
-					if l.Error != "" {
-						byArtifact[l.Artifact] += "：" + l.Error
-					}
+					// A pass returns no other landing unless one reached a
+					// conflict it could neither record nor close, which
+					// leaves it locked: nothing was written, and the result
+					// stays queued for later passes.
+					byArtifact[l.Artifact] = "未落地：这次落地没能完成，结果仍在落地队列里，Steve 会接着处理"
 				}
 			}
 			for _, st := range stuck {
