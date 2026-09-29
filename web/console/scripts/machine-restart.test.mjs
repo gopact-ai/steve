@@ -65,6 +65,13 @@ test("automatic start says what it watches for, what it is doing, and how many s
     assert.equal(autoStartLine(auto({ state: "attempting", attempts: 0 }), en, time).title, "Starting automatically (attempt 1 of 5)");
 });
 
+test("a machine that blocks automatic start says why, what clears it, and when it is tried again", () => {
+    const blocked = auto({ state: "blocked", next_at: "2026-09-29T08:10:00Z", last_error: "Another installation holds the lock", suggestion: "Remove ~/steve-bin/.install-lock if nothing is installing" });
+    assert.deepEqual(autoStartLine(blocked, zh, time),
+        { tone: "warn", title: "自动启动被挡住，将在 <2026-09-29T08:10:00Z> 再试", detail: "Another installation holds the lock", hint: "Remove ~/steve-bin/.install-lock if nothing is installing" });
+    assert.equal(autoStartLine(blocked, en, time).title, "Automatic start is blocked; trying again at <2026-09-29T08:10:00Z>");
+});
+
 test("a running peer is left alone and pointed at the manual restart; a stopped one says why and how it resumes", () => {
     assert.deepEqual(autoStartLine(auto({ state: "peer_running", reason: "The peer process is still running" }), zh, time),
         { tone: "warn", title: "节点进程还在运行，但机器没有回到集群", hint: "自动拉起不会结束它；如果它卡住了，请点「重启节点」" });

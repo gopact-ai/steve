@@ -2,6 +2,7 @@ package sshconnect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -511,44 +512,89 @@ func TestAutoStartDoesNotRunBesideAnUpgradeOrAManualRestart(t *testing.T) {
 	}
 }
 
-// A machine whose installation lock another installation holds is tried
-// again every minute for as long as it is held: nothing counts against the
-// limit, and the wait is recorded once, not once a minute. The start that
-// follows once the lock is free is recorded and counted as usual.
-func TestAutoStartWaitsOutAnotherInstallationWithoutCountingOrRepeatingIt(t *testing.T) {
+// A machine whose installation lock another installation holds, or one
+// left behind, blocks automatic start: nothing counts against the limit,
+// and it keeps trying, backing off from a minute to every ten, so the
+// machine starts once the lock is gone. The machine shows why and how to
+// clear a lock left behind, and each time it becomes blocked is recorded
+// once, not once a try. The start that follows once the lock is free is
+// recorded and counted as usual.
+func TestAutoStartKeepsTryingAMachineTheInstallationLockBlocks(t *testing.T) {
 	svc, runner, backend, clock := autoStartFixture(t)
 	runner.answerWith(peerExits(21))
 	zh := i18n.New(i18n.LocaleZH)
+	for _, text := range []i18n.Catalog{zh, i18n.New(i18n.LocaleEN)} {
+		if fix := text.T(i18n.SSHRestartBusyFix); !strings.Contains(fix, "~/steve-bin/.install-lock") {
+			t.Fatalf("the fix for a held installation lock does not say which lock a left-behind one is: %q", fix)
+		}
+	}
 	sweepOnce(svc)
 	clock.Advance(autoStartAfter)
 	sweepOnce(svc)
-	for try := 1; try <= 2*autoStartLimit; try++ {
+	waits := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 10 * time.Minute, 10 * time.Minute}
+	for try, wait := range waits {
 		state := autoState(t, svc, "node-1")
-		if state.State != "retrying" || state.Attempts != 0 || state.LastError != zh.T(i18n.SSHRestartBusy) || !state.NextAt.Equal(clock.Now().Add(autoStartBackoff)) {
-			t.Fatalf("after try %d: %#v", try, state)
+		if state.State != "blocked" || state.Attempts != 0 || state.LastError != zh.T(i18n.SSHRestartBusy) || !state.NextAt.Equal(clock.Now().Add(wait)) {
+			t.Fatalf("after try %d: %#v", try+1, state)
 		}
-		clock.Advance(autoStartBackoff)
+		if fix := autoSuggestion(t, svc, "node-1"); fix != zh.T(i18n.SSHRestartBusyFix) {
+			t.Fatalf("after try %d the machine suggests %q", try+1, fix)
+		}
+		clock.Advance(wait - time.Second)
 		sweepOnce(svc)
 		if scripts := runner.restarts(); len(scripts) != try+1 {
-			t.Fatalf("try %d was not followed after %s: %d runs", try, autoStartBackoff, len(scripts))
+			t.Fatalf("try %d was followed within %s", try+1, wait)
+		}
+		clock.Advance(time.Second)
+		sweepOnce(svc)
+		if scripts := runner.restarts(); len(scripts) != try+2 {
+			t.Fatalf("try %d was not followed after %s: %d runs", try+1, wait, len(scripts))
 		}
 	}
 	if records := backend.recorded(); len(records) != 1 || records[0].Outcome != RestartFailed || !records[0].Automatic || records[0].Reason != zh.T(i18n.SSHRestartBusy) {
 		t.Fatalf("records while the lock is held = %#v", records)
 	}
 	runner.answerWith(peerStarted)
-	clock.Advance(autoStartBackoff)
+	clock.Advance(waits[len(waits)-1])
 	sweepOnce(svc)
-	if state := autoState(t, svc, "node-1"); state.State != "watching" || state.Attempts != 1 {
+	if state := autoState(t, svc, "node-1"); state.State != "watching" || state.Attempts != 1 || state.LastError != "" || autoSuggestion(t, svc, "node-1") != "" {
 		t.Fatalf("after the lock was freed: %#v", state)
 	}
 	if records := backend.recorded(); len(records) != 2 || records[1].Outcome != RestartStarted || !records[1].Automatic {
 		t.Fatalf("records once the lock was freed = %#v", records)
 	}
+	runner.answerWith(peerExits(21))
+	clock.Advance(autoStartBackoff)
+	sweepOnce(svc)
+	if state := autoState(t, svc, "node-1"); state.State != "blocked" || state.Attempts != 1 || !state.NextAt.Equal(clock.Now().Add(autoStartBackoff)) {
+		t.Fatalf("blocked again: %#v", state)
+	}
+	if records := backend.recorded(); len(records) != 3 || records[2].Outcome != RestartFailed || records[2].Reason != zh.T(i18n.SSHRestartBusy) {
+		t.Fatalf("becoming blocked again was not recorded: %#v", records)
+	}
 }
 
-// Automatic start does not try a machine whose SSH session is down, and
-// a machine it cannot reach over SSH is not counted as a failed start.
+// autoSuggestion is what the fleet is told to do about how automatic
+// start stands for nodeID.
+func autoSuggestion(t *testing.T, svc *Service, nodeID string) string {
+	t.Helper()
+	raw, err := json.Marshal(autoState(t, svc, nodeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields struct {
+		Suggestion string `json:"suggestion"`
+	}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields.Suggestion
+}
+
+// Automatic start does not try a machine whose SSH session is down. A
+// machine it cannot open an SSH session to blocks it, as a held
+// installation lock does: that counts as no failed start, is recorded
+// once, and is tried again.
 func TestAutoStartDoesNotTryAMachineItCannotReach(t *testing.T) {
 	svc, runner, backend, clock := autoStartFixture(t)
 	backend.set(func(b *restartBackend) { b.unreachable = map[string]bool{"node-1": true} })
@@ -564,11 +610,15 @@ func TestAutoStartDoesNotTryAMachineItCannotReach(t *testing.T) {
 	backend.set(func(b *restartBackend) { b.unreachable = nil })
 	runner.stderr = "ssh: connect to host dev.example port 22: Connection refused"
 	sweepOnce(svc)
-	if state := autoState(t, svc, "node-1"); state.State != "unreachable" || state.Attempts != 0 || state.LastError == "" {
+	state := autoState(t, svc, "node-1")
+	if state.State != "blocked" || state.Attempts != 0 || state.LastError == "" || !state.NextAt.Equal(clock.Now().Add(autoStartBackoff)) || autoSuggestion(t, svc, "node-1") == "" {
 		t.Fatalf("a machine SSH could not reach: %#v", state)
 	}
-	if len(runner.restarts()) != 0 || len(backend.recorded()) != 0 {
-		t.Fatal("a machine SSH could not reach was started or recorded")
+	if len(runner.restarts()) != 0 {
+		t.Fatal("a machine SSH could not reach was started")
+	}
+	if records := backend.recorded(); len(records) != 1 || records[0].Outcome != RestartFailed || !records[0].Automatic || records[0].Reason != state.LastError {
+		t.Fatalf("records of a machine SSH could not reach = %#v", records)
 	}
 	runner.stderr = ""
 	clock.Advance(autoStartBackoff)
