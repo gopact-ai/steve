@@ -75,12 +75,13 @@ type LocalTransport struct {
 // groupCalls are the calls a local process makes on its process group, so a
 // test can stand in for a kernel that hides a member or cannot end one.
 type groupCalls struct {
+	capture  func(pid int, mark string) (procgroup.Identity, error)
 	waitExit func(pid int) error
 	kill     func(group int) error
 	inspect  func(group int) (procgroup.Remains, error)
 }
 
-var kernelGroup = groupCalls{waitExit: procgroup.WaitExit, kill: procgroup.Kill, inspect: procgroup.Inspect}
+var kernelGroup = groupCalls{capture: procgroup.Capture, waitExit: procgroup.WaitExit, kill: procgroup.Kill, inspect: procgroup.Inspect}
 
 func (t LocalTransport) Name() string { return t.Command }
 
@@ -117,18 +118,18 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start agent %q: %w", t.Command, err)
 	}
+	group := kernelGroup
+	if t.group != nil {
+		group = *t.group
+	}
 	if t.Started != nil {
 		// The leader is not waited for before Start returns, so it still
 		// holds its pid and its start time can be read.
-		if id, err := procgroup.Capture(cmd.Process.Pid, mark); err != nil {
+		if id, err := group.capture(cmd.Process.Pid, mark); err != nil {
 			slog.Warn(fmt.Sprintf("acphost: agent process group not identified: %v", err))
 		} else {
 			t.Started(id)
 		}
-	}
-	group := kernelGroup
-	if t.group != nil {
-		group = *t.group
 	}
 	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, exited: make(chan struct{}), observed: make(chan struct{})}
 	go p.observe()
