@@ -111,6 +111,8 @@ if (process.env.PURE_ONLY !== "1") {
         let state = fixtureView(), channels = channelView(), configRevision = "revision-a", conflict = false, loseRestart = true, restartUnknown = true;
         const writes = [], errors = [], external = [], operations = new Map(), restartPosts = [], queries = [], approvalSyncs = [];
         let settingsReads = 0, versionsReads = 0, channelReads = 0;
+        // A channel read to answer only once the test lets it.
+        let heldChannelRead = null;
         const stubs = () => {
             localStorage.setItem("steve.ui.locale", "zh");
             window.EventSource = class { addEventListener() {} constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
@@ -140,7 +142,13 @@ if (process.env.PURE_ONLY !== "1") {
                 return route.fulfill({ json: state });
             }
             if (url.pathname === "/console/channels") {
-                if (request.method() === "GET") { channelReads++; return route.fulfill({ json: { ...channels, revision: configRevision } }); }
+                if (request.method() === "GET") {
+                    channelReads++;
+                    const json = { ...channels, revision: configRevision }, held = heldChannelRead;
+                    heldChannelRead = null;
+                    if (held) await held;
+                    return route.fulfill({ json });
+                }
                 const body = request.postDataJSON(); writes.push({ group: "channels", ...body });
                 if (body.base_revision !== configRevision) return route.fulfill({ status: 409, json: { error: "channel revision conflict" } });
                 configRevision = `revision-${writes.length}`;
@@ -190,7 +198,9 @@ if (process.env.PURE_ONLY !== "1") {
         // the other management views refresh: a loss after the page loaded
         // shows without a reload and is followed with each attempt until the
         // connection is back, then slowly again, keeping drafts. A client that
-        // stopped trying shows as a last attempt that grows old.
+        // stopped trying shows as a last attempt that grows old. A hidden page
+        // waits and reads once shown again, and a poll sent before a save does
+        // not bring back what the save replaced.
         {
             const followContext = await browser.newContext({ locale: "zh-CN", reducedMotion: "reduce", viewport: { width: 1280, height: 960 } });
             await followContext.clock.install();
@@ -229,9 +239,9 @@ if (process.env.PURE_ONLY !== "1") {
             assert.equal(await appID.inputValue(), "draft-app-fixture");
             const reconnectReads = channelReads;
             channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: await pageNow(), last_error: "503: system busy" };
-            await follow.clock.runFor(3_500);
+            await follow.clock.runFor(3_000);
             await readsStay(reconnectReads, "a reconnecting channel is read more often than every 5 seconds");
-            await follow.clock.runFor(2_000);
+            await follow.clock.runFor(2_500);
             await lost.filter({ hasText: "已失败 2 次，最近一次尝试：" }).waitFor();
             // The client stops trying: nothing changes but the time since.
             await follow.clock.fastForward(3 * 60_000);
@@ -245,9 +255,33 @@ if (process.env.PURE_ONLY !== "1") {
             await follow.clock.runFor(6_000);
             await readsReach(backReads + 1, "a reconnected channel is no longer followed");
             assert.equal(await appID.inputValue(), "draft-app-fixture");
+            const setVisible = (visible) => follow.evaluate((visible) => {
+                Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible ? "visible" : "hidden" });
+                Object.defineProperty(document, "hidden", { configurable: true, get: () => !visible });
+                document.dispatchEvent(new Event("visibilitychange"));
+            }, visible);
+            await setVisible(false);
+            const hiddenReads = channelReads;
+            await follow.clock.runFor(65_000);
+            await readsStay(hiddenReads, "a hidden page is still read");
+            await setVisible(true);
+            await readsReach(hiddenReads + 1, "a page shown again is not read at once");
+            await readsStay(hiddenReads + 1, "a page shown again is read more than once");
+            let answer;
+            heldChannelRead = new Promise((resolve) => { answer = resolve; });
+            channels.reconnect = { since: await pageNow(), attempts: 1, last_attempt_at: await pageNow(), last_error: "503: system busy" };
+            const heldReads = channelReads;
+            await follow.clock.runFor(31_000);
+            await readsReach(heldReads + 1, "a shown page is no longer followed");
+            delete channels.reconnect;
+            await follow.getByRole("button", { name: "保存渠道设置", exact: true }).click();
+            await follow.locator(".settings-pending-link").waitFor();
+            answer();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            assert.equal(await lost.count(), 0, "a poll sent before a save brings back what the save replaced");
             await followContext.close();
         }
-        channels = channelView();
+        channels = channelView(); writes.length = 0; configRevision = "revision-a";
 
         await page.goto(`${origin}/#/projects`);
         await page.getByRole("link", { name: "设置", exact: true }).click();
