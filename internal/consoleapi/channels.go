@@ -31,9 +31,11 @@ type ChannelStartupRetry struct {
 // ChannelReconnect reports a started channel whose connection failed or
 // was lost and is being established again.
 type ChannelReconnect struct {
-	Since     time.Time `json:"since"`
-	Attempts  int       `json:"attempts"`
-	LastError string    `json:"last_error,omitempty"`
+	Since    time.Time `json:"since"`
+	Attempts int       `json:"attempts"`
+	// LastAttemptAt is when the last attempt failed; omitted before one did.
+	LastAttemptAt time.Time `json:"last_attempt_at,omitzero"`
+	LastError     string    `json:"last_error,omitempty"`
 }
 
 type ChannelsUpdate struct {
