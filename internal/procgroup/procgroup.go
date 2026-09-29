@@ -113,13 +113,18 @@ func settle(id Identity, ran, here Place, within time.Duration, k kernel) error 
 	if ran.Boot == "" || here.Boot == "" {
 		return fmt.Errorf("%w: the boot it ran in is unknown", ErrUnproven)
 	}
+	// The same records read on another machine prove nothing about the one
+	// that wrote them, even in the same boot, as a machine restored from
+	// another's snapshot, or cloned from it, starts in.
+	if ran.Machine != "" && here.Machine != "" && ran.Machine != here.Machine {
+		return fmt.Errorf("%w: it was recorded on another machine", ErrUnproven)
+	}
 	if ran.Boot != here.Boot {
-		// Nothing a machine ran outlives its reboot. The same records read
-		// on another machine prove nothing about the one that wrote them.
+		// Nothing a machine ran outlives its reboot.
 		if ran.Machine != "" && ran.Machine == here.Machine {
 			return nil
 		}
-		return fmt.Errorf("%w: it was recorded on another machine", ErrUnproven)
+		return fmt.Errorf("%w: it was recorded in another boot of a machine not known to be this one", ErrUnproven)
 	}
 	if ran.Namespace != here.Namespace {
 		return fmt.Errorf("%w: it was recorded in another pid namespace", ErrUnproven)
