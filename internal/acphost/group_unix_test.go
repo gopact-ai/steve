@@ -114,6 +114,64 @@ func TestHostDoesNotConfirmAStopWhileAHiddenMemberRuns(t *testing.T) {
 	}
 }
 
+// An agent can exit leaving a member of its process group that no kill
+// ends, as one in uninterruptible sleep. The host starts the next agent at
+// once, while the stop of the one that exited stays unconfirmed until its
+// group is empty: a new agent is no evidence the old one's group is gone.
+func TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded(t *testing.T) {
+	dir := t.TempDir()
+	pause := fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000)
+	endMembers := func() {
+		raw, _ := os.ReadFile(filepath.Join(dir, "members"))
+		for _, line := range strings.Fields(string(raw)) {
+			if pid, _ := strconv.Atoi(line); pid > 0 && cmdlineIs(pid, "sleep", pause) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	}
+	calls := kernelGroup
+	calls.kill = func(int) error { return nil }
+	var leader atomic.Int64
+	h := New(Config{Transport: LocalTransport{
+		Command: "/bin/sh", Args: []string{"-c", `sleep "$3" </dev/null >/dev/null 2>&1 & echo $! >> "$2/members"; exec "$1"`, "agent", buildMockAgent(t), dir, pause},
+		ProcessDir: t.TempDir(), Started: func(id procgroup.Identity) { leader.Store(int64(id.Leader)) }, group: &calls,
+	}})
+	t.Cleanup(h.Close)
+	t.Cleanup(endMembers)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, first, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(int(leader.Load()), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	var second uint64
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, second, err = h.OpenSession(attempt, "", SessionConfig{Workdir: t.TempDir()})
+		cancel()
+		if err == nil && second > first {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no new agent started while the exited one's group could not be ended (generation %d, %v)", second, err)
+		}
+	}
+	for until := time.Now().Add(500 * time.Millisecond); time.Now().Before(until); time.Sleep(10 * time.Millisecond) {
+		if h.ProcessStopped(first) {
+			t.Fatal("the exited agent's stop was confirmed while a member of its group still ran")
+		}
+	}
+	endMembers()
+	for deadline := time.Now().Add(10 * time.Second); !h.ProcessStopped(first); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the exited agent's stop was not confirmed once its group was empty")
+		}
+	}
+}
+
 // When the agent's exit cannot be watched without reaping it, waiting for
 // the agent must still leave a close free to kill it: an agent that stays
 // past the grace is killed, and the close returns.
