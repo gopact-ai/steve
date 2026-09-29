@@ -109,11 +109,18 @@ func parseStat(pid int, raw []byte) (process, error) {
 	if err != nil {
 		return process{}, fmt.Errorf("process %d: group: %w", pid, err)
 	}
+	threads, err := strconv.Atoi(fields[17])
+	if err != nil {
+		return process{}, fmt.Errorf("process %d: threads: %w", pid, err)
+	}
 	start, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
 		return process{}, fmt.Errorf("process %d: start time: %w", pid, err)
 	}
-	return process{pid: pid, start: start, group: group, live: fields[0] != "Z" && fields[0] != "X"}, nil
+	// The state is its first thread's: a process whose first thread has
+	// ended shows as a zombie while its other threads still run.
+	exited := (fields[0] == "Z" || fields[0] == "X") && threads <= 1
+	return process{pid: pid, start: start, group: group, live: !exited}, nil
 }
 
 // members lists the running processes of a group.
