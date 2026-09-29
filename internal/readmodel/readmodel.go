@@ -266,7 +266,13 @@ type Node struct {
 	LastRestart *NodeRestart `json:"last_restart,omitempty"`
 }
 
-// NodeRestart is one restart of a machine's peer as recorded.
+// NodeRestartKind is the kind of the observation recording a restart of a
+// machine's peer; its subject is the machine's node ID and its data carry
+// the fields of NodeRestart.
+const NodeRestartKind = "node.restart"
+
+// NodeRestart is one restart of a machine's peer as recorded: who ran it,
+// whether by hand ("manual") or on its own ("automatic"), and how it went.
 type NodeRestart struct {
 	At      time.Time `json:"at"`
 	By      string    `json:"by,omitempty"`

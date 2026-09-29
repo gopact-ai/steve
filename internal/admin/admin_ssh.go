@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
+	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
@@ -175,6 +176,32 @@ func (a *Service) SSHUpgradeStatus(ctx context.Context, nodeID string) (sshconne
 	return a.sshService().UpgradeStatus(ctx, nodeID)
 }
 
+// SSHRestart and SSHRestartStatus answer for the executor backend too: it
+// restarts nothing, and the service says so.
+func (a *Service) SSHRestart(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return a.sshService().Restart(ctx, nodeID)
+}
+
+func (a *Service) SSHRestartStatus(ctx context.Context, nodeID string) (sshconnect.RestartState, error) {
+	return a.sshService().RestartStatus(ctx, nodeID)
+}
+
 // RecordNodeRestart keeps a restart of a machine's peer among the fleet's
-// events.
-func (a *Service) RecordNodeRestart(sshconnect.RestartRecord) {}
+// events, dated when it ran: who ran it, whether by hand or on its own,
+// and how it went.
+func (a *Service) RecordNodeRestart(record sshconnect.RestartRecord) {
+	if a.View == nil {
+		return
+	}
+	trigger, how := "manual", "manual restart"
+	if record.Automatic {
+		trigger, how = "automatic", "automatic start"
+	}
+	data := map[string]string{"by": record.By, "trigger": trigger, "outcome": record.Outcome}
+	said := fmt.Sprintf("%s: %s by %s: %s", record.NodeID, how, record.By, record.Outcome)
+	if record.Reason != "" {
+		data["reason"] = record.Reason
+		said += ": " + record.Reason
+	}
+	a.View.ObserveAt(record.At, readmodel.NodeRestartKind, record.NodeID, said, data)
+}

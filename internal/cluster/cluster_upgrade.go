@@ -118,6 +118,12 @@ const awaitAskLimit = 10 * time.Second
 // machine that answers without naming a build is still running the program
 // it had before this build started reporting one.
 func awaitBuildWithin(ctx context.Context, ask func(context.Context) (string, error), askLimit, interval time.Duration, version string) error {
+	return awaitWithin(ctx, ask, askLimit, interval, func(build string) bool { return build == version })
+}
+
+// awaitWithin asks the machine which build it runs, every interval and
+// each ask bounded by askLimit, until accept takes its answer.
+func awaitWithin(ctx context.Context, ask func(context.Context) (string, error), askLimit, interval time.Duration, accept func(string) bool) error {
 	text := i18n.FromContext(ctx)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -129,7 +135,7 @@ func awaitBuildWithin(ctx context.Context, ask func(context.Context) (string, er
 		timedOut := askCtx.Err() != nil
 		cancel()
 		switch {
-		case err == nil && build == version:
+		case err == nil && accept(build):
 			return nil
 		case err == nil:
 			answered, seen = true, build

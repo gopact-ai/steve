@@ -74,7 +74,7 @@ func peerCmd(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	peer, err := app.OpenClusterPeer(ctx, cluster.PeerOptions{ConfigPath: *configPath, ClusterPath: *clusterPath, AllowAutoFailover: true})
+	peer, err := app.OpenClusterPeer(ctx, cluster.PeerOptions{ConfigPath: *configPath, ClusterPath: *clusterPath, AllowAutoFailover: true, AutoStartPeers: true})
 	if err != nil {
 		return err
 	}

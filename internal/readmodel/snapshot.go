@@ -85,8 +85,10 @@ func (b *snapshotBuilder) fleet() {
 	if m.src.NodeNames != nil {
 		names = m.src.NodeNames()
 	}
+	restarts := m.lastRestarts()
 	for i := range snap.Nodes {
 		snap.Nodes[i].DisplayName = names[snap.Nodes[i].Name]
+		snap.Nodes[i].LastRestart = restarts[snap.Nodes[i].Name]
 		m.observedModels(&snap.Nodes[i])
 	}
 	// Absence is a fact too: every list is present, empty or not, so a
@@ -567,6 +569,24 @@ func errSuffix(err string) string {
 		return ""
 	}
 	return ": " + err
+}
+
+// lastRestarts is each machine's latest restart among the kept
+// observations: the one that happened last, whenever it was recorded.
+func (m *Model) lastRestarts() map[string]*NodeRestart {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	latest := map[string]*NodeRestart{}
+	for _, obs := range m.observations {
+		if obs.Kind != NodeRestartKind {
+			continue
+		}
+		if seen, ok := latest[obs.Subject]; ok && !obs.At.After(seen.At) {
+			continue
+		}
+		latest[obs.Subject] = &NodeRestart{At: obs.At, By: obs.Data["by"], Trigger: obs.Data["trigger"], Outcome: obs.Data["outcome"], Reason: obs.Data["reason"]}
+	}
+	return latest
 }
 
 // observedModels fills a node's harness model lists from what was seen

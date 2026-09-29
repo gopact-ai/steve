@@ -1386,6 +1386,7 @@ const (
 	ClusterUpgradeReopen             Key = "cluster_upgrade_reopen"
 	ClusterUpgradeReopenFailed       Key = "cluster_upgrade_reopen_failed"
 	ClusterUpgradeAwaitBuild         Key = "cluster_upgrade_await_build"
+	ClusterRestartAwait              Key = "cluster_restart_await"
 	ClusterServiceNotRunning         Key = "cluster_service_not_running"
 	ClusterNotMember                 Key = "cluster_not_member"
 	ClusterAskAgain                  Key = "cluster_ask_again"

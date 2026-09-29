@@ -98,7 +98,8 @@ type PeerOptions struct {
 	PollInterval         time.Duration
 	AllowAutoFailover    bool
 	// AutoStartPeers starts the peer of a machine this node keeps a link to
-	// when its process is gone.
+	// when the machine stopped answering and no peer runs on it; a peer
+	// that still runs is left alone.
 	AutoStartPeers bool
 	// Only local process tests supply virtual independent failure domains.
 	TestFailureDomain     func() (string, error)
@@ -280,6 +281,12 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 		return nil, err
 	}
 	go p.watchRuntime(runtime)
+	if options.AutoStartPeers {
+		p.Mu.Lock()
+		service := p.localSSHLocked()
+		p.Mu.Unlock()
+		service.AutoStart()
+	}
 
 	p.unpublish, err = desktop.PublishEndpoint(options.ConfigPath, p.UiURL)
 	if err != nil {
@@ -347,6 +354,7 @@ func (p *Peer) startPeerServers(runtime *Runtime, peerListener, uiListener net.L
 	mux.HandleFunc(clusterWorkerPath+"/descriptor", p.serveWorkerDescriptor)
 	mux.HandleFunc("/cluster/network/check", p.serveNetworkCheck)
 	mux.HandleFunc("/cluster/enrollment/", p.servePeerEnrollment)
+	mux.HandleFunc(clusterNodeRestartPath, p.serveNodeRestart)
 	mux.HandleFunc(clusterContentPath, p.serveContent)
 	// Close waits for their handlers, which run under p.ctx, before it
 	// closes what they use.
