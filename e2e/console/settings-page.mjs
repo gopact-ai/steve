@@ -198,7 +198,8 @@ if (process.env.PURE_ONLY !== "1") {
         // the other management views refresh: a loss after the page loaded
         // shows without a reload and is followed with each attempt until the
         // connection is back, then slowly again, keeping drafts. A client that
-        // stopped trying shows as a last attempt that grows old. A hidden page
+        // stopped trying shows as a last failure that grows old; the notice
+        // says how old means stopped under the default settings. A hidden page
         // waits and reads once shown again, and a poll sent before a save does
         // not bring back what the save replaced.
         {
@@ -236,16 +237,18 @@ if (process.env.PURE_ONLY !== "1") {
             await readsReach(loaded + 1, "a connected channel is not followed: a later loss needs a reload");
             const lost = follow.getByRole("status").filter({ hasText: "正在自动重连" });
             await lost.filter({ hasText: "尚无失败的尝试" }).waitFor();
+            assert.match(await lost.innerText(), /默认设置下 30 秒内开始首次尝试，若超过 5 分钟仍无结果，请重启协调节点服务/);
             assert.equal(await appID.inputValue(), "draft-app-fixture");
             const reconnectReads = channelReads;
             channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: await pageNow(), last_error: "503: system busy" };
             await follow.clock.runFor(3_000);
             await readsStay(reconnectReads, "a reconnecting channel is read more often than every 5 seconds");
             await follow.clock.runFor(2_500);
-            await lost.filter({ hasText: "已失败 2 次，最近一次尝试：" }).waitFor();
+            await lost.filter({ hasText: "已失败 2 次，最近一次失败：" }).waitFor();
             // The client stops trying: nothing changes but the time since.
             await follow.clock.fastForward(3 * 60_000);
-            await lost.filter({ hasText: "最近一次尝试：3分钟前" }).waitFor();
+            await lost.filter({ hasText: "最近一次失败：3分钟前" }).waitFor();
+            assert.match(await lost.innerText(), /默认设置下每 2 分钟重试一次，若最近一次失败已超过 5 分钟，说明重连已停止，请重启协调节点服务/);
             delete channels.reconnect;
             await follow.clock.runFor(5_500);
             await lost.waitFor({ state: "detached" });
@@ -671,10 +674,11 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("button", { name: "Discard draft and reload", exact: true }).click();
         const reconnecting = page.getByRole("status").filter({ hasText: "reconnecting on its own" });
         await reconnecting.filter({ hasText: "no attempt has failed yet" }).waitFor();
+        assert.match(await reconnecting.innerText(), /with the default settings the first attempt starts within 30 seconds, so if there is still no result after 5 minutes, restart the coordinator/);
         assert.equal(await reconnecting.getByText("Error details", { exact: true }).count(), 0);
         channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: new Date().toISOString(), last_error: "503: system busy" };
-        await reconnecting.filter({ hasText: "Failed attempts: 2. Last attempt:" }).waitFor({ timeout: 15_000 });
-        assert.match(await reconnecting.innerText(), /much older than that, reconnecting has stopped: restart the coordinator/);
+        await reconnecting.filter({ hasText: "Failed attempts: 2. Last failure:" }).waitFor({ timeout: 15_000 });
+        assert.match(await reconnecting.innerText(), /with the default settings it retries every 2 minutes, so if the last failure is more than 5 minutes old, reconnecting has stopped: restart the coordinator/);
         await reconnecting.getByText("Error details", { exact: true }).click();
         await reconnecting.getByText("503: system busy", { exact: true }).waitFor();
         delete channels.reconnect;
