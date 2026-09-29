@@ -198,6 +198,12 @@ if (process.env.PURE_ONLY !== "1") {
             await follow.addInitScript(stubs);
             follow.on("pageerror", (error) => errors.push(String(error)));
             await follow.route("**/*", mock);
+            // A poll's read reaches the route a moment after its timer fires:
+            // wait that long before saying none came.
+            const readsStay = async (count, message) => {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                assert.equal(channelReads, count, message);
+            };
             const readsReach = async (count, message) => {
                 for (const end = Date.now() + 7000; channelReads < count;) {
                     assert.ok(Date.now() < end, message);
@@ -214,7 +220,7 @@ if (process.env.PURE_ONLY !== "1") {
             await appID.fill("draft-app-fixture");
             const loaded = channelReads;
             await follow.clock.runFor(25_000);
-            assert.equal(channelReads, loaded, "a connected channel is read more often than every 30 seconds");
+            await readsStay(loaded, "a connected channel is read more often than every 30 seconds");
             channels.reconnect = { since: await pageNow(), attempts: 0 };
             await follow.clock.runFor(6_000);
             await readsReach(loaded + 1, "a connected channel is not followed: a later loss needs a reload");
@@ -223,9 +229,9 @@ if (process.env.PURE_ONLY !== "1") {
             assert.equal(await appID.inputValue(), "draft-app-fixture");
             const reconnectReads = channelReads;
             channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: await pageNow(), last_error: "503: system busy" };
-            await follow.clock.runFor(4_000);
-            assert.equal(channelReads, reconnectReads, "a reconnecting channel is read more often than every 5 seconds");
-            await follow.clock.runFor(1_500);
+            await follow.clock.runFor(3_500);
+            await readsStay(reconnectReads, "a reconnecting channel is read more often than every 5 seconds");
+            await follow.clock.runFor(2_000);
             await lost.filter({ hasText: "已失败 2 次，最近一次尝试：" }).waitFor();
             // The client stops trying: nothing changes but the time since.
             await follow.clock.fastForward(3 * 60_000);
@@ -235,7 +241,7 @@ if (process.env.PURE_ONLY !== "1") {
             await lost.waitFor({ state: "detached" });
             const backReads = channelReads;
             await follow.clock.runFor(25_000);
-            assert.equal(channelReads, backReads, "a reconnected channel is read more often than every 30 seconds");
+            await readsStay(backReads, "a reconnected channel is read more often than every 30 seconds");
             await follow.clock.runFor(6_000);
             await readsReach(backReads + 1, "a reconnected channel is no longer followed");
             assert.equal(await appID.inputValue(), "draft-app-fixture");
