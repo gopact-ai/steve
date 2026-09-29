@@ -245,6 +245,50 @@ func TestHostStopWaitsOnlyBrieflyForAnExitedAgentsGroup(t *testing.T) {
 	}
 }
 
+// A member the agent left in its process group can keep the agent's output
+// open after the agent has exited. The agent's exit, not the end of its
+// output, ends the group: the host sees the agent go, and the stop is
+// confirmed once the member is killed.
+func TestHostEndsAnExitedAgentsGroupWhileAMemberHoldsItsOutput(t *testing.T) {
+	dir := t.TempDir()
+	pause := fmt.Sprintf("%d.%06d", 3000+os.Getpid()%997, time.Now().Nanosecond()/1000)
+	member := func() int { return recordedPID(filepath.Join(dir, "member")) }
+	t.Cleanup(func() {
+		if pid := member(); pid > 0 && cmdlineIs(pid, "sleep", pause) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	var leader atomic.Int64
+	h := New(Config{Transport: LocalTransport{
+		Command: "/bin/sh", Args: []string{"-c", `sleep "$3" </dev/null 2>/dev/null & echo $! > "$2/member"; exec "$1"`, "agent", buildMockAgent(t), dir, pause},
+		ProcessDir: t.TempDir(), Started: func(id procgroup.Identity) { leader.Store(int64(id.Leader)) },
+	}, NoRestart: true})
+	t.Cleanup(h.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, generation, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !liveProcess(member()) {
+		t.Fatal("the agent left no member in its group")
+	}
+	if err := syscall.Kill(int(leader.Load()), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); !h.ProcessStopped(generation); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			h.mu.Lock()
+			alive := h.alive
+			h.mu.Unlock()
+			t.Fatalf("the exited agent's stop was not confirmed while a member of its group held its output: the host takes the agent for running: %v; the member runs: %v", alive, liveProcess(member()))
+		}
+	}
+	if liveProcess(member()) {
+		t.Fatal("the stop was confirmed while the member ran")
+	}
+}
+
 // A mark names one process group. An agent whose group is not recorded
 // does not carry on a mark this process inherited, as it would then share
 // it with the group that mark was recorded for.

@@ -120,3 +120,58 @@ func TestConfigDefaultsToLocalTransport(t *testing.T) {
 		t.Fatalf("config not carried into local transport: %+v", local)
 	}
 }
+
+// heldOutputTransport starts an agent whose own process exits, as Exited
+// says, when exit is closed, while its output stays open, as something the
+// agent left outside its process group keeps it.
+type heldOutputTransport struct {
+	exit    chan struct{}
+	started *heldOutputProcess
+}
+
+func (*heldOutputTransport) Name() string { return "held-output" }
+
+func (t *heldOutputTransport) Start(ctx context.Context) (Process, error) {
+	proc, err := elicitationTestTransport{}.Start(ctx)
+	if err != nil {
+		return nil, err
+	}
+	t.started = &heldOutputProcess{elicitationTestProcess: proc.(*elicitationTestProcess), exit: t.exit}
+	return t.started, nil
+}
+
+type heldOutputProcess struct {
+	*elicitationTestProcess
+	exit chan struct{}
+}
+
+func (p *heldOutputProcess) Exited() <-chan struct{} { return p.exit }
+func (p *heldOutputProcess) Wait() error             { <-p.exit; return nil }
+
+// Output that stays open after the agent has exited does not keep the host
+// taking the agent for running.
+func TestHostLetsGoOfAnExitedAgentWhoseOutputStaysOpen(t *testing.T) {
+	transport := &heldOutputTransport{exit: make(chan struct{})}
+	h := New(Config{Transport: transport, NoRestart: true})
+	t.Cleanup(func() {
+		h.Close()
+		transport.started.Kill()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if _, _, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	close(transport.exit)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		h.mu.Lock()
+		alive := h.alive
+		h.mu.Unlock()
+		if !alive {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the host still takes an exited agent for running while its output stays open")
+		}
+	}
+}

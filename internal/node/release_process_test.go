@@ -264,3 +264,47 @@ func TestNodeStopsWithoutWaitingOutAnExitedAgentsGroup(t *testing.T) {
 		t.Fatalf("the node recorded %q for an agent whose process group had not stopped", exit)
 	}
 }
+
+// heldOutputAgent is an agent that has exited, and its process group
+// stopped, while its output stays open, as something it left outside its
+// process group keeps it.
+type heldOutputAgent struct {
+	output *io.PipeReader
+	exited chan struct{}
+}
+
+func newHeldOutputAgent(output *io.PipeReader) *heldOutputAgent {
+	p := &heldOutputAgent{output: output, exited: make(chan struct{})}
+	close(p.exited)
+	return p
+}
+
+func (p *heldOutputAgent) Stdout() io.ReadCloser   { return p.output }
+func (p *heldOutputAgent) Stdin() io.WriteCloser   { return releaseDiscardWriter{} }
+func (p *heldOutputAgent) Wait() error             { return nil }
+func (p *heldOutputAgent) Exited() <-chan struct{} { return p.exited }
+func (p *heldOutputAgent) Kill()                   {}
+func (p *heldOutputAgent) Stopped() bool           { return true }
+
+// Output that stays open after the agent has exited does not keep the hub
+// from being told of the exit.
+func TestNodeTellsTheHubAnAgentExitedWhileItsOutputStaysOpen(t *testing.T) {
+	m := newMemoryNode(t, "/bin/cat")
+	output, held := io.Pipe()
+	t.Cleanup(func() { _ = held.Close() })
+	agent := newHeldOutputAgent(output)
+	cfg := m.s.conf()
+	cfg.startAgent = func(context.Context, acphost.LocalTransport) (acphost.Process, error) { return agent, nil }
+	m.s.cfg.Store(&cfg)
+	r := memoryRegistry(t)
+	connectMemory(t, m, r)
+	p := startRemote(t, r)
+	select {
+	case <-p.Exited():
+	case <-time.After(15 * time.Second):
+		t.Fatal("the hub was not told the agent had exited while its output stayed open")
+	}
+	if err := p.Wait(); err != nil {
+		t.Fatalf("the hub was told %v, want the agent's exit", err)
+	}
+}
