@@ -238,21 +238,8 @@ func TestPeerRestartScriptDefersToAnInstallationInProgress(t *testing.T) {
 func TestPeerRestartScriptStopsAPeerStartedByARelativePath(t *testing.T) {
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
-	state := filepath.Join(home, ".steve-peer")
-	start := exec.Command("bash", "-c", `cd "$HOME/.steve-peer"; nohup ./bin/steve peer --config ./config.json >> peer.log 2>&1 < /dev/null & echo $!`)
-	start.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
-	out, err := start.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldPID := strings.TrimSpace(string(out))
-	t.Cleanup(func() { _ = exec.Command("kill", "-KILL", oldPID).Run() })
-	if err := os.MkdirAll(filepath.Join(state, "cluster", "peer-process"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(state, "cluster", "peer-process", "gateway.lock"), []byte(oldPID+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	oldPID := relativePeer(t, home)
+	lockedBy(t, home, oldPID)
 	report, err := runRestart(t, home, RestartSpec{})
 	if err != nil {
 		t.Fatalf("restart failed: %v\n%s", err, report)
