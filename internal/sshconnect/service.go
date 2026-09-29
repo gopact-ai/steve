@@ -199,6 +199,8 @@ type storedPlan struct {
 	err        error
 	connection Connection
 	timer      *time.Timer
+	// automatic marks a restart automatic start ran.
+	automatic bool
 }
 
 type Service struct {
@@ -209,9 +211,16 @@ type Service struct {
 	now        func() time.Time
 	mu         sync.Mutex
 	plans      map[string]*storedPlan
-	// upgrades is the latest upgrade operation of each machine, by node ID.
-	upgrades         map[string]string
-	restarts         map[string]string
+	// upgrades and restarts are the latest upgrade and restart operation of
+	// each machine, by node ID.
+	upgrades map[string]string
+	restarts map[string]string
+	// watches is what automatic start keeps of each machine it watches;
+	// autoCtx ends with the service, and with it every start it runs.
+	watches          map[string]*autoWatch
+	autoCtx          context.Context
+	autoCancel       context.CancelFunc
+	autoStarted      bool
 	autoRuns         sync.WaitGroup
 	closed           bool
 	installationMode InstallationMode
@@ -230,7 +239,8 @@ func New(options Options) *Service {
 	if options.InstallationMode == "" {
 		options.InstallationMode = InstallExecutor
 	}
-	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}, installationMode: options.InstallationMode, text: options.Text, uploadTick: time.Second, uploadStall: uploadStallLimit, uploadReport: uploadReportEvery}
+	autoCtx, autoCancel := context.WithCancel(context.Background())
+	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}, autoCtx: autoCtx, autoCancel: autoCancel, installationMode: options.InstallationMode, text: options.Text, uploadTick: time.Second, uploadStall: uploadStallLimit, uploadReport: uploadReportEvery}
 }
 
 // speak is ctx carrying the language of whoever called, the Hub's when
@@ -472,8 +482,9 @@ func (s *Service) expire(id string) {
 	}
 }
 
-// Close releases all private masters. A process crash is additionally bounded
-// by OpenSSH's ControlPersist timeout, independent of request contexts.
+// Close stops automatic start, waiting for the start it runs to end, and
+// releases all private masters. A process crash is additionally bounded by
+// OpenSSH's ControlPersist timeout, independent of request contexts.
 func (s *Service) Close() error {
 	s.mu.Lock()
 	s.closed = true
@@ -487,6 +498,8 @@ func (s *Service) Close() error {
 		}
 	}
 	s.mu.Unlock()
+	s.autoCancel()
+	s.autoRuns.Wait()
 	var err error
 	for _, connection := range connections {
 		err = errors.Join(err, connection.Close())

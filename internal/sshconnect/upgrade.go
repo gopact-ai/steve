@@ -42,8 +42,8 @@ type UpgradeTarget struct {
 // returns for a node ID no machine has: nothing about it is recorded.
 const UnknownNode = "unknown_node"
 
-func unknownNode(text i18n.Catalog, nodeID string) *StepError {
-	return Fail(text, "preflight", UnknownNode, text.T(i18n.SSHUpgradeUnknownNode, nodeID), text.T(i18n.SSHUpgradeUnknownNodeFix))
+func unknownNode(text i18n.Catalog, nodeID string, fix i18n.Key) *StepError {
+	return Fail(text, "preflight", UnknownNode, text.T(i18n.SSHUpgradeUnknownNode, nodeID), text.T(fix))
 }
 
 // UnknownUpgrade is the code of the failure an upgrade's status returns
@@ -70,7 +70,8 @@ var upgradePhases = []string{PhasePreflight, PhaseUpload, PhaseInstallation, Pha
 // ~/.steve-peer and the peer restarted on it; the backend then reopens
 // what it keeps to the machine and waits until the machine reports the
 // new build. It returns when the upgrade has settled; UpgradeStatus reads
-// how far it has come meanwhile. One upgrade runs per machine at a time.
+// how far it has come meanwhile. A machine runs one upgrade or restart at
+// a time.
 func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, error) {
 	ctx, text := s.speak(ctx)
 	backend, ok := s.backend.(UpgradeBackend)
@@ -78,7 +79,7 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 		return InstallResult{}, upgradeUnsupported(text)
 	}
 	if !backend.Knows(ctx, nodeID) {
-		return InstallResult{}, unknownNode(text, nodeID)
+		return InstallResult{}, unknownNode(text, nodeID, i18n.SSHUpgradeUnknownNodeFix)
 	}
 	var nonce [24]byte
 	rand.Read(nonce[:])
@@ -88,9 +89,9 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 		s.mu.Unlock()
 		return InstallResult{}, Fail(text, "ssh", "closed", text.T(i18n.SSHClosed), text.T(i18n.SSHClosedUpgradeFix))
 	}
-	if previous := s.plans[s.upgrades[nodeID]]; previous != nil && previous.running {
+	if failure := s.busy(text, nodeID); failure != nil {
 		s.mu.Unlock()
-		return InstallResult{}, Fail(text, "installation", "in_progress", text.T(i18n.SSHUpgradeRunning), text.T(i18n.SSHUpgradeRunningFix))
+		return InstallResult{}, failure
 	}
 	stored := &storedPlan{plan: InstallPlan{ID: id, Request: InstallRequest{Name: nodeID}}, running: true, result: InstallResult{PlanID: id, Name: nodeID, NodeID: nodeID, Status: "installing", Steps: []Step{}, Phases: upgradePhases}}
 	s.plans[id] = stored
@@ -100,13 +101,7 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 	s.upgrades[nodeID] = id
 	s.mu.Unlock()
 	result, err := s.upgrade(ctx, backend, id, nodeID)
-	s.mu.Lock()
-	stored.running, stored.done = false, true
-	stored.result, stored.err = cloneResult(result), err
-	// The record stays readable for as long as an installation plan would.
-	stored.plan.ExpiresAt = s.now().Add(s.ttl).UTC()
-	stored.timer = time.AfterFunc(s.ttl, func() { s.expire(id) })
-	s.mu.Unlock()
+	s.settle(stored, result, err)
 	return result, err
 }
 
@@ -121,7 +116,7 @@ func (s *Service) UpgradeStatus(ctx context.Context, nodeID string) (InstallResu
 		return InstallResult{}, upgradeUnsupported(text)
 	}
 	if !backend.Knows(ctx, nodeID) {
-		return InstallResult{}, unknownNode(text, nodeID)
+		return InstallResult{}, unknownNode(text, nodeID, i18n.SSHUpgradeUnknownNodeFix)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -147,16 +142,16 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 	}
 	candidate, _, err := s.selected(ctx, target.Alias)
 	if err != nil {
-		return reject(stepOf(text, err))
+		return reject(stepOf(text, err, "upgrade_failed", i18n.SSHUpgradeFailedFix))
 	}
 	connection, err := s.bind(ctx, candidate)
 	if err != nil {
-		return reject(stepOf(text, err))
+		return reject(stepOf(text, err, "upgrade_failed", i18n.SSHUpgradeFailedFix))
 	}
 	defer connection.Close()
 	check, err := s.check(ctx, candidate, connection)
 	if err != nil {
-		return reject(stepOf(text, err))
+		return reject(stepOf(text, err, "upgrade_failed", i18n.SSHUpgradeFailedFix))
 	}
 	if check.OS == "" || check.Arch == "" {
 		return reject(Fail(text, "preflight", "platform", text.T(i18n.SSHUpgradePlatformUnknown), text.T(i18n.SSHUpgradePlatformUnknownFix)))
@@ -244,10 +239,12 @@ func (s *Service) swapProgram(ctx context.Context, result *InstallResult, connec
 	}
 }
 
-func stepOf(text i18n.Catalog, err error) *StepError {
+// stepOf is err as a step failure: as it is where it is one already, and
+// otherwise a preflight failure with code and fix.
+func stepOf(text i18n.Catalog, err error, code string, fix i18n.Key) *StepError {
 	var step *StepError
 	if errors.As(err, &step) {
 		return step
 	}
-	return Fail(text, "preflight", "upgrade_failed", err.Error(), text.T(i18n.SSHUpgradeFailedFix))
+	return Fail(text, "preflight", code, err.Error(), text.T(fix))
 }
