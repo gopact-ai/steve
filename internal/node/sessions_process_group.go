@@ -2,6 +2,7 @@ package node
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/procgroup"
@@ -20,8 +21,8 @@ type sessionProcess struct {
 	procgroup.Place
 }
 
-// recordedGroupWithin bounds how long ending one recorded group waits for its
-// members to die before the stop is answered as unconfirmed.
+// recordedGroupWithin bounds how long ending recorded groups waits for their
+// members to die before a stop is answered as unconfirmed.
 const recordedGroupWithin = 2 * time.Second
 
 // observeProcess is the host's Started callback. The host calls it holding
@@ -42,15 +43,40 @@ func (one *ownedSession) observeProcess(id procgroup.Identity) {
 	}()
 }
 
+// endRecordedGroups ends at once, by one deadline, the process groups that
+// the records an earlier node process left name, so a node that left many
+// starts no later than one that left one. A stop left unconfirmed is tried
+// again when a stop is asked for.
+func (s *SessionService) endRecordedGroups(unstopped []*ownedSession) error {
+	deadline := time.Now().Add(recordedGroupWithin)
+	failed := make([]error, len(unstopped))
+	var wg sync.WaitGroup
+	for i, one := range unstopped {
+		wg.Go(func() { failed[i] = s.endRecordedGroup(one, deadline) })
+	}
+	wg.Wait()
+	for i, one := range unstopped {
+		if failed[i] != nil {
+			slog.Warn("steve-node: native process stop is not confirmed after restart", "session", one.record.State.ID, "error", failed[i])
+			s.unverifiedProcesses[one.record.State.ID] = true
+			continue
+		}
+		if err := s.endStoppedRuntime(one.record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // endRecordedGroup ends the process group one's record names, left by an
-// earlier node process, and records the stop once no member of it runs. one
-// is not shared: its record was just read.
-func (s *SessionService) endRecordedGroup(one *ownedSession) error {
+// earlier node process, and records the stop once no member of it runs by
+// deadline. one is not shared: its record was just read.
+func (s *SessionService) endRecordedGroup(one *ownedSession, deadline time.Time) error {
 	if !s.placeKnown {
 		return procgroup.ErrUnsupported
 	}
 	process := one.record.Process
-	if err := procgroup.Settle(process.Identity, process.Place, s.place, recordedGroupWithin); err != nil {
+	if err := procgroup.Settle(process.Identity, process.Place, s.place, time.Until(deadline)); err != nil {
 		return err
 	}
 	next := one.copyLocked()
@@ -80,7 +106,7 @@ func (s *SessionService) settleUnverified(id string) bool {
 	}
 	one := &ownedSession{service: s, record: record, changed: make(chan struct{})}
 	if !record.State.ProcessStopped {
-		if err := s.endRecordedGroup(one); err != nil {
+		if err := s.endRecordedGroup(one, time.Now().Add(recordedGroupWithin)); err != nil {
 			slog.Warn("steve-node: native process stop is still not confirmed", "session", id, "error", err)
 			return false
 		}

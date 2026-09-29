@@ -2,7 +2,6 @@ package node
 
 import (
 	"fmt"
-	"log/slog"
 	"slices"
 
 	"github.com/gopact-ai/acp"
@@ -154,6 +153,7 @@ func (s *SessionService) load() error {
 	if err != nil {
 		return err
 	}
+	var unstopped []*ownedSession
 	for after := ""; ; {
 		ids, err := store.ids(after)
 		if err != nil {
@@ -163,22 +163,28 @@ func (s *SessionService) load() error {
 			break
 		}
 		for _, id := range ids {
-			if err := s.loadRecord(store, id); err != nil {
+			one, err := s.loadRecord(store, id)
+			if err != nil {
 				return err
+			}
+			if one != nil {
+				unstopped = append(unstopped, one)
 			}
 		}
 		after = ids[len(ids)-1]
 	}
-	return nil
+	return s.endRecordedGroups(unstopped)
 }
 
-func (s *SessionService) loadRecord(store *sessionRecords, id string) error {
+// loadRecord returns the record's session when the process group its agent
+// ran in is still to be ended.
+func (s *SessionService) loadRecord(store *sessionRecords, id string) (*ownedSession, error) {
 	record, _, err := store.read(id, "")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if record.Format != 1 || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name || record.Commands == nil || record.CommandHashes == nil {
-		return sessionError("unavailable", "node session state identity differs")
+		return nil, sessionError("unavailable", "node session state identity differs")
 	}
 	one := &ownedSession{service: s, record: record, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
 	if record.State.State != nodewire.SessionClosed {
@@ -198,23 +204,16 @@ func (s *SessionService) loadRecord(store *sessionRecords, id string) error {
 			}
 		}
 		if err := one.commitLocked(next); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	// After node restart no old native callback is resumable. Keep its
 	// receipt on disk and load it on demand rather than consuming a live slot.
 	// Its agent can no longer be reached, only ended.
 	if !one.record.State.ProcessStopped {
-		if err := s.endRecordedGroup(one); err != nil {
-			slog.Warn("steve-node: native process stop is not confirmed after restart", "session", id, "error", err)
-			s.unverifiedProcesses[id] = true
-		}
+		return one, nil
 	}
-	if err := s.endStoppedRuntime(one.record); err != nil {
-		return err
-	}
-
-	return nil
+	return nil, s.endStoppedRuntime(one.record)
 }
 
 func (s *SessionService) readRecord(id string) (sessionRecord, bool, error) {
