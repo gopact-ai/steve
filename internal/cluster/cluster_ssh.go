@@ -45,6 +45,19 @@ func (p *Peer) localSSHLocked() *sshconnect.Service {
 	return p.localSSH
 }
 
+// startAutoStart has this node start the peer of a machine it keeps a link
+// to once the machine stopped answering and no peer runs on it, where the
+// node's options ask for that.
+func (p *Peer) startAutoStart() {
+	if !p.Options.AutoStartPeers {
+		return
+	}
+	p.Mu.Lock()
+	service := p.localSSHLocked()
+	p.Mu.Unlock()
+	service.AutoStart()
+}
+
 type peerSSHService struct{ service *sshconnect.Service }
 
 func (s peerSSHService) SSHDiscover(ctx context.Context) (sshconnect.Discovery, error) {

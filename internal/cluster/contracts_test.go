@@ -10,9 +10,11 @@ import (
 var (
 	_ coordination.CheckpointApplication = application{}
 	_ sshconnect.AliasBackend            = peerSSHBackend{}
+	_ sshconnect.AutoStartBackend        = peerSSHBackend{}
 	_ sshconnect.Linker                  = peerSSHBackend{}
 	_ sshconnect.RegistrationAbandoner   = peerSSHBackend{}
 	_ sshconnect.RegistrationRecovery    = peerSSHBackend{}
 	_ sshconnect.RegistrationVerifier    = peerSSHBackend{}
+	_ sshconnect.RestartBackend          = peerSSHBackend{}
 	_ sshconnect.UpgradeBackend          = peerSSHBackend{}
 )

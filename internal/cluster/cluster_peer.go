@@ -281,12 +281,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 		return nil, err
 	}
 	go p.watchRuntime(runtime)
-	if options.AutoStartPeers {
-		p.Mu.Lock()
-		service := p.localSSHLocked()
-		p.Mu.Unlock()
-		service.AutoStart()
-	}
+	p.startAutoStart()
 
 	p.unpublish, err = desktop.PublishEndpoint(options.ConfigPath, p.UiURL)
 	if err != nil {
