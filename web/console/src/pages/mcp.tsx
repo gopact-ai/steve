@@ -20,6 +20,7 @@ import { useNodeLabel } from "@/lib/node-name";
 import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { useManagementRefresh } from "@/hooks/use-management-refresh";
+import { useRowDrawer } from "@/hooks/use-row-drawer";
 import type { MCPDeployment, MCPRegistryEntry, MCPView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
@@ -56,7 +57,6 @@ const steveToolSummaries: Record<string, string> = {
     const [view, setView] = useState<MCPView | null>(null);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState("");
-    const [opened, setOpened] = useState<string | null>(null);
     const [readError, setReadError] = useState("");
     const load = useResourceRead("mcp", fetchMCP, (next) => { setView(next); setReadError(""); }, (error) => setReadError(fail(error)));
     useManagementRefresh("mcp", load);
@@ -65,7 +65,8 @@ const steveToolSummaries: Record<string, string> = {
         try { await op(); await load(); } catch (e) { setError(fail(e)); } finally { setBusy(""); }
     }
     const deployments = view?.deployments ?? [];
-    const current = opened ? deployments.find((d) => d.node + "/" + d.name === opened) : undefined;
+    const rows = useRowDrawer(view ? deployments.map((d) => d.node + "/" + d.name) : undefined);
+    const current = rows.opened ? deployments.find((d) => d.node + "/" + d.name === rows.opened) : undefined;
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title="MCP"
@@ -78,9 +79,7 @@ const steveToolSummaries: Record<string, string> = {
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">{tr("mcp.loading")}</div> : deployments.length === 0 ? (
                         <Nothing icon={Dataflow03} title={tr("mcp.empty")}>{tr("mcp.emptyHint")}</Nothing>
                     ) : (
-                        <Table aria-label="MCP" size="sm" selectionMode="single" selectionBehavior="replace"
-                            selectedKeys={opened ? [opened] : []}
-                            onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                        <Table aria-label="MCP" size="sm" selectionMode="single" selectionBehavior="replace" {...rows.table}>
                             <Table.Header>
                                 <Table.Head id="name" label={tr("mcp.name")} isRowHeader />
                                 <Table.Head id="node" label={tr("mcp.machine")} />
@@ -157,7 +156,7 @@ const steveToolSummaries: Record<string, string> = {
 
                 <RegistryPanel onInstalled={load} />
 
-                {current && <DeploymentDrawer d={current} onClose={() => setOpened(null)} busy={busy} onProbe={() => void run("probe:" + current.node + current.name, () => probeMCP(current.node, current.name))} onRemove={() => void run("rm:" + current.node + current.name, async () => { await removeMCP(current.node, current.name); setOpened(null); })} />}
+                {current && <DeploymentDrawer d={current} onClose={rows.close} busy={busy} onProbe={() => void run("probe:" + current.node + current.name, () => probeMCP(current.node, current.name))} onRemove={() => void run("rm:" + current.node + current.name, async () => { await removeMCP(current.node, current.name); rows.close(); })} />}
             </PageBody>
         </div>
     );
