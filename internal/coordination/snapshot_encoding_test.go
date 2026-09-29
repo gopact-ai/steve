@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -139,12 +140,19 @@ func (b *logBuffer) String() string {
 // A restored snapshot leaves one line in the process log with the applied
 // index it restores, the bytes read and how long it took, so the log shows
 // how often a replica catches up through a whole snapshot. A snapshot that
-// is refused leaves no such line.
+// is refused, or whose application fails to restore, leaves no such line.
 func TestRestoreLogsItsAppliedIndexBytesAndDuration(t *testing.T) {
 	output := &logBuffer{}
-	previous := slog.Default()
+	// Setting slog's default also redirects the log package, which setting
+	// it back does not undo.
+	previousLogger := slog.Default()
+	previousWriter, previousFlags := log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(logs.NewHandler(output)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
 	source := newMachine("snapshot", &snapshotBytesApplication{data: bytes.Repeat([]byte("x"), 4096)})
 	source.StoreConfiguration(41, raft.Configuration{Servers: []raft.Server{{ID: "a", Address: "a", Suffrage: raft.Voter}}})
 	// A command after the configuration takes the applied index past the
@@ -168,18 +176,26 @@ func TestRestoreLogsItsAppliedIndexBytesAndDuration(t *testing.T) {
 	raw := sink.Bytes()
 	for name, refused := range map[string]struct {
 		cluster string
+		app     Application
 		input   []byte
+		stops   bool
 	}{
-		"truncated":     {"snapshot", raw[:len(raw)-1]},
-		"other-cluster": {"other", raw},
+		"truncated":     {"snapshot", &snapshotBytesApplication{}, raw[:len(raw)-1], false},
+		"other-cluster": {"other", &snapshotBytesApplication{}, raw, false},
+		// The snapshot passes every check, then the application cannot
+		// decode its part and the replica stops.
+		"application": {"snapshot", &retentionApplication{}, raw, true},
 	} {
-		target := newMachine(refused.cluster, &snapshotBytesApplication{})
+		target := newMachine(refused.cluster, refused.app)
 		if err := target.Restore(io.NopCloser(bytes.NewReader(refused.input))); err == nil {
 			t.Fatalf("%s snapshot accepted", name)
 		}
+		if stopped := !target.healthy(); stopped != refused.stops {
+			t.Fatalf("%s snapshot: replica stopped %v, want %v", name, stopped, refused.stops)
+		}
 	}
 	if strings.Contains(output.String(), "snapshot restored") {
-		t.Fatalf("a refused snapshot was logged as restored:\n%s", output.String())
+		t.Fatalf("a snapshot that was not restored was logged as restored:\n%s", output.String())
 	}
 	target := newMachine("snapshot", &snapshotBytesApplication{})
 	if err := target.Restore(io.NopCloser(bytes.NewReader(raw))); err != nil {
