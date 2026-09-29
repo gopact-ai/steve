@@ -2838,10 +2838,13 @@ checks["fleet-synthesized-snapshot"] = async (f) => {
     await close(opened);
 };
 
+const focusedTag = (page) => page.evaluate(() => document.activeElement?.tagName);
+
 // A row's drawer opens as often as its row is clicked or entered. The row is
 // selected only while its drawer is open: however the drawer was closed (its
 // close button, Escape, or a click beside it), closing it lets go of the row,
-// so the same row opens it again.
+// so the same row opens it again, and gives focus back to the row, so the
+// keyboard carries on from where the drawer was opened.
 async function reopensDrawer(row, drawer, what) {
     const page = row.page();
     const closes = [
@@ -2861,6 +2864,8 @@ async function reopensDrawer(row, drawer, what) {
         await close();
         await drawer.waitFor({ state: "detached" });
         assert.equal(await row.getAttribute("aria-selected"), "false", `${what} stays selected after ${how} closed its drawer`);
+        await page.waitForFunction((el) => el.contains(document.activeElement), await row.elementHandle())
+            .catch(async () => assert.fail(`${what} does not get focus back after ${how} closed its drawer; focus is on ${await focusedTag(page)}`));
         since = ` again after ${how} closed its drawer`;
     }
     await row.focus();
@@ -2890,6 +2895,76 @@ checks["mcp-deployment-reopens"] = async (f) => {
     } }));
     await f.page.getByRole("link", { name: "MCP", exact: true }).click();
     await reopensDrawer(f.page.getByRole("row").filter({ hasText: "example-service" }), f.page.getByRole("dialog", { name: "example-service", exact: true }), "An installed MCP service");
+};
+
+checks["project-reopens"] = async (f) => {
+    await f.page.locator('a[href="#/projects"]').click();
+    await reopensDrawer(f.page.getByRole("row").filter({ hasText: "scratch" }), f.page.getByRole("dialog", { name: "scratch", exact: true }), "A project");
+};
+
+// A row can leave the data while its drawer is open: another console, the
+// command line or a peer removed it. Its drawer goes with it and focus stays
+// in the table; when the row comes back, it comes back closed and unselected,
+// because nobody opened it. present(false) takes the row out of the data and
+// refreshes the page, present(true) puts it back.
+async function forgetsVanishedRow(row, drawer, what, present) {
+    const page = row.page();
+    await row.click();
+    await drawer.waitFor();
+    const table = await row.evaluateHandle((el) => el.closest("table"));
+    await present(false);
+    await row.waitFor({ state: "detached" });
+    await drawer.waitFor({ state: "detached" }).catch(() => assert.fail(`${what} keeps its drawer open after it left the data`));
+    await present(true);
+    await row.waitFor();
+    assert.equal(await drawer.count(), 0, `${what} opens its drawer by itself when it comes back`);
+    assert.equal(await row.getAttribute("aria-selected"), "false", `${what} is selected when it comes back`);
+    assert.ok(await table.evaluate((el) => el.isConnected && el.contains(document.activeElement)), `${what} left the data with its drawer open and focus fell to ${await focusedTag(page)} instead of its table`);
+}
+
+checks["fleet-machine-vanishes"] = async (f) => {
+    const nodes = [{ name: "hub", role: "hub", up: true, version: "test", harnesses: [] }, { name: "worker", role: "node", up: true, version: "test", harnesses: [] }];
+    const state = { ...usageState(), hub: { node: "hub", version: "test", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
+    await forgetsVanishedRow(f.page.locator("#fleet-machines").getByRole("row", { name: /worker/ }), f.page.getByRole("dialog", { name: "worker", exact: true }), "A machine", async (present) => {
+        state.nodes = present ? nodes : nodes.filter((n) => n.name !== "worker");
+        await f.emit({ kind: "node.changed" }); await f.page.clock.runFor(350);
+    });
+};
+
+checks["fleet-agent-vanishes"] = async (f) => {
+    const agents = [{ id: "builder", harness: "mock", eligible: true, activities: [] }, { id: "planner", harness: "mock", eligible: true, activities: [] }];
+    const state = { ...usageState(), agents };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
+    await forgetsVanishedRow(f.page.getByRole("row", { name: /builder/ }), f.page.getByRole("dialog", { name: "builder", exact: true }), "An agent", async (present) => {
+        state.agents = present ? agents : agents.filter((a) => a.id !== "builder");
+        await f.emit({ kind: "node.changed" }); await f.page.clock.runFor(350);
+    });
+};
+
+checks["mcp-deployment-vanishes"] = async (f) => {
+    const deployment = (name) => ({ node: "test-node", name, type: "http", url: `https://${name}.test/mcp`, agents: [] });
+    const all = [deployment("example-service"), deployment("other-service")];
+    let deployments = all;
+    await f.page.route("**/console/mcp", (route) => route.fulfill({ json: { platform: [], machines: [], deployments } }));
+    await f.page.getByRole("link", { name: "MCP", exact: true }).click();
+    await forgetsVanishedRow(f.page.getByRole("row").filter({ hasText: "example-service" }), f.page.getByRole("dialog", { name: "example-service", exact: true }), "An installed MCP service", async (present) => {
+        deployments = present ? all : all.filter((d) => d.name !== "example-service");
+        await f.emit({ kind: "observe.node.manifest", data: { changes: `mcp:example-service\t${present ? "\tavailable" : "available\t"}` } }); await f.page.clock.runFor(350);
+    });
+};
+
+checks["project-vanishes"] = async (f) => {
+    const projects = [project("scratch"), project("docs"), project("home")];
+    const state = { ...usageState(), projects };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/projects`); await f.page.reload();
+    await forgetsVanishedRow(f.page.getByRole("row").filter({ hasText: "scratch" }), f.page.getByRole("dialog", { name: "scratch", exact: true }), "A project", async (present) => {
+        state.projects = present ? projects : projects.filter((p) => p.id !== "scratch");
+        await f.emit({ kind: "project.changed" }); await f.page.clock.runFor(350);
+    });
 };
 
 async function checkNativeHistoryImport(f, autoProject = false) {
