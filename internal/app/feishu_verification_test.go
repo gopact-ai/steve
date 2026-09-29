@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -24,8 +25,9 @@ import (
 
 // startupRetrySettings is the console's channel state as startup reports it.
 type startupRetrySettings struct {
-	mu    sync.Mutex
-	retry *consoleapi.ChannelStartupRetry
+	mu        sync.Mutex
+	retry     *consoleapi.ChannelStartupRetry
+	reconnect *consoleapi.ChannelReconnect
 }
 
 func (s *startupRetrySettings) SetRuntimeError(string) {}
@@ -34,7 +36,17 @@ func (s *startupRetrySettings) SetStartupRetry(r *consoleapi.ChannelStartupRetry
 	defer s.mu.Unlock()
 	s.retry = r
 }
+func (s *startupRetrySettings) SetReconnect(r *consoleapi.ChannelReconnect) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconnect = r
+}
 func (s *startupRetrySettings) BindAccessUpdater(func(config.Feishu)) {}
+func (s *startupRetrySettings) reconnecting() *consoleapi.ChannelReconnect {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reconnect
+}
 func (s *startupRetrySettings) current() *consoleapi.ChannelStartupRetry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,5 +201,28 @@ func TestFeishuWorkWaitsForAVerifiedChannel(t *testing.T) {
 		answersTo(answered, "om_waiting") != 1 || answersTo(answered, "om_schedule") != 1 || answersTo(answered, "om_anchor") != 1 {
 		t.Fatalf("after verification: %d turns run, %d inputs pending, schedule still due %t, retry %+v, answered %v, agent send %s; want the input and the schedule run once each and answered, the agent's message sent, nothing pending and the retry cleared",
 			turns.calls.Load(), len(pending), scheduled, settings.current(), answered, sent)
+	}
+}
+
+// A Feishu long connection being established again is shown in the console
+// with the attempts that failed and the last failure, never the secret, and
+// withdrawn once it is back.
+func TestFeishuReconnectIsShownWithoutTheSecret(t *testing.T) {
+	settings := &startupRetrySettings{}
+	report := reportReconnect(settings, "app-secret-value")
+	since := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+
+	report(&feishu.Reconnect{Since: since})
+	if got := settings.reconnecting(); got == nil || *got != (consoleapi.ChannelReconnect{Since: since}) {
+		t.Fatalf("the loss is shown as %+v", got)
+	}
+	report(&feishu.Reconnect{Since: since, Failures: 2, Err: errors.New("bootstrap app-secret-value: 503: system busy")})
+	want := consoleapi.ChannelReconnect{Since: since, Attempts: 2, LastError: "bootstrap [redacted]: 503: system busy"}
+	if got := settings.reconnecting(); got == nil || *got != want {
+		t.Fatalf("the failed attempts are shown as %+v, want %+v", got, want)
+	}
+	report(nil)
+	if got := settings.reconnecting(); got != nil {
+		t.Fatalf("a connection that is back is still shown as %+v", got)
 	}
 }

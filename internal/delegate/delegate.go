@@ -774,7 +774,8 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		// the run, what follows the answer — publishing it, the terminal
 		// transition — is bounded by one silence; cleanup is bounded by
 		// lifecycle.CleanupTimeout, and landing the result for the parent,
-		// after the run returns, by the silence clock again.
+		// after the run returns, by the silence clock again; queueing a
+		// result it did not land, by lifecycle.CleanupTimeout.
 		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantinesUnlessCancelled, CancelDetaches: true, SettledTimeout: silence},
 	})
 	return d.settle(ctx, run, err)
@@ -1075,7 +1076,16 @@ func (s *Service) land(ctx context.Context, parent, child task.Task, record atte
 				}
 			}
 		}
-		if err := s.artifacts.Defer(ctx, parent.ProjectID, p.published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
+		// The result is committed; queueing it records where it goes next.
+		// The silence clock that timed the landing above may have just cut
+		// it off, so the queue is written on a context that clock no longer
+		// cancels, bounded as cleanup is. A stopped execution's result is
+		// still refused: the ledger checks the execution here and again
+		// when the result would land.
+		queue, cancel := lifecycle.Cleanup(ctx)
+		err := s.artifacts.Defer(queue, parent.ProjectID, p.published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...)
+		cancel()
+		if err != nil {
 			if nodewire.IsManagedSession(record.Session) {
 				return result, retainedDetached(record, err)
 			}

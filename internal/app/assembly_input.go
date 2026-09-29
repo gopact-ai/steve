@@ -27,5 +27,6 @@ func (v *assemblyInput) Environment() *Environment { return v.environment }
 type channelRuntime interface {
 	SetRuntimeError(string)
 	SetStartupRetry(*consoleapi.ChannelStartupRetry)
+	SetReconnect(*consoleapi.ChannelReconnect)
 	BindAccessUpdater(func(config.Feishu))
 }

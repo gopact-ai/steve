@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,7 @@ type electionPeers struct {
 	members  []Member
 	elected  atomic.Bool
 	answer   func(w http.ResponseWriter) // node-2's answer once elected
+	refusal  time.Duration               // how long the others take to name node-2 once elected
 	requests atomic.Int32
 	latest   atomic.Int64 // when the latest request arrived, in Unix nanoseconds
 }
@@ -41,6 +43,7 @@ func newElectionPeers(t *testing.T, authority *testAuthority) *electionPeers {
 			case id == "node-2":
 				p.answer(w)
 			default:
+				time.Sleep(p.refusal)
 				w.WriteHeader(http.StatusServiceUnavailable)
 				json.NewEncoder(w).Encode(rpcFailure{Code: "not_leader", Message: "coordination: not consensus leader: leader is node-2", LeaderID: "node-2"})
 			}
@@ -225,5 +228,198 @@ func TestClientReturnsTheCallersOwnContextError(t *testing.T) {
 				t.Fatalf("a join whose caller gave up after %s returned after %s", after, elapsed)
 			}
 		})
+	}
+}
+
+// holdLeader makes node-2 take every call and answer none until the test
+// ends.
+func holdLeader(t *testing.T, peers *electionPeers) {
+	t.Helper()
+	release := make(chan struct{})
+	// Registered after the servers, so it runs before they close and wait
+	// for their handlers.
+	t.Cleanup(func() { close(release) })
+	peers.answer = func(http.ResponseWriter) { <-release }
+}
+
+// saysUnanswered reports whether err says that node-2 was sent action and
+// did not answer within the client's 1s timeout, rather than that no member
+// took it.
+func saysUnanswered(err error, action string) bool {
+	return errors.Is(err, ErrUnavailable) && !strings.Contains(err.Error(), "no member took") &&
+		strings.Contains(err.Error(), "peer node-2 was sent "+action+" and did not answer within 1s") &&
+		strings.Contains(err.Error(), "retrying it with the same ID continues it")
+}
+
+// A leader runs a control command in steps, each bounded by its apply
+// timeout, so the command can take longer than one call's timeout, and a
+// member that forwarded it then stops waiting. The call fails as
+// unavailable, as before, but the leader was sent the command and may still
+// be working on it, so the error says that and that a retry with the same
+// ID continues it, not that no member took it.
+func TestClientSaysTheLeaderWasSentACommandItDidNotAnswer(t *testing.T) {
+	calls := map[string]func(context.Context, *Client) error{
+		"join": func(ctx context.Context, client *Client) error {
+			_, err := client.Join(ctx, JoinRequest{ID: "join-unanswered", Actor: "owner", Member: Member{NodeID: "node-4"}})
+			return err
+		},
+		"voting": func(ctx context.Context, client *Client) error {
+			_, err := client.SetVoting(ctx, VotingRequest{ID: "voting-unanswered", Actor: "owner", NodeID: "node-4", Voting: true})
+			return err
+		},
+		"transfer": func(ctx context.Context, client *Client) error {
+			_, err := client.Transfer(ctx, TransferRequest{ID: "transfer-unanswered", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-3"})
+			return err
+		},
+	}
+	for action, call := range calls {
+		t.Run(action, func(t *testing.T) {
+			authority := newTestAuthority(t)
+			peers := newElectionPeers(t, authority)
+			holdLeader(t, peers)
+			peers.elected.Store(true)
+			client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: time.Second})
+			client.mu.Lock()
+			client.leader = "node-2"
+			client.mu.Unlock()
+			if err := call(t.Context(), client); !saysUnanswered(err, action) {
+				t.Fatalf("a %s call the leader was sent and did not answer returned %v", action, err)
+			}
+		})
+	}
+}
+
+// A member the command never reached is not working on it. A call whose
+// connection timed out before the request went out, here in a TLS handshake
+// the member never answers, still says that no member took the command.
+func TestClientSaysNoMemberTookACommandItNeverSent(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	peers.elected.Store(true)
+	// The kernel completes connections to a listener that accepts none, and
+	// nothing on them answers a TLS handshake.
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { silent.Close() })
+	peers.members[1].APIAddress = "https://" + silent.Addr().String()
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: time.Second})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	started := time.Now()
+	_, err = client.Join(t.Context(), JoinRequest{ID: "join-never-sent", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if elapsed := time.Since(started); elapsed < time.Second {
+		t.Fatalf("a join whose connection to the leader was never set up returned after %s, before its 1s timeout: %v", elapsed.Round(time.Millisecond), err)
+	}
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no member took join within 1s") || strings.Contains(err.Error(), "was sent") {
+		t.Fatalf("a join that timed out before it was sent to the leader returned %v", err)
+	}
+}
+
+// Only a call that runs out of time is one the member did not answer. A
+// member that was sent the command in full and closes the connection
+// without answering failed at once, as when its process stops, so the call
+// still says that no member took the command.
+func TestClientSaysNoMemberTookACommandTheLeaderDroppedWithoutAnswering(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	var dropped atomic.Int32
+	peers.answer = func(w http.ResponseWriter) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		dropped.Add(1)
+		conn.Close()
+	}
+	peers.elected.Store(true)
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: time.Second})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	_, err := client.Join(t.Context(), JoinRequest{ID: "join-dropped", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if dropped.Load() == 0 {
+		t.Fatalf("the leader never got the join: %v", err)
+	}
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no member took join within 1s") || strings.Contains(err.Error(), "was sent") {
+		t.Fatalf("a join the leader dropped without answering returned %v", err)
+	}
+}
+
+// A member that refuses the command later in the window names the leader,
+// which may still be working on it, so that refusal does not hide that the
+// leader was sent the command and did not answer.
+func TestClientReportsTheUnansweredLeaderAfterAnotherMemberRefuses(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	holdLeader(t, peers)
+	// node-2 holds the first call until the client's 1s timeout; node-1
+	// takes the second inside the window and refuses it after the window.
+	// The second call starts 1s in, 400ms before the window ends, and
+	// node-1 refuses it 600ms later, 400ms inside that call's own timeout
+	// and no earlier than 200ms after the window.
+	peers.refusal = 600 * time.Millisecond
+	peers.elected.Store(true)
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: 1400 * time.Millisecond})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	_, err := client.Join(t.Context(), JoinRequest{ID: "join-unanswered-then-refused", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if n := peers.requests.Load(); n != 2 {
+		t.Fatalf("the join was sent %d times, not to the leader and then to one member that refused it: %v", n, err)
+	}
+	if !saysUnanswered(err, "join") {
+		t.Fatalf("a join the leader did not answer and another member then refused returned %v", err)
+	}
+}
+
+// A leader that refuses the command after it did not answer an earlier call
+// is no longer working on it, as when it has lost its leadership, so the
+// call says again that no member took the command.
+func TestClientSaysNoMemberTookACommandTheLeaderRefusedAfterNotAnswering(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var calls atomic.Int32
+	peers.answer = func(w http.ResponseWriter) {
+		if calls.Add(1) == 1 {
+			<-release
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(rpcFailure{Code: "not_leader", Message: "coordination: not consensus leader: leader is "})
+	}
+	peers.elected.Store(true)
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: 1500 * time.Millisecond})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	_, err := client.Join(t.Context(), JoinRequest{ID: "join-unanswered-then-lost", Actor: "owner", Member: Member{NodeID: "node-4"}})
+	if n := calls.Load(); n < 2 {
+		t.Fatalf("the leader was sent the join %d times, so it never refused it: %v", n, err)
+	}
+	if !errors.Is(err, ErrNotLeader) || !strings.Contains(err.Error(), "no member took join within 1.5s") || strings.Contains(err.Error(), "was sent") {
+		t.Fatalf("a join the leader refused after it did not answer an earlier call returned %v", err)
+	}
+}
+
+// A read the leader did not answer leaves nothing in progress there to
+// continue, so it still says that no member took it.
+func TestClientSaysNoMemberTookAReadTheLeaderDidNotAnswer(t *testing.T) {
+	authority := newTestAuthority(t)
+	peers := newElectionPeers(t, authority)
+	holdLeader(t, peers)
+	peers.elected.Store(true)
+	client := newElectionClient(t, authority, peers, ClientConfig{RetryWindow: time.Second})
+	client.mu.Lock()
+	client.leader = "node-2"
+	client.mu.Unlock()
+	_, err := client.ReadState(t.Context())
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no member took state within 1s") || strings.Contains(err.Error(), "was sent") {
+		t.Fatalf("a read the leader did not answer returned %v", err)
 	}
 }

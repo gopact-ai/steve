@@ -56,8 +56,9 @@ func TestSSHHandlerRefusesForeignHostsAndSites(t *testing.T) {
 }
 
 // upgradeSSH answers upgrades the way the service does: a node ID no
-// machine has is refused outright, and a known machine that cannot be
-// reached gets a record that says why.
+// machine has is refused outright, a known machine that cannot be
+// reached gets a record that says why, and a known machine with no
+// upgrade running or just finished has no status to read.
 type upgradeSSH struct{ SSHService }
 
 func (upgradeSSH) SSHUpgrade(_ context.Context, node string) (sshconnect.InstallResult, error) {
@@ -69,13 +70,18 @@ func (upgradeSSH) SSHUpgrade(_ context.Context, node string) (sshconnect.Install
 }
 
 func (upgradeSSH) SSHUpgradeStatus(_ context.Context, node string) (sshconnect.InstallResult, error) {
-	return sshconnect.InstallResult{}, sshconnect.Fail(i18n.New(i18n.LocaleEN), "preflight", "unknown_node", "no machine has node ID "+node, "use the node ID")
+	text := i18n.New(i18n.LocaleEN)
+	if node == "node-dev" {
+		return sshconnect.InstallResult{}, sshconnect.Fail(text, "planning", "unknown_upgrade", "node-dev has no upgrade running or just finished", "start an upgrade")
+	}
+	return sshconnect.InstallResult{}, sshconnect.Fail(text, "preflight", "unknown_node", "no machine has node ID "+node, "use the node ID")
 }
 
 // An upgrade, or its status, asked for a node ID no machine has is not
-// found, with the refusal in the API's usual error body; a known machine
+// found, and so is the status of a known machine with no upgrade to read,
+// each with its refusal in the API's usual error body; a known machine
 // that cannot be upgraded still answers with its record.
-func TestSSHUpgradeOfAnUnknownNodeIsNotFound(t *testing.T) {
+func TestSSHUpgradeOfAnUnknownNodeOrWithoutARecordIsNotFound(t *testing.T) {
 	token := strings.Repeat("t", 40)
 	handler, err := SSHHandler(upgradeSSH{}, token, "http://127.0.0.1:1")
 	if err != nil {
@@ -84,10 +90,12 @@ func TestSSHUpgradeOfAnUnknownNodeIsNotFound(t *testing.T) {
 	for _, tc := range []struct {
 		method, node string
 		want         int
+		code, says   string
 	}{
-		{http.MethodPost, "Mac%20mini", http.StatusNotFound},
-		{http.MethodGet, "Mac%20mini", http.StatusNotFound},
-		{http.MethodPost, "node-dev", http.StatusOK},
+		{http.MethodPost, "Mac%20mini", http.StatusNotFound, "unknown_node", "Mac mini"},
+		{http.MethodGet, "Mac%20mini", http.StatusNotFound, "unknown_node", "Mac mini"},
+		{http.MethodPost, "node-dev", http.StatusOK, "", ""},
+		{http.MethodGet, "node-dev", http.StatusNotFound, "unknown_upgrade", "node-dev"},
 	} {
 		request := httptest.NewRequest(tc.method, "http://127.0.0.1:1/console/ssh/upgrades/"+tc.node, nil)
 		request.Header.Set("Authorization", "Bearer "+token)
@@ -103,7 +111,7 @@ func TestSSHUpgradeOfAnUnknownNodeIsNotFound(t *testing.T) {
 			Error string               `json:"error"`
 			Step  sshconnect.StepError `json:"step"`
 		}
-		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || !strings.Contains(body.Error, "Mac mini") || body.Step.Code != "unknown_node" {
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || !strings.Contains(body.Error, tc.says) || body.Step.Code != tc.code {
 			t.Fatalf("%s %s body = %s (%v)", tc.method, tc.node, response.Body, err)
 		}
 	}
