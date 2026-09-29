@@ -11,7 +11,7 @@ import { TextArea } from "@/components/base/textarea/textarea";
 import { Toggle } from "@/components/base/toggle/toggle";
 import { SettingsServices } from "@/components/steve/settings-services";
 import { fetchChannels, fetchHubSettings, saveChannels, saveHubSettings, syncApproval, type ApprovalSync, type ChannelSettings, type HubSettings, type SettingsField } from "@/lib/api/settings";
-import { channelInputs, channelPatch, changedInputs, type ChannelDraft } from "@/lib/settings-channels";
+import { channelInputs, channelPatch, changedInputs, followChannelStatus, type ChannelDraft } from "@/lib/settings-channels";
 import { number, when } from "@/lib/format";
 import { HTTPError } from "@/lib/http";
 import { errorText, type LocalePreference } from "@/lib/i18n";
@@ -117,7 +117,7 @@ export function SettingsPage() {
             try {
                 const next = await fetchChannels();
                 if (cancelled || !alive.current) return;
-                setChannels((current) => current && { ...current, runtime_error: next.runtime_error, startup_retry: next.startup_retry, reconnect: next.reconnect });
+                setChannels((current) => current && followChannelStatus(current, next));
             } catch { /* The next poll tries again. */ }
             if (!cancelled && alive.current) setRetryPolls((count) => count + 1);
         }, !retryAt ? reconnectPoll : Number.isNaN(due) ? retryPollMax : Math.min(Math.max(due + retryPollSettle, retryPollMin), retryPollMax));

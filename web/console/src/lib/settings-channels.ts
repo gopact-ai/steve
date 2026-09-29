@@ -8,6 +8,12 @@ export function channelInputs(view: ChannelSettings): ChannelDraft {
     return { default_channel: view.desired.default_channel, enabled: feishu.enabled, app_id: feishu.app_id || "", domain: feishu.domain || "feishu", owner_open_id: feishu.owner_open_id || "", group_policy: feishu.group_policy || "open", allow_unmentioned: feishu.allow_unmentioned, allowed_senders: (feishu.allowed_senders || []).join("\n"), blocked_senders: (feishu.blocked_senders || []).join("\n"), secret: "", clearSecret: false };
 }
 
+// A poll takes the connection status, which changes on its own, and keeps
+// the rest of the view as last loaded: the drafts are based on it.
+export function followChannelStatus(current: ChannelSettings, next: ChannelSettings): ChannelSettings {
+    return { ...current, runtime_error: next.runtime_error, startup_retry: next.startup_retry, reconnect: next.reconnect };
+}
+
 export function changedInputs<T extends object>(baseline: T, current: T): Partial<T> {
     return Object.fromEntries(Object.entries(current).filter(([key, value]) => value !== baseline[key as keyof T])) as Partial<T>;
 }
