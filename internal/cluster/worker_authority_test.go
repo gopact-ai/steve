@@ -217,10 +217,10 @@ func TestWorkerTunnelIsAdmittedAgainOnceAnUnconfirmedReplicaCatchesUp(t *testing
 	case <-time.After(2*timeout + 3*time.Second):
 		t.Fatalf("the tunnel to a machine whose replication lagged stayed open %s", 2*timeout+3*time.Second)
 	}
-	workers := &member.Runtime.Load().workers
-	workers.mu.Lock()
-	failure := workers.failure
-	workers.mu.Unlock()
+	confirmation := &member.Runtime.Load().confirmation
+	confirmation.mu.Lock()
+	failure := confirmation.failure
+	confirmation.mu.Unlock()
 	if failure == nil || !strings.Contains(failure.Error(), "could not be confirmed with a quorum") {
 		t.Fatalf("the tunnel closed, but not because the replica could not be confirmed: %v", failure)
 	}
@@ -291,13 +291,13 @@ func TestWorkerConfirmationWaitsForTheStateMachineToApply(t *testing.T) {
 	confirmed := make(chan struct{})
 	go func() {
 		defer close(confirmed)
-		runtime.confirmWorkers()
+		runtime.confirmReplica()
 	}()
 	select {
 	case <-confirmed:
-		runtime.workers.mu.Lock()
-		failure := runtime.workers.failure
-		runtime.workers.mu.Unlock()
+		runtime.confirmation.mu.Lock()
+		failure := runtime.confirmation.failure
+		runtime.confirmation.mu.Unlock()
 		if failure == nil {
 			t.Fatalf("a quorum confirmed the replica while its state machine had not applied entry %d", entry)
 		}
@@ -310,9 +310,9 @@ func TestWorkerConfirmationWaitsForTheStateMachineToApply(t *testing.T) {
 	case <-time.After(runtime.config.Coordination.ApplyTimeout + time.Second):
 		t.Fatal("the confirmation did not return once the state machine was released")
 	}
-	runtime.workers.mu.Lock()
-	failure := runtime.workers.failure
-	runtime.workers.mu.Unlock()
+	runtime.confirmation.mu.Lock()
+	failure := runtime.confirmation.failure
+	runtime.confirmation.mu.Unlock()
 	if failure != nil {
 		t.Fatalf("the replica was not confirmed once its state machine applied entry %d: %v", entry, failure)
 	}
@@ -344,10 +344,10 @@ func TestIdleWorkerTunnelsAppendNothingToTheConsensusLog(t *testing.T) {
 		return idleSpan{service.LastIndex() - before.grew, hub.Runtime.Load().stateReads.Load() - before.hubReads, member.Runtime.Load().stateReads.Load() - before.memberReads}
 	}
 	confirmed := func() time.Time {
-		workers := &member.Runtime.Load().workers
-		workers.mu.Lock()
-		defer workers.mu.Unlock()
-		return workers.confirmed
+		confirmation := &member.Runtime.Load().confirmation
+		confirmation.mu.Lock()
+		defer confirmation.mu.Unlock()
+		return confirmation.confirmed
 	}
 	if idle := growth(); idle != (idleSpan{}) {
 		t.Fatalf("with no worker tunnel open the leader's log grew by %d entries and the hub and the member read the committed state %d and %d times in %s; the measurement needs an idle cluster", idle.grew, idle.hubReads, idle.memberReads, span)
@@ -561,7 +561,7 @@ func TestWorkerGrantLapsesWithTheLocalReplica(t *testing.T) {
 			for _, seen := range tc.seen {
 				// Each observation here follows a quorum confirmation; see
 				// TestWorkerTunnelsOfAFollowerNeedQuorumConfirmations.
-				runtime.workers.confirmed = seen.at
+				runtime.confirmation.confirmed = seen.at
 				if _, err = runtime.authorizesWorker(seen, "node-1", assignment, 7); err != nil {
 					break
 				}
@@ -592,7 +592,7 @@ func TestWorkerTunnelIsAdmittedOnTheJudgmentThatClosedAnother(t *testing.T) {
 		seen.Healthy, seen.LeaderID = true, leader
 		seen.Coordinator, seen.WriterGeneration = assignment, 7
 		seen.Members = map[string]coordination.Member{"node-1": {NodeID: "node-1"}, "node-3": {NodeID: "node-3"}}
-		runtime.workers.confirmed = seen.at
+		runtime.confirmation.confirmed = seen.at
 		return seen
 	}
 	// The open tunnel last saw the leader at 0; another observer, the one
@@ -677,13 +677,14 @@ func TestWorkerTunnelsOfAFollowerNeedQuorumConfirmations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			runtime := &Runtime{config: Config{Coordination: coordination.Config{NodeID: leader, ApplyTimeout: timeout}}}
 			// Opening a tunnel confirmed the replica at 0.
-			runtime.workers = workerAuthority{live: liveness{started: started, heard: started}, confirmed: started}
+			runtime.workers = workerAuthority{live: liveness{started: started, heard: started}}
+			runtime.confirmation.confirmed = started
 			for i, s := range tc.steps {
 				if s.settle {
-					runtime.workers.mu.Lock()
-					runtime.workers.confirming = false
-					runtime.workers.mu.Unlock()
-					runtime.workers.settle(started.Add(s.after), s.result)
+					runtime.confirmation.mu.Lock()
+					runtime.confirmation.confirming = false
+					runtime.confirmation.mu.Unlock()
+					runtime.confirmation.settle(started.Add(s.after), s.result)
 					continue
 				}
 				seen := observation{at: started.Add(s.after), log: coordination.LogProgress{Committed: 10, Applied: 10}}

@@ -14,7 +14,7 @@ import (
 // settleConfirmation records the result of a confirmation of r's replica
 // that started at started.
 func settleConfirmation(r *Runtime, started time.Time, err error) {
-	r.workers.settle(started, err)
+	r.confirmation.settle(started, err)
 }
 
 // A coordinator that does not lead consensus keeps its business generation
