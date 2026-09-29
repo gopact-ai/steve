@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -233,5 +234,39 @@ func TestLongConnectionRefusedAfterALossEndsStart(t *testing.T) {
 		}
 	case <-time.After(waitDeadline):
 		t.Fatal("the channel kept waiting on a connection Feishu refused")
+	}
+}
+
+// clientCallbacks are the watch's handlers for the official client's
+// connection callbacks, as newLongConn installs them.
+func clientCallbacks(w *connWatch) (disconnected, reconnecting func(), failed func(error), reconnected func()) {
+	return w.lost, w.lost, w.failed, w.back
+}
+
+// The official client reports a reconnect round as reconnecting, each
+// failed attempt, then reconnected. A connection that drops as soon as it
+// is made starts the next round before the round that made it reports
+// reconnected; that late report does not end the round still in progress.
+func TestALateReconnectedDoesNotEndTheNextRound(t *testing.T) {
+	reports := &reconnectReports{}
+	w := &connWatch{report: reports.add, refused: make(chan error, 1)}
+	disconnected, reconnecting, failed, reconnected := clientCallbacks(w)
+
+	disconnected()
+	reconnecting()
+	failed(errors.New("system busy"))
+	// The first round connects, and the new connection drops at once.
+	disconnected()
+	reconnecting()
+	failed(errors.New("system busy"))
+	reconnected() // the first round, late
+	got := reports.snapshot()
+	if last := got[len(got)-1]; last == nil || last.Failures != 2 {
+		t.Fatalf("reports %s; want the second round still reconnecting after two failures", describeReports(got))
+	}
+	reconnected()
+	got = reports.snapshot()
+	if got[len(got)-1] != nil {
+		t.Fatalf("reports %s; want connected once the second round is back", describeReports(got))
 	}
 }
