@@ -130,16 +130,22 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 	if t.group != nil {
 		group = *t.group
 	}
-	return &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, exited: make(chan struct{})}, nil
+	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, exited: make(chan struct{}), observed: make(chan struct{})}
+	go p.observe()
+	return p, nil
 }
 
 type localProcess struct {
-	cmd     *exec.Cmd
-	stdout  io.ReadCloser
-	stdin   io.WriteCloser
-	group   groupCalls
-	exited  chan struct{}
-	stopped atomic.Bool
+	cmd    *exec.Cmd
+	stdout io.ReadCloser
+	stdin  io.WriteCloser
+	group  groupCalls
+	exited chan struct{}
+	// observed is closed once observe is over, err then holding how the
+	// agent ended.
+	observed chan struct{}
+	err      error
+	stopped  atomic.Bool
 	// mu keeps a kill from reaching the group's id once the leader is
 	// reaped: from then on the id can belong to another process's group.
 	mu     sync.Mutex
@@ -150,36 +156,58 @@ func (p *localProcess) Stdout() io.ReadCloser   { return p.stdout }
 func (p *localProcess) Stdin() io.WriteCloser   { return p.stdin }
 func (p *localProcess) Exited() <-chan struct{} { return p.exited }
 
-// Wait kills what the agent left running in its process group before
-// reaping the agent. Until the leader is reaped it holds its pid, so no
-// other process can lead a group of that id, and the kill reaches only
-// the agent's own. The stop is confirmed once nothing of the group runs,
-// as procgroup.Remains.Ended judges. Exited is closed as soon as the agent
-// has exited, as a member no kill ends can keep Wait waiting for as long
-// as it runs. Nothing cuts that wait short: a host's Close waits for it
-// only a bounded time, so Wait, and the checks in endGroup and awaitEmpty,
-// can run past the Close until the group is empty.
-func (p *localProcess) Wait() error {
+// observe watches the agent from its start, apart from its output: a member
+// of its process group can hold that output open after the agent has
+// exited, and only the end of the group closes it then. It kills what the
+// agent left running in its group before reaping the agent. Until the
+// leader is reaped it holds its pid, so no other process can lead a group
+// of that id, and the kill reaches only the agent's own. The stop is
+// confirmed once nothing of the group runs, as procgroup.Remains.Ended
+// judges. Exited is closed as soon as the agent has exited, as a member no
+// kill ends can keep observe waiting for as long as it runs. Nothing cuts
+// that wait short: a host's Close waits for it only a bounded time, so
+// observe, and the checks in endGroup and awaitEmpty, can run past the
+// Close until the group is empty.
+func (p *localProcess) observe() {
+	defer close(p.observed)
 	pid := p.cmd.Process.Pid
 	switch err := p.group.waitExit(pid); {
 	case errors.Is(err, procgroup.ErrUnsupported):
-		err := p.reapRunning()
+		p.err = p.reapRunning()
 		p.stopped.Store(true)
-		return err
+		return
 	case err != nil:
 		// Nothing then shows the group is empty, so the stop stays
 		// unconfirmed.
 		slog.Error(fmt.Sprintf("acphost: wait for agent process %d: %v", pid, err))
-		return p.reapRunning()
+		p.err = p.reapRunning()
+		return
 	}
 	close(p.exited)
 	p.endGroup(pid)
 	p.mu.Lock()
-	err := p.cmd.Wait()
+	p.err = exitError(p.cmd.Process.Wait())
 	p.reaped = true
 	p.mu.Unlock()
 	p.awaitEmpty(pid)
 	p.stopped.Store(true)
+}
+
+// Wait returns once observe is over, and lets go of the agent's pipes: it
+// is called once what the agent wrote has been read, as the agent is
+// reaped without them.
+func (p *localProcess) Wait() error {
+	<-p.observed
+	_ = p.stdin.Close()
+	_ = p.stdout.Close()
+	return p.err
+}
+
+// exitError is what exec.Cmd.Wait says of how the agent ended.
+func exitError(state *os.ProcessState, err error) error {
+	if err == nil && !state.Success() {
+		return &exec.ExitError{ProcessState: state}
+	}
 	return err
 }
 
@@ -188,7 +216,7 @@ func (p *localProcess) Wait() error {
 // it; a kill that comes just as the agent is reaped can then reach the
 // group's id after it is let go.
 func (p *localProcess) reapRunning() error {
-	err := p.cmd.Wait()
+	err := exitError(p.cmd.Process.Wait())
 	p.mu.Lock()
 	p.reaped = true
 	p.mu.Unlock()

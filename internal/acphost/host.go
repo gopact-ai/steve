@@ -828,7 +828,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 // goroutine and the one in Wait outlive the host's Close, and end once the
 // group has.
 func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, settled chan struct{}) {
-	<-conn.Done()
+	endConnection(conn, proc)
 	connErr := conn.Err()
 	waited := make(chan struct{})
 	go func() {
@@ -865,6 +865,34 @@ func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, se
 	delete(h.settling, generation)
 	h.mu.Unlock()
 	close(settled)
+}
+
+// ExitedOutputWait bounds how long an agent's output is read once the agent
+// has exited. The transport ends what the agent left in its process group
+// as it exits, which closes the output they held within milliseconds;
+// output still open then is held by something the agent left outside its
+// group, which need never close it.
+const ExitedOutputWait = 2 * time.Second
+
+// endConnection returns once the connection to the agent proc runs has
+// ended: the agent closed its output, or the agent exited and what it
+// wrote before was read, the connection closed if its output stays open
+// ExitedOutputWait after.
+func endConnection(conn *acp.Conn, proc Process) {
+	select {
+	case <-conn.Done():
+		return
+	case <-proc.Exited():
+	}
+	held := time.NewTimer(ExitedOutputWait)
+	defer held.Stop()
+	select {
+	case <-conn.Done():
+	case <-held.C:
+		slog.Warn(fmt.Sprintf("acphost: the agent exited and its output is still open after %s; the connection is closed", ExitedOutputWait))
+		_ = conn.Close()
+		<-conn.Done()
+	}
 }
 
 func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg SessionConfig) (acp.SessionID, uint64, error) {
@@ -1277,7 +1305,7 @@ func (h *Host) AllProcessesStopped() bool {
 // reap the process; requires h.mu to be held. It releases h.mu while waiting
 // so in-flight session notifications can drain instead of blocking on the
 // lock (conn.Done waits for the notification loop, whose handler takes h.mu).
-// cmd.Wait is never called here — the monitor goroutine is the sole waiter.
+// Wait is never called here — the monitor goroutine is the sole waiter.
 // Within the same grace, and the kill that ends it, it also waits for every
 // process this host started to settle what it left in its process group;
 // one that does not stays unconfirmed. With no agent running there is

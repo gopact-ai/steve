@@ -447,9 +447,12 @@ func (p *agentProcess) run(ctx context.Context) {
 		case <-done:
 		}
 	}()
+	read := make(chan struct{})
+	go p.closeHeldOutput(read)
 	// Output ends with the process; Wait below is where its fate is read,
 	// so the pump's own error adds nothing.
 	_ = readLines(p.proc.Stdout(), func(b []byte, complete bool) error { p.emit(outputLine{data: b}, complete); return nil })
+	close(read)
 	waited, err := p.await(ctx)
 	if !waited {
 		return
@@ -492,6 +495,26 @@ func (p *agentProcess) run(ctx context.Context) {
 	p.mu.Unlock()
 	p.emit(outputLine{exit: fmt.Sprintf("exit %d", code)}, true)
 	slog.Info(fmt.Sprintf("steve-node: stream %s ended: exit %d", p.id, code), "stream", p.id)
+}
+
+// closeHeldOutput closes the agent's output if it is still open
+// acphost.ExitedOutputWait after the agent has exited, held by something
+// the agent left outside its process group, so the stream ends with the
+// agent. read is closed once the output has been read to its end.
+func (p *agentProcess) closeHeldOutput(read <-chan struct{}) {
+	select {
+	case <-p.proc.Exited():
+	case <-read:
+		return
+	}
+	held := time.NewTimer(acphost.ExitedOutputWait)
+	defer held.Stop()
+	select {
+	case <-held.C:
+		slog.Warn(fmt.Sprintf("steve-node: stream %s: the agent exited and its output is still open after %s; the output is closed", p.id, acphost.ExitedOutputWait), "stream", p.id)
+		_ = p.proc.Stdout().Close()
+	case <-read:
+	}
 }
 
 // await reports true with what Wait returns, once the agent has exited
