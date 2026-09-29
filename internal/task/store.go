@@ -187,8 +187,10 @@ func (s *Store) List(channel string) []Task {
 // without the store lock, so each close re-checks the task under it: one
 // that was spoken to in the meantime is no longer quiet and stays open.
 // One the check refuses stays open too, for a later pass to look again.
-// The closed tasks are returned; the error names every task that could
-// not be checked or closed.
+// Each close holds the store lock and the ledger's writer for its own
+// check alone, so check should cost what the task holds, not what the
+// ledger holds for every task. The closed tasks are returned; the error
+// names every task that could not be checked or closed.
 func (s *Store) CloseIdle(age time.Duration, live func(id string) (bool, error), check func(*ledger.Tx, Task) error) ([]Task, error) {
 	if check == nil {
 		return nil, errors.New("closing a task requires a completion check")

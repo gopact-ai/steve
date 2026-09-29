@@ -407,6 +407,15 @@ func TestCachedDatabaseAndQueryMethodsCannotBypassReplication(t *testing.T) {
 		t.Fatalf("query bypass=%v", err)
 	}
 	if err := l.Update(t.Context(), func(tx *Tx) error {
+		rows, err := tx.Query(`DELETE FROM bindings RETURNING id`)
+		if err == nil {
+			rows.Close()
+		}
+		return err
+	}); !errors.Is(err, ErrReplicaWriteBypass) {
+		t.Fatalf("rows query bypass=%v", err)
+	}
+	if err := l.Update(t.Context(), func(tx *Tx) error {
 		_, err := tx.Exec(`INSERT INTO bindings(kind,id,data,updated_at) VALUES ('x','1','null','now'); COMMIT`)
 		return err
 	}); !errors.Is(err, ErrReplicaWriteBypass) {

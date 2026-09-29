@@ -18,7 +18,8 @@ import (
 // flight must leave the task alone: a failed read is not evidence of idleness.
 func TestIdleSweepKeepsTasksWhoseLivenessCannotBeRead(t *testing.T) {
 	output := captureLog(t)
-	tasks, err := task.OpenLedger(testLedger(t))
+	book := testLedger(t)
+	tasks, err := task.OpenLedger(book)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestIdleSweepKeepsTasksWhoseLivenessCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	unreadable.Close()
-	closeIdleTasks(t.Context(), tasks, attempt.New(unreadable), nil, time.Millisecond)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(unreadable), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateRunning {
 		t.Fatalf("task closed although its liveness could not be read: %s", got.State)
 	}
@@ -45,7 +46,7 @@ func TestIdleSweepKeepsTasksWhoseLivenessCannotBeRead(t *testing.T) {
 	}
 
 	// The same task is closed once its liveness is known.
-	closeIdleTasks(t.Context(), tasks, attempt.New(openAttempts(t)), nil, time.Millisecond)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(openAttempts(t)), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateDone {
 		t.Fatalf("quiet task with no live attempt = %s, want done", got.State)
 	}
@@ -89,13 +90,13 @@ func TestIdleSweepKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
 	store(consoleapi.ExchangeAwaitingUser, "pending")
 	time.Sleep(5 * time.Millisecond)
 
-	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateRunning {
 		t.Fatalf("quiet task closed while its turn waits on the owner: %s, want running", got.State)
 	}
 
 	store(consoleapi.ExchangeDone, "answered")
-	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateDone {
 		t.Fatalf("quiet task after its turn settled = %s, want done", got.State)
 	}
@@ -120,13 +121,13 @@ func TestIdleSweepKeepsATaskALineIsQueuedFor(t *testing.T) {
 	store(consoleapi.ExchangeQueued)
 	time.Sleep(5 * time.Millisecond)
 
-	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateRunning {
 		t.Fatalf("quiet task closed with a line queued for it: %s, want running", got.State)
 	}
 
 	store(consoleapi.ExchangeDone)
-	closeIdleTasks(t.Context(), tasks, attempt.New(book), nil, time.Millisecond)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond)
 	if got, _ := tasks.Get(quiet.ID); got.State != task.StateDone {
 		t.Fatalf("quiet task after the queued line ran = %s, want done", got.State)
 	}
@@ -163,7 +164,7 @@ func TestIdleSweepPerTaskCostDoesNotGrowWithHistory(t *testing.T) {
 		defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
-		closeIdleTasks(t.Context(), tasks, attempts, nil, time.Millisecond)
+		closeIdleTasks(t.Context(), book, tasks, attempts, nil, time.Millisecond)
 		runtime.ReadMemStats(&after)
 		for _, id := range ids {
 			if got, _ := tasks.Get(id); got.State != task.StateDone {

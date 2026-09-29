@@ -862,6 +862,13 @@ func (t *Tx) QueryRow(query string, args ...any) *Row {
 	return t.tx.QueryRowContext(t.ctx, query, args...)
 }
 
+// Query reads rows in the transition, so a check can select the rows it
+// needs instead of loading a whole kind. Under replication only a read is
+// accepted, as with QueryRow.
+func (t *Tx) Query(query string, args ...any) (*sql.Rows, error) {
+	return t.tx.QueryContext(t.ctx, query, args...)
+}
+
 // ---------------------------------------------------------------- reads
 //
 // The Ledger read methods below, and Read, Document.Load and DB's queries,
