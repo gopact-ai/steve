@@ -50,6 +50,7 @@ func orphan(t *testing.T, carried, mark string) (int, Identity, string) {
 	t.Helper()
 	arg, file := pause(), filepath.Join(t.TempDir(), "member")
 	cmd, id := startGroup(t, carried, mark, `sleep "$1" </dev/null >/dev/null 2>&1 & echo $! > "$2"`, arg, file)
+	endMember(t, file, arg)
 	if err := cmd.Wait(); err != nil {
 		t.Fatal(err)
 	}
@@ -61,15 +62,22 @@ func orphan(t *testing.T, carried, mark string) (int, Identity, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if cmdlineIs(member, "sleep", arg) {
-			_ = syscall.Kill(member, syscall.SIGKILL)
-		}
-	})
 	if !running(member) {
 		t.Fatal("the group left no member running")
 	}
 	return member, id, arg
+}
+
+// endMember kills, when the test ends, the member whose pid the group wrote
+// to file, if it still runs with the test's own argument. It is registered
+// before anything can fail, so a failing test leaves no member behind.
+func endMember(t *testing.T, file, arg string) {
+	t.Cleanup(func() {
+		raw, _ := os.ReadFile(file)
+		if member, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && member > 0 && cmdlineIs(member, "sleep", arg) {
+			_ = syscall.Kill(member, syscall.SIGKILL)
+		}
+	})
 }
 
 func here(t *testing.T) Place {
@@ -90,6 +98,7 @@ func TestSettleEndsTheGroupOfARunningLeader(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
+	endMember(t, file, arg)
 	var member int
 	for deadline := time.Now().Add(10 * time.Second); member == 0 || !cmdlineIs(cmd.Process.Pid, "sleep", arg); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
