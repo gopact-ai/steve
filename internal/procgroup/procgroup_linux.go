@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -73,15 +74,6 @@ func WaitExit(pid int) error {
 	}
 }
 
-// Live reports whether any process in the group that this process can see
-// still runs. A zombie runs nothing and does not count. A member hidden from
-// this process is not listed, so false does not show the group is empty;
-// Gone does.
-func Live(group int) (bool, error) {
-	members, err := members(group)
-	return len(members) > 0, err
-}
-
 func status(pid int) (process, bool, error) {
 	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ESRCH) {
@@ -123,13 +115,13 @@ func parseStat(pid int, raw []byte) (process, error) {
 	return process{pid: pid, start: start, group: group, live: !exited}, nil
 }
 
-// members lists the running processes of a group.
-func members(group int) ([]process, error) {
+// members lists the processes of a group, zombies included.
+func members(group int) (listing, error) {
+	found := listing{complete: procShowsAll()}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return nil, err
+		return listing{}, err
 	}
-	var found []process
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid <= 0 {
@@ -138,18 +130,62 @@ func members(group int) ([]process, error) {
 		p, ok, err := status(pid)
 		if errors.Is(err, os.ErrPermission) {
 			// /proc mounted with hidepid shows nothing of another user's
-			// processes. Such a member is not listed; whether a group is
-			// empty is asked of the kernel instead.
+			// processes: such a member is not listed, and the listing can
+			// miss one.
+			found.complete = false
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return listing{}, err
 		}
-		if ok && p.live && p.group == group {
-			found = append(found, p)
+		if ok && p.group == group {
+			found.members = append(found.members, p)
 		}
 	}
+	slices.SortFunc(found.members, byPid)
 	return found, nil
+}
+
+// procShowsAll reports whether /proc shows every process of this process's
+// pid namespace: it is that namespace's, and it is not mounted with
+// hidepid, which hides other users' processes, or has it off.
+func procShowsAll() bool {
+	self, err := os.Readlink("/proc/self")
+	if err != nil || self != strconv.Itoa(os.Getpid()) {
+		return false
+	}
+	mountinfo, err := os.ReadFile("/proc/self/mountinfo")
+	return err == nil && mountShowsAll(mountinfo)
+}
+
+// mountShowsAll reports whether the mount table in the format of
+// /proc/self/mountinfo has a proc filesystem on /proc, the last mounted
+// there, without hidepid on.
+func mountShowsAll(mountinfo []byte) bool {
+	shows := false
+	for line := range strings.SplitSeq(string(mountinfo), "\n") {
+		// Fields are: id, parent, device, root, mount point, mount
+		// options, optional fields, "-", filesystem, source and the
+		// filesystem's options.
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[4] != "/proc" {
+			continue
+		}
+		dash := slices.Index(fields, "-")
+		shows = dash >= 6 && len(fields) >= dash+4 && fields[dash+1] == "proc" &&
+			!hidesPids(fields[5]) && !hidesPids(fields[dash+3])
+	}
+	return shows
+}
+
+// hidesPids reports whether mount options turn hidepid on.
+func hidesPids(options string) bool {
+	for option := range strings.SplitSeq(options, ",") {
+		if value, ok := strings.CutPrefix(option, "hidepid="); ok && value != "0" && value != "off" {
+			return true
+		}
+	}
+	return false
 }
 
 func carriesMark(pid int, mark string) bool {

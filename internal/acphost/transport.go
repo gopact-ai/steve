@@ -77,11 +77,10 @@ type LocalTransport struct {
 type groupCalls struct {
 	waitExit func(pid int) error
 	kill     func(group int) error
-	live     func(group int) (bool, error)
-	gone     func(group int) (bool, error)
+	inspect  func(group int) (procgroup.Remains, error)
 }
 
-var kernelGroup = groupCalls{waitExit: procgroup.WaitExit, kill: procgroup.Kill, live: procgroup.Live, gone: procgroup.Gone}
+var kernelGroup = groupCalls{waitExit: procgroup.WaitExit, kill: procgroup.Kill, inspect: procgroup.Inspect}
 
 func (t LocalTransport) Name() string { return t.Command }
 
@@ -154,9 +153,10 @@ func (p *localProcess) Exited() <-chan struct{} { return p.exited }
 // Wait kills what the agent left running in its process group before
 // reaping the agent. Until the leader is reaped it holds its pid, so no
 // other process can lead a group of that id, and the kill reaches only
-// the agent's own. The stop is confirmed once the kernel finds no process
-// left in the group. Exited is closed as soon as the agent has exited, as
-// a member no kill ends can keep Wait waiting for as long as it runs.
+// the agent's own. The stop is confirmed once nothing of the group runs,
+// as procgroup.Remains.Ended judges. Exited is closed as soon as the agent
+// has exited, as a member no kill ends can keep Wait waiting for as long
+// as it runs.
 func (p *localProcess) Wait() error {
 	pid := p.cmd.Process.Pid
 	switch err := p.group.waitExit(pid); {
@@ -195,40 +195,48 @@ func (p *localProcess) reapRunning() error {
 }
 
 // endGroup kills the members of an exited leader's group until none that
-// this process can see runs. A member the kill cannot end, as one in
+// this process can list runs. A member the kill cannot end, as one in
 // uninterruptible sleep until it wakes, keeps it waiting.
 func (p *localProcess) endGroup(group int) {
 	stuck := newStuckReport()
 	for delay := time.Millisecond; ; delay = min(2*delay, 2*time.Second) {
 		killErr := p.group.kill(group)
-		live, err := p.group.live(group)
-		if err == nil && !live {
+		remains, err := p.group.inspect(group)
+		if err == nil && remains.Running == 0 {
 			return
 		}
 		if waited, due := stuck.due(); due {
-			slog.Error(fmt.Sprintf("acphost: agent process group %d still runs %s after SIGKILL (kill: %v, check: %v)", group, waited, killErr, err))
+			slog.Error(fmt.Sprintf("acphost: agent process group %d still runs %s after SIGKILL: %s (kill: %v)", group, waited, left(remains, err), killErr))
 		}
 		time.Sleep(delay)
 	}
 }
 
-// awaitEmpty waits, the leader reaped, until the kernel finds no process
-// left in its group: a member hidden from this process, or one it may not
-// signal, is not listed as running but still holds the group's id. Nothing
-// is signalled any more, as the id stops being the agent's own once its
-// last member is gone.
+// awaitEmpty waits, the leader reaped, until nothing of its group runs: a
+// member hidden from this process is not listed as running but still keeps
+// the stop unconfirmed. Nothing is signalled any more, as the id stops
+// being the agent's own once its last member is gone.
 func (p *localProcess) awaitEmpty(group int) {
 	stuck := newStuckReport()
 	for delay := time.Millisecond; ; delay = min(2*delay, 2*time.Second) {
-		gone, err := p.group.gone(group)
-		if err == nil && gone {
+		remains, err := p.group.inspect(group)
+		if err == nil && remains.Ended() {
 			return
 		}
 		if waited, due := stuck.due(); due {
-			slog.Error(fmt.Sprintf("acphost: agent process group %d still has a process this one cannot end after %s (check: %v)", group, waited, err))
+			slog.Error(fmt.Sprintf("acphost: agent process group %d has not stopped %s after its leader was reaped: %s", group, waited, left(remains, err)))
 		}
 		time.Sleep(delay)
 	}
+}
+
+// left says what a check found left in a group, for a report of one that
+// does not end.
+func left(remains procgroup.Remains, err error) string {
+	if err != nil {
+		return fmt.Sprintf("the check failed: %v", err)
+	}
+	return remains.String()
 }
 
 // stuckReport paces the report of a group that does not settle: first

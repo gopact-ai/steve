@@ -188,8 +188,8 @@ func TestSettleLeavesAnUnmarkedGroupAlone(t *testing.T) {
 // empty only when the kernel finds no process in it.
 func TestSettleDoesNotTakeAHiddenMemberForAnEmptyGroup(t *testing.T) {
 	member, id, _ := orphan(t, "m", "m")
-	hidden := func(int) ([]process, error) { return nil, nil }
-	if err := settle(id, here(t), here(t), time.Second, hidden); !errors.Is(err, ErrUnproven) {
+	hidden := func(int) (listing, error) { return listing{}, nil }
+	if err := settle(id, here(t), here(t), time.Second, kernel{list: hidden, kill: Kill}); !errors.Is(err, ErrUnproven) {
 		t.Fatalf("settle = %v, want %v", err, ErrUnproven)
 	}
 	if !running(member) {

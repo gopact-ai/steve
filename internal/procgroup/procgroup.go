@@ -10,15 +10,23 @@
 // leader that still holds its pid with its recorded start time proves the
 // group is the recorded one, and a pid holder with another start time
 // proves the recorded group emptied before that process started.
+//
+// A group has stopped once nothing of it runs: the kernel finds no process
+// in it, or only zombies are left in it, which a PID 1 that reaps no
+// orphans leaves. Zombies are told from running processes only where every
+// process can be listed, so a member hidden from this process is never
+// taken for an ended one.
 package procgroup
 
 import (
+	"cmp"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 )
@@ -36,7 +44,8 @@ var (
 	ErrUnproven = errors.New("process group cannot be shown to be the recorded one")
 	// ErrRunning is returned when members of a recorded group still run
 	// after being killed, as a process in uninterruptible sleep does until
-	// it wakes, or its exited leader is still not reaped.
+	// it wakes, or when zombies are left in it where not every process can
+	// be listed.
 	ErrRunning = errors.New("process group still has members after SIGKILL")
 )
 
@@ -72,17 +81,25 @@ func NewMark() string {
 // recorded leader still holds its pid with its recorded start time, or,
 // the leader gone, every running member started after the leader and one
 // carries the recorded mark. It judges again before every signal. The
-// group is taken for empty only when the kernel finds no process under its
-// id, so a member this process cannot see keeps it unconfirmed. When it
-// cannot show which group runs under the id, or this process runs in the
-// group it would signal, it returns ErrUnproven, and when members, or a
-// leader not yet reaped, outlive within after being killed, ErrRunning.
+// group has stopped when the kernel finds no process under its id, or when
+// only zombies are left under it as Inspect judges, so a member this
+// process cannot see keeps it unconfirmed. When it cannot show which group
+// runs under the id, or this process runs in the group it would signal, it
+// returns ErrUnproven, and when members outlive within after being killed,
+// ErrRunning.
 func Settle(id Identity, ran, here Place, within time.Duration) error {
-	return settle(id, ran, here, within, members)
+	return settle(id, ran, here, within, kernel{list: members, kill: Kill})
 }
 
-// settle is Settle listing a group's running members with list.
-func settle(id Identity, ran, here Place, within time.Duration, list func(group int) ([]process, error)) error {
+// kernel is what settling asks of the kernel, so a test can stand in for
+// one that hides processes, and see what is signalled.
+type kernel struct {
+	list func(group int) (listing, error)
+	kill func(group int) error
+}
+
+// settle is Settle asking k.
+func settle(id Identity, ran, here Place, within time.Duration, k kernel) error {
 	if id.Group <= 0 || id.Leader != id.Group || id.Start == 0 || id.Mark == "" {
 		return fmt.Errorf("%w: its identity is incomplete", ErrUnproven)
 	}
@@ -102,7 +119,7 @@ func settle(id Identity, ran, here Place, within time.Duration, list func(group 
 	}
 	deadline := time.Now().Add(within)
 	for delay := time.Millisecond; ; delay = min(2*delay, 100*time.Millisecond) {
-		owned, err := recorded(id, list)
+		owned, err := recorded(id, k.list)
 		if err != nil || !owned {
 			return err
 		}
@@ -113,7 +130,7 @@ func settle(id Identity, ran, here Place, within time.Duration, list func(group 
 		if time.Now().After(deadline) {
 			return ErrRunning
 		}
-		if err := Kill(id.Group); err != nil {
+		if err := k.kill(id.Group); err != nil {
 			return err
 		}
 		time.Sleep(delay)
@@ -122,8 +139,8 @@ func settle(id Identity, ran, here Place, within time.Duration, list func(group 
 
 // recorded reports whether a process in the group id names still runs and
 // the group is shown to be the recorded one; false means no process of the
-// recorded group runs. list names the group's running members.
-func recorded(id Identity, list func(group int) ([]process, error)) (bool, error) {
+// recorded group runs. list names the group's members.
+func recorded(id Identity, list func(group int) (listing, error)) (bool, error) {
 	leader, found, err := status(id.Leader)
 	if err != nil {
 		return false, err
@@ -133,24 +150,33 @@ func recorded(id Identity, list func(group int) ([]process, error)) (bool, error
 		// has it as its group's id: the recorded group had emptied.
 		return false, nil
 	}
-	if found {
-		// The leader, running or not yet reaped, keeps its pid, so the
-		// group is the one it started.
+	if found && leader.live {
+		// The running leader keeps its pid, so the group is the one it
+		// started.
 		return true, nil
 	}
-	members, err := list(id.Group)
+	remains, listed, err := inspect(id.Group, list)
 	if err != nil {
 		return false, err
 	}
-	if len(members) == 0 {
-		gone, err := Gone(id.Group)
-		if err != nil || gone {
-			return false, err
-		}
-		return false, fmt.Errorf("%w: a process this one cannot see is still in the group", ErrUnproven)
+	if remains.Ended() {
+		// Nothing is signalled and no proof is asked for. Whether or not
+		// the zombies left are of the recorded group, no member of the
+		// recorded group runs: had its id been given to another group, the
+		// recorded group had emptied before.
+		return false, nil
+	}
+	if found {
+		// The leader, not yet reaped, keeps its pid, so the group is the
+		// one it started.
+		return true, nil
+	}
+	running := listed.running()
+	if len(running) == 0 {
+		return false, fmt.Errorf("%w: no running member is listed, yet the group is not empty: %v", ErrUnproven, remains)
 	}
 	marked := false
-	for _, member := range members {
+	for _, member := range running {
 		if member.start < id.Start {
 			return false, fmt.Errorf("%w: a member started before the recorded leader", ErrUnproven)
 		}
@@ -162,6 +188,112 @@ func recorded(id Identity, list func(group int) ([]process, error)) (bool, error
 	return true, nil
 }
 
+// Remains is what is left of a process group.
+type Remains struct {
+	// Gone is true when the kernel finds no process in the group, a zombie
+	// included.
+	Gone bool
+	// Running and Zombies count the members listed that run and those
+	// that exited and were not reaped.
+	Running, Zombies int
+	// Complete is true when the listing misses no process: none is hidden
+	// from this process.
+	Complete bool
+	// changing is true when two listings that each found only zombies did
+	// not agree, as the group changed while it was listed.
+	changing bool
+}
+
+// Ended reports whether nothing of the group runs: the kernel finds no
+// process in it, or a listing that misses no process, and a second one that
+// agrees with it, find only zombies in it. A zombie runs nothing, and while
+// it holds the group's id no other group can be given it.
+func (r Remains) Ended() bool {
+	return r.Gone || r.Complete && !r.changing && r.Running == 0 && r.Zombies > 0
+}
+
+// String says what is left, for a report of a group that does not end.
+func (r Remains) String() string {
+	if r.Gone {
+		return "no process is left in the group"
+	}
+	listed := fmt.Sprintf("%d running and %d zombie members are listed", r.Running, r.Zombies)
+	switch {
+	case r.changing:
+		return listed + ", and the group changed while it was listed"
+	case !r.Complete && r.Running == 0 && r.Zombies > 0:
+		return listed + "; zombies are left unreaped, as a PID 1 that reaps no orphans leaves them, and the listing can miss processes, as /proc mounted with hidepid hides them, so the zombies do not show that nothing else is left"
+	case !r.Complete:
+		return listed + ", and the listing can miss processes, as /proc mounted with hidepid hides them"
+	case r.Running == 0 && r.Zombies == 0:
+		return listed + ", yet the kernel still finds a process in the group"
+	}
+	return listed
+}
+
+// Inspect reports what is left of a process group.
+func Inspect(group int) (Remains, error) {
+	remains, _, err := inspect(group, members)
+	return remains, err
+}
+
+// inspect is Inspect listing the group's members with list. It returns the
+// listing it judged by too.
+func inspect(group int, list func(group int) (listing, error)) (Remains, listing, error) {
+	if gone, err := gone(group); err != nil || gone {
+		return Remains{Gone: gone}, listing{}, err
+	}
+	first, err := list(group)
+	if err != nil {
+		return Remains{}, listing{}, err
+	}
+	if !first.remains().Ended() {
+		return first.remains(), first, nil
+	}
+	// A member that forks and exits while the processes are read can be
+	// listed as a zombie while its child, started after the read began, is
+	// not listed. A second listing shows that child, or, had it done the
+	// same, a zombie the first did not: only a group that no longer
+	// changes is listed alike twice.
+	second, err := list(group)
+	if err != nil {
+		return Remains{}, listing{}, err
+	}
+	remains := second.remains()
+	remains.changing = !slices.Equal(first.members, second.members)
+	return remains, second, nil
+}
+
+// listing is what one pass over the processes shows of a group: its
+// members, zombies included, in pid order, and whether the pass misses no
+// process.
+type listing struct {
+	members  []process
+	complete bool
+}
+
+func (l listing) remains() Remains {
+	r := Remains{Complete: l.complete}
+	for _, member := range l.members {
+		if member.live {
+			r.Running++
+		} else {
+			r.Zombies++
+		}
+	}
+	return r
+}
+
+func (l listing) running() []process {
+	var running []process
+	for _, member := range l.members {
+		if member.live {
+			running = append(running, member)
+		}
+	}
+	return running
+}
+
 // process is what one pid shows of the process holding it.
 type process struct {
 	pid   int
@@ -171,6 +303,8 @@ type process struct {
 	// its parent to reap it.
 	live bool
 }
+
+func byPid(a, b process) int { return cmp.Compare(a.pid, b.pid) }
 
 // hasMark reports whether an environment, as NUL-separated entries, carries
 // mark.

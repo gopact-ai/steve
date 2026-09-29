@@ -75,7 +75,13 @@ func TestHostDoesNotConfirmAStopWhileAHiddenMemberRuns(t *testing.T) {
 	t.Cleanup(endMember)
 	calls := kernelGroup
 	calls.kill = func(int) error { return nil }
-	calls.live = func(int) (bool, error) { return false, nil }
+	calls.inspect = func(group int) (procgroup.Remains, error) {
+		remains, err := procgroup.Inspect(group)
+		if !remains.Gone {
+			remains.Running, remains.Complete = 0, false
+		}
+		return remains, err
+	}
 	var leader atomic.Int64
 	h := New(Config{Transport: LocalTransport{
 		Command: "/bin/sh", Args: []string{"-c", leavingMember, "agent", buildMockAgent(t), dir, pause}, ProcessDir: t.TempDir(),

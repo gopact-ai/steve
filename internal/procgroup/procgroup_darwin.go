@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -92,15 +93,6 @@ func WaitExit(pid int) error {
 	}
 }
 
-// Live reports whether any process in the group that this process can see
-// still runs. A zombie runs nothing and does not count. A member hidden from
-// this process is not listed, so false does not show the group is empty;
-// Gone does.
-func Live(group int) (bool, error) {
-	members, err := members(group)
-	return len(members) > 0, err
-}
-
 func status(pid int) (process, bool, error) {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.pid", pid)
 	if err != nil {
@@ -127,18 +119,20 @@ func describe(proc unix.KinfoProc) process {
 	}
 }
 
-// members lists the running processes of a group.
-func members(group int) ([]process, error) {
+// members lists the processes of a group, zombies included. The kernel
+// lists every process to any user, so the listing misses none.
+func members(group int) (listing, error) {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", group)
 	if err != nil {
-		return nil, err
+		return listing{}, err
 	}
-	var found []process
+	found := listing{complete: true}
 	for _, proc := range procs {
-		if p := describe(proc); p.live && p.group == group {
-			found = append(found, p)
+		if p := describe(proc); p.group == group {
+			found.members = append(found.members, p)
 		}
 	}
+	slices.SortFunc(found.members, byPid)
 	return found, nil
 }
 
