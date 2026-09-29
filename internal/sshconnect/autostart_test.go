@@ -50,6 +50,25 @@ func sweepOnce(svc *Service) {
 	svc.autoRuns.Wait()
 }
 
+// cutOffAnswer is a restart script that runs until its context ends, and
+// closes cut then. One still running when the test ends gives up, so a
+// start that is never cut off fails the test at once rather than holding
+// the service's Close for as long as the script may run.
+func cutOffAnswer(t *testing.T) (answer func(context.Context, string) (Output, error), cut <-chan struct{}) {
+	ended, closed := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(ended) })
+	var once sync.Once
+	return func(ctx context.Context, _ string) (Output, error) {
+		select {
+		case <-ctx.Done():
+			once.Do(func() { close(closed) })
+			return Output{}, ctx.Err()
+		case <-ended:
+			return Output{}, errors.New("the test ended before the start was cut off")
+		}
+	}, closed
+}
+
 func autoState(t *testing.T, svc *Service, nodeID string) AutoStartState {
 	t.Helper()
 	state, err := svc.RestartStatus(t.Context(), nodeID)
@@ -267,12 +286,8 @@ func TestAutoStartRecordsAStopItCouldNotRecordAtFirstLater(t *testing.T) {
 // for it is cut off and nothing is recorded or tried for it again.
 func TestAutoStartStopsForAMachineThatWasRemoved(t *testing.T) {
 	svc, runner, backend, clock := autoStartFixture(t)
-	cut := make(chan struct{})
-	runner.answerWith(func(ctx context.Context, _ string) (Output, error) {
-		<-ctx.Done()
-		close(cut)
-		return Output{}, ctx.Err()
-	})
+	answer, cut := cutOffAnswer(t)
+	runner.answerWith(answer)
 	sweepOnce(svc)
 	clock.Advance(autoStartAfter)
 	svc.sweep()
@@ -526,8 +541,12 @@ func TestAutoStartDoesNotRunBesideAnUpgradeOrAManualRestart(t *testing.T) {
 
 	release := make(chan struct{})
 	runner.answerWith(func(ctx context.Context, script string) (Output, error) {
-		<-release
-		return peerStarted(ctx, script)
+		select {
+		case <-release:
+			return peerStarted(ctx, script)
+		case <-ctx.Done():
+			return Output{}, ctx.Err()
+		}
 	})
 	svc.sweep()
 	waitUntil(t, "automatic start never reached the machine", func() bool { return len(runner.restarts()) == 2 })
@@ -539,10 +558,14 @@ func TestAutoStartDoesNotRunBesideAnUpgradeOrAManualRestart(t *testing.T) {
 		var step *StepError
 		return errors.As(err, &step) && step.Code == "in_progress" && step.Message == zh.T(i18n.SSHRestartRunning)
 	}
-	if _, err := svc.Restart(ctx, "node-1"); !refused(err) {
+	// A restart let through would run its script into the held answer;
+	// the deadline makes that a failure rather than a hang.
+	asked, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, err := svc.Restart(asked, "node-1"); !refused(err) {
 		t.Fatalf("manual restart during automatic start: %v", err)
 	}
-	if _, err := svc.Upgrade(ctx, "node-1"); !refused(err) {
+	if _, err := svc.Upgrade(asked, "node-1"); !refused(err) {
 		t.Fatalf("upgrade during automatic start: %v", err)
 	}
 	close(release)
@@ -693,12 +716,8 @@ func TestClosingTheServiceEndsAutomaticStart(t *testing.T) {
 		state, err := svc.RestartStatus(t.Context(), "node-1")
 		return err == nil && state.AutoStart != nil && state.AutoStart.State == "waiting"
 	})
-	cut := make(chan struct{})
-	runner.answerWith(func(ctx context.Context, _ string) (Output, error) {
-		<-ctx.Done()
-		close(cut)
-		return Output{}, ctx.Err()
-	})
+	answer, cut := cutOffAnswer(t)
+	runner.answerWith(answer)
 	clock.Advance(autoStartAfter)
 	svc.sweep()
 	waitUntil(t, "the start never reached the machine", func() bool { return len(runner.restarts()) == 1 })

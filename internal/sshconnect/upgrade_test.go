@@ -23,8 +23,8 @@ type upgradeBackend struct {
 	binaryPath  string
 	// unknown is a node ID no machine of the backend has.
 	unknown string
-	// hold keeps Upgraded from returning until closed; holding counts the
-	// calls waiting there.
+	// hold keeps Upgraded from returning until closed or its context
+	// ends; holding counts the calls waiting there.
 	hold    chan struct{}
 	holding atomic.Int32
 	// upgradedLeft is how long the latest Upgraded had to wait for the
@@ -52,7 +52,11 @@ func (b *upgradeBackend) Upgraded(ctx context.Context, nodeID string) error {
 	}
 	if b.hold != nil {
 		b.holding.Add(1)
-		<-b.hold
+		select {
+		case <-b.hold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	b.upgraded = append(b.upgraded, nodeID)
 	return b.upgradedErr
