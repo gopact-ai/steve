@@ -251,6 +251,33 @@ func TestOutboundCallsThatMayHaveReachedFeishuAreUnknown(t *testing.T) {
 	}
 }
 
+// A call Feishu accepted may have posted its message even when the response
+// lacks what the caller needs to find that message. It cannot be reported
+// as a definite failure: posting again could post twice.
+func TestOutboundCallsAcceptedWithoutTheirIDsAreUnknown(t *testing.T) {
+	for name, accepted := range map[string]struct{ call, body string }{
+		"card without data":    {"card", `{"code":0}`},
+		"topic without data":   {"topic", `{"code":0}`},
+		"send without data":    {"send", `{"code":0}`},
+		"send without chat id": {"send", `{"code":0,"data":{"message_id":"om_sent"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == tokenPath {
+					jsonReply(w, http.StatusOK, tokenOK)
+					return
+				}
+				jsonReply(w, http.StatusOK, accepted.body)
+			}))
+			t.Cleanup(server.Close)
+			err := outboundCalls[accepted.call](t.Context(), channelAt(t, server.URL, server.Client()))
+			if !errors.Is(err, channel.ErrOutcomeUnknown) {
+				t.Fatalf("a call Feishu accepted is reported as a definite failure: %v", err)
+			}
+		})
+	}
+}
+
 // A refusal Feishu answered is a definite failure and keeps its code.
 func TestOutboundCallsKeepDefiniteRefusals(t *testing.T) {
 	for name, call := range outboundCalls {
