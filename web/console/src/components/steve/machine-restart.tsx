@@ -97,7 +97,7 @@ export function MachineRestart({ n, onChanged }: { n: Node; onChanged: () => voi
         {refusal && <p className="break-words text-xs text-tertiary">{refusal}</p>}
         {confirming && <p className="text-xs leading-5 text-warning-primary">{t("fleet.restartConfirmHint")}</p>}
         {error && <p role="alert" className="break-words text-xs text-error-primary">{error}</p>}
-        {auto && <div className="space-y-0.5 text-xs">
+        {auto && <div className="space-y-0.5 text-xs" aria-live="polite">
             <p><span className="font-medium text-secondary">{t("fleet.autoStart")}</span> <span className={toneText[auto.tone]}>{auto.title}</span></p>
             {auto.detail && <p className="break-words text-tertiary">{auto.detail}</p>}
             {auto.hint && <p className="text-tertiary">{auto.hint}</p>}
