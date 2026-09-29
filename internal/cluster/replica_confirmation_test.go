@@ -75,8 +75,9 @@ func TestCoordinatorThatDoesNotLeadConsensusKeepsItsGenerationWhileAQuorumConfir
 
 // A coordinator that was replaced while its replica received heartbeats
 // but no log entries still names itself, so no local view tells it that it
-// no longer coordinates. It gives its business generation up nonetheless
-// within two ApplyTimeouts, while its replica still lags.
+// no longer coordinates. It gives its business generation up nonetheless,
+// about two ApplyTimeouts and two polls after it was replaced, while its
+// replica still lags.
 func TestReplacedCoordinatorGivesUpItsGenerationWhileItsReplicationLags(t *testing.T) {
 	hub := startTestHub(t)
 	gate := newEntryGate()
@@ -111,9 +112,10 @@ func TestReplacedCoordinatorGivesUpItsGenerationWhileItsReplicationLags(t *testi
 
 // A coordinator that does not lead consensus, and whose replica receives
 // heartbeats but no log entries, cannot tell whether it still coordinates.
-// It gives its business generation up within two ApplyTimeouts, because
-// its replica cannot be confirmed with a quorum, and starts another once
-// its replica has caught up.
+// It gives its business generation up about two ApplyTimeouts and two
+// polls after its replica falls behind, because its replica cannot be
+// confirmed with a quorum, and starts another once its replica has caught
+// up.
 func TestCoordinatorWhoseReplicationLagsGivesUpItsGenerationUntilItCatchesUp(t *testing.T) {
 	hub := startTestHub(t)
 	gate := newEntryGate()
