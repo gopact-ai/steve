@@ -276,11 +276,16 @@ type exchangeRecovery struct {
 	stopped chan string
 
 	// blockedSince is when this recovery first failed to rejoin the
-	// original without saying anything, and rejoin records that an open
-	// question was withdrawn because the original came back. Together
-	// they keep a brief outage between the recovery and the node.
+	// original without saying anything, and withdrawn records that an open
+	// question was withdrawn because nobody needs to answer it any more:
+	// the original came back, or its task was cancelled. Together they keep
+	// a brief outage between the recovery and the node.
 	blockedSince time.Time
-	rejoin       bool
+	withdrawn    bool
+
+	// cancels wakes the worker when a person cancels a task; the service
+	// records which one on the exchange.
+	cancels <-chan struct{}
 }
 
 func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver RetainedChatDriver) {
@@ -295,7 +300,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 	if s.anchor != nil {
 		s.anchor(exchange.Conversation, ChatID, AnchorMark+exchange.ID)
 	}
-	r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: exchange, work: work, stream: stream, driver: driver, stopped: make(chan string, 1)}
+	r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: exchange, work: work, stream: stream, driver: driver, stopped: make(chan string, 1), cancels: e.taskCancels}
 	for {
 		if ctx.Err() != nil {
 			r.detach(ctx.Err())
@@ -321,7 +326,7 @@ func (s *Service) openRecovery(e *queuedExchange) (Exchange, *process, bool) {
 	}
 	if e.RecoveryStopPending != "" {
 		s.mu.Unlock()
-		s.waitRecoveryStop(e)
+		s.waitRecoveryStop(e, false)
 		return Exchange{}, nil, false
 	}
 	exchange := copyExchange(e.Exchange)
@@ -330,6 +335,9 @@ func (s *Service) openRecovery(e *queuedExchange) (Exchange, *process, bool) {
 		s.processes = map[string]*process{}
 	}
 	s.processes[e.ID] = work
+	if e.taskCancels == nil {
+		e.taskCancels = make(chan struct{}, 1)
+	}
 	s.mu.Unlock()
 	return exchange, work, true
 }
@@ -357,6 +365,12 @@ func (r *exchangeRecovery) observe() bool {
 	if requester == "" || requester != r.s.owner {
 		r.stream.Close()
 		r.s.finish(r.e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
+		return false
+	}
+	// A cancelled task cannot be resumed, so the only thing left to do
+	// with its execution is to confirm that it stopped.
+	if found && lookupErr == nil && r.s.taskCancelled(r.e, candidate.TaskID) {
+		r.abandon()
 		return false
 	}
 	if !found && lookupErr == nil {
@@ -391,7 +405,7 @@ func (r *exchangeRecovery) observe() bool {
 		if done {
 			return false
 		}
-		if r.rejoined() {
+		if r.withdrew() {
 			return true
 		}
 	}
@@ -516,7 +530,7 @@ func (r *exchangeRecovery) approvePlan(plan turn.RelocationPlan, signature strin
 		r.detach(err)
 		return true, ""
 	}
-	if r.rejoin {
+	if r.withdrawn {
 		return false, ""
 	}
 	if answer.Value != "confirm-stopped-and-retry:"+plan.ID {
@@ -558,10 +572,10 @@ func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity 
 		r.detach(err)
 		return false
 	}
-	// The original came back while the card was open: it was withdrawn
-	// and this pass rejoins the execution instead of waiting on an
-	// answer nobody needs to give any more.
-	if r.rejoined() {
+	// The original came back or its task was cancelled while the card was
+	// open: it was withdrawn and the next pass acts on that instead of
+	// waiting on an answer nobody needs to give any more.
+	if r.withdrew() {
 		return true
 	}
 	// Stopping is the one answer that can end a recovery nothing else can
@@ -646,45 +660,31 @@ func (r *exchangeRecovery) withinQuiet() bool {
 	return time.Since(r.blockedSince) < r.s.recoveryQuiet
 }
 
-// rejoined consumes a withdrawal made because the original became
-// reachable again, and puts the recovery back where it was before
-// anything was asked.
-func (r *exchangeRecovery) rejoined() bool {
-	if !r.rejoin {
+// withdrew consumes a withdrawn question and puts the recovery back where
+// it was before anything was asked.
+func (r *exchangeRecovery) withdrew() bool {
+	if !r.withdrawn {
 		return false
 	}
-	r.rejoin, r.quiet, r.waitingPlan = false, false, ""
+	r.withdrawn, r.quiet, r.waitingPlan = false, false, ""
 	r.asked, r.repeats, r.blockedSince = "", 0, time.Time{}
 	return true
 }
 
 // ask puts a question to the owner while watching the original
-// execution. A node that comes back withdraws the question, because the
-// recovery can then continue without an answer; rejoin says so.
+// execution and its task. A node that comes back or a task that is
+// cancelled withdraws the question, because the recovery can then go on
+// without an answer; withdrawn says so.
 func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Question, put func(context.Context, consoleapi.PendingQuestion, view.Question) (view.Answer, error)) (view.Answer, error) {
 	binding := identity.binding()
-	prober, ok := r.driver.(retainedProber)
-	if !ok || binding.AttemptID == "" {
-		return put(r.ctx, binding, question)
-	}
 	ctx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
-	back, reachable := make(chan struct{}), make(chan struct{})
+	back, moot := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(back)
-		ticker := time.NewTicker(r.s.recoveryProbe)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-			if err := prober.ProbeRetained(ctx, binding.AttemptID); err == nil {
-				close(reachable)
-				cancel()
-				return
-			}
+		if r.watch(ctx, binding) {
+			close(moot)
+			cancel()
 		}
 	}()
 	answer, err := put(ctx, binding, question)
@@ -693,9 +693,9 @@ func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Questio
 	// An answer given at the same moment is still the owner's decision;
 	// only a question nobody answered is withdrawn.
 	select {
-	case <-reachable:
+	case <-moot:
 		if err == nil && r.ctx.Err() == nil && answer.Value == "" && answer.Text == "" && answer.Decision == "" {
-			r.rejoin = true
+			r.withdrawn = true
 			return view.Answer{}, nil
 		}
 	default:
@@ -703,14 +703,45 @@ func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Questio
 	return answer, err
 }
 
+// watch reports whether a question bound to binding stopped needing an
+// answer before ctx ended: the original execution can be reached again, or
+// a person cancelled its task.
+func (r *exchangeRecovery) watch(ctx context.Context, binding consoleapi.PendingQuestion) bool {
+	var probe <-chan time.Time
+	prober, ok := r.driver.(retainedProber)
+	if ok && binding.AttemptID != "" {
+		ticker := time.NewTicker(r.s.recoveryProbe)
+		defer ticker.Stop()
+		probe = ticker.C
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-r.cancels:
+			if r.s.taskCancelled(r.e, binding.TaskID) {
+				return true
+			}
+		case <-probe:
+			if err := prober.ProbeRetained(ctx, binding.AttemptID); err == nil {
+				return true
+			}
+		}
+	}
+}
+
 // wait lets a quiet recovery observe the execution again every so often,
 // until the exchange's lifetime ends.
 func (r *exchangeRecovery) wait() bool { return r.waitFor(30 * time.Second) }
 
+// waitFor observes again after d, or at once when a task is cancelled.
 func (r *exchangeRecovery) waitFor(d time.Duration) bool {
 	timer := time.NewTimer(d)
 	select {
 	case <-timer.C:
+		return true
+	case <-r.cancels:
+		timer.Stop()
 		return true
 	case <-r.ctx.Done():
 		timer.Stop()

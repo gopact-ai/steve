@@ -310,6 +310,6 @@ func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracke
 		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + c.landingSummary(outcome)
 	}
 	if tracked.AnchorMessage != "" {
-		c.notifier(TaskNotice{TaskID: tracked.ID, Transport: tracked.Transport, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Conversation: tracked.Channel, Text: text})
+		c.routes.notify(TaskNotice{TaskID: tracked.ID, Transport: tracked.Transport, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Conversation: tracked.Channel, Text: text})
 	}
 }

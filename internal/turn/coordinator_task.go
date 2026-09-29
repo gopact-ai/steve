@@ -263,6 +263,16 @@ type TaskNotice struct {
 	Text         string
 }
 
+// TaskCancel names the tasks a person just cancelled: the one they chose
+// and every task delegated under it. None of them can be resumed any more,
+// so whatever the channel still holds open to resume one — a recovery
+// question offering to retry it — is waiting for an answer that cannot
+// help.
+type TaskCancel struct {
+	Transport string
+	Tasks     []string
+}
+
 // noteActivity records that this conversation just heard from a person. The
 // question the reminder has to answer is "did they walk away?", and the only
 // evidence Steve has is whether anything arrived while the turn was running.
@@ -300,7 +310,7 @@ func (c *Coordinator) offlineReminder(req Request, id string, started time.Time,
 	if elapsed < c.offlineAfter || c.heardSince(req.ConversationID, started) {
 		return
 	}
-	c.notifier(TaskNotice{
+	c.routes.notify(TaskNotice{
 		TaskID: id, Transport: req.Channel, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID, Conversation: req.ConversationID,
 		Text: c.text.T(i18n.TaskOfflineDone, id, elapsed.Round(time.Minute)),
 	})
@@ -321,15 +331,18 @@ const (
 	taskReopen
 )
 
-func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, error) {
+// setTaskAside moves tracked and the tasks under it to to and stops what
+// runs under them. It returns the tasks it moved, which a failed stop does
+// not take back.
+func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, []string, error) {
 	ids, err := c.tasks.SetAside(tracked.ID, to)
 	if err != nil {
-		return Result{Title: title, Text: err.Error()}, err
+		return Result{Title: title, Text: err.Error()}, nil, err
 	}
 	stopErr := c.stopExecutions(ctx, ids, confirmSettlement)
 	moved, _ := c.tasks.Get(tracked.ID)
 	if stopErr != nil {
-		return Result{Title: title, Text: fmt.Sprintf("task #%s: stop recorded, execution has not confirmed stopping: %v", tracked.ID, stopErr)}, stopErr
+		return Result{Title: title, Text: fmt.Sprintf("task #%s: stop recorded, execution has not confirmed stopping: %v", tracked.ID, stopErr)}, ids, stopErr
 	}
 	// Re-read: the stopped turn closes its own attempt, and the detail is
 	// only worth showing if it reflects that.
@@ -337,9 +350,9 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 		moved = latest
 	}
 	if to == task.StatePaused {
-		return Result{Title: title, Text: c.text.T(i18n.TaskPaused, moved.ID, protocol.CommandTasks) + "\n\n" + c.taskDetail(moved)}, nil
+		return Result{Title: title, Text: c.text.T(i18n.TaskPaused, moved.ID, protocol.CommandTasks) + "\n\n" + c.taskDetail(moved)}, ids, nil
 	}
-	return Result{Title: title, Text: c.text.T(i18n.TaskCancelled, moved.ID) + "\n\n" + c.taskDetail(moved)}, nil
+	return Result{Title: title, Text: c.text.T(i18n.TaskCancelled, moved.ID) + "\n\n" + c.taskDetail(moved)}, ids, nil
 }
 
 // stopExecutions stops what is running under tasks whose execution has

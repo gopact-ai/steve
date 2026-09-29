@@ -33,7 +33,7 @@ func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req R
 	if tracked.Requester != "" && tracked.Requester != req.SenderOpenID {
 		return Result{}, errors.New("recovery stop requires the original requester")
 	}
-	result, stopErr := c.setTaskAside(ctx, c.text.T(i18n.CardTasks), tracked, task.StateCancelled, true)
+	result, _, stopErr := c.setTaskAside(ctx, c.text.T(i18n.CardTasks), tracked, task.StateCancelled, true)
 	if stopErr != nil {
 		return result, errors.Join(harness.ErrStopUnconfirmed, stopErr)
 	}

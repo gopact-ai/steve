@@ -79,7 +79,7 @@ func (c commands) decideCmd(ctx context.Context, req Request, cmd protocol.Comma
 	if !approved {
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureDenied, id)}, nil
 	}
-	c.notifier(TaskNotice{Transport: h.req.Channel, TaskID: h.task, ChatID: h.req.ChatID, MessageID: h.req.MessageID, Requester: h.req.SenderOpenID, Conversation: h.req.ConversationID, Text: h.text})
+	c.routes.notify(TaskNotice{Transport: h.req.Channel, TaskID: h.task, ChatID: h.req.ChatID, MessageID: h.req.MessageID, Requester: h.req.SenderOpenID, Conversation: h.req.ConversationID, Text: h.text})
 	return Result{Title: title, Text: c.text.T(i18n.DisclosureApproved, id)}, nil
 }
 

@@ -190,8 +190,8 @@ var ErrNoCallback = errors.New("turntest: nothing behind this callback")
 
 // Callbacks fills every callback turn.Coordinator.Wire requires that cb
 // leaves unset: a supervisor that plans nothing and has no runs, a
-// workspace attach that refuses, a resumer that accepts, and a notifier and
-// dispatcher that drop what they are given.
+// workspace attach that refuses, a resumer that accepts, and a notifier,
+// dispatcher and cancellation hook that drop what they are given.
 //
 // fillCallbacks in the turn package's own tests fills Callbacks the same
 // way; change both together.
@@ -210,6 +210,9 @@ func Callbacks(cb turn.Callbacks) turn.Callbacks {
 	}
 	if cb.ResumeDispatcher == nil {
 		cb.ResumeDispatcher = func(turn.TaskResume) {}
+	}
+	if cb.AfterCancel == nil {
+		cb.AfterCancel = func(turn.TaskCancel) {}
 	}
 	return cb
 }

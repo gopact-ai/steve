@@ -192,9 +192,14 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 
 // taskSetAside pauses or cancels, in that order: move the record first so a
 // turn that happens to finish during the stop cannot flip the task back to
-// running, then stop the turn that is actually burning time.
+// running, then stop the turn that is actually burning time. A cancellation
+// is then told to the task's channel, which may still be asking whether to
+// resume one of the tasks it moved.
 func (c commands) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
-	result, _ := c.setTaskAside(ctx, title, tracked, to, false)
+	result, ids, _ := c.setTaskAside(ctx, title, tracked, to, false)
+	if to == task.StateCancelled && len(ids) > 0 {
+		c.routes.cancelled(TaskCancel{Transport: tracked.Transport, Tasks: ids})
+	}
 	return result
 }
 
@@ -274,7 +279,7 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if err := c.resumer(resume); err != nil {
+	if err := c.routes.resume(resume); err != nil {
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -289,7 +294,7 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 	// same slot, but no channel callback is permission to execute.
 	c.clearActive(tracked.Channel, tracked.Member)
 	reserved = false
-	c.resumeDispatcher(resume)
+	c.routes.dispatch(resume)
 	return result, nil
 }
 

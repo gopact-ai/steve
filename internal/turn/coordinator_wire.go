@@ -35,6 +35,10 @@ type Callbacks struct {
 	// not undo acceptance, since recovery reads the same grant.
 	Resumer          func(TaskResume) error
 	ResumeDispatcher func(TaskResume)
+	// AfterCancel tells the channel a task came from that a person
+	// cancelled it, once the cancellation is recorded and whether or not
+	// the execution under it has confirmed stopping yet.
+	AfterCancel func(TaskCancel)
 }
 
 // required is every callback Wire refuses to go without. Each is named
@@ -43,7 +47,7 @@ func (cb Callbacks) required() []dependency {
 	return []dependency{
 		{"Supervisor", cb.Supervisor == nil}, {"WorkspaceAttach", cb.WorkspaceAttach == nil},
 		{"Notifier", cb.Notifier == nil}, {"Resumer", cb.Resumer == nil},
-		{"ResumeDispatcher", cb.ResumeDispatcher == nil},
+		{"ResumeDispatcher", cb.ResumeDispatcher == nil}, {"AfterCancel", cb.AfterCancel == nil},
 	}
 }
 
@@ -67,5 +71,14 @@ func (c *Coordinator) Wire(cb Callbacks) {
 	}
 	c.supervisor, c.attach, c.gate = cb.Supervisor, cb.WorkspaceAttach, cb.AgentGate
 	c.afterTurn, c.turnPreface = cb.AfterTurn, cb.TurnPreface
-	c.notifier, c.resumer, c.resumeDispatcher = cb.Notifier, cb.Resumer, cb.ResumeDispatcher
+	c.routes = taskRoutes{notify: cb.Notifier, resume: cb.Resumer, dispatch: cb.ResumeDispatcher, cancelled: cb.AfterCancel}
+}
+
+// taskRoutes are the callbacks that reach the channel a task came from:
+// Notifier, Resumer, ResumeDispatcher and AfterCancel.
+type taskRoutes struct {
+	notify    func(TaskNotice)
+	resume    func(TaskResume) error
+	dispatch  func(TaskResume)
+	cancelled func(TaskCancel)
 }

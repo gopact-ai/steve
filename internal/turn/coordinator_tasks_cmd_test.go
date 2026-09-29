@@ -139,6 +139,39 @@ func TestCancelIsTerminalAndSurvivesRestartUnrevived(t *testing.T) {
 	}
 }
 
+// A cancellation reaches the channel the task came from and names every
+// task it ended, so a question there still offering to resume one of them
+// can be settled. A pause is not told: a paused task can still be resumed.
+func TestCancelTellsTheChannelEveryTaskItEnded(t *testing.T) {
+	told := make(chan TaskCancel, 4)
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) {
+		cb.AfterCancel = func(c TaskCancel) { told <- c }
+	}))
+	if _, err := handle(coordinator, t.Context(), "chase the flake"); err != nil {
+		t.Fatalf("opening turn: %v", err)
+	}
+	child, err := tasks.Create(task.Task{Channel: "chat", Member: "codex", Parent: "1", Goal: "delegated part"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tasksCmdText(t, coordinator, "/tasks pause 1")
+	select {
+	case c := <-told:
+		t.Fatalf("pause was told as a cancellation: %+v", c)
+	default:
+	}
+	tasksCmdText(t, coordinator, "/tasks cancel 1")
+	select {
+	case c := <-told:
+		if c.Transport != "" || strings.Join(c.Tasks, ",") != "1,"+child.ID {
+			t.Fatalf("cancellation told = %+v; want tasks 1 and %s on the conversation's own transport", c, child.ID)
+		}
+	default:
+		t.Fatal("cancellation was not told to the channel")
+	}
+}
+
 // The detail view exists to answer "where did it get to" — which means the
 // attempts it survived, not just the ones that worked.
 func TestTaskDetailShowsTheAttemptTrail(t *testing.T) {
