@@ -234,6 +234,7 @@ export const fleetZh = {
     "fleet.autoStartAttempting": "正在自动启动（第 {attempt}/{limit} 次）",
     "fleet.autoStartRetrying": "自动启动没有成功，将在 {next} 再试",
     "fleet.autoStartFailures": "已尝试 {attempts}/{limit} 次",
+    "fleet.autoStartBlocked": "自动启动被挡住，将在 {next} 再试",
     "fleet.autoStartPeerRunning": "节点进程还在运行，但机器没有回到集群",
     "fleet.autoStartPeerRunningHint": "自动拉起不会结束它；如果它卡住了，请点「重启节点」",
     "fleet.autoStartStopped": "已停止自动拉起",

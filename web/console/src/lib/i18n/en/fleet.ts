@@ -236,6 +236,7 @@ export const fleetEn = {
     "fleet.autoStartAttempting": "Starting automatically (attempt {attempt} of {limit})",
     "fleet.autoStartRetrying": "The automatic start did not succeed; trying again at {next}",
     "fleet.autoStartFailures": "{attempts} of {limit} attempts made",
+    "fleet.autoStartBlocked": "Automatic start is blocked; trying again at {next}",
     "fleet.autoStartPeerRunning": "The node process is still running, but the machine has not rejoined the cluster",
     "fleet.autoStartPeerRunningHint": "Automatic start never ends it; if it is stuck, use Restart node",
     "fleet.autoStartStopped": "Automatic start has stopped",

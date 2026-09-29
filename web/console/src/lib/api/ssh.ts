@@ -24,8 +24,9 @@ export const upgradeSSH = (nodeID: string) => request<SSHInstallResult>(`/consol
 export const upgradeStatusSSH = (nodeID: string, signal?: AbortSignal) => request<SSHInstallResult>(`/console/ssh/upgrades/${encodeURIComponent(nodeID)}`, { signal, cache: "no-store" });
 // SSHAutoStart is how automatic start stands for a machine on the node
 // serving the console: what it is doing, how many starts it made since the
-// machine last stayed online, and why it stopped when it did.
-export interface SSHAutoStart { state: string; attempts: number; limit: number; last_error?: string; reason?: string; last_at?: string; next_at?: string; offline_since?: string }
+// machine last stayed online, why it stopped when it did, and what clears
+// what blocks it.
+export interface SSHAutoStart { state: string; attempts: number; limit: number; last_error?: string; suggestion?: string; reason?: string; last_at?: string; next_at?: string; offline_since?: string }
 // SSHRestartState is a machine's latest restart on that node, running or
 // settled, whether automatic start ran it, and how automatic start stands.
 export interface SSHRestartState { restart?: SSHInstallResult; automatic?: boolean; auto_start?: SSHAutoStart }

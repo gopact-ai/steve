@@ -57,7 +57,8 @@ export const restartPollDelay = (state: SSHRestartState | null | undefined, post
 /**
  * autoStartLine says how automatic start stands for a machine: what it
  * watches for, what it is doing, how many starts it made since the machine
- * last stayed online, and, once it stopped, why and how it resumes. A
+ * last stayed online, what blocks it and what clears that, and, once it
+ * stopped, why and how it resumes. A
  * running node process is never ended automatically; the line points at
  * the manual restart instead. `time` formats an instant; nothing is said
  * where the node serving the console does not watch the machine.
@@ -81,6 +82,11 @@ export function autoStartLine(auto: SSHAutoStart | undefined, tr: Translator, ti
             return {
                 tone: "warn", title: tr("fleet.autoStartRetrying", { next: auto.next_at ? time(auto.next_at) : "—" }), ...detail,
                 ...(attempts > 0 ? { hint: tr("fleet.autoStartFailures", { attempts, limit }) } : {}),
+            };
+        case "blocked":
+            return {
+                tone: "warn", title: tr("fleet.autoStartBlocked", { next: auto.next_at ? time(auto.next_at) : "—" }), ...detail,
+                ...(auto.suggestion ? { hint: auto.suggestion } : {}),
             };
         case "peer_running":
             return { tone: "warn", title: tr("fleet.autoStartPeerRunning"), hint: tr("fleet.autoStartPeerRunningHint") };

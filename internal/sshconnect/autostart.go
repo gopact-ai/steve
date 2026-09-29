@@ -46,6 +46,10 @@ const (
 	// autoStartRecheck is how long a machine whose peer was found running
 	// is left before it is looked at again.
 	autoStartRecheck = 5 * time.Minute
+	// autoStartBlockedBackoff bounds the wait between tries at a machine
+	// automatic start is blocked on: it doubles from autoStartBackoff up to
+	// this, and a lock left behind is noticed gone within it.
+	autoStartBlockedBackoff = 10 * time.Minute
 )
 
 // How automatic start stands for a machine.
@@ -55,6 +59,7 @@ const (
 	autoUnreachable = "unreachable"
 	autoAttempting  = "attempting"
 	autoRetrying    = "retrying"
+	autoBlocked     = "blocked"
 	autoPeerRunning = "peer_running"
 	autoStopped     = "stopped"
 )
@@ -63,15 +68,20 @@ const (
 // watching (the machine answers, or was just brought back), waiting (it
 // stopped answering less than a minute ago), unreachable (its SSH session
 // is down), attempting (a start is running), retrying (a start failed and
-// another follows at NextAt), peer_running (its peer runs but does not
-// answer; Reason says so and it is left alone) or stopped (LastError is
-// why no start follows until the machine stays online or is restarted by
-// hand). Attempts counts the starts since the machine last stayed online.
+// another follows at NextAt), blocked (another installation holds the
+// machine's installation lock, or one left it behind, or no SSH session to
+// the machine opens: LastError says which and Suggestion what clears it;
+// nothing counts, and it is tried again at NextAt), peer_running (its peer
+// runs but does not answer; Reason says so and it is left alone) or
+// stopped (LastError is why no start follows until the machine stays
+// online or is restarted by hand). Attempts counts the starts since the
+// machine last stayed online.
 type AutoStartState struct {
 	State        string    `json:"state"`
 	Attempts     int       `json:"attempts"`
 	Limit        int       `json:"limit"`
 	LastError    string    `json:"last_error,omitempty"`
+	Suggestion   string    `json:"suggestion,omitempty"`
 	Reason       string    `json:"reason,omitempty"`
 	LastAt       time.Time `json:"last_at,omitzero"`
 	NextAt       time.Time `json:"next_at,omitzero"`
@@ -83,19 +93,21 @@ type autoWatch struct {
 	state       AutoStartState
 	onlineSince time.Time
 	stopped     bool
-	// peerRunning is set while the last start found the peer running, and
-	// held while another installation held the machine's installation lock,
-	// so finding either again is not recorded again.
+	// peerRunning is set while the last start found the peer running, so
+	// finding it again is not recorded again.
 	peerRunning bool
-	held        bool
+	// blockedWait is the wait after the latest of the tries in a row that
+	// were blocked, and zero once one was not: becoming blocked is recorded
+	// once, not once a try.
+	blockedWait time.Duration
 	// cancel ends the start running for the machine; nil when none runs.
 	cancel context.CancelFunc
 }
 
 // forget drops what failed or short-lived starts left behind.
 func (w *autoWatch) forget() {
-	w.stopped, w.peerRunning, w.held = false, false, false
-	w.state.Attempts, w.state.LastError, w.state.Reason, w.state.NextAt = 0, "", "", time.Time{}
+	w.stopped, w.peerRunning, w.blockedWait = false, false, 0
+	w.state.Attempts, w.state.LastError, w.state.Suggestion, w.state.Reason, w.state.NextAt = 0, "", "", "", time.Time{}
 }
 
 // AutoStart starts watching the machines the backend holds links to,
@@ -189,7 +201,8 @@ func (s *Service) due(text i18n.Catalog, watch *autoWatch, nodeID string, answer
 		return false
 	}
 	if answers {
-		watch.state.OfflineSince, watch.peerRunning = time.Time{}, false
+		watch.state.OfflineSince, watch.peerRunning, watch.blockedWait = time.Time{}, false, 0
+		watch.state.Suggestion = ""
 		if watch.onlineSince.IsZero() {
 			watch.onlineSince = now
 		}
@@ -270,9 +283,12 @@ func (s *Service) concluded(ctx context.Context, watch *autoWatch, nodeID, outco
 	var failure *StepError
 	errors.As(err, &failure)
 	running := outcome == RestartRunning
-	held := failure != nil && failure.Code == "restart_busy"
-	recorded := !(running && watch.peerRunning) && !(held && watch.held)
-	watch.peerRunning, watch.held = running, held
+	blocked := failure != nil && (failure.Code == "restart_busy" || failure.Stage == "ssh")
+	recorded := !(running && watch.peerRunning) && !(blocked && watch.blockedWait > 0)
+	watch.peerRunning, watch.state.Suggestion = running, ""
+	if !blocked {
+		watch.blockedWait = 0
+	}
 	switch {
 	case err == nil:
 		watch.state.Attempts++
@@ -281,17 +297,14 @@ func (s *Service) concluded(ctx context.Context, watch *autoWatch, nodeID, outco
 	case running:
 		watch.state.State, watch.state.Reason = autoPeerRunning, record.Reason
 		watch.state.NextAt = now.Add(autoStartRecheck)
-	case failure != nil && failure.Stage == "ssh":
-		// The machine could not be reached over SSH: nothing was tried on
-		// it, so nothing counts or is recorded.
-		watch.state.State, watch.state.LastError = autoUnreachable, record.Reason
-		watch.state.NextAt = now.Add(autoStartBackoff)
-		return record, false
-	case held:
-		// Another installation holds the machine; its turn comes first,
-		// however long it takes.
-		watch.state.State, watch.state.LastError = autoRetrying, record.Reason
-		watch.state.NextAt = now.Add(autoStartBackoff)
+	case blocked:
+		// Another installation holds the machine, or a lock one left behind
+		// does, or it could not be reached over SSH: nothing was done to its
+		// peer, so nothing counts. It is tried again, less and less often,
+		// until what blocks it is gone.
+		watch.blockedWait = min(max(2*watch.blockedWait, autoStartBackoff), autoStartBlockedBackoff)
+		watch.state.State, watch.state.LastError, watch.state.Suggestion = autoBlocked, record.Reason, failure.Suggestion
+		watch.state.NextAt = now.Add(watch.blockedWait)
 	default:
 		watch.state.Attempts++
 		watch.state.LastError = record.Reason
