@@ -43,7 +43,10 @@ type Config struct {
 	// PollInterval is how often the runtime compares its business generation
 	// with the local replica, which reads nothing from other nodes and
 	// appends nothing to the Raft log. The poll itself makes quorum reads
-	// only while a generation starts; writes make their own.
+	// only while a generation starts and, on a node that does not lead
+	// consensus, asks the leader for a read index once every ApplyTimeout
+	// while a generation runs (see replicaConfirmation); writes make their
+	// own.
 	PollInterval time.Duration
 	// ShutdownTimeout is how long a business generation may take to stop
 	// before the runtime reports it as slow and records every goroutine's
@@ -115,6 +118,10 @@ type Runtime struct {
 	closeError   error
 	cleanupError error
 	failure      error
+	// confirmation is what a quorum has confirmed of this node's replica,
+	// which keeps its business generation and worker tunnels; see
+	// replicaConfirmation.
+	confirmation replicaConfirmation
 	// workers is what keeps this node's worker tunnels; see workerAuthority.
 	workers    workerAuthority
 	changed    chan struct{}
@@ -358,10 +365,9 @@ func (r *Runtime) revoke(g *generation, err error) {
 // entry the replica committed stays unapplied for longer than ApplyTimeout.
 // A follower learns its commit index only with entries it holds, so one
 // whose replication falls behind while heartbeats still arrive looks caught
-// up here. Its next write finds out: the quorum read it starts with gives
-// the generation up if another node was named meanwhile, and otherwise
-// fails the write as unavailable once the replica has not caught up within
-// ApplyTimeout.
+// up here; a node that does not lead consensus therefore also keeps its
+// generation only while a quorum confirms its replica, which it asks the
+// leader for once every ApplyTimeout (see replicaConfirmation).
 func (r *Runtime) run() {
 	defer close(r.workerDone)
 	ticker := time.NewTicker(r.config.PollInterval)
@@ -496,6 +502,15 @@ func (r *Runtime) step(seen observation, s *tickState) error {
 	}
 	if err == nil && !r.keeps(seen.State) {
 		err = r.start(s)
+	} else if err == nil {
+		// The replica names the generation running here, and it may be
+		// a replica whose log entries stopped arriving while heartbeats
+		// still do; see replicaConfirmation.
+		var confirm bool
+		confirm, err = r.replicaConfirmed(seen)
+		if confirm {
+			r.startConfirmation()
+		}
 	}
 	return err
 }
@@ -617,11 +632,15 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 			return fmt.Errorf("activate business generation: %w", err)
 		}
 	}
+	// The quorum read that makes the generation ready confirms the replica
+	// it runs on, whatever a confirmation before it found.
+	asked := time.Now()
 	position, err := (&replicator{runtime: r, generation: g, book: writer}).Prepare(ctx)
 	if err != nil {
 		r.revoke(g, err)
 		return nil
 	}
+	r.confirmation.settle(asked, nil)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed || g.Context.Err() != nil || g.restore != r.restores {
@@ -919,7 +938,7 @@ func (r *Runtime) shutdown(reason error) {
 			serviceDone := make(chan error, 1)
 			go func() { serviceDone <- r.service.Close() }()
 			<-r.workerDone
-			r.workers.stop()
+			r.confirmation.stop()
 			serviceErr := <-serviceDone
 			bookErr := r.book.Close()
 			r.mu.Lock()
