@@ -1132,13 +1132,13 @@ func (h *Host) PromptTurn(
 	return out, activity, nil
 }
 
-// failedPrompt is the error of a prompt that did not end as asked, on
-// cause, its call having returned err. An answer from the agent, an error
-// included, settles it. One that no answer ended is settled only by the
-// stop of the agent's process, and the agent's exit ends the call before
-// the transport has ended what the agent left in its process group: the
-// stop is read once that has settled, waiting for it at most
-// exitedGroupWait and no longer than ctx lasts. A group that has not
+// failedPrompt is the error, carrying cause, of a prompt that did not end
+// as asked; err is what the prompt's call returned. An answer from the
+// agent, an error included, settles the prompt. One that no answer ended
+// is settled only by the stop of the agent's process, and the agent's exit
+// ends the call before the transport has ended what the agent left in its
+// process group: the stop is read once that has settled, waiting for it at
+// most exitedGroupWait and no longer than ctx lasts. A group that has not
 // emptied by then leaves the stop unconfirmed.
 func (h *Host) failedPrompt(ctx context.Context, generation uint64, err, cause error) error {
 	if PromptSettled(err) {
