@@ -1,8 +1,9 @@
 import { workState } from "./work-fixture.mjs";
 // Source preview of restarting a machine's node process from the fleet
 // drawer, with the SSH restart API as a fixture: which machines offer it,
-// the confirmation an online one asks for, the progress of a restart, and
-// how automatic start stands.
+// why one is not restarted from here, the confirmation an online one asks
+// for, the progress of a restart, how automatic start stands, and the
+// machine's last restart wherever it shows.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,18 +21,22 @@ const log = [{ at, stream: "steve", text: "Stopping peer process 4242." }];
 const running = (automatic = false, plan = "restart-1") => ({ restart: { plan_id: plan, name: "", node_id: "", registered: true, connected: false, status: "installing", phase: "restart", phases, steps: [], log }, automatic });
 const restarted = { plan_id: "restart-1", name: "", node_id: "node-build", registered: true, connected: true, status: "connected", phase: "connectivity", phases, log,
     steps: [{ id: "restart", status: "ready", message: "节点进程已重新启动" }, { id: "connectivity", status: "ready", message: "节点进程已重启，机器已回到集群" }] };
+const far = "本节点没有这台机器的 SSH 连接；它若经 SSH 加入，请到把它加入集群的节点的控制台重启、查看自动拉起，否则需登录这台机器手动重启节点进程";
 const nodes = [
-    { name: "my-desktop", role: "hub", up: true, version: "test" },
+    { name: "my-desktop", role: "hub", up: true, version: "test", last_restart: { at, by: "node-build", trigger: "manual", outcome: "restarted" } },
     { name: "node-build", display_name: "build-node", role: "worker", up: true, version: "test", os: "linux", arch: "arm64", addr: "10.0.0.9:7701",
         last_restart: { at, by: "my-desktop", trigger: "automatic", outcome: "started" } },
     { name: "node-gpu", display_name: "gpu-node", role: "worker", up: false, version: "test", addr: "10.0.0.10:7701", last_error: "dial tcp 10.0.0.10:7701: connection refused" },
-    { name: "node-old", display_name: "old-node", role: "worker", up: true, version: "test", addr: "10.0.0.11:7701" },
+    { name: "node-old", display_name: "old-node", role: "worker", up: true, version: "test", addr: "10.0.0.11:7701",
+        last_restart: { at, by: "my-desktop", trigger: "manual", outcome: "failed", reason: "SSH 连不上这台机器" } },
+    { name: "node-far", display_name: "far-node", role: "worker", up: true, version: "test", addr: "10.0.0.12:7701" },
 ];
 const f = {
     errors: [], reads: {}, posts: [], states: 0, hold: false, release: null, refuse: null,
     status: {
-        "node-build": { auto_start: { state: "watching", attempts: 0, limit: 5 } },
-        "node-gpu": { auto_start: { state: "stopped", attempts: 5, limit: 5, last_error: "连续 5 次自动拉起后，这台机器都没能保持在线 10 分钟，已停止自动拉起" } },
+        "node-build": { restartable: true, auto_start: { state: "watching", attempts: 0, limit: 5 } },
+        "node-gpu": { restartable: true, auto_start: { state: "stopped", attempts: 5, limit: 5, last_error: "连续 5 次自动拉起后，这台机器都没能保持在线 10 分钟，已停止自动拉起" } },
+        "node-far": { restartable: false, reason: far },
     },
     result: { "node-build": restarted, "node-gpu": { ...restarted, node_id: "node-gpu", steps: [{ id: "restart", status: "ready", message: "节点进程原本没有运行，已启动" }, { id: "connectivity", status: "ready", message: "节点进程已启动，机器已回到集群" }] } },
 };
@@ -72,16 +77,30 @@ try {
 
     let drawer = await open("my-desktop");
     await drawer.getByText("节点 ID", { exact: true }).waitFor();
+    await drawer.getByText("my-desktop 的节点进程已重启", { exact: true }).waitFor();
+    await drawer.getByText(/手动 · 由 build-node 执行/).waitFor();
     await page.waitForTimeout(300);
     assert.equal(await drawer.getByRole("button", { name: "重启节点" }).count(), 0, "the coordinator is not restarted over SSH");
     assert.equal(f.reads["my-desktop"], undefined, "the coordinator's restart status is never asked for");
     await close(drawer);
     drawer = await open("old-node");
     await waitFor(() => f.reads["node-old"] >= 1, "the restart status of a worker is asked for");
+    await drawer.getByText("old-node 的节点重启没有成功", { exact: true }).waitFor();
+    await drawer.getByText("SSH 连不上这台机器", { exact: true }).waitFor();
     await page.waitForTimeout(300);
     assert.equal(await drawer.getByRole("button", { name: "重启节点" }).count(), 0, "a machine this node does not restart offers no restart");
     await close(drawer);
-    console.log("PASS the restart is offered only where the node serving the console restarts the machine");
+    console.log("PASS the restart is offered only where the node serving the console restarts the machine, and a last restart shows wherever");
+
+    drawer = await open("far-node");
+    await drawer.getByText(far, { exact: true }).waitFor();
+    assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), true, "a machine this node has no link to is not restarted from here");
+    await drawer.getByRole("button", { name: "重启节点", exact: true }).click({ force: true });
+    await page.waitForTimeout(200);
+    assert.equal(await drawer.getByText(/重启会中断它上面正在运行的执行/).count(), 0);
+    assert.deepEqual(f.posts, [], "a restart this node cannot run is never asked for");
+    await close(drawer);
+    console.log("PASS a machine this node cannot restart shows the restart disabled and says where to turn");
 
     drawer = await open("build-node");
     const restart = drawer.getByRole("button", { name: "重启节点", exact: true });
@@ -131,12 +150,12 @@ try {
     await drawer.getByText("节点进程已启动，机器已回到集群", { exact: true }).waitFor();
     console.log("PASS an offline machine is restarted at once, and a stopped automatic start says why and how it resumes");
 
-    f.status["node-gpu"] = { ...running(true, "restart-2"), auto_start: { state: "attempting", attempts: 1, limit: 5, last_at: at } };
+    f.status["node-gpu"] = { restartable: true, ...running(true, "restart-2"), auto_start: { state: "attempting", attempts: 1, limit: 5, last_at: at } };
     await drawer.getByText("正在自动启动（第 2/5 次）", { exact: true }).waitFor({ timeout: 8000 });
     await drawer.getByText("自动拉起进度", { exact: true }).waitFor();
     await drawer.getByText("第 2/3 步 · 重启节点进程", { exact: true }).waitFor();
     assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), true, "a machine being started automatically is not restarted by hand meanwhile");
-    f.status["node-gpu"] = { restart: { ...f.result["node-gpu"], plan_id: "restart-2" }, automatic: true, auto_start: { state: "watching", attempts: 1, limit: 5 } };
+    f.status["node-gpu"] = { restartable: true, restart: { ...f.result["node-gpu"], plan_id: "restart-2" }, automatic: true, auto_start: { state: "watching", attempts: 1, limit: 5 } };
     await drawer.getByText("已自动启动，等待机器稳定在线（第 1/5 次）", { exact: true }).waitFor();
     assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), false);
     assert.equal(await drawer.getByText("节点进程已启动，机器已回到集群", { exact: true }).count(), 0, "a restart asked here is not shown once a later one ran");

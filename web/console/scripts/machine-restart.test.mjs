@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { loadLocale, translate } from "../src/lib/i18n.ts";
-import { autoStartLine, restartConfirms, restartHiddenBy, restartOffered, restartPollDelay, restartRunning, restartShown } from "../src/lib/machine-restart.ts";
+import { autoStartLine, nodeProcessShown, restartConfirms, restartHiddenBy, restartOffered, restartPollDelay, restartRefusal, restartRunning, restartShown } from "../src/lib/machine-restart.ts";
 
 await Promise.all([loadLocale("zh"), loadLocale("en")]);
 const zh = (key, params) => translate("zh", key, params);
@@ -82,4 +82,17 @@ test("a running peer is left alone and pointed at the manual restart; a stopped 
     assert.equal(stopped.hint, "It resumes once the machine stays online for a while, or after a manual restart succeeds");
     assert.equal(autoStartLine(auto({ state: "peer_running" }), en, time).hint, "Automatic start never ends it; if it is stuck, use Restart node");
     assert.deepEqual(autoStartLine(auto({ state: "resting" }), en, time), { tone: "quiet", title: "resting" }, "a state this page does not know is shown as it came");
+});
+
+test("a machine this console's node cannot restart says why, and a machine's last restart shows whoever serves the console", () => {
+    assert.equal(restartRefusal({ restartable: true }), null);
+    assert.equal(restartRefusal(null), null, "nothing is said before the node answered, or after it refused");
+    assert.equal(restartRefusal({ restartable: false, reason: "不能从这里重启当前提供控制台的节点" }), "不能从这里重启当前提供控制台的节点");
+    assert.equal(restartRefusal({}), "", "a status that does not say the machine can be restarted offers no restart");
+    const last = { at: "2026-09-29T08:00:00Z", by: "node-hub", trigger: "manual", outcome: "restarted" };
+    assert.equal(nodeProcessShown("worker", { restartable: false, reason: "x" }, undefined), true, "a restart this node cannot run is shown, disabled, with why");
+    assert.equal(nodeProcessShown("hub", null, last), true, "the coordinator's last restart shows though it is not restarted from here");
+    assert.equal(nodeProcessShown("worker", null, last), true, "a machine whose status was not read, or was refused, still shows its last restart");
+    assert.equal(nodeProcessShown("worker", null, undefined), false);
+    assert.equal(nodeProcessShown("hub", { restartable: true }, undefined), false);
 });

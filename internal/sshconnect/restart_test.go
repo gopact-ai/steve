@@ -2,6 +2,7 @@ package sshconnect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -530,4 +531,46 @@ func TestRestartStatusWithoutARecordHasNoRestart(t *testing.T) {
 		state, err := svc.RestartStatus(t.Context(), "node-1")
 		return err == nil && state.Restart == nil
 	})
+}
+
+// A machine's status says whether this node can restart it, and where it
+// cannot, why, as the backend refuses a restart of it; the page reads it
+// before offering a restart that would only be refused.
+func TestRestartStatusSaysWhetherThisNodeCanRestartTheMachine(t *testing.T) {
+	svc, runner, backend := restartFixture(t)
+	restartable := func(nodeID string) (bool, string, bool) {
+		t.Helper()
+		state, err := svc.RestartStatus(t.Context(), nodeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire struct {
+			Restartable *bool  `json:"restartable"`
+			Reason      string `json:"reason"`
+		}
+		if err := json.Unmarshal(body, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire.Restartable == nil {
+			t.Fatalf("the status of %s does not say whether it can be restarted: %s", nodeID, body)
+		}
+		return *wire.Restartable, wire.Reason, strings.Contains(string(body), `"reason"`)
+	}
+	if can, reason, said := restartable("node-1"); !can || said {
+		t.Fatalf("a machine with a link here: restartable %v, reason %q", can, reason)
+	}
+	backend.set(func(b *restartBackend) { delete(b.aliases, "node-1") })
+	if can, reason, _ := restartable("node-1"); can || reason != "这台机器没有记录 SSH 隧道" {
+		t.Fatalf("a machine without a link here: restartable %v, reason %q", can, reason)
+	}
+	if can, _, _ := restartable("node-2"); !can {
+		t.Fatal("another machine's link was not read on its own")
+	}
+	if len(runner.calls) != 0 || len(backend.recorded()) != 0 {
+		t.Fatalf("reading whether a machine can be restarted ran %d commands and recorded %d restarts", len(runner.calls), len(backend.recorded()))
+	}
 }

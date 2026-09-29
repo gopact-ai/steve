@@ -85,8 +85,9 @@ func (peerMachineRunner) Upload(context.Context, []string, io.Reader) (sshconnec
 }
 
 // oneMachine is a backend that knows one machine, node-dev, reached as
-// dev. An upgrade or restart of it can be held at its start until the
-// test lets it go; the upgrade then fails, as there is no program to send.
+// dev. The next upgrade or restart of it can be held at its start until
+// the test lets it go; the upgrade then fails, as there is no program to
+// send.
 type oneMachine struct {
 	mu       sync.Mutex
 	hold     chan struct{}
@@ -106,10 +107,12 @@ func (b *oneMachine) Verify(context.Context, string) error { return errors.New("
 
 func (b *oneMachine) Knows(_ context.Context, nodeID string) bool { return nodeID == "node-dev" }
 
-// wait holds an operation at its start while the test holds the machine.
+// wait holds the first operation to start while the test holds the
+// machine; anything asked for meanwhile goes on.
 func (b *oneMachine) wait() {
 	b.mu.Lock()
 	hold, entered := b.hold, b.entered
+	b.hold, b.entered = nil, nil
 	b.mu.Unlock()
 	if hold != nil {
 		close(entered)
@@ -120,14 +123,9 @@ func (b *oneMachine) wait() {
 func (b *oneMachine) holdNext() (entered chan struct{}, release func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.hold, b.entered = make(chan struct{}), make(chan struct{})
-	hold := b.hold
-	return b.entered, func() {
-		b.mu.Lock()
-		b.hold, b.entered = nil, nil
-		b.mu.Unlock()
-		close(hold)
-	}
+	hold := make(chan struct{})
+	b.hold, b.entered = hold, make(chan struct{})
+	return b.entered, func() { close(hold) }
 }
 
 func (b *oneMachine) UpgradeTarget(context.Context, string) (sshconnect.UpgradeTarget, error) {
@@ -227,6 +225,9 @@ func TestSSHRestartOverTheAPIRunsOneOperationPerMachine(t *testing.T) {
 	var state sshconnect.RestartState
 	if status.status != http.StatusOK || json.Unmarshal(status.body, &state) != nil || state.Restart == nil || state.Restart.Status != "connected" || state.Automatic {
 		t.Fatalf("restart status = %d %s", status.status, status.body)
+	}
+	if !strings.Contains(string(status.body), `"restartable":true`) {
+		t.Fatalf("the restart status does not say the machine can be restarted from here: %s", status.body)
 	}
 
 	// A restart held at its start keeps the machine: its status says it

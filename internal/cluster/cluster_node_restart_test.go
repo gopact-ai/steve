@@ -13,6 +13,7 @@ import (
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 	"github.com/gopact-ai/steve/internal/sshconnect/linktest"
@@ -20,18 +21,25 @@ import (
 
 // A member this node keeps a link to is restarted over that link's alias;
 // this node itself, and a member it has no link to, are not restarted
-// from here.
+// from here. Each refusal is what the page shows by a restart it cannot
+// offer, so it says where to turn instead: a member without a link here
+// is restarted, and its automatic start seen, where it joined over SSH.
 func TestRestartTargetNamesTheLinkAliasAndRefusesSelf(t *testing.T) {
 	peer := &Peer{Config: PeerConfig{NodeID: "node-hub", Links: map[string]PeerLink{"node-dev": {Alias: "dev"}}}}
 	backend := peerSSHBackend{peer: peer}
 	if alias, err := backend.RestartTarget(t.Context(), "node-dev"); err != nil || alias != "dev" {
 		t.Fatalf("target = %q %v", alias, err)
 	}
-	if _, err := backend.RestartTarget(t.Context(), "node-hub"); err == nil || !strings.Contains(err.Error(), "本机不经 SSH 重启") {
+	if _, err := backend.RestartTarget(t.Context(), "node-hub"); err == nil || err.Error() != "不能从这里重启当前提供控制台的节点" {
 		t.Fatalf("self was not refused: %v", err)
 	}
-	if _, err := backend.RestartTarget(t.Context(), "node-other"); err == nil || !strings.Contains(err.Error(), "隧道") {
-		t.Fatalf("a member without a link was not refused: %v", err)
+	_, err := backend.RestartTarget(t.Context(), "node-other")
+	if err == nil || !strings.Contains(err.Error(), "本节点没有这台机器的 SSH 连接") || !strings.Contains(err.Error(), "把它加入集群的节点的控制台") || !strings.Contains(err.Error(), "自动拉起") {
+		t.Fatalf("a member without a link was not refused with where to turn: %v", err)
+	}
+	english := i18n.WithLocale(t.Context(), i18n.LocaleEN)
+	if _, err := backend.RestartTarget(english, "node-other"); err == nil || !strings.Contains(err.Error(), "console of the node that added it") {
+		t.Fatalf("a member without a link was not refused in English: %v", err)
 	}
 }
 
