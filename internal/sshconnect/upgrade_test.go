@@ -204,6 +204,50 @@ func TestUnknownNodeRefusalSaysThisNodeDoesNotKnowTheID(t *testing.T) {
 	}
 }
 
+// A known machine with no upgrade running or just finished has no status
+// to read, whether it was never upgraded from here or the record of its
+// last upgrade expired: both are answered alike, in the language asked
+// for. A backend that upgrades nothing has no upgrade of any machine.
+func TestUpgradeStatusWithoutARecordSaysTheMachineHasNoUpgrade(t *testing.T) {
+	svc, _, _, _ := upgradeFixture(t)
+	svc.ttl = 50 * time.Millisecond
+	none := func(svc *Service, node, when string) {
+		t.Helper()
+		for _, tc := range []struct {
+			locale i18n.Locale
+			says   string
+		}{{i18n.LocaleZH, "没有进行中或刚结束的升级"}, {i18n.LocaleEN, "no upgrade running or just finished"}} {
+			_, err := svc.UpgradeStatus(i18n.WithLocale(t.Context(), tc.locale), node)
+			var step *StepError
+			if !errors.As(err, &step) {
+				t.Errorf("%s, %s: status of %s = %v", when, tc.locale, node, err)
+				continue
+			}
+			if step.Code != "unknown_upgrade" || !strings.Contains(step.Message, tc.says) {
+				t.Errorf("%s, %s: status of %s refused as %s: %q", when, tc.locale, node, step.Code, step.Message)
+			}
+		}
+	}
+	none(svc, "node-1", "never upgraded")
+	if _, err := svc.Upgrade(t.Context(), "node-1"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := svc.UpgradeStatus(t.Context(), "node-1"); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the finished upgrade's record never expired")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	none(svc, "node-1", "record expired")
+	unsupported := New(Options{Backend: &fakeBackend{}})
+	t.Cleanup(func() { _ = unsupported.Close() })
+	none(unsupported, "node-1", "no upgrade backend")
+}
+
 // When the machine does not come back on the new build the upgrade is
 // reported as unconfirmed, with the program already swapped.
 func TestUpgradeReportsAnUnconfirmedReturn(t *testing.T) {
@@ -234,7 +278,8 @@ func TestUpgradeTellsARollbackFromAPeerLeftDown(t *testing.T) {
 }
 
 // A second upgrade of a machine still being upgraded is refused outright,
-// and the record of a finished upgrade goes away like a plan does.
+// while its status reads how the first is going; the record of a finished
+// upgrade goes away like a plan does.
 func TestUpgradeRunsOncePerMachineAndItsRecordExpires(t *testing.T) {
 	svc, runner, backend, _ := upgradeFixture(t)
 	svc.ttl = 50 * time.Millisecond
@@ -253,6 +298,10 @@ func TestUpgradeRunsOncePerMachineAndItsRecordExpires(t *testing.T) {
 	var step *StepError
 	if !errors.As(err, &step) || step.Code != "in_progress" || result.Status != "" {
 		t.Fatalf("second upgrade = %#v %v", result, err)
+	}
+	status, err := svc.UpgradeStatus(t.Context(), "node-1")
+	if err != nil || status.Status != "installing" || status.PlanID == "" || len(status.Phases) != 4 {
+		t.Fatalf("status while upgrading = %#v %v", status, err)
 	}
 	close(release)
 	if err := <-first; err != nil {

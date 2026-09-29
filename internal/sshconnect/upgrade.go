@@ -46,6 +46,12 @@ func unknownNode(text i18n.Catalog, nodeID string) *StepError {
 	return Fail(text, "preflight", UnknownNode, text.T(i18n.SSHUpgradeUnknownNode, nodeID), text.T(i18n.SSHUpgradeUnknownNodeFix))
 }
 
+// UnknownUpgrade is the code of the failure an upgrade's status returns
+// for a machine with no upgrade running or just finished here: none was
+// started from this node since it came up, or the last one's record
+// expired.
+const UnknownUpgrade = "unknown_upgrade"
+
 // upgradeVerifyLimit bounds how long the coordinator waits for a machine
 // to come back on the new build once its program was swapped.
 const upgradeVerifyLimit = 3 * time.Minute
@@ -98,19 +104,20 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 }
 
 // UpgradeStatus reads how a machine's latest upgrade is going, or how its
-// last one went until that record expires.
+// last one went until that record expires. A machine whose record expired
+// has no upgrade, like one never upgraded from here.
 func (s *Service) UpgradeStatus(ctx context.Context, nodeID string) (InstallResult, error) {
 	ctx, text := s.speak(ctx)
 	if backend, ok := s.backend.(UpgradeBackend); ok && !backend.Knows(ctx, nodeID) {
 		return InstallResult{}, unknownNode(text, nodeID)
 	}
 	s.mu.Lock()
-	id, ok := s.upgrades[nodeID]
-	s.mu.Unlock()
-	if !ok {
-		return InstallResult{}, Fail(text, "planning", "unknown_plan", text.T(i18n.SSHUpgradeUnknown), text.T(i18n.SSHUpgradeUnknownFix))
+	defer s.mu.Unlock()
+	stored := s.plans[s.upgrades[nodeID]]
+	if stored == nil {
+		return InstallResult{}, Fail(text, "planning", UnknownUpgrade, text.T(i18n.SSHUpgradeUnknown), text.T(i18n.SSHUpgradeUnknownFix))
 	}
-	return s.Status(ctx, id)
+	return cloneResult(stored.result), nil
 }
 
 func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeID string) (InstallResult, error) {
