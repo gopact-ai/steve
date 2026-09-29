@@ -61,24 +61,32 @@ func TestCloseSettledNamesOnlyTheTaskItIsAbout(t *testing.T) {
 	if _, err := tasks.Advance(cancelled, task.StateCancelled); err != nil {
 		t.Fatal(err)
 	}
-	closing := func(name string, ids []string, want string) {
+	closing := func(name string, ids []string, want string, key i18n.Key) {
 		t.Helper()
 		refused, err := c.closeSettled(t.Context(), ids, "")
 		if err == nil || refused != want {
 			t.Errorf("%s: close of %v refused %q with %v, want %q named", name, ids, refused, err, want)
+			return
+		}
+		text := c.text.T(key, protocol.CommandTasks)
+		if want != "" {
+			text = c.text.T(key, want, protocol.CommandTasks)
+		}
+		if got := c.closeRefusal("chat", refused, err).Text; got != text {
+			t.Errorf("%s: refusal = %q, want %q", name, got, text)
 		}
 	}
 
 	refuse = second
-	closing("the check refuses the second", []string{first, second}, second)
+	closing("the check refuses the second", []string{first, second}, second, i18n.TaskCloseAttention)
 	refuse = ""
-	closing("the second can no longer end", []string{first, cancelled}, "")
+	closing("the second can no longer end", []string{first, cancelled}, "", i18n.TaskCloseSeveralFailed)
 
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_close BEFORE UPDATE ON bindings WHEN NEW.kind = 'task-store' AND NEW.id = 'state' BEGIN SELECT RAISE(ABORT, 'close write unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	closing("the close is not saved", []string{first, second}, "")
-	closing("the close of one alone is not saved", []string{first}, first)
+	closing("the close is not saved", []string{first, second}, "", i18n.TaskCloseSeveralFailed)
+	closing("the close of one alone is not saved", []string{first}, first, i18n.TaskCloseFailed)
 	for _, id := range []string{first, second} {
 		if tracked, _ := tasks.Get(id); tracked.State != task.StateDraft {
 			t.Fatalf("task %s after refused closes = %s, want it as it was", id, tracked.State)

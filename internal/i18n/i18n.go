@@ -159,6 +159,7 @@ const (
 	TaskCloseDelivery      Key = "task_close_delivery"
 	TaskCloseAttention     Key = "task_close_attention"
 	TaskCloseFailed        Key = "task_close_unavailable"
+	TaskCloseSeveralFailed Key = "task_close_several_unavailable"
 	TaskResumeNotice       Key = "task_resume_notice"
 	TaskResumeManual       Key = "task_resume_manual"
 	TaskStuck              Key = "task_stuck"

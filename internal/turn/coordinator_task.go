@@ -229,25 +229,38 @@ func (c *Coordinator) setAside(tracked task.Task) error {
 // check spares; so are the conversation's lines still queued that no task
 // has claimed, such as input typed behind that one: they have not started,
 // and run after the close under whichever task then holds the
-// conversation. On a refusal the task it is about is returned with it.
+// conversation. On a refusal the task it is about is returned with it: the
+// one the check refused, or the only one closing. A close of several that
+// fails otherwise is about none of them, and no task is returned.
 func (c *Coordinator) closeSettled(ctx context.Context, ids []string, currentExchange string) (string, error) {
 	if len(ids) == 0 {
 		return "", nil
 	}
-	refused := ids[0]
+	var refused string
 	_, err := c.tasks.CloseChecked(ctx, ids, func(tx *ledger.Tx, tracked task.Task) error {
-		refused = tracked.ID
-		return c.checkTaskCompletionTx(tx, map[string]bool{tracked.ID: true}, tracked.Channel, currentExchange, true)
+		err := c.checkTaskCompletionTx(tx, map[string]bool{tracked.ID: true}, tracked.Channel, currentExchange, true)
+		if err != nil {
+			refused = tracked.ID
+		}
+		return err
 	})
-	if err != nil {
-		return refused, err
+	if err == nil {
+		return "", nil
 	}
-	return "", nil
+	if refused == "" && len(ids) == 1 {
+		refused = ids[0]
+	}
+	return refused, err
 }
 
 // closeRefusal tells the user why a reset or a project switch did nothing,
 // and how to let the task go: settle what it still waits for, or cancel it.
+// Without taskID the close of the conversation's tasks failed as a whole.
 func (c *Coordinator) closeRefusal(conversationID, taskID string, err error) UserError {
+	if taskID == "" {
+		slog.Warn(fmt.Sprintf("turn: close tasks: %v", err), "conversation", conversationID)
+		return UserError{Text: c.text.T(i18n.TaskCloseSeveralFailed, protocol.CommandTasks)}
+	}
 	key := i18n.TaskCloseFailed
 	switch {
 	case errors.Is(err, task.ErrCompleteBusy):
