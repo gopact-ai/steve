@@ -577,7 +577,9 @@ export function FleetPage() {
             <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title={tr("fleet.noMachines")}>{tr("fleet.noMachinesHint")}</Nothing> : (
-                    <Table aria-label={tr("fleet.machine")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                    <Table aria-label={tr("fleet.machine")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace"
+                        selectedKeys={opened ? [opened] : []}
+                        onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                         <Table.Header>
                             <Table.Head id="node" label={tr("fleet.name")} className="w-[19%]" isRowHeader />
                             <Table.Head id="host" label={tr("fleet.labelsHost")} className="w-[21%]" />
@@ -623,7 +625,9 @@ export function FleetPage() {
             {tab === "agents" && <>
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title="Agent" badge={`${snap.agents.length}`} />
-                <Table aria-label="Agent" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
+                <Table aria-label="Agent" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace"
+                    selectedKeys={openedAgent ? [openedAgent] : []}
+                    onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
                     <Table.Header>
                         <Table.Head id="agent" label="Agent" className="w-[20%]" isRowHeader />
                         <Table.Head id="state" label={tr("fleet.status")} className="w-[18%]" />
