@@ -198,7 +198,7 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 func (c commands) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
 	result, ids, _ := c.setTaskAside(ctx, title, tracked, to, false)
 	if to == task.StateCancelled && len(ids) > 0 {
-		c.routes.cancelled(TaskCancel{Transport: tracked.Transport, Tasks: ids})
+		c.routes.cancel(TaskCancel{Transport: tracked.Transport, Tasks: ids})
 	}
 	return result
 }

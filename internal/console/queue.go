@@ -40,8 +40,10 @@ type queuedExchange struct {
 	outcome              outcome
 
 	// cancelledTasks are tasks a person cancelled while this exchange was
-	// recovering, and taskCancels wakes its recovery worker when one is
-	// added. Both are held under the service lock.
+	// in progress, held under the service lock. taskCancels wakes its
+	// recovery worker when one is added; it is made under the lock when a
+	// recovery first opens and never replaced, so the worker keeps the
+	// channel it was handed without taking the lock again.
 	cancelledTasks map[string]bool
 	taskCancels    chan struct{}
 }

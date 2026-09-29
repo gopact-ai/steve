@@ -264,15 +264,17 @@ func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange
 	}
 }
 
-// TasksCancelled tells the recovering exchanges that a person cancelled
-// these tasks. A recovery bound to one of them can no longer resume it, so
-// it stops offering to and turns to confirming its execution stopped.
+// TasksCancelled tells the exchanges still in progress that a person
+// cancelled these tasks. An exchange bound to one of them can no longer
+// resume it: its recovery, whether already under way or begun only when
+// the turn leaves the execution behind, stops offering to and turns to
+// confirming the execution stopped.
 func (s *Service) TasksCancelled(ids []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, list := range s.exchanges {
 		for _, e := range list {
-			if e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser {
+			if e.State.Terminal() {
 				continue
 			}
 			if e.cancelledTasks == nil {
@@ -295,11 +297,12 @@ func (s *Service) taskCancelled(e *queuedExchange, id string) bool {
 	return id != "" && e.cancelledTasks[id]
 }
 
-// abandon hands an exchange whose task was cancelled over to confirming
-// that the original execution stopped, as a stop the owner asked for from
-// the recovery question would be. The request is recorded first so a
-// restart goes on waiting for the stop instead of asking to resume again;
-// a stop already confirmed is simply delivered.
+// abandon turns the recovery of an exchange whose task was cancelled into
+// waiting for the original execution to stop. It records the stop request
+// first, so a restart goes on waiting for the stop instead of offering to
+// resume the task again, then tries the stop at once and, until it is
+// confirmed, holds the exchange on the card that says the stop is being
+// confirmed; a stop already confirmed is simply delivered.
 func (r *exchangeRecovery) abandon() {
 	r.stream.Close()
 	r.s.mu.Lock()

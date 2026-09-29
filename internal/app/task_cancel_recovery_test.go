@@ -171,8 +171,7 @@ func (f cancelledRecovery) exchange() consoleapi.Exchange {
 // A task cancelled from the conversation can no longer be resumed, so a
 // recovery question that offers to retry it has become one no answer can
 // satisfy. Cancelling the task settles that question: the exchange moves on
-// to confirming the stop of the task's execution, as a stop asked for from
-// the question itself would.
+// to confirming the stop of the task's execution.
 func TestTaskCancelSettlesTheRecoveryQuestionOfTheCancelledTask(t *testing.T) {
 	f := openCancelledRecovery(t)
 	deadline := time.Now().Add(10 * time.Second)

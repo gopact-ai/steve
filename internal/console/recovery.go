@@ -691,10 +691,12 @@ func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Questio
 	cancel()
 	<-back
 	// An answer given at the same moment is still the owner's decision;
-	// only a question nobody answered is withdrawn.
+	// only a question nobody answered is withdrawn, including one the
+	// watch withdrew before it was even put.
 	select {
 	case <-moot:
-		if err == nil && r.ctx.Err() == nil && answer.Value == "" && answer.Text == "" && answer.Decision == "" {
+		unanswered := err == nil && answer.Value == "" && answer.Text == "" && answer.Decision == ""
+		if r.ctx.Err() == nil && (unanswered || errors.Is(err, context.Canceled)) {
 			r.withdrawn = true
 			return view.Answer{}, nil
 		}

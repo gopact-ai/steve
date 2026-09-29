@@ -71,14 +71,14 @@ func (c *Coordinator) Wire(cb Callbacks) {
 	}
 	c.supervisor, c.attach, c.gate = cb.Supervisor, cb.WorkspaceAttach, cb.AgentGate
 	c.afterTurn, c.turnPreface = cb.AfterTurn, cb.TurnPreface
-	c.routes = taskRoutes{notify: cb.Notifier, resume: cb.Resumer, dispatch: cb.ResumeDispatcher, cancelled: cb.AfterCancel}
+	c.routes = taskRoutes{notify: cb.Notifier, resume: cb.Resumer, dispatch: cb.ResumeDispatcher, cancel: cb.AfterCancel}
 }
 
 // taskRoutes are the callbacks that reach the channel a task came from:
 // Notifier, Resumer, ResumeDispatcher and AfterCancel.
 type taskRoutes struct {
-	notify    func(TaskNotice)
-	resume    func(TaskResume) error
-	dispatch  func(TaskResume)
-	cancelled func(TaskCancel)
+	notify   func(TaskNotice)
+	resume   func(TaskResume) error
+	dispatch func(TaskResume)
+	cancel   func(TaskCancel)
 }
