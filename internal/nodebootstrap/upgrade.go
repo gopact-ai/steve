@@ -108,18 +108,24 @@ const peerStartSection = `start_peer() {
 // installation runs, or to nothing when it runs none, and exits 29 when
 // it cannot look.
 const peerLocateSection = `# Only this account's peer started from this installation is stopped; the
-# link session the coordinator holds open is replaced from its side. The
-# peer may have been started from its own directory as ./bin/steve, so a
-# process is this installation's peer when its command line starts with
-# the installed program's path, or with ./bin/steve and its working
-# directory is this installation. The pid in the installation's gateway
-# lock is tried first and taken only when it passes that test: the lock
-# keeps the pid after its peer exits, and the number may since belong to
-# another installation's peer. Then the program path is searched for, and
-# last a relative launch. Another account's peer, and this account's peer
-# under a different state directory, are left alone. Missing the process
-# would leave it holding the gateway lock, and the program started next
-# would exit on it and be taken for one that cannot run.
+# link session the coordinator holds open is replaced from its side. A
+# process is this installation's peer when it holds the installation's
+# gateway lock, whatever command line it was started with, when its
+# command line starts with the installed program's path, as the state
+# directory is spelled or as it resolves, or when it starts with
+# ./bin/steve and its working directory is this installation. The pid in
+# the gateway lock is tried first and taken only when it passes that test:
+# the lock keeps the pid after its peer exits, and the number may since
+# belong to another installation's peer, which holds its own lock. Then
+# the program path is searched for, and last a relative launch. Another
+# account's peer, and this account's peer under a different state
+# directory, are left alone. Missing the process would leave it holding
+# the gateway lock, and the program started next would exit on it.
+#
+# Whether a pid holds the gateway lock is read from /proc/locks, by the
+# pid and the lock's inode, and without /proc from the write lock lsof
+# reports on the lock. Where neither tells, the pid is not taken for the
+# lock's holder.
 #
 # A search that cannot be made is not a search that found nothing: without
 # pgrep, ps, or lsof where there is no /proc, with a pgrep that fails, or
@@ -146,6 +152,7 @@ peer_search() {
 }
 pattern=$(printf '%s' "$state_dir/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
 state_real=$(cd "$state_dir" && pwd -P)
+pattern_real=$(printf '%s' "$state_real/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
 process_dir() {
   if [ -r "/proc/$1/cwd" ]; then
     readlink "/proc/$1/cwd" 2>/dev/null
@@ -155,20 +162,29 @@ process_dir() {
 }
 installation_peer() {
   line=$(ps -o command= -p "$1" 2>/dev/null) || return 1
-  if printf '%s\n' "$line" | grep -q "^$pattern"; then return 0; fi
+  if printf '%s\n' "$line" | grep -q -e "^$pattern" -e "^$pattern_real"; then return 0; fi
   printf '%s\n' "$line" | grep -q '^\./bin/steve peer ' || return 1
   case "$(process_dir "$1")" in
     "$state_real"|"$state_dir") return 0 ;;
   esac
   return 1
 }
+holds_lock() {
+  if [ -r /proc/locks ]; then
+    inode=$(ls -di "$lock_file" 2>/dev/null | awk '{ print $1 }')
+    [ -n "$inode" ] || return 1
+    awk -v pid="$1" -v inode="$inode" '$2 == "FLOCK" && $5 == (pid "") && split($6, id, ":") == 3 && id[3] == (inode "") { held = 1 } END { exit !held }' /proc/locks
+  else
+    lsof -F pl -- "$lock_file" 2>/dev/null | awk -v pid="$1" '/^p/ { process = substr($0, 2) } /^lW/ && process == (pid "") { held = 1 } END { exit !held }'
+  fi
+}
 running=""
 locked=$(head -n 1 "$lock_file" 2>/dev/null | tr -dc '0-9')
-if [ -n "$locked" ] && kill -0 "$locked" 2>/dev/null && installation_peer "$locked"; then
+if [ -n "$locked" ] && kill -0 "$locked" 2>/dev/null && { holds_lock "$locked" || installation_peer "$locked"; }; then
   running="$locked"
 fi
 if [ -z "$running" ]; then
-  running=$(peer_search "^$pattern") || unlocatable 'Looking for the peer process with pgrep failed'
+  running=$(peer_search "^$pattern|^$pattern_real") || unlocatable 'Looking for the peer process with pgrep failed'
 fi
 if [ -z "$running" ]; then
   relative=$(peer_search '^\./bin/steve peer ') || unlocatable 'Looking for the peer process with pgrep failed'
