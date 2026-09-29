@@ -26,15 +26,20 @@ type sessionClose struct {
 	id    string
 }
 
-// nodeSessions opens sessions under ids a node gives them and answers each
-// close the way that node would.
+// nodeSessions opens sessions under the id a node gives them, ns_owed
+// unless opens says otherwise, and answers each close the way that node
+// would.
 type nodeSessions struct {
 	*fakeManager
+	opens  string
 	closes []sessionClose
 	err    error
 }
 
 func (m *nodeSessions) OpenSession(ctx context.Context, at harness.Placement, upstreamID, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
+	if upstreamID == "" {
+		upstreamID = m.opens
+	}
 	if upstreamID == "" {
 		upstreamID = "ns_owed"
 	}
@@ -78,9 +83,10 @@ var ownerChannels = []struct {
 	{"feishu", Request{Channel: "feishu", ConversationID: "oc_owed", SenderOpenID: "owner", ChatType: protocol.ChatP2P, ChatID: "oc_owed", Mentioned: true}},
 }
 
-// startOwedSession runs one turn in req's conversation, so it holds a
-// session on node-b, and returns that session and the execution that ran.
-func startOwedSession(t *testing.T, c *Coordinator, req Request) (state.Session, Result) {
+// startOwedSession runs one turn in req's conversation, so it holds the
+// session id on node-b, and returns that session and the execution that
+// ran.
+func startOwedSession(t *testing.T, c *Coordinator, req Request, id string) (state.Session, Result) {
 	t.Helper()
 	req.Input, req.MessageID = "hello", "m1"
 	first, err := c.Handle(t.Context(), req)
@@ -88,7 +94,7 @@ func startOwedSession(t *testing.T, c *Coordinator, req Request) (state.Session,
 		t.Fatalf("first turn: %v", err)
 	}
 	session, ok := c.store.Conversation(req.ConversationID).Sessions["codex"]
-	if !ok || session.UpstreamID != "ns_owed" {
+	if !ok || session.UpstreamID != id {
 		t.Fatalf("the first turn left the session %+v", c.store.Conversation(req.ConversationID))
 	}
 	return session, first
@@ -102,7 +108,7 @@ func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sessions := &nodeSessions{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}}
 			c, tasks, _ := owedCloseCoordinator(t, sessions)
-			session, first := startOwedSession(t, c, tc.req)
+			session, first := startOwedSession(t, c, tc.req, "ns_owed")
 			record, err := c.attempts.Get(t.Context(), first.Attempt)
 			if err != nil {
 				t.Fatal(err)
@@ -154,24 +160,25 @@ func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
 // for a session the cluster opened for an execution it can still name. A
 // node that answered has settled the question its own way, and a close
 // whose fate is unknown may have landed; either keeps the session and says
-// so.
+// why: the close failure, and what kept the close from being owed when
+// that is more than the failure.
 func TestResetKeepsTheSessionWhenTheCloseMayHaveLanded(t *testing.T) {
 	notSent := &nodewire.SessionNotDispatched{Cause: errors.New("dial node-b: connection refused")}
 	for name, tc := range map[string]struct {
 		failure error
+		opens   string
 		change  func(*testing.T, *Coordinator, string)
+		more    bool
 	}{
-		"the node refused":           {failure: &node.SessionError{Code: "conflict", Message: "session is bound to another execution"}},
-		"the node could not stop it": {failure: &node.SessionError{Code: "uncertain", Message: "native process stop is not confirmed"}},
-		"the answer was lost":        {failure: errors.New("read node response: connection reset by peer")},
-		"the request timed out":      {failure: context.DeadlineExceeded},
-		"never sent, not a cluster session": {failure: notSent, change: func(t *testing.T, c *Coordinator, conversation string) {
-			resumeAs(t, c, conversation, "codex-session")
-		}},
+		"the node refused":                  {failure: &node.SessionError{Code: "conflict", Message: "session is bound to another execution"}},
+		"the node could not stop it":        {failure: &node.SessionError{Code: "uncertain", Message: "native process stop is not confirmed"}},
+		"the answer was lost":               {failure: errors.New("read node response: connection reset by peer")},
+		"the request timed out":             {failure: context.DeadlineExceeded},
+		"never sent, not a cluster session": {failure: notSent, opens: "codex-session"},
 		"never sent, no execution ran there": {failure: notSent, change: func(t *testing.T, c *Coordinator, conversation string) {
 			resumeAs(t, c, conversation, "ns_elsewhere")
 		}},
-		"never sent, history unreadable": {failure: notSent, change: func(t *testing.T, c *Coordinator, _ string) {
+		"never sent, history unreadable": {failure: notSent, more: true, change: func(t *testing.T, c *Coordinator, _ string) {
 			unreadable, err := ledger.Open(t.TempDir(), ledger.Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -183,18 +190,29 @@ func TestResetKeepsTheSessionWhenTheCloseMayHaveLanded(t *testing.T) {
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			sessions := &nodeSessions{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}}
+			sessions := &nodeSessions{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}, opens: tc.opens}
 			c, _, _ := owedCloseCoordinator(t, sessions)
 			req := ownerChannels[0].req
-			startOwedSession(t, c, req)
+			opened := tc.opens
+			if opened == "" {
+				opened = "ns_owed"
+			}
+			startOwedSession(t, c, req, opened)
 			if tc.change != nil {
 				tc.change(t, c, req.ConversationID)
 			}
 			sessions.err = tc.failure
 			before := c.store.Conversation(req.ConversationID).Sessions["codex"]
 			req.Input, req.MessageID = "/new", "m2"
-			if _, err := c.Handle(t.Context(), req); err == nil {
+			_, err := c.Handle(t.Context(), req)
+			if err == nil {
 				t.Fatal("/new reported success for a close that may have landed")
+			}
+			if !errors.Is(err, tc.failure) {
+				t.Fatalf("/new = %v, which does not say the close failed: %v", err, tc.failure)
+			}
+			if tc.more && err.Error() == tc.failure.Error() {
+				t.Fatalf("/new = %v, which does not say why the close could not be owed", err)
 			}
 			if len(sessions.closes) != 1 || sessions.closes[0].id != before.UpstreamID {
 				t.Fatalf("closes %+v, want one of %s", sessions.closes, before.UpstreamID)
