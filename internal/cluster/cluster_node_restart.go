@@ -56,9 +56,16 @@ func (b peerSSHBackend) Watched(context.Context) []string {
 	status := runtime.Status()
 	b.peer.Mu.RLock()
 	defer b.peer.Mu.RUnlock()
+	return watchedMembers(status.State, b.peer.Config.Links, b.peer.Config.NodeID)
+}
+
+// watchedMembers is which machines with a link here automatic start
+// watches, in order: members of the cluster in state, other than self,
+// that are not being removed.
+func watchedMembers(state coordination.State, links map[string]PeerLink, self string) []string {
 	var watched []string
-	for nodeID := range b.peer.Config.Links {
-		if _, member := status.Members[nodeID]; member && nodeID != b.peer.Config.NodeID && !status.Removing[nodeID] {
+	for nodeID := range links {
+		if _, member := state.Members[nodeID]; member && nodeID != self && !state.Removing[nodeID] {
 			watched = append(watched, nodeID)
 		}
 	}
