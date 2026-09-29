@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -819,7 +820,9 @@ func (m *machine) captureSnapshot() (snapshotData, *encodedSnapshot, error) {
 
 func (m *machine) Restore(reader io.ReadCloser) error {
 	defer reader.Close()
-	metadata, application, err := decodeSnapshot(reader)
+	started := time.Now()
+	counted := &countingReader{Reader: reader}
+	metadata, application, err := decodeSnapshot(counted)
 	if err != nil {
 		return err
 	}
@@ -894,5 +897,22 @@ func (m *machine) Restore(reader io.ReadCloser) error {
 	m.state = data.State
 	m.receipts = data.Receipts
 	m.notifyMembership()
+	// Raft logs a restore at INFO, which Open's default WARN level hides,
+	// and does not pass the snapshot's index to Restore. The applied index
+	// is that of the last command or configuration entry the snapshot
+	// holds; barriers applied after it can put the snapshot's index higher.
+	slog.Info("coordination: snapshot restored", "applied_index", m.state.AppliedIndex, "bytes", counted.n, "took", time.Since(started).Round(time.Millisecond))
 	return nil
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	io.Reader
+	n int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.n += int64(n)
+	return n, err
 }
