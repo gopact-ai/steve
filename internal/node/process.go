@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -461,7 +460,10 @@ func (p *agentProcess) run(ctx context.Context) {
 	code := 0
 	if err != nil {
 		code = -1
-		if e, ok := err.(*exec.ExitError); ok {
+		// A local agent's end tells its exit code as exec.ExitError
+		// does, whichever way it was reaped.
+		var e interface{ ExitCode() int }
+		if errors.As(err, &e) {
 			code = e.ExitCode()
 		}
 	}

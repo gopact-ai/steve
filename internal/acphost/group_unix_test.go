@@ -405,6 +405,20 @@ func TestLocalProcessReapsAnAgentWhoseExitCannotBeWatchedOnlyBetweenKills(t *tes
 	}
 }
 
+// An agent reaped without its exit being watched still tells its exit code.
+func TestLocalProcessTellsTheExitCodeOfAnAgentWhoseExitCannotBeWatched(t *testing.T) {
+	calls := kernelGroup
+	calls.waitExit = func(int) error { return errors.New("exit cannot be watched") }
+	proc, err := LocalTransport{Command: "/bin/sh", Args: []string{"-c", "exit 3"}, ProcessDir: t.TempDir(), group: &calls}.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exit interface{ ExitCode() int }
+	if err := proc.Wait(); !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Fatalf("Wait = %v, want an exit code of 3", err)
+	}
+}
+
 func recordedPID(path string) int {
 	raw, err := os.ReadFile(path)
 	if err != nil {

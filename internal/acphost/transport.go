@@ -211,19 +211,6 @@ func exitError(state *os.ProcessState, err error) error {
 	return err
 }
 
-// reapRunning reaps an agent whose exit cannot be watched without reaping
-// it. The agent may still run, so the lock stays free and a kill can reach
-// it; a kill that comes just as the agent is reaped can then reach the
-// group's id after it is let go.
-func (p *localProcess) reapRunning() error {
-	err := exitError(p.cmd.Process.Wait())
-	p.mu.Lock()
-	p.reaped = true
-	p.mu.Unlock()
-	close(p.exited)
-	return err
-}
-
 // endGroup kills the members of an exited leader's group until none that
 // this process can list runs. A member the kill cannot end, as one in
 // uninterruptible sleep until it wakes, keeps it waiting.
