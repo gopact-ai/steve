@@ -235,6 +235,66 @@ func TestPeerRestartScriptStopsAPeerStartedByARelativePath(t *testing.T) {
 	}
 }
 
+// The pid a gateway lock records outlives the peer that wrote it, and the
+// number can come back as another process of the same account, here the
+// peer of a second installation, started by its path or from its own
+// directory. That peer belongs to its own installation: a restart of this
+// one neither stops it nor takes it for this installation's peer, and
+// starts this installation's own.
+func TestPeerRestartScriptLeavesAnotherInstallationsPeerItsLockNames(t *testing.T) {
+	requirePeerPlatform(t)
+	byPath, byPathPID := installedPeer(t)
+	fromItsDirectory, _ := layoutPeer(t)
+	others := map[string]string{byPath: byPathPID, fromItsDirectory: relativePeer(t, fromItsDirectory)}
+	for other, otherPID := range others {
+		for _, spec := range []RestartSpec{{IfStopped: true}, {}} {
+			home, _ := layoutPeer(t)
+			lockedBy(t, home, otherPID)
+			report, err := runRestart(t, home, spec)
+			if err != nil || strings.Contains(report, "Stopping peer process") || !strings.Contains(report, "STEVE_RESTART\tstarted\n") {
+				t.Fatalf("IfStopped %v: the peer %s of another installation was taken for this one's: %v\n%s", spec.IfStopped, otherPID, err, report)
+			}
+			if exec.Command("kill", "-0", otherPID).Run() != nil {
+				t.Fatalf("IfStopped %v: the peer %s of the installation under %s was stopped:\n%s", spec.IfStopped, otherPID, other, report)
+			}
+			if pids := peerPIDs(t, home); len(pids) != 1 {
+				t.Fatalf("IfStopped %v: expected this installation's peer to be started, got %v\n%s", spec.IfStopped, pids, report)
+			}
+		}
+	}
+}
+
+// relativePeer starts the installation's peer from its own directory as
+// ./bin/steve, the way its owner may start it by hand, and returns its
+// pid. Its config path names the installation, so it is ended by its
+// command line when the test ends, never by a pid a later process may
+// have taken.
+func relativePeer(t *testing.T, home string) string {
+	t.Helper()
+	start := exec.Command("bash", "-c", `cd "$HOME/.steve-peer"; nohup ./bin/steve peer --config "$HOME/.steve-peer/config.json" >> peer.log 2>&1 < /dev/null & echo $!`)
+	start.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	out, err := start.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(home, ".steve-peer", "config.json")
+	t.Cleanup(func() { _ = exec.Command("pkill", "-KILL", "-f", `^\./bin/steve peer --config `+config).Run() })
+	return strings.TrimSpace(string(out))
+}
+
+// lockedBy records pid in the installation's gateway lock, as the peer
+// holding the lock does.
+func lockedBy(t *testing.T, home, pid string) {
+	t.Helper()
+	dir := filepath.Join(home, ".steve-peer", "cluster", "peer-process")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gateway.lock"), []byte(pid+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // An upgrade and a restart find and stop the peer with one and the same
 // piece of script, so the two cannot drift apart on which process is the
 // peer or how long it is given to stop.
