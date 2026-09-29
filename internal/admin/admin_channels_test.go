@@ -258,13 +258,13 @@ func TestChannelsViewReportsAStartupRetry(t *testing.T) {
 }
 
 // A started channel whose connection was lost shows since when, how many
-// attempts to establish it again failed and why the last failed. It is
-// withdrawn once the connection is back and replaced by a terminal runtime
-// error.
+// attempts to establish it again failed, and when and why the last failed.
+// It is withdrawn once the connection is back and replaced by a terminal
+// runtime error.
 func TestChannelsViewReportsAReconnect(t *testing.T) {
 	_, s := ChannelsAdminFixture(t)
 	since := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
-	reconnect := consoleapi.ChannelReconnect{Since: since, Attempts: 2, LastError: "503: system busy"}
+	reconnect := consoleapi.ChannelReconnect{Since: since, Attempts: 2, LastAttemptAt: since.Add(4 * time.Minute), LastError: "503: system busy"}
 	reported := reconnect
 	s.SetReconnect(&reported)
 	reported.Attempts = 99

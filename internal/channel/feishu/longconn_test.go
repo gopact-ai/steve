@@ -174,7 +174,7 @@ func describeReports(reports []*Reconnect) string {
 			parts = append(parts, "connected")
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("{failures %d since %s err %v}", r.Failures, r.Since.Format(time.RFC3339Nano), r.Err))
+		parts = append(parts, fmt.Sprintf("{failures %d since %s last attempt %s err %v}", r.Failures, r.Since.Format(time.RFC3339Nano), r.LastAttempt.Format(time.RFC3339Nano), r.Err))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }
@@ -189,8 +189,8 @@ func longConnChannel(t *testing.T, f *longConnFeishu) (*Channel, *reconnectRepor
 }
 
 // A lost long connection is reported while the official client establishes
-// it again, with each failed attempt, and withdrawn once it is back. A later
-// loss is reported afresh.
+// it again, with each failed attempt and when it failed, and withdrawn once
+// it is back. A later loss is reported afresh.
 func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
 	f := newLongConnFeishu(t, bootstrapOK, bootstrapBusy, bootstrapOKOnce, bootstrapBusy)
 	c, reports := longConnChannel(t, f)
@@ -210,18 +210,20 @@ func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
 	if len(got) != 3 || got[0] == nil || got[1] == nil || got[2] != nil {
 		t.Fatalf("reports %s; want the loss, the failed attempt, then connected", describeReports(got))
 	}
-	if got[0].Failures != 0 || got[0].Err != nil || got[0].Since.Before(lost) {
+	if got[0].Failures != 0 || got[0].Err != nil || !got[0].LastAttempt.IsZero() || got[0].Since.Before(lost) {
 		t.Fatalf("the loss was reported as %s", describeReports(got[:1]))
 	}
-	if got[1].Failures != 1 || got[1].Since != got[0].Since || got[1].Err == nil || !strings.Contains(got[1].Err.Error(), "system busy") {
+	if got[1].Failures != 1 || got[1].Since != got[0].Since || got[1].LastAttempt.Before(got[1].Since) ||
+		got[1].Err == nil || !strings.Contains(got[1].Err.Error(), "system busy") {
 		t.Fatalf("the failed attempt was reported as %s", describeReports(got[1:2]))
 	}
 
 	lostAgain := time.Now()
 	_ = second.Close()
 	got = reports.waitFor(t, 5)
-	if len(got) != 5 || got[3] == nil || got[4] == nil || got[3].Failures != 0 || got[3].Since.Before(lostAgain) ||
-		got[4].Failures != 1 || got[4].Since != got[3].Since || got[4].Err == nil || !strings.Contains(got[4].Err.Error(), "system busy") {
+	if len(got) != 5 || got[3] == nil || got[4] == nil || got[3].Failures != 0 || !got[3].LastAttempt.IsZero() || got[3].Since.Before(lostAgain) ||
+		got[4].Failures != 1 || got[4].Since != got[3].Since || got[4].LastAttempt.Before(got[4].Since) ||
+		got[4].Err == nil || !strings.Contains(got[4].Err.Error(), "system busy") {
 		t.Fatalf("reports %s; want the second loss, then its failed attempt", describeReports(got))
 	}
 
@@ -291,6 +293,41 @@ func TestALateReconnectedDoesNotEndTheNextRound(t *testing.T) {
 	got = reports.snapshot()
 	if got[len(got)-1] != nil {
 		t.Fatalf("reports %s; want connected once the second round is back", describeReports(got))
+	}
+}
+
+// Each failed attempt is reported with when it failed: the official client
+// reports nothing when it stops trying, so a last attempt that stops
+// advancing is how that shows. The loss, and the wait before the first
+// attempt, have no attempt yet. A first connection after Ready that fails
+// starts the reconnect with that attempt.
+func TestEachFailedAttemptIsReportedWithWhenItFailed(t *testing.T) {
+	reports := &reconnectReports{}
+	w := &connWatch{report: reports.add, refused: make(chan error, 1)}
+	disconnected, reconnecting, failed, _ := clientCallbacks(w)
+
+	disconnected()
+	reconnecting()
+	if got := reports.snapshot(); len(got) != 1 || got[0] == nil || !got[0].LastAttempt.IsZero() {
+		t.Fatalf("the loss was reported as %s; want no attempt yet", describeReports(got))
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		before := time.Now()
+		failed(errors.New("system busy"))
+		got := reports.snapshot()
+		if last := got[len(got)-1]; last == nil || last.Failures != attempt || last.LastAttempt.Before(before) {
+			t.Fatalf("after failed attempt %d made after %s: reports %s", attempt, before.Format(time.RFC3339Nano), describeReports(got))
+		}
+	}
+
+	reports = &reconnectReports{}
+	w = &connWatch{report: reports.add, refused: make(chan error, 1)}
+	_, reconnecting, failed, _ = clientCallbacks(w)
+	failed(errors.New("system busy"))
+	reconnecting()
+	got := reports.snapshot()
+	if len(got) != 1 || got[0] == nil || got[0].Failures != 1 || got[0].LastAttempt.IsZero() || !got[0].LastAttempt.Equal(got[0].Since) {
+		t.Fatalf("the failed first connection was reported as %s; want one failure, since that attempt", describeReports(got))
 	}
 }
 
