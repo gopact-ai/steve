@@ -323,17 +323,22 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.Lease) func(task.Task) string {
 	byArtifact := map[string]string{}
 	held := ""
-	conflicted := func(state, reason string, paths []string) string {
+	conflicted := func(state, reason string, paths []string, marked bool) string {
 		said := "落地冲突"
 		if detail := conflictDetail(state, reason, paths); detail != "" {
 			said += "：" + detail
 		}
 		// Only an apply conflict can be landed again, which the console
-		// offers; a merge conflict is settled, by /resolve or there.
-		if state == artifact.LandApplyConflicted {
+		// offers. A merge conflict git kept a marked tree for is settled
+		// by /resolve or there; one without, only by hand on the machine
+		// the console lists it with.
+		switch {
+		case state == artifact.LandApplyConflicted:
 			return said + "。你不能自己重新落地；用户处理好原因后，可以在控制台「待处理」的「合并冲突」里点「重新落地」"
+		case marked:
+			return said + "。你不能自己解决；用户可以发 " + string(protocol.CommandResolve) + "，或在控制台「待处理」的「合并冲突」里处理"
 		}
-		return said + "。你不能自己解决；用户可以发 " + string(protocol.CommandResolve) + "，或在控制台「待处理」的「合并冲突」里处理"
+		return said + "。你不能自己解决；这次冲突没有留下可编辑的快照，用户只能到主目录所在的机器上直接处理，控制台「待处理」的「合并冲突」里列出了它和那台机器"
 	}
 	if s.artifacts != nil && parent.ProjectID != "" {
 		if p, found, err := s.artifacts.Project(ctx, parent.ProjectID); err == nil && found {
@@ -362,7 +367,7 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 				case artifact.LandCommitted:
 					byArtifact[l.Artifact] = fmt.Sprintf("已落地主目录，%d 个路径", len(l.Paths))
 				case artifact.LandMergeConflicted, artifact.LandApplyConflicted:
-					byArtifact[l.Artifact] = conflicted(l.State, l.ConflictReason(), l.Paths)
+					byArtifact[l.Artifact] = conflicted(l.State, l.ConflictReason(), l.Paths, l.Conflict != "")
 				default:
 					// A pass returns no other landing unless one reached a
 					// conflict it could neither record nor close, which
@@ -374,7 +379,7 @@ func (s *Service) landFor(ctx context.Context, parent task.Task, lease *ledger.L
 			}
 			for _, st := range stuck {
 				if _, reached := byArtifact[st.Artifact]; !reached {
-					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths)
+					byArtifact[st.Artifact] = conflicted(st.State, st.Reason, st.Paths, st.Resolvable())
 				}
 			}
 			if lerr != nil {
