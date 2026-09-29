@@ -24,11 +24,17 @@ type bootstrap struct {
 	status int
 	code   int
 	msg    string
+	// attempts limits how often the official client tries to connect
+	// again after it loses the connection this answer leads to; 0 is no
+	// limit.
+	attempts int
 }
 
 var (
-	bootstrapOK   = bootstrap{status: http.StatusOK}
-	bootstrapBusy = bootstrap{status: http.StatusServiceUnavailable, msg: "system busy"}
+	bootstrapOK = bootstrap{status: http.StatusOK}
+	// bootstrapOKOnce has the official client try once after a loss.
+	bootstrapOKOnce = bootstrap{status: http.StatusOK, attempts: 1}
+	bootstrapBusy   = bootstrap{status: http.StatusServiceUnavailable, msg: "system busy"}
 	// bootstrapRefused is a code the official client does not retry.
 	bootstrapRefused = bootstrap{status: http.StatusOK, code: 403, msg: "application disabled"}
 )
@@ -67,12 +73,16 @@ func (f *longConnFeishu) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.mu.Unlock()
 		body := map[string]any{"code": answer.code, "msg": answer.msg}
-		if answer == bootstrapOK {
+		if answer.status == http.StatusOK && answer.code == 0 {
 			// The official client takes its reconnect policy from here:
-			// retry forever, at once after a loss, a second apart.
+			// retry at once after a loss, a second apart, by default forever.
+			attempts := -1
+			if answer.attempts > 0 {
+				attempts = answer.attempts
+			}
 			body["data"] = map[string]any{
 				"URL":          "ws" + strings.TrimPrefix(f.server.URL, "http") + "/ws?device_id=d&service_id=1",
-				"ClientConfig": map[string]int{"ReconnectCount": -1, "ReconnectInterval": 1, "ReconnectNonce": 0, "PingInterval": 120},
+				"ClientConfig": map[string]int{"ReconnectCount": attempts, "ReconnectInterval": 1, "ReconnectNonce": 0, "PingInterval": 120},
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -181,7 +191,7 @@ func longConnChannel(t *testing.T, f *longConnFeishu) (*Channel, *reconnectRepor
 // it again, with each failed attempt, and withdrawn once it is back.
 // Stopping the channel reports nothing more.
 func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
-	f := newLongConnFeishu(t, bootstrapOK, bootstrapBusy, bootstrapOK)
+	f := newLongConnFeishu(t, bootstrapOK, bootstrapBusy, bootstrapOKOnce, bootstrapBusy)
 	c, reports := longConnChannel(t, f)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -194,7 +204,7 @@ func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
 	}
 	lost := time.Now()
 	lose(t, first)
-	f.next(t)
+	second := f.next(t)
 	got := reports.waitFor(t, 3)
 	if len(got) != 3 || got[0] == nil || got[1] == nil || got[2] != nil {
 		t.Fatalf("reports %s; want the loss, the failed attempt, then connected", describeReports(got))
@@ -206,14 +216,19 @@ func TestLongConnectionLossIsReportedUntilItIsBack(t *testing.T) {
 		t.Fatalf("the failed attempt was reported as %s", describeReports(got[1:2]))
 	}
 
+	// Closing the official client with a connection open races its own
+	// logging, so the channel stops once the client has lost the connection
+	// again and made its one attempt.
+	_ = second.Close()
+	reports.waitFor(t, 5)
 	cancel()
 	select {
 	case <-errCh:
 	case <-time.After(waitDeadline):
 		t.Fatal("Start did not return after cancel")
 	}
-	if after := reports.snapshot(); len(after) != 3 {
-		t.Fatalf("a stopped channel reported %s", describeReports(after[3:]))
+	if after := reports.snapshot(); len(after) != 5 {
+		t.Fatalf("a stopped channel reported %s", describeReports(after[5:]))
 	}
 }
 
@@ -268,5 +283,24 @@ func TestALateReconnectedDoesNotEndTheNextRound(t *testing.T) {
 	got = reports.snapshot()
 	if got[len(got)-1] != nil {
 		t.Fatalf("reports %s; want connected once the second round is back", describeReports(got))
+	}
+}
+
+// Once the channel stops, nothing the official client calls back is
+// reported: the client keeps calling back after it is closed.
+func TestAStoppedWatchReportsNothing(t *testing.T) {
+	reports := &reconnectReports{}
+	w := &connWatch{report: reports.add, refused: make(chan error, 1)}
+	disconnected, reconnecting, failed, reconnected := clientCallbacks(w)
+
+	disconnected()
+	reconnecting()
+	w.stop()
+	failed(errors.New("system busy"))
+	reconnected()
+	disconnected()
+	reconnecting()
+	if got := reports.snapshot(); len(got) != 1 {
+		t.Fatalf("a stopped watch reported %s", describeReports(got[1:]))
 	}
 }
