@@ -207,11 +207,11 @@ func TestUnknownNodeRefusalSaysThisNodeDoesNotKnowTheID(t *testing.T) {
 // A known machine with no upgrade running or just finished has no status
 // to read, whether it was never upgraded from here or the record of its
 // last upgrade expired: both are answered alike, in the language asked
-// for. A backend that upgrades nothing has no upgrade of any machine.
+// for.
 func TestUpgradeStatusWithoutARecordSaysTheMachineHasNoUpgrade(t *testing.T) {
 	svc, _, _, _ := upgradeFixture(t)
 	svc.ttl = 50 * time.Millisecond
-	none := func(svc *Service, node, when string) {
+	none := func(node, when string) {
 		t.Helper()
 		for _, tc := range []struct {
 			locale i18n.Locale
@@ -228,7 +228,7 @@ func TestUpgradeStatusWithoutARecordSaysTheMachineHasNoUpgrade(t *testing.T) {
 			}
 		}
 	}
-	none(svc, "node-1", "never upgraded")
+	none("node-1", "never upgraded")
 	if _, err := svc.Upgrade(t.Context(), "node-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -242,10 +242,41 @@ func TestUpgradeStatusWithoutARecordSaysTheMachineHasNoUpgrade(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	none(svc, "node-1", "record expired")
-	unsupported := New(Options{Backend: &fakeBackend{}})
-	t.Cleanup(func() { _ = unsupported.Close() })
-	none(unsupported, "node-1", "no upgrade backend")
+	none("node-1", "record expired")
+}
+
+// A backend that upgrades no machine refuses an upgrade and the status of
+// one alike, whatever the node ID, in the language asked for: there is no
+// upgrade to start or to read here, and no record is kept of either.
+func TestABackendThatUpgradesNothingRefusesAnUpgradeAndItsStatusAlike(t *testing.T) {
+	svc := New(Options{Backend: &fakeBackend{}})
+	t.Cleanup(func() { _ = svc.Close() })
+	said := func(step *StepError) [5]string {
+		return [5]string{step.Stage, step.Code, step.Message, step.Suggestion, step.Error()}
+	}
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		ctx := i18n.WithLocale(t.Context(), locale)
+		for _, node := range []string{"node-1", "Mac mini"} {
+			_, upgradeErr := svc.Upgrade(ctx, node)
+			_, statusErr := svc.UpgradeStatus(ctx, node)
+			var upgrade, status *StepError
+			if !errors.As(upgradeErr, &upgrade) || !errors.As(statusErr, &status) {
+				t.Fatalf("%s, %s: upgrade = %v, status = %v", locale, node, upgradeErr, statusErr)
+			}
+			if upgrade.Code != "upgrade_unsupported" || upgrade.Message != i18n.New(locale).T(i18n.SSHUpgradeUnsupported) {
+				t.Errorf("%s, %s: upgrade refused as %s: %q", locale, node, upgrade.Code, upgrade.Message)
+			}
+			if said(status) != said(upgrade) {
+				t.Errorf("%s, %s: status refused as %q, upgrade as %q", locale, node, said(status), said(upgrade))
+			}
+		}
+	}
+	svc.mu.Lock()
+	kept := len(svc.plans) + len(svc.upgrades)
+	svc.mu.Unlock()
+	if kept != 0 {
+		t.Fatalf("refusals left %d records", kept)
+	}
 }
 
 // When the machine does not come back on the new build the upgrade is

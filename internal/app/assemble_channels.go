@@ -139,7 +139,7 @@ func reportReconnect(settings channelRuntime, secret string) func(*feishu.Reconn
 			settings.SetReconnect(nil)
 			return
 		}
-		shown := &consoleapi.ChannelReconnect{Since: r.Since, Attempts: r.Failures}
+		shown := &consoleapi.ChannelReconnect{Since: r.Since, Attempts: r.Failures, LastAttemptAt: r.LastAttempt}
 		if r.Err != nil {
 			shown.LastError = adminsvc.RedactChannelError(r.Err, secret).Error()
 		}

@@ -216,6 +216,7 @@ export const settingsPageZh = {
     "settingsPage.waitingOn.unknown": "正在等待当前工作结束",
     "settingsPage.channelStartupFailed": "通道启动失败，请核对应用凭据；保存后重启协调节点服务。",
     "settingsPage.channelStartupRetrying": "通道暂时连不上，正在自动重试：已失败 {attempts} 次，下次尝试于 {time}。无需重启。",
-    "settingsPage.channelReconnecting": "通道自 {time} 起未连上，正在自动重连：已失败 {attempts} 次。连上后自动恢复；若失败次数长时间不再增加，请重启协调节点服务。",
+    "settingsPage.channelReconnecting": "通道自 {time} 起未连上，正在自动重连：已失败 {attempts} 次，最近一次失败：{last}。连上后自动恢复。重连间隔由飞书服务端下发；默认设置下每 2 分钟重试一次，若最近一次失败已超过 5 分钟，说明重连已停止，请重启协调节点服务。",
+    "settingsPage.channelReconnectingFirst": "通道自 {time} 起未连上，正在自动重连，尚无失败的尝试。连上后自动恢复。首次尝试前的随机等待由飞书服务端下发；默认设置下 30 秒内开始首次尝试，若超过 5 分钟仍无结果，请重启协调节点服务。",
     "settingsPage.errorDetails": "错误详情"
 } as const;
