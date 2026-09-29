@@ -30,7 +30,7 @@ export const historyFamilies: HistoryFamily[] = ["machine", "skills", "work", "c
 
 export function familyOf(entry: HistoryEntry): HistoryFamily {
     const kind = bareKind(entry);
-    if (kind === "node.up" || kind === "node.down" || kind === "node.manifest") return "machine";
+    if (kind === "node.up" || kind === "node.down" || kind === "node.manifest" || kind === "node.restart") return "machine";
     if (kind === "node.skills") return "skills";
     if (kind === "landing" || kind === "worktree.sweep" || kind === "task.idle") return "work";
     if (kind.startsWith("content.")) return "content";
@@ -81,6 +81,34 @@ function abilityWord(row: string, tr: Translator): string {
 
 const lines = (value?: string) => (value || "").split("\n").filter(Boolean);
 
+// What a restart of a machine's node process did, as recorded: the
+// sentence for it and how it reads.
+type RestartSentence = "history.lineRestart" | "history.lineRestartStarted" | "history.lineRestartRunning" | "history.lineRestartFailed" | "history.lineRestartStopped";
+const restartOutcomes: Record<string, [RestartSentence, HistoryTone]> = {
+    restarted: ["history.lineRestart", "good"],
+    started: ["history.lineRestartStarted", "good"],
+    running: ["history.lineRestartRunning", "warn"],
+    failed: ["history.lineRestartFailed", "bad"],
+    stopped: ["history.lineRestartStopped", "bad"],
+};
+
+/**
+ * restartLine reads one restart of a machine's node process: what it
+ * did, whether a person or automatic start ran it, which node ran it, and
+ * why it did not bring the machine back when it did not. An outcome this
+ * page does not know keeps `said`, the server's own sentence.
+ */
+export function restartLine(restart: { by?: string; trigger?: string; outcome?: string; reason?: string }, machine: string, tr: Translator, nodeName: (id: string) => string, said = ""): HistoryLine {
+    const outcome = Object.hasOwn(restartOutcomes, restart.outcome || "") ? restartOutcomes[restart.outcome!] : undefined;
+    const trigger = restart.trigger === "automatic" ? tr("history.factRestartAutomatic") : restart.trigger === "manual" ? tr("history.factRestartManual") : "";
+    return {
+        family: "machine", tone: outcome?.[1] ?? "quiet", label: tr("history.kindNodeRestart"),
+        title: outcome ? tr(outcome[0], { machine }) : said,
+        facts: [trigger, restart.by ? tr("history.factRestartBy", { machine: nodeName(restart.by) }) : ""].filter(Boolean),
+        note: restart.reason || undefined,
+    };
+}
+
 /**
  * describeHistory renders one record. `stateWord` translates a ledger
  * state, `nodeName` a node ID; both fall back to what they were given,
@@ -105,6 +133,8 @@ export function describeHistory(entry: HistoryEntry, tr: Translator, nodeName: (
                 title: tr("history.lineNodeDown", { machine }),
                 facts: [], note: reasonWord(d.reason ?? "", machine, tr, nodeName),
             };
+        case "node.restart":
+            return restartLine(d, machine, tr, nodeName, entry.text);
         case "node.skills": {
             if (d.error) {
                 return {

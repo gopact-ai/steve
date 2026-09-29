@@ -253,7 +253,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     </ModalOverlay>;
 }
 
-const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase.registration", link: "ssh.phase.link", upload: "ssh.phase.upload", installation: "ssh.phase.installation", connectivity: "ssh.phase.connectivity" } as const;
+const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase.registration", link: "ssh.phase.link", upload: "ssh.phase.upload", installation: "ssh.phase.installation", restart: "ssh.phase.restart", connectivity: "ssh.phase.connectivity" } as const;
 
 // InstallProgress shows where an installation is among its phases: the
 // ones behind it, the one it is in, and, for one that stopped, where.

@@ -5,6 +5,7 @@ import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
 import { MachineUpgrade } from "@/components/steve/machine-upgrade";
+import { MachineRestart } from "@/components/steve/machine-restart";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useI18n } from "@/providers/locale-provider";
@@ -450,6 +451,7 @@ function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: No
                     { k: tr("fleet.spaceUsed"), v: !h ? tr("fleet.unreported") : !h.space_at ? tr("history.spaceMeasuring") : <span className="tabular-nums">{bytes(h.workspace_bytes || 0, locale)}{h.state_bytes ? ` + ${bytes(h.state_bytes, locale)}` : ""}{h.space_partial ? "+" : ""}</span>, hint: [h?.root, h?.state_root].filter(Boolean).join(" · ") || tr("fleet.spaceUsedHint") },
                     { k: tr("fleet.connection"), v: n.since ? when(n.since, locale) : "—" },
                 ]} />
+                <MachineRestart n={n} onChanged={onChanged} />
                 {enrolling && <NodeAgentEnrollment node={n.name} onClose={() => setEnrolling(false)} onRegistered={onChanged} />}
                 <section className="rounded-lg border border-secondary p-3">{n.role === "hub" ? <Button size="sm" color="secondary" href="/console?setup=agents" onClick={onClose}>{tr("nodeAgents.entry")}</Button> : <Button size="sm" color="secondary" isDisabled={!n.up} onClick={() => setEnrolling(true)}>{tr("nodeAgents.entry")}</Button>}</section>
                 {editing ? (

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { loadLocale, translate } from "../src/lib/i18n.ts";
-import { autoStartLine, restartConfirms, restartHiddenBy, restartOffered, restartPollDelay, restartRunning } from "../src/lib/machine-restart.ts";
+import { autoStartLine, restartConfirms, restartHiddenBy, restartOffered, restartPollDelay, restartRunning, restartShown } from "../src/lib/machine-restart.ts";
 
 await Promise.all([loadLocale("zh"), loadLocale("en")]);
 const zh = (key, params) => translate("zh", key, params);
@@ -36,6 +36,19 @@ test("a running restart is followed every second, a quiet machine every few", ()
     assert.equal(restartPollDelay({}, true), 1000, "a restart asked here is followed before its status says so");
     assert.equal(restartPollDelay({ restart: { status: "needs_attention" }, auto_start: auto({ state: "stopped" }) }, false), 5000);
     assert.equal(restartPollDelay(null, false), 5000);
+});
+
+test("a running restart shows, then the one asked for here until a later one ran, then one that needs attention", () => {
+    const restart = (plan_id, status) => ({ plan_id, status, steps: [] });
+    const asked = restart("restart-1", "connected");
+    assert.deepEqual(restartShown({ restart: restart("restart-2", "installing"), automatic: true }, asked, false), { restart: restart("restart-2", "installing"), automatic: true });
+    assert.deepEqual(restartShown({ restart: restart("restart-1", "installing") }, null, false), { restart: restart("restart-1", "installing"), automatic: false });
+    assert.deepEqual(restartShown({ restart: restart("restart-0", "needs_attention") }, null, true), { automatic: false }, "a restart asked here that has not answered shows nothing yet");
+    assert.deepEqual(restartShown({ restart: asked }, asked, false), { restart: asked, automatic: false });
+    assert.deepEqual(restartShown({}, asked, false), { restart: asked, automatic: false });
+    assert.deepEqual(restartShown({ restart: restart("restart-2", "connected"), automatic: true }, asked, false), { automatic: false }, "a later restart that brought the machine back replaces it");
+    assert.deepEqual(restartShown({ restart: restart("restart-2", "needs_attention"), automatic: true }, asked, false), { restart: restart("restart-2", "needs_attention"), automatic: true });
+    assert.deepEqual(restartShown({ restart: restart("restart-2", "connected") }, null, false), { automatic: false }, "a settled restart that brought the machine back is its last restart");
 });
 
 test("automatic start says what it watches for, what it is doing, and how many starts it made", () => {

@@ -17,7 +17,7 @@ const page = await context.newPage(); page.setDefaultTimeout(6000);
 const at = new Date(Date.now() - 3 * 60_000).toISOString();
 const phases = ["preflight", "restart", "connectivity"];
 const log = [{ at, stream: "steve", text: "Stopping peer process 4242." }];
-const running = (automatic = false) => ({ restart: { plan_id: "restart-1", name: "", node_id: "", registered: true, connected: false, status: "installing", phase: "restart", phases, steps: [], log }, automatic });
+const running = (automatic = false, plan = "restart-1") => ({ restart: { plan_id: plan, name: "", node_id: "", registered: true, connected: false, status: "installing", phase: "restart", phases, steps: [], log }, automatic });
 const restarted = { plan_id: "restart-1", name: "", node_id: "node-build", registered: true, connected: true, status: "connected", phase: "connectivity", phases, log,
     steps: [{ id: "restart", status: "ready", message: "节点进程已重新启动" }, { id: "connectivity", status: "ready", message: "节点进程已重启，机器已回到集群" }] };
 const nodes = [
@@ -97,9 +97,9 @@ try {
     assert.deepEqual(f.posts, []);
     console.log("PASS an online machine asks for confirmation and says what a restart interrupts");
 
-    f.hold = true; f.status["node-build"] = { ...f.status["node-build"], ...running() };
     const states = f.states;
     await restart.click();
+    f.hold = true; f.status["node-build"] = { ...f.status["node-build"], ...running() };
     await drawer.getByRole("button", { name: "确认重启", exact: true }).click();
     await waitFor(() => f.posts.length === 1, "one restart");
     await drawer.getByText("重启进度", { exact: true }).waitFor();
@@ -129,18 +129,17 @@ try {
     await waitFor(() => f.posts.length === 3, "an offline machine is restarted at once");
     assert.equal(await drawer.getByText(/重启会中断它上面正在运行的执行/).count(), 0, "an offline machine asks no confirmation");
     await drawer.getByText("节点进程已启动，机器已回到集群", { exact: true }).waitFor();
-    await close(drawer);
     console.log("PASS an offline machine is restarted at once, and a stopped automatic start says why and how it resumes");
 
-    f.status["node-gpu"] = { ...running(true), auto_start: { state: "attempting", attempts: 1, limit: 5, last_at: at } };
-    drawer = await open("gpu-node");
-    await drawer.getByText("正在自动启动（第 2/5 次）", { exact: true }).waitFor();
+    f.status["node-gpu"] = { ...running(true, "restart-2"), auto_start: { state: "attempting", attempts: 1, limit: 5, last_at: at } };
+    await drawer.getByText("正在自动启动（第 2/5 次）", { exact: true }).waitFor({ timeout: 8000 });
     await drawer.getByText("自动拉起进度", { exact: true }).waitFor();
     await drawer.getByText("第 2/3 步 · 重启节点进程", { exact: true }).waitFor();
     assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), true, "a machine being started automatically is not restarted by hand meanwhile");
-    f.status["node-gpu"] = { restart: f.result["node-gpu"], automatic: true, auto_start: { state: "watching", attempts: 1, limit: 5 } };
+    f.status["node-gpu"] = { restart: { ...f.result["node-gpu"], plan_id: "restart-2" }, automatic: true, auto_start: { state: "watching", attempts: 1, limit: 5 } };
     await drawer.getByText("已自动启动，等待机器稳定在线（第 1/5 次）", { exact: true }).waitFor();
     assert.equal(await drawer.getByRole("button", { name: "重启节点", exact: true }).isDisabled(), false);
+    assert.equal(await drawer.getByText("节点进程已启动，机器已回到集群", { exact: true }).count(), 0, "a restart asked here is not shown once a later one ran");
     await close(drawer);
     assert.deepEqual(f.errors, []);
     console.log("PASS an automatic start shows as it runs and once the machine is back");

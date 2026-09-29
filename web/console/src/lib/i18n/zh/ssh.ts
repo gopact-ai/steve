@@ -130,6 +130,7 @@ export const sshZh = {
     "ssh.phase.link": "建立 SSH 隧道",
     "ssh.phase.upload": "上传节点程序",
     "ssh.phase.installation": "执行安装",
+    "ssh.phase.restart": "重启节点进程",
     "ssh.phase.connectivity": "等待节点连通",
     "ssh.log": "安装日志",
     "ssh.logCount": "安装日志 · {count} 行",
