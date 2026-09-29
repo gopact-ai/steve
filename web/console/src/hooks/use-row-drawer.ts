@@ -6,8 +6,9 @@ import type { Selection } from "react-aria-components";
 // undefined until it has loaded. A row that leaves the data — removed on
 // another console, from the command line, by a peer — takes its drawer with
 // it for good, so the row comes back closed. Closing a drawer gives focus
-// back to its row, or to the table once the row is gone, so the keyboard
-// carries on from where the drawer was opened.
+// back to its row, so the keyboard carries on from where the drawer was
+// opened. A row that left the data is still in the table when its drawer
+// closes, and the table hands its focus to a row beside it as it takes it out.
 export function useRowDrawer(rows: readonly string[] | undefined) {
     const [opened, setOpened] = useState<string | null>(null);
     if (opened !== null && rows !== undefined && !rows.includes(opened)) setOpened(null);
@@ -20,8 +21,7 @@ export function useRowDrawer(rows: readonly string[] | undefined) {
         const closed = last.current;
         last.current = opened;
         if (opened !== null || closed === null || document.activeElement !== document.body) return;
-        const row = table.current?.querySelector<HTMLElement>(`:scope > tbody > [data-key="${CSS.escape(closed)}"]`);
-        (row ?? table.current)?.focus({ preventScroll: true });
+        table.current?.querySelector<HTMLElement>(`:scope > tbody > [data-key="${CSS.escape(closed)}"]`)?.focus({ preventScroll: true });
     }, [opened]);
     return {
         opened,
