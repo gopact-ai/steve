@@ -17,6 +17,8 @@ func Live(int) (bool, error) { return false, ErrUnsupported }
 // Kill sends SIGKILL to every process in a group.
 func Kill(int) error { return ErrUnsupported }
 
+func ownGroup() int { return 0 }
+
 // Gone reports whether the kernel finds no process in a group.
 func Gone(int) (bool, error) { return false, ErrUnsupported }
 

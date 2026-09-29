@@ -74,9 +74,9 @@ func NewMark() string {
 // carries the recorded mark. It judges again before every signal. The
 // group is taken for empty only when the kernel finds no process under its
 // id, so a member this process cannot see keeps it unconfirmed. When it
-// cannot show which group runs under the id it returns ErrUnproven, and
-// when members, or a leader not yet reaped, outlive within after being
-// killed, ErrRunning.
+// cannot show which group runs under the id, or this process runs in the
+// group it would signal, it returns ErrUnproven, and when members, or a
+// leader not yet reaped, outlive within after being killed, ErrRunning.
 func Settle(id Identity, ran, here Place, within time.Duration) error {
 	return settle(id, ran, here, within, members)
 }
@@ -105,6 +105,10 @@ func settle(id Identity, ran, here Place, within time.Duration, list func(group 
 		owned, err := recorded(id, list)
 		if err != nil || !owned {
 			return err
+		}
+		if ownGroup() == id.Group {
+			// A kill of the group would end this process with it.
+			return fmt.Errorf("%w: this process runs in it", ErrUnproven)
 		}
 		if time.Now().After(deadline) {
 			return ErrRunning

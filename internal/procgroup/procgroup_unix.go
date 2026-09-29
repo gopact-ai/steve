@@ -17,6 +17,9 @@ func Kill(group int) error {
 	return nil
 }
 
+// ownGroup is the id of the process group this process runs in.
+func ownGroup() int { return unix.Getpgrp() }
+
 // Gone reports whether the kernel finds no process in a group, a zombie
 // included. A process this one may not signal, or cannot see in /proc,
 // still counts, so an empty process list does not show a group is gone.
