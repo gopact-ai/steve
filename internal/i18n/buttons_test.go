@@ -16,7 +16,7 @@ func TestSentencesNameButtonsAsTheyAreLabelled(t *testing.T) {
 		if locale == LocaleEN {
 			table = en
 		}
-		for _, key := range []Key{RetainedAdviceSealOpen, ConsoleRecoveryStopUnfinished, ConsoleRecoveryRepeated} {
+		for _, key := range []Key{RetainedAdviceSealOpen, ConsoleRecoveryRepeated} {
 			if !quotes(table[key], table[ConsoleStopChoice]) {
 				t.Errorf("%s %s = %q, want the stop choice %q quoted", locale, key, table[key], table[ConsoleStopChoice])
 			}

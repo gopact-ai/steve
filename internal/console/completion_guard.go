@@ -29,7 +29,7 @@ func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, cur
 	if err != nil {
 		return fmt.Errorf("read completion console: %w", err)
 	}
-	return checkTaskCompletion(state, ids, conversation, currentExchange, spareQueued)
+	return checkTaskCompletion(tx, state, ids, conversation, currentExchange, spareQueued)
 }
 
 // CompletionRead is the console as read once for several completion checks,
@@ -78,10 +78,15 @@ func (r *CompletionRead) CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]boo
 	if r.err != nil {
 		return fmt.Errorf("read completion console: %w", r.err)
 	}
-	return checkTaskCompletion(r.state, ids, conversation, currentExchange, spareQueued)
+	return checkTaskCompletion(tx, r.state, ids, conversation, currentExchange, spareQueued)
 }
 
-func checkTaskCompletion(state DurableState, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error {
+// An exchange whose stop is requested and only waits to be confirmed, of a
+// task the store has cancelled or paused, is left out of what the
+// conversation holds, with the card it waits on: nothing the owner answers
+// there settles these tasks, and the stop goes on being confirmed after
+// they end.
+func checkTaskCompletion(tx ledger.Reader, state DurableState, ids map[string]bool, conversation, currentExchange string, spareQueued bool) error {
 	for _, question := range state.Questions {
 		if question.State == "pending" && ids[question.TaskID] {
 			return task.ErrCompleteAttention
@@ -94,14 +99,29 @@ func checkTaskCompletion(state DurableState, ids map[string]bool, conversation, 
 			}
 		}
 	}
+	settling := map[string]bool{}
+	for _, list := range state.Exchanges {
+		for _, exchange := range list {
+			if exchange.Conversation != conversation {
+				continue
+			}
+			ok, err := stopSettling(tx, exchange.State, exchange.RecoveryPending, exchange.RecoveryStopPending, exchange.RecoveryStopTask)
+			if err != nil {
+				return fmt.Errorf("read completion tasks: %w", err)
+			}
+			if ok {
+				settling[exchange.ID] = true
+			}
+		}
+	}
 	for _, question := range state.Questions {
-		if question.State == "pending" && question.Conversation == conversation {
+		if question.State == "pending" && question.Conversation == conversation && !settling[question.ExchangeID] {
 			return fmt.Errorf("%w: question %s: %w", task.ErrCompleteAttention, question.ID, task.ErrCompleteConversation)
 		}
 	}
 	for _, list := range state.Exchanges {
 		for _, exchange := range list {
-			if exchange.Conversation != conversation || exchange.State.Terminal() {
+			if exchange.Conversation != conversation || exchange.State.Terminal() || settling[exchange.ID] {
 				continue
 			}
 			if exchange.State == consoleapi.ExchangeAwaitingUser || exchange.State == consoleapi.ExchangeRecovering {

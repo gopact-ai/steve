@@ -132,7 +132,7 @@ func TestRecoveryNeverAdmittedCanCancelThroughControlOrQuestion(t *testing.T) {
 				s.mu.Lock()
 				target := s.exchanges["console:main"][0]
 				s.mu.Unlock()
-				if err := s.cancelRecovering(t.Context(), target, "owner"); err != nil {
+				if err := s.cancelRecovering(t.Context(), target, "owner", true); err != nil {
 					t.Fatal(err)
 				}
 			} else if _, err := s.SendCommand(t.Context(), "main", "/cancel", "stop-original"); err != nil {

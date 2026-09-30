@@ -75,7 +75,7 @@ func (s *Service) ContinueTask(ctx context.Context, conversation, taskID, key, m
 	case consoleapi.ExchangeDone:
 		return nil
 	case consoleapi.ExchangeQueued:
-		if s.running[e.Conversation] == 0 {
+		if s.busyLocked(e.Conversation) == 0 {
 			if err := s.startNextLocked(e.Conversation); err != nil {
 				return err
 			}

@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -96,10 +97,103 @@ func TestSessionResetGoesAheadOnceTheTaskIsCancelled(t *testing.T) {
 // A schedule's firing rotates the task its last run opened, and a run still
 // waiting on the owner has not ended: the task stays with it.
 func TestScheduleRotationKeepsATaskWhoseContinuationIsUnsettled(t *testing.T) {
-	f := openRetainedRecovery(t, "schedule:1")
+	f := openRetainedRecovery(t, "schedule:1", task.StateRunning)
 	f.awaitOffering(t, "retry")
 	f.coordinator.RotateTask(cancelledRecoveryConversation, "worker", "schedule:1")
 	if tracked, _ := f.tasks.Get(f.taskID); tracked.State != task.StateRunning {
 		t.Fatalf("scheduled task rotated while its run waits on the owner: %s, want running", tracked.State)
+	}
+}
+
+// A turn waiting on the stop of a cancelled task no longer holds the
+// conversation: the task is not the conversation's, and the wait keeps its
+// card whatever else happens there. A reset that ends another task the
+// worker holds goes ahead, and the wait stays as it was.
+func TestSessionResetGoesAheadPastAStopWait(t *testing.T) {
+	f := openCancelledRecovery(t)
+	f.awaitOffering(t, "retry")
+	if _, err := f.cons.SendCommand(t.Context(), cancelledRecoveryConversation, "/tasks cancel "+f.taskID, "cancel-1"); err != nil {
+		t.Fatal(err)
+	}
+	f.awaitOffering(t, "recheck")
+	other, err := f.tasks.Create(task.Task{Transport: "console", Channel: cancelledRecoveryConversation, Member: "worker", Requester: "owner", ProjectID: "p", Goal: "other goal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.keepSession(t)
+	if result, err := f.command(t, "e3", "/new"); err != nil {
+		t.Fatalf("/new past a stop wait = %+v, %v; want it to go ahead", result, err)
+	}
+	if tracked, _ := f.tasks.Get(other.ID); tracked.State != task.StateDone {
+		t.Fatalf("the worker's other task after /new = %s, want done", tracked.State)
+	}
+	if tracked, _ := f.tasks.Get(f.taskID); tracked.State != task.StateCancelled {
+		t.Fatalf("cancelled task after /new = %s, want cancelled", tracked.State)
+	}
+	if e := f.exchange(); e.State != consoleapi.ExchangeAwaitingUser {
+		t.Fatalf("stop wait after /new = %+v, want awaiting user", e)
+	}
+	if _, waiting := f.pendingOffering("recheck"); !waiting {
+		t.Fatalf("/new took down the stop wait: questions %+v", f.cons.Questions(cancelledRecoveryConversation))
+	}
+}
+
+// A turn waiting on the stop of a task set aside does not hold the queue:
+// what the owner sends next runs, and the wait keeps its card.
+func TestQueuedResetRunsPastAStopWait(t *testing.T) {
+	for _, tc := range []struct {
+		state task.State
+		open  func(*testing.T) cancelledRecovery
+	}{
+		{task.StateCancelled, func(t *testing.T) cancelledRecovery {
+			f := openCancelledRecovery(t)
+			f.awaitOffering(t, "retry")
+			if _, err := f.cons.SendCommand(t.Context(), cancelledRecoveryConversation, "/tasks cancel "+f.taskID, "cancel-1"); err != nil {
+				t.Fatal(err)
+			}
+			f.awaitOffering(t, "recheck")
+			return f
+		}},
+		{task.StatePaused, func(t *testing.T) cancelledRecovery {
+			f := openRetainedRecovery(t, "", task.StatePaused)
+			f.awaitStopWait(t)
+			return f
+		}},
+	} {
+		state := tc.state
+		t.Run(string(state), func(t *testing.T) {
+			f := tc.open(t)
+			f.keepSession(t)
+			reset, err := f.cons.Enqueue(t.Context(), cancelledRecoveryConversation, "/new", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+				var got consoleapi.Exchange
+				for _, e := range f.cons.Queue(cancelledRecoveryConversation) {
+					if e.ID == reset.ID {
+						got = e
+					}
+				}
+				if got.State == consoleapi.ExchangeDone {
+					break
+				}
+				if got.State.Terminal() || time.Now().After(deadline) {
+					t.Fatalf("/new queued behind a stop wait = %+v, want done; queue %+v", got, f.cons.Queue(cancelledRecoveryConversation))
+				}
+			}
+			if _, kept := f.sessions.Conversation(cancelledRecoveryConversation).Sessions["worker"]; kept {
+				t.Fatal("/new past a stop wait kept the session")
+			}
+			if e := f.exchange(); e.State != consoleapi.ExchangeAwaitingUser {
+				t.Fatalf("stop wait after /new = %+v, want awaiting user", e)
+			}
+			if _, waiting := f.pendingOffering("recheck"); !waiting {
+				t.Fatalf("/new took down the stop wait: questions %+v", f.cons.Questions(cancelledRecoveryConversation))
+			}
+			if tracked, _ := f.tasks.Get(f.taskID); tracked.State != state {
+				t.Fatalf("task after /new = %s, want %s", tracked.State, state)
+			}
+		})
 	}
 }

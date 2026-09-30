@@ -158,7 +158,10 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
     useEffect(() => { closeSplitKind("delegation"); }, [conversation, closeSplitKind]);
     // The server owns execution; every tab projects the same durable queue.
     const queue = useMemo(() => exchanges.filter((e) => e.conversation === conversation && e.state === "queued"), [exchanges, conversation]);
-    const recoveryState = exchanges.find((entry) => entry.conversation === conversation && ["recovering", "awaiting-user"].includes(entry.state))?.state;
+    // Recovery is said of the turn in flight. A turn left waiting only on
+    // the stop of a task set aside lets a newer one run beside it; its card
+    // stays among the questions, and the running line is the newer turn's.
+    const recoveryState = exchanges.find((entry) => entry.conversation === conversation && entry.id === live?.exchangeID && ["recovering", "awaiting-user"].includes(entry.state))?.state;
     const activeConversation = useRef(conversation);
     activeConversation.current = conversation;
     // Quotes ride with the next message wherever it is sent from; they

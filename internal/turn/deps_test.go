@@ -147,9 +147,7 @@ func fillCallbacks(cb Callbacks) Callbacks {
 	if cb.ResumeDispatcher == nil {
 		cb.ResumeDispatcher = func(TaskResume) {}
 	}
-	if cb.AfterCancel == nil {
-		cb.AfterCancel = func(TaskCancel) {}
-	}
+
 	return cb
 }
 

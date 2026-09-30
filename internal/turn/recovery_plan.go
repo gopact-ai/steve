@@ -23,6 +23,8 @@ type RetainedPlan struct {
 	TaskID, Conversation, MessageID, PlanID, RunID string
 	AttemptID, AgentID, NodeID, ProjectID          string
 	Completed                                      bool
+	// TaskState is the plan task's durable state when the plan was found.
+	TaskState task.State
 }
 
 func (c *Coordinator) retainedPlanRuns(ctx context.Context) ([]exec.RunRecord, error) {
@@ -51,7 +53,7 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 		if tracked.Origin != "plan" || tracked.Channel == "" || tracked.AnchorMessage == "" {
 			continue
 		}
-		item := RetainedPlan{TaskID: tracked.ID, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, ProjectID: tracked.ProjectID}
+		item := RetainedPlan{TaskID: tracked.ID, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, ProjectID: tracked.ProjectID, TaskState: tracked.State}
 		if stored, ok := c.plans.ForTask(tracked.ID); ok {
 			item.PlanID = stored.ID
 		}

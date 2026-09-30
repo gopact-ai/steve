@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/filedoc"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 func assembleAdministration(life lifetime, input inputAssembly, boot runtimeAssembly, work executionAssembly, planning plansAssembly, projection readModelAssembly, page consoleAssembly) (administrationAssembly, error) {
@@ -47,7 +49,7 @@ func assembleAdministration(life lifetime, input inputAssembly, boot runtimeAsse
 	if err := admin.ResumeProjectCopies(ctx); err != nil {
 		return nil, fmt.Errorf("resume configured copies: %w", err)
 	}
-	tasks.SetObserver(func(id string) { view.TaskChanged(id) })
+	tasks.SetObserver(taskObserver(tasks, cons, view.TaskChanged))
 	supervisor.Runs().Observe(view)
 	// A turn on a machine the project is not on gives it a directory there
 	// instead of refusing: the project follows the agent that was chosen.
@@ -74,3 +76,12 @@ func (v *administrationValues) WorkspaceAttach() func(ctx context.Context, proje
 func (v *administrationValues) ChannelSettings() channelRuntime { return v.channelSettings }
 
 func (v *administrationValues) Services() *adminsvc.Services { return v.services }
+
+func taskObserver(tasks *task.Store, cons *console.Service, changed func(string)) func(string) {
+	tasks.SetStateObserver(func(_ string, state task.State) {
+		if state == task.StateCancelled || state == task.StatePaused || state == task.StateRunning {
+			cons.TasksSetAside()
+		}
+	})
+	return changed
+}

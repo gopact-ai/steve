@@ -323,9 +323,15 @@ try {
             await execution.getByText(label, { exact: true }).waitFor();
             assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), animation, "Waiting is not active execution");
         }
+        // A turn left waiting only on the stop of a task set aside does not
+        // hold the line, so a newer turn runs beside it. The line in flight
+        // says what that newer turn is doing, not what the older one waits on.
+        const since = new Date(Date.parse(at) - 60000).toISOString();
+        f.queue.push({ id: "stop-wait-turn", conversation: A, input: "Set-aside task", state: "awaiting-user", enqueued_at: since, started_at: since });
         active.state = "running";
         await f.emit({ kind: "console.queue", at: new Date(++queueTime).toISOString() });
         await execution.getByText("正在执行", { exact: true }).waitFor();
+        assert.equal(await execution.evaluate((el) => getComputedStyle(el).animationName), "steve-breathe", "The turn running past a stop wait is active execution");
         // Keep recovery in this active turn. An older queue snapshot from a
         // reconnect/poll must not be raced against an unrelated new test turn.
         const beforeReconnect = { state: f.stateReads, queue: f.queueReads, replies: f.replyReads };

@@ -34,7 +34,6 @@ func TestCoordinatorCallbacksFillEveryField(t *testing.T) {
 			Notifier:         func(turn.TaskNotice) {},
 			Resumer:          func(turn.TaskResume) error { return nil },
 			ResumeDispatcher: func(turn.TaskResume) {},
-			AfterCancel:      func(turn.TaskCancel) {},
 		})
 	value := reflect.ValueOf(got)
 	for i := range value.NumField() {
