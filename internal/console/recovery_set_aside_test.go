@@ -223,6 +223,9 @@ func TestRecoveryStopChoiceUnconfirmedShowsRecheckCard(t *testing.T) {
 	}
 	card := awaitStopWait(t, s)
 	awaitStops(t, &driver.stops)
+	if !driver.explicit.Load() {
+		t.Fatal("owner stop was sent as an automatic check")
+	}
 	if driver.calls.Load() != 1 {
 		t.Fatalf("a task the owner stopped was resumed again: %d resumptions", driver.calls.Load())
 	}
@@ -477,4 +480,22 @@ func TestStopControlStopsTheLineRunningPastAStopWait(t *testing.T) {
 	}
 	release(running)
 	awaitExchange(t, s, "e2")
+}
+
+func TestAutomaticRecoveryCheckKeepsPauseIntent(t *testing.T) {
+	s := impatient(New(&echo{}, "owner", nil))
+	s.EnableRetainedRecovery(t.Context())
+	if err := s.Persist(recoveryDocument()); err != nil {
+		t.Fatal(err)
+	}
+	driver := newCancelledTaskDriver()
+	driver.setAside(task.StatePaused, "task-1")
+	if err := s.RecoverChats(t.Context(), driver); err != nil {
+		t.Fatal(err)
+	}
+	awaitStopWait(t, s)
+	awaitStops(t, &driver.stops)
+	if driver.explicit.Load() {
+		t.Fatal("automatic stop check was sent as an owner cancellation")
+	}
 }

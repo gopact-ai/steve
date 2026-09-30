@@ -684,6 +684,7 @@ func TestHistoricalStopDoesNotInferAnUnrelatedRecoveryTarget(t *testing.T) {
 type cancelledTaskDriver struct {
 	*recoveryDriver
 	exchange  string
+	explicit  atomic.Bool
 	stops     atomic.Int32
 	confirmed atomic.Bool
 
@@ -738,6 +739,9 @@ func cancelTasks(s *Service, d *cancelledTaskDriver, ids ...string) {
 }
 
 func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
+	if cancel {
+		d.explicit.Store(true)
+	}
 	d.stops.Add(1)
 	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != AnchorMark+d.exchange || req.SenderOpenID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
