@@ -11,6 +11,8 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -136,5 +138,30 @@ func TestForceStopClassifiedFailureDoesNotFallBackToAbort(t *testing.T) {
 	got, _ := s.attempts.Get(t.Context(), records[0].ID)
 	if len(sessions.killed) != 1 || len(sessions.aborted) != 0 || got.ForceStop.Level != "exhausted" || !got.Unsettled {
 		t.Fatalf("unproven stop: %+v kill=%v abort=%v", got.ForceStop, sessions.killed, sessions.aborted)
+	}
+}
+
+func TestForceStopReachesOriginalNodeAndLostOpen(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mockagent")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprint(pending), func(t *testing.T) {
+			f := newStopRegistryFixture(t, bin, pending)
+			f.stops.sessions = f.sessions.manager
+			f.owner.Finish(harness.ErrStopUnconfirmed)
+			if _, err := f.attempts.RequestForceStop(f.ctx, f.record.ID, "owner"); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.stops.Reconcile(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			got, err := f.attempts.Get(f.ctx, f.record.ID)
+			if err != nil || got.ForceStop.Level != "confirmed" || !got.StopProjected || got.Unsettled {
+				t.Fatalf("force stop not confirmed: %+v %v", got, err)
+			}
+			f.requireResolved(t)
+		})
 	}
 }

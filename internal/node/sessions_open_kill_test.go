@@ -131,3 +131,61 @@ func TestOpenKillWinsAgainstAlreadyAuthorizedDelayedOpen(t *testing.T) {
 		t.Fatal("previously authorized open created an agent after cancellation")
 	}
 }
+
+func TestOpenKillDoesNotConfirmARefusedTombstone(t *testing.T) {
+	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	records, err := s.sessions.recordsStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := records.db.Exec(`CREATE TRIGGER reject_tombstone BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'write refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	req := nodeSessionRequest("kill")
+	req.CommandID, req.Harness = "original/open", "mock"
+	state, err := s.sessions.Do(t.Context(), "cluster-1", req)
+	if err == nil || state.ProcessStopped {
+		t.Fatalf("refused tombstone confirmed: %+v %v", state, err)
+	}
+	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
+	_, found, err := records.read(id, "")
+	if err != nil || found {
+		t.Fatalf("refused tombstone survived: %v %v", found, err)
+	}
+}
+
+func TestOpenKillRejectsUntrustedExecutionClaims(t *testing.T) {
+	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	for _, which := range []string{"principal", "cluster", "attempt", "node", "command", "harness"} {
+		t.Run(which, func(t *testing.T) {
+			req := nodeSessionRequest("kill")
+			req.CommandID, req.Harness = "original/open", "mock"
+			principal := "cluster-1"
+			switch which {
+			case "principal":
+				principal = "outsider"
+			case "cluster":
+				req.Authority.ClusterID = "other"
+			case "attempt":
+				req.Binding.AttemptID = "other"
+			case "node":
+				req.Binding.NodeID = "other"
+			case "command":
+				req.CommandID = ""
+			case "harness":
+				req.Harness = ""
+			}
+			if state, err := s.sessions.Do(t.Context(), principal, req); err == nil || state.ProcessStopped {
+				t.Fatalf("invalid %s confirmed: %+v %v", which, state, err)
+			}
+		})
+	}
+}
