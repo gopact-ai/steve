@@ -872,9 +872,8 @@ func TestCancelledTaskTurnsItsRecoveryIntoConfirmingTheStop(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		cancelTasks(s, driver, "task-1")
 		awaitOffer(t, s, "recheck")
-		if driver.stops.Load() == 0 {
-			t.Fatal("the stop of the cancelled task was not attempted")
-		}
+		// The card can appear before the background stop reaches the driver.
+		awaitStops(t, &driver.stops)
 	})
 	t.Run("cancelled while still running", func(t *testing.T) {
 		h := &queueHandler{started: make(chan *queueCall, 1)}
