@@ -164,7 +164,7 @@ type stoppablePlanDriver struct {
 	stops   atomic.Int32
 }
 
-func (d *stoppablePlanDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
+func (d *stoppablePlanDriver) StopRetainedTask(_ context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
 	d.stops.Add(1)
 	if id != "plan-task" || req.ConversationID != "console:main" || req.MessageID != "web-e1" {
 		return turn.Result{}, errors.New("stop targeted another execution")
@@ -269,7 +269,7 @@ func (d *storedTaskDriver) ResumeRetainedChat(context.Context, string, turn.Requ
 	return turn.Result{}, &agentexec.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "The original machine is away.", Choices: []view.Choice{{Value: "retry", Label: "Retry"}}}}
 }
 
-func (d *storedTaskDriver) StopRetainedTask(ctx context.Context, id string, req turn.Request) (turn.Result, error) {
+func (d *storedTaskDriver) StopRetainedTask(ctx context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
 	d.stops.Add(1)
 	if id != d.id || req.ConversationID != "console:main" || req.MessageID != "web-e1" {
 		return turn.Result{}, errors.New("stop targeted another execution")

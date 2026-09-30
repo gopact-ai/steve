@@ -240,3 +240,21 @@ func TestParseTaskArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestResumeStopRefusalIsExplainedAndKeepsTheTaskPaused(t *testing.T) {
+	c, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) { cb.Resumer = func(TaskResume) error { return ErrResumeAwaitsStop } }))
+	if _, err := handle(c, t.Context(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.SetAside("1", task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Handle(t.Context(), Request{ConversationID: "chat", MessageID: "resume-control", Input: "/tasks resume 1"})
+	var user UserError
+	if !errors.As(err, &user) || !strings.Contains(result.Text, "/tasks resume 1") {
+		t.Fatalf("stop refusal is not actionable: %q, %v", result.Text, err)
+	}
+	if tracked, _ := tasks.Get("1"); tracked.State != task.StatePaused {
+		t.Fatalf("refused resume left task %s", tracked.State)
+	}
+}

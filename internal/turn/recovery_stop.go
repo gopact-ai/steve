@@ -13,7 +13,7 @@ import (
 // children. No active turn or currently selected Agent is needed to identify it.
 // A task the owner paused stays paused, to be picked back up later; any
 // other is cancelled.
-func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req Request) (Result, error) {
+func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req Request, cancel bool) (Result, error) {
 	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()

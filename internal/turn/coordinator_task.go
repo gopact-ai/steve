@@ -391,6 +391,10 @@ type TaskCancel struct {
 	Tasks     []string
 }
 
+// ErrResumeAwaitsStop is what a channel's Resumer returns for a task whose
+// earlier execution was asked to stop and has not confirmed it yet.
+var ErrResumeAwaitsStop = errors.New("the task's earlier execution has not confirmed its stop")
+
 // noteActivity records that this conversation just heard from a person. The
 // question the reminder has to answer is "did they walk away?", and the only
 // evidence Steve has is whether anything arrived while the turn was running.

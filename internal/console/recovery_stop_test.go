@@ -25,7 +25,7 @@ type stoppingRecoveryDriver struct {
 	stopHook func()
 }
 
-func (d *stoppingRecoveryDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
+func (d *stoppingRecoveryDriver) StopRetainedTask(_ context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
 	d.stops.Add(1)
 	if d.stopHook != nil {
 		d.once.Do(d.stopHook)
@@ -737,7 +737,7 @@ func cancelTasks(s *Service, d *cancelledTaskDriver, ids ...string) {
 	s.TasksCancelled()
 }
 
-func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
+func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
 	d.stops.Add(1)
 	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != AnchorMark+d.exchange || req.SenderOpenID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
@@ -988,6 +988,8 @@ func TestCancelledTaskStopIsRecordedBeforeItIsTried(t *testing.T) {
 func TestRecoveryQuestionWithdrawnBeforeItIsPut(t *testing.T) {
 	for _, why := range []string{"task cancelled", "original back"} {
 		t.Run(why, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
 			s := impatient(New(&echo{}, "owner", nil))
 			e := &queuedExchange{Exchange: Exchange{ID: "e1", Conversation: "console:main", State: consoleapi.ExchangeAwaitingUser}}
 			var driver RetainedChatDriver
@@ -1003,7 +1005,7 @@ func TestRecoveryQuestionWithdrawnBeforeItIsPut(t *testing.T) {
 				back.reachable.Store(true)
 				driver = back
 			}
-			r := &exchangeRecovery{s: s, ctx: t.Context(), e: e, exchange: e.Exchange, driver: driver, cancels: cancels}
+			r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: e.Exchange, driver: driver, cancels: cancels}
 			identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: "console:main", ExchangeID: "e1", TaskID: "task-1", AttemptID: "attempt-1"}}
 			// The watch settles the question before it is put to the owner.
 			put := func(ctx context.Context, binding consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {

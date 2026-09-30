@@ -18,7 +18,7 @@ import (
 )
 
 type retainedStopDriver interface {
-	StopRetainedTask(context.Context, string, turn.Request) (turn.Result, error)
+	StopRetainedTask(context.Context, string, turn.Request, bool) (turn.Result, error)
 }
 
 // stopRequested is what an exchange waits on once a stop of its original
@@ -129,7 +129,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 		return turn.Result{}, true, err
 	}
 	s.mu.Unlock()
-	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: control.Locale})
+	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: control.Locale}, true)
 	if err != nil {
 		s.mu.Lock()
 		target.RecoveryStopPending = err.Error()
@@ -212,7 +212,7 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 		return saveErr
 	}
 	s.mu.Unlock()
-	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: original.Locale})
+	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: original.Locale}, false)
 	if err != nil {
 		s.mu.Lock()
 		target.RecoveryStopPending = err.Error()

@@ -21,14 +21,14 @@ func TestStopRetainedTaskRequiresPhysicalSettlementAndOriginalIdentity(t *testin
 	} {
 		wrong := req
 		change(&wrong)
-		if _, err := c.StopRetainedTask(t.Context(), r.TaskID, wrong); err == nil {
+		if _, err := c.StopRetainedTask(t.Context(), r.TaskID, wrong, true); err == nil {
 			t.Fatal("stop with another identity accepted")
 		}
 		if tracked, _ := c.tasks.Get(r.TaskID); tracked.State == task.StateCancelled {
 			t.Fatal("invalid stop revoked task")
 		}
 	}
-	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req); !errors.Is(err, harness.ErrStopUnconfirmed) {
+	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req, true); !errors.Is(err, harness.ErrStopUnconfirmed) {
 		t.Fatalf("missing native stop receipt reported success: %v", err)
 	}
 	if tracked, _ := c.tasks.Get(r.TaskID); tracked.State != task.StateCancelled {
@@ -40,7 +40,7 @@ func TestStopRetainedTaskRequiresPhysicalSettlementAndOriginalIdentity(t *testin
 	if _, err := c.attempts.ConfirmStopped(t.Context(), r.ID, "test", "test executor process exited"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req); err != nil {
+	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req, true); err != nil {
 		t.Fatalf("confirmed stop still uncertain: %v", err)
 	}
 }
@@ -53,7 +53,7 @@ func TestStopRetainedTaskKeepsAPausedTaskPaused(t *testing.T) {
 	if _, err := c.tasks.SetAside(r.TaskID, task.StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req); !errors.Is(err, harness.ErrStopUnconfirmed) {
+	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req, false); !errors.Is(err, harness.ErrStopUnconfirmed) {
 		t.Fatalf("missing native stop receipt reported success: %v", err)
 	}
 	if tracked, _ := c.tasks.Get(r.TaskID); tracked.State != task.StatePaused {
@@ -65,7 +65,7 @@ func TestStopRetainedTaskKeepsAPausedTaskPaused(t *testing.T) {
 	if _, err := c.attempts.ConfirmStopped(t.Context(), r.ID, "test", "test executor process exited"); err != nil {
 		t.Fatal(err)
 	}
-	result, err := c.StopRetainedTask(t.Context(), r.TaskID, req)
+	result, err := c.StopRetainedTask(t.Context(), r.TaskID, req, false)
 	if want := c.text.T(i18n.TaskPaused, r.TaskID, protocol.CommandTasks); err != nil || !strings.HasPrefix(result.Text, want) {
 		t.Fatalf("confirmed stop of a paused task = %q, %v; want it to say %q", result.Text, err, want)
 	}
@@ -106,5 +106,30 @@ func TestRetainedPlansCarryTheTaskState(t *testing.T) {
 		if err != nil || len(items) != 1 || items[0].TaskID != identity.TaskID || items[0].TaskState != want {
 			t.Fatalf("retained plans with the task %s = %+v, %v; want the plan carrying that state", want, items, err)
 		}
+	}
+}
+
+func TestOwnerStopCancelsAPausedRetainedTask(t *testing.T) {
+	c, _, _, r, req := retainedChatFixture(t)
+	if _, err := c.tasks.SetAside(r.TaskID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req, true); !errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("stop = %v", err)
+	}
+	if tracked, _ := c.tasks.Get(r.TaskID); tracked.State != task.StateCancelled {
+		t.Fatalf("owner stop left task %s, want cancelled", tracked.State)
+	}
+}
+
+func TestAutomaticStopCannotCancelARunningRetainedTask(t *testing.T) {
+	c, _, _, r, req := retainedChatFixture(t)
+	before, _ := c.tasks.Get(r.TaskID)
+	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req, false); err == nil {
+		t.Fatal("automatic check of a running task succeeded")
+	}
+	after, _ := c.tasks.Get(r.TaskID)
+	if after.State != before.State || after.ExecutionEpoch != before.ExecutionEpoch {
+		t.Fatalf("automatic check changed running task: before %+v, after %+v", before, after)
 	}
 }

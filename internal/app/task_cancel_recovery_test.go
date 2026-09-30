@@ -119,6 +119,7 @@ func openRetainedRecovery(t *testing.T, origin string, left task.State) cancelle
 		t.Fatal(err)
 	}
 	coordinator.Wire(turntest.Callbacks(coordinatorCallbacks(nil, nil, messagingCallbacks{}, channels.Routes())))
+	tasks.SetObserver(taskObserver(tasks, f.cons, func(string) {}))
 	if err := f.cons.RecoverChats(lifetime, coordinator); err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +289,37 @@ func TestRestartIntoASetAsideTaskWaitsOnTheStop(t *testing.T) {
 			}
 			if tracked, _ := f.tasks.Get(f.taskID); tracked.State != tc.state {
 				t.Fatalf("task while its stop is unconfirmed = %s, want %s", tracked.State, tc.state)
+			}
+		})
+	}
+}
+
+func TestEveryTaskSetAsideWakesItsRecovery(t *testing.T) {
+	for _, state := range []task.State{task.StatePaused, task.StateCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			f := openCancelledRecovery(t)
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if _, ok := f.pendingOffering("retry"); ok {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("no recovery question")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if _, err := f.tasks.SetAside(f.taskID, state); err != nil {
+				t.Fatal(err)
+			}
+			deadline = time.Now().Add(2 * time.Second)
+			for {
+				if _, ok := f.pendingOffering("recheck"); ok {
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("%s did not wake recovery", state)
+				}
+				time.Sleep(time.Millisecond)
 			}
 		})
 	}

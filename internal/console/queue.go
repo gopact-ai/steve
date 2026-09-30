@@ -34,6 +34,7 @@ type queuedExchange struct {
 	RecoveryStopTask     string              `json:"recovery_stop_task,omitempty"`
 	ContinuationRejected bool                `json:"continuation_rejected,omitempty"`
 	RecoveryPending      bool                `json:"recovery_pending,omitempty"`
+	stopSetAside         bool
 	recoveryStopping     chan struct{}
 	ctx                  context.Context
 	cancel               context.CancelFunc
