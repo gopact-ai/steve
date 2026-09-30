@@ -21,7 +21,7 @@ func TestSentencesNameButtonsAsTheyAreLabelled(t *testing.T) {
 				t.Errorf("%s %s = %q, want the stop choice %q quoted", locale, key, table[key], table[ConsoleStopChoice])
 			}
 		}
-		for _, key := range []Key{TaskOpenAttempt, TurnWriterUnconfirmed} {
+		for _, key := range []Key{TurnRefusalConsoleRecheck} {
 			if !quotes(table[key], table[RecoveryRetry]) {
 				t.Errorf("%s %s = %q, want the recovery choice %q quoted", locale, key, table[key], table[RecoveryRetry])
 			}

@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"log/slog"
 	"slices"
 )
 
@@ -69,4 +70,25 @@ func (s *Store) SettleOwedClose(owed OwedClose) error {
 	next := cloneData(s.data)
 	next.OwedCloses = slices.DeleteFunc(next.OwedCloses, func(earlier OwedClose) bool { return earlier == owed })
 	return s.replaceLocked(next)
+}
+
+// ForgetOwedClosesOn drops the closes owed by a machine removed from the
+// cluster. No session action can be authorized on that machine any more.
+func (s *Store) ForgetOwedClosesOn(node string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	matches := func(owed OwedClose) bool { return owed.NodeID == node }
+	if !slices.ContainsFunc(s.data.OwedCloses, matches) {
+		return nil
+	}
+	next := cloneData(s.data)
+	removed := slices.DeleteFunc(slices.Clone(s.data.OwedCloses), func(owed OwedClose) bool { return !matches(owed) })
+	next.OwedCloses = slices.DeleteFunc(next.OwedCloses, matches)
+	if err := s.replaceLocked(next); err != nil {
+		return err
+	}
+	for _, owed := range removed {
+		slog.Warn("steve: close owed dropped because its node was removed", "node", node, "session", owed.UpstreamID, "task", owed.TaskID, "attempt", owed.AttemptID)
+	}
+	return nil
 }

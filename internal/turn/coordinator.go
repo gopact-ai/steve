@@ -93,9 +93,14 @@ func (r Request) stage(s view.Stage) {
 }
 
 // UserError is safe to show on Feishu. Gateway replies Text verbatim.
-type UserError struct{ Text string }
+type UserError struct {
+	Text  string
+	Cause error
+}
 
 func (e UserError) Error() string { return e.Text }
+
+func (e UserError) Unwrap() error { return e.Cause }
 
 // Runtime opens and closes the agent sessions turns run in.
 type Runtime interface {

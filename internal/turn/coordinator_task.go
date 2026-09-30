@@ -113,15 +113,15 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		ResumeAdmission: req.ResumeAdmission, TurnID: req.MessageID,
 	})
 	if err := beginErr; err != nil {
+		if errors.Is(err, task.ErrOpenAttempt) {
+			slog.Info(fmt.Sprintf("turn: task %s refused a turn: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
+			return "", UserError{Text: c.openAttemptRefusal(req, tracked.ID)}
+		}
 		if req.ExpectedTask != "" {
 			return "", err
 		}
 		if text, spent := c.budgetStop(tracked); spent {
 			return "", UserError{Text: text}
-		}
-		if errors.Is(err, task.ErrOpenAttempt) {
-			slog.Info(fmt.Sprintf("turn: task %s refused a turn: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
-			return "", UserError{Text: c.text.T(i18n.TaskOpenAttempt, tracked.ID, protocol.CommandTasks)}
 		}
 		return "", fmt.Errorf("admit turn for task %s: %w", tracked.ID, err)
 	}

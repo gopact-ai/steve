@@ -379,6 +379,9 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
 	slog.Info(fmt.Sprintf("steve: machine %s removed", name), "node", name)
+	if a.OwedCloses != nil {
+		saveErr = errors.Join(saveErr, a.OwedCloses.ForgetOwedClosesOn(name))
+	}
 	return saveErr
 }
 

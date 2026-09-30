@@ -124,7 +124,11 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID), Recover: true}, nil
+	text := c.text.T(i18n.Reset, selected.ID)
+	if owed != nil {
+		text = c.text.T(i18n.ResetCloseOwed, selected.ID, owed.NodeID)
+	}
+	return Result{AgentID: selected.ID, Text: text, Recover: true}, nil
 }
 
 // closeSession closes session on its node. A close that certainly never

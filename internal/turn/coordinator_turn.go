@@ -398,7 +398,7 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			}
 			if errors.Is(step.Err, attempt.ErrStopConfirmationRequired) {
 				slog.Warn(fmt.Sprintf("turn: refused behind an execution not confirmed stopped: %v", step.Err), "conversation", req.ConversationID, "agent", selected.ID)
-				return Result{}, UserError{Text: c.text.T(i18n.TurnWriterUnconfirmed, protocol.CommandTasks)}
+				return Result{}, c.unconfirmedWriterRefusal(parent, req, step.Err)
 			}
 			return Result{}, fmt.Errorf("open attempt: %w", step.Err)
 		case lifecycle.StepAdmit:

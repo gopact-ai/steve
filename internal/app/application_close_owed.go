@@ -123,7 +123,12 @@ func (c *applicationOwedCloses) send(parent context.Context, owed state.OwedClos
 	}
 	ctx = execution.WithProbeKey(ctx, execution.Key{TaskID: latest.TaskID, InstanceID: latest.TurnID, AttemptID: latest.ID})
 	if err := c.sessions.CloseSession(ctx, harness.Placement{Node: owed.NodeID, Harness: owed.HarnessID}, owed.UpstreamID); err != nil {
-		outcome.kept = err
+		var refusal interface{ SessionErrorCode() string }
+		if errors.As(err, &refusal) && (refusal.SessionErrorCode() == "conflict" || refusal.SessionErrorCode() == "absent") {
+			outcome.err = c.forget(owed, "the node refused: "+refusal.SessionErrorCode())
+		} else {
+			outcome.kept = err
+		}
 		return outcome
 	}
 	slog.Info(fmt.Sprintf("steve: close owed task=%s attempt=%s node=%s session=%s taken", owed.TaskID, owed.AttemptID, owed.NodeID, owed.UpstreamID),
