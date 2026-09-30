@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -38,5 +39,8 @@ func (f *ForceStopControl) ForceStopAttempt(ctx context.Context, id, requester s
 	_, err = c.tasks.CancelWith(ctx, tracked.ID, func(tx *ledger.Tx, ids []string) error {
 		return c.attempts.RequestForceStopTreeTx(tx, id, tracked.ID, requester, ids)
 	})
+	if errors.Is(err, attempt.ErrForceStopAlreadyStopped) {
+		return nil
+	}
 	return err
 }

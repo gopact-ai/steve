@@ -171,7 +171,11 @@ func (s *Service) LatestForSession(ctx context.Context, node, harness, session s
 	return result, found, err
 }
 
-func latestSessionIdentity(tx *ledger.ReadTx, key string) (string, error) {
+type sessionIdentityReader interface {
+	Query(string, ...any) (*sql.Rows, error)
+}
+
+func latestSessionIdentity(tx sessionIdentityReader, key string) (string, error) {
 	rows, err := tx.Query(sessionIdentitySQL, key)
 	if err != nil {
 		return "", err

@@ -9,6 +9,9 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
+// ErrForceStopAlreadyStopped makes an exactly proved exit an atomic no-op.
+var ErrForceStopAlreadyStopped = errors.New("original process stop is already confirmed")
+
 // RequestForceStopTreeTx is composed with the task owner's atomic cancellation.
 // The caller revokes precisely taskIDs in this transaction. Recording the exit
 // requirement before those revocations become visible fences ordinary command
@@ -26,6 +29,22 @@ func (s *Service) RequestForceStopTreeTx(tx *ledger.Tx, target, taskID, actor st
 	}
 	if err := checkIdentityRows(tx); err != nil {
 		return err
+	}
+	stopped, err := processExitRecordedTx(tx, original)
+	if err != nil {
+		return err
+	}
+	if stopped {
+		return ErrForceStopAlreadyStopped
+	}
+	if original.Session != "" {
+		latest, err := latestSessionIdentity(tx, sessionIdentityKey(original.Node, original.Harness, original.Session))
+		if err != nil {
+			return err
+		}
+		if latest != original.ID {
+			return errors.New("original native session is now bound to another execution")
+		}
 	}
 	raw, err := json.Marshal(taskIDs)
 	if err != nil {
