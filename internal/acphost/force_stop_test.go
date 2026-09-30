@@ -76,3 +76,23 @@ func TestHostKillKeepsUnprovenGroupUnconfirmed(t *testing.T) {
 		t.Fatal("unproven group was confirmed")
 	}
 }
+
+func TestHostKillDoesNotWaitPastContextForHostLock(t *testing.T) {
+	h := New(Config{})
+	h.mu.Lock()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- h.Kill(ctx) }()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("lock wait=%v", err)
+		}
+		h.mu.Unlock()
+	case <-time.After(250 * time.Millisecond):
+		h.mu.Unlock()
+		<-result
+		t.Error("kill waited behind host lock beyond its context")
+	}
+}
