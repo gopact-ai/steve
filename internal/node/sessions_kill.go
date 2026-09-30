@@ -50,7 +50,7 @@ func (one *ownedSession) kill(ctx context.Context, req nodewire.SessionRequest) 
 	if openCancel != nil {
 		openCancel()
 	}
-	if err := host.Kill(ctx); err != nil && !host.AllProcessesStopped() {
+	if err := host.Kill(ctx); err != nil {
 		return one.state(req.CommandID), killFailure(err)
 	}
 	for _, done := range []<-chan struct{}{openDone, runDone} {
