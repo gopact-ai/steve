@@ -36,9 +36,16 @@ func (s *Service) TaskStopReceipt(ctx context.Context, id string) (TaskStopRecei
 // Native evidence, quarantine removal and retirement of the exact old leases
 // commit together; no new task/turn is finished or admitted by this operation.
 func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proof RetainedEvidence) (Record, error) {
+	return s.confirmTaskStopped(ctx, id, actor, proof, 0)
+}
+
+func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proof RetainedEvidence, forceRevision uint64) (Record, error) {
 	current, err := s.Get(ctx, id)
 	if err != nil {
 		return Record{}, err
+	}
+	if forceRevision != 0 && (current.ForceStop == nil || current.ForceStop.Revision != forceRevision) {
+		return Record{}, ErrForceStopChanged
 	}
 	if current.StopEvidence == "task-stop/"+id && taskStopAlreadySettled(current) {
 		return current, nil
@@ -54,6 +61,9 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 	_, err = s.l.Transition(ctx, id, string(current.State), string(to), actor, nil, map[string]string{"stop_evidence": "task-stop/" + id}, func(tx *ledger.Tx, op *ledger.Operation) error {
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
+		}
+		if forceRevision != 0 && (next.ForceStop == nil || next.ForceStop.Revision != forceRevision || next.ForceStop.Level != "kill") {
+			return ErrForceStopChanged
 		}
 		tracked, err := stoppedTaskTx(tx, next)
 		if err != nil {
@@ -87,6 +97,14 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		settled := true
 		next.Unsettled, next.SessionSettled = false, &settled
 		next.StopEvidence = "task-stop/" + next.ID
+		if next.ForceStop != nil {
+			force := *next.ForceStop
+			force.Level = "confirmed"
+			force.Reason = ""
+			force.UnansweredSince = time.Time{}
+			force.UnansweredCount = 0
+			next.ForceStop = &force
+		}
 		next.State, next.Revision = to, op.Revision+1
 		next.Error = i18n.FromContext(ctx).T(i18n.AttemptTaskStopped)
 		if next.EndedAt.IsZero() {

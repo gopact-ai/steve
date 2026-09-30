@@ -2,7 +2,9 @@ package attempt
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"time"
 )
 
@@ -20,12 +22,105 @@ type ForceStop struct {
 
 var ErrForceStopChanged = errors.New("force stop request changed")
 
-func (s *Service) RequestForceStop(context.Context, string, string) (Record, error) {
-	return Record{}, errors.New("force stop unavailable")
+// RequestForceStop records an owner request only for an already revoked
+// native execution. A newer revision fences every older in-flight result.
+func (s *Service) RequestForceStop(ctx context.Context, id, actor string) (Record, error) {
+	if actor == "" {
+		return Record{}, errors.New("force stop requires an actor")
+	}
+	return s.writeForceStop(ctx, id, 0, actor, func(r *Record) error {
+		if !TaskStopOwed(*r) || TaskStopConfirmed(*r) {
+			return errors.New("execution does not owe a native stop")
+		}
+		revision := uint64(1)
+		if r.ForceStop != nil {
+			revision = r.ForceStop.Revision + 1
+		}
+		now := s.now().UTC()
+		r.ForceStop = &ForceStop{Revision: revision, RequestedAt: now, By: actor, Level: "kill", LevelSince: now}
+		r.Unsettled = true
+		return nil
+	})
 }
-func (s *Service) RecordForceStopResult(context.Context, string, uint64, bool, string) (Record, error) {
-	return Record{}, errors.New("force stop unavailable")
+
+var errForceStopUnchanged = errors.New("force stop state is unchanged")
+
+func (s *Service) writeForceStop(ctx context.Context, id string, revision uint64, actor string, change func(*Record) error) (Record, error) {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return Record{}, err
+	}
+	var next Record
+	_, err = s.l.Transition(ctx, id, string(current.State), string(current.State), actor, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		if err := json.Unmarshal(op.Data, &next); err != nil {
+			return err
+		}
+		if revision != 0 && (next.ForceStop == nil || next.ForceStop.Revision != revision || next.ForceStop.Level != "kill") {
+			return ErrForceStopChanged
+		}
+		if _, err := stoppedTaskTx(tx, next); err != nil {
+			return err
+		}
+		if err := change(&next); err != nil {
+			return err
+		}
+		next.Revision = op.Revision + 1
+		return setRecordDataTx(tx, op, next)
+	})
+	if errors.Is(err, errForceStopUnchanged) {
+		return s.Get(ctx, id)
+	}
+	return next, err
 }
-func (s *Service) ConfirmForceStopped(context.Context, string, uint64, RetainedEvidence) (Record, error) {
-	return Record{}, errors.New("force stop unavailable")
+
+// RecordForceStopResult persists only changing evidence. Two consecutive
+// unanswered calls are durable even if the coordinator changes between them.
+func (s *Service) RecordForceStopResult(ctx context.Context, id string, revision uint64, answered bool, code string) (Record, error) {
+	return s.writeForceStop(ctx, id, revision, "force-stop", func(r *Record) error {
+		before := *r.ForceStop
+		next := before
+		now := s.now().UTC()
+		if answered {
+			next.UnansweredSince = time.Time{}
+			next.UnansweredCount = 0
+			switch code {
+			case "stop_running":
+				if now.Sub(next.LevelSince) >= time.Minute {
+					next.Reason = code
+				}
+			case "unavailable":
+				next.Reason = "restart_required"
+			case "invalid":
+				next.Reason = "upgrade_required"
+			case "stop_unproven", "stop_unsupported":
+				next.Reason = code
+			default:
+				next.Reason = "rejected"
+			}
+		} else {
+			if next.UnansweredSince.IsZero() {
+				next.UnansweredSince = now
+			}
+			next.UnansweredCount = min(next.UnansweredCount+1, 2)
+			if next.UnansweredCount >= 2 && now.Sub(next.UnansweredSince) >= 30*time.Second {
+				next.Reason = "restart_required"
+			}
+		}
+		if next.Reason != "" {
+			next.Level = "exhausted"
+			next.ExhaustedAt = now
+		}
+		if next == before {
+			return errForceStopUnchanged
+		}
+		r.ForceStop = &next
+		return nil
+	})
+}
+
+func (s *Service) ConfirmForceStopped(ctx context.Context, id string, revision uint64, proof RetainedEvidence) (Record, error) {
+	if revision == 0 {
+		return Record{}, ErrForceStopChanged
+	}
+	return s.confirmTaskStopped(ctx, id, "force-stop", proof, revision)
 }
