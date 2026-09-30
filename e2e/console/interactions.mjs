@@ -3103,6 +3103,14 @@ checks["force-stop-durable-banner"] = async (f) => {
     await banner.waitFor();
     assert.equal(await banner.getByRole("button", { name: "强制停止", exact: true }).count(), 1);
     await banner.getByRole("button", { name: "强制停止", exact: true }).click();
+    const confirmation = f.page.getByRole("dialog", { name: "确认强制停止任务 #11？", exact: true });
+    await confirmation.waitFor();
+    assert.equal(calls, 0, "opening the confirmation already dispatched a destructive request");
+    await confirmation.getByText(/不能撤销/).waitFor();
+    await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(calls, 0, "cancelling the confirmation dispatched a force stop");
+    await banner.getByRole("button", { name: "强制停止", exact: true }).click();
+    await confirmation.getByRole("button", { name: "确认强制停止", exact: true }).click();
     await eventually(() => calls === 1, "force stop did not reach its API");
     await f.page.reload();
     await banner.getByText("正在强制停止", { exact: true }).waitFor();
@@ -3125,6 +3133,10 @@ checks["force-stop-execution-row"] = async (f) => {
     await f.page.goto(`${app.url}/#/dashboard`); await f.page.reload();
     const row = f.page.getByRole("row").filter({ hasText: "orphan-attempt" });
     await row.getByRole("button", { name: "强制停止", exact: true }).click();
+    const confirmation = f.page.getByRole("dialog", { name: "确认强制停止任务 #22？", exact: true });
+    await confirmation.waitFor();
+    assert.equal(calls, 0, "row force stop skipped confirmation");
+    await confirmation.getByRole("button", { name: "确认强制停止", exact: true }).click();
     await eventually(() => calls === 1, "execution row did not stop its original attempt");
 };
 

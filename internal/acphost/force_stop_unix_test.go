@@ -103,3 +103,29 @@ func TestReapedGroupWithReusedLeaderIsNeverSignalled(t *testing.T) {
 		t.Fatalf("reused identity killed unrelated live group: %+v %v", remains, err)
 	}
 }
+
+func TestUnsupportedLeaderExitDoesNotProveTheProcessGroupStopped(t *testing.T) {
+	group := kernelGroup
+	group.waitExit = func(int) error { return procgroup.ErrUnsupported }
+	group.kill = func(int) error { return procgroup.ErrUnsupported }
+	transport := LocalTransport{Command: "/bin/sh", Args: []string{"-c", "exit 0"}, ProcessDir: t.TempDir(), group: &group}
+	p, err := transport.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	h := New(Config{})
+	h.generation = 1
+	h.processes[1] = p
+	if p.Stopped() || h.ProcessStopped(1) || h.AllProcessesStopped() {
+		t.Fatal("unsupported leader exit was reported as process-group proof")
+	}
+	if len(h.processes) != 1 {
+		t.Fatal("unsupported process record disappeared")
+	}
+	if err := h.Kill(t.Context()); !errors.Is(err, procgroup.ErrUnsupported) {
+		t.Fatalf("kill = %v, want unsupported", err)
+	}
+}

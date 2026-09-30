@@ -41,6 +41,18 @@ func TestStopWaitForceChoiceTargetsTheOriginalAttempt(t *testing.T) {
 	if _, err := s.AnswerQuestion(t.Context(), card.ID, consoleapi.QuestionAnswer{CommandID: "force-original", Decision: "accept", Choice: "force-stop"}); err != nil {
 		t.Fatal(err)
 	}
+	confirm := awaitOffer(t, s, "confirm-force-stop")
+	if confirm.ID == card.ID || confirm.TaskID != items[0].TaskID || confirm.AttemptID != items[0].AttemptID || confirm.AllowFreeText {
+		t.Fatalf("confirmation lost original identity: %+v", confirm)
+	}
+	select {
+	case <-force.calls:
+		t.Fatal("force request sent before explicit confirmation")
+	default:
+	}
+	if _, err := s.AnswerQuestion(t.Context(), confirm.ID, consoleapi.QuestionAnswer{CommandID: "confirm-original", Decision: "accept", Choice: "confirm-force-stop"}); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case id := <-force.calls:
 		if id != items[0].AttemptID || force.owner != "owner" {

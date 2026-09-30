@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -54,6 +55,15 @@ func TestForceStopOwnerDispatchesOnlyNamedAttempt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var body struct {
+			Accepted bool `json:"accepted"`
+		}
+		if token == testToken {
+			if err := json.NewDecoder(res.Body).Decode(&body); err != nil || !body.Accepted {
+				res.Body.Close()
+				t.Fatalf("accepted body=%+v %v", body, err)
+			}
+		}
 		res.Body.Close()
 		want := http.StatusUnauthorized
 		if token == testToken {
@@ -61,6 +71,9 @@ func TestForceStopOwnerDispatchesOnlyNamedAttempt(t *testing.T) {
 		}
 		if res.StatusCode != want {
 			t.Fatalf("status=%d", res.StatusCode)
+		}
+		if token == testToken && res.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("accepted response content type=%q", res.Header.Get("Content-Type"))
 		}
 	}
 	if f.calls != 1 || f.id != "old-attempt" {
