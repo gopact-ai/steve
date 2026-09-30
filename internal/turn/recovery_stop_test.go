@@ -133,3 +133,16 @@ func TestAutomaticStopCannotCancelARunningRetainedTask(t *testing.T) {
 		t.Fatalf("automatic check changed running task: before %+v, after %+v", before, after)
 	}
 }
+
+func TestAutomaticStopCheckDoesNotRevokeTheTaskAgain(t *testing.T) {
+	c, _, _, r, req := retainedChatFixture(t)
+	if _, err := c.tasks.SetAside(r.TaskID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := c.tasks.Get(r.TaskID)
+	_, _ = c.StopRetainedTask(t.Context(), r.TaskID, req, false)
+	after, _ := c.tasks.Get(r.TaskID)
+	if after.ExecutionEpoch != before.ExecutionEpoch {
+		t.Fatalf("checking the stop revoked the task again: epoch %d -> %d", before.ExecutionEpoch, after.ExecutionEpoch)
+	}
+}

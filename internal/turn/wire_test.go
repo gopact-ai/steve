@@ -33,7 +33,7 @@ func TestWireHandsOverEveryCallback(t *testing.T) {
 		TurnPreface: func(context.Context, string) Preface { return Preface{} }})
 	c.Wire(callbacks)
 	if c.supervisor != callbacks.Supervisor || c.gate != callbacks.AgentGate || c.attach == nil || c.afterTurn == nil ||
-		c.turnPreface == nil || c.routes.notify == nil || c.routes.resume == nil || c.routes.dispatch == nil || c.routes.cancel == nil {
+		c.turnPreface == nil || c.routes.notify == nil || c.routes.resume == nil || c.routes.dispatch == nil {
 		t.Fatal("Wire dropped a callback")
 	}
 }

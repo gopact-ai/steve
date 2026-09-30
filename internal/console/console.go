@@ -86,9 +86,10 @@ type Service struct {
 	titler      Titler
 	inspector   Inspector
 
-	mu      sync.Mutex
-	replies map[string][]consoleapi.Reply
-	meta    map[string]Meta
+	stopTasksMu sync.Mutex
+	mu          sync.Mutex
+	replies     map[string][]consoleapi.Reply
+	meta        map[string]Meta
 	// sealed names the conversations being deleted right now; they take
 	// no new work until the delete finishes or gives up.
 	sealed map[string]bool
@@ -986,6 +987,12 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 		return fmt.Errorf("task #%s not resumable: no member", taskID)
 	}
 	s.mu.Lock()
+	for _, e := range s.exchanges[conversation] {
+		if !e.State.Terminal() && e.RecoveryStopPending != "" && e.RecoveryStopTask == taskID {
+			s.mu.Unlock()
+			return turn.ErrResumeAwaitsStop
+		}
+	}
 	existing := s.continuationLocked(conversation, admission.ID)
 	if existing != nil {
 		defer s.mu.Unlock()

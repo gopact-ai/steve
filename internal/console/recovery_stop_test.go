@@ -734,7 +734,7 @@ func (d *cancelledTaskDriver) setAside(state task.State, ids ...string) {
 // records it, then the console is told.
 func cancelTasks(s *Service, d *cancelledTaskDriver, ids ...string) {
 	d.setAside(task.StateCancelled, ids...)
-	s.TasksCancelled()
+	s.TasksSetAside()
 }
 
 func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
@@ -742,7 +742,7 @@ func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req
 	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != AnchorMark+d.exchange || req.SenderOpenID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
 	}
-	if d.state(id) != task.StatePaused {
+	if cancel || d.state(id) != task.StatePaused {
 		d.setAside(task.StateCancelled, id)
 	}
 	if !d.confirmed.Load() {

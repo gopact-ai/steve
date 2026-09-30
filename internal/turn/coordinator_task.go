@@ -381,16 +381,6 @@ type TaskNotice struct {
 	Text         string
 }
 
-// TaskCancel names the tasks a person just cancelled: the one they chose
-// and every task delegated under it. None of them can be resumed any more,
-// so whatever the channel still holds open to resume one — a recovery
-// question offering to retry it — is waiting for an answer that cannot
-// help.
-type TaskCancel struct {
-	Transport string
-	Tasks     []string
-}
-
 // ErrResumeAwaitsStop is what a channel's Resumer returns for a task whose
 // earlier execution was asked to stop and has not confirmed it yet.
 var ErrResumeAwaitsStop = errors.New("the task's earlier execution has not confirmed its stop")

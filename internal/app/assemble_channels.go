@@ -107,14 +107,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 			}
 		})
 	}
-	routes.AfterCancel = func(c turn.TaskCancel) {
-		// Only the page asks a person whether to resume a task; a chat has
-		// no such question for a cancellation to settle.
-		err := routeTask(c.Transport, func() error { cons.TasksCancelled(); return nil }, func() error { return nil })
-		if err != nil {
-			slog.Error("task cancellation not routed", "tasks", c.Tasks, "error", err)
-		}
-	}
+
 	return &channelsValues{channel: channel, routes: routes, startup: channelStartup{
 		owner: cfg.Feishu.OwnerOpenID, home: cfg.Gateway.HomePath, timeout: time.Duration(cfg.Gateway.PromptTimeout),
 	}}, nil
@@ -153,13 +146,12 @@ type channelsAssembly interface {
 	Routes() taskRoutes
 }
 
-// taskRoutes are the coordinator's Notifier, Resumer, ResumeDispatcher and
-// AfterCancel, routed to the channel a task came from.
+// taskRoutes are the coordinator's Notifier, Resumer and ResumeDispatcher,
+// routed to the channel a task came from.
 type taskRoutes struct {
 	Notifier         func(turn.TaskNotice)
 	Resumer          func(turn.TaskResume) error
 	ResumeDispatcher func(turn.TaskResume)
-	AfterCancel      func(turn.TaskCancel)
 }
 
 type channelStartup struct {

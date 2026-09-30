@@ -89,6 +89,7 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 			}
 		}
 	}
+	s.refreshStopTasks(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.recoveryLifetime == nil {
@@ -371,7 +372,7 @@ func (r *exchangeRecovery) observe() bool {
 	// stopped. The task store says so, whoever set the task aside and
 	// whether or not this process was running when they did.
 	if found && lookupErr == nil && setAside(candidate.TaskState) {
-		r.abandon(candidate.TaskID)
+		r.abandon(candidate.TaskID, false)
 		return false
 	}
 	if !found && lookupErr == nil {
@@ -584,7 +585,7 @@ func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity 
 	// the task is cancelled from the task list: asking again whether to
 	// retry would offer a task the stop has just cancelled.
 	if answer.Value == "stop" {
-		r.abandon(identity.binding().TaskID)
+		r.abandon(identity.binding().TaskID, true)
 		return false
 	}
 	// Free-form advice is retained in the question record. Without an

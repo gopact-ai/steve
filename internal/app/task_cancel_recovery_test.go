@@ -324,3 +324,20 @@ func TestEveryTaskSetAsideWakesItsRecovery(t *testing.T) {
 		})
 	}
 }
+
+func TestExplicitStopCancelsThePausedRecovery(t *testing.T) {
+	f := openRetainedRecovery(t, "", task.StatePaused)
+	f.awaitStopWait(t)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		_, _ = f.cons.SendCommand(t.Context(), cancelledRecoveryConversation, "/cancel", "cancel-paused")
+		tracked, _ := f.tasks.Get(f.taskID)
+		if tracked.State == task.StateCancelled {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("explicit stop left task %s", tracked.State)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

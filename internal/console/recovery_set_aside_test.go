@@ -404,7 +404,7 @@ func TestLineMovesWhileTheStopIsTried(t *testing.T) {
 	if _, err := driver.tasks.SetAside(driver.id, task.StateCancelled); err != nil {
 		t.Fatal(err)
 	}
-	s.TasksCancelled()
+	s.TasksSetAside()
 	call := nextCall(t, h)
 	defer release(call)
 	if call.req.Input != "follow-up" {

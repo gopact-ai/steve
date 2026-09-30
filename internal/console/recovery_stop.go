@@ -130,6 +130,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	}
 	s.mu.Unlock()
 	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: control.Locale}, true)
+	s.refreshStopTasks(ctx)
 	if err != nil {
 		s.mu.Lock()
 		target.RecoveryStopPending = err.Error()
@@ -161,7 +162,7 @@ func (s *Service) beginRecoveryStopLocked(target *queuedExchange) (release func(
 // reached from the recovery question instead. It runs beside the recovery
 // worker, never inside it: finishing a stop waits for that worker to
 // release the exchange. It reports what kept the stop from finishing.
-func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, requester string) error {
+func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, requester string, cancel bool) error {
 	s.mu.Lock()
 	if target.RecoveryStop != nil {
 		s.mu.Unlock()
@@ -212,7 +213,8 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 		return saveErr
 	}
 	s.mu.Unlock()
-	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: original.Locale}, false)
+	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: original.Locale}, cancel)
+	s.refreshStopTasks(ctx)
 	if err != nil {
 		s.mu.Lock()
 		target.RecoveryStopPending = err.Error()
@@ -267,11 +269,14 @@ func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange
 	}
 }
 
-// TasksCancelled wakes the recoveries still in progress because a person
-// cancelled tasks, so one bound to such a task looks at once instead of at
+// TasksSetAside refreshes stop waits and wakes recoveries after a task
+// changes state, so one bound to such a task looks at once instead of at
 // its next pass. What it does then goes by the task store, the same as for
 // a task set aside by anything else: the wake is only a nudge to look.
-func (s *Service) TasksCancelled() {
+func (s *Service) TasksSetAside() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.refreshStopTasks(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, list := range s.exchanges {
@@ -294,7 +299,7 @@ func (s *Service) TasksCancelled() {
 // at once and, until it is confirmed, holds the exchange on the card that
 // says the stop is being confirmed; a stop already confirmed is simply
 // delivered.
-func (r *exchangeRecovery) abandon(taskID string) {
+func (r *exchangeRecovery) abandon(taskID string, cancel bool) {
 	r.stream.Close()
 	r.s.mu.Lock()
 	if r.e.RecoveryStop == nil && r.e.RecoveryStopPending == "" {
@@ -306,8 +311,9 @@ func (r *exchangeRecovery) abandon(taskID string) {
 			return
 		}
 	}
+	r.e.stopSetAside = r.s.book != nil && !cancel
 	r.s.mu.Unlock()
-	r.s.waitRecoveryStop(r.e, true)
+	r.s.waitRecoveryStopIntent(r.e, true, cancel)
 }
 
 // stopSettling reports whether an exchange only waits on the stop of a task
@@ -328,24 +334,11 @@ func stopSettling(tx ledger.Reader, state consoleapi.ExchangeState, recoveryPend
 	return setAside(tracked.State), nil
 }
 
-// stopSettlingLocked is stopSettling for e as the task store has it now. A
-// console without a ledger cannot tell, so its exchanges hold the line as
-// before, and so does one whose task cannot be read.
+// stopSettlingLocked uses the last task observation made outside the console
+// lock. Until that observation exists, the exchange conservatively holds the line.
 func (s *Service) stopSettlingLocked(e *queuedExchange) bool {
-	if s.book == nil || e.RecoveryStopPending == "" || e.RecoveryStopTask == "" {
-		return false
-	}
-	var settling bool
-	err := s.book.Read(context.Background(), func(tx *ledger.ReadTx) error {
-		var err error
-		settling, err = stopSettling(tx, e.State, e.RecoveryPending, e.RecoveryStopPending, e.RecoveryStopTask)
-		return err
-	})
-	if err != nil {
-		slog.Error("console: read the task of a pending stop", "conversation", e.Conversation, "exchange", e.ID, "task", e.RecoveryStopTask, "error", err)
-		return false
-	}
-	return settling
+	return e.stopSetAside && !e.RecoveryPending && e.RecoveryStopPending != "" && e.RecoveryStopTask != "" &&
+		(e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser)
 }
 
 // A parent observer can finish before the stop of one of its children is
@@ -356,6 +349,10 @@ func (s *Service) stopSettlingLocked(e *queuedExchange) bool {
 // behind the console confirmed it while nobody was watching. checkNow makes
 // the first check at once instead of a cadence later.
 func (s *Service) waitRecoveryStop(e *queuedExchange, checkNow bool) {
+	s.waitRecoveryStopIntent(e, checkNow, false)
+}
+
+func (s *Service) waitRecoveryStopIntent(e *queuedExchange, checkNow, cancel bool) {
 	s.mu.Lock()
 	if e.RecoveryStop != nil {
 		reply := *e.RecoveryStop
@@ -385,7 +382,7 @@ func (s *Service) waitRecoveryStop(e *queuedExchange, checkNow bool) {
 		return
 	}
 	if checkNow {
-		w.check()
+		w.checkIntent(cancel)
 	}
 	w.run()
 }
@@ -463,7 +460,9 @@ func (w *recoveryStopWait) poll() func() {
 // check runs one stop pass unless one is already running. The pass runs
 // beside this wait because confirming a stop waits for the wait to release
 // the exchange.
-func (w *recoveryStopWait) check() {
+func (w *recoveryStopWait) check() { w.checkIntent(false) }
+
+func (w *recoveryStopWait) checkIntent(cancel bool) {
 	w.mu.Lock()
 	if w.busy || w.ctx.Err() != nil {
 		w.mu.Unlock()
@@ -475,7 +474,7 @@ func (w *recoveryStopWait) check() {
 	w.s.workers.Add(1)
 	go func() {
 		defer w.s.workers.Done()
-		err := w.s.cancelRecovering(ctx, w.e, w.requester)
+		err := w.s.cancelRecovering(ctx, w.e, w.requester, cancel)
 		// The pass may have been what set the task aside, which lets the
 		// line move past this exchange.
 		w.s.mu.Lock()

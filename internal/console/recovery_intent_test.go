@@ -17,6 +17,7 @@ func TestResumeWaitsUntilTheOriginalStopIsConfirmed(t *testing.T) {
 	s, h, driver := openStopWaitConsole(t, task.StatePaused, true)
 	awaitStopWait(t, s)
 	call := nextCall(t, h)
+	defer release(call)
 	tracked, _ := driver.tasks.Get(driver.id)
 	admission := task.ResumeAdmission{ID: "resume-check", TaskID: tracked.ID, Epoch: tracked.ExecutionEpoch + 1}
 	revived := false
@@ -36,7 +37,7 @@ func TestResumeWaitsUntilTheOriginalStopIsConfirmed(t *testing.T) {
 	if err := s.Resume(t.Context(), "main", tracked.ID, "worker", "continue", "continue", admission, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	call.finish <- nil
+	release(call)
 }
 
 func TestSettlingQueueDoesNotReadTheLedgerUnderItsLock(t *testing.T) {

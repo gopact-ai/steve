@@ -78,5 +78,10 @@ func (v *administrationValues) ChannelSettings() channelRuntime { return v.chann
 func (v *administrationValues) Services() *adminsvc.Services { return v.services }
 
 func taskObserver(tasks *task.Store, cons *console.Service, changed func(string)) func(string) {
-	return func(id string) { changed(id) }
+	return func(id string) {
+		changed(id)
+		if tracked, ok := tasks.Get(id); ok && (tracked.State == task.StateCancelled || tracked.State == task.StatePaused || tracked.State == task.StateRunning) {
+			cons.TasksSetAside()
+		}
+	}
 }

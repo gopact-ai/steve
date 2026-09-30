@@ -6,6 +6,7 @@ package turn
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -192,14 +193,9 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 
 // taskSetAside pauses or cancels, in that order: move the record first so a
 // turn that happens to finish during the stop cannot flip the task back to
-// running, then stop the turn that is actually burning time. A cancellation
-// is then told to the task's channel, which may still be asking whether to
-// resume one of the tasks it moved.
+// running, then stop the turn that is actually burning time.
 func (c commands) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
-	result, ids, _ := c.setTaskAside(ctx, title, tracked, to, false)
-	if to == task.StateCancelled && len(ids) > 0 {
-		c.routes.cancel(TaskCancel{Transport: tracked.Transport, Tasks: ids})
-	}
+	result, _, _ := c.setTaskAside(ctx, title, tracked, to, false)
 	return result
 }
 
@@ -280,6 +276,9 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 		return result, err
 	}
 	if err := c.routes.resume(resume); err != nil {
+		if errors.Is(err, ErrResumeAwaitsStop) {
+			return result, UserError{Text: c.text.T(i18n.TaskResumeAwaitsStop, tracked.ID, c.text.T(i18n.ConsoleStopRecheckNow), protocol.CommandTasks)}
+		}
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {
