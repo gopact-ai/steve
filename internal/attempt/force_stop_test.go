@@ -94,7 +94,7 @@ func TestForceStopAnsweredResetsUnansweredAndBoundsRunning(t *testing.T) {
 	}
 	now.t = now.t.Add(32 * time.Second)
 	r, err = s.RecordForceStopResult(t.Context(), r.ID, 1, true, "stop_running")
-	if err != nil || r.ForceStop.Level != "exhausted" || r.ForceStop.Reason != "stop_running" {
+	if err != nil || r.ForceStop.Level != "exhausted" || r.ForceStop.Reason != "stop_running" || !r.ForceStop.LevelSince.Equal(now.t) {
 		t.Fatalf("running limit=%+v %v", r.ForceStop, err)
 	}
 }
