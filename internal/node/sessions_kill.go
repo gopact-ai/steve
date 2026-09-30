@@ -90,6 +90,13 @@ func (s *SessionService) killRecorded(req nodewire.SessionRequest) (nodewire.Ses
 			return record.State, killFailure(err)
 		}
 	}
+	if one.record.State.State != nodewire.SessionClosed {
+		next := one.copyLocked()
+		next.State.State = nodewire.SessionClosed
+		if err := one.commitLocked(next); err != nil {
+			return nodewire.SessionState{}, err
+		}
+	}
 	s.mu.Lock()
 	delete(s.unverifiedProcesses, req.ID)
 	s.mu.Unlock()

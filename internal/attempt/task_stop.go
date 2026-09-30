@@ -170,7 +170,7 @@ func matchesStoppedSession(r Record, tracked task.Task, st nodewire.SessionState
 	}
 	if r.Session == "" {
 		proof := st.OpenReceipt
-		if !PendingSessionOpen(r) || proof == nil || proof.Action != nodewire.SessionActionCancelOpen || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != nodewire.SessionClosed || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
+		if !PendingSessionOpen(r) || proof == nil || (proof.Action != nodewire.SessionActionCancelOpen && proof.Action != nodewire.SessionActionKill) || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != nodewire.SessionClosed || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
 			return false
 		}
 	} else if st.ID != r.Session {

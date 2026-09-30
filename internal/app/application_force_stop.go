@@ -43,6 +43,9 @@ func (s *applicationStops) stopBatch(pending []attempt.Record) []attempt.Record 
 }
 
 type sessionFailure interface{ SessionErrorCode() string }
+type applicationOpenKiller interface {
+	KillNodeOpen(context.Context, harness.Placement, string) (nodewire.SessionState, error)
+}
 
 func (s *applicationStops) forceStop(parent context.Context, r attempt.Record) error {
 	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
@@ -78,7 +81,11 @@ func (s *applicationStops) killOnNode(ctx context.Context, r attempt.Record) (no
 		return nodewire.SessionState{}, forceUnavailable{"stop_unproven"}
 	}
 	if attempt.PendingSessionOpen(r) {
-		return nodewire.SessionState{}, forceUnavailable{"stop_unproven"}
+		killer, ok := s.sessions.(applicationOpenKiller)
+		if !ok {
+			return nodewire.SessionState{}, forceUnavailable{"stop_unsupported"}
+		}
+		return killer.KillNodeOpen(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Workspace.Path)
 	}
 	runner, err := s.sessions.AttachRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
 	if err != nil {
