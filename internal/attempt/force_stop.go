@@ -109,6 +109,7 @@ func (s *Service) RecordForceStopResult(ctx context.Context, id string, revision
 		}
 		if next.Reason != "" {
 			next.Level = "exhausted"
+			next.LevelSince = now
 			next.ExhaustedAt = now
 		}
 		if next == before {

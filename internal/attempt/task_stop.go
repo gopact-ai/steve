@@ -103,6 +103,7 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 		if next.ForceStop != nil {
 			force := *next.ForceStop
 			force.Level = "confirmed"
+			force.LevelSince = s.now().UTC()
 			force.Reason = ""
 			force.UnansweredSince = time.Time{}
 			force.UnansweredCount = 0
