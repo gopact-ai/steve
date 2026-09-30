@@ -68,7 +68,8 @@ func (s *applicationStops) forceStop(parent context.Context, r attempt.Record) e
 		return err
 	}
 	var coded sessionFailure
-	answered := errors.As(err, &coded)
+	var undispatched *nodewire.SessionNotDispatched
+	answered := !errors.As(err, &undispatched) && errors.As(err, &coded)
 	code := ""
 	if answered {
 		code = coded.SessionErrorCode()
