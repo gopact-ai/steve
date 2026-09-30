@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -268,5 +269,19 @@ func TestOwedCloseStaysOwedWhenHistoryCannotBeRead(t *testing.T) {
 	}
 	if got := f.store.OwedCloses(); !reflect.DeepEqual(got, []state.OwedClose{f.owed}) {
 		t.Fatalf("owed %+v after an unreadable pass, want %+v", got, []state.OwedClose{f.owed})
+	}
+}
+
+func TestOwedCloseKeepsOnlyRefusalsThatCanChange(t *testing.T) {
+	for _, code := range []string{"conflict", "absent", "forbidden", "unavailable", "busy", "uncertain"} {
+		t.Run(code, func(t *testing.T) {
+			f := newOwedCloseFixture(t)
+			f.node.err = fmt.Errorf("close session: %w", &node.SessionError{Code: code, Message: "node refused"})
+			f.reconcile(t)
+			kept := code != "conflict" && code != "absent"
+			if got := len(f.store.OwedCloses()); (got == 1) != kept {
+				t.Fatalf("refusal %s leaves %d closes owed, want kept=%v", code, got, kept)
+			}
+		})
 	}
 }

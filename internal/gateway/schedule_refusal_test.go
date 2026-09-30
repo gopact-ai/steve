@@ -101,10 +101,13 @@ func TestScheduledRunOnAnOpenAttemptTellsTheOwnerWhatToDo(t *testing.T) {
 	if answer == text.T(i18n.AgentFailed) {
 		t.Fatalf("the chat got the failure that explains nothing: %q", answer)
 	}
-	for _, want := range []string{"#" + earlier.ID, "/tasks cancel " + earlier.ID, "「" + text.T(i18n.RecoveryRetry) + "」"} {
+	for _, want := range []string{"#" + earlier.ID, "/tasks cancel " + earlier.ID} {
 		if !strings.Contains(answer, want) {
 			t.Errorf("the chat got %q, which does not say %q", answer, want)
 		}
+	}
+	if strings.Contains(answer, text.T(i18n.RecoveryRetry)) {
+		t.Errorf("console control in chat: %q", answer)
 	}
 	if strings.Contains(answer, "admit turn") || strings.Contains(answer, "open attempt") {
 		t.Errorf("the chat got the internal error: %q", answer)

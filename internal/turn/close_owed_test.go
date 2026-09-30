@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
-	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -123,8 +123,8 @@ func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
 			if err != nil {
 				t.Fatalf("/new with its node unreachable: %v", err)
 			}
-			if want := c.text.T(i18n.Reset, "codex"); result.Text != want {
-				t.Fatalf("/new answered %q, want %q", result.Text, want)
+			if !strings.Contains(result.Text, "自动补发") || !strings.Contains(result.Text, session.NodeID) {
+				t.Fatalf("/new does not explain the close owed: %q", result.Text)
 			}
 			if want := []sessionClose{{place: harness.Placement{Node: session.NodeID, Harness: session.HarnessID}, id: "ns_owed"}}; !reflect.DeepEqual(sessions.closes, want) {
 				t.Fatalf("closes %+v, want %+v", sessions.closes, want)
