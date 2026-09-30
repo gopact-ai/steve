@@ -42,33 +42,23 @@ var openMu sync.Mutex
 func Open(ctx context.Context, dir string) (*Repo, error) {
 	openMu.Lock()
 	defer openMu.Unlock()
-	// git init writes HEAD before all repository metadata exists. A killed
-	// initialization must not make the next attempt accept that partial tree.
-	ready := filepath.Join(dir, "steve-initialized")
-	if _, err := os.Stat(ready); err == nil {
-		return &Repo{Dir: dir}, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := git(ctx, "", nil, "init", "--bare", "--quiet", dir); err != nil {
-		return nil, err
-	}
-	r := &Repo{Dir: dir}
-	// Snapshots must not depend on who runs the hub, and nothing may keep
-	// working in a shadow repository after the operation that used it
-	// returned: git's automatic maintenance detaches into the background,
-	// which is a process nobody waits for and a directory that is not
-	// free when its owner removes it.
-	for _, setting := range [][2]string{{"user.name", "steve"}, {"user.email", "steve@localhost"}, {"gc.auto", "0"}, {"gc.autoDetach", "false"}, {"maintenance.auto", "false"}} {
-		if _, err := r.Git(ctx, nil, "config", setting[0], setting[1]); err != nil {
+	if ready, err := initialized(dir); err != nil || ready {
+		if err != nil {
 			return nil, err
 		}
+		return &Repo{Dir: dir}, nil
 	}
-	if err := os.WriteFile(ready, []byte("1\n"), 0600); err != nil {
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	return r, nil
+	if len(entries) != 0 {
+		return recognizeRepository(ctx, dir)
+	}
+	return createRepository(ctx, dir)
 }
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
