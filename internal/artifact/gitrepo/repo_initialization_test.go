@@ -99,6 +99,32 @@ func TestOpenDoesNotRewriteAnUnmarkedRepositoryConfiguration(t *testing.T) {
 	}
 }
 
+func TestSnapshotDoesNotRecreateAMissingRepository(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "p.git")
+	repo, err := Open(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	write(t, work, "answer", "retained")
+	if _, _, err := repo.Snapshot(t.Context(), work, "", "missing repository", false); err == nil {
+		t.Fatal("snapshot succeeded without a repository")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("snapshot created a partial repository instead of leaving it missing: %v", err)
+	}
+	reopened, err := Open(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := reopened.Snapshot(t.Context(), work, "", "restored repository", false); err != nil {
+		t.Fatalf("snapshot did not recover after reopening: %v", err)
+	}
+}
+
 func TestCancelledOpenDoesNotPublishARepository(t *testing.T) {
 	parent := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
