@@ -4,8 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 type ForceStopControl struct{ coordinator *Coordinator }
@@ -32,36 +31,12 @@ func (f *ForceStopControl) ForceStopAttempt(ctx context.Context, id, requester s
 	if err != nil {
 		return err
 	}
-	if !attempt.TaskStopOwed(original) || attempt.TaskStopConfirmed(original) {
-		return errors.New("execution does not owe a native stop")
-	}
 	tracked, ok := c.tasks.Get(original.TaskID)
 	if !ok {
 		return errors.New("original task is unavailable")
 	}
-	if tracked.State != task.StateCancelled {
-		if _, err := c.tasks.SetAside(tracked.ID, task.StateCancelled); err != nil {
-			return err
-		}
-	}
-	tree, err := c.tasks.Tree(tracked.ID)
-	if err != nil {
-		return err
-	}
-	ids := make([]string, 0, len(tree))
-	for _, t := range tree {
-		ids = append(ids, t.ID)
-	}
-	records, err := c.attempts.ForTasksByUpdate(ctx, ids)
-	if err != nil {
-		return err
-	}
-	var result error
-	for _, r := range records {
-		if attempt.TaskStopOwed(r) && !attempt.TaskStopConfirmed(r) {
-			_, err := c.attempts.RequestForceStop(ctx, r.ID, requester)
-			result = errors.Join(result, err)
-		}
-	}
-	return result
+	_, err = c.tasks.CancelWith(ctx, tracked.ID, func(tx *ledger.Tx, ids []string) error {
+		return c.attempts.RequestForceStopTreeTx(tx, id, tracked.ID, requester, ids)
+	})
+	return err
 }

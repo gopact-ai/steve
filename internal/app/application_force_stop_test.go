@@ -29,6 +29,10 @@ func (s *forceSessions) AttachRetainedSession(_ context.Context, _ harness.Place
 	return forceRunner{s: s, id: id}, nil
 }
 
+func (s *forceSessions) KillRetainedSession(ctx context.Context, _ harness.Placement, id, _ string) (nodewire.SessionState, error) {
+	return (forceRunner{s: s, id: id}).KillRetained(ctx)
+}
+
 type forceRunner struct {
 	harness.ResumableRunner
 	s  *forceSessions

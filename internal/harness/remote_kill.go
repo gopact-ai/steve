@@ -30,3 +30,32 @@ func (s *managedSession) KillRetained(parent context.Context) (nodewire.SessionS
 	s.mu.Unlock()
 	return state, nil
 }
+
+// KillRetainedSession addresses the recorded execution directly. Cleanup is
+// still authorized when observation or plugin execution permission was revoked.
+func (m *Manager) KillRetainedSession(ctx context.Context, at Placement, id, workdir string) (nodewire.SessionState, error) {
+	ctx, err := m.bindNodeSession(ctx, at, id, workdir)
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	binding, bound := NodeSessionFromContext(ctx)
+	if !bound || !nodewire.IsManagedSession(id) || at.Node == "" || binding.Binding.NodeID != at.Node {
+		return nodewire.SessionState{}, ErrNodeSessionUnavailable
+	}
+	m.mu.Lock()
+	transport, available := m.remote.(NodeSessionTransport)
+	stopped := m.stopped
+	m.mu.Unlock()
+	if !available || stopped {
+		return nodewire.SessionState{}, ErrNodeSessionUnavailable
+	}
+	session := &managedSession{at: at, transport: transport, base: binding, id: id}
+	state, err := session.KillRetained(ctx)
+	if err != nil {
+		return state, err
+	}
+	if state.Harness != at.Harness || state.Command != nil && state.Command.ID != binding.CommandID {
+		return nodewire.SessionState{}, errors.Join(ErrStopUnconfirmed, errors.New("kill receipt belongs to another original command"))
+	}
+	return state, nil
+}

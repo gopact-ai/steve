@@ -100,15 +100,7 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 		settled := true
 		next.Unsettled, next.SessionSettled = false, &settled
 		next.StopEvidence = "task-stop/" + next.ID
-		if next.ForceStop != nil {
-			force := *next.ForceStop
-			force.Level = "confirmed"
-			force.LevelSince = s.now().UTC()
-			force.Reason = ""
-			force.UnansweredSince = time.Time{}
-			force.UnansweredCount = 0
-			next.ForceStop = &force
-		}
+		confirmForceStop(&next, s.now().UTC())
 		next.State, next.Revision = to, op.Revision+1
 		next.Error = i18n.FromContext(ctx).T(i18n.AttemptTaskStopped)
 		if next.EndedAt.IsZero() {

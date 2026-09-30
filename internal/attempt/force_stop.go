@@ -33,12 +33,7 @@ func (s *Service) RequestForceStop(ctx context.Context, id, actor string) (Recor
 		if !TaskStopOwed(*r) || TaskStopConfirmed(*r) {
 			return errors.New("execution does not owe a native stop")
 		}
-		revision := uint64(1)
-		if r.ForceStop != nil {
-			revision = r.ForceStop.Revision + 1
-		}
-		now := s.now().UTC()
-		r.ForceStop = &ForceStop{Revision: revision, RequestedAt: now, By: actor, Level: "kill", LevelSince: now}
+		r.ForceStop = newForceStop(r.ForceStop, actor, s.now().UTC())
 		r.Unsettled = true
 		return nil
 	})
@@ -128,4 +123,23 @@ func (s *Service) ConfirmForceStopped(ctx context.Context, id string, revision u
 		return Record{}, ErrStopConfirmationRequired
 	}
 	return s.confirmTaskStopped(ctx, id, "force-stop", proof, revision)
+}
+
+func newForceStop(previous *ForceStop, actor string, now time.Time) *ForceStop {
+	revision := uint64(1)
+	if previous != nil {
+		revision = previous.Revision + 1
+	}
+	return &ForceStop{Revision: revision, RequestedAt: now, By: actor, Level: "kill", LevelSince: now}
+}
+
+// Only an authenticated native exit confirmation calls this projection.
+func confirmForceStop(r *Record, now time.Time) {
+	if r.ForceStop == nil {
+		return
+	}
+	force := *r.ForceStop
+	force.Level, force.LevelSince, force.Reason = "confirmed", now, ""
+	force.ExhaustedAt, force.UnansweredSince, force.UnansweredCount = time.Time{}, time.Time{}, 0
+	r.ForceStop = &force
 }

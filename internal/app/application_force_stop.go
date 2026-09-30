@@ -44,6 +44,10 @@ func (s *applicationStops) stopBatch(pending []attempt.Record) []attempt.Record 
 }
 
 type sessionFailure interface{ SessionErrorCode() string }
+type applicationSessionKiller interface {
+	KillRetainedSession(context.Context, harness.Placement, string, string) (nodewire.SessionState, error)
+}
+
 type applicationOpenKiller interface {
 	KillNodeOpen(context.Context, harness.Placement, string) (nodewire.SessionState, error)
 }
@@ -77,8 +81,7 @@ func (s *applicationStops) forceStop(parent context.Context, r attempt.Record) e
 }
 
 func (s *applicationStops) killOnNode(ctx context.Context, r attempt.Record) (nodewire.SessionState, error) {
-	tracked, ok := s.tasks.Get(r.TaskID)
-	if !ok {
+	if _, ok := s.tasks.Get(r.TaskID); !ok {
 		return nodewire.SessionState{}, forceUnavailable{"stop_unproven"}
 	}
 	if attempt.PendingSessionOpen(r) {
@@ -88,26 +91,11 @@ func (s *applicationStops) killOnNode(ctx context.Context, r attempt.Record) (no
 		}
 		return killer.KillNodeOpen(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Workspace.Path)
 	}
-	runner, err := s.sessions.AttachRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
-	if err != nil {
-		return nodewire.SessionState{}, err
-	}
-	inspector, ok := runner.(harness.RetainedSessionInspector)
+	killer, ok := s.sessions.(applicationSessionKiller)
 	if !ok {
-		return nodewire.SessionState{}, forceUnavailable{"stop_unproven"}
+		return nodewire.SessionState{}, forceUnavailable{"stop_unsupported"}
 	}
-	state, err := inspector.InspectRetained(ctx)
-	if err != nil {
-		return state, err
-	}
-	if state.ID != r.Session || state.Harness != r.Harness || state.Binding != sessionBinding(r, tracked) || state.Command != nil && state.Command.ID != attempt.InputCommandID(r) {
-		return state, forceUnavailable{"stop_unproven"}
-	}
-	killer, ok := runner.(harness.RetainedKiller)
-	if !ok {
-		return state, forceUnavailable{"stop_unsupported"}
-	}
-	return killer.KillRetained(ctx)
+	return killer.KillRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
 }
 
 type forceUnavailable struct{ code string }
