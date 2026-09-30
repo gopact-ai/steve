@@ -404,13 +404,9 @@ func TestRecoveryStopIntentIsDurableBeforeStoppingExecutions(t *testing.T) {
 	if err := restored.RecoverChats(t.Context(), rd); err != nil {
 		t.Fatal(err)
 	}
-	waitRecoveryQuestion(t, restored)
-	if got := restored.Queue("main"); got[0].State != "awaiting-user" || got[1].State != "queued" {
-		t.Fatalf("in-flight stop lost after crash: %+v", got)
-	}
-	if _, err := restored.SendCommand(t.Context(), "main", "/cancel", "retry-stop-after-crash"); err != nil {
-		t.Fatalf("interrupted stop command became an unrelated recovery task: %v", err)
-	}
+	// The durable owner intent is retried without another user command.
+	// A successful stop may settle before a waiting card is ever rendered.
+	awaitStops(t, &rd.stops)
 	if got := awaitExchange(t, restored, "e1"); got.State != "cancelled" {
 		t.Fatalf("stop could not complete after restart: %+v", got)
 	}
@@ -534,6 +530,7 @@ func TestRecoveryStopRetryKeepsItsTargetAcrossRestart(t *testing.T) {
 			if oldReceipt {
 				s.mu.Lock()
 				for _, e := range s.exchanges["console:main"] {
+					e.RecoveryCancelPending = false
 					if e.ID == failed.ExchangeID {
 						e.RecoveryStopTarget = nil
 					}
@@ -553,7 +550,11 @@ func TestRecoveryStopRetryKeepsItsTargetAcrossRestart(t *testing.T) {
 			if err := restored.RecoverChats(t.Context(), driver); err != nil {
 				t.Fatal(err)
 			}
-			waitRecoveryQuestion(t, restored)
+			if oldReceipt {
+				waitRecoveryQuestion(t, restored)
+			} else {
+				awaitExchange(t, restored, "e1")
+			}
 			if _, err := restored.SendSubmission(t.Context(), consoleapi.Submission{Conversation: "main", Input: "/cancel", CommandID: "restart-stop"}); err != nil {
 				t.Fatalf("original stop failed after restart: %v", err)
 			}
