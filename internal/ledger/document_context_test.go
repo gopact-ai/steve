@@ -125,3 +125,43 @@ func TestDocumentSaveContextDoesNotWaitForAnotherWriter(t *testing.T) {
 		t.Fatal("context document save waited for the busy writer")
 	}
 }
+
+type committedDocumentReplicator struct {
+	book   *Ledger
+	cancel context.CancelFunc
+}
+
+func (r *committedDocumentReplicator) Prepare(context.Context) (ReplicaPosition, error) {
+	version, err := r.book.ReplicaVersion()
+	return ReplicaPosition{Version: version, CoordinatorEpoch: 1}, err
+}
+func (r *committedDocumentReplicator) Propose(_ context.Context, w ReplicatedWrite) ([]byte, error) {
+	out, err := r.book.ApplyReplicated(w.ID, w.ExpectedVersion+1, w.Payload)
+	r.cancel()
+	return out, err
+}
+
+func TestDocumentSaveContextReportsACommitDespiteLaterCancellation(t *testing.T) {
+	book, err := Open(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	replica := &committedDocumentReplicator{book: book, cancel: cancel}
+	if err := book.AttachReplication(replica); err != nil {
+		t.Fatal(err)
+	}
+	doc := book.Document("test")
+	if err := doc.SaveContext(ctx, []byte("committed")); err != nil {
+		t.Fatalf("committed write reported as cancelled: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("fixture did not cancel after commit")
+	}
+	got, _, err := doc.Load()
+	if err != nil || string(got) != "committed" {
+		t.Fatalf("committed document=%q, %v", got, err)
+	}
+}

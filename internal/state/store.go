@@ -92,7 +92,7 @@ type data struct {
 }
 
 type Store struct {
-	doc  ledger.Doc
+	doc  *ledger.Document
 	mu   sync.Mutex
 	data data
 }

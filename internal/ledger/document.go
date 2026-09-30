@@ -29,6 +29,9 @@ type Document struct {
 
 const documentKind = "document"
 
+const saveDocument = `INSERT INTO bindings(kind, id, data, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(kind, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
+
 // Document returns the ledger-backed document of a kind ("state", "tasks"…).
 func (l *Ledger) Document(kind string) *Document {
 	return &Document{l: l, kind: kind}
@@ -47,8 +50,7 @@ func (d *Document) Load() ([]byte, bool, error) {
 }
 
 func (d *Document) Save(raw []byte) error {
-	_, err := d.l.execWrite(context.Background(), `INSERT INTO bindings(kind, id, data, updated_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT(kind, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+	_, err := d.l.execWrite(context.Background(), saveDocument,
 		documentKind, d.kind, string(raw), d.l.now().UTC().Format(rfc3339nano))
 	return err
 }
@@ -76,4 +78,25 @@ func (t *Tx) LoadDocument(kind string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	return []byte(data), true, nil
+}
+
+// SaveContext bounds admission and consensus by ctx. It refuses a busy
+// writer rather than waiting behind an unrelated write. Once committed,
+// the usual local receipt confirmation still establishes the result.
+func (d *Document) SaveContext(ctx context.Context, raw []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !d.l.writerMu.TryLock() {
+		return fmt.Errorf("%w: document writer is busy", ErrConflict)
+	}
+	tx, err := d.l.beginWriteLocked(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, saveDocument, documentKind, d.kind, string(raw), d.l.now().UTC().Format(rfc3339nano)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

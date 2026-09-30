@@ -18,6 +18,7 @@ type closeSettlementReplicator struct {
 	once             sync.Once
 	writes, active   atomic.Int64
 	reject           error
+	deadline         time.Time
 }
 
 func (r *closeSettlementReplicator) Prepare(context.Context) (ledger.ReplicaPosition, error) {
@@ -30,7 +31,7 @@ func (r *closeSettlementReplicator) Propose(ctx context.Context, write ledger.Re
 	r.active.Add(1)
 	defer r.active.Add(-1)
 	if r.entered != nil {
-		r.once.Do(func() { close(r.entered) })
+		r.once.Do(func() { r.deadline, _ = ctx.Deadline(); close(r.entered) })
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -78,6 +79,12 @@ func TestOwedCloseSettlementHonorsCancellationAndDeadline(t *testing.T) {
 					close(r.release)
 					<-done
 					t.Fatal("settlement never reached replication")
+				}
+				if mode != "deadline" && (r.deadline.IsZero() || time.Until(r.deadline) > 20*time.Second) {
+					cancel()
+					close(r.release)
+					<-done
+					t.Fatal("settlement has no reconciliation deadline")
 				}
 				if mode != "deadline" {
 					cancel()

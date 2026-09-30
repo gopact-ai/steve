@@ -38,11 +38,11 @@ func newApplicationOwedCloses(store *state.Store, attempts *attempt.Service, tas
 	return &applicationOwedCloses{store: store, attempts: attempts, tasks: tasks, sessions: sessions, reported: map[string]string{}}
 }
 
-// owedCloseOutcome is how one pass left a close owed: kept says why it is
-// still owed, err why forgetting it failed.
+// owedCloseOutcome says why an obligation remains, or why it can be dropped.
 type owedCloseOutcome struct {
-	owed      state.OwedClose
-	kept, err error
+	owed    state.OwedClose
+	kept    error
+	dropped string
 }
 
 // Reconcile sends each close still owed. A small rotating batch keeps an
@@ -54,7 +54,12 @@ func (c *applicationOwedCloses) Reconcile(parent context.Context) error {
 		return nil
 	}
 	defer c.mu.Unlock()
-	owed := c.store.OwedCloses()
+	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+	defer cancel()
+	owed, err := c.store.OwedClosesContext(ctx)
+	if err != nil {
+		return err
+	}
 	current := make(map[string]bool, len(owed))
 	for _, o := range owed {
 		current[owedCloseKey(o)] = true
@@ -67,8 +72,6 @@ func (c *applicationOwedCloses) Reconcile(parent context.Context) error {
 	if len(owed) == 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
-	defer cancel()
 	sort.Slice(owed, func(i, j int) bool { return owedCloseKey(owed[i]) < owedCloseKey(owed[j]) })
 	start := sort.Search(len(owed), func(i int) bool { return owedCloseKey(owed[i]) > c.after })
 	if start == len(owed) {
@@ -81,13 +84,14 @@ func (c *applicationOwedCloses) Reconcile(parent context.Context) error {
 		c.after = owedCloseKey(o)
 		go func() { outcomes <- c.send(ctx, o) }()
 	}
-	var result error
+	var settled []state.OwedClose
+	var completed []owedCloseOutcome
 	for range count {
 		outcome := <-outcomes
 		key := owedCloseKey(outcome.owed)
-		result = errors.Join(result, outcome.err)
 		if outcome.kept == nil {
-			delete(c.reported, key)
+			settled = append(settled, outcome.owed)
+			completed = append(completed, outcome)
 			continue
 		}
 		if cause := outcome.kept.Error(); c.reported[key] != cause {
@@ -97,7 +101,17 @@ func (c *applicationOwedCloses) Reconcile(parent context.Context) error {
 				"task", o.TaskID, "attempt", o.AttemptID, "node", o.NodeID, "session", o.UpstreamID)
 		}
 	}
-	return result
+	if len(settled) == 0 {
+		return ctx.Err()
+	}
+	if err := c.store.SettleOwedCloses(ctx, settled...); err != nil {
+		return fmt.Errorf("settle closes owed: %w", err)
+	}
+	for _, outcome := range completed {
+		delete(c.reported, owedCloseKey(outcome.owed))
+		logSettledClose(outcome)
+	}
+	return nil
 }
 
 // send sends owed to its node, bound to the execution it was owed for. It
@@ -114,38 +128,35 @@ func (c *applicationOwedCloses) send(parent context.Context, owed state.OwedClos
 		return outcome
 	}
 	if !found || latest.ID != owed.AttemptID || latest.TaskID != owed.TaskID || latest.NativeContext != owed.NativeContext {
-		outcome.err = c.forget(owed, "the session no longer holds the execution it was owed for")
+		outcome.dropped = "the session no longer holds the execution it was owed for"
 		return outcome
 	}
 	if _, ok := c.tasks.Get(owed.TaskID); !ok {
-		outcome.err = c.forget(owed, "its task is gone")
+		outcome.dropped = "its task is gone"
 		return outcome
 	}
 	ctx = execution.WithProbeKey(ctx, execution.Key{TaskID: latest.TaskID, InstanceID: latest.TurnID, AttemptID: latest.ID})
 	if err := c.sessions.CloseSession(ctx, harness.Placement{Node: owed.NodeID, Harness: owed.HarnessID}, owed.UpstreamID); err != nil {
 		var refusal interface{ SessionErrorCode() string }
 		if errors.As(err, &refusal) && (refusal.SessionErrorCode() == "conflict" || refusal.SessionErrorCode() == "absent") {
-			outcome.err = c.forget(owed, "the node refused: "+refusal.SessionErrorCode())
+			outcome.dropped = "the node refused: " + refusal.SessionErrorCode()
 		} else {
 			outcome.kept = err
 		}
 		return outcome
 	}
-	slog.Info(fmt.Sprintf("steve: close owed task=%s attempt=%s node=%s session=%s taken", owed.TaskID, owed.AttemptID, owed.NodeID, owed.UpstreamID),
-		"task", owed.TaskID, "attempt", owed.AttemptID, "node", owed.NodeID, "session", owed.UpstreamID)
-	if err := c.store.SettleOwedClose(owed); err != nil {
-		outcome.err = fmt.Errorf("close owed for session %s on %s was taken but is still recorded: %w", owed.UpstreamID, owed.NodeID, err)
-	}
 	return outcome
 }
 
-func (c *applicationOwedCloses) forget(owed state.OwedClose, why string) error {
-	slog.Warn(fmt.Sprintf("steve: close owed task=%s attempt=%s node=%s session=%s dropped unsent: %s", owed.TaskID, owed.AttemptID, owed.NodeID, owed.UpstreamID, why),
-		"task", owed.TaskID, "attempt", owed.AttemptID, "node", owed.NodeID, "session", owed.UpstreamID)
-	if err := c.store.SettleOwedClose(owed); err != nil {
-		return fmt.Errorf("drop the close owed for session %s on %s: %w", owed.UpstreamID, owed.NodeID, err)
+func logSettledClose(outcome owedCloseOutcome) {
+	owed := outcome.owed
+	if outcome.dropped != "" {
+		slog.Warn(fmt.Sprintf("steve: close owed task=%s attempt=%s node=%s session=%s dropped unsent: %s", owed.TaskID, owed.AttemptID, owed.NodeID, owed.UpstreamID, outcome.dropped),
+			"task", owed.TaskID, "attempt", owed.AttemptID, "node", owed.NodeID, "session", owed.UpstreamID)
+		return
 	}
-	return nil
+	slog.Info(fmt.Sprintf("steve: close owed task=%s attempt=%s node=%s session=%s taken", owed.TaskID, owed.AttemptID, owed.NodeID, owed.UpstreamID),
+		"task", owed.TaskID, "attempt", owed.AttemptID, "node", owed.NodeID, "session", owed.UpstreamID)
 }
 
 // owedCloseKey names the native session a close is owed for; at most one
