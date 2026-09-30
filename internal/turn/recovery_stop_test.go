@@ -114,8 +114,12 @@ func TestOwnerStopCancelsAPausedRetainedTask(t *testing.T) {
 	if _, err := c.tasks.SetAside(r.TaskID, task.StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.StopRetainedTask(t.Context(), r.TaskID, req, true); !errors.Is(err, harness.ErrStopUnconfirmed) {
+	result, err := c.StopRetainedTask(t.Context(), r.TaskID, req, true)
+	if !errors.Is(err, harness.ErrStopUnconfirmed) {
 		t.Fatalf("stop = %v", err)
+	}
+	if !strings.HasPrefix(result.Text, c.text.T(i18n.TaskCancelled, r.TaskID)) {
+		t.Fatalf("explicit stop did not say the task was cancelled: %q", result.Text)
 	}
 	if tracked, _ := c.tasks.Get(r.TaskID); tracked.State != task.StateCancelled {
 		t.Fatalf("owner stop left task %s, want cancelled", tracked.State)

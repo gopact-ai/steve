@@ -39,8 +39,11 @@ func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req R
 	if !cancel {
 		return c.checkRetainedStop(ctx, tracked)
 	}
-	result, _, stopErr := c.setTaskAside(ctx, c.text.T(i18n.CardTasks), tracked, task.StateCancelled, true)
+	result, ids, stopErr := c.setTaskAside(ctx, c.text.T(i18n.CardTasks), tracked, task.StateCancelled, true)
 	if stopErr != nil {
+		if len(ids) > 0 {
+			result.Text = c.text.T(i18n.TaskCancelled, tracked.ID) + "\n\n" + result.Text
+		}
 		return result, errors.Join(harness.ErrStopUnconfirmed, stopErr)
 	}
 	return result, nil
