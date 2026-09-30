@@ -40,6 +40,9 @@ func (s *Store) SetObserver(observe func(id string)) {
 	s.observe = observe
 }
 
+// SetStateObserver is notified only after a persisted state transition.
+func (s *Store) SetStateObserver(observe func(string, State)) {}
+
 type data struct {
 	NextID int
 	Tasks  map[string]*Task

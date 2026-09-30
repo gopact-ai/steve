@@ -26,15 +26,16 @@ const (
 // Recovery receipts are authority and survive independently of reply pruning.
 type DurableExchange struct {
 	Exchange
-	PayloadHash          string              `json:"payload_hash,omitempty"`
-	QuoteAliases         map[string]string   `json:"quote_aliases,omitempty"`
-	Receipt              *consoleapi.Reply   `json:"receipt,omitempty"`
-	RecoveryStopTarget   *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
-	RecoveryStop         *consoleapi.Reply   `json:"recovery_stop,omitempty"`
-	RecoveryStopPending  string              `json:"recovery_stop_pending,omitempty"`
-	RecoveryStopTask     string              `json:"recovery_stop_task,omitempty"`
-	RecoveryPending      bool                `json:"recovery_pending,omitempty"`
-	ContinuationRejected bool                `json:"continuation_rejected,omitempty"`
+	PayloadHash           string              `json:"payload_hash,omitempty"`
+	QuoteAliases          map[string]string   `json:"quote_aliases,omitempty"`
+	Receipt               *consoleapi.Reply   `json:"receipt,omitempty"`
+	RecoveryStopTarget    *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
+	RecoveryStop          *consoleapi.Reply   `json:"recovery_stop,omitempty"`
+	RecoveryStopPending   string              `json:"recovery_stop_pending,omitempty"`
+	RecoveryCancelPending bool                `json:"recovery_cancel_pending,omitempty"`
+	RecoveryStopTask      string              `json:"recovery_stop_task,omitempty"`
+	RecoveryPending       bool                `json:"recovery_pending,omitempty"`
+	ContinuationRejected  bool                `json:"continuation_rejected,omitempty"`
 }
 
 // DurableState is an owner snapshot for stopped-service maintenance. Loading

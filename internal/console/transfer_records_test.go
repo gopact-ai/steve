@@ -14,12 +14,13 @@ func TestRecordTransferPreservesRecoveryObligationsAndRemapsTargets(t *testing.T
 	}
 	defer source.Close()
 	state := DurableState{Exchanges: map[string][]DurableExchange{"console:source": {{
-		Exchange:            Exchange{ID: "queued", Conversation: "console:source", ExpectedProject: "p", ExpectedTask: "task", State: consoleapi.ExchangeQueued},
-		RecoveryPending:     true,
-		RecoveryStopTarget:  &recoveryStopTarget{Conversation: "console:source", ExchangeID: "original", TaskID: "task", Requester: "owner"},
-		RecoveryStop:        &consoleapi.Reply{ID: "stop", Conversation: "console:source", ProjectID: "p", Text: "stable stop evidence"},
-		RecoveryStopPending: "waiting for original task",
-		RecoveryStopTask:    "task",
+		Exchange:              Exchange{ID: "queued", Conversation: "console:source", ExpectedProject: "p", ExpectedTask: "task", State: consoleapi.ExchangeQueued},
+		RecoveryPending:       true,
+		RecoveryStopTarget:    &recoveryStopTarget{Conversation: "console:source", ExchangeID: "original", TaskID: "task", Requester: "owner"},
+		RecoveryStop:          &consoleapi.Reply{ID: "stop", Conversation: "console:source", ProjectID: "p", Text: "stable stop evidence"},
+		RecoveryStopPending:   "waiting for original task",
+		RecoveryStopTask:      "task",
+		RecoveryCancelPending: true,
 	}}}}
 	storeConsoleState(t, source, state)
 	exported, err := ExportProject(source, "p", nil)
@@ -43,7 +44,7 @@ func TestRecordTransferPreservesRecoveryObligationsAndRemapsTargets(t *testing.T
 		t.Fatal(err)
 	}
 	e := got.Exchanges["console:target"][0]
-	if !e.RecoveryPending || e.RecoveryStopTarget == nil || e.RecoveryStopTarget.Conversation != "console:target" ||
+	if !e.RecoveryCancelPending || !e.RecoveryPending || e.RecoveryStopTarget == nil || e.RecoveryStopTarget.Conversation != "console:target" ||
 		e.RecoveryStopTarget.TaskID != "target-task" || e.RecoveryStopTarget.ExchangeID != "original" ||
 		e.RecoveryStop == nil || e.RecoveryStop.Conversation != "console:target" || e.RecoveryStop.Text != "stable stop evidence" ||
 		e.RecoveryStopPending != "waiting for original task" || e.RecoveryStopTask != "target-task" {

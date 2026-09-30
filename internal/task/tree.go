@@ -180,3 +180,16 @@ func (s *Store) Children(id string) []Task {
 func (t Task) Deadline(now time.Time) time.Time {
 	return now.Add(t.Budget.MaxElapsed - t.Budget.Elapsed)
 }
+
+// Tree returns one snapshot of the root and its descendants.
+func (s *Store) Tree(id string) ([]Task, error) {
+	root, ok := s.Get(id)
+	if !ok {
+		return nil, ErrTaskNotFound
+	}
+	tree := []Task{root}
+	for i := 0; i < len(tree); i++ {
+		tree = append(tree, s.Children(tree[i].ID)...)
+	}
+	return tree, nil
+}

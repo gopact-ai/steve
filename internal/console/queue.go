@@ -25,21 +25,22 @@ type queuedExchange struct {
 	Exchange
 	// Submission identity survives edits/steering. A keyed exchange's result
 	// outlives the bounded transcript projection so restart retries can reply.
-	PayloadHash          string              `json:"payload_hash,omitempty"`
-	QuoteAliases         map[string]string   `json:"quote_aliases,omitempty"`
-	Receipt              *consoleapi.Reply   `json:"receipt,omitempty"`
-	RecoveryStopTarget   *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
-	RecoveryStop         *consoleapi.Reply   `json:"recovery_stop,omitempty"`
-	RecoveryStopPending  string              `json:"recovery_stop_pending,omitempty"`
-	RecoveryStopTask     string              `json:"recovery_stop_task,omitempty"`
-	ContinuationRejected bool                `json:"continuation_rejected,omitempty"`
-	RecoveryPending      bool                `json:"recovery_pending,omitempty"`
-	stopSetAside         bool
-	recoveryStopping     chan struct{}
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	done                 chan struct{}
-	outcome              outcome
+	PayloadHash           string              `json:"payload_hash,omitempty"`
+	QuoteAliases          map[string]string   `json:"quote_aliases,omitempty"`
+	Receipt               *consoleapi.Reply   `json:"receipt,omitempty"`
+	RecoveryStopTarget    *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
+	RecoveryStop          *consoleapi.Reply   `json:"recovery_stop,omitempty"`
+	RecoveryStopPending   string              `json:"recovery_stop_pending,omitempty"`
+	RecoveryCancelPending bool                `json:"recovery_cancel_pending,omitempty"`
+	RecoveryStopTask      string              `json:"recovery_stop_task,omitempty"`
+	ContinuationRejected  bool                `json:"continuation_rejected,omitempty"`
+	RecoveryPending       bool                `json:"recovery_pending,omitempty"`
+	stopSetAside          bool
+	recoveryStopping      chan struct{}
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	done                  chan struct{}
+	outcome               outcome
 
 	// taskCancels wakes the exchange's recovery worker when a person
 	// cancels a task; it is made under the lock when a recovery first opens

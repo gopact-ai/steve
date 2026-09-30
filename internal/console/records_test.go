@@ -155,7 +155,7 @@ func TestConsoleRecordsReopenPreservesOrderReceiptsAndRecovery(t *testing.T) {
 				Receipt: &consoleapi.Reply{ID: "receipt", ExchangeID: "e-z", Conversation: conv, Text: "receipt survives pruning"}, ContinuationRejected: true,
 				RecoveryStopTarget: &recoveryStopTarget{Conversation: conv, ExchangeID: "target", TaskID: "task", Requester: "owner"},
 				RecoveryStop:       &consoleapi.Reply{ID: "stopped", Conversation: conv, Text: "stop evidence"}, RecoveryStopPending: "pending evidence",
-				RecoveryStopTask: "stop-task"},
+				RecoveryStopTask: "stop-task", RecoveryCancelPending: true},
 			{Exchange: Exchange{ID: "e-a", Conversation: conv, Key: "running", State: consoleapi.ExchangeRunning, Input: "work"}},
 			{Exchange: Exchange{ID: "deferred", Conversation: conv, State: consoleapi.ExchangeQueued}, RecoveryPending: true},
 		}},
