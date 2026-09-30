@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type forceStopDriver interface {
@@ -40,6 +42,24 @@ func (w *recoveryStopWait) forceStop() error {
 	}
 	if !found {
 		return errors.New("original execution is unavailable")
+	}
+	text := i18n.New(i18n.FromLang(w.base.Locale))
+	base := w.base
+	base.TaskID, base.AttemptID = retained.TaskID, retained.AttemptID
+	answer, err := w.s.askUser(w.ctx, base, view.Question{
+		Kind: "recovery", Required: true,
+		Title:   text.T(i18n.ConsoleForceConfirmTitle, retained.TaskID),
+		Message: text.T(i18n.ConsoleForceConfirmBody, retained.TaskID, retained.AttemptID),
+		Choices: []view.Choice{
+			{Value: "confirm-force-stop", Label: text.T(i18n.ConsoleForceConfirm)},
+			{Value: "cancel-force-stop", Label: text.T(i18n.ConsoleForceCancel)},
+		},
+	}, false)
+	if err != nil {
+		return err
+	}
+	if answer.Value != "confirm-force-stop" {
+		return nil
 	}
 	return w.s.ForceStop(w.ctx, retained.AttemptID)
 }

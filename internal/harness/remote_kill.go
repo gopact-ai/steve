@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -23,7 +22,7 @@ func (s *managedSession) KillRetained(parent context.Context) (nodewire.SessionS
 		return state, err
 	}
 	if !stopReceiptMatches(state, request) || !state.ProcessStopped {
-		return state, errors.Join(ErrStopUnconfirmed, errors.New("native kill receipt does not prove the original process stopped"))
+		return state, unprovedKillReceipt("native kill receipt does not prove the original process stopped")
 	}
 	s.mu.Lock()
 	s.stopState = state
@@ -55,7 +54,15 @@ func (m *Manager) KillRetainedSession(ctx context.Context, at Placement, id, wor
 		return state, err
 	}
 	if state.Harness != at.Harness || state.Command != nil && state.Command.ID != binding.CommandID {
-		return nodewire.SessionState{}, errors.Join(ErrStopUnconfirmed, errors.New("kill receipt belongs to another original command"))
+		return nodewire.SessionState{}, unprovedKillReceipt("kill receipt belongs to another original command")
 	}
 	return state, nil
 }
+
+// A receipt was received, but it cannot prove the requested termination.
+// This is not a transport silence and must not request a node restart.
+type unprovedKillReceipt string
+
+func (e unprovedKillReceipt) Error() string            { return string(e) }
+func (e unprovedKillReceipt) Unwrap() error            { return ErrStopUnconfirmed }
+func (e unprovedKillReceipt) SessionErrorCode() string { return "stop_unproven" }

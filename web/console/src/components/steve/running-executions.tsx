@@ -3,7 +3,6 @@ import { Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
 import { relative, short } from "@/lib/format";
-import { useFleet } from "@/lib/fleet";
 import type { Attempt } from "@/lib/types";
 import { useI18n } from "@/providers/locale-provider";
 import { Mono, Nothing, StateBadge, Where } from "@/components/steve/ui";
@@ -12,13 +11,12 @@ import { Mono, Nothing, StateBadge, Where } from "@/components/steve/ui";
 // row per attempt holding a lease, with the admission decision that let it
 // start. It reads live state, so it belongs with the other status views
 // rather than with the machine and agent inventory.
-export function RunningExecutions() {
+export function RunningExecutions({ attempts, onForce }: { attempts: Attempt[]; onForce: (id: string) => Promise<void> }) {
     const { t: tr, locale } = useI18n();
-    const snap = useFleet((fleet) => fleet.snap);
     return (
         <TableCard.Root size="sm" className="workbench-table min-w-0">
-            <TableCard.Header title={tr("fleet.runningExecutions")} badge={`${snap.attempts.length}`} description={tr("fleet.leaseHint")} />
-            {snap.attempts.length === 0 ? <Nothing icon={Zap} title={tr("fleet.noExecutions")} /> : (
+            <TableCard.Header title={tr("fleet.runningExecutions")} badge={`${attempts.length}`} description={tr("fleet.leaseHint")} />
+            {attempts.length === 0 ? <Nothing icon={Zap} title={tr("fleet.noExecutions")} /> : (
                 <Table aria-label={tr("fleet.runningExecutions")} size="sm" className="min-w-240">
                     <Table.Header>
                         <Table.Head id="id" label={tr("fleet.executionId")} isRowHeader />
@@ -33,7 +31,7 @@ export function RunningExecutions() {
                         <Table.Head id="since" label={tr("fleet.started")} />
                         <Table.Head id="force" label={tr("console.forceStop")} />
                     </Table.Header>
-                    <Table.Body items={snap.attempts}>
+                    <Table.Body items={attempts}>
                         {(a) => (
                             <Table.Row id={a.id}>
                                 <Table.Cell><span title={a.id}><Mono>{a.id.length > 14 ? `${short(a.id, 14)}…` : a.id}</Mono></span></Table.Cell>
@@ -46,7 +44,7 @@ export function RunningExecutions() {
                                 <Table.Cell><Leases a={a} /></Table.Cell>
                                 <Table.Cell><AdmissionBadge a={a} /></Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{relative(a.started_at, locale)}</span></Table.Cell>
-                                <Table.Cell>{needsForceStop(a) && <ForceStopControl attempt={a} />}</Table.Cell>
+                                <Table.Cell>{needsForceStop(a) && <ForceStopControl attempt={a} onForce={onForce} />}</Table.Cell>
                             </Table.Row>
                         )}
                     </Table.Body>

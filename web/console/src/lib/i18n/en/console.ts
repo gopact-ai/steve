@@ -1,6 +1,9 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.forceConfirmTitle": "Force stop task #{task}?",
+    "console.forceConfirmBody": "This cancels original task #{task} and its descendants and immediately terminates execution {attempt}'s process group. This cannot be undone and does not automatically restart the node over SSH.",
+    "console.forceConfirm": "Confirm force stop",
     "console.forceStop": "Force stop",
     "console.forceTitle": "The original execution is not confirmed stopped",
     "console.forceHint": "Cancel the task and immediately terminate the original process group. Quarantine remains until the stop is confirmed.",

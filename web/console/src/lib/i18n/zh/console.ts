@@ -1,4 +1,7 @@
 export const consoleZh = {
+    "console.forceConfirmTitle": "确认强制停止任务 #{task}？",
+    "console.forceConfirmBody": "这将取消原任务 #{task} 及其后代，并立即终止原执行 {attempt} 的进程组。此操作不能撤销，且不会自动通过 SSH 重启节点。",
+    "console.forceConfirm": "确认强制停止",
     "console.forceStop": "强制停止",
     "console.forceTitle": "原执行停止尚未确认",
     "console.forceHint": "取消任务并立即终止原执行的进程组；只有确认停止后才解除隔离。",

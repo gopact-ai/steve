@@ -82,6 +82,9 @@ func (h *Host) Kill(parent context.Context) error {
 // After reaping, the recorded identity must be proved again before signalling;
 // the old numeric group id alone can belong to an unrelated process.
 func (p *localProcess) KillNow(ctx context.Context) error {
+	if p.groupUnsupported.Load() {
+		return procgroup.ErrUnsupported
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

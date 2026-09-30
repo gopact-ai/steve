@@ -3140,6 +3140,41 @@ checks["force-stop-execution-row"] = async (f) => {
     await eventually(() => calls === 1, "execution row did not stop its original attempt");
 };
 
+checks["force-stop-confirmation-retry"] = async (f) => {
+    const original = { id: "confirmed-original", task_id: "11", kind: "chat", state: "failed", project: "scratch", node: "test-node", agent: "worker", started_at: at, unsettled: true };
+    const state = { ...usageState(), tasks: [task("11", A, "scratch")], attempts: [original], projects: [project("scratch"), project("home")] };
+    let calls = 0, reads = 0;
+    const response = gate();
+    f.releases.push(response.release);
+    await f.page.route("**/state", (route) => { reads++; return route.fulfill({ json: f.snapshot = workState(state) }); });
+    await f.page.route("**/console/attempts/*/force-stop", async (route) => {
+        assert.ok(route.request().url().endsWith("/confirmed-original/force-stop"));
+        calls++;
+        if (calls === 1) return route.fulfill({ status: 409, body: "Original execution rejected the request" });
+        await response.promise;
+        original.force_stop = { revision: 1, level: "kill", by: "owner", requested_at: at, level_since: at };
+        return route.fulfill({ status: 202, json: { accepted: true } });
+    });
+    await f.page.reload();
+    const banner = f.page.getByRole("alert").filter({ hasText: "原执行停止尚未确认" });
+    await banner.getByRole("button", { name: "强制停止", exact: true }).click();
+    const dialog = f.page.getByRole("dialog", { name: "确认强制停止任务 #11？", exact: true });
+    await dialog.waitFor();
+    const before = reads;
+    await dialog.getByRole("button", { name: "确认强制停止", exact: true }).click();
+    await dialog.getByRole("alert").getByText("Original execution rejected the request", { exact: true }).waitFor();
+    assert.equal(reads, before, "failed force stop refreshed the snapshot as if accepted");
+    await dialog.getByRole("button", { name: "确认强制停止", exact: true }).click();
+    await eventually(() => calls === 2, "retry did not submit the original target");
+    assert.equal(await dialog.getByRole("button", { name: "取消", exact: true }).isDisabled(), true);
+    await f.page.keyboard.press("Enter");
+    assert.equal(calls, 2, "pending confirmation submitted twice");
+    response.release();
+    await dialog.waitFor({ state: "detached" });
+    await f.page.clock.runFor(350);
+    await eventually(() => reads > before, "accepted force stop did not refresh the snapshot");
+};
+
 async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";

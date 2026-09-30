@@ -63,9 +63,15 @@ func (m *Manager) reconcileNodeOpen(ctx context.Context, at Placement, workdir s
 	proof := state.OpenReceipt
 	expected := nodewire.SessionOpenID(binding.Authority.ClusterID, at.Node, binding.Binding.AttemptID, req.CommandID, at.Harness)
 	if state.ID != expected || state.Binding != req.Binding || state.Harness != at.Harness || proof == nil || proof.Action != action || proof.Authority != req.Authority || proof.CommandID != req.CommandID {
+		if action == nodewire.SessionActionKill {
+			return nodewire.SessionState{}, unprovedKillReceipt("node open receipt differs from the original execution or current coordinator")
+		}
 		return nodewire.SessionState{}, errors.New("node open receipt differs from the original execution or current coordinator")
 	}
 	if action != nodewire.SessionActionInspectOpen && (!state.ProcessStopped || state.State != nodewire.SessionClosed) {
+		if action == nodewire.SessionActionKill {
+			return nodewire.SessionState{}, unprovedKillReceipt("node open receipt does not prove process termination")
+		}
 		return nodewire.SessionState{}, ErrStopUnconfirmed
 	}
 	return state, nil

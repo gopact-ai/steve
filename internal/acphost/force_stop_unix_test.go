@@ -129,3 +129,41 @@ func TestUnsupportedLeaderExitDoesNotProveTheProcessGroupStopped(t *testing.T) {
 		t.Fatalf("kill = %v, want unsupported", err)
 	}
 }
+
+func TestHostRetainsUnsupportedGroupAfterItsWatcherFinishes(t *testing.T) {
+	group := kernelGroup
+	group.waitExit = func(int) error { return procgroup.ErrUnsupported }
+	group.kill = func(int) error { return procgroup.ErrUnsupported }
+	h := New(Config{Transport: LocalTransport{Command: "/bin/sh", Args: []string{"-c", "exit 0"}, ProcessDir: t.TempDir(), group: &group}})
+	defer h.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if _, _, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()}); err == nil {
+		t.Fatal("non-agent unexpectedly initialized")
+	}
+	h.mu.Lock()
+	var channels []chan struct{}
+	for _, done := range h.settling {
+		channels = append(channels, done)
+	}
+	h.mu.Unlock()
+	for _, done := range channels {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	if h.ProcessStopped(1) || h.AllProcessesStopped() {
+		t.Fatal("watcher retired unsupported group on leader exit")
+	}
+	h.mu.Lock()
+	kept := len(h.processes)
+	h.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("unsupported generations kept=%d", kept)
+	}
+	if err := h.Kill(ctx); !errors.Is(err, procgroup.ErrUnsupported) {
+		t.Fatalf("kill=%v", err)
+	}
+}

@@ -161,9 +161,10 @@ type localProcess struct {
 	exited       chan struct{}
 	// observed is closed once observe is over, err then holding how the
 	// agent ended.
-	observed chan struct{}
-	err      error
-	stopped  atomic.Bool
+	observed         chan struct{}
+	err              error
+	stopped          atomic.Bool
+	groupUnsupported atomic.Bool
 	// mu keeps a kill from reaching the group's id once the leader is
 	// reaped: from then on the id can belong to another process's group.
 	mu     sync.Mutex
@@ -191,8 +192,8 @@ func (p *localProcess) observe() {
 	pid := p.cmd.Process.Pid
 	switch err := p.group.waitExit(pid); {
 	case errors.Is(err, procgroup.ErrUnsupported):
+		p.groupUnsupported.Store(true)
 		p.err = p.reapRunning()
-		p.stopped.Store(true)
 		return
 	case err != nil:
 		// Nothing then shows the group is empty, so the stop stays
@@ -297,7 +298,7 @@ func (r *stuckReport) due() (time.Duration, bool) {
 	return now.Sub(r.began).Round(time.Second), true
 }
 
-func (p *localProcess) Stopped() bool { return p.stopped.Load() }
+func (p *localProcess) Stopped() bool { return p.stopped.Load() && !p.groupUnsupported.Load() }
 
 // Kill signals the whole process group: the agent spawns MCP stdio servers
 // and tools of its own, and killing only the parent orphans them.

@@ -65,3 +65,36 @@ func TestForceStopUsesStoppingAuthorityWithoutObservation(t *testing.T) {
 		})
 	}
 }
+
+func TestAnsweredBadKillProofResetsTheUnansweredWindow(t *testing.T) {
+	for _, invalid := range []string{"binding", "exit"} {
+		t.Run(invalid, func(t *testing.T) {
+			s, records, sessions := forceFixture(t, 1)
+			r := records[0]
+			manager, err := harness.NewManager(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.Stop()
+			transport := &stoppingOnlyTransport{state: sessions.states[r.Session], invalid: invalid}
+			manager.SetTransports(transport)
+			manager.SetNodeSessionBinder(func(ctx context.Context, _ harness.Placement, _, _ string) (context.Context, error) {
+				return harness.WithNodeSession(ctx, harness.NodeSessionContext{Authority: nodewire.SessionAuthority{ClusterID: "test", CoordinatorNodeID: "coordinator", CoordinatorEpoch: 1, WriterGeneration: 1}, Binding: transport.state.Binding, CommandID: r.TurnID}), nil
+			})
+			s.sessions = manager
+			if _, err := s.attempts.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.attempts.RecordForceStopResult(t.Context(), r.ID, 1, false, ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := s.attempts.Get(t.Context(), r.ID)
+			if got.ForceStop.Level != "exhausted" || got.ForceStop.Reason != "stop_unproven" || got.ForceStop.UnansweredCount != 0 || !got.ForceStop.UnansweredSince.IsZero() {
+				t.Fatalf("answered invalid proof looks like transport silence: %+v", got.ForceStop)
+			}
+		})
+	}
+}
