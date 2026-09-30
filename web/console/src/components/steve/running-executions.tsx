@@ -1,3 +1,4 @@
+import { ForceStopControl, needsForceStop } from "@/components/steve/force-stop";
 import { Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
@@ -30,6 +31,7 @@ export function RunningExecutions() {
                         <Table.Head id="leases" label={tr("fleet.leases")} />
                         <Table.Head id="admission" label={tr("fleet.admission")} />
                         <Table.Head id="since" label={tr("fleet.started")} />
+                        <Table.Head id="force" label={tr("console.forceStop")} />
                     </Table.Header>
                     <Table.Body items={snap.attempts}>
                         {(a) => (
@@ -44,6 +46,7 @@ export function RunningExecutions() {
                                 <Table.Cell><Leases a={a} /></Table.Cell>
                                 <Table.Cell><AdmissionBadge a={a} /></Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{relative(a.started_at, locale)}</span></Table.Cell>
+                                <Table.Cell>{needsForceStop(a) && <ForceStopControl attempt={a} />}</Table.Cell>
                             </Table.Row>
                         )}
                     </Table.Body>
