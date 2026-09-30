@@ -134,3 +134,24 @@ func TestForceStopRequiresProcessExitNotJustAnAnsweredCommand(t *testing.T) {
 		t.Fatal("unproved force stop changed durable state")
 	}
 }
+
+func TestOrdinaryStopCannotDowngradePendingForceStopProof(t *testing.T) {
+	s, _, r, proof, tasks := retainedFixture(t)
+	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
+	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	proof.Session.Command.State = "cancelled"
+	proof.Session.Command.Settled = true
+	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "earlier-stop", proof); err == nil {
+		t.Fatal("earlier graceful stop confirmed an outstanding force stop without exit")
+	}
+	got, _ := s.Get(t.Context(), r.ID)
+	if got.ForceStop.Level != "kill" || !got.Unsettled {
+		t.Fatal("graceful receipt cleared force quarantine")
+	}
+	proof.Session.ProcessStopped = true
+	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "earlier-stop", proof); err != nil {
+		t.Fatal(err)
+	}
+}
