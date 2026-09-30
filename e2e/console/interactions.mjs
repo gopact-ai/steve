@@ -2838,6 +2838,60 @@ checks["fleet-synthesized-snapshot"] = async (f) => {
     await close(opened);
 };
 
+// A row's drawer opens as often as its row is clicked or entered. The row is
+// selected only while its drawer is open: however the drawer was closed (its
+// close button, Escape, or a click beside it), closing it lets go of the row,
+// so the same row opens it again.
+async function reopensDrawer(row, drawer, what) {
+    const page = row.page();
+    const closes = [
+        ["its close button", () => drawer.getByRole("button", { name: "关闭", exact: true }).click()],
+        // Escape reaches the drawer once focus has moved into it.
+        ["Escape", async () => {
+            await page.waitForFunction((el) => el.contains(document.activeElement), await drawer.elementHandle());
+            await page.keyboard.press("Escape");
+        }],
+        ["a click beside it", () => page.mouse.click(2, 2)],
+    ];
+    let since = "";
+    for (const [how, close] of closes) {
+        await row.click();
+        await drawer.waitFor().catch(() => assert.fail(`${what} does not open${since}`));
+        assert.equal(await row.getAttribute("aria-selected"), "true", `${what} is not selected while its drawer is open`);
+        await close();
+        await drawer.waitFor({ state: "detached" });
+        assert.equal(await row.getAttribute("aria-selected"), "false", `${what} stays selected after ${how} closed its drawer`);
+        since = ` again after ${how} closed its drawer`;
+    }
+    await row.focus();
+    await page.keyboard.press("Enter");
+    await drawer.waitFor().catch(() => assert.fail(`${what} does not open from the keyboard${since}`));
+}
+
+checks["fleet-machine-reopens"] = async (f) => {
+    const nodes = [{ name: "hub", role: "hub", up: true, version: "test", harnesses: [] }, { name: "worker", role: "node", up: true, version: "test", harnesses: [] }];
+    const state = { ...usageState(), hub: { node: "hub", version: "test", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
+    await reopensDrawer(f.page.locator("#fleet-machines").getByRole("row", { name: /worker/ }), f.page.getByRole("dialog", { name: "worker", exact: true }), "A machine");
+};
+
+checks["fleet-agent-reopens"] = async (f) => {
+    const state = { ...usageState(), agents: [{ id: "builder", harness: "mock", eligible: true, activities: [] }] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
+    await reopensDrawer(f.page.getByRole("row", { name: /builder/ }), f.page.getByRole("dialog", { name: "builder", exact: true }), "An agent");
+};
+
+checks["mcp-deployment-reopens"] = async (f) => {
+    await f.page.route("**/console/mcp", (route) => route.fulfill({ json: {
+        platform: [], machines: [],
+        deployments: [{ node: "test-node", name: "example-service", type: "http", url: "https://example.test/mcp", agents: [] }],
+    } }));
+    await f.page.getByRole("link", { name: "MCP", exact: true }).click();
+    await reopensDrawer(f.page.getByRole("row").filter({ hasText: "example-service" }), f.page.getByRole("dialog", { name: "example-service", exact: true }), "An installed MCP service");
+};
+
 async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";
