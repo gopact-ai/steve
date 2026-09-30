@@ -98,3 +98,19 @@ func TestAnsweredBadKillProofResetsTheUnansweredWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestUndispatchedKillIsNotAnAnsweredNodeRefusal(t *testing.T) {
+	s, records, sessions := forceFixture(t, 1)
+	sessions.failure = &nodewire.SessionNotDispatched{Cause: &node.SessionError{Code: "unavailable", Message: "connection was never opened"}}
+	r := records[0]
+	if _, err := s.attempts.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.attempts.Get(t.Context(), r.ID)
+	if got.ForceStop.Level != "kill" || got.ForceStop.UnansweredCount != 1 || got.ForceStop.Reason != "" {
+		t.Fatalf("undispatched request treated as answered: %+v", got.ForceStop)
+	}
+}

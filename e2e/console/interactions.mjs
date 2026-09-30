@@ -3163,6 +3163,9 @@ checks["force-stop-confirmation-retry"] = async (f) => {
     const before = reads;
     await dialog.getByRole("button", { name: "确认强制停止", exact: true }).click();
     await dialog.getByRole("alert").getByText("Original execution rejected the request", { exact: true }).waitFor();
+    const unwantedRefresh = f.page.waitForRequest((request) => new URL(request.url()).pathname === "/state", { timeout: 500 }).then(() => true, () => false);
+    await f.page.clock.runFor(350);
+    assert.equal(await unwantedRefresh, false, "failed force stop scheduled a snapshot refresh");
     assert.equal(reads, before, "failed force stop refreshed the snapshot as if accepted");
     await dialog.getByRole("button", { name: "确认强制停止", exact: true }).click();
     await eventually(() => calls === 2, "retry did not submit the original target");
