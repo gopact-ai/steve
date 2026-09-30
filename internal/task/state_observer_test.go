@@ -29,13 +29,16 @@ func TestStateObserverIgnoresUnchangedStateWrites(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("state %s did not notify", state)
 		}
-		title := "metadata"
+		title := "metadata-" + string(state)
 		if _, err := s.SetMeta(row.ID, MetaPatch{Title: &title}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AddInterimForTask(row.ID, "progress-"+string(state)); err != nil {
 			t.Fatal(err)
 		}
 		select {
 		case got := <-events:
-			t.Fatalf("same-state metadata broadcast: %+v", got)
+			t.Fatalf("same-state metadata or progress broadcast: %+v", got)
 		case <-time.After(25 * time.Millisecond):
 		}
 	}

@@ -192,17 +192,34 @@ func (r *Registry) Shutdown(ctx context.Context) error {
 // Stop acts only on already authorized IDs; task.SetAside owns persistence.
 // Native handlers run before observer cancellation. Service shutdown and
 // lifetime cancellation do not invoke these task-specific stop handlers.
+// StopBefore stops only epochs revoked before the supplied task snapshots.
+// A new execution admitted after that snapshot is not part of the old stop.
+func (r *Registry) StopBefore(tokens []task.ExecutionToken, cause error) WaitSet {
+	through := make(map[string]uint64, len(tokens))
+	for _, token := range tokens {
+		through[token.TaskID] = token.Epoch
+	}
+	return r.stopMatching(func(s *Scope) bool {
+		epoch, ok := through[s.key.TaskID]
+		return ok && s.token != nil && s.token.TaskID == s.key.TaskID && s.token.Epoch < epoch
+	}, cause)
+}
+
 func (r *Registry) Stop(ids []string, cause error) WaitSet {
 	set := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		set[id] = true
 	}
+	return r.stopMatching(func(s *Scope) bool { return set[s.key.TaskID] }, cause)
+}
+
+func (r *Registry) stopMatching(matches func(*Scope) bool, cause error) WaitSet {
 	r.mu.Lock()
 	var waiting WaitSet
 	var stopping []*Scope
 	var handlers, starting []*stopHandler
 	for s := range r.entries {
-		if set[s.key.TaskID] {
+		if matches(s) {
 			waiting = append(waiting, s)
 			if !s.stopRequested {
 				s.stopRequested = true

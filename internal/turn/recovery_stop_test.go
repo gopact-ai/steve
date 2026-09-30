@@ -1,9 +1,13 @@
 package turn
 
 import (
+	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/execution"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -148,5 +152,87 @@ func TestAutomaticStopCheckDoesNotRevokeTheTaskAgain(t *testing.T) {
 	after, _ := c.tasks.Get(r.TaskID)
 	if after.ExecutionEpoch != before.ExecutionEpoch {
 		t.Fatalf("checking the stop revoked the task again: epoch %d -> %d", before.ExecutionEpoch, after.ExecutionEpoch)
+	}
+}
+
+func TestStopSnapshotCannotStopAResumedExecution(t *testing.T) {
+	c, _, _, record, _ := retainedChatFixture(t)
+	old, err := c.executions.Begin(t.Context(), execution.Key{TaskID: record.TaskID, AttemptID: record.ID, InstanceID: "old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldStops, newStops atomic.Int32
+	if err := execution.RegisterStopHandler(old.Context(), "old", func(context.Context) error { oldStops.Add(1); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	old.Finish(harness.ErrStopUnconfirmed)
+	if _, err := c.tasks.SetAside(record.TaskID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	captured := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		tree, err := c.tasks.Tree(record.TaskID)
+		if err != nil {
+			done <- err
+			close(captured)
+			return
+		}
+		close(captured)
+		<-release
+		_, err = c.checkRetainedStopSnapshot(t.Context(), tree)
+		done <- err
+	}()
+	<-captured
+	if _, err := c.tasks.Advance(record.TaskID, task.StateRunning); err != nil {
+		close(release)
+		<-done
+		t.Fatal(err)
+	}
+	newer, err := c.executions.Begin(t.Context(), execution.Key{TaskID: record.TaskID, AttemptID: "new", InstanceID: "new"})
+	if err != nil {
+		close(release)
+		<-done
+		t.Fatal(err)
+	}
+	defer newer.Finish(nil)
+	if err := execution.RegisterStopHandler(newer.Context(), "new", func(context.Context) error { newStops.Add(1); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("snapshot check waited for the new execution")
+		newer.Finish(nil)
+		<-done
+	}
+	if newStops.Load() != 0 || newer.Context().Err() != nil {
+		t.Fatal("old stop check reached the resumed execution")
+	}
+	if oldStops.Load() != 1 {
+		t.Fatalf("old execution was not checked: %d", oldStops.Load())
+	}
+}
+
+func TestReplayedCancelIntentDoesNotRevokeAgain(t *testing.T) {
+	c, _, _, record, req := retainedChatFixture(t)
+	if _, err := c.tasks.SetAside(record.TaskID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := c.tasks.Get(record.TaskID)
+	_, _ = c.StopRetainedTask(t.Context(), record.TaskID, req, true)
+	after, _ := c.tasks.Get(record.TaskID)
+	if after.ExecutionEpoch != before.ExecutionEpoch {
+		t.Fatalf("replayed cancellation advanced epoch %d -> %d", before.ExecutionEpoch, after.ExecutionEpoch)
+	}
+}
+
+func TestStopSnapshotRefusesARunningDescendant(t *testing.T) {
+	c, _, _, record, _ := retainedChatFixture(t)
+	tree := []task.Task{{ID: record.TaskID, State: task.StatePaused, ExecutionEpoch: 2}, {ID: "child", Parent: record.TaskID, State: task.StateRunning, ExecutionEpoch: 3}}
+	if _, err := c.checkRetainedStopSnapshot(t.Context(), tree); err == nil {
+		t.Fatal("running descendant was accepted for stopping")
 	}
 }

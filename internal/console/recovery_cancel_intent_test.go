@@ -126,3 +126,32 @@ func TestTaskStateRefreshMovesTheQueueWhileStopIsBlocked(t *testing.T) {
 		t.Fatalf("wrong queued input: %q", call.req.Input)
 	}
 }
+
+func TestTaskStateRefreshDoesNotStartUndurableInput(t *testing.T) {
+	s, h, driver := openStopWaitConsole(t, task.StateRunning, true)
+	awaitStopWait(t, s)
+	driver.hold.Store(true)
+	defer close(driver.held)
+	answerRecheck(t, s, awaitStopWait(t, s))
+	awaitStops(t, &driver.stops)
+	if _, err := driver.tasks.SetAside(driver.id, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.book.DB().Exec(`CREATE TRIGGER reject_queue_start BEFORE UPDATE ON bindings WHEN new.kind='console-store' BEGIN SELECT RAISE(ABORT, 'queue write refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	s.TasksSetAside()
+	noCall(t, h)
+	if got := queuedByID(s, "e2"); got.State != consoleapi.ExchangeQueued {
+		t.Fatalf("undurable input started: %+v", got)
+	}
+	if _, err := s.book.DB().Exec(`DROP TRIGGER reject_queue_start`); err != nil {
+		t.Fatal(err)
+	}
+	s.TasksSetAside()
+	call := nextCall(t, h)
+	defer release(call)
+	if call.req.Input != "follow-up" {
+		t.Fatal("wrong input")
+	}
+}

@@ -181,15 +181,31 @@ func (t Task) Deadline(now time.Time) time.Time {
 	return now.Add(t.Budget.MaxElapsed - t.Budget.Elapsed)
 }
 
-// Tree returns one snapshot of the root and its descendants.
+// Tree returns one snapshot of the root and every descendant, including
+// hidden system tasks. It indexes parent links once and does not sort each
+// child's siblings or read unrelated accounting histories.
 func (s *Store) Tree(id string) ([]Task, error) {
-	root, ok := s.Get(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, ok := s.data.Tasks[id]
 	if !ok {
 		return nil, ErrTaskNotFound
 	}
-	tree := []Task{root}
-	for i := 0; i < len(tree); i++ {
-		tree = append(tree, s.Children(tree[i].ID)...)
+	children := make(map[string][]*Task)
+	for _, row := range s.data.Tasks {
+		children[row.Parent] = append(children[row.Parent], row)
 	}
-	return tree, nil
+	pending := []*Task{root}
+	seen := map[string]bool{}
+	var out []Task
+	for i := 0; i < len(pending); i++ {
+		row := pending[i]
+		if seen[row.ID] {
+			return nil, fmt.Errorf("task %s has cyclic ancestry", row.ID)
+		}
+		seen[row.ID] = true
+		out = append(out, *row.clone())
+		pending = append(pending, children[row.ID]...)
+	}
+	return out, nil
 }

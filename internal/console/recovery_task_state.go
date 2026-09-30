@@ -44,9 +44,23 @@ func (s *Service) refreshStopTasks(ctx context.Context) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	conversations := map[string][]*queuedExchange{}
 	for e, id := range pending {
-		if e.RecoveryStopTask == id {
-			e.stopSetAside = err == nil && states[id]
+		if e.RecoveryStopTask != id || e.State.Terminal() {
+			continue
+		}
+		previous := e.stopSetAside
+		e.stopSetAside = err == nil && states[id]
+		if !previous && e.stopSetAside {
+			conversations[e.Conversation] = append(conversations[e.Conversation], e)
+		}
+	}
+	for conversation, released := range conversations {
+		if err := s.startNextLocked(conversation); err != nil {
+			slog.Error("console: start the line after task state changed", "conversation", conversation, "error", err)
+			for _, e := range released {
+				e.stopSetAside = false
+			}
 		}
 	}
 }

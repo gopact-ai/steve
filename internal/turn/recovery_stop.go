@@ -36,7 +36,7 @@ func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req R
 	if tracked.Requester != "" && tracked.Requester != req.SenderOpenID {
 		return Result{}, errors.New("recovery stop requires the original requester")
 	}
-	if !cancel {
+	if !cancel || tracked.State == task.StateCancelled {
 		return c.checkRetainedStop(ctx, tracked)
 	}
 	result, ids, stopErr := c.setTaskAside(ctx, c.text.T(i18n.CardTasks), tracked, task.StateCancelled, true)
@@ -55,18 +55,28 @@ func (c *Coordinator) checkRetainedStop(ctx context.Context, tracked task.Task) 
 	if tracked.State != task.StatePaused && tracked.State != task.StateCancelled {
 		return Result{}, errors.New("the task is no longer waiting for its execution to stop")
 	}
-	pending := []task.Task{tracked}
+	tree, err := c.tasks.Tree(tracked.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	return c.checkRetainedStopSnapshot(ctx, tree)
+}
+
+func (c *Coordinator) checkRetainedStopSnapshot(ctx context.Context, tree []task.Task) (Result, error) {
+	tracked := tree[0]
+	if tracked.State != task.StatePaused && tracked.State != task.StateCancelled {
+		return Result{}, errors.New("the task is no longer waiting for its execution to stop")
+	}
 	var ids []string
-	for len(pending) > 0 {
-		current := pending[0]
-		pending = pending[1:]
+	var tokens []task.ExecutionToken
+	for _, current := range tree {
 		if current.State != task.StatePaused && current.State != task.StateCancelled && !current.State.Terminal() {
 			return Result{}, errors.New("the task is no longer waiting for its execution to stop")
 		}
 		ids = append(ids, current.ID)
-		pending = append(pending, c.tasks.Children(current.ID)...)
+		tokens = append(tokens, task.ExecutionToken{TaskID: current.ID, Epoch: current.ExecutionEpoch})
 	}
-	stopErr := c.stopExecutions(ctx, ids, true)
+	stopErr := c.stopExecutionsBefore(ctx, ids, true, tokens)
 	if stopErr != nil {
 		return Result{}, errors.Join(harness.ErrStopUnconfirmed, stopErr)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -472,10 +473,24 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 // An error says the stop is recorded but some writer has not been seen to
 // stop; with confirmSettlement, an attempt still open counts as that.
 func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmSettlement bool) error {
+	return c.stopExecutionsBefore(ctx, ids, confirmSettlement, nil)
+}
+
+func (c *Coordinator) stopExecutionsBefore(ctx context.Context, ids []string, confirmSettlement bool, tokens []task.ExecutionToken) error {
+	through := map[string]uint64{}
+	for _, token := range tokens {
+		through[token.TaskID] = token.Epoch
+	}
+	matches := func(record attempt.Record) bool {
+		return tokens == nil || record.Execution == nil || record.Execution.Epoch < through[record.TaskID]
+	}
 	var stopErr error
 	for _, id := range ids {
 		if records, err := c.attempts.ForTask(ctx, id); err == nil {
 			for _, record := range records {
+				if !matches(record) {
+					continue
+				}
 				if !record.Unsettled && record.StopEvidence != "" {
 					stopErr = errors.Join(stopErr, c.resolveStoppedExecution(ctx, record))
 				}
@@ -485,7 +500,13 @@ func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmS
 		}
 	}
 	waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
-	stopErr = errors.Join(stopErr, c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx))
+	var waiting execution.WaitSet
+	if tokens == nil {
+		waiting = c.executions.Stop(ids, task.ErrExecutionStopped)
+	} else {
+		waiting = c.executions.StopBefore(tokens, task.ErrExecutionStopped)
+	}
+	stopErr = errors.Join(stopErr, waiting.Wait(waitCtx))
 	finishWait()
 	for _, id := range ids {
 		records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
@@ -494,6 +515,9 @@ func (c *Coordinator) stopExecutions(ctx context.Context, ids []string, confirmS
 			continue
 		}
 		for _, record := range records {
+			if !matches(record) {
+				continue
+			}
 			if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
 				stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
 			}

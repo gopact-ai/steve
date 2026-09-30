@@ -121,10 +121,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	if controlRecord != nil {
 		controlRecord.RecoveryStopTarget = &recoveryStopTarget{Conversation: control.Conversation, ExchangeID: target.ID, TaskID: candidate.TaskID, Requester: requester}
 	}
-	previousPending, previousTask := target.RecoveryStopPending, target.RecoveryStopTask
-	target.RecoveryStopPending, target.RecoveryStopTask = stopRequested, candidate.TaskID
-	if err := s.save(); err != nil {
-		target.RecoveryStopPending, target.RecoveryStopTask = previousPending, previousTask
+	if err := s.recordRecoveryStopLocked(target, candidate.TaskID, true); err != nil {
 		s.mu.Unlock()
 		return turn.Result{}, true, err
 	}
@@ -205,10 +202,8 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 		return errors.New("stopping the original recovery task is unavailable")
 	}
 	s.mu.Lock()
-	previous, previousTask := target.RecoveryStopPending, target.RecoveryStopTask
-	target.RecoveryStopPending, target.RecoveryStopTask = stopRequested, candidate.TaskID
-	if saveErr := s.save(); saveErr != nil {
-		target.RecoveryStopPending, target.RecoveryStopTask = previous, previousTask
+	cancel = (cancel || target.RecoveryCancelPending) && candidate.TaskState != task.StateCancelled
+	if saveErr := s.recordRecoveryStopLocked(target, candidate.TaskID, cancel); saveErr != nil {
 		s.mu.Unlock()
 		return saveErr
 	}
@@ -235,10 +230,10 @@ func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange
 	}
 	// Persist confirmed settlement before interrupting the waiter. A crash in
 	// this gap must finish delivery on restart, never ask or execute again.
-	previous, pending := target.RecoveryStop, target.RecoveryStopPending
-	target.RecoveryStop, target.RecoveryStopPending = &reply, ""
+	previous, pending, intent := target.RecoveryStop, target.RecoveryStopPending, target.RecoveryCancelPending
+	target.RecoveryStop, target.RecoveryStopPending, target.RecoveryCancelPending = &reply, "", false
 	if err := s.save(); err != nil {
-		target.RecoveryStop, target.RecoveryStopPending = previous, pending
+		target.RecoveryStop, target.RecoveryStopPending, target.RecoveryCancelPending = previous, pending, intent
 		s.mu.Unlock()
 		return turn.Result{}, err
 	}
@@ -302,10 +297,8 @@ func (s *Service) TasksSetAside() {
 func (r *exchangeRecovery) abandon(taskID string, cancel bool) {
 	r.stream.Close()
 	r.s.mu.Lock()
-	if r.e.RecoveryStop == nil && r.e.RecoveryStopPending == "" {
-		r.e.RecoveryStopPending, r.e.RecoveryStopTask = stopRequested, taskID
-		if err := r.s.save(); err != nil {
-			r.e.RecoveryStopPending, r.e.RecoveryStopTask = "", ""
+	if r.e.RecoveryStop == nil && (r.e.RecoveryStopPending == "" || cancel) {
+		if err := r.s.recordRecoveryStopLocked(r.e, taskID, cancel || r.e.RecoveryCancelPending); err != nil {
 			r.s.mu.Unlock()
 			r.s.detachRecovery(r.e, err)
 			return
@@ -349,7 +342,10 @@ func (s *Service) stopSettlingLocked(e *queuedExchange) bool {
 // behind the console confirmed it while nobody was watching. checkNow makes
 // the first check at once instead of a cadence later.
 func (s *Service) waitRecoveryStop(e *queuedExchange, checkNow bool) {
-	s.waitRecoveryStopIntent(e, checkNow, false)
+	s.mu.Lock()
+	cancel := e.RecoveryCancelPending
+	s.mu.Unlock()
+	s.waitRecoveryStopIntent(e, checkNow || cancel, cancel)
 }
 
 func (s *Service) waitRecoveryStopIntent(e *queuedExchange, checkNow, cancel bool) {
@@ -555,6 +551,10 @@ func (w *recoveryStopWait) ask() (string, bool) {
 // paused instead of calling it stopped.
 func (w *recoveryStopWait) paused() bool {
 	w.s.mu.Lock()
+	if w.e.RecoveryCancelPending {
+		w.s.mu.Unlock()
+		return false
+	}
 	driver := w.s.recoveryDriver
 	original := copyExchange(w.e.Exchange)
 	w.s.mu.Unlock()
