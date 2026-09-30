@@ -1,5 +1,6 @@
 import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { useI18n } from "@/providers/locale-provider";
 import { labelsFor } from "@/lib/labels";
 import { DotsHorizontal, Folder, GitBranch01, Loading01, Plus, Trash01, X } from "@untitledui/icons";
@@ -16,6 +17,7 @@ import { fetchConversations } from "@/lib/api/console";
 import { addProject, addWorkspace, removeProject, removeWorkspace } from "@/lib/api/projects";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { useRowDrawer } from "@/hooks/use-row-drawer";
 import { ConflictsPanel } from "@/components/steve/conflicts";
 import { nodeLabelIn, useNodeLabel } from "@/lib/node-name";
 import type { Conversation, Project, Repo, Workspace } from "@/lib/types";
@@ -40,7 +42,6 @@ export function ProjectsPage() {
     const refresh = useFleet((fleet) => fleet.refresh);
     const nodeLabelOf = useNodeLabel();
     const navigate = useNavigate();
-    const [opened, setOpened] = useState<string | null>(null);
     const [adding, setAdding] = useState(false);
     const [threads, setThreads] = useState<Conversation[] | null>(null);
     const [removing, setRemoving] = useState<Project | null>(null);
@@ -48,19 +49,22 @@ export function ProjectsPage() {
         await removeProject(p.id);
         refresh();
     }
+    const work = snap.projects.filter((p) => !p.home).sort((a, b) => a.node.localeCompare(b.node) || a.id.localeCompare(b.id));
+    const home = snap.projects.find((p) => p.home);
+    const rows = useRowDrawer(work.map((p) => p.id));
+    const current = rows.opened ? snap.projects.find((p) => p.id === rows.opened) : undefined;
     // The question stands alone: whatever was being read about the project
-    // closes first, so the only thing left on screen is the decision. The
-    // threads are counted only now, for this one question, and until they
-    // arrive the question does not claim a number it does not have.
+    // closes first, so the only thing left on screen is the decision. It
+    // closes at once, so focus is back on the project's row when the
+    // question opens, and the question gives focus back there when it goes.
+    // The threads are counted only now, for this one question, and until
+    // they arrive the question does not claim a number it does not have.
     async function ask(p: Project) {
-        setOpened(null);
+        flushSync(rows.close);
         setThreads(null);
         setRemoving(p);
         try { setThreads((await fetchConversations()).conversations || []); } catch { setThreads(null); }
     }
-    const work = snap.projects.filter((p) => !p.home).sort((a, b) => a.node.localeCompare(b.node) || a.id.localeCompare(b.id));
-    const home = snap.projects.find((p) => p.home);
-    const current = opened ? snap.projects.find((p) => p.id === opened) : undefined;
     const newSession = (id: string) => navigate(`/console?new=1&project=${encodeURIComponent(id)}`);
     return (
         <div className="workbench-page flex min-w-0 flex-col">
@@ -71,9 +75,7 @@ export function ProjectsPage() {
             {adding && <AddProject onClose={() => setAdding(false)} onDone={() => refresh()} />}
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 {work.length === 0 ? <Nothing icon={Folder} title={tr("projects.empty")}>{tr("projects.emptyHint")}</Nothing> : (
-                    <Table aria-label={tr("nav.projects")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace"
-                        selectedKeys={opened ? [opened] : []}
-                        onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                    <Table aria-label={tr("nav.projects")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" {...rows.table}>
                         <Table.Header>
                             <Table.Head id="name" label={tr("projects.name")} className="w-[18%]" isRowHeader />
                             <Table.Head id="where" label={tr("projects.workspaces")} className="w-[26%]" />
@@ -139,7 +141,7 @@ export function ProjectsPage() {
                 </div>
                 </Panel>
             )}
-            {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} onRemove={() => void ask(current)} />}
+            {current && <ProjectDrawer p={current} onClose={rows.close} onNewSession={() => newSession(current.id)} onRemove={() => void ask(current)} />}
             {removing && <ConfirmDialog title={tr("projects.removeTitle", { project: removing.id })} confirmLabel={tr("projects.removeProject")}
                 body={threads === null
                     ? tr("projects.removeConfirmCounting", { tasks: removing.task_counts?.total ?? tr("common.unknown"), path: removing.path })

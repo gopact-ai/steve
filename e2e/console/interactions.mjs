@@ -2838,10 +2838,13 @@ checks["fleet-synthesized-snapshot"] = async (f) => {
     await close(opened);
 };
 
+const focusedTag = (page) => page.evaluate(() => document.activeElement?.tagName);
+
 // A row's drawer opens as often as its row is clicked or entered. The row is
 // selected only while its drawer is open: however the drawer was closed (its
 // close button, Escape, or a click beside it), closing it lets go of the row,
-// so the same row opens it again.
+// so the same row opens it again, and gives focus back to the row, so the
+// keyboard carries on from where the drawer was opened.
 async function reopensDrawer(row, drawer, what) {
     const page = row.page();
     const closes = [
@@ -2861,6 +2864,8 @@ async function reopensDrawer(row, drawer, what) {
         await close();
         await drawer.waitFor({ state: "detached" });
         assert.equal(await row.getAttribute("aria-selected"), "false", `${what} stays selected after ${how} closed its drawer`);
+        await page.waitForFunction((el) => el.contains(document.activeElement), await row.elementHandle())
+            .catch(async () => assert.fail(`${what} does not get focus back after ${how} closed its drawer; focus is on ${await focusedTag(page)}`));
         since = ` again after ${how} closed its drawer`;
     }
     await row.focus();
@@ -2890,6 +2895,196 @@ checks["mcp-deployment-reopens"] = async (f) => {
     } }));
     await f.page.getByRole("link", { name: "MCP", exact: true }).click();
     await reopensDrawer(f.page.getByRole("row").filter({ hasText: "example-service" }), f.page.getByRole("dialog", { name: "example-service", exact: true }), "An installed MCP service");
+};
+
+checks["project-reopens"] = async (f) => {
+    await f.page.locator('a[href="#/projects"]').click();
+    await reopensDrawer(f.page.getByRole("row").filter({ hasText: "scratch" }), f.page.getByRole("dialog", { name: "scratch", exact: true }), "A project");
+};
+
+// A row can leave the data while its drawer is open: another console, the
+// command line or a peer removed it. Its drawer goes with it and focus stays
+// in the table; when the row comes back, it comes back closed and unselected,
+// because nobody opened it. present(false) takes the row out of the data and
+// refreshes the page, present(true) puts it back.
+async function forgetsVanishedRow(row, drawer, what, present) {
+    const page = row.page();
+    await row.click();
+    await drawer.waitFor();
+    const table = await row.evaluateHandle((el) => el.closest("table"));
+    await present(false);
+    await row.waitFor({ state: "detached" });
+    await drawer.waitFor({ state: "detached" }).catch(() => assert.fail(`${what} keeps its drawer open after it left the data`));
+    await present(true);
+    await row.waitFor();
+    assert.equal(await drawer.count(), 0, `${what} opens its drawer by itself when it comes back`);
+    assert.equal(await row.getAttribute("aria-selected"), "false", `${what} is selected when it comes back`);
+    assert.ok(await table.evaluate((el) => el.isConnected && el.contains(document.activeElement)), `${what} left the data with its drawer open and focus fell to ${await focusedTag(page)} instead of its table`);
+}
+
+checks["fleet-machine-vanishes"] = async (f) => {
+    const nodes = [{ name: "hub", role: "hub", up: true, version: "test", harnesses: [] }, { name: "worker", role: "node", up: true, version: "test", harnesses: [] }];
+    const state = { ...usageState(), hub: { node: "hub", version: "test", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
+    await forgetsVanishedRow(f.page.locator("#fleet-machines").getByRole("row", { name: /worker/ }), f.page.getByRole("dialog", { name: "worker", exact: true }), "A machine", async (present) => {
+        state.nodes = present ? nodes : nodes.filter((n) => n.name !== "worker");
+        await f.emit({ kind: "node.changed" }); await f.page.clock.runFor(350);
+    });
+};
+
+checks["fleet-agent-vanishes"] = async (f) => {
+    const agents = [{ id: "builder", harness: "mock", eligible: true, activities: [] }, { id: "planner", harness: "mock", eligible: true, activities: [] }];
+    const state = { ...usageState(), agents };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
+    await forgetsVanishedRow(f.page.getByRole("row", { name: /builder/ }), f.page.getByRole("dialog", { name: "builder", exact: true }), "An agent", async (present) => {
+        state.agents = present ? agents : agents.filter((a) => a.id !== "builder");
+        await f.emit({ kind: "node.changed" }); await f.page.clock.runFor(350);
+    });
+};
+
+checks["mcp-deployment-vanishes"] = async (f) => {
+    const deployment = (name) => ({ node: "test-node", name, type: "http", url: `https://${name}.test/mcp`, agents: [] });
+    const all = [deployment("example-service"), deployment("other-service")];
+    let deployments = all;
+    await f.page.route("**/console/mcp", (route) => route.fulfill({ json: { platform: [], machines: [], deployments } }));
+    await f.page.getByRole("link", { name: "MCP", exact: true }).click();
+    await forgetsVanishedRow(f.page.getByRole("row").filter({ hasText: "example-service" }), f.page.getByRole("dialog", { name: "example-service", exact: true }), "An installed MCP service", async (present) => {
+        deployments = present ? all : all.filter((d) => d.name !== "example-service");
+        await f.emit({ kind: "observe.node.manifest", data: { changes: `mcp:example-service\t${present ? "\tavailable" : "available\t"}` } }); await f.page.clock.runFor(350);
+    });
+};
+
+checks["project-vanishes"] = async (f) => {
+    const projects = [project("scratch"), project("docs"), project("home")];
+    const state = { ...usageState(), projects };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.goto(`${app.url}/#/projects`); await f.page.reload();
+    await forgetsVanishedRow(f.page.getByRole("row").filter({ hasText: "scratch" }), f.page.getByRole("dialog", { name: "scratch", exact: true }), "A project", async (present) => {
+        state.projects = present ? projects : projects.filter((p) => p.id !== "scratch");
+        await f.emit({ kind: "project.changed" }); await f.page.clock.runFor(350);
+    });
+};
+
+// Deleting a row in its drawer closes the drawer while the page still lists
+// the row, so focus goes back to the row first; once the page has read the
+// data again without it, the table hands focus to the row beside it.
+// remove() deletes in the open drawer, confirming on the way; the page's read
+// after the delete waits for reread().
+async function passesFocusOnWhenDeleted(row, drawer, beside, what, remove, reread) {
+    const page = row.page();
+    await row.click();
+    await drawer.waitFor();
+    await remove();
+    await drawer.waitFor({ state: "detached" });
+    await page.clock.runFor(350);
+    await page.waitForFunction((el) => el.contains(document.activeElement), await row.elementHandle())
+        .catch(async () => assert.fail(`${what} deleted in its drawer does not get focus back while it is still listed; focus is on ${await focusedTag(page)}`));
+    reread();
+    await row.waitFor({ state: "detached" });
+    await page.clock.runFor(100);
+    await page.waitForFunction((el) => el.contains(document.activeElement), await beside.elementHandle())
+        .catch(async () => assert.fail(`${what} deleted in its drawer leaves focus on ${await focusedTag(page)} instead of the row beside it`));
+}
+
+checks["fleet-machine-removed-in-drawer"] = async (f) => {
+    const nodes = ["hub", "worker", "zeta"].map((name) => ({ name, role: name === "hub" ? "hub" : "node", up: true, version: "test", harnesses: [] }));
+    const state = { ...usageState(), hub: { node: "hub", version: "test", started: at }, nodes };
+    let reread;
+    await f.page.route("**/state", async (route) => { if (f.reread) await f.reread; return route.fulfill({ json: f.snapshot = workState(state) }); });
+    await f.page.route("**/console/nodes/*", (route) => {
+        if (route.request().method() !== "DELETE") return route.fallback();
+        state.nodes = nodes.filter((n) => n.name !== "worker"); reread = f.hold("reread");
+        return route.fulfill({ json: { ok: true } });
+    });
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
+    const machines = f.page.locator("#fleet-machines"), drawer = f.page.getByRole("dialog", { name: "worker", exact: true });
+    await passesFocusOnWhenDeleted(machines.getByRole("row", { name: /worker/ }), drawer, machines.getByRole("row", { name: /zeta/ }), "A machine", async () => {
+        await drawer.getByRole("button", { name: "移除机器", exact: true }).click();
+        await drawer.getByRole("button", { name: "确认移除", exact: true }).click();
+    }, () => reread());
+};
+
+checks["fleet-agent-deleted-in-drawer"] = async (f) => {
+    const agents = [{ id: "builder", harness: "mock", eligible: true, activities: [] }, { id: "planner", harness: "mock", eligible: true, activities: [] }];
+    const state = { ...usageState(), agents };
+    let reread;
+    await f.page.route("**/state", async (route) => { if (f.reread) await f.reread; return route.fulfill({ json: f.snapshot = workState(state) }); });
+    await f.page.route("**/console/agents/*", (route) => {
+        if (route.request().method() !== "DELETE") return route.fallback();
+        state.agents = agents.filter((a) => a.id !== "builder"); reread = f.hold("reread");
+        return route.fulfill({ json: { ok: true } });
+    });
+    await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
+    const drawer = f.page.getByRole("dialog", { name: "builder", exact: true });
+    await passesFocusOnWhenDeleted(f.page.getByRole("row", { name: /builder/ }), drawer, f.page.getByRole("row", { name: /planner/ }), "An agent", async () => {
+        await drawer.getByRole("button", { name: "删除 Agent", exact: true }).click();
+        await drawer.getByRole("button", { name: "确认删除", exact: true }).click();
+    }, () => reread());
+};
+
+checks["mcp-deployment-deleted-in-drawer"] = async (f) => {
+    const deployment = (name) => ({ node: "test-node", name, type: "http", url: `https://${name}.test/mcp`, agents: [] });
+    const all = [deployment("example-service"), deployment("other-service")];
+    let deployments = all, reread;
+    await f.page.route((url) => url.pathname === "/console/mcp", async (route) => {
+        if (route.request().method() === "DELETE") {
+            deployments = all.filter((d) => d.name !== "example-service"); reread = f.hold("reread");
+            return route.fulfill({ json: { ok: true } });
+        }
+        if (f.reread) await f.reread;
+        return route.fulfill({ json: { platform: [], machines: [], deployments } });
+    });
+    await f.page.getByRole("link", { name: "MCP", exact: true }).click();
+    const drawer = f.page.getByRole("dialog", { name: "example-service", exact: true });
+    await passesFocusOnWhenDeleted(f.page.getByRole("row").filter({ hasText: "example-service" }), drawer, f.page.getByRole("row").filter({ hasText: "other-service" }), "An installed MCP service", async () => {
+        await drawer.getByRole("button", { name: "删除", exact: true }).click();
+        await drawer.getByRole("button", { name: "确认删除", exact: true }).click();
+    }, () => reread());
+};
+
+// Removing a project from its drawer asks first; the drawer closes for the
+// question. Cancelling gives focus back to the project's row; removing it
+// leaves focus in the table, on the row beside it, as when a row leaves.
+async function removesFromDrawer(f, answer) {
+    const projects = [project("scratch"), project("docs"), project("extra"), project("home")];
+    const state = { ...usageState(), projects };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.route("**/console/projects/*", (route) => {
+        if (route.request().method() !== "DELETE") return route.fallback();
+        state.projects = projects.filter((p) => !route.request().url().endsWith(`/${p.id}`));
+        return route.fulfill({ json: { ok: true } });
+    });
+    await f.page.goto(`${app.url}/#/projects`); await f.page.reload();
+    const page = f.page, row = page.getByRole("row").filter({ hasText: "docs" });
+    const drawer = page.getByRole("dialog", { name: "docs", exact: true });
+    const question = page.getByRole("dialog", { name: /删除项目 docs/ });
+    await row.click();
+    await drawer.waitFor();
+    const table = await row.evaluateHandle((el) => el.closest("table"));
+    await drawer.getByRole("button", { name: "删除项目", exact: true }).click();
+    await question.waitFor();
+    await page.waitForFunction((el) => el.contains(document.activeElement), await question.elementHandle());
+    await question.getByRole("button", { name: answer, exact: true }).click();
+    await question.waitFor({ state: "detached" });
+    return { page, row, table };
+}
+
+checks["project-remove-cancelled"] = async (f) => {
+    const { page, row } = await removesFromDrawer(f, "取消");
+    await page.clock.runFor(100);
+    await page.waitForFunction((el) => el.contains(document.activeElement), await row.elementHandle(), { timeout: 3000 })
+        .catch(async () => assert.fail(`A project whose removal was cancelled does not get focus back; focus is on ${await focusedTag(page)}`));
+};
+
+checks["project-remove-confirmed"] = async (f) => {
+    const { page, row, table } = await removesFromDrawer(f, "删除项目");
+    await page.clock.runFor(350);
+    await row.waitFor({ state: "detached" });
+    await page.clock.runFor(100);
+    const where = await page.evaluate(() => ({ tag: document.activeElement?.tagName, row: document.activeElement?.closest?.('[role="row"]')?.getAttribute("data-key") ?? null }));
+    assert.ok(await table.evaluate((el) => el.isConnected && el.contains(document.activeElement)) && where.row !== null, `A removed project leaves focus on ${where.tag} instead of the row beside it`);
 };
 
 async function checkNativeHistoryImport(f, autoProject = false) {
