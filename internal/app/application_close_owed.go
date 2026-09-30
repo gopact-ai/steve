@@ -46,9 +46,10 @@ type owedCloseOutcome struct {
 }
 
 // Reconcile sends each close still owed. A small rotating batch keeps an
-// offline node from starving the closes owed by others; each pass has a
-// bounded lifetime. A close the node does not take stays owed for the next
-// pass, and why is logged once per cause.
+// offline node from starving the closes owed by others. Network calls and
+// the settlement proposal share a deadline; committed writes retain the
+// ledger's local confirmation semantics. A refused close stays owed for
+// the next pass, and why is logged once per cause.
 func (c *applicationOwedCloses) Reconcile(parent context.Context) error {
 	if !c.mu.TryLock() {
 		return nil
