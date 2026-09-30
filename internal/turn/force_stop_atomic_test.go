@@ -193,3 +193,55 @@ func TestOldForceTargetDoesNotCancelANewSessionBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestForceStopTreeWriteFailureIsAtomic(t *testing.T) {
+	for _, reject := range []bool{false, true} {
+		t.Run(map[bool]string{false: "committed", true: "refused-child"}[reject], func(t *testing.T) {
+			c, tasks, root, _ := forceStopControlFixture(t)
+			child, err := tasks.Spawn(root.TaskID, task.Task{Member: "child-worker", ProjectID: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tasks.Begin(child.ID, "child-worker", "node", ""); err != nil {
+				t.Fatal(err)
+			}
+			token, _ := tasks.ExecutionToken(child.ID)
+			spec := root.Spec
+			spec.ID = "force-child"
+			spec.TaskID = child.ID
+			spec.TurnID = "child-input"
+			spec.Agent = "child-worker"
+			spec.Execution = &token
+			spec.Workspace.Path = t.TempDir()
+			spec.Workspace.ID = "child-workspace"
+			r, err := c.attempts.Open(t.Context(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+				r, err = c.attempts.Advance(t.Context(), r.ID, phase, "fixture", func(r *attempt.Record) { r.Session = "ns_child" })
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if reject {
+				forceStopTrigger(t, c, `CREATE TRIGGER refuse_child_force BEFORE UPDATE ON operations WHEN NEW.id='force-child' AND json_extract(NEW.data,'$.force_stop') IS NOT NULL BEGIN SELECT RAISE(ABORT,'child force refused'); END`)
+			}
+			err = NewForceStopControl(c).ForceStopAttempt(t.Context(), root.ID, "owner")
+			if reject != (err != nil) {
+				t.Fatalf("force=%v rejected=%v", err, reject)
+			}
+			for _, record := range []attempt.Record{root, r} {
+				tracked, _ := tasks.Get(record.TaskID)
+				got, _ := c.attempts.Get(t.Context(), record.ID)
+				if reject {
+					if tracked.State != task.StateRunning || got.ForceStop != nil {
+						t.Fatal("rejected tree partially installed")
+					}
+				} else if tracked.State != task.StateCancelled || got.ForceStop == nil || !got.Unsettled {
+					t.Fatal("tree cancellation omitted an original execution")
+				}
+			}
+		})
+	}
+}

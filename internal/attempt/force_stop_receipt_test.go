@@ -76,3 +76,25 @@ func TestProcessExitCannotConfirmForceStopOnWrongOrRefusedProof(t *testing.T) {
 		})
 	}
 }
+
+func TestOrdinaryProcessReceiptClearsExhaustedForceFields(t *testing.T) {
+	s, now, r, proof, tasks := retainedFixture(t)
+	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
+	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordForceStopResult(t.Context(), r.ID, 1, true, "stop_unproven"); err != nil {
+		t.Fatal(err)
+	}
+	now.t = now.t.Add(time.Second)
+	proof.ObservedAt = now.t
+	proof.Session.ProcessStopped = true
+	got, err := s.ConfirmTaskStopped(t.Context(), r.ID, "native-exit", proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := got.ForceStop
+	if f.Level != "confirmed" || !f.ExhaustedAt.IsZero() || f.Reason != "" || !f.LevelSince.Equal(now.t) {
+		t.Fatalf("ordinary native proof left stale fields: %+v", f)
+	}
+}
