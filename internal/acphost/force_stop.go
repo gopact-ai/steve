@@ -16,7 +16,18 @@ type processKiller interface{ KillNow(context.Context) error }
 func (h *Host) Kill(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	h.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	retry := time.NewTicker(time.Millisecond)
+	defer retry.Stop()
+	for !h.mu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-retry.C:
+		}
+	}
 	h.isClosed, h.alive = true, false
 	conn, stdin := h.conn, h.stdin
 	var processes []Process
