@@ -83,6 +83,7 @@ type groupCalls struct {
 	waitExit func(pid int) error
 	kill     func(group int) error
 	inspect  func(group int) (procgroup.Remains, error)
+	settle   func(procgroup.Identity, procgroup.Place, procgroup.Place, time.Duration) error
 }
 
 var kernelGroup = groupCalls{capture: procgroup.Capture, waitExit: procgroup.WaitExit, kill: procgroup.Kill, inspect: procgroup.Inspect}
@@ -127,6 +128,8 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 		group = *t.group
 	}
 	var unidentified error
+	var identity procgroup.Identity
+	place, _ := procgroup.Here()
 	if t.Started != nil {
 		// The leader is not waited for before Start returns, so it still
 		// holds its pid and its start time can be read.
@@ -136,10 +139,11 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 		case err != nil:
 			unidentified = err
 		default:
+			identity = id
 			t.Started(id)
 		}
 	}
-	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, unidentified: unidentified, exited: make(chan struct{}), observed: make(chan struct{})}
+	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, unidentified: unidentified, identity: identity, place: place, exited: make(chan struct{}), observed: make(chan struct{})}
 	go p.observe()
 	return p, nil
 }
@@ -152,6 +156,8 @@ type localProcess struct {
 	// unidentified is why the identity of the group, where it was to be
 	// reported, could not be read.
 	unidentified error
+	identity     procgroup.Identity
+	place        procgroup.Place
 	exited       chan struct{}
 	// observed is closed once observe is over, err then holding how the
 	// agent ended.
