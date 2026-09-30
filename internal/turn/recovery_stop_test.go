@@ -232,7 +232,7 @@ func TestReplayedCancelIntentDoesNotRevokeAgain(t *testing.T) {
 func TestStopSnapshotRefusesARunningDescendant(t *testing.T) {
 	c, _, _, record, _ := retainedChatFixture(t)
 	tree := []task.Task{{ID: record.TaskID, State: task.StatePaused, ExecutionEpoch: 2}, {ID: "child", Parent: record.TaskID, State: task.StateRunning, ExecutionEpoch: 3}}
-	if _, err := c.checkRetainedStopSnapshot(t.Context(), tree); err == nil {
-		t.Fatal("running descendant was accepted for stopping")
+	if _, err := c.checkRetainedStopSnapshot(t.Context(), tree); err == nil || !strings.Contains(err.Error(), "no longer waiting") {
+		t.Fatalf("running descendant was not refused before stopping: %v", err)
 	}
 }
