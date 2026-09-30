@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/sameorigin"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
 func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, planning plansAssembly, projection readModelAssembly) (consoleAssembly, error) {
@@ -82,6 +83,8 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	view.SetInteractions(cons)
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
+	cons.SetForceStops(turn.NewForceStopControl(coordinator))
+	dashboard.SetForceStops(cons)
 	dashboard.SetChannelHistory(&channelConversations{
 		ChannelHistory: gateway.NewChannelHistory(book), contexts: coordinator, tasks: tasks, activity: work.Gateway(),
 	})

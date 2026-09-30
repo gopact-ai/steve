@@ -1,7 +1,6 @@
 package turn
 
 import (
-	"context"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -28,12 +27,7 @@ func TestForceStopAttemptRequiresOwnerAndCancelsTask(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	force, ok := any(c).(interface {
-		ForceStopAttempt(context.Context, string, string) error
-	})
-	if !ok {
-		t.Fatal("coordinator has no force stop entry")
-	}
+	force := NewForceStopControl(c)
 	if err := force.ForceStopAttempt(t.Context(), r.ID, "visitor"); err == nil {
 		t.Fatal("non-owner force stopped a task")
 	}

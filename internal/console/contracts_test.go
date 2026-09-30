@@ -5,6 +5,7 @@ import "github.com/gopact-ai/steve/internal/turn"
 // The only production implementation of capabilities console recovery
 // probes its retained-chat driver for.
 var (
+	_ forceStopDriver     = (*turn.ForceStopControl)(nil)
 	_ neverAdmittedDriver = (*turn.Coordinator)(nil)
 	_ relocationDriver    = (*turn.Coordinator)(nil)
 	_ retainedPlanDriver  = (*turn.Coordinator)(nil)

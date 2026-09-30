@@ -140,19 +140,20 @@ type Grant struct {
 }
 
 type Attempt struct {
-	Unsettled bool      `json:"unsettled,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	State     string    `json:"state"`
-	TaskID    string    `json:"task_id,omitempty"`
-	Project   string    `json:"project"`
-	Agent     string    `json:"agent,omitempty"`
-	Node      string    `json:"node,omitempty"`
-	Scope     string    `json:"scope"`
-	Workspace string    `json:"workspace,omitempty"`
-	Leases    []string  `json:"leases,omitempty"`
-	StartedAt time.Time `json:"started_at"`
+	ForceStop *attempt.ForceStop `json:"force_stop,omitempty"`
+	Unsettled bool               `json:"unsettled,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	ID        string             `json:"id"`
+	Kind      string             `json:"kind"`
+	State     string             `json:"state"`
+	TaskID    string             `json:"task_id,omitempty"`
+	Project   string             `json:"project"`
+	Agent     string             `json:"agent,omitempty"`
+	Node      string             `json:"node,omitempty"`
+	Scope     string             `json:"scope"`
+	Workspace string             `json:"workspace,omitempty"`
+	Leases    []string           `json:"leases,omitempty"`
+	StartedAt time.Time          `json:"started_at"`
 	// Requires is what the work asked of the machine; Admission the
 	// machine's final word on it before the attempt ran.
 	Requires  []string           `json:"requires,omitempty"`

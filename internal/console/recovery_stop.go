@@ -421,6 +421,14 @@ func (w *recoveryStopWait) run() {
 		if !ok {
 			return
 		}
+		if choice == "force-stop" {
+			if err := w.forceStop(); err != nil {
+				w.mu.Lock()
+				w.reason = err.Error()
+				w.mu.Unlock()
+			}
+			continue
+		}
 		if choice == "recheck" {
 			w.check()
 			continue
@@ -531,6 +539,7 @@ func (w *recoveryStopWait) ask() (string, bool) {
 		Title:         text.T(i18n.ConsoleStopWaitTitle),
 		Message:       message,
 		Choices: []view.Choice{
+			{Value: "force-stop", Label: text.T(i18n.ConsoleForceStop), Detail: text.T(i18n.ConsoleForceStopDetail)},
 			{Value: "recheck", Label: text.T(i18n.ConsoleStopRecheckNow), Detail: text.T(i18n.ConsoleStopRecheckNowDetail)},
 			{Value: "wait", Label: text.T(i18n.ConsoleStopLetItCheck), Detail: text.T(i18n.ConsoleStopLetItCheckDetail)},
 		},

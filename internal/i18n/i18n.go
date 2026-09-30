@@ -790,6 +790,8 @@ const (
 	ConsoleStopChoiceDetail      Key = "console_stop_choice_detail"
 	ConsoleNeverAdmitted         Key = "console_never_admitted"
 	ConsoleStopWaitTitle         Key = "console_stop_wait_title"
+	ConsoleForceStop             Key = "console_force_stop"
+	ConsoleForceStopDetail       Key = "console_force_stop_detail"
 	ConsoleStopRecheckNow        Key = "console_stop_recheck_now"
 	ConsoleStopRecheckNowDetail  Key = "console_stop_recheck_now_detail"
 	ConsoleStopLetItCheck        Key = "console_stop_let_it_check"
