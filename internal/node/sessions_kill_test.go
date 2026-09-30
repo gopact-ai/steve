@@ -1,10 +1,12 @@
 package node
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/procgroup"
 )
@@ -87,5 +89,54 @@ func TestNodeAbortClassificationRemainsUncertain(t *testing.T) {
 	var e *SessionError
 	if !errors.As(err, &e) || e.Code != "uncertain" {
 		t.Fatalf("abort error changed: %v", err)
+	}
+}
+
+type unsupportedGroupTransport struct{ acphost.LocalTransport }
+
+func (t unsupportedGroupTransport) Start(ctx context.Context) (acphost.Process, error) {
+	p, err := t.LocalTransport.Start(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return unsupportedGroupProcess{p}, nil
+}
+
+type unsupportedGroupProcess struct{ acphost.Process }
+
+func (p unsupportedGroupProcess) KillNow(ctx context.Context) error {
+	p.Process.Kill()
+	for !p.Process.Stopped() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
+	}
+	return procgroup.ErrUnsupported
+}
+func TestLiveKillPreservesUnsupportedGroupClassification(t *testing.T) {
+	h := acphost.New(acphost.Config{Transport: unsupportedGroupTransport{acphost.LocalTransport{Command: buildMockAgent(t), ProcessDir: t.TempDir()}}})
+	defer h.Close()
+	sid, generation, err := h.OpenSession(t.Context(), "", acphost.SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, record := recordsFixture(t)
+	before := record
+	record.Generation = generation
+	record.UpstreamID = string(sid)
+	record.State.Sequence++
+	if err := store.save(before, record); err != nil {
+		t.Fatal(err)
+	}
+	s := &SessionService{server: NewServer(ServerConfig{Name: "worker"}), records: store, sessions: map[string]*ownedSession{}}
+	one := &ownedSession{service: s, record: record, host: h, changed: make(chan struct{})}
+	req := nodeSessionRequest("kill")
+	req.ID = record.State.ID
+	_, err = one.kill(t.Context(), req)
+	var failure *SessionError
+	if !errors.As(err, &failure) || failure.Code != "stop_unsupported" {
+		t.Fatalf("unsupported group got silently confirmed: %v", err)
 	}
 }
