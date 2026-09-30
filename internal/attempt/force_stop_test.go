@@ -116,3 +116,21 @@ func TestForceStopUnprovableAndOldNodeExhaustWithoutAbort(t *testing.T) {
 		})
 	}
 }
+
+func TestForceStopRequiresProcessExitNotJustAnAnsweredCommand(t *testing.T) {
+	s, _, r, proof, tasks := retainedFixture(t)
+	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
+	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	proof.Session.Command.State = "cancelled"
+	proof.Session.Command.Settled = true
+	proof.Session.ProcessStopped = false
+	if _, err := s.ConfirmForceStopped(t.Context(), r.ID, 1, proof); err == nil {
+		t.Fatal("force stop accepted command settlement without process exit")
+	}
+	got, _ := s.Get(t.Context(), r.ID)
+	if got.ForceStop.Level != "kill" || !got.Unsettled {
+		t.Fatal("unproved force stop changed durable state")
+	}
+}
