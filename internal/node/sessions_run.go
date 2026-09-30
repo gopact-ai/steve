@@ -465,7 +465,7 @@ func (one *ownedSession) settleStop(req nodewire.SessionRequest, host *acphost.H
 	one.mu.Lock()
 	next := one.copyLocked()
 	next.State.ProcessStopped = host.ProcessStopped(generation)
-	if req.Action == nodewire.SessionActionClose || req.Action == nodewire.SessionActionAbort {
+	if req.Action == nodewire.SessionActionClose || req.Action == nodewire.SessionActionAbort || req.Action == nodewire.SessionActionKill {
 		next.State.ProcessStopped = host.AllProcessesStopped()
 	}
 	if next.State.ProcessStopped {
@@ -476,7 +476,7 @@ func (one *ownedSession) settleStop(req nodewire.SessionRequest, host *acphost.H
 	}
 	command, hasCommand := next.Commands[req.CommandID]
 	confirmed := next.State.ProcessStopped || (req.Action == nodewire.SessionActionCancel && (!hasCommand || command.Settled))
-	if req.Action == nodewire.SessionActionClose || req.Action == nodewire.SessionActionAbort {
+	if req.Action == nodewire.SessionActionClose || req.Action == nodewire.SessionActionAbort || req.Action == nodewire.SessionActionKill {
 		if confirmed {
 			next.State.State = nodewire.SessionClosed
 		} else {

@@ -348,6 +348,8 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 		return one.option(ctx, req)
 	case nodewire.SessionActionCancel:
 		return one.cancel(ctx, req)
+	case nodewire.SessionActionKill:
+		return one.kill(ctx, req)
 	case nodewire.SessionActionAbort:
 		return one.abort(ctx, req)
 	case nodewire.SessionActionClose:
