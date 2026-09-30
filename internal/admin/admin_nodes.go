@@ -355,6 +355,15 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	_, inConfig := a.cfg().Nodes[name]
 	a.ConfigStore.runlock()
 	if !inConfig {
+		// A prior removal may have committed its configuration before
+		// forgetting its session closes failed. Retrying finishes that write.
+		if a.OwedCloses != nil {
+			for _, owed := range a.OwedCloses.OwedCloses() {
+				if owed.NodeID == name {
+					return a.OwedCloses.ForgetOwedClosesOn(name)
+				}
+			}
+		}
 		return textFor(ctx).Errorf(i18n.AdminNoNode, name)
 	}
 	// Leaving the cluster can take a consensus round; readers of the
@@ -379,6 +388,9 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
 	slog.Info(fmt.Sprintf("steve: machine %s removed", name), "node", name)
+	if a.OwedCloses != nil {
+		saveErr = errors.Join(saveErr, a.OwedCloses.ForgetOwedClosesOn(name))
+	}
 	return saveErr
 }
 

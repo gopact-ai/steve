@@ -36,9 +36,17 @@ func lostOwnLease(tx *ledger.Tx, r Record) (bool, error) {
 	return true, nil
 }
 
-func writerRefusal(r Record) error {
-	return fmt.Errorf("%w: attempt %s may still be writing; reconcile it before replacing its work", ErrStopConfirmationRequired, r.ID)
+// StopUnconfirmed names the execution that must be reconciled before
+// another writer can be admitted.
+type StopUnconfirmed struct{ Holder string }
+
+func (e StopUnconfirmed) Error() string {
+	return fmt.Sprintf("%s: attempt %s may still be writing; reconcile it before replacing its work", ErrStopConfirmationRequired, e.Holder)
 }
+
+func (e StopUnconfirmed) Unwrap() error { return ErrStopConfirmationRequired }
+
+func writerRefusal(r Record) error { return StopUnconfirmed{Holder: r.ID} }
 
 // checkAdmissionTx closes the gap between an early Open check and the exact
 // transaction that arms a new prompt or command. Healthy parallel attempts

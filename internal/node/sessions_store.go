@@ -245,11 +245,17 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 	if err != nil {
 		return nodewire.SessionState{}, err
 	}
-	if !exists || (record.State.State != nodewire.SessionClosed && record.State.State != nodewire.SessionInterrupted) {
+	if !exists {
+		return nodewire.SessionState{}, sessionError("absent", "unknown node-owned session; reconcile the original execution")
+	}
+	if record.State.State != nodewire.SessionClosed && record.State.State != nodewire.SessionInterrupted {
 		return nodewire.SessionState{}, sessionError("unavailable", "unknown node-owned session; reconcile the original execution")
 	}
-	if record.ClusterID != req.Authority.ClusterID || record.State.Binding != req.Binding {
-		return nodewire.SessionState{}, sessionError("forbidden", "archived session belongs to another execution")
+	if record.ClusterID != req.Authority.ClusterID {
+		return nodewire.SessionState{}, sessionError("forbidden", "archived session belongs to another cluster")
+	}
+	if record.State.Binding != req.Binding {
+		return nodewire.SessionState{}, sessionError("conflict", "archived session belongs to another execution")
 	}
 	if err := checkSessionReceipt(req, record); err != nil {
 		return nodewire.SessionState{}, err

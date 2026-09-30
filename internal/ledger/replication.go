@@ -231,6 +231,11 @@ type writeTx struct {
 
 func (l *Ledger) beginWrite(ctx context.Context) (*writeTx, error) {
 	l.writerMu.Lock()
+	return l.beginWriteLocked(ctx)
+}
+
+// beginWriteLocked takes ownership of writerMu, including on failure.
+func (l *Ledger) beginWriteLocked(ctx context.Context) (*writeTx, error) {
 	r, err := l.writeState()
 	if err != nil {
 		l.writerMu.Unlock()

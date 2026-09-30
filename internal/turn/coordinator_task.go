@@ -114,6 +114,10 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		ResumeAdmission: req.ResumeAdmission, TurnID: req.MessageID,
 	})
 	if err := beginErr; err != nil {
+		if errors.Is(err, task.ErrOpenAttempt) {
+			slog.Info(fmt.Sprintf("turn: task %s refused a turn: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
+			return "", UserError{Text: c.openAttemptRefusal(req, tracked.ID)}
+		}
 		if req.ExpectedTask != "" {
 			return "", err
 		}
