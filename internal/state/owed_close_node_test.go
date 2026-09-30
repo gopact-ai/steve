@@ -1,6 +1,9 @@
 package state
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestForgetOwedClosesOnOneNodeIsOneReplicatedWrite(t *testing.T) {
 	store, _, replicator := replicatedState(t)
@@ -31,5 +34,30 @@ func TestForgetOwedClosesOnOneNodeIsOneReplicatedWrite(t *testing.T) {
 	}
 	if err := cleaner.ForgetOwedClosesOn("node-b"); err != nil || len(replicator.payloads) != before+1 {
 		t.Fatalf("repeated cleanup wrote again: %v", err)
+	}
+}
+
+func TestForgetOwedClosesKeepsThemWhenTheWriteIsRefused(t *testing.T) {
+	store, book, replicator := replicatedState(t)
+	owed := owedSession(t, store, "one", "agent", "ns_one")
+	if err := store.ArchiveSessionOwingClose("one", "agent", owed.OwedAt, owed); err != nil {
+		t.Fatal(err)
+	}
+	replicator.reject = errors.New("not coordinator")
+	cleaner, ok := any(store).(interface{ ForgetOwedClosesOn(string) error })
+	if !ok {
+		t.Fatal("node removal cannot forget its closes owed")
+	}
+	if err := cleaner.ForgetOwedClosesOn("node-b"); err == nil {
+		t.Fatal("refused cleanup reported success")
+	}
+	reopened, err := OpenLedger(book)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []*Store{store, reopened} {
+		if got := s.OwedCloses(); len(got) != 1 || got[0] != owed {
+			t.Fatalf("refused cleanup lost close owed: %+v", got)
+		}
 	}
 }

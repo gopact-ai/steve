@@ -69,3 +69,45 @@ func TestUnconfirmedWriterInThisConversationNamesItsTask(t *testing.T) {
 		})
 	}
 }
+
+func TestUnconfirmedWriterNamesAnotherConversationOnTheSameChannel(t *testing.T) {
+	for _, tc := range ownerChannels {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, _ := taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}, withOwner("owner"), withChannelOwner("feishu", "owner"))
+			other := tc.req
+			other.ConversationID += ":other"
+			if _, err := c.projects.Bind(t.Context(), other.ConversationID, "codex", "owner"); err != nil {
+				t.Fatal(err)
+			}
+			other.Input, other.MessageID = "earlier", "other"
+			first, err := c.Handle(t.Context(), other)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err := c.attempts.Get(t.Context(), first.Attempt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.attempts.MarkUnsettled(t.Context(), first.Attempt, "test", harness.ErrStopUnconfirmed, nil); err != nil {
+				t.Fatal(err)
+			}
+			req := tc.req
+			if _, err := c.projects.Bind(t.Context(), req.ConversationID, "codex", "owner"); err != nil {
+				t.Fatal(err)
+			}
+			req.Input, req.MessageID = "hello", "current"
+			_, err = c.Handle(t.Context(), req)
+			var refusal UserError
+			if !errors.As(err, &refusal) || !strings.Contains(refusal.Text, "#"+record.TaskID) || !strings.Contains(refusal.Text, other.ConversationID) {
+				t.Fatalf("cross-conversation refusal = %v", err)
+			}
+			if req.Channel == "feishu" {
+				if !strings.Contains(refusal.Text, "对应的飞书会话发送 /tasks cancel "+record.TaskID) || strings.Contains(refusal.Text, c.text.T(i18n.RecoveryRetry)) {
+					t.Fatalf("wrong Feishu exit: %q", refusal.Text)
+				}
+			} else if !strings.Contains(refusal.Text, "打开该会话") {
+				t.Fatalf("wrong console exit: %q", refusal.Text)
+			}
+		})
+	}
+}
