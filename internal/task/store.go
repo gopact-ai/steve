@@ -30,7 +30,8 @@ type Store struct {
 	BudgetSource func() (int, time.Duration)
 	// observe is told each task id a write changed, after the write
 	// landed; it runs off the store's lock.
-	observe func(id string)
+	observe      func(id string)
+	observeState func(string, State)
 }
 
 // SetObserver installs where task changes are announced; nil discards.
@@ -38,6 +39,13 @@ func (s *Store) SetObserver(observe func(id string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.observe = observe
+}
+
+// SetStateObserver is notified only after a persisted state transition.
+func (s *Store) SetStateObserver(observe func(string, State)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observeState = observe
 }
 
 type data struct {
@@ -632,6 +640,7 @@ func (s *Store) replaceLocked(next *draft) error {
 }
 
 func (s *Store) installLocked(next *draft, changes []recordChange) {
+	s.notifyStateChangesLocked(next, changes)
 	if s.observe != nil {
 		var changed []string
 		seen := map[string]bool{}

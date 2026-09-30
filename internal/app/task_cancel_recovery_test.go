@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,12 +41,13 @@ type cancelledRecovery struct {
 // the owner at once.
 func openCancelledRecovery(t *testing.T) cancelledRecovery {
 	t.Helper()
-	return openRetainedRecovery(t, "")
+	return openRetainedRecovery(t, "", task.StateRunning)
 }
 
 // openRetainedRecovery is openCancelledRecovery for a turn opened by
-// origin, which is empty for one a person asked for.
-func openRetainedRecovery(t *testing.T, origin string) cancelledRecovery {
+// origin, which is empty for one a person asked for, whose task was left in
+// the state left before the restart.
+func openRetainedRecovery(t *testing.T, origin string, left task.State) cancelledRecovery {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -81,6 +83,11 @@ func openRetainedRecovery(t *testing.T, origin string) cancelledRecovery {
 		o.ConsoleCompletionGuard = console.CheckTaskCompletionTx
 	})
 	f := cancelledRecovery{coordinator: coordinator, tasks: tasks, sessions: sessions, projects: projects, taskID: seedCancelledRecovery(t, book, tasks, attempts, origin)}
+	if left != task.StateRunning {
+		if _, err := tasks.SetAside(f.taskID, left); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := attempts.PrepareRecovery(t.Context(), "startup"); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +119,7 @@ func openRetainedRecovery(t *testing.T, origin string) cancelledRecovery {
 		t.Fatal(err)
 	}
 	coordinator.Wire(turntest.Callbacks(coordinatorCallbacks(nil, nil, messagingCallbacks{}, channels.Routes())))
+	tasks.SetObserver(taskObserver(tasks, f.cons, func(string) {}))
 	if err := f.cons.RecoverChats(lifetime, coordinator); err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +194,26 @@ func (f cancelledRecovery) awaitOffering(t *testing.T, choice string) {
 	}
 }
 
+// awaitStopWait waits until the exchange waits on the stop of the task's
+// original execution, and fails at once if it offers to retry the task in
+// the meantime.
+func (f cancelledRecovery) awaitStopWait(t *testing.T) consoleapi.PendingQuestion {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if q, dead := f.pendingOffering("retry"); dead {
+			t.Fatalf("recovery of task #%s offered to retry it: %+v", f.taskID, q)
+		}
+		if q, waiting := f.pendingOffering("recheck"); waiting {
+			return q
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recovery never waited on the stop: questions %+v, exchange %+v", f.cons.Questions(cancelledRecoveryConversation), f.exchange())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func (f cancelledRecovery) exchange() consoleapi.Exchange {
 	for _, e := range f.cons.Queue(cancelledRecoveryConversation) {
 		if e.ID == "e1" {
@@ -233,5 +261,83 @@ func TestTaskCancelSettlesTheRecoveryQuestionOfTheCancelledTask(t *testing.T) {
 	// confirmed yet: the exchange keeps its place instead of closing.
 	if e := f.exchange(); e.State != consoleapi.ExchangeAwaitingUser {
 		t.Fatalf("exchange while the stop is unconfirmed = %+v, want awaiting user", e)
+	}
+}
+
+// A task cancelled or paused while Steve was down is known to the task
+// store alone, and the restarted recovery goes by it: it never offers to
+// retry a task nothing may resume, and waits on the stop of the task's
+// original execution instead, saying whether the task was cancelled or
+// paused. Trying the stop leaves the task as it was set aside.
+func TestRestartIntoASetAsideTaskWaitsOnTheStop(t *testing.T) {
+	zh := i18n.New(i18n.LocaleZH)
+	for _, tc := range []struct {
+		state task.State
+		says  i18n.Key
+	}{
+		{task.StateCancelled, i18n.ConsoleStopRecorded},
+		{task.StatePaused, i18n.ConsolePauseRecorded},
+	} {
+		t.Run(string(tc.state), func(t *testing.T) {
+			f := openRetainedRecovery(t, "", tc.state)
+			card := f.awaitStopWait(t)
+			if !strings.Contains(card.Message, zh.T(tc.says)) {
+				t.Fatalf("the stop wait of a %s task says %q, want %q", tc.state, card.Message, zh.T(tc.says))
+			}
+			if e := f.exchange(); e.State != consoleapi.ExchangeAwaitingUser {
+				t.Fatalf("exchange while the stop is unconfirmed = %+v, want awaiting user", e)
+			}
+			if tracked, _ := f.tasks.Get(f.taskID); tracked.State != tc.state {
+				t.Fatalf("task while its stop is unconfirmed = %s, want %s", tracked.State, tc.state)
+			}
+		})
+	}
+}
+
+func TestEveryTaskSetAsideWakesItsRecovery(t *testing.T) {
+	for _, state := range []task.State{task.StatePaused, task.StateCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			f := openCancelledRecovery(t)
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if _, ok := f.pendingOffering("retry"); ok {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("no recovery question")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if _, err := f.tasks.SetAside(f.taskID, state); err != nil {
+				t.Fatal(err)
+			}
+			deadline = time.Now().Add(2 * time.Second)
+			for {
+				if _, ok := f.pendingOffering("recheck"); ok {
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("%s did not wake recovery", state)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		})
+	}
+}
+
+func TestExplicitStopCancelsThePausedRecovery(t *testing.T) {
+	f := openRetainedRecovery(t, "", task.StatePaused)
+	f.awaitStopWait(t)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		_, _ = f.cons.SendCommand(t.Context(), cancelledRecoveryConversation, "/cancel", "cancel-paused")
+		tracked, _ := f.tasks.Get(f.taskID)
+		if tracked.State == task.StateCancelled {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("explicit stop left task %s", tracked.State)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

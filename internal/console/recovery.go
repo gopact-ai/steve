@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -88,6 +89,7 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 			}
 		}
 	}
+	s.refreshStopTasks(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.recoveryLifetime == nil {
@@ -218,7 +220,7 @@ func (s *Service) findRetained(ctx context.Context, driver RetainedChatDriver, e
 			if ok {
 				return retainedExchange{}, false, errors.New("multiple chat or plan executions reference the same exchange")
 			}
-			found = retainedExchange{RetainedChat: turn.RetainedChat{AttemptID: item.AttemptID, TaskID: item.TaskID, Conversation: item.Conversation, MessageID: item.MessageID, AgentID: item.AgentID, NodeID: item.NodeID, ProjectID: item.ProjectID, Completed: item.Completed}, plan: &item}
+			found = retainedExchange{RetainedChat: turn.RetainedChat{AttemptID: item.AttemptID, TaskID: item.TaskID, Conversation: item.Conversation, MessageID: item.MessageID, AgentID: item.AgentID, NodeID: item.NodeID, ProjectID: item.ProjectID, Completed: item.Completed, TaskState: item.TaskState}, plan: &item}
 			ok = true
 		}
 	}
@@ -269,22 +271,20 @@ type exchangeRecovery struct {
 
 	// asked and repeats remember the block the owner last saw, so a check
 	// that comes back with the same answer says so instead of looking
-	// like fresh news. stopped carries back why a stop the owner asked
-	// for did not finish; it is written by the stop's own goroutine.
+	// like fresh news.
 	asked   string
 	repeats int
-	stopped chan string
 
 	// blockedSince is when this recovery first failed to rejoin the
 	// original without saying anything, and withdrawn records that an open
 	// question was withdrawn because nobody needs to answer it any more:
-	// the original came back, or its task was cancelled. Together they keep
+	// the original came back, or its task was set aside. Together they keep
 	// a brief outage between the recovery and the node.
 	blockedSince time.Time
 	withdrawn    bool
 
-	// cancels wakes the worker when a person cancels a task; the service
-	// records which one on the exchange.
+	// cancels wakes the worker when a person cancels a task, so it looks
+	// at once at what the task store now holds.
 	cancels <-chan struct{}
 }
 
@@ -300,7 +300,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 	if s.anchor != nil {
 		s.anchor(exchange.Conversation, ChatID, AnchorMark+exchange.ID)
 	}
-	r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: exchange, work: work, stream: stream, driver: driver, stopped: make(chan string, 1), cancels: e.taskCancels}
+	r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: exchange, work: work, stream: stream, driver: driver, cancels: e.taskCancels}
 	for {
 		if ctx.Err() != nil {
 			r.detach(ctx.Err())
@@ -367,10 +367,12 @@ func (r *exchangeRecovery) observe() bool {
 		r.s.finish(r.e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
 		return false
 	}
-	// A cancelled task cannot be resumed, so the only thing left to do
-	// with its execution is to confirm that it stopped.
-	if found && lookupErr == nil && r.s.taskCancelled(r.e, candidate.TaskID) {
-		r.abandon()
+	// A task the owner cancelled or paused cannot be resumed from here, so
+	// the only thing left to do with its execution is to confirm that it
+	// stopped. The task store says so, whoever set the task aside and
+	// whether or not this process was running when they did.
+	if found && lookupErr == nil && setAside(candidate.TaskState) {
+		r.abandon(candidate.TaskID, false)
 		return false
 	}
 	if !found && lookupErr == nil {
@@ -579,12 +581,12 @@ func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity 
 		return true
 	}
 	// Stopping is the one answer that can end a recovery nothing else can
-	// resolve. It runs beside this worker, because finishing a stop waits
-	// for this worker to release the exchange.
+	// resolve. From here the exchange waits on the stop, the same as when
+	// the task is cancelled from the task list: asking again whether to
+	// retry would offer a task the stop has just cancelled.
 	if answer.Value == "stop" {
-		r.stopOriginal()
-		r.quiet = true
-		return r.wait()
+		r.abandon(identity.binding().TaskID, true)
+		return false
 	}
 	// Free-form advice is retained in the question record. Without an
 	// explicit retry choice, make one fresh observation and then wait
@@ -594,17 +596,10 @@ func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity 
 }
 
 // explain adds to a block what the owner needs in order to decide: the
-// failure the check actually reported, whether this check said anything
-// new, and what became of a stop they already asked for.
+// failure the check actually reported, and whether this check said
+// anything new.
 func (r *exchangeRecovery) explain(message string, cause error) string {
 	text := i18n.New(i18n.FromLang(r.exchange.Locale))
-	select {
-	case note := <-r.stopped:
-		if note != "" {
-			message += "\n\n" + text.T(i18n.ConsoleRecoveryStopUnfinished, note)
-		}
-	default:
-	}
 	if cause != nil {
 		if detail := clipDetail(strings.TrimSpace(cause.Error())); detail != "" && !strings.Contains(message, detail) {
 			message += "\n\n" + text.T(i18n.ConsoleRecoveryCheckReported, detail)
@@ -628,26 +623,6 @@ func clipDetail(detail string) string {
 
 func stopChoice(text i18n.Catalog) view.Choice {
 	return view.Choice{Value: "stop", Label: text.T(i18n.ConsoleStopChoice), Detail: text.T(i18n.ConsoleStopChoiceDetail)}
-}
-
-// stopOriginal performs the owner's stop next to this worker and brings
-// back why it did not finish, so the next question says so.
-func (r *exchangeRecovery) stopOriginal() {
-	requester := r.s.owner
-	if r.exchange.Requester != "" {
-		requester = r.exchange.Requester
-	}
-	ctx := r.s.exchangeContext(r.ctx)
-	r.s.workers.Add(1)
-	go func() {
-		defer r.s.workers.Done()
-		if err := r.s.cancelRecovering(ctx, r.e, requester); err != nil {
-			select {
-			case r.stopped <- clipDetail(strings.TrimSpace(err.Error())):
-			default:
-			}
-		}
-	}()
 }
 
 // withinQuiet reports whether this recovery is still inside the stretch
@@ -707,7 +682,7 @@ func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Questio
 
 // watch reports whether a question bound to binding stopped needing an
 // answer before ctx ended: the original execution can be reached again, or
-// a person cancelled its task.
+// a person cancelled its task and the task store now has it set aside.
 func (r *exchangeRecovery) watch(ctx context.Context, binding consoleapi.PendingQuestion) bool {
 	var probe <-chan time.Time
 	prober, ok := r.driver.(retainedProber)
@@ -721,7 +696,7 @@ func (r *exchangeRecovery) watch(ctx context.Context, binding consoleapi.Pending
 		case <-ctx.Done():
 			return false
 		case <-r.cancels:
-			if r.s.taskCancelled(r.e, binding.TaskID) {
+			if r.taskSetAside(ctx, binding.TaskID) {
 				return true
 			}
 		case <-probe:
@@ -730,6 +705,22 @@ func (r *exchangeRecovery) watch(ctx context.Context, binding consoleapi.Pending
 			}
 		}
 	}
+}
+
+// taskSetAside reports whether the task store now has id, the task of the
+// exchange's execution, cancelled or paused.
+func (r *exchangeRecovery) taskSetAside(ctx context.Context, id string) bool {
+	if id == "" {
+		return false
+	}
+	candidate, found, err := r.s.findRetained(ctx, r.driver, r.exchange)
+	return err == nil && found && candidate.TaskID == id && setAside(candidate.TaskState)
+}
+
+// setAside reports whether a task in state was cancelled or paused, the two
+// states in which nothing may resume it.
+func setAside(state task.State) bool {
+	return state == task.StateCancelled || state == task.StatePaused
 }
 
 // wait lets a quiet recovery observe the execution again every so often,

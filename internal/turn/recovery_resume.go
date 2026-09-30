@@ -28,6 +28,9 @@ type RetainedChat struct {
 	NodeID       string
 	ProjectID    string
 	Completed    bool
+	// TaskState is the task's durable state when the execution was found:
+	// a task set aside by the owner is not the execution's to carry on.
+	TaskState task.State
 }
 
 // retainedBlocked leaves the original attempt and exchange unresolved. The
@@ -73,7 +76,7 @@ func (c *Coordinator) RetainedChatsFor(ctx context.Context, conversation, messag
 		if !ok || tracked.Channel != conversation {
 			continue
 		}
-		result = append(result, RetainedChat{AttemptID: r.ID, TaskID: r.TaskID, Conversation: tracked.Channel, MessageID: r.TurnID, AgentID: r.Agent, NodeID: r.Node, ProjectID: r.Project, Completed: r.State.Terminal()})
+		result = append(result, RetainedChat{AttemptID: r.ID, TaskID: r.TaskID, Conversation: tracked.Channel, MessageID: r.TurnID, AgentID: r.Agent, NodeID: r.Node, ProjectID: r.Project, Completed: r.State.Terminal(), TaskState: tracked.State})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].AttemptID < result[j].AttemptID })
 	return result, nil

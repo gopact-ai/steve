@@ -211,9 +211,7 @@ func Callbacks(cb turn.Callbacks) turn.Callbacks {
 	if cb.ResumeDispatcher == nil {
 		cb.ResumeDispatcher = func(turn.TaskResume) {}
 	}
-	if cb.AfterCancel == nil {
-		cb.AfterCancel = func(turn.TaskCancel) {}
-	}
+
 	return cb
 }
 

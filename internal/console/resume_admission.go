@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -41,14 +43,18 @@ func (s *Service) checkResumeLocked(e *queuedExchange) error {
 // Keep its stable key so retry can never build another input under that key.
 func (s *Service) rejectResumeLocked(e *queuedExchange, cause error) error {
 	previous := *e
-	reply := consoleapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: cause.Error(), Error: cause.Error()}
+	previousReplies := s.replies[e.Conversation]
+	reply := consoleapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: i18n.New(i18n.FromLang(e.Locale)).T(i18n.ConsoleResumeRefused, e.ExpectedTask), Error: cause.Error(), At: time.Now().UTC()}
+	reply = s.recordLocked(reply)
 	e.State, e.Receipt = consoleapi.ExchangeFailed, &reply
 	if err := s.save(); err != nil {
 		*e = previous
+		s.replies[e.Conversation] = previousReplies
 		return err
 	}
 	e.outcome = replyOutcome(reply)
 	close(e.done)
+	s.publishReply(reply)
 	s.publishQueue(e.Conversation)
 	return nil
 }
