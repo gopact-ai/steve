@@ -3,8 +3,9 @@ package harness
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // RetainedKiller forces the original native process to stop. Each call

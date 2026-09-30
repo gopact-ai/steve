@@ -2,9 +2,10 @@ package node
 
 import (
 	"context"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 func TestOpenKillStopsReservedSessionWhileNativeInitializeIsPending(t *testing.T) {

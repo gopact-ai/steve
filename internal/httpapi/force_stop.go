@@ -1,8 +1,9 @@
 package httpapi
 
 import (
-	"github.com/gopact-ai/steve/internal/consoleapi"
 	"net/http"
+
+	"github.com/gopact-ai/steve/internal/consoleapi"
 )
 
 func (s *Server) SetForceStops(control consoleapi.ForceStops) { s.forceStops = control }

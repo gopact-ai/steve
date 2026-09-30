@@ -2,10 +2,11 @@ package node
 
 import (
 	"errors"
-	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/procgroup"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/procgroup"
 )
 
 func TestNodeKillOnLoadedRecordUsesOriginalIdentity(t *testing.T) {

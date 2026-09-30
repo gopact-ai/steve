@@ -2,11 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"github.com/gopact-ai/steve/internal/readmodel"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
 type forceControl struct {

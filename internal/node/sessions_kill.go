@@ -3,10 +3,11 @@ package node
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/procgroup"
-	"time"
 )
 
 func killFailure(err error) error {

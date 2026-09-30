@@ -3,8 +3,9 @@ package harness
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 func TestKillRetainedBypassesStopDoneCache(t *testing.T) {

@@ -1,10 +1,11 @@
 package turn
 
 import (
+	"testing"
+
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
-	"testing"
 )
 
 func TestForceStopAttemptRequiresOwnerAndCancelsTask(t *testing.T) {

@@ -2,9 +2,10 @@ package attempt
 
 import (
 	"errors"
-	"github.com/gopact-ai/steve/internal/task"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 func TestForceStopRequestsAreRevokedAndRevisionFenced(t *testing.T) {

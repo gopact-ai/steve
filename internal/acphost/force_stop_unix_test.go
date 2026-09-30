@@ -5,11 +5,12 @@ package acphost
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/procgroup"
 	"os/exec"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/procgroup"
 )
 
 func TestReapedGroupKillRequiresItsRecordedIdentity(t *testing.T) {

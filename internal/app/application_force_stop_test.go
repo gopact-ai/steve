@@ -3,6 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"testing"
+
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -11,10 +16,6 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
-	"os/exec"
-	"path/filepath"
-	"sync"
-	"testing"
 )
 
 type forceSessions struct {

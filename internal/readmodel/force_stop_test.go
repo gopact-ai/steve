@@ -1,8 +1,9 @@
 package readmodel
 
 import (
-	"github.com/gopact-ai/steve/internal/attempt"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/attempt"
 )
 
 func TestLiveAttemptCarriesDurableForceStop(t *testing.T) {

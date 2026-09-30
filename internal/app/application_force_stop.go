@@ -3,12 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"sort"
+	"time"
+
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"sort"
-	"time"
 )
 
 func (s *applicationStops) stopBatch(pending []attempt.Record) []attempt.Record {
