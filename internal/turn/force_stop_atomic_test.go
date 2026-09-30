@@ -133,3 +133,63 @@ func TestForceStopDistinguishesEarlierCommandAndProcessReceipts(t *testing.T) {
 		})
 	}
 }
+
+func TestOldForceTargetDoesNotCancelANewSessionBinding(t *testing.T) {
+	for _, exited := range []bool{false, true} {
+		t.Run(map[bool]string{false: "command", true: "process"}[exited], func(t *testing.T) {
+			c, tasks, old, proof := forceStopControlFixture(t)
+			_, _ = tasks.SetAside(old.TaskID, task.StatePaused)
+			proof.Session.ProcessStopped = exited
+			if _, err := c.attempts.ConfirmTaskStopped(t.Context(), old.ID, "ordinary-stop", proof); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tasks.FinishUnstarted(old.TaskID, task.OutcomeCancelled); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tasks.Advance(old.TaskID, task.StateRunning); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tasks.Begin(old.TaskID, "worker", "node", ""); err != nil {
+				t.Fatal(err)
+			}
+			child, err := tasks.Spawn(old.TaskID, task.Task{Member: "child", ProjectID: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			token, _ := tasks.ExecutionToken(old.TaskID)
+			spec := old.Spec
+			spec.ID = "replacement"
+			spec.TurnID = "next-input"
+			spec.Execution = &token
+			next, err := c.attempts.Open(t.Context(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+				next, err = c.attempts.Advance(t.Context(), next.ID, phase, "fixture", func(r *attempt.Record) { r.Session = old.Session })
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, _ := tasks.Get(old.TaskID)
+			err = NewForceStopControl(c).ForceStopAttempt(t.Context(), old.ID, "owner")
+			if !exited && err == nil {
+				t.Fatal("old force target accepted a replaced native binding")
+			}
+			if exited && err != nil {
+				t.Fatalf("proved old exit was not an idempotent no-op: %v", err)
+			}
+			after, _ := tasks.Get(old.TaskID)
+			afterChild, _ := tasks.Get(child.ID)
+			if after.State != before.State || after.ExecutionEpoch != before.ExecutionEpoch || afterChild.State != child.State || afterChild.ExecutionEpoch != child.ExecutionEpoch {
+				t.Fatal("old target revoked new work or its descendants")
+			}
+			for _, id := range []string{old.ID, next.ID} {
+				got, _ := c.attempts.Get(t.Context(), id)
+				if got.ForceStop != nil {
+					t.Fatal("old target installed force intent on another binding")
+				}
+			}
+		})
+	}
+}
