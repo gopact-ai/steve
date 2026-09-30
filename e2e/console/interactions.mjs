@@ -3087,6 +3087,47 @@ checks["project-remove-confirmed"] = async (f) => {
     assert.ok(await table.evaluate((el) => el.isConnected && el.contains(document.activeElement)) && where.row !== null, `A removed project leaves focus on ${where.tag} instead of the row beside it`);
 };
 
+checks["force-stop-durable-banner"] = async (f) => {
+    const current = { id: "old-attempt", task_id: "11", kind: "chat", state: "failed", project: "scratch", node: "test-node", agent: "worker", started_at: at, unsettled: true };
+    const other = { ...current, id: "another-attempt", task_id: "22" };
+    const state = { ...usageState(), tasks: [task("11", A, "scratch"), task("22", B, "home")], attempts: [current, other], projects: [project("scratch"), project("home")] };
+    let calls = 0;
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.route("**/console/attempts/*/force-stop", (route) => {
+        assert.ok(route.request().url().endsWith("/old-attempt/force-stop"), "force stop targeted another conversation");
+        calls++; current.force_stop = { revision: 1, level: "kill", by: "owner", requested_at: at, level_since: at };
+        return route.fulfill({ status: 202, json: { accepted: true } });
+    });
+    await f.page.reload();
+    const banner = f.page.getByRole("alert").filter({ hasText: "原执行停止尚未确认" });
+    await banner.waitFor();
+    assert.equal(await banner.getByRole("button", { name: "强制停止", exact: true }).count(), 1);
+    await banner.getByRole("button", { name: "强制停止", exact: true }).click();
+    await eventually(() => calls === 1, "force stop did not reach its API");
+    await f.page.reload();
+    await banner.getByText("正在强制停止", { exact: true }).waitFor();
+    assert.equal(await banner.getByRole("button", { name: "强制停止", exact: true }).isDisabled(), true);
+    current.force_stop = { ...current.force_stop, level: "exhausted", reason: "restart_required" };
+    await f.page.reload();
+    await banner.getByText("需要重启原节点后重试。", { exact: true }).waitFor();
+    assert.equal(await banner.getByRole("button", { name: "强制停止", exact: true }).isEnabled(), true);
+    state.attempts = [other];
+    await f.page.reload();
+    await f.page.getByRole("textbox").first().waitFor();
+    assert.equal(await banner.count(), 0, "confirmed stop left a stale banner");
+};
+
+checks["force-stop-execution-row"] = async (f) => {
+    const attempt = { id: "orphan-attempt", task_id: "22", kind: "chat", state: "failed", project: "home", node: "test-node", agent: "worker", started_at: at, unsettled: true };
+    let calls = 0;
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState({ ...usageState(), tasks: [task("22", B, "home")], attempts: [attempt] }) }));
+    await f.page.route("**/console/attempts/orphan-attempt/force-stop", (route) => { calls++; return route.fulfill({ status: 202, json: { accepted: true } }); });
+    await f.page.goto(`${app.url}/#/dashboard`); await f.page.reload();
+    const row = f.page.getByRole("row").filter({ hasText: "orphan-attempt" });
+    await row.getByRole("button", { name: "强制停止", exact: true }).click();
+    await eventually(() => calls === 1, "execution row did not stop its original attempt");
+};
+
 async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";
