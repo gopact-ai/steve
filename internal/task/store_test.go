@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,27 @@ func TestBeginRefusesExhaustedTurnBudget(t *testing.T) {
 	_, err = store.Begin(created.ID, "builder", "laptop", "")
 	if err == nil {
 		t.Fatal("begin past the turn budget should fail")
+	}
+}
+
+// A task runs one attempt at a time; the refusal says so as a kind the
+// caller can tell apart from any other failure to begin.
+func TestBeginRefusesSecondOpenAttempt(t *testing.T) {
+	store, _ := newStore(t)
+	created := mustCreate(t, store, "one at a time", "chat-a")
+	if _, err := store.Begin(created.ID, "builder", "laptop", ""); err != nil {
+		t.Fatalf("first begin: %v", err)
+	}
+	_, err := store.Begin(created.ID, "builder", "laptop", "")
+	if !errors.Is(err, ErrOpenAttempt) {
+		t.Fatalf("second begin = %v, want %v", err, ErrOpenAttempt)
+	}
+	if !strings.Contains(err.Error(), "task "+created.ID) {
+		t.Fatalf("the refusal %v does not name task %s", err, created.ID)
+	}
+	input := TurnInput{Address: channel.Address{Channel: created.Transport, Conversation: created.Channel}}
+	if _, err := store.BeginTurn(created.ID, "builder", "laptop", input); !errors.Is(err, ErrOpenAttempt) {
+		t.Fatalf("a turn begun on it = %v, want %v", err, ErrOpenAttempt)
 	}
 }
 

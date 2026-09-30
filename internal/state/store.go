@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -87,10 +88,11 @@ type data struct {
 	Conversations map[string]Conversation `json:"conversations"`
 	Pairing       pairingData             `json:"pairing,omitempty"`
 	Onboarded     bool                    `json:"onboarded,omitempty"`
+	OwedCloses    []OwedClose             `json:"owed_closes,omitempty"`
 }
 
 type Store struct {
-	doc  ledger.Doc
+	doc  *ledger.Document
 	mu   sync.Mutex
 	data data
 }
@@ -404,6 +406,12 @@ func (s *Store) ArchiveSession(conversationID, agentID, at string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneData(s.data)
+	archiveSession(&next, conversationID, agentID, at)
+	return s.replaceLocked(next)
+}
+
+// archiveSession is ArchiveSession applied to next.
+func archiveSession(next *data, conversationID, agentID, at string) {
 	conversation := next.Conversations[conversationID]
 	session, ok := conversation.Sessions[agentID]
 	delete(conversation.Sessions, agentID)
@@ -416,7 +424,6 @@ func (s *Store) ArchiveSession(conversationID, agentID, at string) error {
 		}
 	}
 	next.Conversations[conversationID] = conversation
-	return s.replaceLocked(next)
 }
 
 // RestoreSession puts an archived session back in the active slot, newest
@@ -456,6 +463,9 @@ func (s *Store) RestoreSession(conversationID, agentID string, index int) (Sessi
 	restored.Tainted = false
 	conversation.Sessions[agentID] = restored
 	next.Conversations[conversationID] = conversation
+	// The conversation holds it again, so a close still owed for it would
+	// end the context the user just chose to return to.
+	next.OwedCloses = slices.DeleteFunc(next.OwedCloses, func(owed OwedClose) bool { return owed.names(restored) })
 	if err := s.replaceLocked(next); err != nil {
 		return Session{}, err
 	}
@@ -539,7 +549,8 @@ func cloneData(source data) data {
 			Pending:  make(map[string]PendingPair, len(source.Pairing.Pending)),
 			Approved: append([]string(nil), source.Pairing.Approved...),
 		},
-		Onboarded: source.Onboarded,
+		Onboarded:  source.Onboarded,
+		OwedCloses: append([]OwedClose(nil), source.OwedCloses...),
 	}
 	for id, conversation := range source.Conversations {
 		clone.Conversations[id] = cloneConversation(conversation)

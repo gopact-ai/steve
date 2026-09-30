@@ -18,6 +18,10 @@ type ExecutionToken struct {
 
 var ErrExecutionStopped = errors.New("task execution was stopped")
 
+// ErrOpenAttempt refuses a turn to a task whose previous attempt has not
+// ended: a task runs one attempt at a time.
+var ErrOpenAttempt = errors.New("task already has an open attempt")
+
 // ErrSettleState guards the one state a settlement means anything in: a task
 // that failed. Running work is stopped, not settled.
 var ErrSettleState = errors.New("only a failed task can be settled by hand")

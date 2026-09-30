@@ -27,6 +27,7 @@ import (
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/sshconnect"
+	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -80,9 +81,10 @@ type Service struct {
 	Projects *project.Store
 	Repos    *RepoCache
 	// attempts is where a copy's lock is taken before it is forgotten.
-	Attempts *attempt.Service
-	Tasks    *task.Store
-	View     *readmodel.Model
+	Attempts   *attempt.Service
+	Tasks      *task.Store
+	OwedCloses *state.Store
+	View       *readmodel.Model
 	// artifacts is the project snapshots, for a turn's changes.
 	Artifacts *artifact.Store
 	// skills is the live map of what agents are handed, shipper what each

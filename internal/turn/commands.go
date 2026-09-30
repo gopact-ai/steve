@@ -7,13 +7,17 @@ package turn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -92,7 +96,8 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 		return Result{}, c.closeRefusal(conversationID, refused, err)
 	}
 	session := c.store.Conversation(conversationID).Sessions[selected.ID]
-	if err := c.runtime.CloseSession(ctx, harness.Placement{Node: session.NodeID, Harness: session.HarnessID}, session.UpstreamID); err != nil {
+	owed, err := c.closeSession(ctx, session)
+	if err != nil {
 		return Result{}, err
 	}
 	c.mu.Lock()
@@ -107,10 +112,47 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 	// so the record is all that stands between the user and their own
 	// history; dropping it would make a cleared conversation unreachable
 	// forever.
-	if err := c.store.ArchiveSession(conversationID, selected.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	at := time.Now().UTC().Format(time.RFC3339)
+	if owed != nil {
+		owed.OwedAt = at
+		slog.Warn(fmt.Sprintf("turn: /new let go of session %s on node %s before its node could be reached; the close is owed", session.UpstreamID, session.NodeID),
+			"conversation", conversationID, "agent", selected.ID, "node", session.NodeID, "session", session.UpstreamID, "task", owed.TaskID, "attempt", owed.AttemptID)
+		err = c.store.ArchiveSessionOwingClose(conversationID, selected.ID, at, *owed)
+	} else {
+		err = c.store.ArchiveSession(conversationID, selected.ID, at)
+	}
+	if err != nil {
 		return Result{}, err
 	}
-	return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID), Recover: true}, nil
+	text := c.text.T(i18n.Reset, selected.ID)
+	if owed != nil {
+		text = c.text.T(i18n.ResetCloseOwed, selected.ID, owed.NodeID)
+	}
+	return Result{AgentID: selected.ID, Text: text, Recover: true}, nil
+}
+
+// closeSession closes session on its node. A close that certainly never
+// reached the node, of a session the cluster opened for an execution still
+// on record, is owed instead: closeSession returns the close owed, naming
+// that execution, and the session may be let go of now. Any other failure
+// may have landed, or cannot be sent rightly later, so the session stays.
+func (c commands) closeSession(ctx context.Context, session state.Session) (*state.OwedClose, error) {
+	err := c.runtime.CloseSession(ctx, harness.Placement{Node: session.NodeID, Harness: session.HarnessID}, session.UpstreamID)
+	var notSent *nodewire.SessionNotDispatched
+	if err == nil || !errors.As(err, &notSent) || !nodewire.IsManagedSession(session.UpstreamID) {
+		return nil, err
+	}
+	last, found, readErr := c.attempts.LatestForSession(ctx, session.NodeID, session.HarnessID, session.UpstreamID)
+	if readErr != nil {
+		return nil, errors.Join(err, fmt.Errorf("read the execution in session %s: %w", session.UpstreamID, readErr))
+	}
+	if !found {
+		return nil, err
+	}
+	return &state.OwedClose{
+		NodeID: session.NodeID, HarnessID: session.HarnessID, UpstreamID: session.UpstreamID,
+		NativeContext: last.NativeContext, TaskID: last.TaskID, AttemptID: last.ID,
+	}, nil
 }
 
 func (c commands) status(req Request, selected agent.Agent) Result {

@@ -91,7 +91,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.
 	projects.Levels = registryLevels(nodes)
-	admin := &adminsvc.Service{Lifetime: ctx, NodeName: boot.NodeName(), ConfigStore: boot.ConfigStore(), Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, View: view,
+	admin := &adminsvc.Service{Lifetime: ctx, NodeName: boot.NodeName(), ConfigStore: boot.ConfigStore(), Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, OwedCloses: storage.Store(), View: view,
 		LiveSkills: live, Shipper: shipper, Observation: observation, Coordinator: coordinator, HomePath: cfg.Gateway.HomePath, Memory: memories, Artifacts: artifacts}
 	admin.RuntimeSettings = boot.Settings()
 	life.Defer(func() { admin.CloseSSH() })
