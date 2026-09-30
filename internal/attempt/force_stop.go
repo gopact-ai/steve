@@ -122,5 +122,8 @@ func (s *Service) ConfirmForceStopped(ctx context.Context, id string, revision u
 	if revision == 0 {
 		return Record{}, ErrForceStopChanged
 	}
+	if !proof.Session.ProcessStopped {
+		return Record{}, ErrStopConfirmationRequired
+	}
 	return s.confirmTaskStopped(ctx, id, "force-stop", proof, revision)
 }
