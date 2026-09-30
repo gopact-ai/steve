@@ -98,5 +98,9 @@ func (p *localProcess) KillNow(ctx context.Context) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		within = min(within, time.Until(deadline))
 	}
-	return settle(identity, place, here, within)
+	err = settle(identity, place, here, within)
+	if err == nil {
+		p.stopped.Store(true)
+	}
+	return err
 }

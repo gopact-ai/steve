@@ -254,6 +254,9 @@ func (p *localProcess) endGroup(group int) {
 func (p *localProcess) awaitEmpty(group int) {
 	stuck := newStuckReport()
 	for delay := time.Millisecond; ; delay = min(2*delay, 2*time.Second) {
+		if p.stopped.Load() {
+			return
+		}
 		remains, err := p.group.inspect(group)
 		if err == nil && remains.Ended() {
 			return
