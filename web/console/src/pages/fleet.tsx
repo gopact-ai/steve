@@ -28,6 +28,7 @@ import { addAgent, addNode, fetchNodeSettings, removeAgent, saveNodeSettings, up
 import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { useCoordination } from "@/lib/coordination";
+import { useRowDrawer } from "@/hooks/use-row-drawer";
 import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
 import type { AbilitySnapshot, Agent, Capability, Condition, Node as NodeT, Snapshot } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
@@ -553,8 +554,8 @@ export function FleetPage() {
         const frame = requestAnimationFrame(() => { machineSection.current?.focus({ preventScroll: true }); machineSection.current?.scrollIntoView({ block: "start" }); setFocusMachines(false); });
         return () => cancelAnimationFrame(frame);
     }, [sshOpen, focusMachines, tab]);
-    const [opened, setOpened] = useState<string | null>(null);
-    const [openedAgent, setOpenedAgent] = useState<string | null>(null);
+    const machineRows = useRowDrawer(snap.nodes.map((n) => n.name));
+    const agentRows = useRowDrawer(snap.agents.map((a) => a.id));
     const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
         <div className="workbench-page flex min-w-0 flex-col">
@@ -577,9 +578,7 @@ export function FleetPage() {
             <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title={tr("fleet.noMachines")}>{tr("fleet.noMachinesHint")}</Nothing> : (
-                    <Table aria-label={tr("fleet.machine")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace"
-                        selectedKeys={opened ? [opened] : []}
-                        onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                    <Table aria-label={tr("fleet.machine")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" {...machineRows.table}>
                         <Table.Header>
                             <Table.Head id="node" label={tr("fleet.name")} className="w-[19%]" isRowHeader />
                             <Table.Head id="host" label={tr("fleet.labelsHost")} className="w-[21%]" />
@@ -620,14 +619,12 @@ export function FleetPage() {
                     </Table>
                 )}
             </TableCard.Root></div>
-            {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} hubVersion={snap.hub.version} onUpgrade={(n) => setUpgrading([n])} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
+            {machineRows.opened && snap.nodes.find((n) => n.name === machineRows.opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === machineRows.opened)!} hubVersion={snap.hub.version} onUpgrade={(n) => setUpgrading([n])} onClose={machineRows.close} onChanged={() => refresh()} />}
             </>}
             {tab === "agents" && <>
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title="Agent" badge={`${snap.agents.length}`} />
-                <Table aria-label="Agent" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace"
-                    selectedKeys={openedAgent ? [openedAgent] : []}
-                    onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
+                <Table aria-label="Agent" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" {...agentRows.table}>
                     <Table.Header>
                         <Table.Head id="agent" label="Agent" className="w-[20%]" isRowHeader />
                         <Table.Head id="state" label={tr("fleet.status")} className="w-[18%]" />
@@ -665,7 +662,7 @@ export function FleetPage() {
                 </Table>
                 {snap.agents.length === 0 && <Nothing icon={Users01} title={tr("fleet.noAgents")} />}
             </TableCard.Root>
-            {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} live={liveActivity[openedAgent]} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
+            {agentRows.opened && snap.agents.find((a) => a.id === agentRows.opened) && <AgentDrawer a={snap.agents.find((a) => a.id === agentRows.opened)!} live={liveActivity[agentRows.opened]} onClose={agentRows.close} onChanged={() => refresh()} />}
             </>}
             </PageBody>
         </div>
