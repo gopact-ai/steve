@@ -14,7 +14,7 @@ type forceStopCapture struct {
 	owner string
 }
 
-func (f *forceStopCapture) ForceStopAttempt(_ context.Context, id, owner string) error {
+func (f *forceStopCapture) ForceStopAttempt(_ context.Context, id, owner string, expectedRevision uint64) error {
 	f.owner = owner
 	f.calls <- id
 	return nil

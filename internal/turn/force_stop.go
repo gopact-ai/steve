@@ -14,7 +14,7 @@ func NewForceStopControl(c *Coordinator) *ForceStopControl { return &ForceStopCo
 
 // ForceStopAttempt records the owner's cancellation and requests immediate
 // native termination. The durable reconciler performs it, not this request.
-func (f *ForceStopControl) ForceStopAttempt(ctx context.Context, id, requester string) error {
+func (f *ForceStopControl) ForceStopAttempt(ctx context.Context, id, requester string, expectedRevision uint64) error {
 	c := f.coordinator
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()

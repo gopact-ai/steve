@@ -12,7 +12,7 @@ func (s *Server) consoleForceStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "force stop is not enabled", http.StatusNotImplemented)
 		return
 	}
-	if err := s.forceStops.ForceStop(r.Context(), r.PathValue("attempt")); err != nil {
+	if err := s.forceStops.ForceStop(r.Context(), r.PathValue("attempt"), 0); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

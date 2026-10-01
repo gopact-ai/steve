@@ -20,14 +20,15 @@ import (
 )
 
 type RetainedChat struct {
-	AttemptID    string
-	TaskID       string
-	Conversation string
-	MessageID    string
-	AgentID      string
-	NodeID       string
-	ProjectID    string
-	Completed    bool
+	ForceStopRevision uint64
+	AttemptID         string
+	TaskID            string
+	Conversation      string
+	MessageID         string
+	AgentID           string
+	NodeID            string
+	ProjectID         string
+	Completed         bool
 	// TaskState is the task's durable state when the execution was found:
 	// a task set aside by the owner is not the execution's to carry on.
 	TaskState task.State

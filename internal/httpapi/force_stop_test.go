@@ -16,7 +16,7 @@ type forceControl struct {
 	id    string
 }
 
-func (f *forceControl) ForceStop(_ context.Context, id string) error {
+func (f *forceControl) ForceStop(_ context.Context, id string, expectedRevision uint64) error {
 	f.calls++
 	f.id = id
 	return nil

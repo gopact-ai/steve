@@ -52,7 +52,7 @@ func TestForceStopRevocationCannotOutrunItsReplicatedIntent(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			result := make(chan error, 1)
-			go func() { result <- NewForceStopControl(c).ForceStopAttempt(ctx, r.ID, "owner") }()
+			go func() { result <- NewForceStopControl(c).ForceStopAttempt(ctx, r.ID, "owner", 0) }()
 			select {
 			case <-replica.entered:
 			case <-ctx.Done():

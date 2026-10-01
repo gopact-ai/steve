@@ -29,14 +29,14 @@ func TestForceStopAttemptRequiresOwnerAndCancelsTask(t *testing.T) {
 		}
 	}
 	force := NewForceStopControl(c)
-	if err := force.ForceStopAttempt(t.Context(), r.ID, "visitor"); err == nil {
+	if err := force.ForceStopAttempt(t.Context(), r.ID, "visitor", 0); err == nil {
 		t.Fatal("non-owner force stopped a task")
 	}
 	before, _ := tasks.Get(tracked.ID)
 	if before.State != task.StateRunning {
 		t.Fatal("unauthorized request changed task")
 	}
-	if err := force.ForceStopAttempt(t.Context(), r.ID, "owner"); err != nil {
+	if err := force.ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := tasks.Get(tracked.ID)
@@ -45,7 +45,7 @@ func TestForceStopAttemptRequiresOwnerAndCancelsTask(t *testing.T) {
 		t.Fatalf("intent not durable: task=%s attempt=%+v", after.State, got)
 	}
 	epoch := after.ExecutionEpoch
-	if err := force.ForceStopAttempt(t.Context(), r.ID, "owner"); err != nil {
+	if err := force.ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
 		t.Fatal(err)
 	}
 	again, _ := tasks.Get(tracked.ID)

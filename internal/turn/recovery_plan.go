@@ -20,6 +20,7 @@ import (
 )
 
 type RetainedPlan struct {
+	ForceStopRevision                              uint64
 	TaskID, Conversation, MessageID, PlanID, RunID string
 	AttemptID, AgentID, NodeID, ProjectID          string
 	Completed                                      bool
