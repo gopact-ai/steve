@@ -19,20 +19,6 @@ var repositorySettings = [][2]string{
 	{"gc.auto", "0"}, {"gc.autoDetach", "false"}, {"maintenance.auto", "false"},
 }
 
-func initialized(dir string) (bool, error) {
-	info, err := os.Lstat(filepath.Join(dir, initializedMarker))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("repository initialization marker is not a regular file: %s", dir)
-	}
-	return true, nil
-}
-
 // Initialization and configuration take place only in a private sibling.
 // Cancellation may leave Git lock files there, but never in the published repo.
 func createRepository(ctx context.Context, dir string) (_ *Repo, err error) {
@@ -172,23 +158,4 @@ func markInitialized(ctx context.Context, dir string) error {
 		return err
 	}
 	return writeInitializationMarker(ctx, dir)
-}
-
-func writeInitializationMarker(ctx context.Context, dir string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(filepath.Join(dir, initializedMarker), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if os.IsExist(err) {
-		ready, err := initialized(dir)
-		if err != nil || ready {
-			return err
-		}
-		return errors.New("repository initialization marker disappeared")
-	}
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.WriteString("1\n")
-	return errors.Join(writeErr, file.Close())
 }

@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 )
 
-// Recognition excludes Git configuration writers without changing config. The
-// open file pins the identity of our lock until validation and marking finish.
-// A replaced lock belongs to someone else and must never be removed by us.
+// Recognition uses Git's exclusive-path protocol without changing config.
+// Cooperative writers cannot replace an existing config.lock. Identity checks
+// reject a replacement already visible, but are not conditional filesystem
+// operations: forcibly removing an active lock or moving its directory outside
+// this protocol is not safe while recognition is running.
 type configurationLock struct {
 	file *os.File
 	info os.FileInfo
