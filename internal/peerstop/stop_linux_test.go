@@ -38,6 +38,10 @@ func TestMain(m *testing.M) {
 		signal.Notify(signals, syscall.SIGTERM)
 		fmt.Println("ready")
 		for range signals {
+			if os.Getenv("STEVE_PEERSTOP_UNLOCK_TERM") == "1" {
+				file.Close()
+				continue
+			}
 			if os.Getenv("STEVE_PEERSTOP_IGNORE_TERM") != "1" {
 				file.Close()
 				os.Exit(0)
@@ -84,10 +88,11 @@ func installationFixture(t *testing.T) (string, string) {
 	return root, sidecar
 }
 
-func startFixturePeer(t *testing.T, root string, ignore bool) (*exec.Cmd, <-chan error) {
+func startFixturePeer(t *testing.T, root string, ignore bool, extra ...string) (*exec.Cmd, <-chan error) {
 	t.Helper()
 	cmd := exec.Command(filepath.Join(root, "bin", "steve"), "peer", "--config", filepath.Join(root, "config.json"), "--cluster-config", filepath.Join(root, "config.json.cluster.json"))
 	cmd.Env = append(os.Environ(), "STEVE_PEERSTOP_FIXTURE=1", "STEVE_PEERSTOP_ROOT="+root, "STEVE_PEERSTOP_IGNORE_TERM="+map[bool]string{true: "1", false: "0"}[ignore])
+	cmd.Env = append(cmd.Env, extra...)
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -327,5 +332,67 @@ func TestReplacedGatewayLockIsNotAccepted(t *testing.T) {
 	}
 	if err := sameLock(file); !errors.Is(err, ErrUnproven) {
 		t.Fatalf("changed inode accepted: %v", err)
+	}
+}
+
+func TestStopMissingOrChangedPrivateIdentityLeavesThePeerAlone(t *testing.T) {
+	for _, change := range []string{"missing-sidecar", "public-sidecar", "linked-sidecar", "different-program", "replaced-lock"} {
+		t.Run(change, func(t *testing.T) {
+			root, sidecar := installationFixture(t)
+			cmd, _ := startFixturePeer(t, root, false)
+			switch change {
+			case "missing-sidecar":
+				if err := os.Rename(sidecar, sidecar+".saved"); err != nil {
+					t.Fatal(err)
+				}
+			case "public-sidecar":
+				if err := os.Chmod(sidecar, 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "linked-sidecar":
+				if err := os.Link(sidecar, sidecar+".link"); err != nil {
+					t.Fatal(err)
+				}
+			case "different-program":
+				bin := filepath.Join(root, "bin/steve")
+				raw, err := os.ReadFile(bin)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(bin+".new", raw, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(bin+".new", bin); err != nil {
+					t.Fatal(err)
+				}
+			case "replaced-lock":
+				path := filepath.Join(root, "cluster/peer-process/gateway.lock")
+				if err := os.Rename(path, path+".saved"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("999\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := Stop(t.Context(), sidecar, "cluster", "node"); !errors.Is(err, ErrUnproven) {
+				t.Fatalf("unproved installation=%v", err)
+			}
+			if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+				t.Fatal("unproved peer received a stop signal")
+			}
+		})
+	}
+}
+
+func TestStopDoesNotEscalateAfterThePeerRelinquishesItsInstallation(t *testing.T) {
+	root, sidecar := installationFixture(t)
+	cmd, _ := startFixturePeer(t, root, true, "STEVE_PEERSTOP_UNLOCK_TERM=1")
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if _, err := stopInstallationWithin(ctx, sidecar, "cluster", "node", 30*time.Millisecond); !errors.Is(err, ErrUnproven) {
+		t.Fatalf("lost installation ownership still escalated: %v", err)
+	}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("peer was killed after relinquishing the installation lock")
 	}
 }
