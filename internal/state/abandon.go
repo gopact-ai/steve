@@ -2,10 +2,10 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 var ErrAbandonedContext = errors.New("the abandoned native context cannot be restored")
@@ -16,8 +16,8 @@ func nativeContextKey(node, harness, upstream string) string {
 
 // ProjectAbandonedSession retires only the named native context. It can be
 // repeated after a crash without archiving a newer session in the same slot.
-func (s *Store) ProjectAbandonedSession(ctx context.Context, conversation, agent string, owed OwedClose, closeNeeded bool) error {
-	if owed.AttemptID == "" || owed.TaskID == "" {
+func (s *Store) ProjectAbandonedSession(ctx context.Context, conversation, agent string, owed OwedClose, closeNeeded bool, guard func(*ledger.Tx) error) error {
+	if guard == nil || owed.AttemptID == "" || owed.TaskID == "" {
 		return errors.New("abandoned session needs its original execution")
 	}
 	// A lost open is stopped by its original command. No native identity is
@@ -65,11 +65,12 @@ func (s *Store) ProjectAbandonedSession(ctx context.Context, conversation, agent
 	if reflect.DeepEqual(next, s.data) {
 		return nil
 	}
-	raw, err := json.MarshalIndent(next, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode retired context: %w", err)
-	}
-	if err := s.doc.SaveContext(ctx, raw); err != nil {
+	if err := s.book.Update(ctx, func(tx *ledger.Tx) error {
+		if err := guard(tx); err != nil {
+			return err
+		}
+		return tx.PutBinding("document", "state", next)
+	}); err != nil {
 		return err
 	}
 	s.data = next

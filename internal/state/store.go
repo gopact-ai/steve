@@ -95,6 +95,7 @@ type data struct {
 
 type Store struct {
 	doc  *ledger.Document
+	book *ledger.Ledger
 	mu   sync.Mutex
 	data data
 }
@@ -102,7 +103,7 @@ type Store struct {
 // OpenLedger keeps the store in the ledger.
 func OpenLedger(l *ledger.Ledger) (*Store, error) {
 	doc := l.Document("state")
-	s := &Store{doc: doc, data: data{Conversations: map[string]Conversation{}}}
+	s := &Store{doc: doc, book: l, data: data{Conversations: map[string]Conversation{}}}
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read state: %w", err)
