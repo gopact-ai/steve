@@ -2,6 +2,9 @@ package cluster
 
 import (
 	"context"
+	"errors"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,5 +66,78 @@ func TestMemberRestartWithoutPeerIdentityIsForbidden(t *testing.T) {
 	p.serveMemberRestart(response, httptest.NewRequest(http.MethodPost, "/cluster/member-restart", strings.NewReader(`{}`)))
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("untrusted restart: %d", response.Code)
+	}
+}
+
+func TestMemberRestartDiscoveryUsesAnotherLinkHolder(t *testing.T) {
+	hub := startTestHub(t)
+	holder := joinNonvoter(t, hub, nil)
+	target := joinNonvoter(t, hub, nil)
+	active := WaitPeerReady(t, hub)
+	cfg := &config.Config{Gateway: config.Gateway{OwnerID: "test-owner", HomePath: "/fixture/home"}}
+	if _, err := platformconfig.New(active.Ledger).Bootstrap(t.Context(), cfg, platformconfig.LocalNode{ID: hub.Config.NodeID, Config: config.Node{Addr: hub.Worker().Address, Token: hub.Worker().Token}}); err != nil {
+		t.Fatal(err)
+	}
+	holder.Mu.Lock()
+	holder.Config.Links = map[string]PeerLink{target.Config.NodeID: {Alias: "private-fixture-link"}}
+	holder.Mu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	got, err := hub.MemberRestarts(active).Find(ctx, target.Config.NodeID, "test-owner")
+	if err != nil || got.Holder != holder.Config.NodeID {
+		t.Fatalf("remote link holder not found: %+v %v", got, err)
+	}
+	holder.Mu.Lock()
+	holder.Config.Links = nil
+	holder.Mu.Unlock()
+	_, err = hub.MemberRestarts(active).Find(ctx, target.Config.NodeID, "test-owner")
+	var unavailable MemberRestartError
+	if !errors.As(err, &unavailable) || unavailable.Reason != "restart_no_holder" {
+		t.Fatalf("missing holder: %v", err)
+	}
+}
+
+func TestMemberRestartClaimsFenceAuthorityAndOwnerChanges(t *testing.T) {
+	hub := startTestHub(t)
+	holder := joinNonvoter(t, hub, nil)
+	target := joinNonvoter(t, hub, nil)
+	active := WaitPeerReady(t, hub)
+	cfg := &config.Config{Gateway: config.Gateway{OwnerID: "test-owner", HomePath: "/fixture/home"}}
+	if _, err := platformconfig.New(active.Ledger).Bootstrap(t.Context(), cfg, platformconfig.LocalNode{ID: hub.Config.NodeID, Config: config.Node{Addr: hub.Worker().Address, Token: hub.Worker().Token}}); err != nil {
+		t.Fatal(err)
+	}
+	op := attempt.ForceRestart{ID: "op", ClusterID: hub.Config.ClusterID, NodeID: target.Config.NodeID, Holder: holder.Config.NodeID, By: "test-owner", RequestedAt: time.Now().UTC()}
+	if err := active.Ledger.PutBinding(t.Context(), "force-stop-member-restart", op.NodeID, op); err != nil {
+		t.Fatal(err)
+	}
+	authority := nodewire.SessionAuthority{ClusterID: hub.Config.ClusterID, CoordinatorNodeID: hub.Config.NodeID, CoordinatorEpoch: active.Assignment.Epoch, WriterGeneration: active.WriterGeneration}
+	req := memberRestartRequest{Operation: op, Authority: authority, PlanID: "plan", Kind: "restart"}
+	yes, err := holder.claimMemberRestart(t.Context(), req)
+	if err != nil || !yes {
+		t.Fatalf("valid holder claim: %v %v", yes, err)
+	}
+	yes, err = holder.claimMemberRestart(t.Context(), req)
+	if err != nil || yes {
+		t.Fatalf("claim repeated after lost answer: %v %v", yes, err)
+	}
+	req.Authority.CoordinatorEpoch++
+	if yes, err := holder.claimMemberRestart(t.Context(), req); yes || err == nil {
+		t.Fatal("stale coordinator claim accepted")
+	}
+	req.Authority = authority
+	if yes, err := target.claimMemberRestart(t.Context(), req); yes || err == nil {
+		t.Fatal("wrong holder claimed")
+	}
+	declaration, _, err := platformconfig.New(active.Ledger).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration.Settings.Gateway.OwnerID = "new-owner"
+	declaration.Channels.Console.OwnerID = "new-owner"
+	if _, err := platformconfig.New(active.Ledger).Save(t.Context(), declaration.Revision, declaration); err != nil {
+		t.Fatal(err)
+	}
+	if yes, err := holder.claimMemberRestart(t.Context(), req); yes || err == nil {
+		t.Fatal("revoked owner reused claim")
 	}
 }

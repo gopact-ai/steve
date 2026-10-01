@@ -3125,6 +3125,31 @@ checks["force-stop-durable-banner"] = async (f) => {
     assert.equal(await banner.count(), 0, "confirmed stop left a stale banner");
 };
 
+checks["force-stop-restart-progress"] = async (f) => {
+    const current = { id: "restarting-attempt", task_id: "11", kind: "chat", state: "failed", project: "scratch", node: "test-node", agent: "worker", started_at: at, unsettled: true };
+    const state = { ...usageState(), tasks: [task("11", A, "scratch")], attempts: [current], projects: [project("scratch"), project("home")] };
+    let calls = 0;
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.route("**/console/attempts/*/force-stop", (route) => { calls++; return route.fulfill({ status: 202, json: { accepted: true } }); });
+    await f.page.reload();
+    const banner = f.page.getByRole("alert").filter({ hasText: "原执行停止尚未确认" });
+    await banner.getByRole("button", { name: "强制停止", exact: true }).click();
+    const question = f.page.getByRole("dialog", { name: "确认强制停止任务 #11？", exact: true });
+    await question.getByText(/同节点上的其他执行会被中断/).waitFor({ timeout: 3000 });
+    await question.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(calls, 0, "restart warning confirmation sent a request on cancellation");
+    for (const [level, text] of [["restart", "正在重启原节点"], ["await", "正在确认节点回归及原进程停止"]]) {
+        current.force_stop = { revision: 1, level, by: "owner", requested_at: at, level_since: at, restart_id: "restart-one", restart_holder: "link-holder" };
+        await f.page.reload();
+        await banner.getByText(text, { exact: true }).waitFor({ timeout: 3000 });
+        assert.equal(await banner.getByRole("button", { name: "强制停止", exact: true }).isDisabled(), true, "in-flight restart permits a duplicate request");
+    }
+    current.force_stop = { ...current.force_stop, level: "exhausted", reason: "restart_status_lost" };
+    await f.page.reload();
+    await banner.getByText(/不会自动重复重启/).waitFor({ timeout: 3000 });
+    assert.equal(await banner.getByRole("button", { name: "强制停止", exact: true }).isEnabled(), true);
+};
+
 checks["force-stop-execution-row"] = async (f) => {
     const attempt = { id: "orphan-attempt", task_id: "22", kind: "chat", state: "failed", project: "home", node: "test-node", agent: "worker", started_at: at, unsettled: true };
     let calls = 0;
