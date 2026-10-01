@@ -81,6 +81,9 @@ func (s *applicationStops) pollForceRestart(ctx context.Context, r attempt.Recor
 		}
 		return s.awaitForceStop(ctx, r, true)
 	}
+	if status.State != "lost" && (status.NodeID != op.NodeID || status.RequestID != op.ID || status.PlanID != op.PlanID || status.Kind != op.Kind) {
+		return s.exhaustForceStop(ctx, r, "restart_status_lost")
+	}
 	switch status.State {
 	case "running", "claiming":
 		return nil
