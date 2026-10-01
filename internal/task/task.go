@@ -246,6 +246,7 @@ type Task struct {
 	// right conversation (and topic) after a gateway restart.
 	ChatID        string `json:"chat_id,omitempty"`
 	AnchorMessage string `json:"anchor_message,omitempty"`
+	// PlanMessageID is the immutable input that created a planning task.
 	PlanMessageID string `json:"plan_message_id,omitempty"`
 	ChatType      string `json:"chat_type,omitempty"`
 	// OpenCard is the platform's own card for the task's current turn, and

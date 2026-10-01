@@ -8,6 +8,8 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 func (e *queuedExchange) recoveryReply() *consoleapi.Reply {
@@ -56,12 +58,15 @@ func (s *Service) recordAbandonment(target *queuedExchange, id string) error {
 	return nil
 }
 
-func (s *Service) deliverAbandonment(r attempt.Record) error {
+func (s *Service) deliverAbandonment(ctx context.Context, r attempt.Record) error {
 	if r.Abandoned == nil || r.Abandoned.ProjectedAt.IsZero() {
 		return errors.New("abandonment session projection is not complete")
 	}
 	if r.Kind != attempt.KindChat && r.Kind != attempt.KindPlan {
 		return nil
+	}
+	if err := s.checkAbandonmentInput(ctx, r); err != nil {
+		return err
 	}
 	if !strings.HasPrefix(r.Abandoned.MessageID, AnchorMark) {
 		return nil
@@ -85,4 +90,35 @@ func (s *Service) deliverAbandonment(r attempt.Record) error {
 func (s *Service) finishAbandonedRecovery(ctx context.Context, target *queuedExchange, id string, release func()) error {
 	release()
 	return s.recordAbandonment(target, id)
+}
+
+// The durable decision supplies the destination; delivery checks that it still
+// describes the original input instead of borrowing the task's current anchor.
+func (s *Service) checkAbandonmentInput(ctx context.Context, r attempt.Record) error {
+	if r.Kind == attempt.KindChat {
+		if r.TurnID == "" || r.Abandoned.MessageID != r.TurnID {
+			return attempt.ErrAbandonInput
+		}
+		return nil
+	}
+	s.mu.Lock()
+	book := s.book
+	s.mu.Unlock()
+	if book == nil {
+		return attempt.ErrAbandonInput
+	}
+	return book.Read(ctx, func(tx *ledger.ReadTx) error {
+		original, err := attempt.AbandonInputTx(tx, r)
+		if err != nil {
+			return err
+		}
+		tracked, found, err := task.GetTx(tx, r.TaskID)
+		if err != nil {
+			return err
+		}
+		if !found || tracked.Channel != r.Abandoned.Conversation || original != r.Abandoned.MessageID {
+			return attempt.ErrAbandonInput
+		}
+		return nil
+	})
 }

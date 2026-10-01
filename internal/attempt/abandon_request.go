@@ -66,10 +66,11 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if source.State != "absent" && source.State != "original" && source.State != "different" {
 		return task.RecoveryUsage{}, errors.New("abandonment requires the original session-slot snapshot")
 	}
-	r.Abandoned = &Abandoned{SlotState: source.State, SlotFingerprint: source.Fingerprint, ImportFingerprint: source.ImportFingerprint, At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, Session: r.Session}
-	if r.Abandoned.MessageID == "" && (r.Kind == KindChat || r.Kind == KindPlan) {
-		r.Abandoned.MessageID = r.TurnID
+	input, err := AbandonInputTx(tx, r)
+	if err != nil {
+		return task.RecoveryUsage{}, err
 	}
+	r.Abandoned = &Abandoned{SlotState: source.State, SlotFingerprint: source.Fingerprint, ImportFingerprint: source.ImportFingerprint, At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: input, Session: r.Session}
 	if r.EndedAt.IsZero() {
 		r.EndedAt = at
 	}

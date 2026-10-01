@@ -87,6 +87,12 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 		}
 		item.Abandoned = latest.Abandoned != nil
 		item.AbandonProjected = item.Abandoned && !latest.Abandoned.ProjectedAt.IsZero()
+		if item.Abandoned {
+			if latest.Abandoned.MessageID != tracked.PlanMessageID || tracked.PlanMessageID == "" {
+				return nil, attempt.ErrAbandonInput
+			}
+			item.MessageID = tracked.PlanMessageID
+		}
 		if item.PlanID != "" || item.AttemptID != "" || tracked.PreparedPlan != nil {
 			result = append(result, item)
 		}

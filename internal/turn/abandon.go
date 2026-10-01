@@ -42,6 +42,9 @@ func (a *AbandonControl) AbandonAttempt(ctx context.Context, id, requester strin
 		}
 		return c.attempts.AbandonTx(tx, original.ID, requester, revision, row, at, source)
 	})
+	if errors.Is(err, attempt.ErrAbandonInput) {
+		return attempt.Record{}, UserError{Text: c.text.T(i18n.ConsoleAbandonInputUnknown), Cause: err}
+	}
 	if errors.Is(err, attempt.ErrForceStopChanged) {
 		return attempt.Record{}, UserError{Text: c.text.T(i18n.ConsoleAbandonChanged), Cause: err}
 	}

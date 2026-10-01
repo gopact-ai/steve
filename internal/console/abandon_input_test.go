@@ -52,14 +52,14 @@ func TestAbandonmentDeliveryChecksItsImmutableInput(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			s, r, old, newer := abandonDeliveryFixture(t, kind)
 			r.Abandoned.MessageID = "web-newer"
-			if err := s.deliverAbandonment(r); err == nil {
+			if err := s.deliverAbandonment(t.Context(), r); err == nil {
 				t.Fatal("accepted a receipt pointing to another input")
 			}
 			if newer.State.Terminal() || old.State.Terminal() {
 				t.Fatal("mismatched receipt ended an exchange")
 			}
 			r.Abandoned.MessageID = "web-original"
-			if err := s.deliverAbandonment(r); err != nil {
+			if err := s.deliverAbandonment(t.Context(), r); err != nil {
 				t.Fatal(err)
 			}
 			if old.State != consoleapi.ExchangeCancelled || newer.State.Terminal() {
@@ -73,7 +73,7 @@ func TestAbandonmentOfATerminalInputDoesNotMoveToTheNextInput(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			s, r, old, newer := abandonDeliveryFixture(t, kind)
 			old.State = consoleapi.ExchangeDone
-			if err := s.deliverAbandonment(r); err != nil {
+			if err := s.deliverAbandonment(t.Context(), r); err != nil {
 				t.Fatal(err)
 			}
 			if old.RecoveryAbandon != nil || newer.RecoveryAbandon != nil || newer.State.Terminal() {

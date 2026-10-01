@@ -110,7 +110,7 @@ func TestAbandoningAChildExecutionDoesNotFinishItsParentsExchange(t *testing.T) 
 	s.running[e.Conversation] = 1
 	s.mu.Unlock()
 	r := attempt.Record{Spec: attempt.Spec{ID: "child", Kind: attempt.KindDelegate}, Abandoned: &attempt.Abandoned{At: time.Now(), ProjectedAt: time.Now(), Conversation: e.Conversation, MessageID: AnchorMark + e.ID}}
-	if err := s.deliverAbandonment(r); err != nil {
+	if err := s.deliverAbandonment(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
 	if e.State != consoleapi.ExchangeAwaitingUser || e.RecoveryAbandon != nil {

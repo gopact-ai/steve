@@ -47,7 +47,7 @@ func (s *Service) projectAbandoned(ctx context.Context, id string) error {
 	if r.Abandoned == nil || r.Abandoned.ProjectedAt.IsZero() {
 		return errors.New("abandonment projection is still pending")
 	}
-	return s.deliverAbandonment(r)
+	return s.deliverAbandonment(ctx, r)
 }
 
 // ReconcileAbandonments completes session retirement independently of process
