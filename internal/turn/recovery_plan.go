@@ -20,6 +20,9 @@ import (
 )
 
 type RetainedPlan struct {
+	Abandoned                                      bool
+	AbandonProjected                               bool
+	ForceStopLevel                                 string
 	ForceStopRevision                              uint64
 	TaskID, Conversation, MessageID, PlanID, RunID string
 	AttemptID, AgentID, NodeID, ProjectID          string
@@ -80,7 +83,10 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 		item.AttemptID, item.AgentID, item.NodeID = latest.ID, latest.Agent, latest.Node
 		if latest.ForceStop != nil {
 			item.ForceStopRevision = latest.ForceStop.Revision
+			item.ForceStopLevel = latest.ForceStop.Level
 		}
+		item.Abandoned = latest.Abandoned != nil
+		item.AbandonProjected = item.Abandoned && !latest.Abandoned.ProjectedAt.IsZero()
 		if item.PlanID != "" || item.AttemptID != "" || tracked.PreparedPlan != nil {
 			result = append(result, item)
 		}

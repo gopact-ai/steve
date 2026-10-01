@@ -20,6 +20,9 @@ import (
 )
 
 type RetainedChat struct {
+	Abandoned         bool
+	AbandonProjected  bool
+	ForceStopLevel    string
 	ForceStopRevision uint64
 	AttemptID         string
 	TaskID            string
@@ -77,11 +80,13 @@ func (c *Coordinator) RetainedChatsFor(ctx context.Context, conversation, messag
 		if !ok || tracked.Channel != conversation {
 			continue
 		}
+		level := ""
 		revision := uint64(0)
 		if r.ForceStop != nil {
 			revision = r.ForceStop.Revision
+			level = r.ForceStop.Level
 		}
-		result = append(result, RetainedChat{ForceStopRevision: revision, AttemptID: r.ID, TaskID: r.TaskID, Conversation: tracked.Channel, MessageID: r.TurnID, AgentID: r.Agent, NodeID: r.Node, ProjectID: r.Project, Completed: r.State.Terminal(), TaskState: tracked.State})
+		result = append(result, RetainedChat{Abandoned: r.Abandoned != nil, AbandonProjected: r.Abandoned != nil && !r.Abandoned.ProjectedAt.IsZero(), ForceStopLevel: level, ForceStopRevision: revision, AttemptID: r.ID, TaskID: r.TaskID, Conversation: tracked.Channel, MessageID: r.TurnID, AgentID: r.Agent, NodeID: r.Node, ProjectID: r.Project, Completed: r.State.Terminal(), TaskState: tracked.State})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].AttemptID < result[j].AttemptID })
 	return result, nil

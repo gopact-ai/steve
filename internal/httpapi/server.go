@@ -191,6 +191,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/tasks/{task}/accounting", s.guard(s.consoleTaskAccounting))
 	mux.HandleFunc("GET /console/attempts", s.guard(s.consoleNativeAttempts))
 	mux.HandleFunc("POST /console/attempts/{attempt}/force-stop", s.guard(s.consoleForceStop))
+	mux.HandleFunc("POST /console/attempts/{attempt}/abandon", s.guard(s.consoleAbandon))
 	mux.HandleFunc("PATCH /console/tasks/{task}/meta", s.guard(s.consoleTaskMeta))
 	mux.HandleFunc("GET /console/tasks/{task}/attempts", s.guard(s.consoleTaskAttempts))
 	mux.HandleFunc("GET /console/attempts/{attempt}/tree", s.guard(s.consoleAttemptTree))

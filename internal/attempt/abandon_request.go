@@ -57,7 +57,10 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if usage.Reported || usage.Tokens != (task.Tokens{}) {
 		r.Usage = &Usage{Model: usage.Model, Input: usage.Tokens.Input, Output: usage.Tokens.Output, CachedRead: usage.Tokens.CachedRead, CachedWrite: usage.Tokens.CachedWrite, Reported: usage.Reported}
 	}
-	r.Abandoned = &Abandoned{At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, Session: r.Session}
+	r.Abandoned = &Abandoned{At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, Session: r.Session}
+	if r.Abandoned.MessageID == "" && (r.Kind == KindChat || r.Kind == KindPlan) {
+		r.Abandoned.MessageID = r.TurnID
+	}
 	if r.EndedAt.IsZero() {
 		r.EndedAt = at
 	}

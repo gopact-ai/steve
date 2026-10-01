@@ -197,6 +197,9 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 	if err != nil || !found {
 		return errors.Join(harness.ErrStopUnconfirmed, err)
 	}
+	if candidate.Abandoned && candidate.AbandonProjected {
+		return s.finishAbandonedRecovery(ctx, target, candidate.AttemptID, release)
+	}
 	stopper, ok := driver.(retainedStopDriver)
 	if !ok {
 		return errors.New("stopping the original recovery task is unavailable")

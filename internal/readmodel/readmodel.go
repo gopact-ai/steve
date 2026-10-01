@@ -140,6 +140,7 @@ type Grant struct {
 }
 
 type Attempt struct {
+	Abandoned *attempt.Abandoned `json:"abandoned,omitempty"`
 	ForceStop *attempt.ForceStop `json:"force_stop,omitempty"`
 	Unsettled bool               `json:"unsettled,omitempty"`
 	Error     string             `json:"error,omitempty"`
