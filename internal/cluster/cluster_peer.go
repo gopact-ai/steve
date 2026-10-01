@@ -350,6 +350,8 @@ func (p *Peer) startPeerServers(runtime *Runtime, peerListener, uiListener net.L
 	mux.HandleFunc("/cluster/network/check", p.serveNetworkCheck)
 	mux.HandleFunc("/cluster/enrollment/", p.servePeerEnrollment)
 	mux.HandleFunc(clusterNodeRestartPath, p.serveNodeRestart)
+	mux.HandleFunc(clusterMemberRestartPath, p.serveMemberRestart)
+	mux.HandleFunc(clusterMemberRestartClaimPath, p.serveMemberRestartClaim)
 	mux.HandleFunc(clusterContentPath, p.serveContent)
 	// Close waits for their handlers, which run under p.ctx, before it
 	// closes what they use.
