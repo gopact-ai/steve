@@ -15,6 +15,7 @@ import (
 // still open, so the caller stops it first.
 var ErrExecuting = errors.New("task is executing")
 
+// ErrRetirementPending retains task authority needed by native cleanup.
 var ErrRetirementPending = errors.New("task native cleanup is pending")
 
 // DeleteChannel removes what one conversation opened: the tasks it holds
@@ -23,7 +24,8 @@ var ErrRetirementPending = errors.New("task native cleanup is pending")
 // goes; leaving it behind would list work nobody can open any more.
 //
 // Work in flight is never deleted out from under itself: a task with an
-// open execution refuses, and the caller stops it first.
+// open execution refuses, and the caller stops it first. The supplied owner
+// guard checks native cleanup in the same transaction that deletes the tree.
 func (s *Store) DeleteChannel(ctx context.Context, channel string, guard func(ledger.Reader, []string) error) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -38,7 +40,11 @@ func (s *Store) DeleteChannel(ctx context.Context, channel string, guard func(le
 	for _, id := range ids {
 		next.remove(id)
 	}
-	if err := s.replaceLocked(next); err != nil {
+	var check func(*ledger.Tx) error
+	if guard != nil {
+		check = func(tx *ledger.Tx) error { return guard(tx, ids) }
+	}
+	if err := s.replaceRecordsLocked(ctx, next, check); err != nil {
 		return nil, err
 	}
 	return ids, nil
@@ -46,12 +52,16 @@ func (s *Store) DeleteChannel(ctx context.Context, channel string, guard func(le
 
 // ChannelIdle reports what a conversation opened as safe to delete: no
 // task of it, or delegated from it, has an attempt open. The caller asks
-// before ending anything else, so a refusal costs the owner nothing.
+// before ending anything else, so a refusal costs the owner nothing. This
+// preliminary read never replaces the guard in DeleteChannel.
 func (s *Store) ChannelIdle(ctx context.Context, channel string, guard func(ledger.Reader, []string) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.deletableLocked(channel)
-	return err
+	ids, err := s.deletableLocked(channel)
+	if err != nil || len(ids) == 0 || guard == nil {
+		return err
+	}
+	return s.book.Read(ctx, func(tx *ledger.ReadTx) error { return guard(tx, ids) })
 }
 
 // deletableLocked is the conversation's tasks and everything delegated
