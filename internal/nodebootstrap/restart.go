@@ -41,7 +41,11 @@ fi
 trap 'rmdir "$bin_dir/.install-lock" 2>/dev/null || true' EXIT
 `)
 	b.WriteString(peerStartSection)
-	b.WriteString(peerLocateSection)
+	if spec.ExpectedCluster != "" || spec.ExpectedNode != "" {
+		b.WriteString(identifiedPeerStop(spec))
+	} else {
+		b.WriteString(peerLocateSection)
+	}
 	if spec.IfStopped {
 		b.WriteString(`if [ -n "$running" ]; then
   echo "Peer process $running is still running; it is left alone."
@@ -50,7 +54,9 @@ trap 'rmdir "$bin_dir/.install-lock" 2>/dev/null || true' EXIT
 fi
 `)
 	}
-	b.WriteString(peerStopSection)
+	if spec.ExpectedCluster == "" && spec.ExpectedNode == "" {
+		b.WriteString(peerStopSection)
+	}
 	b.WriteString(`if start_peer; then
   if [ -n "$running" ]; then
     echo 'Peer restarted; the cluster still has to see it come back.'
@@ -80,4 +86,30 @@ tail -n 20 "$state_dir/peer.log" >&2 || true
 exit 28
 `)
 	return b.String()
+}
+
+// Automatic restarts require an exact installation and a stable process
+// handle. Old binaries reject the capability flag before serving anything.
+func identifiedPeerStop(spec RestartSpec) string {
+	if spec.ExpectedCluster == "" || spec.ExpectedNode == "" {
+		return "echo 'Incomplete expected peer identity; nothing was stopped or started.' >&2\nexit 32\n"
+	}
+	return `if ! protocol=$("$state_dir/bin/steve" --peer-stop-protocol 2>/dev/null) || [ "$protocol" != STEVE_PEER_STOP_V1 ]; then
+  echo 'The installed program does not support identified peer stopping; upgrade it before retrying.' >&2
+  exit 33
+fi
+result=""
+if result=$("$state_dir/bin/steve" peer-stop --cluster-config "$state_dir/config.json.cluster.json" --expect-cluster ` + shellQuote(spec.ExpectedCluster) + ` --expect-node ` + shellQuote(spec.ExpectedNode) + `); then
+  case "$result" in
+    $'STEVE_PEER_STOP\tstopped') running=identified ;;
+    $'STEVE_PEER_STOP\tabsent') running="" ;;
+    *) echo 'The original installation stop was not proved; nothing will be started.' >&2; exit 32 ;;
+  esac
+else
+  case "$result" in
+    $'STEVE_PEER_STOP\tunsupported') echo 'Stable process handles are unavailable; nothing was stopped or started.' >&2; exit 34 ;;
+    *) echo 'The original installation stop was not proved; nothing will be started.' >&2; exit 32 ;;
+  esac
+fi
+`
 }
