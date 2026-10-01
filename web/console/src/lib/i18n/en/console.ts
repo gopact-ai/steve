@@ -1,12 +1,21 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.forceRestarting": "Restarting the original node",
+    "console.forceAwaiting": "Checking node return and original process exit",
+    "console.forceRestartSelf": "The current coordinator is not restarted automatically. Restart Steve manually, or switch coordinators before retrying.",
+    "console.forceRestartPermission": "Restart authority has changed. Ask the current owner to confirm again.",
+    "console.forceRestartNoHolder": "No online member holds the original node's SSH connection.",
+    "console.forceRestartTimeout": "Waiting for the node restart timed out; the original process is not confirmed stopped.",
+    "console.forceRestartFailed": "The node restart failed; quarantine remains.",
+    "console.forceRestartLost": "The restart status was lost. It will not be repeated automatically; check the node before retrying.",
+    "console.forceAwaitTimeout": "Stop confirmation after node return timed out; quarantine remains.",
     "console.forceConfirmTitle": "Force stop task #{task}?",
-    "console.forceConfirmBody": "This cancels original task #{task} and its descendants and immediately terminates execution {attempt}'s process group. This cannot be undone and does not automatically restart the node over SSH.",
+    "console.forceConfirmBody": "This cancels original task #{task} and its descendants and immediately terminates execution {attempt}'s process group. This cannot be undone. If the original node does not respond, it will be restarted over SSH and other executions on that node will be interrupted.",
     "console.forceConfirm": "Confirm force stop",
     "console.forceStop": "Force stop",
     "console.forceTitle": "The original execution is not confirmed stopped",
-    "console.forceHint": "Cancel the task and immediately terminate the original process group. Quarantine remains until the stop is confirmed.",
+    "console.forceHint": "Cancel the task and terminate the original process group. An unresponsive node may be restarted, interrupting its other executions. Quarantine remains until the stop is confirmed.",
     "console.forceSending": "Recording the force-stop request…",
     "console.forceRunning": "Forcing the original execution to stop",
     "console.forceRestartRequired": "Restart the original node, then retry.",

@@ -12,11 +12,17 @@ export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onFor
     const { t } = useI18n();
     const [sending, setSending] = useState(false);
     const [confirming, setConfirming] = useState<Attempt | null>(null);
-    const active = attempt.force_stop?.level === "kill";
+    const level = attempt.force_stop?.level;
+    const active = level === "kill" || level === "restart" || level === "await";
+    const progress = level === "restart" ? t("console.forceRestarting") : level === "await" ? t("console.forceAwaiting") : t("console.forceRunning");
     const reasons: Record<string, string> = {
         restart_required: t("console.forceRestartRequired"), upgrade_required: t("console.forceUpgradeRequired"),
         stop_running: t("console.forceStillRunning"), stop_unproven: t("console.forceUnproven"),
         stop_unsupported: t("console.forceUnsupported"), rejected: t("console.forceRejected"),
+        restart_self: t("console.forceRestartSelf"), restart_permission: t("console.forceRestartPermission"),
+        restart_no_holder: t("console.forceRestartNoHolder"), restart_unavailable: t("console.forceRestartNoHolder"),
+        restart_timeout: t("console.forceRestartTimeout"), restart_failed: t("console.forceRestartFailed"),
+        restart_status_lost: t("console.forceRestartLost"), await_timeout: t("console.forceAwaitTimeout"),
     };
     async function force() {
         if (sending || !confirming) return;
@@ -26,7 +32,7 @@ export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onFor
     }
     return <div className="flex flex-col items-start gap-1">
         <Button size="sm" color="secondary" isDisabled={sending || active} onClick={() => setConfirming({ ...attempt })}>{t("console.forceStop")}</Button>
-        <span role="status" className="text-xs text-tertiary">{sending ? t("console.forceSending") : active ? t("console.forceRunning") : attempt.force_stop?.level === "exhausted" ? reasons[attempt.force_stop.reason || ""] || t("console.forceUnproven") : t("console.forceHint")}</span>
+        <span role="status" className="text-xs text-tertiary">{sending ? t("console.forceSending") : active ? progress : attempt.force_stop?.level === "exhausted" ? reasons[attempt.force_stop.reason || ""] || t("console.forceUnproven") : t("console.forceHint")}</span>
         {confirming && <ConfirmDialog title={t("console.forceConfirmTitle", { task: confirming.task_id || "?" })}
             body={t("console.forceConfirmBody", { task: confirming.task_id || "?", attempt: confirming.id })}
             confirmLabel={t("console.forceConfirm")} onConfirm={force} onClose={() => setConfirming(null)} />}
