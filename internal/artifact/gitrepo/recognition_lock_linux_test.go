@@ -95,6 +95,7 @@ func TestRecognitionExcludesConfigChangesUntilItMarksTheRepository(t *testing.T)
 			// These are actual Git writes and use its normal config.lock.
 			for _, setting := range [][2]string{{"user.name", "other-owner"}, {"gc.auto", "0"}} {
 				cmd := exec.CommandContext(ctx, realGit, "--git-dir="+dir, "config", setting[0], setting[1])
+				cmd.Env = append(os.Environ(), "LC_ALL=C")
 				out, err := cmd.CombinedOutput()
 				if err == nil || !strings.Contains(string(out), "could not lock config file") {
 					t.Errorf("configuration writer was not excluded at %s: %v: %s", setting[0], err, out)
