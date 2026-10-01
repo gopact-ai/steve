@@ -798,6 +798,10 @@ func (p *Peer) authorizedPeerRequest(r *http.Request, action string) bool {
 }
 
 func (p *Peer) peerJSON(ctx context.Context, member coordination.Member, method, path string, input, output any) error {
+	return p.peerJSONStatus(ctx, member, method, path, input, output, http.StatusOK)
+}
+
+func (p *Peer) peerJSONStatus(ctx context.Context, member coordination.Member, method, path string, input, output any, status int) error {
 	transport, origin, err := p.remoteTransport(member)
 	if err != nil {
 		return err
@@ -822,7 +826,7 @@ func (p *Peer) peerJSON(ctx context.Context, member coordination.Member, method,
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != status {
 		data, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
 		return fmt.Errorf("peer HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(data)))
 	}

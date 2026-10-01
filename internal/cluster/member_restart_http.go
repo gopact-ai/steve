@@ -144,6 +144,11 @@ func (p *Peer) serveMemberRestart(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, err)
 		return
 	}
+	if r.Method == http.MethodPost {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusAccepted)
+	}
 	WriteJSON(w, answer)
 }
 

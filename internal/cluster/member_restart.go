@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -78,7 +79,10 @@ func (m memberRestarts) Find(ctx context.Context, node, by string) (RestartTarge
 		}
 		query := restartQuery(node, "", "", "", by, authority)
 		var answer memberRestartResponse
-		if err := m.peer.peerJSON(ctx, state.Members[id], http.MethodGet, clusterMemberRestartPath+"?"+query.Encode(), nil, &answer); err == nil && answer.Restartable {
+		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := m.peer.peerJSON(probeCtx, state.Members[id], http.MethodGet, clusterMemberRestartPath+"?"+query.Encode(), nil, &answer)
+		cancel()
+		if err == nil && answer.Restartable {
 			return RestartTarget{m.peer.Config.ClusterID, id}, nil
 		}
 	}
@@ -98,7 +102,7 @@ func (m memberRestarts) Start(ctx context.Context, op attempt.ForceRestart) erro
 		return MemberRestartError{"restart_no_holder"}
 	}
 	var answer memberRestartResponse
-	return m.peer.peerJSON(ctx, holder, http.MethodPost, clusterMemberRestartPath, memberRestartRequest{Operation: op, Authority: authority}, &answer)
+	return m.peer.peerJSONStatus(ctx, holder, http.MethodPost, clusterMemberRestartPath, memberRestartRequest{Operation: op, Authority: authority}, &answer, http.StatusAccepted)
 }
 
 func (m memberRestarts) Status(ctx context.Context, op attempt.ForceRestart) (sshconnect.MemberRestart, error) {
