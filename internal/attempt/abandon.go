@@ -10,5 +10,7 @@ type Abandoned struct {
 	By                string    `json:"by"`
 	ForceStopRevision uint64    `json:"force_stop_revision"`
 	Reason            string    `json:"reason"`
+	Conversation      string    `json:"conversation"`
+	Session           string    `json:"session,omitempty"`
 	ProjectedAt       time.Time `json:"projected_at,omitzero"`
 }

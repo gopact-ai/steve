@@ -65,6 +65,9 @@ func checkAdmissionTx(tx *ledger.Tx, spec Spec) error {
 			continue
 		}
 		sameWriter := samePhysicalPath(r.Workspace.Path, spec.Workspace.Path) && r.Workspace.Node == spec.Workspace.Node
+		if r.Abandoned != nil && !r.Abandoned.ProjectedAt.IsZero() && !sameWriter {
+			continue
+		}
 		sameTask := spec.TaskID != "" && spec.TaskID == r.TaskID
 		sameEndpoint := spec.Slots > 0 && spec.Node == r.Node && spec.Harness == r.Harness
 		if !sameWriter && !sameTask && !sameEndpoint {

@@ -86,10 +86,11 @@ type pairingData struct {
 }
 
 type data struct {
-	Conversations map[string]Conversation `json:"conversations"`
-	Pairing       pairingData             `json:"pairing,omitempty"`
-	Onboarded     bool                    `json:"onboarded,omitempty"`
-	OwedCloses    []OwedClose             `json:"owed_closes,omitempty"`
+	Conversations   map[string]Conversation `json:"conversations"`
+	Pairing         pairingData             `json:"pairing,omitempty"`
+	Onboarded       bool                    `json:"onboarded,omitempty"`
+	OwedCloses      []OwedClose             `json:"owed_closes,omitempty"`
+	RetiredContexts map[string]string       `json:"retired_contexts,omitempty"`
 }
 
 type Store struct {
@@ -216,6 +217,9 @@ func (s *Store) SaveSession(session Session) error {
 	session.NativeImport = session.NativeImport.Clone()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if session.UpstreamID != "" && s.data.RetiredContexts[nativeContextKey(session.NodeID, session.HarnessID, session.UpstreamID)] != "" {
+		return ErrAbandonedContext
+	}
 	next := cloneData(s.data)
 	conversation := next.Conversations[session.ConversationID]
 	if conversation.Sessions == nil {
@@ -450,6 +454,9 @@ func (s *Store) RestoreSession(conversationID, agentID string, index int) (Sessi
 	}
 	at := matches[index-1]
 	restored := conversation.Archived[at].Session
+	if conversation.Archived[at].AbandonedAttempt != "" || next.RetiredContexts[nativeContextKey(restored.NodeID, restored.HarnessID, restored.UpstreamID)] != "" {
+		return Session{}, ErrAbandonedContext
+	}
 	// Whatever is live now takes the restored one's place in the history,
 	// so switching back and forth never loses either.
 	if current, ok := conversation.Sessions[agentID]; ok && current.UpstreamID != "" {
@@ -552,6 +559,12 @@ func cloneData(source data) data {
 		},
 		Onboarded:  source.Onboarded,
 		OwedCloses: append([]OwedClose(nil), source.OwedCloses...),
+	}
+	if source.RetiredContexts != nil {
+		clone.RetiredContexts = make(map[string]string, len(source.RetiredContexts))
+	}
+	for key, id := range source.RetiredContexts {
+		clone.RetiredContexts[key] = id
 	}
 	for id, conversation := range source.Conversations {
 		clone.Conversations[id] = cloneConversation(conversation)

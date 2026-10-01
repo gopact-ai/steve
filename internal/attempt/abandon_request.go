@@ -33,7 +33,8 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if row.ExecutionID != r.ID || row.TurnID != r.TurnID || r.Execution == nil || row.ExecutionEpoch != r.Execution.Epoch {
 		return task.RecoveryUsage{}, errors.New("abandonment accounting belongs to another execution")
 	}
-	if _, err := nativeTaskTx(tx, r); err != nil {
+	tracked, err := nativeTaskTx(tx, r)
+	if err != nil {
 		return task.RecoveryUsage{}, err
 	}
 	if err := checkIdentityRows(tx); err != nil {
@@ -56,7 +57,7 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if usage.Reported || usage.Tokens != (task.Tokens{}) {
 		r.Usage = &Usage{Model: usage.Model, Input: usage.Tokens.Input, Output: usage.Tokens.Output, CachedRead: usage.Tokens.CachedRead, CachedWrite: usage.Tokens.CachedWrite, Reported: usage.Reported}
 	}
-	r.Abandoned = &Abandoned{At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason}
+	r.Abandoned = &Abandoned{At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, Session: r.Session}
 	if r.EndedAt.IsZero() {
 		r.EndedAt = at
 	}
