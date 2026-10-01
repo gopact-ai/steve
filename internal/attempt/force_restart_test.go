@@ -325,6 +325,9 @@ func TestForceRestartVerificationRequiresTheExactLiveClaim(t *testing.T) {
 	if err := s.VerifyForceRestart(t.Context(), op, "plan", "restart", allowRestart); err == nil {
 		t.Fatal("verification granted an unclaimed operation")
 	}
+	if err := s.VerifyForceRestart(t.Context(), op, "", "", allowRestart); err == nil {
+		t.Fatal("unclaimed empty plan authorized a script")
+	}
 	if yes, err := s.ClaimForceRestart(t.Context(), op, "plan", "restart", allowRestart); err != nil || !yes {
 		t.Fatalf("claim=%v %v", yes, err)
 	}
