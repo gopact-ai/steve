@@ -396,3 +396,22 @@ func TestStopDoesNotEscalateAfterThePeerRelinquishesItsInstallation(t *testing.T
 		t.Fatal("peer was killed after relinquishing the installation lock")
 	}
 }
+
+func TestAnOpenDescriptorIsNotAnInstallationFlock(t *testing.T) {
+	root, _ := installationFixture(t)
+	file, err := privateFile(filepath.Join(root, "cluster/peer-process/gateway.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := ownsKernelLock(file, os.Getpid()); !errors.Is(err, ErrUnproven) {
+		t.Fatalf("mere open descriptor proves lock ownership: %v", err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Flock(int(file.Fd()), unix.LOCK_UN)
+	if err := ownsKernelLock(file, os.Getpid()); err != nil {
+		t.Fatalf("real lock ownership not recognized: %v", err)
+	}
+}

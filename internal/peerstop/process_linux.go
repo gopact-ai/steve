@@ -67,7 +67,13 @@ func lockOwner(file *os.File) (int, error) {
 	if owner == 0 {
 		return 0, fmt.Errorf("%w: held installation lock has no visible owner", ErrUnproven)
 	}
-	return owner, sameLock(file)
+	if err := sameLock(file); err != nil {
+		return 0, err
+	}
+	if err := ownsKernelLock(file, owner); err != nil {
+		return 0, err
+	}
+	return owner, nil
 }
 
 func (i installation) process(pid int) (processIdentity, bool, error) {
@@ -207,4 +213,46 @@ func checkProcessNamespace() error {
 		}
 	}
 	return fmt.Errorf("%w: process namespace is unknown", ErrUnproven)
+}
+
+// The kernel's reported PID alone is not enough for an inherited lock after
+// its original holder exits. The identified process must still own a file
+// description carrying that exact flock, not merely have the inode open.
+func ownsKernelLock(file *os.File, pid int) error {
+	expected, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	root := fmt.Sprintf("/proc/%d", pid)
+	entries, err := os.ReadDir(filepath.Join(root, "fd"))
+	if err != nil {
+		return fmt.Errorf("%w: lock owner's descriptors unavailable", ErrUnproven)
+	}
+	for _, entry := range entries {
+		info, err := os.Stat(filepath.Join(root, "fd", entry.Name()))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("%w: lock owner's descriptor cannot be checked", ErrUnproven)
+		}
+		if !os.SameFile(expected, info) {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(root, "fdinfo", entry.Name()))
+		if err != nil {
+			return fmt.Errorf("%w: lock description unavailable", ErrUnproven)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			value, found := strings.CutPrefix(line, "lock:")
+			if !found {
+				continue
+			}
+			fields := strings.Fields(value)
+			if len(fields) >= 8 && fields[1] == "FLOCK" && fields[3] == "WRITE" && fields[4] == strconv.Itoa(pid) {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: kernel PID does not own the installation flock", ErrUnproven)
 }
