@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/ledger"
 	"net/http"
 	"net/url"
 	"sort"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )

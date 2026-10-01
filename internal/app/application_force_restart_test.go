@@ -51,10 +51,12 @@ func (h *forceRestartHost) Start(ctx context.Context, op attempt.ForceRestart) e
 	}
 	return nil
 }
-func (h *forceRestartHost) Status(context.Context, attempt.ForceRestart) (sshconnect.MemberRestart, error) {
+func (h *forceRestartHost) Status(_ context.Context, op attempt.ForceRestart) (sshconnect.MemberRestart, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.status, nil
+	result := h.status
+	result.NodeID, result.RequestID = op.NodeID, op.ID
+	return result, nil
 }
 
 func forceRestartFixture(t *testing.T, n int) (*applicationStops, []attempt.Record, *forceSessions, *forceRestartHost) {
@@ -167,5 +169,75 @@ func TestForceRestartRefusesMissingHolderAndBoundsBothPhases(t *testing.T) {
 				t.Fatalf("unbounded phase: %+v", r.ForceStop)
 			}
 		})
+	}
+}
+
+func TestForceRestartNeverRestartsSelfOrUsesAnotherOwnersAuthority(t *testing.T) {
+	for _, why := range []string{"restart_self", "restart_permission"} {
+		t.Run(why, func(t *testing.T) {
+			s, records, _, host := forceRestartFixture(t, 1)
+			host.failure = cluster.MemberRestartError{Reason: why}
+			if err := s.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := s.attempts.Get(t.Context(), records[0].ID)
+			if len(host.starts) != 0 || got.ForceStop.Level != "exhausted" || got.ForceStop.Reason != why {
+				t.Fatalf("unsafe restart: %+v %d", got.ForceStop, len(host.starts))
+			}
+		})
+	}
+}
+
+func TestForceRestartLostHolderAndPendingDispatchNeverRepeat(t *testing.T) {
+	s, records, sessions, host := forceRestartFixture(t, 1)
+	r, err := s.attempts.RecordForceStopResult(t.Context(), records[0].ID, 1, true, "unavailable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.attempts.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "link-owner"); err != nil {
+		t.Fatal(err)
+	}
+	sessions.failure = errors.New("no response")
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.attempts.Get(t.Context(), r.ID)
+	if len(host.starts) != 0 || got.ForceStop.Level != "exhausted" || got.ForceStop.Reason != "restart_status_lost" {
+		t.Fatalf("reserved dispatch was replayed: %+v %v", got.ForceStop, host.starts)
+	}
+}
+
+func TestForceRestartAwaitNeverAcceptsCommandCompletion(t *testing.T) {
+	s, records, sessions, host := forceRestartFixture(t, 1)
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	host.status.State = "connected"
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	sessions.failure = &node.SessionError{Code: "stop_unproven", Message: "no process proof"}
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.attempts.Get(t.Context(), records[0].ID)
+	if !got.Unsettled || got.ForceStop.Level != "exhausted" || got.ForceStop.Reason != "stop_unproven" || len(host.starts) != 1 {
+		t.Fatalf("unproved return confirmed: %+v", got)
+	}
+}
+
+func TestForceRestartRejectsAnotherPlansSuccessfulStatus(t *testing.T) {
+	s, records, _, host := forceRestartFixture(t, 1)
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	host.status.State = "connected"
+	host.status.PlanID = "another-plan"
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.attempts.Get(t.Context(), records[0].ID)
+	if got.ForceStop.Level != "exhausted" || got.ForceStop.Reason != "restart_status_lost" {
+		t.Fatalf("another plan's result advanced restart: %+v", got.ForceStop)
 	}
 }

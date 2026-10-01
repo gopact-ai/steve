@@ -148,3 +148,145 @@ func TestForceRestartTimeoutDoesNotResetItsClock(t *testing.T) {
 }
 
 func allowRestart(ledger.Reader, ForceRestart) error { return nil }
+
+type restartReplication struct {
+	book             *ledger.Ledger
+	fail             bool
+	entered, release chan struct{}
+}
+
+func (r *restartReplication) Prepare(context.Context) (ledger.ReplicaPosition, error) {
+	v, err := r.book.ReplicaVersion()
+	return ledger.ReplicaPosition{Version: v, CoordinatorEpoch: 1}, err
+}
+func (r *restartReplication) Propose(ctx context.Context, w ledger.ReplicatedWrite) ([]byte, error) {
+	if r.entered != nil {
+		close(r.entered)
+		select {
+		case <-r.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if r.fail {
+		return nil, errors.New("replication refused")
+	}
+	return r.book.ApplyReplicated(w.ID, w.ExpectedVersion+1, w.Payload)
+}
+
+func TestForceRestartRefusedProposalRollsBackReservationAndClaim(t *testing.T) {
+	for _, stage := range []string{"reserve", "claim"} {
+		t.Run(stage, func(t *testing.T) {
+			s, r := restartFixture(t)
+			var op ForceRestart
+			var err error
+			if stage == "claim" {
+				op, _, err = s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			replica := &restartReplication{book: s.l, fail: true}
+			if err := s.l.AttachReplication(replica); err != nil {
+				t.Fatal(err)
+			}
+			if stage == "reserve" {
+				_, _, err = s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+			} else {
+				_, err = s.ClaimForceRestart(t.Context(), op, "plan", "restart", allowRestart)
+			}
+			if err == nil {
+				t.Fatal("refused proposal reported success")
+			}
+			got, found, readErr := s.ForceRestart(t.Context(), r.Node)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if stage == "reserve" && found {
+				t.Fatal("refused reservation published operation")
+			}
+			if stage == "claim" && (!found || !got.ClaimedAt.IsZero()) {
+				t.Fatal("refused claim consumed execution right")
+			}
+		})
+	}
+}
+
+func TestForceRestartClaimIsInvisibleUntilReplicationCompletes(t *testing.T) {
+	s, r := restartFixture(t)
+	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica := &restartReplication{book: s.l, entered: make(chan struct{}), release: make(chan struct{})}
+	if err := s.l.AttachReplication(replica); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		yes, err := s.ClaimForceRestart(ctx, op, "plan", "restart", allowRestart)
+		if err == nil && !yes {
+			err = errors.New("claim not won")
+		}
+		done <- err
+	}()
+	select {
+	case <-replica.entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	current, _, err := s.ForceRestart(ctx, r.Node)
+	if err != nil || !current.ClaimedAt.IsZero() {
+		close(replica.release)
+		<-done
+		t.Fatalf("uncommitted claim became visible: %+v %v", current, err)
+	}
+	close(replica.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	restored := New(s.l)
+	restored.now = s.now
+	if yes, err := restored.ClaimForceRestart(ctx, op, "second", "restart", allowRestart); err != nil || yes {
+		t.Fatalf("lost response may replay SSH: %v %v", yes, err)
+	}
+}
+
+func TestForceRestartTerminalOperationNeedsANewExplicitRequest(t *testing.T) {
+	s, r := restartFixture(t)
+	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := op.RequestedAt.Add(time.Second)
+	s.now = func() time.Time { return now }
+	if err := s.FinishForceRestart(t.Context(), op, "lost"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "new-holder"); err != nil {
+		t.Fatal(err)
+	}
+	same, _, _ := s.ForceRestart(t.Context(), r.Node)
+	if same.ID != op.ID {
+		t.Fatal("poll created a new operation")
+	}
+	now = now.Add(time.Second)
+	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordForceStopResult(t.Context(), r.ID, 2, true, "unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	next, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 2, "cluster", "new-holder")
+	if err != nil || !fresh || next.ID == op.ID {
+		t.Fatalf("new explicit request not reserved: %+v %v", next, err)
+	}
+	if yes, err := s.ClaimForceRestart(t.Context(), op, "late", "restart", allowRestart); yes || err == nil {
+		t.Fatal("late operation claimed after replacement")
+	}
+	if err := s.FinishForceRestart(t.Context(), op, "connected"); err == nil {
+		t.Fatal("old result changed replacement")
+	}
+}

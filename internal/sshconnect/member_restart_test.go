@@ -117,3 +117,51 @@ func TestMemberRestartKeepsMachineSlotUntilClaimReturns(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMemberRestartJoinsAutomaticStartWithoutAnotherScript(t *testing.T) {
+	s, runner, _ := restartFixture(t)
+	s.mu.Lock()
+	stored, failure := s.claimRestart(s.text, "node-1", true)
+	if failure != nil {
+		s.mu.Unlock()
+		t.Fatal(failure)
+	}
+	plan := stored.plan.ID
+	s.mu.Unlock()
+	got, err := s.BeginMemberRestart(t.Context(), "node-1", "force", func(_ context.Context, id, kind string) (bool, error) {
+		if id != plan || kind != "restart" {
+			t.Error("automatic start identity was lost")
+		}
+		return true, nil
+	})
+	if err != nil || got.PlanID != plan || got.State != "running" || len(runner.restarts()) != 0 {
+		t.Fatalf("automatic start duplicated: %+v %v", got, err)
+	}
+	s.settle(stored, InstallResult{PlanID: plan, NodeID: "node-1", Connected: true, Status: "connected"}, nil)
+	got, err = s.MemberRestartStatus(t.Context(), "node-1", "force", plan, "restart")
+	if err != nil || got.State != "connected" {
+		t.Fatalf("automatic start not observed: %+v %v", got, err)
+	}
+}
+
+func TestMemberRestartMissingLocalRecordDoesNotReplayClaim(t *testing.T) {
+	s, runner, _ := restartFixture(t)
+	claim := func(context.Context, string, string) (bool, error) { return true, nil }
+	op, err := s.BeginMemberRestart(t.Context(), "node-1", "force", claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "first restart did not finish", func() bool {
+		got, _ := s.MemberRestartStatus(t.Context(), "node-1", "force", op.PlanID, "restart")
+		return got.State == "connected"
+	})
+	s.mu.Lock()
+	delete(s.memberRestarts, "force")
+	s.mu.Unlock()
+	if _, err = s.BeginMemberRestart(t.Context(), "node-1", "force", func(context.Context, string, string) (bool, error) { return false, nil }); err == nil {
+		t.Fatal("lost claim was accepted again")
+	}
+	if len(runner.restarts()) != 1 {
+		t.Fatal("lost holder memory repeated SSH")
+	}
+}
