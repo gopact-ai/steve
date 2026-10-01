@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -38,15 +39,16 @@ func TestForceRestartIsPersistedBeforeDispatchAndClaimedOnce(t *testing.T) {
 		t.Fatalf("attempt not waiting on restart: %+v", got.ForceStop)
 	}
 	reopened := New(s.l)
+	reopened.now = s.now
 	same, exists, err := reopened.ForceRestart(t.Context(), r.Node)
 	if err != nil || !exists || same != op {
 		t.Fatalf("restart not durable: %+v %v", same, err)
 	}
-	first, err := reopened.ClaimForceRestart(t.Context(), op, "plan", "restart")
+	first, err := reopened.ClaimForceRestart(t.Context(), op, "plan", "restart", allowRestart)
 	if err != nil || !first {
 		t.Fatalf("first claim: %v %v", first, err)
 	}
-	second, err := reopened.ClaimForceRestart(t.Context(), op, "another-plan", "restart")
+	second, err := reopened.ClaimForceRestart(t.Context(), op, "another-plan", "restart", allowRestart)
 	if err != nil || second {
 		t.Fatalf("replayed claim can start SSH: %v %v", second, err)
 	}
@@ -65,7 +67,7 @@ func TestForceRestartRejectsWrongIdentityAndOldRevision(t *testing.T) {
 	for _, change := range []func(*ForceRestart){func(v *ForceRestart) { v.ID = "other" }, func(v *ForceRestart) { v.NodeID = "other" }, func(v *ForceRestart) { v.ClusterID = "other" }, func(v *ForceRestart) { v.Holder = "other" }, func(v *ForceRestart) { v.By = "other" }} {
 		wrong := op
 		change(&wrong)
-		if ok, err := s.ClaimForceRestart(t.Context(), wrong, "plan", "restart"); err == nil || ok {
+		if ok, err := s.ClaimForceRestart(t.Context(), wrong, "plan", "restart", allowRestart); err == nil || ok {
 			t.Fatalf("claimed another identity: %+v %v", wrong, err)
 		}
 	}
@@ -89,7 +91,7 @@ func TestForceRestartConcurrentClaimsHaveOneWinner(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			yes, err := s.ClaimForceRestart(t.Context(), op, "plan", "restart")
+			yes, err := s.ClaimForceRestart(t.Context(), op, "plan", "restart", allowRestart)
 			if err != nil {
 				t.Error(err)
 			}
@@ -120,7 +122,7 @@ func TestForceRestartCancellationCannotReserveOrClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if yes, err := s.ClaimForceRestart(ctx, op, "plan", "restart"); yes || err == nil {
+	if yes, err := s.ClaimForceRestart(ctx, op, "plan", "restart", allowRestart); yes || err == nil {
 		t.Fatal("cancelled claim succeeded")
 	}
 	got, _, _ := s.ForceRestart(t.Context(), r.Node)
@@ -140,7 +142,9 @@ func TestForceRestartTimeoutDoesNotResetItsClock(t *testing.T) {
 	if err != nil || fresh || again != op {
 		t.Fatalf("poll reset or relocated restart: %+v %v %v", again, fresh, err)
 	}
-	if yes, err := s.ClaimForceRestart(t.Context(), op, "plan", "restart"); yes || err == nil {
+	if yes, err := s.ClaimForceRestart(t.Context(), op, "plan", "restart", allowRestart); yes || err == nil {
 		t.Fatal("expired operation launched SSH")
 	}
 }
+
+func allowRestart(ledger.Reader, ForceRestart) error { return nil }

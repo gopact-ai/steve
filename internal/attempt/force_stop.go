@@ -10,15 +10,18 @@ import (
 )
 
 type ForceStop struct {
-	Revision        uint64    `json:"revision"`
-	RequestedAt     time.Time `json:"requested_at"`
-	By              string    `json:"by"`
-	Level           string    `json:"level"`
-	LevelSince      time.Time `json:"level_since"`
-	UnansweredSince time.Time `json:"unanswered_since,omitempty"`
-	UnansweredCount uint8     `json:"unanswered_count,omitempty"`
-	Reason          string    `json:"reason,omitempty"`
-	ExhaustedAt     time.Time `json:"exhausted_at,omitempty"`
+	RestartID          string    `json:"restart_id,omitempty"`
+	RestartHolder      string    `json:"restart_holder,omitempty"`
+	RestartRequestedAt time.Time `json:"restart_requested_at,omitempty"`
+	Revision           uint64    `json:"revision"`
+	RequestedAt        time.Time `json:"requested_at"`
+	By                 string    `json:"by"`
+	Level              string    `json:"level"`
+	LevelSince         time.Time `json:"level_since"`
+	UnansweredSince    time.Time `json:"unanswered_since,omitempty"`
+	UnansweredCount    uint8     `json:"unanswered_count,omitempty"`
+	Reason             string    `json:"reason,omitempty"`
+	ExhaustedAt        time.Time `json:"exhausted_at,omitempty"`
 }
 
 var ErrForceStopChanged = errors.New("force stop request changed")
@@ -51,7 +54,7 @@ func (s *Service) writeForceStop(ctx context.Context, id string, revision uint64
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
 		}
-		if revision != 0 && (next.ForceStop == nil || next.ForceStop.Revision != revision || next.ForceStop.Level != "kill") {
+		if revision != 0 && (next.ForceStop == nil || next.ForceStop.Revision != revision || !forceStopActive(next.ForceStop.Level)) {
 			return ErrForceStopChanged
 		}
 		if _, err := stoppedTaskTx(tx, next); err != nil {
@@ -73,6 +76,9 @@ func (s *Service) writeForceStop(ctx context.Context, id string, revision uint64
 // unanswered calls are durable even if the coordinator changes between them.
 func (s *Service) RecordForceStopResult(ctx context.Context, id string, revision uint64, answered bool, code string) (Record, error) {
 	return s.writeForceStop(ctx, id, revision, "force-stop", func(r *Record) error {
+		if r.ForceStop.Level != "kill" {
+			return ErrForceStopChanged
+		}
 		before := *r.ForceStop
 		next := before
 		now := s.now().UTC()
@@ -142,4 +148,29 @@ func confirmForceStop(r *Record, now time.Time) {
 	force.Level, force.LevelSince, force.Reason = "confirmed", now, ""
 	force.ExhaustedAt, force.UnansweredSince, force.UnansweredCount = time.Time{}, time.Time{}, 0
 	r.ForceStop = &force
+}
+
+func forceStopActive(level string) bool {
+	return level == "kill" || level == "restart" || level == "await"
+}
+
+// AdvanceForceStop moves a still-current request without extending a running
+// phase's clock. Repeated observations of the same phase are not writes.
+func (s *Service) AdvanceForceStop(ctx context.Context, id string, revision uint64, from, to, reason string) (Record, error) {
+	return s.writeForceStop(ctx, id, revision, "force-stop", func(r *Record) error {
+		if r.ForceStop.Level != from {
+			return ErrForceStopChanged
+		}
+		if to != "exhausted" && !(from == "restart" && to == "await") {
+			return ErrForceStopChanged
+		}
+		force := *r.ForceStop
+		force.Level, force.LevelSince, force.Reason = to, s.now().UTC(), reason
+		force.UnansweredSince, force.UnansweredCount = time.Time{}, 0
+		if to == "exhausted" {
+			force.ExhaustedAt = force.LevelSince
+		}
+		r.ForceStop = &force
+		return nil
+	})
 }

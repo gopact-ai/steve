@@ -62,7 +62,7 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
 		}
-		if forceRevision != 0 && (next.ForceStop == nil || next.ForceStop.Revision != forceRevision || next.ForceStop.Level != "kill") {
+		if forceRevision != 0 && (next.ForceStop == nil || next.ForceStop.Revision != forceRevision || !forceStopActive(next.ForceStop.Level)) {
 			return ErrForceStopChanged
 		}
 		tracked, err := stoppedTaskTx(tx, next)
