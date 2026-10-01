@@ -88,3 +88,18 @@ func TestAbandonedSessionWithExitProofDoesNotInventAClose(t *testing.T) {
 		t.Fatal("exited abandoned context remained resumable")
 	}
 }
+
+func TestLateSessionSaveCannotResurrectAnAbandonedContext(t *testing.T) {
+	s, _, _ := replicatedState(t)
+	owed := owedSession(t, s, "conversation", "agent", "ns_original")
+	original := s.Conversation("conversation").Sessions["agent"]
+	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, func(*ledger.Tx) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveSession(original); !errors.Is(err, ErrAbandonedContext) {
+		t.Fatalf("late session save=%v", err)
+	}
+	if _, found := s.Conversation("conversation").Sessions["agent"]; found {
+		t.Fatal("retired context was resurrected")
+	}
+}

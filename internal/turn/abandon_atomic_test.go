@@ -147,3 +147,65 @@ func sameAbandonJSON(a, b any) bool {
 	y, f := json.Marshal(b)
 	return e == nil && f == nil && bytes.Equal(x, y)
 }
+
+func TestAbandonmentDoesNotFreezeOrAbandonUnselectedDescendantExecutions(t *testing.T) {
+	c, tasks, r, _ := forceStopControlFixture(t)
+	if err := tasks.BindAttempt(*r.Execution, r.ID, r.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	child, err := tasks.Create(task.Task{Parent: r.TaskID, Channel: "console:original", Transport: "console", Member: "worker", ProjectID: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Begin(child.ID, "worker", "node", ""); err != nil {
+		t.Fatal(err)
+	}
+	token, err := tasks.ExecutionToken(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := r.Spec
+	spec.ID = "child-execution"
+	spec.TaskID = child.ID
+	spec.Execution = &token
+	spec.TurnID = "child-input"
+	spec.Workspace.ID = "child-workspace"
+	spec.Workspace.Path = r.Workspace.Path + "-child"
+	other, err := c.attempts.Open(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.BindAttempt(token, other.ID, other.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+		other, err = c.attempts.Advance(t.Context(), other.ID, phase, "fixture", func(r *attempt.Record) { r.Session = "ns_child" })
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.RecordForceStopResult(t.Context(), r.ID, 1, true, "stop_unproven"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewAbandonControl(c).AbandonAttempt(t.Context(), r.ID, "owner", 1); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := c.attempts.Get(t.Context(), other.ID)
+	if loaded.Abandoned != nil || !loaded.Unsettled {
+		t.Fatal("the unselected descendant lost its own stop obligation")
+	}
+	tracked, _ := tasks.Get(child.ID)
+	if tracked.State != task.StateCancelled || !tracked.Attempts[0].AccountingFrozenAt.IsZero() || !tracked.Attempts[0].Open() {
+		t.Fatal("target abandonment froze a different execution")
+	}
+	if err := tasks.SettleAttempt(t.Context(), child.ID, other.ID, other.TurnID, time.Now(), task.OutcomeCancelled, task.RecoveryUsage{Tokens: task.Tokens{Input: 9, Output: 8}, Reported: true}); err != nil {
+		t.Fatal(err)
+	}
+	root, _ := tasks.Get(r.TaskID)
+	if root.Budget.Tokens.Input != 9 || root.Budget.Tokens.Output != 8 {
+		t.Fatal("freezing one execution discarded a descendant's valid accounting")
+	}
+}

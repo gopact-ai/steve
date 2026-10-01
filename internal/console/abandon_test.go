@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/consoleapi"
+
 	"github.com/gopact-ai/steve/internal/attempt"
 )
 
@@ -63,5 +65,32 @@ func TestAbandonConsoleDoesNotAcceptAnUncommittedDecision(t *testing.T) {
 	got, err := s.Abandon(t.Context(), "original", 3)
 	if err == nil || got.Accepted {
 		t.Fatal("a rejected core decision was accepted")
+	}
+}
+
+func TestAbandonmentReplyIsDurableWithoutAStopReceipt(t *testing.T) {
+	s := New(&echo{}, "owner", nil)
+	doc := &memDoc{}
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	target := &queuedExchange{Exchange: Exchange{ID: "old", Conversation: "console:main", State: consoleapi.ExchangeAwaitingUser}, RecoveryStopPending: "unproved", done: make(chan struct{})}
+	s.mu.Lock()
+	s.exchanges[target.Conversation] = []*queuedExchange{target}
+	s.running[target.Conversation] = 1
+	s.mu.Unlock()
+	if err := s.recordAbandonment(target, "original-attempt"); err != nil {
+		t.Fatal(err)
+	}
+	if target.RecoveryStop != nil || target.RecoveryAbandon == nil || target.State != consoleapi.ExchangeCancelled {
+		t.Fatal("abandonment used a physical stop receipt or did not end the exchange")
+	}
+	restored := New(&echo{}, "owner", nil)
+	if err := restored.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	row := restored.exchanges[target.Conversation][0]
+	if row.RecoveryAbandon == nil || row.RecoveryStop != nil || row.RecoveryAbandon.AttemptID != "original-attempt" {
+		t.Fatal("restart lost the distinct abandoned outcome")
 	}
 }

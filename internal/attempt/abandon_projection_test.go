@@ -75,3 +75,25 @@ func TestAbandonedCommandReceiptCannotReleaseItsWriter(t *testing.T) {
 		t.Fatalf("confirmed before projection lost obligation: %+v %v", got.Abandoned, err)
 	}
 }
+
+func TestAbandonmentProjectionRemainsVisibleAfterPhysicalConfirmation(t *testing.T) {
+	s, r, proof, _ := abandonedRecord(t)
+	proof.Session.ProcessStopped = true
+	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "node-exit", proof); err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.Live(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].ID != r.ID || live[0].Abandoned == nil {
+		t.Fatal("physical exit hid unfinished abandonment projection")
+	}
+	if _, err := s.ProjectAbandonedCapacity(t.Context(), r.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	live, err = s.Live(t.Context())
+	if err != nil || len(live) != 0 {
+		t.Fatalf("projected confirmed abandonment stayed live: %v %v", live, err)
+	}
+}
