@@ -60,6 +60,9 @@ func (s *Service) deliverAbandonment(r attempt.Record) error {
 	if r.Abandoned == nil || r.Abandoned.ProjectedAt.IsZero() {
 		return errors.New("abandonment session projection is not complete")
 	}
+	if r.Kind != attempt.KindChat && r.Kind != attempt.KindPlan {
+		return nil
+	}
 	if !strings.HasPrefix(r.Abandoned.MessageID, AnchorMark) {
 		return nil
 	}

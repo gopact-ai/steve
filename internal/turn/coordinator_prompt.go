@@ -238,7 +238,7 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 
 func (c *Coordinator) open(ctx context.Context, saved state.Session, selected agent.Agent, workspace string, servers []acp.MCPServer) (harness.Runner, error) {
 	if err := c.store.CheckSessionContext(saved); err != nil {
-		return nil, err
+		return nil, UserError{Text: c.text.T(i18n.HistoryAbandoned), Cause: err}
 	}
 	ctx = harness.WithPluginProfile(ctx, saved.PluginRuntime)
 	ctx = harness.WithNativeImport(ctx, saved.NativeImport)
