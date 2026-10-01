@@ -66,6 +66,12 @@ func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uin
 		if found && op.ClusterID != clusterID {
 			return ErrForceRestartChanged
 		}
+		if found && op.FinishedAt.IsZero() && s.now().Sub(op.RequestedAt) >= 7*time.Minute {
+			op.FinishedAt, op.Outcome = op.RequestedAt.Add(7*time.Minute), "timeout"
+			if err := tx.PutBinding(forceRestartKind, r.Node, op); err != nil {
+				return err
+			}
+		}
 		if !found || !op.FinishedAt.IsZero() && r.ForceStop.RequestedAt.After(op.FinishedAt) {
 			op = ForceRestart{ID: fmt.Sprintf("%s/%d", id, revision), ClusterID: clusterID, NodeID: r.Node, Holder: holder, By: r.ForceStop.By, RequestedAt: s.now().UTC()}
 			if err := tx.PutBinding(forceRestartKind, r.Node, op); err != nil {
