@@ -90,6 +90,10 @@ func TestAbandonmentReplyIsDurableWithoutAStopReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := restored.exchanges[target.Conversation][0]
+	fromRecord := durableExchange(row).queued()
+	if fromRecord.RecoveryAbandon == nil || fromRecord.RecoveryAbandon.AttemptID != "original-attempt" {
+		t.Fatal("record encoding lost abandonment reply")
+	}
 	if row.RecoveryAbandon == nil || row.RecoveryStop != nil || row.RecoveryAbandon.AttemptID != "original-attempt" {
 		t.Fatal("restart lost the distinct abandoned outcome")
 	}

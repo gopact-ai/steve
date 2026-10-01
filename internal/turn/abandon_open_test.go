@@ -114,6 +114,9 @@ func TestAbandonLostOpenDoesNotRetireANewEmptySlot(t *testing.T) {
 			if len(c.store.OwedCloses()) != 0 {
 				t.Fatal("empty-slot projection invented a native close")
 			}
+			if err := c.store.SaveSession(original); err == nil {
+				t.Fatal("original import was reusable after retirement of its missing or replaced slot")
+			}
 		})
 	}
 }

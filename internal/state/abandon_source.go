@@ -13,7 +13,8 @@ import (
 )
 
 // AbandonSource describes exactly the slot read inside the core decision's
-// transaction. Fingerprints exclude credentials and do not expose the context.
+// transaction. Only digests are persisted; credentials and context contents are
+// never copied into an execution record.
 type AbandonSource struct {
 	State             string
 	Fingerprint       string
@@ -31,7 +32,6 @@ func NativeImportFingerprint(ref *nativehistory.Reference) string {
 }
 
 func sessionFingerprint(session Session) string {
-	session.AgentToken, session.PendingAgentToken = "", ""
 	raw, _ := json.Marshal(session)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

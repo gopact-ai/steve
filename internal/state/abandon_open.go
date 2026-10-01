@@ -13,11 +13,14 @@ func (s *Store) ProjectAbandonedOpen(ctx context.Context, conversation, agent, n
 	if guard == nil || attemptID == "" {
 		return errors.New("pending open retirement needs its original decision")
 	}
-	if slotState == "absent" || slotState == "different" {
-		return s.book.Update(ctx, guard)
+	if slotState != "absent" && slotState != "different" && slotState != "original" {
+		return errors.New("pending open has no recorded slot state")
 	}
-	if slotState != "original" || fingerprint == "" || imported == "" {
+	if slotState == "original" && (fingerprint == "" || imported == "") {
 		return errors.New("pending open retirement has no exact imported slot")
+	}
+	if imported == "" {
+		return s.book.Update(ctx, guard)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -31,7 +34,7 @@ func (s *Store) ProjectAbandonedOpen(ctx context.Context, conversation, agent, n
 	}
 	next.RetiredContexts[key] = attemptID
 	thread := next.Conversations[conversation]
-	if current, ok := thread.Sessions[agent]; ok && current.UpstreamID == "" && sessionFingerprint(current) == fingerprint {
+	if current, ok := thread.Sessions[agent]; ok && slotState == "original" && current.UpstreamID == "" && sessionFingerprint(current) == fingerprint {
 		delete(thread.Sessions, agent)
 		next.Conversations[conversation] = thread
 	}

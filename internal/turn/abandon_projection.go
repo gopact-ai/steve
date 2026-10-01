@@ -31,7 +31,7 @@ func (a *AbandonControl) ProjectAbandoned(ctx context.Context, id string) error 
 	if r.Abandoned.Session == "" {
 		err = c.store.ProjectAbandonedOpen(ctx, r.Abandoned.Conversation, r.Agent, r.Node, r.Harness, r.ID, r.Abandoned.SlotState, r.Abandoned.SlotFingerprint, r.Abandoned.ImportFingerprint, guard)
 	} else {
-		err = c.store.ProjectAbandonedSession(ctx, r.Abandoned.Conversation, r.Agent, owed, r.Unsettled, guard)
+		err = c.store.ProjectAbandonedSession(ctx, r.Abandoned.Conversation, r.Agent, owed, r.Unsettled, r.Abandoned.ImportFingerprint, guard)
 	}
 	if err != nil {
 		return err

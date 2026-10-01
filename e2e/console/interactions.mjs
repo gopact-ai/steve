@@ -3135,11 +3135,17 @@ checks["abandon-requires-current-exhausted-revision"] = async (f) => {
     await banner.getByRole("button", { name: "放弃这次执行", exact: true }).click();
     const dialog = f.page.getByRole("dialog", { name: "确认放弃任务 #11 的执行？", exact: true });
     await dialog.waitFor();
-    current.force_stop = { ...current.force_stop, revision: 5, level: "kill" };
+    current.force_stop = { ...current.force_stop, revision: 5, level: "exhausted" };
     await f.emit({ kind: "attempt.changed" });
     await f.page.clock.runFor(350);
     await dialog.waitFor({ state: "detached" });
     assert.equal(calls, 0, "a stale abandonment confirmation was sent");
+    await banner.getByRole("button", { name: "放弃这次执行", exact: true }).click();
+    current.force_stop.level = "kill";
+    await f.emit({ kind: "attempt.changed" });
+    await f.page.clock.runFor(350);
+    await dialog.waitFor({ state: "detached" });
+    assert.equal(calls, 0, "an active stop retained an abandonment confirmation");
 };
 
 checks["force-stop-durable-banner"] = async (f) => {

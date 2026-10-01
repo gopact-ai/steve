@@ -12,17 +12,17 @@ func TestAbandonedSessionProjectionIsAtomicAndCannotBeRestored(t *testing.T) {
 	s, book, replica := replicatedState(t)
 	owed := owedSession(t, s, "conversation", "agent", "ns_original")
 	replica.reject = errors.New("replication refused")
-	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, func(*ledger.Tx) error { return nil }); err == nil {
+	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, "", func(*ledger.Tx) error { return nil }); err == nil {
 		t.Fatal("refused projection succeeded")
 	}
 	if len(s.OwedCloses()) != 0 || s.Conversation("conversation").Sessions["agent"].UpstreamID != owed.UpstreamID {
 		t.Fatal("refused projection partially installed")
 	}
 	replica.reject = nil
-	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, func(*ledger.Tx) error { return nil }); err != nil {
+	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, "", func(*ledger.Tx) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, func(*ledger.Tx) error { return nil }); err != nil {
+	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, "", func(*ledger.Tx) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if _, live := s.Conversation("conversation").Sessions["agent"]; live {
@@ -57,7 +57,7 @@ func TestAbandonProjectionPreservesANewerBindingAndOwesOnlyTheOldClose(t *testin
 				}
 			}
 			_ = owedSession(t, s, "conversation", "agent", "ns_new")
-			if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", old, true, func(*ledger.Tx) error { return nil }); err != nil {
+			if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", old, true, "", func(*ledger.Tx) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
 			if s.Conversation("conversation").Sessions["agent"].UpstreamID != "ns_new" {
@@ -78,7 +78,7 @@ func TestAbandonProjectionPreservesANewerBindingAndOwesOnlyTheOldClose(t *testin
 func TestAbandonedSessionWithExitProofDoesNotInventAClose(t *testing.T) {
 	s, _, _ := replicatedState(t)
 	owed := owedSession(t, s, "conversation", "agent", "ns_original")
-	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, false, func(*ledger.Tx) error { return nil }); err != nil {
+	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, false, "", func(*ledger.Tx) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.OwedCloses()) != 0 {
@@ -93,7 +93,7 @@ func TestLateSessionSaveCannotResurrectAnAbandonedContext(t *testing.T) {
 	s, _, _ := replicatedState(t)
 	owed := owedSession(t, s, "conversation", "agent", "ns_original")
 	original := s.Conversation("conversation").Sessions["agent"]
-	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, func(*ledger.Tx) error { return nil }); err != nil {
+	if err := s.ProjectAbandonedSession(t.Context(), "conversation", "agent", owed, true, "", func(*ledger.Tx) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SaveSession(original); !errors.Is(err, ErrAbandonedContext) {

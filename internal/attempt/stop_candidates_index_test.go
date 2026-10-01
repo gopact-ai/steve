@@ -44,7 +44,7 @@ func TestStopCandidateIndexReplacesTheRetiredV1Definition(t *testing.T) {
 	if err := book.DB().QueryRow(`SELECT sql FROM sqlite_schema WHERE type='index' AND name='operations_attempt_stop_candidates'`).Scan(&definition); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(definition, "_v1(") || !strings.Contains(definition, "steve_attempt_stop_candidate_v2(") {
+	if strings.Contains(definition, "_v1(") || !strings.Contains(definition, stopCandidatePredicate) {
 		t.Fatalf("stop candidate index not replaced: %s", definition)
 	}
 	s := New(book)

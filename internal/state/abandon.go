@@ -16,7 +16,7 @@ func nativeContextKey(node, harness, upstream string) string {
 
 // ProjectAbandonedSession retires only the named native context. It can be
 // repeated after a crash without archiving a newer session in the same slot.
-func (s *Store) ProjectAbandonedSession(ctx context.Context, conversation, agent string, owed OwedClose, closeNeeded bool, guard func(*ledger.Tx) error) error {
+func (s *Store) ProjectAbandonedSession(ctx context.Context, conversation, agent string, owed OwedClose, closeNeeded bool, imported string, guard func(*ledger.Tx) error) error {
 	if guard == nil || owed.AttemptID == "" || owed.TaskID == "" {
 		return errors.New("abandoned session needs its original execution")
 	}
@@ -36,6 +36,9 @@ func (s *Store) ProjectAbandonedSession(ctx context.Context, conversation, agent
 		return errors.New("native context was retired for another execution")
 	}
 	next.RetiredContexts[key] = owed.AttemptID
+	if imported != "" {
+		next.RetiredContexts[importedContextKey(conversation, agent, owed.NodeID, owed.HarnessID, imported)] = owed.AttemptID
+	}
 	current := next.Conversations[conversation]
 	if live, ok := current.Sessions[agent]; ok && owed.names(live) {
 		archiveSession(&next, conversation, agent, owed.OwedAt)

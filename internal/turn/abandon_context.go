@@ -27,7 +27,7 @@ func abandonContextTx(tx *ledger.Tx, id string) (attempt.AbandonContext, error) 
 	if err != nil {
 		return attempt.AbandonContext{}, err
 	}
-	out := attempt.AbandonContext{State: source.State}
+	out := attempt.AbandonContext{State: source.State, ImportFingerprint: state.NativeImportFingerprint(r.NativeImport)}
 	if source.State == "absent" {
 		return out, nil
 	}
