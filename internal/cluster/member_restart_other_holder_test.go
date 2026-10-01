@@ -117,6 +117,15 @@ func TestForceRestartJoinsWorkOnAnotherLinkHolder(t *testing.T) {
 	if err != nil || manual.Restart == nil {
 		t.Fatalf("manual restart not active: %+v %v", manual, err)
 	}
+	m := control.(memberRestarts)
+	view, authority, err := m.authority(ctx, target, "test-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Removing = map[string]bool{busy.Config.NodeID: true}
+	if _, err := m.discover(ctx, target, "test-owner", view, authority); err == nil {
+		t.Fatal("a removing member with a live operation was ignored")
+	}
 	chosen, err := control.Find(ctx, target, "test-owner")
 	if err != nil {
 		t.Fatal(err)

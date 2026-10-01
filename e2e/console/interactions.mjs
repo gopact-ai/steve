@@ -3240,6 +3240,25 @@ for (const [name, update, shown] of [
     };
 }
 
+checks["force-stop-confirmation-revision-body"] = async (f) => {
+    const current = { id: "retry-revision", task_id: "11", kind: "chat", state: "failed", project: "scratch", node: "test-node", agent: "worker", started_at: at, unsettled: true, force_stop: { revision: 7, level: "exhausted", reason: "restart_status_lost", by: "owner", requested_at: at, level_since: at } };
+    const state = { ...usageState(), tasks: [task("11", A, "scratch")], attempts: [current], projects: [project("scratch"), project("home")] };
+    let calls = 0;
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.route("**/console/attempts/retry-revision/force-stop", (route) => {
+        assert.deepEqual(route.request().postDataJSON(), { expected_revision: 7 }, "the displayed revision was not sent to the server");
+        calls++; current.force_stop = { ...current.force_stop, revision: 8, level: "kill", reason: "" };
+        return route.fulfill({ status: 202, json: { accepted: true } });
+    });
+    await f.page.reload();
+    const banner = f.page.getByRole("alert").filter({ hasText: "原执行停止尚未确认" });
+    await banner.getByRole("button", { name: "强制停止", exact: true }).click();
+    const question = f.page.getByRole("dialog", { name: "确认强制停止任务 #11？", exact: true });
+    await question.getByRole("button", { name: "确认强制停止", exact: true }).click();
+    await eventually(() => calls === 1, "the current exhausted revision could not be retried");
+    await question.waitFor({ state: "detached" });
+};
+
 async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";

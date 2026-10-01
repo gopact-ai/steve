@@ -35,7 +35,7 @@ func (m memberRestarts) discover(ctx context.Context, node, by string, state coo
 	out := []restartCandidate{{holder: m.peer.Config.NodeID, memberRestartResponse: answer}}
 	ids := make([]string, 0, len(state.Members))
 	for id := range state.Members {
-		if id != m.peer.Config.NodeID && id != node && !state.Removing[id] {
+		if id != m.peer.Config.NodeID && id != node {
 			ids = append(ids, id)
 		}
 	}
@@ -66,6 +66,9 @@ func (m memberRestarts) discover(ctx context.Context, node, by string, state coo
 			continue
 		}
 		if response.MembershipRevision != state.Revision || response.Operation.PlanID != "" && (response.Operation.NodeID != node || response.Operation.State != sshconnect.MemberRestartRunning || response.Operation.Kind != "restart" && response.Operation.Kind != "upgrade") {
+			return nil, MemberRestartError{"restart_discovery_changed"}
+		}
+		if state.Removing[id] && (response.Restartable || response.Operation.PlanID != "") {
 			return nil, MemberRestartError{"restart_discovery_changed"}
 		}
 		out = append(out, restartCandidate{holder: id, memberRestartResponse: response})

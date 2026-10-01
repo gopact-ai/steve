@@ -89,3 +89,31 @@ func TestConcurrentForceStopConfirmationsHaveOneAcceptedRevision(t *testing.T) {
 		t.Fatalf("two tabs both advanced the operation: accepted=%d revision=%d", accepted, current.ForceStop.Revision)
 	}
 }
+
+func TestRetainedChatCarriesTheForceStopRevision(t *testing.T) {
+	c, _, _, r, req := retainedChatFixture(t)
+	if _, err := c.tasks.SetAside(r.TaskID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	items, err := c.RetainedChatsFor(t.Context(), req.ConversationID, req.MessageID)
+	if err != nil || len(items) != 1 || items[0].ForceStopRevision != 1 {
+		t.Fatalf("chat confirmation lost current revision: %+v %v", items, err)
+	}
+}
+
+func TestRetainedPlanCarriesTheForceStopRevision(t *testing.T) {
+	c, _, identity, _ := retainedPlanFixture(t)
+	if _, err := c.tasks.SetAside(identity.TaskID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.RequestForceStop(t.Context(), identity.AttemptID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	items, err := c.RetainedPlans(t.Context())
+	if err != nil || len(items) != 1 || items[0].ForceStopRevision != 1 {
+		t.Fatalf("plan confirmation lost current revision: %+v %v", items, err)
+	}
+}
