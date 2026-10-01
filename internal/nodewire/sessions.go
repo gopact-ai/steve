@@ -79,6 +79,7 @@ const (
 	SessionActionOption       SessionAction = "option"
 	SessionActionCancel       SessionAction = "cancel"
 	SessionActionAbort        SessionAction = "abort"
+	SessionActionKill         SessionAction = "kill"
 	// Start is an authorization challenge inside open, not a client operation.
 	SessionActionStart SessionAction = "start"
 )

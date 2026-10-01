@@ -1,3 +1,4 @@
+import { useForceStop } from "@/hooks/use-force-stop";
 import { ChannelConversationPane } from "./channel-conversation";
 import { conversationURL, type ConversationTransport } from "@/lib/conversation-identity";
 import { IconButton } from "@/components/steve/icon-button";
@@ -34,6 +35,7 @@ import { useConversationController } from "@/hooks/use-conversation-controller";
 import { placeLabel } from "@/lib/workspaces";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { childrenOfTurn, streamWithChildren, withDelegations } from "@/lib/delegations";
+import { ForceStopBanner, needsForceStop } from "@/components/steve/force-stop";
 import { beginSubmission, retrySubmission, failSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
@@ -77,6 +79,7 @@ export function ConsolePage() {
 }
 
 function ConsoleWorkbench({ initialConversation }: { initialConversation: string }) {
+    const forceStop = useForceStop();
     const snap = useFleet((fleet) => fleet.snap);
     const refresh = useFleet((fleet) => fleet.refresh);
     const connection = useFleet((fleet) => fleet.live);
@@ -651,11 +654,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                                 {(!submission.id || submission.rejected) && <button type="button" className="mr-4 underline" onClick={async () => { if (!await restoreSubmission(conversation)) setStatus(t("console.recoveryStorage")); }}>{t("console.restoreDraft")}</button>}
                                 <button type="button" className="underline" onClick={async () => { if (await finishSubmission(conversation, submission.id)) setStatus(""); }}>{t("console.received")}</button>
                             </div>}
-                            {stopState?.uncertain && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
-                                <p>{t("console.stopUncertain")}</p>
-                                {stopState.error && <details className="mt-2"><summary className="cursor-pointer text-xs text-tertiary">{t("console.details")}</summary><pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-xs [overflow-wrap:anywhere]">{stopState.error}</pre></details>}
-                                <button type="button" className="mt-1 underline" onClick={() => void stop()}>{t("console.retryStop")}</button>
-                            </div>}
+                            <ForceStopBanner onForce={forceStop} attempts={snap.attempts.filter((a) => needsForceStop(a) && snap.tasks.some((task) => task.id === a.task_id && task.transport === "console" && task.channel === conversation))} retry={() => void stop()} uncertain={!!stopState?.uncertain} error={stopState?.error} />
                             {submissionSupport.interactive_requests && <QuestionPanel key={conversation} conversation={conversation} turnStartedAt={live?.since} />}
                             {draftMaterials.length > 0 && <ul aria-label={t("materials.draftRefs")} className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">{draftMaterials.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs"><button type="button" className="truncate" onClick={() => setOpenedMaterial(ref)}>{ref.title}{ref.selector?.kind === "lines" ? ` · L${ref.selector.start}–L${ref.selector.end}` : ""}</button><button type="button" aria-label={t("materials.remove", { title: ref.title })} onClick={async () => { if (!await removeDraftMaterial(conversation, ref)) setStatus(t("materials.sourceUnavailable")); }}>×</button></li>)}</ul>}
                             {submissionSupport.material_refs && <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-3"><label className="cursor-pointer rounded-md px-2 py-1 text-xs text-tertiary hover:bg-secondary">{uploading ? t("materials.uploading") : t("materials.upload")}<input type="file" multiple className="sr-only" disabled={uploading} aria-label={t("materials.upload")} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} /></label><span className="text-xs text-quaternary">{t("materials.uploadHint")}</span></div>}

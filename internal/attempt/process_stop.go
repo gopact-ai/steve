@@ -64,6 +64,7 @@ func (s *Service) ConfirmProcessStopped(ctx context.Context, id, actor string, p
 		settled := true
 		next.Unsettled, next.SessionSettled = false, &settled
 		next.StopEvidence = "process-stop/" + next.ID
+		confirmForceStop(&next, s.now().UTC())
 		next.State, next.Revision = to, op.Revision+1
 		next.Error = i18n.FromContext(ctx).T(i18n.AttemptProcessStopped)
 		if next.EndedAt.IsZero() {

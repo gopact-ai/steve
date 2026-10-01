@@ -1,3 +1,4 @@
+import { useForceStop } from "@/hooks/use-force-stop";
 import { useI18n } from "@/providers/locale-provider";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
@@ -32,6 +33,7 @@ const tabs: DashboardTab[] = ["overview", "timeline", "audit"];
 // paged together by an opaque cursor, and the audit tab holds raw records.
 export function DashboardPage() {
     const { t: tr, locale } = useI18n();
+    const forceStop = useForceStop();
     const snap = useFleet((fleet) => fleet.snap);
     const events = useFleetEvents();
     const nodeLabelOf = useNodeLabel();
@@ -115,7 +117,7 @@ export function DashboardPage() {
             <PageBody>
             {tab === "overview" && (
                 <div className="flex min-w-0 flex-col gap-5">
-                    <RunningExecutions />
+                    <RunningExecutions attempts={snap.attempts} onForce={forceStop} />
                     <Suspense fallback={<p role="status" className="text-sm text-tertiary">{tr("dashboard.loadingUsage")}</p>}><UsageDashboard /></Suspense>
                 </div>
             )}

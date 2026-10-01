@@ -185,6 +185,7 @@ type Usage struct {
 // Record is the attempt as the ledger holds it.
 type Record struct {
 	Spec
+	ForceStop *ForceStop `json:"force_stop,omitempty"`
 	// NodeReceipt is authenticated original native evidence, recorded with the
 	// terminal result. Its pending retry index is separate from closed history.
 	NodeReceipt *nodewire.SessionReceipt `json:"node_receipt,omitempty"`

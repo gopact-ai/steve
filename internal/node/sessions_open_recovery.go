@@ -25,6 +25,13 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		s.mu.Unlock()
 		// Only an admitted cancellation tries again to end what a killed
 		// node left: a refused one must not signal anything.
+		if req.Action == nodewire.SessionActionKill && retry {
+			check := req
+			check.ID = id
+			check.CommandID = ""
+			state, err := s.killRecorded(check)
+			return openRecoveryReceipt(state, req, false), err
+		}
 		if retry && s.settleUnverified(id) {
 			return s.reconcileOpen(ctx, req)
 		}
@@ -44,6 +51,11 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 	}
 	state := one.stateLocked("")
 	one.mu.Unlock()
+	if req.Action == nodewire.SessionActionKill {
+		check.Action, check.CommandID = nodewire.SessionActionKill, ""
+		state, err := one.kill(ctx, check)
+		return openRecoveryReceipt(state, req, false), err
+	}
 	if req.Action == nodewire.SessionActionCancelOpen {
 		check.Action, check.CommandID = nodewire.SessionActionAbort, ""
 		var err error
@@ -65,7 +77,7 @@ func (s *SessionService) reconcileRecordedOpenLocked(id string, req nodewire.Ses
 		return nodewire.SessionState{}, false, err
 	}
 	if !exists {
-		if req.Action != nodewire.SessionActionCancelOpen {
+		if req.Action != nodewire.SessionActionCancelOpen && req.Action != nodewire.SessionActionKill {
 			return nodewire.SessionState{}, false, sessionError("absent", "original open is not recorded; absence alone does not confirm cancellation")
 		}
 		cancelled := &ownedSession{service: s, changed: make(chan struct{})}
@@ -84,10 +96,10 @@ func (s *SessionService) reconcileRecordedOpenLocked(id string, req nodewire.Ses
 	if err := one.admitLocked(check); err != nil {
 		return nodewire.SessionState{}, false, err
 	}
-	if req.Action == nodewire.SessionActionCancelOpen && !one.record.State.ProcessStopped {
+	if (req.Action == nodewire.SessionActionCancelOpen || req.Action == nodewire.SessionActionKill) && !one.record.State.ProcessStopped {
 		return nodewire.SessionState{}, true, sessionError("uncertain", "original native process stop is not confirmed")
 	}
-	if req.Action == nodewire.SessionActionCancelOpen {
+	if req.Action == nodewire.SessionActionCancelOpen || req.Action == nodewire.SessionActionKill {
 		next := one.copyLocked()
 		var saveErr error
 		if next.State.State != nodewire.SessionClosed {

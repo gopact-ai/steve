@@ -28,6 +28,18 @@ func classifyOpenRecovery(err error) error {
 // ReconcileNodeOpen only inspects or cancels the exact admitted open command.
 // It never starts a native session or reconstructs an input to replay.
 func (m *Manager) ReconcileNodeOpen(ctx context.Context, at Placement, workdir string, cancelOpen bool) (nodewire.SessionState, error) {
+	action := nodewire.SessionActionInspectOpen
+	if cancelOpen {
+		action = nodewire.SessionActionCancelOpen
+	}
+	return m.reconcileNodeOpen(ctx, at, workdir, action)
+}
+
+func (m *Manager) KillNodeOpen(ctx context.Context, at Placement, workdir string) (nodewire.SessionState, error) {
+	return m.reconcileNodeOpen(ctx, at, workdir, nodewire.SessionActionKill)
+}
+
+func (m *Manager) reconcileNodeOpen(ctx context.Context, at Placement, workdir string, action nodewire.SessionAction) (nodewire.SessionState, error) {
 	ctx, err := m.bindNodeSession(ctx, at, "", workdir)
 	if err != nil {
 		return nodewire.SessionState{}, err
@@ -43,10 +55,6 @@ func (m *Manager) ReconcileNodeOpen(ctx context.Context, at Placement, workdir s
 	if !ok || stopped {
 		return nodewire.SessionState{}, ErrNodeSessionUnavailable
 	}
-	action := nodewire.SessionActionInspectOpen
-	if cancelOpen {
-		action = nodewire.SessionActionCancelOpen
-	}
 	req := nodewire.SessionRequest{Action: action, Authority: binding.Authority, Binding: binding.Binding, Harness: at.Harness, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, at.Node, req)
 	if err != nil {
@@ -55,9 +63,15 @@ func (m *Manager) ReconcileNodeOpen(ctx context.Context, at Placement, workdir s
 	proof := state.OpenReceipt
 	expected := nodewire.SessionOpenID(binding.Authority.ClusterID, at.Node, binding.Binding.AttemptID, req.CommandID, at.Harness)
 	if state.ID != expected || state.Binding != req.Binding || state.Harness != at.Harness || proof == nil || proof.Action != action || proof.Authority != req.Authority || proof.CommandID != req.CommandID {
+		if action == nodewire.SessionActionKill {
+			return nodewire.SessionState{}, unprovedKillReceipt("node open receipt differs from the original execution or current coordinator")
+		}
 		return nodewire.SessionState{}, errors.New("node open receipt differs from the original execution or current coordinator")
 	}
-	if cancelOpen && (!state.ProcessStopped || state.State != nodewire.SessionClosed) {
+	if action != nodewire.SessionActionInspectOpen && (!state.ProcessStopped || state.State != nodewire.SessionClosed) {
+		if action == nodewire.SessionActionKill {
+			return nodewire.SessionState{}, unprovedKillReceipt("node open receipt does not prove process termination")
+		}
 		return nodewire.SessionState{}, ErrStopUnconfirmed
 	}
 	return state, nil

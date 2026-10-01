@@ -300,6 +300,9 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	case nodewire.SessionActionCapabilities:
 		return s.probeCapabilities(ctx, req)
 	}
+	if req.Action == nodewire.SessionActionKill && req.ID == "" {
+		return s.reconcileOpen(ctx, req)
+	}
 	if req.Action == nodewire.SessionActionOpen && req.ID == "" {
 		return s.open(ctx, principal, req)
 	}
@@ -348,6 +351,8 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 		return one.option(ctx, req)
 	case nodewire.SessionActionCancel:
 		return one.cancel(ctx, req)
+	case nodewire.SessionActionKill:
+		return one.kill(ctx, req)
 	case nodewire.SessionActionAbort:
 		return one.abort(ctx, req)
 	case nodewire.SessionActionClose:

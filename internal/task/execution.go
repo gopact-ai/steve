@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -104,6 +105,17 @@ func CheckExecutionTx(tx ledger.Reader, token *ExecutionToken) error {
 // their visible state. Spawn shares this lock, so a child cannot escape a stop.
 // Finished descendants keep their result, but lose permission to land it later.
 func (s *Store) SetAside(id string, to State) ([]string, error) {
+	return s.setAside(context.Background(), id, to, true, nil)
+}
+
+// CancelWith records related control intent in the same transaction as the
+// task-tree revocation. The callback uses only tx, never another store write
+// or an external call. Repeating cancellation does not revoke epochs again.
+func (s *Store) CancelWith(ctx context.Context, id string, commit func(*ledger.Tx, []string) error) ([]string, error) {
+	return s.setAside(ctx, id, StateCancelled, false, commit)
+}
+
+func (s *Store) setAside(ctx context.Context, id string, to State, repeat bool, commit func(*ledger.Tx, []string) error) ([]string, error) {
 	if to != StatePaused && to != StateCancelled {
 		return nil, fmt.Errorf("invalid task stop state %s", to)
 	}
@@ -125,15 +137,21 @@ func (s *Store) SetAside(id string, to State) ([]string, error) {
 	}
 	ids := make([]string, 0, len(selected))
 	for taskID := range selected {
-		t := next.edit(taskID)
-		t.ExecutionEpoch++
-		if !t.State.Terminal() && (t.State.CanMoveTo(to) || t.State == to) {
-			t.State = to
+		if repeat || s.data.Tasks[id].State != to {
+			t := next.edit(taskID)
+			t.ExecutionEpoch++
+			if !t.State.Terminal() && (t.State.CanMoveTo(to) || t.State == to) {
+				t.State = to
+			}
+			t.UpdatedAt = s.now()
 		}
-		t.UpdatedAt = s.now()
 		ids = append(ids, taskID)
 	}
-	if err := s.replaceLocked(next); err != nil {
+	var guard func(*ledger.Tx) error
+	if commit != nil {
+		guard = func(tx *ledger.Tx) error { return commit(tx, ids) }
+	}
+	if err := s.replaceRecordsLocked(ctx, next, guard); err != nil {
 		return nil, err
 	}
 	sort.Strings(ids)

@@ -68,6 +68,7 @@ type Server struct {
 	channels       consoleapi.ChannelsService
 	settings       consoleapi.SettingsService
 	console        consoleapi.Console
+	forceStops     consoleapi.ForceStops
 	channelHistory consoleapi.ChannelHistory
 	admin          consoleapi.Admin
 	model          Model
@@ -188,6 +189,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/plans", s.guard(s.consolePlans))
 	mux.HandleFunc("GET /console/tasks/{task}/accounting", s.guard(s.consoleTaskAccounting))
 	mux.HandleFunc("GET /console/attempts", s.guard(s.consoleNativeAttempts))
+	mux.HandleFunc("POST /console/attempts/{attempt}/force-stop", s.guard(s.consoleForceStop))
 	mux.HandleFunc("PATCH /console/tasks/{task}/meta", s.guard(s.consoleTaskMeta))
 	mux.HandleFunc("GET /console/tasks/{task}/attempts", s.guard(s.consoleTaskAttempts))
 	mux.HandleFunc("GET /console/attempts/{attempt}/tree", s.guard(s.consoleAttemptTree))

@@ -76,7 +76,9 @@ export interface Admission {
     node?: string; source: "node" | "hub" | "cached"; verdict: number; code?: string;
     generation?: number; sequence?: number; digest?: string; atoms?: { atom: string; verdict: number; code?: string }[]; at: string;
 }
+export interface ForceStop { revision: number; requested_at: string; by: string; level: "kill" | "exhausted" | "confirmed"; level_since: string; reason?: string; unanswered_since?: string; unanswered_count?: number; exhausted_at?: string }
 export interface Attempt {
+    force_stop?: ForceStop;
     id: string; kind: string; state: string; task_id?: string; project: string; agent?: string; node?: string;
     scope?: string; workspace?: string; leases?: string[]; started_at: string; requires?: string[]; admission?: Admission; unsettled?: boolean; error?: string;
 }
