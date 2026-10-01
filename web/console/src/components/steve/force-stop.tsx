@@ -6,7 +6,7 @@ import type { Attempt } from "@/lib/types";
 import { useI18n } from "@/providers/locale-provider";
 
 export function needsForceStop(attempt: Attempt) {
-    return attempt.unsettled || attempt.force_stop && attempt.force_stop.level !== "confirmed";
+    return attempt.unsettled || attempt.force_stop && attempt.force_stop.level !== "confirmed" || attempt.abandoned && !attempt.abandoned.projected_at;
 }
 
 export function ForceStopControl({ attempt, onForce, onAbandon }: { attempt: Attempt; onAbandon: (id: string, revision: number) => Promise<void>; onForce: (id: string, expectedRevision: number) => Promise<void> }) {
@@ -51,8 +51,8 @@ export function ForceStopBanner({ attempts, onForce, onAbandon, retry, uncertain
     const { t } = useI18n();
     if (!attempts.length && !uncertain) return null;
     return <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
-        <p>{attempts.length ? t("console.forceTitle") : t("console.stopUncertain")}</p>
-        {attempts.length > 0 && <p className="mt-1 text-xs text-tertiary">{t("console.forceHint")}</p>}
+        <p>{attempts.length ? t(attempts.some((attempt) => attempt.unsettled) ? "console.forceTitle" : "console.abandonPending") : t("console.stopUncertain")}</p>
+        {attempts.some((attempt) => !attempt.abandoned) && <p className="mt-1 text-xs text-tertiary">{t("console.forceHint")}</p>}
         {attempts.map((attempt) => <div key={attempt.id} className="mt-2 flex flex-wrap items-start justify-between gap-2 border-t border-secondary pt-2">
             <span className="break-words text-xs">#{attempt.task_id} · {attempt.agent} · {attempt.node}</span><ForceStopControl attempt={attempt} onForce={onForce} onAbandon={onAbandon} />
         </div>)}
