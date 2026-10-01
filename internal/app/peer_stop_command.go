@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 // interpret an unknown subcommand as a request to serve an application.
 const peerStopProtocol = "STEVE_PEER_STOP_V1"
 
-func peerStopCmd(args []string) error {
+func PeerStopCommand(args []string) error {
 	flags := flag.NewFlagSet("peer-stop", flag.ContinueOnError)
 	sidecar := flags.String("cluster-config", "", "identified installation sidecar")
 	cluster := flags.String("expect-cluster", "", "expected cluster identity")
@@ -39,5 +39,15 @@ func peerStopCmd(args []string) error {
 		outcome = "stopped"
 	}
 	fmt.Fprintln(os.Stdout, "STEVE_PEER_STOP\t"+outcome)
+	return err
+}
+
+// PeerStopProtocolCommand is a read-only capability query, including on a
+// machine whose peer cannot answer its cluster API.
+func PeerStopProtocolCommand(args []string) error {
+	if len(args) != 0 {
+		return errors.New("unexpected peer-stop protocol arguments")
+	}
+	_, err := fmt.Fprintln(os.Stdout, peerStopProtocol)
 	return err
 }
