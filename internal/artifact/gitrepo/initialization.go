@@ -92,12 +92,20 @@ func publishRepository(ctx context.Context, staging, dir string) (*Repo, bool, e
 // A complete repository missing only our marker can be recognized without
 // rewriting its configuration. Unknown partial trees and locks are not ours
 // to repair: returning an error preserves their contents and writer evidence.
-func recognizeRepository(ctx context.Context, dir string) (*Repo, error) {
-	repo, err := validateRepository(ctx, dir)
+func recognizeRepository(ctx context.Context, dir string) (_ *Repo, err error) {
+	lock, err := lockConfiguration(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	if err := markInitialized(ctx, dir); err != nil {
+	defer func() { err = errors.Join(err, lock.release()) }()
+	repo, err := inspectRepository(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := lock.held(); err != nil {
+		return nil, err
+	}
+	if err := writeInitializationMarker(ctx, dir); err != nil {
 		return nil, err
 	}
 	return repo, nil
@@ -107,6 +115,10 @@ func validateRepository(ctx context.Context, dir string) (*Repo, error) {
 	if err := noConfigurationLock(dir); err != nil {
 		return nil, err
 	}
+	return inspectRepository(ctx, dir)
+}
+
+func inspectRepository(ctx context.Context, dir string) (*Repo, error) {
 	for _, part := range []struct {
 		name string
 		dir  bool
@@ -127,12 +139,17 @@ func validateRepository(ctx context.Context, dir string) (*Repo, error) {
 	if strings.TrimSpace(bare) != "true" {
 		return nil, fmt.Errorf("existing shadow repository is not a complete bare repository: %s", dir)
 	}
+	raw, err := repo.Git(ctx, nil, "config", "--local", "--null", "--list")
+	if err != nil {
+		return nil, fmt.Errorf("inspect existing shadow repository configuration: %w", err)
+	}
+	settings := map[string]string{}
+	for _, entry := range strings.Split(raw, "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		settings[key] = value
+	}
 	for _, setting := range repositorySettings {
-		got, err := repo.Git(ctx, nil, "config", "--local", "--get", setting[0])
-		if err != nil {
-			return nil, fmt.Errorf("inspect existing shadow repository configuration: %w", err)
-		}
-		if strings.TrimSpace(got) != setting[1] {
+		if settings[strings.ToLower(setting[0])] != setting[1] {
 			return nil, fmt.Errorf("existing shadow repository has an unrecognized %s; its configuration was left unchanged", setting[0])
 		}
 	}
@@ -151,16 +168,23 @@ func noConfigurationLock(dir string) error {
 }
 
 func markInitialized(ctx context.Context, dir string) error {
-	if err := ctx.Err(); err != nil {
+	if err := noConfigurationLock(dir); err != nil {
 		return err
 	}
-	if err := noConfigurationLock(dir); err != nil {
+	return writeInitializationMarker(ctx, dir)
+}
+
+func writeInitializationMarker(ctx context.Context, dir string) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(filepath.Join(dir, initializedMarker), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if os.IsExist(err) {
-		_, err = initialized(dir)
-		return err
+		ready, err := initialized(dir)
+		if err != nil || ready {
+			return err
+		}
+		return errors.New("repository initialization marker disappeared")
 	}
 	if err != nil {
 		return err
