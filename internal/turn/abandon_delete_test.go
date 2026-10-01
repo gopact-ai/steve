@@ -47,6 +47,13 @@ func TestAbandonedConversationWaitsForExitProjectionAndOwedCloseBeforeDeletion(t
 					t.Fatal(err)
 				}
 			}
+			if phase == "unconfirmed" {
+				for _, owed := range c.store.OwedCloses() {
+					if err := c.store.SettleOwedClose(owed); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 			before := c.store.Conversation("console:original")
 			if err := c.DiscardConversation(t.Context(), "console:original"); !errors.Is(err, task.ErrRetirementPending) {
 				t.Fatalf("deleted %s abandonment: %v", phase, err)
@@ -117,5 +124,34 @@ func TestConversationDeletionFailsClosedOnUnreadableCleanupState(t *testing.T) {
 	}
 	if _, found := tasks.Get(tracked.ID); !found {
 		t.Fatal("failed guard removed its task")
+	}
+}
+
+func TestTaskDeletionRechecksAnExecutionQuarantinedAfterIdlePreflight(t *testing.T) {
+	c, r := abandonWithSession(t)
+	control := NewAbandonControl(c)
+	if err := control.ProjectAbandoned(t.Context(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	proveAbandonedExit(t, c, r)
+	if _, err := c.attempts.MarkStopProjected(t.Context(), r.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	for _, owed := range c.store.OwedCloses() {
+		if err := c.store.SettleOwedClose(owed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.tasks.ChannelIdle(t.Context(), "console:original", checkConversationRetirement); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.attempts.MarkUnsettled(t.Context(), r.ID, "late-observation", attempt.ErrStopConfirmationRequired, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.tasks.DeleteChannel(t.Context(), "console:original", checkConversationRetirement); !errors.Is(err, task.ErrRetirementPending) {
+		t.Fatalf("late unresolved execution lost its authority: %v", err)
+	}
+	if _, found := c.tasks.Get(r.TaskID); !found {
+		t.Fatal("late quarantine guard removed the task")
 	}
 }
