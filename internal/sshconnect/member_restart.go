@@ -20,9 +20,11 @@ type MemberRestart struct {
 
 type RestartClaim func(context.Context, string, string) (bool, error)
 
+type RestartVerification func(context.Context, string, string) error
+
 // BeginMemberRestart reserves the shared machine slot before the one-shot
 // claim. It never starts a replacement when the claim's reply was lost.
-func (s *Service) BeginMemberRestart(ctx context.Context, node, request string, claim RestartClaim) (MemberRestart, error) {
+func (s *Service) BeginMemberRestart(ctx context.Context, node, request string, claim RestartClaim, verify RestartVerification) (MemberRestart, error) {
 	ctx, text := s.speak(ctx)
 	backend, ok := s.backend.(RestartBackend)
 	if !ok {

@@ -18,11 +18,11 @@ func TestMemberRestartClaimsBeforeSSHAndDoesNotReplay(t *testing.T) {
 		}
 		return true, nil
 	}
-	first, err := s.BeginMemberRestart(t.Context(), "node-1", "request", claim)
+	first, err := s.BeginMemberRestart(t.Context(), "node-1", "request", claim, func(context.Context, string, string) error { return nil })
 	if err != nil || first.PlanID == "" {
 		t.Fatalf("start: %+v %v", first, err)
 	}
-	second, err := s.BeginMemberRestart(t.Context(), "node-1", "request", claim)
+	second, err := s.BeginMemberRestart(t.Context(), "node-1", "request", claim, func(context.Context, string, string) error { return nil })
 	if err != nil || second.PlanID != first.PlanID {
 		t.Fatalf("replay created another plan: %+v %v", second, err)
 	}
@@ -48,7 +48,7 @@ func TestMemberRestartRefusedOrLostClaimNeverRunsSSH(t *testing.T) {
 					return false, errors.New("replication unavailable")
 				}
 				return false, nil
-			})
+			}, func(context.Context, string, string) error { return nil })
 			if err == nil {
 				t.Fatal("unaccepted claim reported a started restart")
 			}
@@ -73,7 +73,7 @@ func TestMemberRestartJoinsMachineUpgradeWithoutRestarting(t *testing.T) {
 			t.Errorf("joined %s %s", plan, kind)
 		}
 		return true, nil
-	})
+	}, func(context.Context, string, string) error { return nil })
 	if err != nil || st.Kind != "upgrade" || st.PlanID != "upgrade-plan" {
 		t.Fatalf("busy upgrade not joined: %+v %v", st, err)
 	}
@@ -93,7 +93,7 @@ func TestMemberRestartKeepsMachineSlotUntilClaimReturns(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.BeginMemberRestart(t.Context(), "node-1", "one", func(context.Context, string, string) (bool, error) { close(entered); <-release; return true, nil })
+		_, err := s.BeginMemberRestart(t.Context(), "node-1", "one", func(context.Context, string, string) (bool, error) { close(entered); <-release; return true, nil }, func(context.Context, string, string) error { return nil })
 		done <- err
 	}()
 	select {
@@ -133,7 +133,7 @@ func TestMemberRestartJoinsAutomaticStartWithoutAnotherScript(t *testing.T) {
 			t.Error("automatic start identity was lost")
 		}
 		return true, nil
-	})
+	}, func(context.Context, string, string) error { return nil })
 	if err != nil || got.PlanID != plan || got.State != "running" || len(runner.restarts()) != 0 {
 		t.Fatalf("automatic start duplicated: %+v %v", got, err)
 	}
@@ -147,7 +147,7 @@ func TestMemberRestartJoinsAutomaticStartWithoutAnotherScript(t *testing.T) {
 func TestMemberRestartMissingLocalRecordDoesNotReplayClaim(t *testing.T) {
 	s, runner, _ := restartFixture(t)
 	claim := func(context.Context, string, string) (bool, error) { return true, nil }
-	op, err := s.BeginMemberRestart(t.Context(), "node-1", "force", claim)
+	op, err := s.BeginMemberRestart(t.Context(), "node-1", "force", claim, func(context.Context, string, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestMemberRestartMissingLocalRecordDoesNotReplayClaim(t *testing.T) {
 	s.mu.Lock()
 	delete(s.memberRestarts, "force")
 	s.mu.Unlock()
-	if _, err = s.BeginMemberRestart(t.Context(), "node-1", "force", func(context.Context, string, string) (bool, error) { return false, nil }); err == nil {
+	if _, err = s.BeginMemberRestart(t.Context(), "node-1", "force", func(context.Context, string, string) (bool, error) { return false, nil }, func(context.Context, string, string) error { return nil }); err == nil {
 		t.Fatal("lost claim was accepted again")
 	}
 	if len(runner.restarts()) != 1 {

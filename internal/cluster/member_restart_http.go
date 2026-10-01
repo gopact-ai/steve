@@ -136,7 +136,7 @@ func (p *Peer) serveMemberRestart(w http.ResponseWriter, r *http.Request) {
 		answer.Operation, err = service.BeginMemberRestart(ctx, req.Operation.NodeID, req.Operation.ID, func(claimCtx context.Context, plan, kind string) (bool, error) {
 			req.PlanID, req.Kind = plan, kind
 			return p.claimMemberRestart(claimCtx, req)
-		})
+		}, func(context.Context, string, string) error { return nil })
 	} else {
 		answer.Operation, err = service.MemberRestartStatus(ctx, req.Operation.NodeID, req.Operation.ID, req.Operation.PlanID, req.Operation.Kind)
 	}
