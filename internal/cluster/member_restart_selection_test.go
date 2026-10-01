@@ -108,3 +108,47 @@ func TestRestartDiscoveryDoesNotQueryItsUnresponsiveTarget(t *testing.T) {
 		t.Fatalf("the unreachable target was treated as its own potential holder: %+v %v", chosen, err)
 	}
 }
+
+func TestRestartDiscoveryKeepsRemovingCandidatesInItsView(t *testing.T) {
+	for _, mode := range []string{"idle-no-link", "idle-with-link", "unanswered"} {
+		t.Run(mode, func(t *testing.T) {
+			control, target, holders := discoveryHolders(t)
+			m := control.(memberRestarts)
+			if mode != "idle-with-link" {
+				holders[1].Mu.Lock()
+				holders[1].Config.Links = nil
+				holders[1].Mu.Unlock()
+			}
+			state, authority, err := m.authority(t.Context(), target, "test-owner")
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.Removing = map[string]bool{holders[1].Config.NodeID: true}
+			if mode == "unanswered" {
+				holders[1].Mu.Lock()
+				defer holders[1].Mu.Unlock()
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			candidates, err := m.discover(ctx, target, "test-owner", state, authority)
+			if mode == "idle-no-link" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := chooseRestartTarget(m.peer.Config.ClusterID, state.Revision, candidates)
+				if err != nil || got.Holder != holders[0].Config.NodeID {
+					t.Fatalf("a proved idle non-holder blocked the unique eligible holder: %+v %v", got, err)
+				}
+			} else {
+				var refused MemberRestartError
+				want := "restart_discovery_changed"
+				if mode == "unanswered" {
+					want = "restart_discovery_incomplete"
+				}
+				if !errors.As(err, &refused) || refused.Reason != want {
+					t.Fatalf("removing member disappeared from ownership proof: candidates=%+v err=%v", candidates, err)
+				}
+			}
+		})
+	}
+}
