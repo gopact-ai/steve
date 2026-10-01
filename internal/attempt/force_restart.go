@@ -28,6 +28,7 @@ type ForceRestart struct {
 }
 
 var ErrForceRestartChanged = errors.New("member restart identity changed")
+var ErrForceRestartExpired = errors.New("member restart discovery deadline expired")
 
 const forceRestartKind = "force-stop-member-restart"
 
@@ -55,6 +56,9 @@ func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uin
 		if r.ForceStop.Level != "restart" || r.ForceStop.Reason != "restart_required" || clusterID == "" || holder == "" {
 			return ErrForceStopChanged
 		}
+		if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
+			return ErrForceRestartExpired
+		}
 		if _, err := stoppedTaskTx(tx, r); err != nil {
 			return err
 		}
@@ -73,14 +77,17 @@ func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uin
 			}
 		}
 		if !found || !op.FinishedAt.IsZero() && r.ForceStop.RequestedAt.After(op.FinishedAt) {
-			op = ForceRestart{ID: fmt.Sprintf("%s/%d", id, revision), ClusterID: clusterID, NodeID: r.Node, Holder: holder, By: r.ForceStop.By, RequestedAt: s.now().UTC()}
+			op = ForceRestart{ID: fmt.Sprintf("%s/%d", id, revision), ClusterID: clusterID, NodeID: r.Node, Holder: holder, By: r.ForceStop.By, RequestedAt: r.ForceStop.LevelSince}
 			if err := tx.PutBinding(forceRestartKind, r.Node, op); err != nil {
 				return err
 			}
 			fresh = true
 		}
 		force := *r.ForceStop
-		force.Level, force.LevelSince, force.Reason = "restart", op.RequestedAt, ""
+		force.Level, force.Reason = "restart", ""
+		if op.RequestedAt.Before(force.LevelSince) {
+			force.LevelSince = op.RequestedAt
+		}
 		force.ExhaustedAt = time.Time{}
 		force.RestartID, force.RestartHolder, force.RestartRequestedAt = op.ID, op.Holder, op.RequestedAt
 		r.ForceStop = &force

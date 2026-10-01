@@ -101,3 +101,25 @@ func TestForceRestartJoiningKeepsTheEarlierDeadline(t *testing.T) {
 		t.Fatalf("join lost the earlier deadline: %+v %v", got.ForceStop, err)
 	}
 }
+
+func TestForceRestartEarlyDiscoveryDoesNotExtendWhenJoiningALaterOperation(t *testing.T) {
+	s, r := restartFixture(t)
+	start := r.ForceStop.LevelSince
+	op := ForceRestart{ID: "shared-operation", ClusterID: "cluster", NodeID: r.Node, Holder: "holder", By: "owner", RequestedAt: start.Add(time.Minute)}
+	s.now = func() time.Time { return start.Add(2 * time.Minute) }
+	if err := s.l.PutBinding(t.Context(), forceRestartKind, r.Node, op); err != nil {
+		t.Fatal(err)
+	}
+	joined, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "another-holder")
+	if err != nil || fresh || joined != op {
+		t.Fatalf("join changed shared operation: %+v %v %v", joined, fresh, err)
+	}
+	got, err := s.Get(t.Context(), r.ID)
+	if err != nil || !got.ForceStop.LevelSince.Equal(start) || !got.ForceStop.RestartRequestedAt.Equal(op.RequestedAt) {
+		t.Fatalf("joining a later operation extended discovery: %+v %v", got.ForceStop, err)
+	}
+	current, _, err := s.ForceRestart(t.Context(), r.Node)
+	if err != nil || current != op {
+		t.Fatalf("join rewrote operation identity: %+v %v", current, err)
+	}
+}

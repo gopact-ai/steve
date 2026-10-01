@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"io"
 	"net/http"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )

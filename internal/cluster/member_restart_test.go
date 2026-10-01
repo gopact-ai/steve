@@ -3,15 +3,15 @@ package cluster
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -30,11 +31,38 @@ type MemberRestartError struct{ Reason string }
 func (e MemberRestartError) Error() string { return e.Reason }
 
 type memberRestarts struct {
-	peer   *Peer
-	active Activation
+	peer      *Peer
+	active    Activation
+	discovery *restartDiscovery
 }
 
-func (p *Peer) MemberRestarts(active Activation) MemberRestarts { return memberRestarts{p, active} }
+func (p *Peer) MemberRestarts(active Activation) MemberRestarts {
+	return memberRestarts{peer: p, active: active, discovery: &restartDiscovery{}}
+}
+
+// Progress belongs to this activation and is shared by concurrent calls. Only
+// choosing the next probe holds the lock; a slow member never holds it over RPC.
+// A replacement coordinator may start afresh, but the persisted phase deadline
+// still bounds discovery even across repeated replacements.
+type restartDiscovery struct {
+	mu    sync.Mutex
+	after string
+}
+
+func (d *restartDiscovery) next(ids []string, tried map[string]bool) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	start := sort.Search(len(ids), func(i int) bool { return ids[i] > d.after })
+	for i := range len(ids) {
+		id := ids[(start+i)%len(ids)]
+		if !tried[id] {
+			d.after = id
+			tried[id] = true
+			return id
+		}
+	}
+	return ""
+}
 
 func (m memberRestarts) authority(ctx context.Context, node, by string) (coordination.State, nodewire.SessionAuthority, error) {
 	var authority nodewire.SessionAuthority
@@ -73,10 +101,12 @@ func (m memberRestarts) Find(ctx context.Context, node, by string) (RestartTarge
 		}
 	}
 	sort.Strings(ids)
-	for _, id := range ids {
+	tried := make(map[string]bool, len(ids))
+	for range len(ids) {
 		if ctx.Err() != nil {
 			return RestartTarget{}, ctx.Err()
 		}
+		id := m.discovery.next(ids, tried)
 		query := restartQuery(node, "", "", "", by, authority)
 		var answer memberRestartResponse
 		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)

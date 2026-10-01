@@ -25,7 +25,13 @@ func (s *applicationStops) restartForceStop(ctx context.Context, r attempt.Recor
 }
 
 func (s *applicationStops) beginForceRestart(ctx context.Context, r attempt.Record) error {
+	if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
+		return s.exhaustForceStop(ctx, r, "restart_timeout")
+	}
 	target, err := s.restarts.Find(ctx, r.Node, r.ForceStop.By)
+	if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
+		return s.exhaustForceStop(ctx, r, "restart_timeout")
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -33,6 +39,9 @@ func (s *applicationStops) beginForceRestart(ctx context.Context, r attempt.Reco
 		return s.exhaustForceStop(ctx, r, restartFailureReason(err, "restart_no_holder"))
 	}
 	op, fresh, err := s.attempts.BeginForceRestart(ctx, r.ID, r.ForceStop.Revision, target.ClusterID, target.Holder)
+	if errors.Is(err, attempt.ErrForceRestartExpired) {
+		return s.exhaustForceStop(ctx, r, "restart_timeout")
+	}
 	if errors.Is(err, attempt.ErrForceStopChanged) {
 		return nil
 	}
@@ -55,9 +64,13 @@ func (s *applicationStops) pollForceRestart(ctx context.Context, r attempt.Recor
 	if !found || op.ID != r.ForceStop.RestartID || op.Holder != r.ForceStop.RestartHolder {
 		return s.awaitForceStop(ctx, r, true)
 	}
-	if s.now().Sub(r.ForceStop.RestartRequestedAt) >= 7*time.Minute {
-		if err := s.attempts.FinishForceRestart(ctx, op, "timeout"); err != nil {
-			return err
+	if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
+		// A late join keeps its own earlier deadline without expiring another
+		// request's shared operation before that operation's budget is spent.
+		if s.now().Sub(op.RequestedAt) >= 7*time.Minute {
+			if err := s.attempts.FinishForceRestart(ctx, op, "timeout"); err != nil {
+				return err
+			}
 		}
 		return s.exhaustForceStop(ctx, r, "restart_timeout")
 	}

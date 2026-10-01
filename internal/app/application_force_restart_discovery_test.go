@@ -82,3 +82,52 @@ func TestForceRestartHolderFoundAfterDeadlineDoesNotGetANewBudget(t *testing.T) 
 		t.Fatalf("late discovery restarted the machine: starts=%d state=%+v", len(host.starts), got.ForceStop)
 	}
 }
+
+func TestForceRestartEarlierAttemptDeadlineDoesNotExpireSharedOperation(t *testing.T) {
+	s, records, _, host := forceRestartFixture(t, 2)
+	for _, r := range records {
+		if err := s.forceStop(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one, err := s.attempts.Get(t.Context(), records[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := s.attempts.Get(t.Context(), records[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, found, err := s.attempts.ForceRestart(t.Context(), one.Node)
+	if err != nil || !found {
+		t.Fatalf("missing shared operation: %v %v", found, err)
+	}
+	// The first discovery began before this shared operation. Its snapshot
+	// expires a minute sooner; that cannot expire the other attempt's plan.
+	force := *one.ForceStop
+	force.LevelSince = op.RequestedAt.Add(-time.Minute)
+	one.ForceStop = &force
+	clock := op.RequestedAt.Add(6 * time.Minute)
+	s.now = func() time.Time { return clock }
+	if err := s.pollForceRestart(t.Context(), one); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pollForceRestart(t.Context(), two); err != nil {
+		t.Fatal(err)
+	}
+	exhausted, _ := s.attempts.Get(t.Context(), one.ID)
+	waiting, _ := s.attempts.Get(t.Context(), two.ID)
+	current, _, err := s.attempts.ForceRestart(t.Context(), one.Node)
+	if err != nil || exhausted.ForceStop.Level != "exhausted" || waiting.ForceStop.Level != "restart" || !current.FinishedAt.IsZero() || len(host.starts) != 1 {
+		t.Fatalf("one deadline ended shared work: first=%+v second=%+v operation=%+v starts=%d err=%v", exhausted.ForceStop, waiting.ForceStop, current, len(host.starts), err)
+	}
+	clock = op.RequestedAt.Add(7 * time.Minute)
+	if err := s.pollForceRestart(t.Context(), two); err != nil {
+		t.Fatal(err)
+	}
+	waiting, _ = s.attempts.Get(t.Context(), two.ID)
+	current, _, err = s.attempts.ForceRestart(t.Context(), one.Node)
+	if err != nil || waiting.ForceStop.Level != "exhausted" || current.Outcome != "timeout" || current.FinishedAt.IsZero() || len(host.starts) != 1 {
+		t.Fatalf("shared deadline did not end all work: state=%+v operation=%+v starts=%d err=%v", waiting.ForceStop, current, len(host.starts), err)
+	}
+}
