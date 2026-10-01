@@ -1,4 +1,11 @@
 export const consoleZh = {
+    "console.abandon": "放弃这次执行",
+    "console.abandonTitle": "确认放弃任务 #{task} 的执行？",
+    "console.abandonBody": "原执行 {attempt} 可能仍在运行、占用资源或继续写原工作区。任务及其后代保持取消，原上下文不再续接；只冻结这次执行此刻已知的用量，之后不再累计。原目录保持隔离，不会立即清理或切换副本。其他未停止执行仍可能阻挡工作。此决定不能撤销。",
+    "console.abandonConfirm": "确认放弃",
+    "console.abandonPending": "放弃已记录，正在处理归档与容量释放",
+    "console.abandoned": "已放弃（停止未确认）",
+
     "console.forceRestartDiscovering": "正在核对可安全重启的连接持有者",
     "console.forceRestartAmbiguous": "多个成员持有原节点的 SSH 连接，未发起新的重启。请先明确连接归属后重试。",
     "console.forceRestartConflict": "多个成员已在原节点运行操作，未额外发起重启。",

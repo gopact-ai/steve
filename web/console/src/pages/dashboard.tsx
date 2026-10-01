@@ -1,3 +1,4 @@
+import { useAbandonExecution } from "@/hooks/use-abandon-execution";
 import { useForceStop } from "@/hooks/use-force-stop";
 import { useI18n } from "@/providers/locale-provider";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -34,6 +35,7 @@ const tabs: DashboardTab[] = ["overview", "timeline", "audit"];
 export function DashboardPage() {
     const { t: tr, locale } = useI18n();
     const forceStop = useForceStop();
+    const abandonExecution = useAbandonExecution();
     const snap = useFleet((fleet) => fleet.snap);
     const events = useFleetEvents();
     const nodeLabelOf = useNodeLabel();
@@ -117,7 +119,7 @@ export function DashboardPage() {
             <PageBody>
             {tab === "overview" && (
                 <div className="flex min-w-0 flex-col gap-5">
-                    <RunningExecutions attempts={snap.attempts} onForce={forceStop} />
+                    <RunningExecutions attempts={snap.attempts} onForce={forceStop} onAbandon={abandonExecution} />
                     <Suspense fallback={<p role="status" className="text-sm text-tertiary">{tr("dashboard.loadingUsage")}</p>}><UsageDashboard /></Suspense>
                 </div>
             )}

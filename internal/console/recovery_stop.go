@@ -424,6 +424,14 @@ func (w *recoveryStopWait) run() {
 		if !ok {
 			return
 		}
+		if choice == "abandon" {
+			if err := w.abandon(); err != nil {
+				w.mu.Lock()
+				w.reason = err.Error()
+				w.mu.Unlock()
+			}
+			continue
+		}
 		if choice == "force-stop" {
 			if err := w.forceStop(); err != nil {
 				w.mu.Lock()
@@ -546,6 +554,9 @@ func (w *recoveryStopWait) ask() (string, bool) {
 			{Value: "recheck", Label: text.T(i18n.ConsoleStopRecheckNow), Detail: text.T(i18n.ConsoleStopRecheckNowDetail)},
 			{Value: "wait", Label: text.T(i18n.ConsoleStopLetItCheck), Detail: text.T(i18n.ConsoleStopLetItCheckDetail)},
 		},
+	}
+	if w.canAbandon() {
+		question.Choices = append(question.Choices, view.Choice{Value: "abandon", Label: text.T(i18n.ConsoleAbandon)})
 	}
 	answer, err := w.s.askUser(w.ctx, w.base, question, false)
 	if err != nil {

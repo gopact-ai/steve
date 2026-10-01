@@ -1,6 +1,13 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.abandon": "Abandon this execution",
+    "console.abandonTitle": "Abandon the execution of task #{task}?",
+    "console.abandonBody": "Execution {attempt} may still be running, using resources or writing its original workspace. The task and descendants stay cancelled and the original context will not resume. Only this execution's currently known usage is frozen; later usage is not counted. Its directory stays quarantined, without immediate cleanup or switching to a copy. Other unresolved executions may still block work. This decision cannot be undone.",
+    "console.abandonConfirm": "Confirm abandonment",
+    "console.abandonPending": "Abandonment recorded; retiring the session and releasing capacity",
+    "console.abandoned": "Abandoned (stop unconfirmed)",
+
     "console.forceRestartDiscovering": "Checking restart ownership",
     "console.forceRestartAmbiguous": "Several members hold this node's SSH link. No new restart was started; resolve the link ownership before retrying.",
     "console.forceRestartConflict": "Several members already have operations running on this node. No additional restart was started.",

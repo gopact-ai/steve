@@ -78,6 +78,7 @@ export interface Admission {
 }
 export interface ForceStop { revision: number; requested_at: string; by: string; level: "kill" | "restart" | "await" | "exhausted" | "confirmed"; level_since: string; reason?: string; unanswered_since?: string; unanswered_count?: number; exhausted_at?: string; restart_id?: string; restart_holder?: string; restart_requested_at?: string }
 export interface Attempt {
+    abandoned?: { at: string; by: string; force_stop_revision: number; reason: string; projected_at?: string };
     force_stop?: ForceStop;
     id: string; kind: string; state: string; task_id?: string; project: string; agent?: string; node?: string;
     scope?: string; workspace?: string; leases?: string[]; started_at: string; requires?: string[]; admission?: Admission; unsettled?: boolean; error?: string;
