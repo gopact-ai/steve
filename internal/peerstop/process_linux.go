@@ -100,9 +100,24 @@ func (i installation) process(pid int) (processIdentity, bool, error) {
 	if len(args) < 2 || args[1] != "peer" {
 		return zero, false, nil
 	}
+	exe, err := os.Stat(fmt.Sprintf("/proc/%d/exe", pid))
+	if errors.Is(err, os.ErrNotExist) {
+		return zero, false, nil
+	}
+	if err != nil {
+		return zero, false, fmt.Errorf("%w: peer executable cannot be checked", ErrUnproven)
+	}
+	if !os.SameFile(i.binary, exe) {
+		return zero, false, nil
+	}
+	if err := checkPeerEnvironment(pid); err != nil {
+		return zero, false, err
+	}
+	config, sidecar, err := peerConfiguration(args[2:])
+	if err != nil {
+		return zero, false, err
+	}
 	cwd := ""
-	config := flagValue(args[2:], "config", "config.json")
-	sidecar := flagValue(args[2:], "cluster-config", config+".cluster.json")
 	if !filepath.IsAbs(config) || !filepath.IsAbs(sidecar) {
 		cwd, err = os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 		if err != nil {
@@ -122,16 +137,6 @@ func (i installation) process(pid int) (processIdentity, bool, error) {
 	if resolve(config) != filepath.Join(i.root, "config.json") || resolve(sidecar) != i.sidecar {
 		return zero, false, nil
 	}
-	exe, err := os.Stat(fmt.Sprintf("/proc/%d/exe", pid))
-	if errors.Is(err, os.ErrNotExist) {
-		return zero, false, nil
-	}
-	if err != nil {
-		return zero, false, fmt.Errorf("%w: peer executable cannot be checked", ErrUnproven)
-	}
-	if !os.SameFile(i.binary, exe) {
-		return zero, false, nil
-	}
 	raw, err = os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return zero, false, err
@@ -149,19 +154,6 @@ func (i installation) process(pid int) (processIdentity, bool, error) {
 		return zero, false, ErrUnproven
 	}
 	return processIdentity{pid, start}, true, nil
-}
-
-func flagValue(args []string, key, otherwise string) string {
-	for index, arg := range args {
-		arg = strings.TrimLeft(arg, "-")
-		if arg == key && index+1 < len(args) {
-			return args[index+1]
-		}
-		if value, ok := strings.CutPrefix(arg, key+"="); ok {
-			return value
-		}
-	}
-	return otherwise
 }
 
 func (i installation) noPeer(ctx context.Context) error {
