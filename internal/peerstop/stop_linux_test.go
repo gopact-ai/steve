@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,21 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("STEVE_PEERSTOP_FIXTURE") == "1" {
 		root := os.Getenv("STEVE_PEERSTOP_ROOT")
+		if os.Getenv("STEVE_PEERSTOP_PARSE_FLAGS") == "1" {
+			flags := flag.NewFlagSet("peer", flag.ContinueOnError)
+			config := flags.String("config", "config.json", "application configuration")
+			sidecar := flags.String("cluster-config", "", "cluster configuration")
+			if err := flags.Parse(os.Args[2:]); err != nil || flags.NArg() != 0 {
+				os.Exit(4)
+			}
+			if *sidecar == "" {
+				*sidecar = *config + ".cluster.json"
+			}
+			raw, err := os.ReadFile(*sidecar)
+			if err != nil || os.WriteFile(filepath.Join(root, "effective-identity"), raw, 0600) != nil {
+				os.Exit(5)
+			}
+		}
 		path := filepath.Join(root, "cluster", "peer-process", "gateway.lock")
 		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
 		if err != nil {
