@@ -73,7 +73,7 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 			return errTaskStopRecorded
 		}
 		st := proof.Session
-		if next.ForceStop != nil && next.ForceStop.Level != "confirmed" && !st.ProcessStopped {
+		if (next.Abandoned != nil || next.ForceStop != nil && next.ForceStop.Level != "confirmed") && !st.ProcessStopped {
 			return ErrStopConfirmationRequired
 		}
 		if !matchesStoppedSession(next, tracked, st) {

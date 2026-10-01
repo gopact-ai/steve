@@ -1206,6 +1206,9 @@ func (s *Service) ConfirmStopped(ctx context.Context, id, actor, evidence string
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
 		}
+		if next.Abandoned != nil {
+			return ErrStopConfirmationRequired
+		}
 		if !next.Unsettled {
 			return errors.New("attempt is not quarantined")
 		}
