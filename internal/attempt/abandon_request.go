@@ -11,6 +11,8 @@ import (
 
 var ErrAlreadyAbandoned = errors.New("the original execution was already abandoned")
 
+var ErrAbandonInput = errors.New("original abandonment input identity is unavailable")
+
 // AbandonTx runs only inside the task owner's accounting transaction. Abandoned
 // is a durable projection obligation, not a statement that any process exited.
 func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, row task.Attempt, at time.Time, source AbandonContext) (task.RecoveryUsage, error) {

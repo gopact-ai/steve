@@ -799,6 +799,7 @@ const (
 	ConsoleNeverAdmitted         Key = "console_never_admitted"
 	ConsoleStopWaitTitle         Key = "console_stop_wait_title"
 	ConsoleAbandonChanged        Key = "console_abandon_changed"
+	ConsoleAbandonInputUnknown   Key = "console_abandon_input_unknown"
 	ConsoleAbandon               Key = "console_abandon"
 	ConsoleAbandonTitle          Key = "console_abandon_title"
 	ConsoleAbandonBody           Key = "console_abandon_body"
