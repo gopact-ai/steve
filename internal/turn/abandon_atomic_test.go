@@ -209,3 +209,12 @@ func TestAbandonmentDoesNotFreezeOrAbandonUnselectedDescendantExecutions(t *test
 		t.Fatal("freezing one execution discarded a descendant's valid accounting")
 	}
 }
+
+func TestStaleAbandonConfirmationTellsTheOwnerToRefresh(t *testing.T) {
+	c, _, r := abandonFixture(t)
+	_, err := NewAbandonControl(c).AbandonAttempt(t.Context(), r.ID, "owner", 0)
+	var explained UserError
+	if !errors.As(err, &explained) || !errors.Is(err, attempt.ErrForceStopChanged) {
+		t.Fatalf("stale abandonment is not an actionable refusal: %v", err)
+	}
+}
