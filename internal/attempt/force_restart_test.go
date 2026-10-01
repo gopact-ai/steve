@@ -74,6 +74,9 @@ func TestForceRestartRejectsWrongIdentityAndOldRevision(t *testing.T) {
 	if _, err = s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.RecordForceStopResult(t.Context(), r.ID, 2, true, "unavailable"); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err = s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder"); !errors.Is(err, ErrForceStopChanged) {
 		t.Fatalf("old revision reserved restart: %v", err)
 	}

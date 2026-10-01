@@ -241,3 +241,17 @@ func TestForceRestartRejectsAnotherPlansSuccessfulStatus(t *testing.T) {
 		t.Fatalf("another plan's result advanced restart: %+v", got.ForceStop)
 	}
 }
+
+func TestForceRestartLaterAttemptJoinsTheSameNodeOperation(t *testing.T) {
+	s, records, _, host := forceRestartFixture(t, 2)
+	for _, r := range records {
+		if err := s.forceStop(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one, _ := s.attempts.Get(t.Context(), records[0].ID)
+	two, _ := s.attempts.Get(t.Context(), records[1].ID)
+	if len(host.starts) != 1 || one.ForceStop.RestartID != two.ForceStop.RestartID {
+		t.Fatalf("one machine got separate operations: starts=%d one=%+v two=%+v", len(host.starts), one.ForceStop, two.ForceStop)
+	}
+}

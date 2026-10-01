@@ -121,6 +121,9 @@ func TestMemberRestartClaimsFenceAuthorityAndOwnerChanges(t *testing.T) {
 		t.Fatalf("claim repeated after lost answer: %v %v", yes, err)
 	}
 	req.Authority.CoordinatorEpoch++
+	if _, err := hub.restartAuthority(t.Context(), req.Authority, op.NodeID); err == nil {
+		t.Fatal("stale authority passed the dispatch gate")
+	}
 	if yes, err := holder.claimMemberRestart(t.Context(), req); yes || err == nil {
 		t.Fatal("stale coordinator claim accepted")
 	}
