@@ -26,7 +26,7 @@ func TestAbandonedExhaustedExecutionStillGetsAnOrdinaryPhysicalStop(t *testing.T
 		t.Fatal(err)
 	}
 	if err := s.tasks.AbandonExecution(t.Context(), r.TaskID, r.ID, r.TurnID, func(tx *ledger.Tx, row task.Attempt, at time.Time) (task.RecoveryUsage, error) {
-		return s.attempts.AbandonTx(tx, r.ID, "owner", 1, row, at)
+		return s.attempts.AbandonTx(tx, r.ID, "owner", 1, row, at, attempt.AbandonContext{State: "absent"})
 	}); err != nil {
 		t.Fatal(err)
 	}

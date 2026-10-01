@@ -13,7 +13,7 @@ var ErrAlreadyAbandoned = errors.New("the original execution was already abandon
 
 // AbandonTx runs only inside the task owner's accounting transaction. Abandoned
 // is a durable projection obligation, not a statement that any process exited.
-func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, row task.Attempt, at time.Time) (task.RecoveryUsage, error) {
+func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, row task.Attempt, at time.Time, source AbandonContext) (task.RecoveryUsage, error) {
 	r, err := GetTx(tx, id)
 	if err != nil {
 		return task.RecoveryUsage{}, err
@@ -57,7 +57,10 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if usage.Reported || usage.Tokens != (task.Tokens{}) {
 		r.Usage = &Usage{Model: usage.Model, Input: usage.Tokens.Input, Output: usage.Tokens.Output, CachedRead: usage.Tokens.CachedRead, CachedWrite: usage.Tokens.CachedWrite, Reported: usage.Reported}
 	}
-	r.Abandoned = &Abandoned{At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, Session: r.Session}
+	if source.State != "absent" && source.State != "original" && source.State != "different" {
+		return task.RecoveryUsage{}, errors.New("abandonment requires the original session-slot snapshot")
+	}
+	r.Abandoned = &Abandoned{SlotState: source.State, SlotFingerprint: source.Fingerprint, ImportFingerprint: source.ImportFingerprint, At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: tracked.AnchorMessage, Session: r.Session}
 	if r.Abandoned.MessageID == "" && (r.Kind == KindChat || r.Kind == KindPlan) {
 		r.Abandoned.MessageID = r.TurnID
 	}

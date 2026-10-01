@@ -27,7 +27,13 @@ func (a *AbandonControl) ProjectAbandoned(ctx context.Context, id string) error 
 		return nil
 	}
 	owed := state.OwedClose{NodeID: r.Node, HarnessID: r.Harness, UpstreamID: r.Abandoned.Session, NativeContext: r.NativeContext, TaskID: r.TaskID, AttemptID: r.ID, OwedAt: r.Abandoned.At.Format(time.RFC3339Nano)}
-	if err := c.store.ProjectAbandonedSession(ctx, r.Abandoned.Conversation, r.Agent, owed, r.Unsettled, func(tx *ledger.Tx) error { return c.attempts.CheckAbandonProjectionTx(tx, r) }); err != nil {
+	guard := func(tx *ledger.Tx) error { return c.attempts.CheckAbandonProjectionTx(tx, r) }
+	if r.Abandoned.Session == "" {
+		err = c.store.ProjectAbandonedOpen(ctx, r.Abandoned.Conversation, r.Agent, r.Node, r.Harness, r.ID, r.Abandoned.SlotState, r.Abandoned.SlotFingerprint, r.Abandoned.ImportFingerprint, guard)
+	} else {
+		err = c.store.ProjectAbandonedSession(ctx, r.Abandoned.Conversation, r.Agent, owed, r.Unsettled, guard)
+	}
+	if err != nil {
 		return err
 	}
 	_, err = c.attempts.ProjectAbandonedCapacity(ctx, id, r.Abandoned.ForceStopRevision)

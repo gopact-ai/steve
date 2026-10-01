@@ -18,3 +18,10 @@ type Abandoned struct {
 	Session           string    `json:"session,omitempty"`
 	ProjectedAt       time.Time `json:"projected_at,omitzero"`
 }
+
+// AbandonContext is the non-secret slot identity captured by the session owner.
+type AbandonContext struct {
+	State             string
+	Fingerprint       string
+	ImportFingerprint string
+}

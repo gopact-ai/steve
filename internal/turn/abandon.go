@@ -35,7 +35,11 @@ func (a *AbandonControl) AbandonAttempt(ctx context.Context, id, requester strin
 		return attempt.Record{}, err
 	}
 	err = c.tasks.AbandonExecution(ctx, original.TaskID, original.ID, original.TurnID, func(tx *ledger.Tx, row task.Attempt, at time.Time) (task.RecoveryUsage, error) {
-		return c.attempts.AbandonTx(tx, original.ID, requester, revision, row, at)
+		source, err := abandonContextTx(tx, original.ID)
+		if err != nil {
+			return task.RecoveryUsage{}, err
+		}
+		return c.attempts.AbandonTx(tx, original.ID, requester, revision, row, at, source)
 	})
 	if err != nil && !errors.Is(err, attempt.ErrAlreadyAbandoned) {
 		return attempt.Record{}, err

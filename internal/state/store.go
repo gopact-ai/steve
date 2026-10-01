@@ -218,7 +218,7 @@ func (s *Store) SaveSession(session Session) error {
 	session.NativeImport = session.NativeImport.Clone()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if session.UpstreamID != "" && s.data.RetiredContexts[nativeContextKey(session.NodeID, session.HarnessID, session.UpstreamID)] != "" {
+	if retiredContext(s.data, session) {
 		return ErrAbandonedContext
 	}
 	next := cloneData(s.data)
@@ -455,7 +455,7 @@ func (s *Store) RestoreSession(conversationID, agentID string, index int) (Sessi
 	}
 	at := matches[index-1]
 	restored := conversation.Archived[at].Session
-	if conversation.Archived[at].AbandonedAttempt != "" || next.RetiredContexts[nativeContextKey(restored.NodeID, restored.HarnessID, restored.UpstreamID)] != "" {
+	if conversation.Archived[at].AbandonedAttempt != "" || retiredContext(next, restored) {
 		return Session{}, ErrAbandonedContext
 	}
 	// Whatever is live now takes the restored one's place in the history,

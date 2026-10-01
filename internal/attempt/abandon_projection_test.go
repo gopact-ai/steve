@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -25,7 +26,7 @@ func abandonedRecord(t *testing.T) (*Service, Record, RetainedEvidence, *task.St
 		t.Fatal(err)
 	}
 	if err := tasks.AbandonExecution(t.Context(), r.TaskID, r.ID, r.TurnID, func(tx *ledger.Tx, row task.Attempt, atTime time.Time) (task.RecoveryUsage, error) {
-		return s.AbandonTx(tx, r.ID, "owner", 1, row, atTime)
+		return s.AbandonTx(tx, r.ID, "owner", 1, row, atTime, AbandonContext{State: "absent"})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -63,12 +64,18 @@ func TestAbandonAdmissionWaitsForProjectionAndKeepsThePhysicalWriter(t *testing.
 func TestAbandonedCommandReceiptCannotReleaseItsWriter(t *testing.T) {
 	s, r, proof, _ := abandonedRecord(t)
 	proof.Session.ProcessStopped = false
+	proof.Session.Command.State = nodewire.SessionCommandCancelled
+	proof.Session.Command.Settled = true
 	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "recheck", proof); !errors.Is(err, ErrStopConfirmationRequired) {
 		t.Fatalf("command-only receipt accepted: %v", err)
 	}
 	proof.Session.ProcessStopped = true
 	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "recheck", proof); err != nil {
 		t.Fatal(err)
+	}
+	pending, err := s.AbandonProjections(t.Context())
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("confirmed execution lost pending projection: %v %v", pending, err)
 	}
 	got, err := s.ProjectAbandonedCapacity(t.Context(), r.ID, 1)
 	if err != nil || got.Abandoned.ProjectedAt.IsZero() {
