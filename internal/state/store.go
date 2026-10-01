@@ -70,7 +70,8 @@ type Conversation struct {
 
 type Archived struct {
 	Session
-	ArchivedAt string `json:"archived_at"`
+	ArchivedAt       string `json:"archived_at"`
+	AbandonedAttempt string `json:"abandoned_attempt,omitempty"`
 }
 
 type PendingPair struct {
