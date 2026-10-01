@@ -40,7 +40,11 @@ if ! mkdir "$bin_dir/.install-lock" 2>/dev/null; then
 fi
 trap 'rmdir "$bin_dir/.install-lock" 2>/dev/null || true' EXIT
 `)
-	b.WriteString(peerStartSection)
+	start := peerStartSection
+	if spec.ExpectedCluster != "" || spec.ExpectedNode != "" {
+		start = strings.Replace(start, `kill -0 "$peer_pid" 2>/dev/null`, `jobs -pr | grep -Fx -- "$peer_pid" >/dev/null`, 1)
+	}
+	b.WriteString(start)
 	if spec.ExpectedCluster != "" || spec.ExpectedNode != "" {
 		b.WriteString(identifiedPeerStop(spec))
 	} else {
