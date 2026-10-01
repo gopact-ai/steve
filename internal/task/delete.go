@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 // still open, so the caller stops it first.
 var ErrExecuting = errors.New("task is executing")
 
+var ErrRetirementPending = errors.New("task native cleanup is pending")
+
 // DeleteChannel removes what one conversation opened: the tasks it holds
 // and everything delegated from them, with their organization. A task is
 // the record of work asked for in a thread, so it goes when the thread
@@ -21,7 +24,7 @@ var ErrExecuting = errors.New("task is executing")
 //
 // Work in flight is never deleted out from under itself: a task with an
 // open execution refuses, and the caller stops it first.
-func (s *Store) DeleteChannel(channel string) ([]string, error) {
+func (s *Store) DeleteChannel(ctx context.Context, channel string, guard func(ledger.Reader, []string) error) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ids, err := s.deletableLocked(channel)
@@ -44,7 +47,7 @@ func (s *Store) DeleteChannel(channel string) ([]string, error) {
 // ChannelIdle reports what a conversation opened as safe to delete: no
 // task of it, or delegated from it, has an attempt open. The caller asks
 // before ending anything else, so a refusal costs the owner nothing.
-func (s *Store) ChannelIdle(channel string) error {
+func (s *Store) ChannelIdle(ctx context.Context, channel string, guard func(ledger.Reader, []string) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.deletableLocked(channel)

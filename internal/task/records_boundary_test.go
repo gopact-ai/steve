@@ -260,7 +260,7 @@ func TestTaskRecordDeleteRemovesOnlySelectedTreeRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if ids, err := s.DeleteChannel("remove"); err != nil || len(ids) != 2 {
+	if ids, err := s.DeleteChannel(t.Context(), "remove", nil); err != nil || len(ids) != 2 {
 		t.Fatalf("delete=%v %v", ids, err)
 	}
 	loaded, err := OpenLedger(book)

@@ -19,7 +19,7 @@ func deleteReceiptTask(t *testing.T, book *ledger.Ledger) {
 	if len(all) != 1 {
 		t.Fatalf("fixture tasks = %+v", all)
 	}
-	if _, err := tasks.DeleteChannel(all[0].Channel); err != nil {
+	if _, err := tasks.DeleteChannel(t.Context(), all[0].Channel, nil); err != nil {
 		t.Fatal(err)
 	}
 }

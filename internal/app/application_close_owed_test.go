@@ -218,7 +218,7 @@ func TestOwedCloseIsNotSentToAnotherExecution(t *testing.T) {
 			f.replaceOwed(t)
 		},
 		"the task is gone": func(t *testing.T, f *owedCloseFixture) {
-			if _, err := f.tasks.DeleteChannel(f.tracked.Channel); err != nil {
+			if _, err := f.tasks.DeleteChannel(t.Context(), f.tracked.Channel, nil); err != nil {
 				t.Fatal(err)
 			}
 		},

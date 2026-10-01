@@ -43,7 +43,7 @@ func TestDeletedTxProvesOnlyAWholeDeletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.DeleteChannel("chat-gone"); err != nil {
+	if _, err := s.DeleteChannel(t.Context(), "chat-gone", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := book.DB().Exec(`DELETE FROM bindings WHERE kind='task' AND id=?`, partial.ID); err != nil {

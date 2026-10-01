@@ -873,6 +873,7 @@ const (
 	AdminDefaultAgentKept                Key = "admin_default_agent_kept"
 	AdminConversationsOff                Key = "admin_conversations_off"
 	AdminDeleteTaskRunning               Key = "admin_delete_task_running"
+	AdminDeleteCleanupPending            Key = "admin_delete_cleanup_pending"
 	AdminDeleteTurnRunning               Key = "admin_delete_turn_running"
 	AdminDeleteHubMaintenance            Key = "admin_delete_hub_maintenance"
 	AdminDesktopOnlySetup                Key = "admin_desktop_only_setup"

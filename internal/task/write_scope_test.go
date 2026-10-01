@@ -175,7 +175,7 @@ func TestWritesPersistWhatMemoryServes(t *testing.T) {
 	if _, err := s.SetMeta(gone.ID, MetaPatch{Title: &title}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DeleteChannel("gone"); err != nil {
+	if _, err := s.DeleteChannel(t.Context(), "gone", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetAside(root.ID, StatePaused); err != nil {
