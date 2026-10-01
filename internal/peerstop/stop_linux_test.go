@@ -164,3 +164,73 @@ func TestStopAnEmptyIdentifiedInstallationDoesNotSignalStalePID(t *testing.T) {
 		t.Fatalf("empty installation: %v %v", ran, err)
 	}
 }
+
+func TestStopEscalatesThroughTheSameStableProcessHandle(t *testing.T) {
+	root, sidecar := installationFixture(t)
+	_, done := startFixturePeer(t, root, true)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	ran, err := stopInstallationWithin(ctx, sidecar, "cluster", "node", 20*time.Millisecond)
+	if err != nil || !ran {
+		t.Fatalf("stable handle escalation: %v %v", ran, err)
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("SIGKILL was not confirmed")
+	}
+}
+
+func TestStopDeadlineDoesNotPretendTheOriginalProcessExited(t *testing.T) {
+	root, sidecar := installationFixture(t)
+	cmd, _ := startFixturePeer(t, root, true)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := Stop(ctx, sidecar, "cluster", "node"); !errors.Is(err, ErrRunning) {
+		t.Fatalf("timed-out peer stop: %v", err)
+	}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("fixture should still ignore TERM")
+	}
+}
+
+func TestStopRejectsAForeignExecutableHoldingTheInstallationLock(t *testing.T) {
+	root, sidecar := installationFixture(t)
+	source, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(t.TempDir(), "foreign-peer")
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(foreign, raw, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(foreign, "peer", "--config", filepath.Join(root, "config.json"), "--cluster-config", sidecar)
+	cmd.Env = append(os.Environ(), "STEVE_PEERSTOP_FIXTURE=1", "STEVE_PEERSTOP_ROOT="+root)
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() { cmd.Process.Kill(); <-done })
+	ready := make(chan struct{})
+	go func() { raw := make([]byte, 64); pipe.Read(raw); close(ready) }()
+	select {
+	case <-ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("foreign holder not ready")
+	}
+	if _, err := Stop(t.Context(), sidecar, "cluster", "node"); !errors.Is(err, ErrUnproven) {
+		t.Fatalf("foreign holder accepted: %v", err)
+	}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("foreign lock owner was signalled")
+	}
+}

@@ -14,5 +14,5 @@ var (
 )
 
 func Stop(ctx context.Context, sidecar, cluster, node string) (bool, error) {
-	return false, ErrUnsupported
+	return stopInstallation(ctx, sidecar, cluster, node)
 }
