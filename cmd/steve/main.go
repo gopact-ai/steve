@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -36,11 +37,15 @@ func main() {
 // commands are the subcommands by name; anything else is `steve run`. A table
 // rather than a switch: it gives back the 10 lines the ledger verb split cost.
 var commands = map[string]func(args []string) error{
-	"setup": setup, "doctor": doctor, "top": consoleclient.Top, "dash": consoleclient.Dash, "desktop": desktopCmd, "peer": peerCmd, "peer-import": peerImportCmd, "peer-init": app.InitClusterCommand, "link": app.LinkCommand,
+	"setup": setup, "doctor": doctor, "top": consoleclient.Top, "dash": consoleclient.Dash, "desktop": desktopCmd, "peer": peerCmd, "peer-stop": peerStopCmd, "peer-import": peerImportCmd, "peer-init": app.InitClusterCommand, "link": app.LinkCommand,
 	"ledger": ledgerCmd, "migrate": migrateCmd, "say": consoleclient.Say, "plugins": app.PluginsCommand, "mcp-launch": app.MCPLaunchCommand,
 }
 
 func run(args []string) error {
+	if len(args) == 1 && args[0] == "--peer-stop-protocol" {
+		_, err := fmt.Fprintln(os.Stdout, peerStopProtocol)
+		return err
+	}
 	if len(args) > 0 {
 		if command, ok := commands[args[0]]; ok {
 			return command(args[1:])
