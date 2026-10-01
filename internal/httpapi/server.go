@@ -69,6 +69,7 @@ type Server struct {
 	settings       consoleapi.SettingsService
 	console        consoleapi.Console
 	forceStops     consoleapi.ForceStops
+	abandons       consoleapi.Abandons
 	channelHistory consoleapi.ChannelHistory
 	admin          consoleapi.Admin
 	model          Model
