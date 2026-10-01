@@ -47,7 +47,8 @@ func stopInstallationWithin(parent context.Context, sidecar, cluster, node strin
 	if err != nil {
 		return false, err
 	}
-	fd, err := pinPeer(file, pid, processOps{identity: instance.process, owner: lockOwner, open: func(pid int) (int, error) { return unix.PidfdOpen(pid, 0) }, close: unix.Close})
+	control := processOps{identity: instance.process, owner: lockOwner, open: func(pid int) (int, error) { return unix.PidfdOpen(pid, 0) }, close: unix.Close}
+	fd, bound, err := pinPeerIdentity(file, pid, control)
 	if err != nil {
 		return false, err
 	}
@@ -67,6 +68,12 @@ func stopInstallationWithin(parent context.Context, sidecar, cluster, node strin
 	if err != nil {
 		if ctx.Err() != nil {
 			return false, fmt.Errorf("%w: %v", ErrRunning, ctx.Err())
+		}
+		if err := verifyPeer(file, bound, control); err != nil {
+			return false, err
+		}
+		if err := instance.verify(); err != nil {
+			return false, err
 		}
 		if err := signalHandle(fd, unix.SIGKILL); err != nil {
 			return false, err
@@ -133,27 +140,33 @@ type processOps struct {
 	close    func(int) error
 }
 
-func pinPeer(file *os.File, pid int, k processOps) (int, error) {
+func pinPeerIdentity(file *os.File, pid int, k processOps) (int, processIdentity, error) {
 	before, found, err := k.identity(pid)
 	if err != nil || !found {
-		return -1, fmt.Errorf("%w: lock owner is not the installed peer", ErrUnproven)
+		return -1, processIdentity{}, fmt.Errorf("%w: lock owner is not the installed peer", ErrUnproven)
 	}
 	fd, err := k.open(pid)
 	if errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EINVAL) {
-		return -1, ErrUnsupported
+		return -1, processIdentity{}, ErrUnsupported
 	}
 	if err != nil {
-		return -1, fmt.Errorf("%w: stable process handle unavailable: %v", ErrUnproven, err)
+		return -1, processIdentity{}, fmt.Errorf("%w: stable process handle unavailable: %v", ErrUnproven, err)
 	}
-	after, found, err := k.identity(pid)
-	if err != nil || !found || after != before {
+	if err := verifyPeer(file, before, k); err != nil {
 		k.close(fd)
-		return -1, fmt.Errorf("%w: original peer identity changed", ErrUnproven)
+		return -1, processIdentity{}, err
+	}
+	return fd, before, nil
+}
+
+func verifyPeer(file *os.File, before processIdentity, k processOps) error {
+	after, found, err := k.identity(before.pid)
+	if err != nil || !found || after != before {
+		return fmt.Errorf("%w: original peer identity changed", ErrUnproven)
 	}
 	owner, err := k.owner(file)
-	if err != nil || owner != pid {
-		k.close(fd)
-		return -1, fmt.Errorf("%w: original peer no longer owns its installation", ErrUnproven)
+	if err != nil || owner != before.pid {
+		return fmt.Errorf("%w: original peer no longer owns its installation", ErrUnproven)
 	}
-	return fd, nil
+	return nil
 }

@@ -276,7 +276,7 @@ func TestPinPeerRefusesReplacedIdentityOrLockBeforeAnySignal(t *testing.T) {
 					return nil
 				},
 			}
-			fd, err := pinPeer(nil, 101, ops)
+			fd, _, err := pinPeerIdentity(nil, 101, ops)
 			if fd != -1 || err == nil {
 				t.Fatalf("replacement got a signalable handle: %d %v", fd, err)
 			}
