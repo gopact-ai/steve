@@ -104,3 +104,20 @@ func TestAbandonmentProjectionRemainsVisibleAfterPhysicalConfirmation(t *testing
 		t.Fatalf("projected confirmed abandonment stayed live: %v %v", live, err)
 	}
 }
+
+func TestAbandonedWriterStillRequiresExitAfterALateQuarantineUpdate(t *testing.T) {
+	s, r, proof, _ := abandonedRecord(t)
+	proof.Session.ProcessStopped = true
+	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "physical-exit", proof); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkUnsettled(t.Context(), r.ID, "late-observer", ErrStopConfirmationRequired, nil); err != nil {
+		t.Fatal(err)
+	}
+	proof.Session.ProcessStopped = false
+	proof.Session.Command.State = nodewire.SessionCommandCancelled
+	proof.Session.Command.Settled = true
+	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "old-command", proof); !errors.Is(err, ErrStopConfirmationRequired) {
+		t.Fatalf("abandoned writer accepted command-only evidence after a late update: %v", err)
+	}
+}
