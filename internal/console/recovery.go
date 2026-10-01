@@ -220,7 +220,7 @@ func (s *Service) findRetained(ctx context.Context, driver RetainedChatDriver, e
 			if ok {
 				return retainedExchange{}, false, errors.New("multiple chat or plan executions reference the same exchange")
 			}
-			found = retainedExchange{RetainedChat: turn.RetainedChat{AttemptID: item.AttemptID, TaskID: item.TaskID, Conversation: item.Conversation, MessageID: item.MessageID, AgentID: item.AgentID, NodeID: item.NodeID, ProjectID: item.ProjectID, Completed: item.Completed, TaskState: item.TaskState}, plan: &item}
+			found = retainedExchange{RetainedChat: turn.RetainedChat{ForceStopRevision: item.ForceStopRevision, AttemptID: item.AttemptID, TaskID: item.TaskID, Conversation: item.Conversation, MessageID: item.MessageID, AgentID: item.AgentID, NodeID: item.NodeID, ProjectID: item.ProjectID, Completed: item.Completed, TaskState: item.TaskState}, plan: &item}
 			ok = true
 		}
 	}

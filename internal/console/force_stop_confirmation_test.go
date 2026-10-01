@@ -11,12 +11,14 @@ import (
 )
 
 type forceConfirmationCapture struct {
-	calls   []string
-	failure error
+	calls     []string
+	revisions []uint64
+	failure   error
 }
 
-func (f *forceConfirmationCapture) ForceStopAttempt(_ context.Context, id, _ string) error {
+func (f *forceConfirmationCapture) ForceStopAttempt(_ context.Context, id, _ string, expectedRevision uint64) error {
 	f.calls = append(f.calls, id)
+	f.revisions = append(f.revisions, expectedRevision)
 	return f.failure
 }
 
@@ -28,7 +30,7 @@ func TestForceConfirmationKeepsItsTargetAndRequiresAnExplicitChoice(t *testing.T
 			if err := s.Persist(doc); err != nil {
 				t.Fatal(err)
 			}
-			driver := &recoveryDriver{}
+			driver := &recoveryDriver{candidates: []turn.RetainedChat{{AttemptID: "attempt-1", TaskID: "task-1", Conversation: "console:main", MessageID: "web-e1", ForceStopRevision: 7}}}
 			s.recoveryDriver = driver
 			force := &forceConfirmationCapture{}
 			if mode == "failure" {
@@ -81,9 +83,36 @@ func TestForceConfirmationKeepsItsTargetAndRequiresAnExplicitChoice(t *testing.T
 			if mode == "confirm" || mode == "failure" {
 				want = 1
 			}
-			if len(force.calls) != want || want == 1 && force.calls[0] != "attempt-1" {
+			if len(force.calls) != want || want == 1 && (force.calls[0] != "attempt-1" || force.revisions[0] != 7) {
 				t.Fatalf("calls=%v want original once=%d", force.calls, want)
 			}
 		})
+	}
+}
+
+func TestForceConfirmationRetainsThePlanRevision(t *testing.T) {
+	s := New(&echo{}, "owner", nil)
+	if err := s.Persist(&memDoc{}); err != nil {
+		t.Fatal(err)
+	}
+	driver := &planRecoveryDriver{recoveryDriver: recoveryDriver{candidates: []turn.RetainedChat{}}, plans: []turn.RetainedPlan{{TaskID: "plan-task", AttemptID: "plan-attempt", ForceStopRevision: 9, Conversation: "console:main", MessageID: "web-e1"}}}
+	s.recoveryDriver = driver
+	force := &forceConfirmationCapture{}
+	s.SetForceStops(force)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	w := &recoveryStopWait{s: s, e: &queuedExchange{Exchange: Exchange{ID: "e1", Conversation: "console:main", Requester: "owner"}}, base: consoleapi.PendingQuestion{Conversation: "console:main", ExchangeID: "e1", Locale: "en"}, ctx: ctx, requester: "owner"}
+	done := make(chan error, 1)
+	go func() { done <- w.forceStop() }()
+	q := awaitOffer(t, s, "confirm-force-stop")
+	driver.plans[0].ForceStopRevision = 10
+	if _, err := s.AnswerQuestion(ctx, q.ID, consoleapi.QuestionAnswer{CommandID: "plan-confirmed", Decision: "accept", Choice: "confirm-force-stop"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(force.calls) != 1 || force.calls[0] != "plan-attempt" || force.revisions[0] != 9 {
+		t.Fatalf("plan confirmation was retargeted: calls=%v revisions=%v", force.calls, force.revisions)
 	}
 }

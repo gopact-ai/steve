@@ -19,7 +19,7 @@ func (s *applicationStops) stopBatch(pending []attempt.Record) []attempt.Record 
 		switch {
 		case r.ForceStop == nil || r.ForceStop.Level == "confirmed":
 			ordinary = append(ordinary, r)
-		case r.ForceStop.Level == "kill":
+		case r.ForceStop.Level == "kill" || r.ForceStop.Level == "restart" || r.ForceStop.Level == "await":
 			forced = append(forced, r)
 		}
 	}
@@ -53,6 +53,9 @@ type applicationOpenKiller interface {
 }
 
 func (s *applicationStops) forceStop(parent context.Context, r attempt.Record) error {
+	if r.ForceStop.Level != "kill" {
+		return s.restartForceStop(parent, r)
+	}
 	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 	defer cancel()
 	ctx = execution.WithProbeKey(ctx, execution.Key{TaskID: r.TaskID, InstanceID: r.TurnID, AttemptID: r.ID})
@@ -74,9 +77,12 @@ func (s *applicationStops) forceStop(parent context.Context, r attempt.Record) e
 	if answered {
 		code = coded.SessionErrorCode()
 	}
-	_, recordErr := s.attempts.RecordForceStopResult(parent, r.ID, r.ForceStop.Revision, answered, code)
+	next, recordErr := s.attempts.RecordForceStopResult(parent, r.ID, r.ForceStop.Revision, answered, code)
 	if errors.Is(recordErr, attempt.ErrForceStopChanged) {
 		return nil
+	}
+	if recordErr == nil && next.ForceStop.Level == "restart" {
+		return s.restartForceStop(parent, next)
 	}
 	return recordErr
 }

@@ -213,8 +213,9 @@ type Service struct {
 	plans      map[string]*storedPlan
 	// upgrades and restarts are the latest upgrade and restart operation of
 	// each machine, by node ID.
-	upgrades map[string]string
-	restarts map[string]string
+	upgrades       map[string]string
+	restarts       map[string]string
+	memberRestarts map[string]MemberRestart
 	// settled is when each machine's latest manual restart or upgrade
 	// settled: a look automatic start took at it before then saw it as it
 	// was before.
@@ -446,6 +447,11 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 				expired = append(expired, stored.connection)
 			}
 			delete(s.plans, id)
+			for request, op := range s.memberRestarts {
+				if op.PlanID == id {
+					delete(s.memberRestarts, request)
+				}
+			}
 		}
 	}
 	if len(s.plans) >= 128 {
@@ -478,6 +484,11 @@ func (s *Service) expire(id string) {
 		return
 	}
 	delete(s.plans, id)
+	for request, op := range s.memberRestarts {
+		if op.PlanID == id {
+			delete(s.memberRestarts, request)
+		}
+	}
 	s.mu.Unlock()
 	if stored.connection != nil {
 		// The plan expired on its timer: nobody is waiting on it, and a
@@ -652,6 +663,11 @@ func (s *Service) Abandon(ctx context.Context, id string) error {
 			stored.timer.Stop()
 		}
 		delete(s.plans, id)
+		for request, op := range s.memberRestarts {
+			if op.PlanID == id {
+				delete(s.memberRestarts, request)
+			}
+		}
 	}
 	s.mu.Unlock()
 	if ok && stored.connection != nil {

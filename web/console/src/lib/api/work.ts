@@ -1,6 +1,6 @@
 import type { AccountingItem, NativeAttempt, Plan, WorkPage, ChangeIndex, FileDiff, FileView, HistoryEntry, Task, TaskDetail, TaskMetaPatch, TreeView } from "../types";
 import { request } from "../http";
-export const forceStopAttempt = (id: string) => request<{ accepted: boolean }>(`/console/attempts/${encodeURIComponent(id)}/force-stop`, { method: "POST", body: {} });
+export const forceStopAttempt = (id: string, expectedRevision: number) => request<{ accepted: boolean }>(`/console/attempts/${encodeURIComponent(id)}/force-stop`, { method: "POST", body: { expected_revision: expectedRevision } });
 export const fetchHistory = (cursor = "", limit = 60, signal?: AbortSignal) => request<{ entries: HistoryEntry[]; next: string }>(`/history?${new URLSearchParams({ cursor, limit: String(limit) })}`, { signal });
 export const fetchTask = (id: string, signal?: AbortSignal) => request<TaskDetail>(`/console/tasks/${encodeURIComponent(id)}`, { signal, cache: "no-store" });
 export const patchTaskMeta = (id: string, body: TaskMetaPatch) => request<Task>(`/console/tasks/${encodeURIComponent(id)}/meta`, { method: "PATCH", body });

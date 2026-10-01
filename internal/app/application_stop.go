@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -32,12 +33,14 @@ type applicationStops struct {
 	executions *execution.Registry
 	after      string
 	forceAfter string
+	restarts   cluster.MemberRestarts
+	now        func() time.Time
 	// text says, in the configured language, how a stop stands.
 	text i18n.Catalog
 }
 
 func newApplicationStops(attempts *attempt.Service, tasks *task.Store, sessions applicationStopSessions, text i18n.Catalog) *applicationStops {
-	return &applicationStops{attempts: attempts, tasks: tasks, sessions: sessions, text: text}
+	return &applicationStops{attempts: attempts, tasks: tasks, sessions: sessions, text: text, now: time.Now}
 }
 
 // Reconcile consumes SetAside's durable revocation of original task tokens.
@@ -86,7 +89,7 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	failures := make(chan error, len(selected))
 	for _, r := range selected {
 		go func() {
-			if r.ForceStop != nil && r.ForceStop.Level == "kill" {
+			if r.ForceStop != nil && r.ForceStop.Level != "confirmed" {
 				failures <- s.forceStop(ctx, r)
 			} else {
 				failures <- s.stop(ctx, r)

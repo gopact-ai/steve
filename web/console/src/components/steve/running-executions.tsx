@@ -11,7 +11,7 @@ import { Mono, Nothing, StateBadge, Where } from "@/components/steve/ui";
 // row per attempt holding a lease, with the admission decision that let it
 // start. It reads live state, so it belongs with the other status views
 // rather than with the machine and agent inventory.
-export function RunningExecutions({ attempts, onForce }: { attempts: Attempt[]; onForce: (id: string) => Promise<void> }) {
+export function RunningExecutions({ attempts, onForce }: { attempts: Attempt[]; onForce: (id: string, expectedRevision: number) => Promise<void> }) {
     const { t: tr, locale } = useI18n();
     return (
         <TableCard.Root size="sm" className="workbench-table min-w-0">

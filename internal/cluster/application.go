@@ -16,6 +16,7 @@ import (
 type ApplicationHost interface {
 	consoleapi.CoordinationService
 	Worker() PeerWorkerDescriptor
+	MemberRestarts(Activation) MemberRestarts
 	// WorkerWorkspaceRoot is the directory this machine keeps its work
 	// in, as the execution service running here has it. It is the answer
 	// to every question about where a directory on this machine goes, so

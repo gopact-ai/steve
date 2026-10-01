@@ -67,6 +67,7 @@ type RestartRecord struct {
 // restart, running or finished, and whether automatic start ran it; and
 // how automatic start stands for the machine where this node watches it.
 type RestartState struct {
+	Activity    *MemberRestart  `json:"activity,omitempty"`
 	Restartable bool            `json:"restartable"`
 	Reason      string          `json:"reason,omitempty"`
 	Restart     *InstallResult  `json:"restart,omitempty"`
@@ -117,7 +118,15 @@ func (s *Service) Restart(ctx context.Context, nodeID string) (InstallResult, er
 	if failure != nil {
 		return InstallResult{}, failure
 	}
-	result, outcome, err := s.restart(ctx, backend, stored.plan.ID, nodeID, nodebootstrap.RestartSpec{})
+	return s.runMemberRestart(ctx, backend, stored, nodeID)
+}
+
+func (s *Service) runMemberRestart(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string) (InstallResult, error) {
+	return s.runMemberRestartChecked(ctx, backend, stored, nodeID, nodebootstrap.RestartSpec{}, nil)
+}
+
+func (s *Service) runMemberRestartChecked(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string, spec nodebootstrap.RestartSpec, verify func(context.Context) error) (InstallResult, error) {
+	result, outcome, err := s.restartChecked(ctx, backend, stored.plan.ID, nodeID, spec, verify)
 	if err == nil {
 		s.mu.Lock()
 		s.resumeAutoStart(nodeID)
@@ -155,6 +164,11 @@ func (s *Service) RestartStatus(ctx context.Context, nodeID string) (RestartStat
 	if stored := s.plans[s.restarts[nodeID]]; stored != nil {
 		result := cloneResult(stored.result)
 		state.Restart, state.Automatic = &result, stored.automatic
+	}
+	if stored := s.plans[s.upgrades[nodeID]]; stored != nil && stored.running {
+		state.Activity = &MemberRestart{NodeID: nodeID, PlanID: stored.plan.ID, Kind: "upgrade", State: "running"}
+	} else if stored := s.plans[s.restarts[nodeID]]; stored != nil && stored.running {
+		state.Activity = &MemberRestart{NodeID: nodeID, PlanID: stored.plan.ID, Kind: "restart", State: "running"}
 	}
 	if watch := s.watches[nodeID]; watch != nil {
 		auto := watch.state
@@ -249,6 +263,10 @@ func reasonOf(err error) string {
 // restart runs one restart of nodeID and returns what it did: restarted or
 // started the peer, found it running (spec.IfStopped), or failed.
 func (s *Service) restart(ctx context.Context, backend RestartBackend, id, nodeID string, spec nodebootstrap.RestartSpec) (InstallResult, string, error) {
+	return s.restartChecked(ctx, backend, id, nodeID, spec, nil)
+}
+
+func (s *Service) restartChecked(ctx context.Context, backend RestartBackend, id, nodeID string, spec nodebootstrap.RestartSpec, verify func(context.Context) error) (InstallResult, string, error) {
 	text := i18n.FromContext(ctx)
 	result := InstallResult{PlanID: id, Name: nodeID, NodeID: nodeID, Status: "needs_attention", Steps: []Step{}, Phases: restartPhaseOrder}
 	reject := func(outcome string, failure *StepError) (InstallResult, string, error) {
@@ -279,6 +297,11 @@ func (s *Service) restart(ctx context.Context, backend RestartBackend, id, nodeI
 	}
 	result.Steps = append(result.Steps, Step{ID: "preflight", Status: "ready", Message: text.T(i18n.SSHRestartReady, check.User, check.Address)})
 	s.progress(result)
+	if verify != nil {
+		if err := verify(ctx); err != nil {
+			return reject(RestartFailed, stepOf(text, err, "restart_refused", i18n.SSHRestartFailedFix))
+		}
+	}
 	outcome, failure := s.startPeer(ctx, &result, connection, spec)
 	if failure != nil {
 		return reject(outcome, failure)
@@ -332,6 +355,12 @@ func (s *Service) startPeer(ctx context.Context, result *InstallResult, connecti
 			code = exit.ExitCode()
 		}
 		switch code {
+		case 32:
+			return RestartFailed, Fail(text, "restart", "restart_identity_unproven", text.T(i18n.SSHRestartIdentityUnproven), text.T(i18n.SSHRestartIdentityUnprovenFix))
+		case 33:
+			return RestartFailed, Fail(text, "restart", "restart_upgrade_required", text.T(i18n.SSHRestartHelperMissing), text.T(i18n.SSHRestartHelperMissingFix))
+		case 34:
+			return RestartFailed, Fail(text, "restart", "restart_stop_unsupported", text.T(i18n.SSHRestartHandleUnsupported), text.T(i18n.SSHRestartHandleUnsupportedFix))
 		case 21:
 			return RestartFailed, Fail(text, "restart", "restart_busy", text.T(i18n.SSHRestartBusy), text.T(i18n.SSHRestartBusyFix))
 		case 28:

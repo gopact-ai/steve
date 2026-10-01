@@ -16,13 +16,20 @@ var ErrForceStopAlreadyStopped = errors.New("original process stop is already co
 // The caller revokes precisely taskIDs in this transaction. Recording the exit
 // requirement before those revocations become visible fences ordinary command
 // receipts even when an earlier cancellation is already in flight.
-func (s *Service) RequestForceStopTreeTx(tx *ledger.Tx, target, taskID, actor string, taskIDs []string) error {
+func (s *Service) RequestForceStopTreeTx(tx *ledger.Tx, target, taskID, actor string, taskIDs []string, expectedRevision uint64) error {
 	if actor == "" || !slices.Contains(taskIDs, taskID) {
 		return errors.New("force stop requires its owner and task tree")
 	}
 	original, err := GetTx(tx, target)
 	if err != nil {
 		return err
+	}
+	currentRevision := uint64(0)
+	if original.ForceStop != nil {
+		currentRevision = original.ForceStop.Revision
+	}
+	if currentRevision != expectedRevision || original.ForceStop != nil && forceStopActive(original.ForceStop.Level) {
+		return ErrForceStopChanged
 	}
 	if original.TaskID != taskID || !nodeOwnedStop(original) {
 		return errors.New("force stop requires the original node-owned execution")

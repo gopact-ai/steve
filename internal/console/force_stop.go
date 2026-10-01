@@ -10,14 +10,14 @@ import (
 )
 
 type forceStopDriver interface {
-	ForceStopAttempt(context.Context, string, string) error
+	ForceStopAttempt(context.Context, string, string, uint64) error
 }
 
 var _ consoleapi.ForceStops = (*Service)(nil)
 
 func (s *Service) SetForceStops(control forceStopDriver) { s.forceStops = control }
 
-func (s *Service) ForceStop(ctx context.Context, id string) error {
+func (s *Service) ForceStop(ctx context.Context, id string, expectedRevision uint64) error {
 	driver := s.forceStops
 	if driver == nil {
 		return errors.New("force stop is unavailable")
@@ -25,7 +25,7 @@ func (s *Service) ForceStop(ctx context.Context, id string) error {
 	if s.owner == "" {
 		return errors.New("force stop requires the owner")
 	}
-	return driver.ForceStopAttempt(ctx, id, s.owner)
+	return driver.ForceStopAttempt(ctx, id, s.owner, expectedRevision)
 }
 func (w *recoveryStopWait) forceStop() error {
 	w.s.mu.Lock()
@@ -61,5 +61,5 @@ func (w *recoveryStopWait) forceStop() error {
 	if answer.Value != "confirm-force-stop" {
 		return nil
 	}
-	return w.s.ForceStop(w.ctx, retained.AttemptID)
+	return w.s.ForceStop(w.ctx, retained.AttemptID, retained.ForceStopRevision)
 }

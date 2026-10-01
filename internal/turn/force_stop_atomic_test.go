@@ -47,7 +47,7 @@ func TestForceStopCancellationAndIntentCommitTogether(t *testing.T) {
 	c, tasks, r, proof := forceStopControlFixture(t)
 	// A revocation must never become visible before its process-exit request.
 	forceStopTrigger(t, c, `CREATE TRIGGER require_force_before_cancel BEFORE UPDATE ON bindings WHEN NEW.kind='task' AND json_extract(NEW.data,'$.state')='cancelled' AND NOT EXISTS(SELECT 1 FROM operations WHERE id='force-original' AND json_extract(data,'$.force_stop.level')='kill') BEGIN SELECT RAISE(ABORT,'revocation without force intent'); END`)
-	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner"); err != nil {
+	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
 		t.Fatalf("force cancellation was not atomic: %v", err)
 	}
 	loaded, err := task.OpenLedger(ledgerOf(t, c))
@@ -63,7 +63,10 @@ func TestForceStopCancellationAndIntentCommitTogether(t *testing.T) {
 		t.Fatal("in-flight command receipt relaxed the force stop")
 	}
 	before, _ := tasks.Get(r.TaskID)
-	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner"); err != nil {
+	if _, err := c.attempts.RecordForceStopResult(t.Context(), r.ID, 1, true, "stop_unproven"); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 1); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := tasks.Get(r.TaskID)
@@ -83,7 +86,7 @@ func TestForceStopRejectedWriteRollsBackTaskAndIntent(t *testing.T) {
 				statement = `CREATE TRIGGER refuse_force BEFORE UPDATE ON bindings WHEN NEW.kind='task-store' BEGIN SELECT RAISE(ABORT,'task refused'); END`
 			}
 			forceStopTrigger(t, c, statement)
-			if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner"); err == nil {
+			if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 0); err == nil {
 				t.Fatal("refused write accepted force stop")
 			}
 			loaded, err := task.OpenLedger(ledgerOf(t, c))
@@ -116,7 +119,7 @@ func TestForceStopDistinguishesEarlierCommandAndProcessReceipts(t *testing.T) {
 				t.Fatal(err)
 			}
 			before, _ := tasks.Get(r.TaskID)
-			if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner"); err != nil {
+			if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
 				t.Fatalf("known original could not be forced: %v", err)
 			}
 			got, _ := c.attempts.Get(t.Context(), r.ID)
@@ -172,7 +175,7 @@ func TestOldForceTargetDoesNotCancelANewSessionBinding(t *testing.T) {
 				}
 			}
 			before, _ := tasks.Get(old.TaskID)
-			err = NewForceStopControl(c).ForceStopAttempt(t.Context(), old.ID, "owner")
+			err = NewForceStopControl(c).ForceStopAttempt(t.Context(), old.ID, "owner", 0)
 			if !exited && err == nil {
 				t.Fatal("old force target accepted a replaced native binding")
 			}
@@ -227,7 +230,7 @@ func TestForceStopTreeWriteFailureIsAtomic(t *testing.T) {
 			if reject {
 				forceStopTrigger(t, c, `CREATE TRIGGER refuse_child_force BEFORE UPDATE ON operations WHEN NEW.id='force-child' AND json_extract(NEW.data,'$.force_stop') IS NOT NULL BEGIN SELECT RAISE(ABORT,'child force refused'); END`)
 			}
-			err = NewForceStopControl(c).ForceStopAttempt(t.Context(), root.ID, "owner")
+			err = NewForceStopControl(c).ForceStopAttempt(t.Context(), root.ID, "owner", 0)
 			if reject != (err != nil) {
 				t.Fatalf("force=%v rejected=%v", err, reject)
 			}
