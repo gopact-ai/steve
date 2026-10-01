@@ -41,6 +41,9 @@ func usageKnown(usage RecoveryUsage) bool {
 // settleAccounting projects an observed execution total, charging only the
 // delta beyond an already recorded total. It never changes task state.
 func settleAccounting(next *draft, tracked *Task, row *Attempt, endedAt time.Time, outcome Outcome, usage RecoveryUsage) error {
+	if !row.AccountingFrozenAt.IsZero() {
+		return nil
+	}
 	usage.Tokens.Total = usage.Tokens.Input + usage.Tokens.Output
 	lineage, err := next.lineage(tracked.ID)
 	if err != nil {
@@ -94,6 +97,9 @@ func (s *Store) SettleAttempt(ctx context.Context, taskID, attemptID, turnID str
 		}
 		if row.TurnID != turnID {
 			return errors.New("execution receipt belongs to another turn")
+		}
+		if !row.AccountingFrozenAt.IsZero() {
+			return nil
 		}
 		if endedAt.IsZero() {
 			endedAt = s.now()

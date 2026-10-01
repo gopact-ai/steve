@@ -24,6 +24,9 @@ func (s *Service) RequestForceStopTreeTx(tx *ledger.Tx, target, taskID, actor st
 	if err != nil {
 		return err
 	}
+	if original.Abandoned != nil {
+		return ErrForceStopChanged
+	}
 	currentRevision := uint64(0)
 	if original.ForceStop != nil {
 		currentRevision = original.ForceStop.Revision
@@ -75,7 +78,7 @@ func (s *Service) RequestForceStopTreeTx(tx *ledger.Tx, target, taskID, actor st
 		return err
 	}
 	for _, r := range records {
-		if r.ID != target && (!TaskStopOwed(r) || TaskStopConfirmed(r)) {
+		if r.Abandoned != nil || r.ID != target && (!TaskStopOwed(r) || TaskStopConfirmed(r)) {
 			continue
 		}
 		stopped, err := processExitRecordedTx(tx, r)

@@ -106,7 +106,7 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 		if next.EndedAt.IsZero() {
 			next.EndedAt = s.now().UTC()
 		}
-		if spend := stoppedUsage(st); spend != nil {
+		if spend := stoppedUsage(st); spend != nil && next.Abandoned == nil {
 			next.Usage = spend
 		}
 		return setRecordDataTx(tx, op, next)

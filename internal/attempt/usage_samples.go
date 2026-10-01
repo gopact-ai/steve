@@ -255,7 +255,13 @@ func scanUsage(tx *ledger.ReadTx, revisions map[string]string, query string, arg
 		scope := scopes[row.sample.TaskID]
 		scope.revision = revisions[row.sample.TaskID]
 		scope.attempts++
-		if State(state).Terminal() {
+		var status struct {
+			Abandoned *Abandoned `json:"abandoned,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(raw), &status); err != nil {
+			return nil, err
+		}
+		if State(state).Terminal() || status.Abandoned != nil {
 			scope.rows = append(scope.rows, row)
 		}
 		scopes[row.sample.TaskID] = scope
