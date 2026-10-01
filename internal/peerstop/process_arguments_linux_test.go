@@ -99,6 +99,7 @@ func TestPeerArgumentsRetainSupportedFlagSpellings(t *testing.T) {
 		{"--config", "config.json", "--cluster-config", "config.json.cluster.json"},
 		{"-config=config.json", "-cluster-config=config.json.cluster.json"},
 		{"--cluster-config=config.json.cluster.json", "-config", "config.json", "--"},
+		{"--config=config.json", "--cluster-config="},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			root, sidecar := installationFixture(t)

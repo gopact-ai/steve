@@ -15,6 +15,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestPeerNamespaceEvidenceMustBeReadable(t *testing.T) {
+	if err := checkPeerEnvironment(os.Getpid()); err != nil {
+		t.Fatalf("same process view rejected: %v", err)
+	}
+	if err := checkPeerEnvironment(-1); !errors.Is(err, ErrUnproven) {
+		t.Fatalf("missing process view was accepted: %v", err)
+	}
+}
+
 func requirePrivateNamespace(t *testing.T) string {
 	t.Helper()
 	program, err := exec.LookPath("unshare")
