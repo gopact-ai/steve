@@ -125,6 +125,60 @@ func TestSnapshotDoesNotRecreateAMissingRepository(t *testing.T) {
 	}
 }
 
+func TestRepositoryPublicationPreservesAnArrivingDestination(t *testing.T) {
+	for _, kind := range []string{"file", "partial-directory", "invalid-marker"} {
+		t.Run(kind, func(t *testing.T) {
+			parent := t.TempDir()
+			staging := filepath.Join(parent, "owned.git")
+			if _, err := Open(t.Context(), staging); err != nil {
+				t.Fatal(err)
+			}
+			destination := filepath.Join(parent, "p.git")
+			evidence := destination
+			if kind != "file" {
+				if err := os.Mkdir(destination, 0700); err != nil {
+					t.Fatal(err)
+				}
+				evidence = filepath.Join(destination, "retained")
+				if kind == "invalid-marker" {
+					write(t, destination, initializedMarker, "1\n")
+				}
+			}
+			if err := os.WriteFile(evidence, []byte("retain this"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, moved, err := publishRepository(t.Context(), staging, destination); err == nil || moved {
+				t.Fatalf("published over an unknown destination: moved=%v err=%v", moved, err)
+			}
+			if contents, err := os.ReadFile(evidence); err != nil || string(contents) != "retain this" {
+				t.Fatalf("changed an arriving destination: %q, %v", contents, err)
+			}
+			if _, err := os.Stat(filepath.Join(staging, initializedMarker)); err != nil {
+				t.Fatalf("lost the unpublished staging repository: %v", err)
+			}
+		})
+	}
+}
+
+func TestRepositoryPublicationHonorsCancellationAfterInitialization(t *testing.T) {
+	parent := t.TempDir()
+	staging, destination := filepath.Join(parent, "owned.git"), filepath.Join(parent, "p.git")
+	if _, err := Open(t.Context(), staging); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, moved, err := publishRepository(ctx, staging, destination); err == nil || moved {
+		t.Fatalf("published after cancellation: moved=%v err=%v", moved, err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("published destination exists after cancellation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, initializedMarker)); err != nil {
+		t.Fatalf("unpublished initialization was removed: %v", err)
+	}
+}
+
 func TestCancelledOpenDoesNotPublishARepository(t *testing.T) {
 	parent := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
