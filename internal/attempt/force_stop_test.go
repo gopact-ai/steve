@@ -66,7 +66,7 @@ func TestForceStopUnansweredPersistsTwoTriesAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.ForceStop.Level != "exhausted" || r.ForceStop.Reason != "restart_required" {
+	if r.ForceStop.Level != "restart" || r.ForceStop.Reason != "restart_required" {
 		t.Fatalf("unanswered stop not exhausted: %+v", r.ForceStop)
 	}
 }
@@ -108,7 +108,11 @@ func TestForceStopUnprovableAndOldNodeExhaustWithoutAbort(t *testing.T) {
 				t.Fatal(err)
 			}
 			r, err = s.RecordForceStopResult(t.Context(), r.ID, 1, true, code)
-			if err != nil || r.ForceStop.Level != "exhausted" {
+			want := "exhausted"
+			if code == "unavailable" {
+				want = "restart"
+			}
+			if err != nil || r.ForceStop.Level != want {
 				t.Fatalf("classification=%+v %v", r.ForceStop, err)
 			}
 			if code == "invalid" && r.ForceStop.Reason != "upgrade_required" {

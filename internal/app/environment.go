@@ -4,6 +4,7 @@ import (
 	"context"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
+	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/contentreplica"
@@ -15,6 +16,7 @@ import (
 )
 
 type Environment struct {
+	MemberRestarts        cluster.MemberRestarts
 	PluginAuthority       nodewire.SessionAuthority
 	PluginAuthorizer      func(context.Context, string, nodewire.PluginRequest) error
 	Ledger                *ledger.Ledger

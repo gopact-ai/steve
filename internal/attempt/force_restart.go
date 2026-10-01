@@ -45,14 +45,14 @@ func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uin
 		if r.ForceStop == nil || r.ForceStop.Revision != revision {
 			return ErrForceStopChanged
 		}
-		if r.ForceStop.Level == "restart" {
+		if r.ForceStop.Level == "restart" && r.ForceStop.RestartID != "" {
 			op, _, err = forceRestartTx(tx, r.Node)
 			if err == nil && op.ID != r.ForceStop.RestartID {
 				return ErrForceRestartChanged
 			}
 			return err
 		}
-		if r.ForceStop.Level != "exhausted" || r.ForceStop.Reason != "restart_required" || clusterID == "" || holder == "" {
+		if r.ForceStop.Level != "restart" || r.ForceStop.Reason != "restart_required" || clusterID == "" || holder == "" {
 			return ErrForceStopChanged
 		}
 		if _, err := stoppedTaskTx(tx, r); err != nil {

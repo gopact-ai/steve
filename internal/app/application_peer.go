@@ -95,6 +95,7 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 		close(started)
 		return nil
 	}}
+	environment.MemberRestarts = p.MemberRestarts(activation)
 	environment.HTTPConfig = &httpapi.ServerConfig{Addr: "127.0.0.1:0", Token: token}
 	environment.ConfigureNodes = func(nodes map[string]node.Config) { p.ConfigureNodes(nodes, activation) }
 	environment.WriteConfig = stateConfig.Save

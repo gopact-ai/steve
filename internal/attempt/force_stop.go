@@ -110,8 +110,12 @@ func (s *Service) RecordForceStopResult(ctx context.Context, id string, revision
 		}
 		if next.Reason != "" {
 			next.Level = "exhausted"
-			next.LevelSince = now
 			next.ExhaustedAt = now
+			if next.Reason == "restart_required" {
+				next.Level = "restart"
+				next.ExhaustedAt = time.Time{}
+			}
+			next.LevelSince = now
 		}
 		if next == before {
 			return errForceStopUnchanged

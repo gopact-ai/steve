@@ -44,6 +44,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	if environment != nil {
 		stops := newApplicationStops(attempts, tasks, manager, work.CatalogText())
 		stops.executions = work.Executions()
+		stops.restarts = environment.MemberRestarts
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile requested task stops", stops.Reconcile) })
 		// Sessions a conversation let go of while their node could not be
 		// reached are closed once it can be.

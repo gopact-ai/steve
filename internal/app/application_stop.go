@@ -89,7 +89,7 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	failures := make(chan error, len(selected))
 	for _, r := range selected {
 		go func() {
-			if r.ForceStop != nil && r.ForceStop.Level == "kill" {
+			if r.ForceStop != nil && r.ForceStop.Level != "confirmed" {
 				failures <- s.forceStop(ctx, r)
 			} else {
 				failures <- s.stop(ctx, r)
