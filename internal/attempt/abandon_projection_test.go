@@ -109,8 +109,29 @@ func TestAbandonmentProjectionRemainsVisibleAfterPhysicalConfirmation(t *testing
 		t.Fatalf("writer admission bypassed pending session retirement: %v", err)
 	}
 
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error {
+		_, err := tx.Exec(`CREATE TRIGGER refuse_projection BEFORE UPDATE ON operations WHEN NEW.id='att-live' AND json_extract(NEW.data,'$.abandoned.projected_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'projection refused'); END`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ProjectAbandonedCapacity(t.Context(), r.ID, 1); err == nil {
+		t.Fatal("rejected projection returned success")
+	}
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return checkAdmissionTx(tx, spec) }); !errors.Is(err, ErrStopConfirmationRequired) {
+		t.Fatal("rejected projection removed admission barrier")
+	}
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec(`DROP TRIGGER refuse_projection`); return err }); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.ProjectAbandonedCapacity(t.Context(), r.ID, 1); err != nil {
 		t.Fatal(err)
+	}
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return checkAdmissionTx(tx, spec) }); err != nil {
+		t.Fatalf("completed retirement remained blocked: %v", err)
+	}
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return CheckWriterTx(tx, r.Workspace.Node, r.Workspace.Path) }); err != nil {
+		t.Fatalf("confirmed retired writer remained blocked: %v", err)
 	}
 	live, err = s.Live(t.Context())
 	if err != nil || len(live) != 0 {
