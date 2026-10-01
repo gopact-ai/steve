@@ -7,7 +7,9 @@ import "strings"
 // alone, however unreachable it is: only a machine whose peer is down gets
 // one started.
 type RestartSpec struct {
-	IfStopped bool
+	ExpectedCluster string
+	ExpectedNode    string
+	IfStopped       bool
 }
 
 // BuildPeerRestart is the script that restarts a peer on its installed
