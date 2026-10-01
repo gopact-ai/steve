@@ -23,6 +23,9 @@ func stopInstallationWithin(parent context.Context, sidecar, cluster, node strin
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if err := checkProcessNamespace(); err != nil {
+		return false, err
+	}
 	instance, err := loadInstallation(sidecar, cluster, node)
 	if err != nil {
 		return false, err
@@ -35,7 +38,7 @@ func stopInstallationWithin(parent context.Context, sidecar, cluster, node strin
 	err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if err == nil {
 		defer unix.Flock(int(file.Fd()), unix.LOCK_UN)
-		return false, instance.confirmEmpty(file)
+		return false, instance.confirmEmpty(ctx, file)
 	}
 	if !errors.Is(err, unix.EWOULDBLOCK) {
 		return false, fmt.Errorf("%w: installation lock unavailable", ErrUnproven)
@@ -44,27 +47,15 @@ func stopInstallationWithin(parent context.Context, sidecar, cluster, node strin
 	if err != nil {
 		return false, err
 	}
-	before, found, err := instance.process(pid)
-	if err != nil || !found {
-		return false, fmt.Errorf("%w: lock owner is not the installed peer", ErrUnproven)
-	}
-	fd, err := unix.PidfdOpen(pid, 0)
-	if errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EINVAL) {
-		return false, ErrUnsupported
-	}
+	fd, err := pinPeer(file, pid, processOps{identity: instance.process, owner: lockOwner, open: func(pid int) (int, error) { return unix.PidfdOpen(pid, 0) }, close: unix.Close})
 	if err != nil {
-		return false, fmt.Errorf("%w: stable process handle unavailable: %v", ErrUnproven, err)
+		return false, err
 	}
 	defer unix.Close(fd)
-	after, found, err := instance.process(pid)
-	if err != nil || !found || after != before {
-		return false, fmt.Errorf("%w: original peer identity changed", ErrUnproven)
-	}
-	held, err := lockOwner(file)
-	if err != nil || held != pid {
-		return false, fmt.Errorf("%w: original peer no longer owns its installation", ErrUnproven)
-	}
 	if err := instance.verify(); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	if err := signalHandle(fd, unix.SIGTERM); err != nil {
@@ -88,17 +79,20 @@ func stopInstallationWithin(parent context.Context, sidecar, cluster, node strin
 		return false, fmt.Errorf("%w: installation lock was acquired by another process", ErrUnproven)
 	}
 	defer unix.Flock(int(file.Fd()), unix.LOCK_UN)
-	return true, instance.confirmEmpty(file)
+	return true, instance.confirmEmpty(ctx, file)
 }
 
-func (i installation) confirmEmpty(file *os.File) error {
+func (i installation) confirmEmpty(ctx context.Context, file *os.File) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := sameLock(file); err != nil {
 		return err
 	}
 	if err := i.verify(); err != nil {
 		return err
 	}
-	return i.noPeer()
+	return i.noPeer(ctx)
 }
 func signalHandle(fd int, signal unix.Signal) error {
 	err := unix.PidfdSendSignal(fd, signal, nil, 0)
@@ -130,4 +124,36 @@ func waitHandle(ctx context.Context, fd int) error {
 			return ErrUnproven
 		}
 	}
+}
+
+type processOps struct {
+	identity func(int) (processIdentity, bool, error)
+	owner    func(*os.File) (int, error)
+	open     func(int) (int, error)
+	close    func(int) error
+}
+
+func pinPeer(file *os.File, pid int, k processOps) (int, error) {
+	before, found, err := k.identity(pid)
+	if err != nil || !found {
+		return -1, fmt.Errorf("%w: lock owner is not the installed peer", ErrUnproven)
+	}
+	fd, err := k.open(pid)
+	if errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EINVAL) {
+		return -1, ErrUnsupported
+	}
+	if err != nil {
+		return -1, fmt.Errorf("%w: stable process handle unavailable: %v", ErrUnproven, err)
+	}
+	after, found, err := k.identity(pid)
+	if err != nil || !found || after != before {
+		k.close(fd)
+		return -1, fmt.Errorf("%w: original peer identity changed", ErrUnproven)
+	}
+	owner, err := k.owner(file)
+	if err != nil || owner != pid {
+		k.close(fd)
+		return -1, fmt.Errorf("%w: original peer no longer owns its installation", ErrUnproven)
+	}
+	return fd, nil
 }

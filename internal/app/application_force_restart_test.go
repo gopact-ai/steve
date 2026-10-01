@@ -255,3 +255,25 @@ func TestForceRestartLaterAttemptJoinsTheSameNodeOperation(t *testing.T) {
 		t.Fatalf("one machine got separate operations: starts=%d one=%+v two=%+v", len(host.starts), one.ForceStop, two.ForceStop)
 	}
 }
+
+func TestForceRestartSafeTargetFailuresAreNotBlindlyRetried(t *testing.T) {
+	for _, reason := range []string{"restart_upgrade_required", "restart_stop_unsupported", "restart_identity_unproven"} {
+		t.Run(reason, func(t *testing.T) {
+			s, records, _, host := forceRestartFixture(t, 1)
+			if err := s.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			host.status.State, host.status.Reason = "failed", reason
+			if err := s.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := s.attempts.Get(t.Context(), records[0].ID)
+			if got.ForceStop.Level != "exhausted" || got.ForceStop.Reason != reason || len(host.starts) != 1 {
+				t.Fatalf("unsafe target refusal=%+v starts=%d", got.ForceStop, len(host.starts))
+			}
+		})
+	}
+}

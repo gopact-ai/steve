@@ -65,6 +65,12 @@ func (s *applicationStops) pollForceRestart(ctx context.Context, r attempt.Recor
 		if op.Outcome == "connected" {
 			return s.moveForceAwait(ctx, r)
 		}
+		switch op.Outcome {
+		case "failed", "restart_failed", "restart_upgrade_required", "restart_stop_unsupported", "restart_identity_unproven":
+			return s.exhaustForceStop(ctx, r, restartOperationReason(op.Outcome))
+		case "timeout":
+			return s.exhaustForceStop(ctx, r, "restart_timeout")
+		}
 		return s.awaitForceStop(ctx, r, true)
 	}
 	if op.PlanID == "" {
@@ -93,10 +99,10 @@ func (s *applicationStops) pollForceRestart(ctx context.Context, r attempt.Recor
 		}
 		return s.moveForceAwait(ctx, r)
 	case "failed":
-		if err := s.attempts.FinishForceRestart(ctx, op, "failed"); err != nil {
+		if err := s.attempts.FinishForceRestart(ctx, op, restartOperationReason(status.Reason)); err != nil {
 			return err
 		}
-		return s.exhaustForceStop(ctx, r, "restart_failed")
+		return s.exhaustForceStop(ctx, r, restartOperationReason(status.Reason))
 	default:
 		return s.awaitForceStop(ctx, r, true)
 	}
@@ -187,4 +193,12 @@ func restartFailureReason(err error, otherwise string) string {
 		return refused.Reason
 	}
 	return otherwise
+}
+
+func restartOperationReason(reason string) string {
+	switch reason {
+	case "restart_upgrade_required", "restart_stop_unsupported", "restart_identity_unproven":
+		return reason
+	}
+	return "restart_failed"
 }

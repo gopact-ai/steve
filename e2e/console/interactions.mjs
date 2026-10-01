@@ -3148,6 +3148,11 @@ checks["force-stop-restart-progress"] = async (f) => {
     await f.page.reload();
     await banner.getByText(/不会自动重复重启/).waitFor({ timeout: 3000 });
     assert.equal(await banner.getByRole("button", { name: "强制停止", exact: true }).isEnabled(), true);
+    for (const [reason, text] of [["restart_upgrade_required", "原节点程序不支持安全重启，请先升级。"], ["restart_stop_unsupported", "原节点不支持稳定进程句柄，未发停止信号。请手动处理。"], ["restart_identity_unproven", "不能证明目标安装或原节点进程身份，未启动替代节点。"]]) {
+        current.force_stop = { ...current.force_stop, reason };
+        await f.page.reload();
+        await banner.getByText(text, { exact: true }).waitFor({ timeout: 3000 });
+    }
 };
 
 checks["force-stop-execution-row"] = async (f) => {

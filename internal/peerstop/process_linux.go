@@ -4,6 +4,7 @@ package peerstop
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -157,16 +158,18 @@ func flagValue(args []string, key, otherwise string) string {
 	return otherwise
 }
 
-func (i installation) noPeer() error {
-	self, err := os.Readlink("/proc/self")
-	if err != nil || self != strconv.Itoa(os.Getpid()) {
-		return fmt.Errorf("%w: process namespace differs", ErrUnproven)
+func (i installation) noPeer(ctx context.Context) error {
+	if err := checkProcessNamespace(); err != nil {
+		return err
 	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid == os.Getpid() {
 			continue
@@ -183,4 +186,25 @@ func (i installation) noPeer() error {
 		}
 	}
 	return nil
+}
+
+func checkProcessNamespace() error {
+	self, err := os.Readlink("/proc/self")
+	if err != nil || self != strconv.Itoa(os.Getpid()) {
+		return fmt.Errorf("%w: process namespace differs", ErrUnproven)
+	}
+	raw, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return fmt.Errorf("%w: process namespace cannot be checked", ErrUnproven)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if value, found := strings.CutPrefix(line, "NSpid:"); found {
+			fields := strings.Fields(value)
+			if len(fields) == 1 && fields[0] == self {
+				return nil
+			}
+			return fmt.Errorf("%w: process namespace differs", ErrUnproven)
+		}
+	}
+	return fmt.Errorf("%w: process namespace is unknown", ErrUnproven)
 }

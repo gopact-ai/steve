@@ -23,6 +23,7 @@ export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onFor
         restart_no_holder: t("console.forceRestartNoHolder"), restart_unavailable: t("console.forceRestartNoHolder"),
         restart_timeout: t("console.forceRestartTimeout"), restart_failed: t("console.forceRestartFailed"),
         restart_status_lost: t("console.forceRestartLost"), await_timeout: t("console.forceAwaitTimeout"),
+        restart_upgrade_required: t("console.forceSafeUpgrade"), restart_stop_unsupported: t("console.forceSafeUnsupported"), restart_identity_unproven: t("console.forceSafeUnproven"),
     };
     async function force() {
         if (sending || !confirming) return;

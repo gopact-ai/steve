@@ -88,7 +88,7 @@ func (i installation) verify() error {
 		return fmt.Errorf("%w: installation identity is unreadable", ErrUnproven)
 	}
 	data, err := filepath.EvalSymlinks(value.DataDir)
-	if err != nil || value.Version != 1 || value.ClusterID != i.cluster || value.NodeID != i.node || data != filepath.Join(i.root, "cluster") {
+	if err != nil || !filepath.IsAbs(value.DataDir) || value.Version != 1 || value.ClusterID != i.cluster || value.NodeID != i.node || data != filepath.Join(i.root, "cluster") {
 		return fmt.Errorf("%w: installation cluster, node or state directory differs", ErrUnproven)
 	}
 	return nil

@@ -234,3 +234,98 @@ func TestStopRejectsAForeignExecutableHoldingTheInstallationLock(t *testing.T) {
 		t.Fatal("foreign lock owner was signalled")
 	}
 }
+
+func TestPinPeerRefusesReplacedIdentityOrLockBeforeAnySignal(t *testing.T) {
+	for _, change := range []string{"exited", "reused", "lock-owner", "unsupported"} {
+		t.Run(change, func(t *testing.T) {
+			reads, closed := 0, 0
+			ops := processOps{
+				identity: func(pid int) (processIdentity, bool, error) {
+					reads++
+					if reads == 2 && change == "exited" {
+						return processIdentity{}, false, nil
+					}
+					start := uint64(1)
+					if reads == 2 && change == "reused" {
+						start = 2
+					}
+					return processIdentity{pid, start}, true, nil
+				},
+				owner: func(*os.File) (int, error) {
+					if change == "lock-owner" {
+						return 202, nil
+					}
+					return 101, nil
+				},
+				open: func(int) (int, error) {
+					if change == "unsupported" {
+						return -1, unix.ENOSYS
+					}
+					return 71, nil
+				},
+				close: func(fd int) error {
+					if fd != 71 {
+						t.Error("closed another handle")
+					}
+					closed++
+					return nil
+				},
+			}
+			fd, err := pinPeer(nil, 101, ops)
+			if fd != -1 || err == nil {
+				t.Fatalf("replacement got a signalable handle: %d %v", fd, err)
+			}
+			if change != "unsupported" && closed != 1 {
+				t.Fatal("unproved handle leaked")
+			}
+		})
+	}
+}
+
+func TestAReapedPidfdCannotSignalANewInstallationInstance(t *testing.T) {
+	root, sidecar := installationFixture(t)
+	first, done := startFixturePeer(t, root, false)
+	fd, err := unix.PidfdOpen(first.Process.Pid, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(fd)
+	if err := signalHandle(fd, unix.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("old fixture did not exit")
+	}
+	replacement, _ := startFixturePeer(t, root, false)
+	if err := signalHandle(fd, unix.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("old stable handle signalled the replacement")
+	}
+	// The new request may stop the new, freshly identified instance.
+	if _, err := Stop(t.Context(), sidecar, "cluster", "node"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReplacedGatewayLockIsNotAccepted(t *testing.T) {
+	root, _ := installationFixture(t)
+	path := filepath.Join(root, "cluster/peer-process/gateway.lock")
+	file, err := privateFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := os.Rename(path, path+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("9999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sameLock(file); !errors.Is(err, ErrUnproven) {
+		t.Fatalf("changed inode accepted: %v", err)
+	}
+}

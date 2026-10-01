@@ -182,3 +182,27 @@ func TestMemberRestartRequiresTheExpectedInstallationInItsScript(t *testing.T) {
 		t.Fatal("member restart did not bind the exact installation before stopping")
 	}
 }
+
+func TestMemberRestartSafeHelperFailuresRemainVisible(t *testing.T) {
+	for _, tc := range []struct {
+		exit   int
+		reason string
+	}{{32, "restart_identity_unproven"}, {33, "restart_upgrade_required"}, {34, "restart_stop_unsupported"}} {
+		t.Run(tc.reason, func(t *testing.T) {
+			s, runner, _ := restartFixture(t)
+			runner.answerWith(peerExits(tc.exit))
+			op, err := s.BeginMemberRestart(t.Context(), "node-1", "guarded", "cluster", func(context.Context, string, string) (bool, error) { return true, nil }, func(context.Context, string, string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state MemberRestart
+			waitUntil(t, "refusal did not settle", func() bool {
+				state, _ = s.MemberRestartStatus(t.Context(), "node-1", "guarded", op.PlanID, "restart")
+				return state.State == "failed"
+			})
+			if state.Reason != tc.reason {
+				t.Fatalf("lost safety reason: %+v", state)
+			}
+		})
+	}
+}

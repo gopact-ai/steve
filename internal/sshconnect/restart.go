@@ -121,11 +121,11 @@ func (s *Service) Restart(ctx context.Context, nodeID string) (InstallResult, er
 }
 
 func (s *Service) runMemberRestart(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string) (InstallResult, error) {
-	return s.runMemberRestartChecked(ctx, backend, stored, nodeID, nil)
+	return s.runMemberRestartChecked(ctx, backend, stored, nodeID, nodebootstrap.RestartSpec{}, nil)
 }
 
-func (s *Service) runMemberRestartChecked(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string, verify func(context.Context) error) (InstallResult, error) {
-	result, outcome, err := s.restartChecked(ctx, backend, stored.plan.ID, nodeID, nodebootstrap.RestartSpec{}, verify)
+func (s *Service) runMemberRestartChecked(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string, spec nodebootstrap.RestartSpec, verify func(context.Context) error) (InstallResult, error) {
+	result, outcome, err := s.restartChecked(ctx, backend, stored.plan.ID, nodeID, spec, verify)
 	if err == nil {
 		s.mu.Lock()
 		s.resumeAutoStart(nodeID)
@@ -349,6 +349,12 @@ func (s *Service) startPeer(ctx context.Context, result *InstallResult, connecti
 			code = exit.ExitCode()
 		}
 		switch code {
+		case 32:
+			return RestartFailed, Fail(text, "restart", "restart_identity_unproven", text.T(i18n.SSHRestartIdentityUnproven), text.T(i18n.SSHRestartIdentityUnprovenFix))
+		case 33:
+			return RestartFailed, Fail(text, "restart", "restart_upgrade_required", text.T(i18n.SSHRestartHelperMissing), text.T(i18n.SSHRestartHelperMissingFix))
+		case 34:
+			return RestartFailed, Fail(text, "restart", "restart_stop_unsupported", text.T(i18n.SSHRestartHandleUnsupported), text.T(i18n.SSHRestartHandleUnsupportedFix))
 		case 21:
 			return RestartFailed, Fail(text, "restart", "restart_busy", text.T(i18n.SSHRestartBusy), text.T(i18n.SSHRestartBusyFix))
 		case 28:

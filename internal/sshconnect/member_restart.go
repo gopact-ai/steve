@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/nodebootstrap"
 )
 
 // MemberRestart names a specific local restart or upgrade, not the latest
@@ -16,6 +17,7 @@ type MemberRestart struct {
 	Kind      string `json:"kind"`
 	State     string `json:"state"`
 	Phase     string `json:"phase,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type RestartClaim func(context.Context, string, string) (bool, error)
@@ -30,7 +32,7 @@ func (s *Service) BeginMemberRestart(ctx context.Context, node, request, cluster
 	if !ok {
 		return MemberRestart{}, restartUnsupported(text)
 	}
-	if request == "" || claim == nil || verify == nil || !backend.Knows(ctx, node) {
+	if request == "" || clusterID == "" || claim == nil || verify == nil || !backend.Knows(ctx, node) {
 		return MemberRestart{}, errors.New("invalid member restart")
 	}
 	if _, err := backend.RestartTarget(ctx, node); err != nil {
@@ -97,7 +99,7 @@ func (s *Service) BeginMemberRestart(ctx context.Context, node, request, cluster
 		runCtx := i18n.WithLocale(s.autoCtx, text.Locale())
 		go func() {
 			defer s.autoRuns.Done()
-			_, _ = s.runMemberRestartChecked(runCtx, backend, stored, node, func(checkCtx context.Context) error {
+			_, _ = s.runMemberRestartChecked(runCtx, backend, stored, node, nodebootstrap.RestartSpec{ExpectedCluster: clusterID, ExpectedNode: node}, func(checkCtx context.Context) error {
 				s.mu.Lock()
 				same := !s.closed && s.plans[op.PlanID] == stored && s.restarts[node] == op.PlanID && stored.running
 				s.mu.Unlock()
@@ -139,6 +141,13 @@ func (s *Service) MemberRestartStatus(ctx context.Context, node, request, plan, 
 		op.State = "connected"
 	default:
 		op.State = "failed"
+		var step *StepError
+		if errors.As(stored.err, &step) {
+			switch step.Code {
+			case "restart_upgrade_required", "restart_stop_unsupported", "restart_identity_unproven":
+				op.Reason = step.Code
+			}
+		}
 	}
 	return op, nil
 }
