@@ -96,6 +96,19 @@ func TestAbandonmentProjectionRemainsVisibleAfterPhysicalConfirmation(t *testing
 	if len(live) != 1 || live[0].ID != r.ID || live[0].Abandoned == nil {
 		t.Fatal("physical exit hid unfinished abandonment projection")
 	}
+	spec := r.Spec
+	spec.ID = "replacement"
+	spec.TaskID = "another-task"
+	spec.Slots = 1
+	spec.Workspace.ID = "other-directory"
+	spec.Workspace.Path = r.Workspace.Path + "-other"
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return checkAdmissionTx(tx, spec) }); !errors.Is(err, ErrStopConfirmationRequired) {
+		t.Fatalf("native exit bypassed pending session retirement: %v", err)
+	}
+	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return CheckWriterTx(tx, r.Workspace.Node, r.Workspace.Path) }); !errors.Is(err, ErrStopConfirmationRequired) {
+		t.Fatalf("writer admission bypassed pending session retirement: %v", err)
+	}
+
 	if _, err := s.ProjectAbandonedCapacity(t.Context(), r.ID, 1); err != nil {
 		t.Fatal(err)
 	}
