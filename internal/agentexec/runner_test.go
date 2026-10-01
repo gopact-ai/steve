@@ -201,9 +201,20 @@ func TestAuxiliarySlotAdmissionWaitsAndDoesNotSpendBeforeEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The short deadline measures admission, not the first Git initialization.
+	workspace, err := w.runner.workspaces.Materialize(t.Context(), project.Request{Project: "p", Isolated: true, Owner: "slot-wait"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := &readyWorkspaces{Workspaces: w.runner.workspaces, workspace: workspace}
+	w.runner.workspaces = prepared
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	_, err = w.runner.Prompt(ctx, w.spec(attempt.KindVerify), "work", nil)
+	if !prepared.used {
+		t.Fatal("deadline expired before the prepared workspace reached admission")
+	}
+	w.runner.workspaces = prepared.Workspaces
 	if !errors.Is(err, context.DeadlineExceeded) || w.sessions.opened.Load() != 0 {
 		t.Fatalf("slot bypassed: opened=%d err=%v", w.sessions.opened.Load(), err)
 	}
@@ -217,6 +228,20 @@ func TestAuxiliarySlotAdmissionWaitsAndDoesNotSpendBeforeEntry(t *testing.T) {
 	if _, err := w.runner.Prompt(t.Context(), w.spec(attempt.KindVerify), "work", nil); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type readyWorkspaces struct {
+	Workspaces
+	workspace project.Workspace
+	used      bool
+}
+
+func (w *readyWorkspaces) Materialize(ctx context.Context, _ project.Request) (project.Workspace, error) {
+	if err := ctx.Err(); err != nil {
+		return project.Workspace{}, err
+	}
+	w.used = true
+	return w.workspace, nil
 }
 
 type interruptedWorkspaces struct {
