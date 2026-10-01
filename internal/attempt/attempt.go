@@ -487,7 +487,12 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 			if err := recordNodeReceiptTx(tx, current, next); err != nil {
 				return err
 			}
-			return setRecordDataTx(tx, op, next)
+			if err := setRecordDataTx(tx, op, next); err != nil {
+				return err
+			}
+			// Return the owner's frozen accounting, not the proposed late usage.
+			next = Record{}
+			return json.Unmarshal(op.Data, &next)
 		})
 	if err != nil {
 		if errors.Is(err, ledger.ErrStale) {
