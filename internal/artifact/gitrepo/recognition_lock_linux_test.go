@@ -15,7 +15,7 @@ import (
 // Pause at a configuration read, not by delaying Git initialization. The
 // old per-key reader has already read user.name by the gc.auto boundary;
 // the snapshot reader has acquired its writer exclusion before reading.
-func holdRecognitionRead(t *testing.T, ctx context.Context) (string, func()) {
+func holdRecognitionRead(t *testing.T, ctx context.Context) (string, string, func()) {
 	t.Helper()
 	realGit, err := exec.LookPath("git")
 	if err != nil {
@@ -41,7 +41,7 @@ func holdRecognitionRead(t *testing.T, ctx context.Context) (string, func()) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", control+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return realGit, func() {
+	return realGit, ready, func() {
 		waitInitializationFile(t, ctx, ready)
 		if _, err := release.WriteString("continue\n"); err != nil {
 			t.Fatal(err)
@@ -58,11 +58,6 @@ func beginRecognition(t *testing.T, ctx context.Context, dir string) <-chan erro
 		close(done)
 	}()
 	return done
-}
-
-func recognitionReadyPath(t *testing.T) string {
-	t.Helper()
-	return filepath.Join(strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0], "ready")
 }
 
 func unmarkedRepository(t *testing.T) string {
@@ -93,10 +88,10 @@ func TestRecognitionExcludesConfigChangesUntilItMarksTheRepository(t *testing.T)
 			before := read(t, dir, "config")
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			realGit, release := holdRecognitionRead(t, ctx)
+			realGit, ready, release := holdRecognitionRead(t, ctx)
 			done := beginRecognition(t, ctx, dir)
 			defer func() { cancel(); <-done }()
-			waitInitializationFile(t, ctx, recognitionReadyPath(t))
+			waitInitializationFile(t, ctx, ready)
 			// These are actual Git writes and use its normal config.lock.
 			for _, setting := range [][2]string{{"user.name", "other-owner"}, {"gc.auto", "0"}} {
 				cmd := exec.CommandContext(ctx, realGit, "--git-dir="+dir, "config", setting[0], setting[1])
@@ -130,10 +125,10 @@ func TestRecognitionReleasesOnlyItsLockOnCancellationOrMarkerFailure(t *testing.
 			before := read(t, dir, "config")
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			_, release := holdRecognitionRead(t, ctx)
+			_, ready, release := holdRecognitionRead(t, ctx)
 			done := beginRecognition(t, ctx, dir)
 			defer func() { cancel(); <-done }()
-			waitInitializationFile(t, ctx, recognitionReadyPath(t))
+			waitInitializationFile(t, ctx, ready)
 			lock := filepath.Join(dir, "config.lock")
 			if _, err := os.Stat(lock); err != nil {
 				t.Errorf("recognition has no exclusive configuration lock: %v", err)
@@ -173,5 +168,34 @@ func TestRecognitionReleasesOnlyItsLockOnCancellationOrMarkerFailure(t *testing.
 				}
 			}
 		})
+	}
+}
+
+// Inspection also reads a published winner, where it must not piece together
+// settings from several versions of a configuration file.
+func TestRepositoryInspectionReadsOneConfigurationSnapshot(t *testing.T) {
+	dir := unmarkedRepository(t)
+	if _, err := (&Repo{Dir: dir}).Git(t.Context(), nil, "config", "gc.auto", "1"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	realGit, ready, release := holdRecognitionRead(t, ctx)
+	done := make(chan error, 1)
+	go func() { _, err := inspectRepository(ctx, dir); done <- err; close(done) }()
+	defer func() { cancel(); <-done }()
+	waitInitializationFile(t, ctx, ready)
+	for _, setting := range [][2]string{{"user.name", "other-owner"}, {"gc.auto", "0"}} {
+		out, err := exec.CommandContext(ctx, realGit, "--git-dir="+dir, "config", setting[0], setting[1]).CombinedOutput()
+		if err != nil {
+			t.Fatalf("change configuration: %v: %s", err, out)
+		}
+	}
+	release()
+	if err := <-done; err == nil {
+		t.Fatal("accepted settings from different versions that were never all valid")
+	}
+	if _, err := os.Stat(filepath.Join(dir, initializedMarker)); !os.IsNotExist(err) {
+		t.Fatalf("inspection changed the initialization marker: %v", err)
 	}
 }
