@@ -19,6 +19,10 @@ type ForceRestartSelection struct {
 	JoinKind           string `json:"join_kind,omitempty"`
 }
 
+func (s ForceRestartSelection) valid() bool {
+	return s.MembershipRevision != 0 && (s.JoinPlanID == "") == (s.JoinKind == "") && (s.JoinKind == "" || s.JoinKind == "restart" || s.JoinKind == "upgrade")
+}
+
 type ForceRestart struct {
 	Selection   ForceRestartSelection `json:"selection"`
 	ID          string                `json:"id"`
@@ -60,7 +64,7 @@ func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uin
 			}
 			return err
 		}
-		if r.ForceStop.Level != "restart" || r.ForceStop.Reason != "restart_required" || clusterID == "" || holder == "" || selection.MembershipRevision == 0 || (selection.JoinPlanID == "") != (selection.JoinKind == "") || selection.JoinKind != "" && selection.JoinKind != "restart" && selection.JoinKind != "upgrade" {
+		if r.ForceStop.Level != "restart" || r.ForceStop.Reason != "restart_required" || clusterID == "" || holder == "" || !selection.valid() {
 			return ErrForceStopChanged
 		}
 		if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
@@ -146,7 +150,7 @@ func (s *Service) ClaimForceRestart(ctx context.Context, request ForceRestart, p
 		if err != nil {
 			return err
 		}
-		if !found || !sameRestart(op, request) || plan == "" || kind != "restart" && kind != "upgrade" || authorize == nil || op.Selection.JoinPlanID != "" && (op.Selection.JoinPlanID != plan || op.Selection.JoinKind != kind) {
+		if !found || !op.Selection.valid() || !sameRestart(op, request) || plan == "" || kind != "restart" && kind != "upgrade" || authorize == nil || op.Selection.JoinPlanID != "" && (op.Selection.JoinPlanID != plan || op.Selection.JoinKind != kind) {
 			return ErrForceRestartChanged
 		}
 		if err := authorize(tx, op); err != nil {
@@ -197,7 +201,7 @@ func (s *Service) VerifyForceRestart(ctx context.Context, request ForceRestart, 
 		if err != nil {
 			return err
 		}
-		if !found || !sameRestart(op, request) || op.ClaimedAt.IsZero() || op.PlanID != plan || op.Kind != kind || !op.FinishedAt.IsZero() || s.now().Sub(op.RequestedAt) >= 7*time.Minute || authorize == nil {
+		if !found || !op.Selection.valid() || !sameRestart(op, request) || op.ClaimedAt.IsZero() || op.PlanID != plan || op.Kind != kind || !op.FinishedAt.IsZero() || s.now().Sub(op.RequestedAt) >= 7*time.Minute || authorize == nil {
 			return ErrForceRestartChanged
 		}
 		return authorize(tx, op)
