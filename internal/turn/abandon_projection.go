@@ -39,3 +39,7 @@ func (a *AbandonControl) ProjectAbandoned(ctx context.Context, id string) error 
 func (a *AbandonControl) PendingAbandonments(ctx context.Context) ([]attempt.Record, error) {
 	return a.coordinator.attempts.AbandonProjections(ctx)
 }
+
+func (a *AbandonControl) ReadAbandoned(ctx context.Context, id string) (attempt.Record, error) {
+	return a.coordinator.attempts.Get(ctx, id)
+}
