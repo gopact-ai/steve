@@ -82,6 +82,14 @@ func TestRestartMembershipChangeInvalidatesTheSelection(t *testing.T) {
 	member := control.(memberRestarts)
 	joinNonvoter(t, member.peer, nil)
 	op := attempt.ForceRestart{ID: "old-membership", ClusterID: got.ClusterID, NodeID: target, Holder: got.Holder, By: "test-owner", RequestedAt: time.Now(), Selection: got.Selection}
+	current, _, err := member.authority(t.Context(), target, "test-owner")
+	if err != nil || current.Revision == got.Selection.MembershipRevision {
+		t.Fatalf("fixture did not retain authority with a changed member view: %+v %v", current, err)
+	}
+	var changed MemberRestartError
+	if err := member.verifyRestartSelection(t.Context(), op, "", ""); !errors.As(err, &changed) || changed.Reason != "restart_discovery_changed" {
+		t.Fatalf("old member view did not fail at selection validation: %v", err)
+	}
 	if err := control.Start(t.Context(), op); err == nil {
 		t.Fatal("old membership view authorized dispatch")
 	}
