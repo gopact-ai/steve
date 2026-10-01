@@ -3120,6 +3120,41 @@ checks["abandon-confirmation-and-pending"] = async (f) => {
     await banner.getByText("已放弃（停止未确认）", { exact: true }).waitFor();
 };
 
+checks["abandon-execution-row-retry"] = async (f) => {
+    const current = { id: "abandon-row", task_id: "22", kind: "chat", state: "failed", project: "home", node: "test-node", agent: "worker", started_at: at, unsettled: true, force_stop: { revision: 6, level: "exhausted", reason: "stop_unproven", by: "owner", requested_at: at, level_since: at } };
+    let calls = 0, reads = 0;
+    const response = gate(); f.releases.push(response.release);
+    await f.page.route("**/state", (route) => { reads++; return route.fulfill({ json: f.snapshot = workState({ ...usageState(), tasks: [task("22", B, "home")], attempts: [current] }) }); });
+    await f.page.route("**/console/attempts/abandon-row/abandon", async (route) => {
+        assert.deepEqual(route.request().postDataJSON(), { expected_revision: 6 }); calls++;
+        if (calls === 1) return route.fulfill({ status: 409, body: "Original abandonment was not accepted" });
+        await response.promise;
+        current.abandoned = { at, by: "owner", force_stop_revision: 6, reason: "stop_unproven" };
+        return route.fulfill({ status: 202, json: { accepted: true, pending: true } });
+    });
+    await f.page.goto(`${app.url}/#/dashboard`); await f.page.reload();
+    const row = f.page.getByRole("row").filter({ hasText: "abandon-row" });
+    await row.getByRole("button", { name: "放弃这次执行", exact: true }).click();
+    const dialog = f.page.getByRole("dialog", { name: "确认放弃任务 #22 的执行？", exact: true });
+    await dialog.waitFor();
+    const before = reads;
+    await dialog.getByRole("button", { name: "确认放弃", exact: true }).click();
+    await dialog.getByRole("alert").getByText("Original abandonment was not accepted", { exact: true }).waitFor();
+    const unwanted = f.page.waitForRequest((request) => new URL(request.url()).pathname === "/state", { timeout: 500 }).then(() => true, () => false);
+    await f.page.clock.runFor(350);
+    assert.equal(await unwanted, false, "failed abandonment refreshed as if it had succeeded");
+    assert.equal(reads, before);
+    await dialog.getByRole("button", { name: "确认放弃", exact: true }).click();
+    await eventually(() => calls === 2, "abandonment retry did not reach the original target");
+    assert.equal(await dialog.getByRole("button", { name: "取消", exact: true }).isDisabled(), true);
+    await f.page.keyboard.press("Enter"); assert.equal(calls, 2, "pending abandonment was submitted twice");
+    response.release();
+    await dialog.waitFor({ state: "detached" });
+    await f.page.clock.runFor(350);
+    await eventually(() => reads > before, "accepted abandonment did not refresh its durable state");
+    await row.getByText("放弃已记录，正在处理归档与容量释放", { exact: true }).waitFor();
+};
+
 checks["abandon-requires-current-exhausted-revision"] = async (f) => {
     const current = { id: "old-abandon", task_id: "11", kind: "chat", state: "failed", project: "scratch", node: "test-node", agent: "worker", started_at: at, unsettled: true, force_stop: { revision: 4, level: "kill", by: "owner", requested_at: at, level_since: at } };
     const state = { ...usageState(), tasks: [task("11", A, "scratch")], attempts: [current], projects: [project("scratch"), project("home")] };
