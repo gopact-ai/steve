@@ -28,7 +28,7 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 		return task.RecoveryUsage{}, ErrForceStopChanged
 	}
 	if r.ForceStop.Level != "exhausted" || !r.Unsettled || !TaskStopOwed(r) {
-		return task.RecoveryUsage{}, errors.New("only an exhausted unconfirmed execution can be abandoned")
+		return task.RecoveryUsage{}, ErrForceStopChanged
 	}
 	if row.ExecutionID != r.ID || row.TurnID != r.TurnID || r.Execution == nil || row.ExecutionEpoch != r.Execution.Epoch {
 		return task.RecoveryUsage{}, errors.New("abandonment accounting belongs to another execution")
@@ -55,7 +55,11 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	}
 	usage := frozenAccounting(r, row)
 	if usage.Reported || usage.Tokens != (task.Tokens{}) {
-		r.Usage = &Usage{Model: usage.Model, Input: usage.Tokens.Input, Output: usage.Tokens.Output, CachedRead: usage.Tokens.CachedRead, CachedWrite: usage.Tokens.CachedWrite, Reported: usage.Reported}
+		frozen := Usage{Model: usage.Model, Input: usage.Tokens.Input, Output: usage.Tokens.Output, CachedRead: usage.Tokens.CachedRead, CachedWrite: usage.Tokens.CachedWrite, Reported: usage.Reported}
+		if r.Usage != nil {
+			frozen.Context = r.Usage.Context
+		}
+		r.Usage = &frozen
 	}
 	if source.State != "absent" && source.State != "original" && source.State != "different" {
 		return task.RecoveryUsage{}, errors.New("abandonment requires the original session-slot snapshot")
