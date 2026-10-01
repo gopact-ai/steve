@@ -3,6 +3,7 @@ package sshconnect
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,11 +19,11 @@ func TestMemberRestartClaimsBeforeSSHAndDoesNotReplay(t *testing.T) {
 		}
 		return true, nil
 	}
-	first, err := s.BeginMemberRestart(t.Context(), "node-1", "request", claim, func(context.Context, string, string) error { return nil })
+	first, err := s.BeginMemberRestart(t.Context(), "node-1", "request", "cluster", claim, func(context.Context, string, string) error { return nil })
 	if err != nil || first.PlanID == "" {
 		t.Fatalf("start: %+v %v", first, err)
 	}
-	second, err := s.BeginMemberRestart(t.Context(), "node-1", "request", claim, func(context.Context, string, string) error { return nil })
+	second, err := s.BeginMemberRestart(t.Context(), "node-1", "request", "cluster", claim, func(context.Context, string, string) error { return nil })
 	if err != nil || second.PlanID != first.PlanID {
 		t.Fatalf("replay created another plan: %+v %v", second, err)
 	}
@@ -43,7 +44,7 @@ func TestMemberRestartRefusedOrLostClaimNeverRunsSSH(t *testing.T) {
 	for _, refused := range []bool{false, true} {
 		t.Run(map[bool]string{false: "already-claimed", true: "write-refused"}[refused], func(t *testing.T) {
 			s, runner, _ := restartFixture(t)
-			_, err := s.BeginMemberRestart(t.Context(), "node-1", "request", func(context.Context, string, string) (bool, error) {
+			_, err := s.BeginMemberRestart(t.Context(), "node-1", "request", "cluster", func(context.Context, string, string) (bool, error) {
 				if refused {
 					return false, errors.New("replication unavailable")
 				}
@@ -67,7 +68,7 @@ func TestMemberRestartJoinsMachineUpgradeWithoutRestarting(t *testing.T) {
 	s.plans["upgrade-plan"] = stored
 	s.mu.Unlock()
 	var claims atomic.Int32
-	st, err := s.BeginMemberRestart(t.Context(), "node-1", "request", func(_ context.Context, plan, kind string) (bool, error) {
+	st, err := s.BeginMemberRestart(t.Context(), "node-1", "request", "cluster", func(_ context.Context, plan, kind string) (bool, error) {
 		claims.Add(1)
 		if plan != "upgrade-plan" || kind != "upgrade" {
 			t.Errorf("joined %s %s", plan, kind)
@@ -93,7 +94,7 @@ func TestMemberRestartKeepsMachineSlotUntilClaimReturns(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.BeginMemberRestart(t.Context(), "node-1", "one", func(context.Context, string, string) (bool, error) { close(entered); <-release; return true, nil }, func(context.Context, string, string) error { return nil })
+		_, err := s.BeginMemberRestart(t.Context(), "node-1", "one", "cluster", func(context.Context, string, string) (bool, error) { close(entered); <-release; return true, nil }, func(context.Context, string, string) error { return nil })
 		done <- err
 	}()
 	select {
@@ -128,7 +129,7 @@ func TestMemberRestartJoinsAutomaticStartWithoutAnotherScript(t *testing.T) {
 	}
 	plan := stored.plan.ID
 	s.mu.Unlock()
-	got, err := s.BeginMemberRestart(t.Context(), "node-1", "force", func(_ context.Context, id, kind string) (bool, error) {
+	got, err := s.BeginMemberRestart(t.Context(), "node-1", "force", "cluster", func(_ context.Context, id, kind string) (bool, error) {
 		if id != plan || kind != "restart" {
 			t.Error("automatic start identity was lost")
 		}
@@ -147,7 +148,7 @@ func TestMemberRestartJoinsAutomaticStartWithoutAnotherScript(t *testing.T) {
 func TestMemberRestartMissingLocalRecordDoesNotReplayClaim(t *testing.T) {
 	s, runner, _ := restartFixture(t)
 	claim := func(context.Context, string, string) (bool, error) { return true, nil }
-	op, err := s.BeginMemberRestart(t.Context(), "node-1", "force", claim, func(context.Context, string, string) error { return nil })
+	op, err := s.BeginMemberRestart(t.Context(), "node-1", "force", "cluster", claim, func(context.Context, string, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,10 +159,26 @@ func TestMemberRestartMissingLocalRecordDoesNotReplayClaim(t *testing.T) {
 	s.mu.Lock()
 	delete(s.memberRestarts, "force")
 	s.mu.Unlock()
-	if _, err = s.BeginMemberRestart(t.Context(), "node-1", "force", func(context.Context, string, string) (bool, error) { return false, nil }, func(context.Context, string, string) error { return nil }); err == nil {
+	if _, err = s.BeginMemberRestart(t.Context(), "node-1", "force", "cluster", func(context.Context, string, string) (bool, error) { return false, nil }, func(context.Context, string, string) error { return nil }); err == nil {
 		t.Fatal("lost claim was accepted again")
 	}
 	if len(runner.restarts()) != 1 {
 		t.Fatal("lost holder memory repeated SSH")
+	}
+}
+
+func TestMemberRestartRequiresTheExpectedInstallationInItsScript(t *testing.T) {
+	s, runner, _ := restartFixture(t)
+	op, err := s.BeginMemberRestart(t.Context(), "node-1", "identified", "cluster", func(context.Context, string, string) (bool, error) { return true, nil }, func(context.Context, string, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "restart did not settle", func() bool {
+		state, _ := s.MemberRestartStatus(t.Context(), "node-1", "identified", op.PlanID, "restart")
+		return state.State == "connected"
+	})
+	scripts := runner.restarts()
+	if len(scripts) != 1 || !strings.Contains(scripts[0].script, "--expect-cluster 'cluster'") || !strings.Contains(scripts[0].script, "--expect-node 'node-1'") || strings.Contains(scripts[0].script, "kill -KILL") {
+		t.Fatal("member restart did not bind the exact installation before stopping")
 	}
 }

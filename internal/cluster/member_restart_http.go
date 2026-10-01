@@ -134,7 +134,7 @@ func (p *Peer) serveMemberRestart(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "restart does not belong to this link holder", http.StatusForbidden)
 			return
 		}
-		answer.Operation, err = service.BeginMemberRestart(ctx, req.Operation.NodeID, req.Operation.ID, func(claimCtx context.Context, plan, kind string) (bool, error) {
+		answer.Operation, err = service.BeginMemberRestart(ctx, req.Operation.NodeID, req.Operation.ID, req.Operation.ClusterID, func(claimCtx context.Context, plan, kind string) (bool, error) {
 			req.PlanID, req.Kind = plan, kind
 			return p.claimMemberRestart(claimCtx, req)
 		}, func(checkCtx context.Context, plan, kind string) error {

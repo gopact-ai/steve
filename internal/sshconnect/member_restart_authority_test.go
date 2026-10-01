@@ -39,7 +39,7 @@ func TestMemberRestartRevalidatesAfterPreflightBeforeTheScript(t *testing.T) {
 			s.runner = probe
 			var claimed, verified atomic.Int32
 			var revoked atomic.Bool
-			op, err := s.BeginMemberRestart(t.Context(), "node-1", "request", func(context.Context, string, string) (bool, error) { claimed.Add(1); return true, nil }, func(_ context.Context, plan, kind string) error {
+			op, err := s.BeginMemberRestart(t.Context(), "node-1", "request", "cluster", func(context.Context, string, string) (bool, error) { claimed.Add(1); return true, nil }, func(_ context.Context, plan, kind string) error {
 				verified.Add(1)
 				if plan == "" || kind != "restart" {
 					return errors.New("wrong local slot")
