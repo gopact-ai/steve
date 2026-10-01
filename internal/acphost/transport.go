@@ -83,6 +83,7 @@ type groupCalls struct {
 	waitExit func(pid int) error
 	kill     func(group int) error
 	inspect  func(group int) (procgroup.Remains, error)
+	settle   func(procgroup.Identity, procgroup.Place, procgroup.Place, time.Duration) error
 }
 
 var kernelGroup = groupCalls{capture: procgroup.Capture, waitExit: procgroup.WaitExit, kill: procgroup.Kill, inspect: procgroup.Inspect}
@@ -127,6 +128,8 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 		group = *t.group
 	}
 	var unidentified error
+	var identity procgroup.Identity
+	place, _ := procgroup.Here()
 	if t.Started != nil {
 		// The leader is not waited for before Start returns, so it still
 		// holds its pid and its start time can be read.
@@ -136,10 +139,11 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 		case err != nil:
 			unidentified = err
 		default:
+			identity = id
 			t.Started(id)
 		}
 	}
-	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, unidentified: unidentified, exited: make(chan struct{}), observed: make(chan struct{})}
+	p := &localProcess{cmd: cmd, stdout: stdout, stdin: stdin, group: group, unidentified: unidentified, identity: identity, place: place, exited: make(chan struct{}), observed: make(chan struct{})}
 	go p.observe()
 	return p, nil
 }
@@ -152,12 +156,15 @@ type localProcess struct {
 	// unidentified is why the identity of the group, where it was to be
 	// reported, could not be read.
 	unidentified error
+	identity     procgroup.Identity
+	place        procgroup.Place
 	exited       chan struct{}
 	// observed is closed once observe is over, err then holding how the
 	// agent ended.
-	observed chan struct{}
-	err      error
-	stopped  atomic.Bool
+	observed         chan struct{}
+	err              error
+	stopped          atomic.Bool
+	groupUnsupported atomic.Bool
 	// mu keeps a kill from reaching the group's id once the leader is
 	// reaped: from then on the id can belong to another process's group.
 	mu     sync.Mutex
@@ -185,8 +192,8 @@ func (p *localProcess) observe() {
 	pid := p.cmd.Process.Pid
 	switch err := p.group.waitExit(pid); {
 	case errors.Is(err, procgroup.ErrUnsupported):
+		p.groupUnsupported.Store(true)
 		p.err = p.reapRunning()
-		p.stopped.Store(true)
 		return
 	case err != nil:
 		// Nothing then shows the group is empty, so the stop stays
@@ -248,6 +255,9 @@ func (p *localProcess) endGroup(group int) {
 func (p *localProcess) awaitEmpty(group int) {
 	stuck := newStuckReport()
 	for delay := time.Millisecond; ; delay = min(2*delay, 2*time.Second) {
+		if p.stopped.Load() {
+			return
+		}
 		remains, err := p.group.inspect(group)
 		if err == nil && remains.Ended() {
 			return
@@ -288,7 +298,7 @@ func (r *stuckReport) due() (time.Duration, bool) {
 	return now.Sub(r.began).Round(time.Second), true
 }
 
-func (p *localProcess) Stopped() bool { return p.stopped.Load() }
+func (p *localProcess) Stopped() bool { return p.stopped.Load() && !p.groupUnsupported.Load() }
 
 // Kill signals the whole process group: the agent spawns MCP stdio servers
 // and tools of its own, and killing only the parent orphans them.

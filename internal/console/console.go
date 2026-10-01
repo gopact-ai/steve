@@ -125,6 +125,7 @@ type Service struct {
 	closing             bool
 	recoveryLifetime    context.Context
 	recoveryDriver      RetainedChatDriver
+	forceStops          forceStopDriver
 	workers             sync.WaitGroup
 	drained             chan struct{}
 	materials           MaterialResolver

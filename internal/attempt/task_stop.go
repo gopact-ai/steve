@@ -36,9 +36,16 @@ func (s *Service) TaskStopReceipt(ctx context.Context, id string) (TaskStopRecei
 // Native evidence, quarantine removal and retirement of the exact old leases
 // commit together; no new task/turn is finished or admitted by this operation.
 func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proof RetainedEvidence) (Record, error) {
+	return s.confirmTaskStopped(ctx, id, actor, proof, 0)
+}
+
+func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proof RetainedEvidence, forceRevision uint64) (Record, error) {
 	current, err := s.Get(ctx, id)
 	if err != nil {
 		return Record{}, err
+	}
+	if forceRevision != 0 && (current.ForceStop == nil || current.ForceStop.Revision != forceRevision) {
+		return Record{}, ErrForceStopChanged
 	}
 	if current.StopEvidence == "task-stop/"+id && taskStopAlreadySettled(current) {
 		return current, nil
@@ -55,6 +62,9 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
 		}
+		if forceRevision != 0 && (next.ForceStop == nil || next.ForceStop.Revision != forceRevision || next.ForceStop.Level != "kill") {
+			return ErrForceStopChanged
+		}
 		tracked, err := stoppedTaskTx(tx, next)
 		if err != nil {
 			return err
@@ -63,6 +73,9 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 			return errTaskStopRecorded
 		}
 		st := proof.Session
+		if next.ForceStop != nil && next.ForceStop.Level != "confirmed" && !st.ProcessStopped {
+			return ErrStopConfirmationRequired
+		}
 		if !matchesStoppedSession(next, tracked, st) {
 			return errors.New("native stop receipt belongs to another execution")
 		}
@@ -87,6 +100,7 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		settled := true
 		next.Unsettled, next.SessionSettled = false, &settled
 		next.StopEvidence = "task-stop/" + next.ID
+		confirmForceStop(&next, s.now().UTC())
 		next.State, next.Revision = to, op.Revision+1
 		next.Error = i18n.FromContext(ctx).T(i18n.AttemptTaskStopped)
 		if next.EndedAt.IsZero() {
@@ -152,7 +166,7 @@ func matchesStoppedSession(r Record, tracked task.Task, st nodewire.SessionState
 	}
 	if r.Session == "" {
 		proof := st.OpenReceipt
-		if !PendingSessionOpen(r) || proof == nil || proof.Action != nodewire.SessionActionCancelOpen || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != nodewire.SessionClosed || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
+		if !PendingSessionOpen(r) || proof == nil || (proof.Action != nodewire.SessionActionCancelOpen && proof.Action != nodewire.SessionActionKill) || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != nodewire.SessionClosed || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
 			return false
 		}
 	} else if st.ID != r.Session {

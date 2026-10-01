@@ -1,6 +1,20 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.forceConfirmTitle": "Force stop task #{task}?",
+    "console.forceConfirmBody": "This cancels original task #{task} and its descendants and immediately terminates execution {attempt}'s process group. This cannot be undone and does not automatically restart the node over SSH.",
+    "console.forceConfirm": "Confirm force stop",
+    "console.forceStop": "Force stop",
+    "console.forceTitle": "The original execution is not confirmed stopped",
+    "console.forceHint": "Cancel the task and immediately terminate the original process group. Quarantine remains until the stop is confirmed.",
+    "console.forceSending": "Recording the force-stop request…",
+    "console.forceRunning": "Forcing the original execution to stop",
+    "console.forceRestartRequired": "Restart the original node, then retry.",
+    "console.forceUpgradeRequired": "Upgrade the original node before retrying force stop.",
+    "console.forceStillRunning": "The process group still has running members; its stop is unconfirmed.",
+    "console.forceUnproven": "The original process group cannot be proved stopped; quarantine remains.",
+    "console.forceUnsupported": "The node platform cannot confirm process-group termination.",
+    "console.forceRejected": "The node refused force stop. Check its authority and execution identity.",
     "console.recovering": "Recovering execution…",
     "console.reviewLoadFailed": "The artifact workspace could not load. Close it and refresh to retry. Your conversation draft is retained.",
     "console.reloadConfirm": "Reloading interrupts uploads and discards unsaved edits. Reload now?",

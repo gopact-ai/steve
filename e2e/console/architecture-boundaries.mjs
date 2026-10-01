@@ -75,3 +75,19 @@ test("console CI invokes the complete standard gate instead of a separate suite 
     assert.match(job, /uses: actions\/setup-go@/, "Go wire fixtures need the repository toolchain");
     assert.match(job, /go-version-file: go\.mod/);
 });
+
+test("force-stop presentation receives its request callback from page composition", () => {
+    const file = "components/steve/force-stop.tsx";
+    const seen = new Set();
+    function visit(current) {
+        if (seen.has(current)) return;
+        seen.add(current);
+        assert.ok(!current.startsWith("lib/api/") && current !== "lib/http.ts" && current !== "lib/fleet.tsx", `${file} requests data through ${current}`);
+        for (const dependency of graph.get(current) || []) visit(dependency);
+    }
+    // Shared visual controls have their own boundaries; only the force-stop
+    // control's data dependencies and hooks belong to this contract.
+    for (const dependency of graph.get(file) || []) {
+        if (!dependency.startsWith("components/") && !dependency.startsWith("providers/")) visit(dependency);
+    }
+});

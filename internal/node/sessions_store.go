@@ -271,6 +271,11 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 	switch req.Action {
 	case nodewire.SessionActionOpen, nodewire.SessionActionAttach, nodewire.SessionActionPoll, nodewire.SessionActionSettings:
 		return state, nil
+	case nodewire.SessionActionKill:
+		if state.ProcessStopped {
+			return state, nil
+		}
+		return s.killRecorded(req)
 	case nodewire.SessionActionClose, nodewire.SessionActionCancel, nodewire.SessionActionAbort:
 		if !state.ProcessStopped {
 			if s.settleUnverified(req.ID) {

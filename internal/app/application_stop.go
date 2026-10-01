@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"sync"
 	"time"
 
@@ -32,6 +31,7 @@ type applicationStops struct {
 	sessions   applicationStopSessions
 	executions *execution.Registry
 	after      string
+	forceAfter string
 	// text says, in the configured language, how a stop stands.
 	text i18n.Catalog
 }
@@ -79,21 +79,21 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	if err := s.resolveJoined(ctx); err != nil {
 		return errors.Join(retired, err)
 	}
-	sort.Slice(pending, func(i, j int) bool { return pending[i].ID < pending[j].ID })
 	if len(pending) == 0 {
 		return retired
 	}
-	start := sort.Search(len(pending), func(i int) bool { return pending[i].ID > s.after })
-	if start == len(pending) {
-		start = 0
+	selected := s.stopBatch(pending)
+	failures := make(chan error, len(selected))
+	for _, r := range selected {
+		go func() {
+			if r.ForceStop != nil && r.ForceStop.Level == "kill" {
+				failures <- s.forceStop(ctx, r)
+			} else {
+				failures <- s.stop(ctx, r)
+			}
+		}()
 	}
-	count := min(len(pending), 4)
-	failures := make(chan error, count)
-	for index := range count {
-		r := pending[(start+index)%len(pending)]
-		s.after = r.ID
-		go func() { failures <- s.stop(ctx, r) }()
-	}
+	count := len(selected)
 	result := retired
 	for range count {
 		result = errors.Join(result, <-failures)

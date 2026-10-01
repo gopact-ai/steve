@@ -7,6 +7,7 @@ var (
 	_ ResumableRunner          = (*managedSession)(nil)
 	_ RetainedSessionInspector = (*managedSession)(nil)
 	_ RetainedStopper          = (*managedSession)(nil)
+	_ RetainedKiller           = (*managedSession)(nil)
 )
 
 // The runners Manager opens: local and plugin sessions are *Session, node-owned

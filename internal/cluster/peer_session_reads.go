@@ -17,7 +17,7 @@ func sessionActionMode(action nodewire.SessionAction) (observation, stopping boo
 	switch action {
 	case nodewire.SessionActionOpen, nodewire.SessionActionAttach, nodewire.SessionActionPoll, nodewire.SessionActionSettings, nodewire.SessionActionInspectOpen:
 		return true, false, nil
-	case nodewire.SessionActionCancel, nodewire.SessionActionAbort, nodewire.SessionActionClose, nodewire.SessionActionCancelOpen:
+	case nodewire.SessionActionCancel, nodewire.SessionActionAbort, nodewire.SessionActionKill, nodewire.SessionActionClose, nodewire.SessionActionCancelOpen:
 		return false, true, nil
 	case nodewire.SessionActionStart, nodewire.SessionActionPrompt, nodewire.SessionActionAnswer, nodewire.SessionActionOption, nodewire.SessionActionCapabilities:
 		return false, false, nil
