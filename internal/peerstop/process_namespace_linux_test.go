@@ -15,6 +15,39 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestPeerRootMustMatchWithinTheSameNamespaces(t *testing.T) {
+	if os.Getenv("STEVE_PEERSTOP_ROOT_TEST") != "1" {
+		unshare := requirePrivateNamespace(t)
+		self, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, unshare, "--user", "--map-root-user", "--fork", "--kill-child", self, "-test.run=^TestPeerRootMustMatchWithinTheSameNamespaces$", "-test.v")
+		cmd.Env = append(os.Environ(), "STEVE_PEERSTOP_ROOT_TEST=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("root fixture: %v\n%s", err, out)
+		}
+		return
+	}
+	root, sidecar := installationFixture(t)
+	privateRoot := filepath.Join(root, "private-root")
+	if err := os.Mkdir(privateRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(root, "bin/steve"), "peer", "--config", filepath.Join(root, "config.json"), "--cluster-config", sidecar)
+	cmd.Env = append(os.Environ(), "STEVE_PEERSTOP_FIXTURE=1", "STEVE_PEERSTOP_ROOT="+root, "STEVE_PEERSTOP_CHROOT="+privateRoot)
+	waitForFixturePeer(t, cmd)
+	if err := checkPeerEnvironment(cmd.Process.Pid); !errors.Is(err, ErrUnproven) || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("different process root was not identified: %v", err)
+	}
+	if _, err := Stop(t.Context(), sidecar, "cluster", "node"); !errors.Is(err, ErrUnproven) {
+		t.Fatalf("different process root was not refused: %v", err)
+	}
+	assertFixtureStillHoldsItsLock(t, root)
+}
+
 func TestPeerNamespaceEvidenceMustBeReadable(t *testing.T) {
 	if err := checkPeerEnvironment(os.Getpid()); err != nil {
 		t.Fatalf("same process view rejected: %v", err)

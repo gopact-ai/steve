@@ -52,6 +52,14 @@ func TestMain(m *testing.M) {
 		file.Sync()
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, syscall.SIGTERM)
+		if root := os.Getenv("STEVE_PEERSTOP_CHROOT"); root != "" {
+			if err := unix.Chroot(root); err != nil {
+				os.Exit(6)
+			}
+			if err := os.Chdir("/"); err != nil {
+				os.Exit(7)
+			}
+		}
 		fmt.Println("ready")
 		for range signals {
 			if os.Getenv("STEVE_PEERSTOP_UNLOCK_TERM") == "1" {

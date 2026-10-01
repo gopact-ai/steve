@@ -35,6 +35,9 @@ func waitForFixturePeer(t *testing.T, cmd *exec.Cmd) {
 		t.Fatal(err)
 	}
 	cmd.Stderr = os.Stderr
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
