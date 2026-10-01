@@ -43,8 +43,13 @@ var (
 // copy, and whichever keeps last wins — any of them is a valid cache.
 func (r *Repo) snapshotIndex(workTree string, seed bool) (index string, keep func(), cleanup func(), err error) {
 	dir := filepath.Join(r.Dir, snapshotIndexDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", nil, nil, err
+	// A missing repository must stay missing so its owner can initialize it
+	// again, rather than finding a partial tree created only for this cache.
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		info, statErr := os.Stat(dir)
+		if !os.IsExist(err) || statErr != nil || !info.IsDir() {
+			return "", nil, nil, err
+		}
 	}
 	sum := sha256.Sum256([]byte(workTree))
 	cached := filepath.Join(dir, hex.EncodeToString(sum[:16]))
