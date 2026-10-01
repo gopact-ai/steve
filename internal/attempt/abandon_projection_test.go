@@ -120,4 +120,20 @@ func TestAbandonedWriterStillRequiresExitAfterALateQuarantineUpdate(t *testing.T
 	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "old-command", proof); !errors.Is(err, ErrStopConfirmationRequired) {
 		t.Fatalf("abandoned writer accepted command-only evidence after a late update: %v", err)
 	}
+	proof.Session.ProcessStopped = true
+	proof.Session.Binding.AttemptID = "other"
+	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "wrong-exit", proof); err == nil {
+		t.Fatal("wrong process identity confirmed abandoned writer")
+	}
+	proof.Session.Binding.AttemptID = r.ID
+	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "fresh-exit", proof); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAbandonedWriterDoesNotAcceptADeclarativeStopInsteadOfNativeProof(t *testing.T) {
+	s, r, _, _ := abandonedRecord(t)
+	if _, err := s.ConfirmStopped(t.Context(), r.ID, "owner", "the writer is said to be stopped"); !errors.Is(err, ErrStopConfirmationRequired) {
+		t.Fatalf("abandoned writer accepted a declaration instead of a native receipt: %v", err)
+	}
 }
