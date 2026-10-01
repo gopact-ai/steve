@@ -98,3 +98,22 @@ func TestAbandonmentReplyIsDurableWithoutAStopReceipt(t *testing.T) {
 		t.Fatal("restart lost the distinct abandoned outcome")
 	}
 }
+
+func TestAbandoningAChildExecutionDoesNotFinishItsParentsExchange(t *testing.T) {
+	s := New(&echo{}, "owner", nil)
+	if err := s.Persist(&memDoc{}); err != nil {
+		t.Fatal(err)
+	}
+	e := &queuedExchange{Exchange: Exchange{ID: "parent", Conversation: "console:main", State: consoleapi.ExchangeAwaitingUser}, RecoveryStopPending: "pending", done: make(chan struct{})}
+	s.mu.Lock()
+	s.exchanges[e.Conversation] = []*queuedExchange{e}
+	s.running[e.Conversation] = 1
+	s.mu.Unlock()
+	r := attempt.Record{Spec: attempt.Spec{ID: "child", Kind: attempt.KindDelegate}, Abandoned: &attempt.Abandoned{At: time.Now(), ProjectedAt: time.Now(), Conversation: e.Conversation, MessageID: AnchorMark + e.ID}}
+	if err := s.deliverAbandonment(r); err != nil {
+		t.Fatal(err)
+	}
+	if e.State != consoleapi.ExchangeAwaitingUser || e.RecoveryAbandon != nil {
+		t.Fatal("abandoning a child ended the parent's conversation exchange")
+	}
+}
