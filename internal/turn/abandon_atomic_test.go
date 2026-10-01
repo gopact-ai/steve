@@ -17,7 +17,7 @@ func abandonFixture(t *testing.T) (*Coordinator, *task.Store, attempt.Record) {
 	if err := tasks.BindAttempt(*r.Execution, r.ID, r.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.attempts.MarkUnsettled(t.Context(), r.ID, "fixture", errors.New("original writer is unreachable"), &attempt.Usage{Input: 11, Output: 13, Model: "fixture", Reported: true}); err != nil {
+	if err := c.attempts.MarkUnsettled(t.Context(), r.ID, "fixture", errors.New("original writer is unreachable"), &attempt.Usage{Input: 11, Output: 13, Model: "fixture", Context: 17, Reported: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
@@ -39,6 +39,9 @@ func TestAbandonRecordsNoPhysicalStopAndFreezesOnlyItsAccounting(t *testing.T) {
 	}
 	if got.Abandoned == nil || got.Abandoned.By != "owner" || got.Abandoned.ForceStopRevision != 1 || got.Abandoned.Reason != "stop_unproven" || got.Abandoned.At.IsZero() {
 		t.Fatalf("missing exact abandonment: %+v", got.Abandoned)
+	}
+	if got.Usage == nil || got.Usage.Context != 17 {
+		t.Fatal("abandonment lost already recorded context usage")
 	}
 	if !got.Unsettled || got.StopEvidence != r.StopEvidence || !sameAbandonJSON(got.Leases, r.Leases) || attempt.TaskStopConfirmed(got) {
 		t.Fatalf("abandonment invented a physical stop: %+v", got)
