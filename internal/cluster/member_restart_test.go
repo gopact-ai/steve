@@ -116,6 +116,15 @@ func TestMemberRestartClaimsFenceAuthorityAndOwnerChanges(t *testing.T) {
 	if err != nil || !yes {
 		t.Fatalf("valid holder claim: %v %v", yes, err)
 	}
+	verify := req
+	verify.Verify = true
+	if yes, err := holder.claimMemberRestart(t.Context(), verify); err != nil || !yes {
+		t.Fatalf("exact claim not verified: %v %v", yes, err)
+	}
+	verify.PlanID = "other-plan"
+	if yes, err := holder.claimMemberRestart(t.Context(), verify); yes || err == nil {
+		t.Fatal("verification accepted another local execution")
+	}
 	yes, err = holder.claimMemberRestart(t.Context(), req)
 	if err != nil || yes {
 		t.Fatalf("claim repeated after lost answer: %v %v", yes, err)
@@ -142,5 +151,9 @@ func TestMemberRestartClaimsFenceAuthorityAndOwnerChanges(t *testing.T) {
 	}
 	if yes, err := holder.claimMemberRestart(t.Context(), req); yes || err == nil {
 		t.Fatal("revoked owner reused claim")
+	}
+	req.Verify = true
+	if yes, err := holder.claimMemberRestart(t.Context(), req); yes || err == nil {
+		t.Fatal("revoked owner passed final verification")
 	}
 }

@@ -20,6 +20,7 @@ const clusterMemberRestartPath = "/cluster/member-restart"
 const clusterMemberRestartClaimPath = "/cluster/member-restart/claim"
 
 type memberRestartRequest struct {
+	Verify    bool                      `json:"verify,omitempty"`
 	Operation attempt.ForceRestart      `json:"operation"`
 	Authority nodewire.SessionAuthority `json:"authority"`
 	PlanID    string                    `json:"plan_id,omitempty"`
@@ -136,7 +137,15 @@ func (p *Peer) serveMemberRestart(w http.ResponseWriter, r *http.Request) {
 		answer.Operation, err = service.BeginMemberRestart(ctx, req.Operation.NodeID, req.Operation.ID, func(claimCtx context.Context, plan, kind string) (bool, error) {
 			req.PlanID, req.Kind = plan, kind
 			return p.claimMemberRestart(claimCtx, req)
-		}, func(context.Context, string, string) error { return nil })
+		}, func(checkCtx context.Context, plan, kind string) error {
+			check := req
+			check.PlanID, check.Kind, check.Verify = plan, kind, true
+			yes, err := p.claimMemberRestart(checkCtx, check)
+			if err == nil && !yes {
+				return errors.New("restart validation was not accepted")
+			}
+			return err
+		})
 	} else {
 		answer.Operation, err = service.MemberRestartStatus(ctx, req.Operation.NodeID, req.Operation.ID, req.Operation.PlanID, req.Operation.Kind)
 	}
@@ -190,9 +199,13 @@ func (p *Peer) claimMemberRestart(ctx context.Context, req memberRestartRequest)
 		return false, coordination.ErrUnavailable
 	}
 	var answer struct {
-		Claimed bool `json:"claimed"`
+		Claimed  bool `json:"claimed"`
+		Verified bool `json:"verified"`
 	}
 	err = p.peerJSON(ctx, coordinator, http.MethodPost, clusterMemberRestartClaimPath, req, &answer)
+	if req.Verify {
+		return answer.Verified, err
+	}
 	return answer.Claimed, err
 }
 
@@ -231,12 +244,26 @@ func (p *Peer) serveMemberRestartClaim(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, coordination.ErrStaleEpoch)
 		return
 	}
-	claimed, err := attempt.New(active.Ledger).ClaimForceRestart(ctx, req.Operation, req.PlanID, req.Kind, func(tx ledger.Reader, op attempt.ForceRestart) error {
+	authorize := func(tx ledger.Reader, op attempt.ForceRestart) error {
 		if op.ClusterID != p.Config.ClusterID || op.Holder != caller.NodeID || op.NodeID == p.Config.NodeID {
 			return errors.New("restart identity differs from this claim")
 		}
 		return restartOwner(tx, op.By)
-	})
+	}
+	service := attempt.New(active.Ledger)
+	if req.Verify {
+		if err := p.waitRestartReplica(ctx, state); err != nil {
+			HTTPError(w, err)
+			return
+		}
+		if err := service.VerifyForceRestart(ctx, req.Operation, req.PlanID, req.Kind, authorize); err != nil {
+			HTTPError(w, err)
+			return
+		}
+		WriteJSON(w, map[string]bool{"verified": true})
+		return
+	}
+	claimed, err := service.ClaimForceRestart(ctx, req.Operation, req.PlanID, req.Kind, authorize)
 	if err != nil {
 		HTTPError(w, err)
 		return

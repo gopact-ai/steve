@@ -30,7 +30,7 @@ func (s *Service) BeginMemberRestart(ctx context.Context, node, request string, 
 	if !ok {
 		return MemberRestart{}, restartUnsupported(text)
 	}
-	if request == "" || claim == nil || !backend.Knows(ctx, node) {
+	if request == "" || claim == nil || verify == nil || !backend.Knows(ctx, node) {
 		return MemberRestart{}, errors.New("invalid member restart")
 	}
 	if _, err := backend.RestartTarget(ctx, node); err != nil {
@@ -95,7 +95,18 @@ func (s *Service) BeginMemberRestart(ctx context.Context, node, request string, 
 	s.mu.Unlock()
 	if fresh {
 		runCtx := i18n.WithLocale(s.autoCtx, text.Locale())
-		go func() { defer s.autoRuns.Done(); _, _ = s.runMemberRestart(runCtx, backend, stored, node) }()
+		go func() {
+			defer s.autoRuns.Done()
+			_, _ = s.runMemberRestartChecked(runCtx, backend, stored, node, func(checkCtx context.Context) error {
+				s.mu.Lock()
+				same := !s.closed && s.plans[op.PlanID] == stored && s.restarts[node] == op.PlanID && stored.running
+				s.mu.Unlock()
+				if !same {
+					return errors.New("member restart no longer holds its machine slot")
+				}
+				return verify(checkCtx, op.PlanID, kind)
+			})
+		}()
 	} else {
 		s.autoRuns.Done()
 	}

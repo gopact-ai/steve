@@ -121,7 +121,11 @@ func (s *Service) Restart(ctx context.Context, nodeID string) (InstallResult, er
 }
 
 func (s *Service) runMemberRestart(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string) (InstallResult, error) {
-	result, outcome, err := s.restart(ctx, backend, stored.plan.ID, nodeID, nodebootstrap.RestartSpec{})
+	return s.runMemberRestartChecked(ctx, backend, stored, nodeID, nil)
+}
+
+func (s *Service) runMemberRestartChecked(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string, verify func(context.Context) error) (InstallResult, error) {
+	result, outcome, err := s.restartChecked(ctx, backend, stored.plan.ID, nodeID, nodebootstrap.RestartSpec{}, verify)
 	if err == nil {
 		s.mu.Lock()
 		s.resumeAutoStart(nodeID)
@@ -253,6 +257,10 @@ func reasonOf(err error) string {
 // restart runs one restart of nodeID and returns what it did: restarted or
 // started the peer, found it running (spec.IfStopped), or failed.
 func (s *Service) restart(ctx context.Context, backend RestartBackend, id, nodeID string, spec nodebootstrap.RestartSpec) (InstallResult, string, error) {
+	return s.restartChecked(ctx, backend, id, nodeID, spec, nil)
+}
+
+func (s *Service) restartChecked(ctx context.Context, backend RestartBackend, id, nodeID string, spec nodebootstrap.RestartSpec, verify func(context.Context) error) (InstallResult, string, error) {
 	text := i18n.FromContext(ctx)
 	result := InstallResult{PlanID: id, Name: nodeID, NodeID: nodeID, Status: "needs_attention", Steps: []Step{}, Phases: restartPhaseOrder}
 	reject := func(outcome string, failure *StepError) (InstallResult, string, error) {
@@ -283,6 +291,11 @@ func (s *Service) restart(ctx context.Context, backend RestartBackend, id, nodeI
 	}
 	result.Steps = append(result.Steps, Step{ID: "preflight", Status: "ready", Message: text.T(i18n.SSHRestartReady, check.User, check.Address)})
 	s.progress(result)
+	if verify != nil {
+		if err := verify(ctx); err != nil {
+			return reject(RestartFailed, stepOf(text, err, "restart_refused", i18n.SSHRestartFailedFix))
+		}
+	}
 	outcome, failure := s.startPeer(ctx, &result, connection, spec)
 	if failure != nil {
 		return reject(outcome, failure)

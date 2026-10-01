@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
-
 	"errors"
-	"github.com/gopact-ai/steve/internal/ledger"
+	"fmt"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // ForceRestart is the latest durable restart of one machine. Its ID is never
@@ -172,5 +172,20 @@ func (s *Service) FinishForceRestart(ctx context.Context, request ForceRestart, 
 		}
 		op.FinishedAt, op.Outcome = s.now().UTC(), outcome
 		return tx.PutBinding(forceRestartKind, op.NodeID, op)
+	})
+}
+
+// VerifyForceRestart rechecks an already claimed exact plan; it never grants
+// another execution right. A replaced, expired or finished operation fails.
+func (s *Service) VerifyForceRestart(ctx context.Context, request ForceRestart, plan, kind string, authorize func(ledger.Reader, ForceRestart) error) error {
+	return s.l.Read(ctx, func(tx *ledger.ReadTx) error {
+		op, found, err := forceRestartTx(tx, request.NodeID)
+		if err != nil {
+			return err
+		}
+		if !found || !sameRestart(op, request) || op.ClaimedAt.IsZero() || op.PlanID != plan || op.Kind != kind || !op.FinishedAt.IsZero() || s.now().Sub(op.RequestedAt) >= 7*time.Minute || authorize == nil {
+			return ErrForceRestartChanged
+		}
+		return authorize(tx, op)
 	})
 }

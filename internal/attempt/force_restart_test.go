@@ -315,3 +315,35 @@ func TestForceRestartExpiredUnobservedOperationDoesNotTrapANewRequest(t *testing
 		t.Fatal("expired replaced operation was claimed")
 	}
 }
+
+func TestForceRestartVerificationRequiresTheExactLiveClaim(t *testing.T) {
+	s, r := restartFixture(t)
+	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.VerifyForceRestart(t.Context(), op, "plan", "restart", allowRestart); err == nil {
+		t.Fatal("verification granted an unclaimed operation")
+	}
+	if yes, err := s.ClaimForceRestart(t.Context(), op, "plan", "restart", allowRestart); err != nil || !yes {
+		t.Fatalf("claim=%v %v", yes, err)
+	}
+	if err := s.VerifyForceRestart(t.Context(), op, "plan", "restart", allowRestart); err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []struct{ plan, kind string }{{"other-plan", "restart"}, {"plan", "upgrade"}} {
+		if err := s.VerifyForceRestart(t.Context(), op, other.plan, other.kind, allowRestart); err == nil {
+			t.Fatal("verification accepted another execution slot")
+		}
+	}
+	refused := errors.New("owner changed")
+	if err := s.VerifyForceRestart(t.Context(), op, "plan", "restart", func(ledger.Reader, ForceRestart) error { return refused }); !errors.Is(err, refused) {
+		t.Fatalf("owner check ignored: %v", err)
+	}
+	if err := s.FinishForceRestart(t.Context(), op, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.VerifyForceRestart(t.Context(), op, "plan", "restart", allowRestart); err == nil {
+		t.Fatal("finished claim authorized another script")
+	}
+}
