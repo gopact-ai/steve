@@ -45,7 +45,10 @@ func TestForceStopAttemptRequiresOwnerAndCancelsTask(t *testing.T) {
 		t.Fatalf("intent not durable: task=%s attempt=%+v", after.State, got)
 	}
 	epoch := after.ExecutionEpoch
-	if err := force.ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
+	if _, err := c.attempts.RecordForceStopResult(t.Context(), r.ID, 1, true, "stop_unproven"); err != nil {
+		t.Fatal(err)
+	}
+	if err := force.ForceStopAttempt(t.Context(), r.ID, "owner", 1); err != nil {
 		t.Fatal(err)
 	}
 	again, _ := tasks.Get(tracked.ID)

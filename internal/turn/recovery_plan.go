@@ -78,6 +78,9 @@ func (c *Coordinator) RetainedPlans(ctx context.Context) ([]RetainedPlan, error)
 			}
 		}
 		item.AttemptID, item.AgentID, item.NodeID = latest.ID, latest.Agent, latest.Node
+		if latest.ForceStop != nil {
+			item.ForceStopRevision = latest.ForceStop.Revision
+		}
 		if item.PlanID != "" || item.AttemptID != "" || tracked.PreparedPlan != nil {
 			result = append(result, item)
 		}

@@ -63,7 +63,10 @@ func TestForceStopCancellationAndIntentCommitTogether(t *testing.T) {
 		t.Fatal("in-flight command receipt relaxed the force stop")
 	}
 	before, _ := tasks.Get(r.TaskID)
-	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 0); err != nil {
+	if _, err := c.attempts.RecordForceStopResult(t.Context(), r.ID, 1, true, "stop_unproven"); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewForceStopControl(c).ForceStopAttempt(t.Context(), r.ID, "owner", 1); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := tasks.Get(r.TaskID)

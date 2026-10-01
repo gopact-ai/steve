@@ -24,7 +24,7 @@ func (f *forceControl) ForceStop(_ context.Context, id string, expectedRevision 
 func TestForceStopRequiresOwner(t *testing.T) {
 	s := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
 	for _, token := range []string{"", "wrong", testToken} {
-		req, _ := http.NewRequest("POST", s.URL()+"/console/attempts/original/force-stop", strings.NewReader("{}"))
+		req, _ := http.NewRequest("POST", s.URL()+"/console/attempts/original/force-stop", strings.NewReader(`{"expected_revision":0}`))
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
@@ -49,7 +49,7 @@ func TestForceStopOwnerDispatchesOnlyNamedAttempt(t *testing.T) {
 	f := &forceControl{}
 	s.SetForceStops(f)
 	for _, token := range []string{"wrong", testToken} {
-		req, _ := http.NewRequest("POST", s.URL()+"/console/attempts/old-attempt/force-stop", strings.NewReader("{}"))
+		req, _ := http.NewRequest("POST", s.URL()+"/console/attempts/old-attempt/force-stop", strings.NewReader(`{"expected_revision":0}`))
 		req.Header.Set("Authorization", "Bearer "+token)
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {

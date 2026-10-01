@@ -37,7 +37,7 @@ func (f *ForceStopControl) ForceStopAttempt(ctx context.Context, id, requester s
 		return errors.New("original task is unavailable")
 	}
 	_, err = c.tasks.CancelWith(ctx, tracked.ID, func(tx *ledger.Tx, ids []string) error {
-		return c.attempts.RequestForceStopTreeTx(tx, id, tracked.ID, requester, ids)
+		return c.attempts.RequestForceStopTreeTx(tx, id, tracked.ID, requester, ids, expectedRevision)
 	})
 	if errors.Is(err, attempt.ErrForceStopAlreadyStopped) {
 		return nil

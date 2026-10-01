@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -12,7 +14,20 @@ func (s *Server) consoleForceStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "force stop is not enabled", http.StatusNotImplemented)
 		return
 	}
-	if err := s.forceStops.ForceStop(r.Context(), r.PathValue("attempt"), 0); err != nil {
+	var request struct {
+		ExpectedRevision *uint64 `json:"expected_revision"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.ExpectedRevision == nil {
+		http.Error(w, "expected force-stop revision is required", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		http.Error(w, "invalid force-stop confirmation", http.StatusBadRequest)
+		return
+	}
+	if err := s.forceStops.ForceStop(r.Context(), r.PathValue("attempt"), *request.ExpectedRevision); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

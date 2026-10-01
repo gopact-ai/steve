@@ -61,5 +61,5 @@ func (w *recoveryStopWait) forceStop() error {
 	if answer.Value != "confirm-force-stop" {
 		return nil
 	}
-	return w.s.ForceStop(w.ctx, retained.AttemptID, 0)
+	return w.s.ForceStop(w.ctx, retained.AttemptID, retained.ForceStopRevision)
 }

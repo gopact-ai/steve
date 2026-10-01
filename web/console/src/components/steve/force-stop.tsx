@@ -8,12 +8,16 @@ export function needsForceStop(attempt: Attempt) {
     return attempt.unsettled || attempt.force_stop && attempt.force_stop.level !== "confirmed";
 }
 
-export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onForce: (id: string) => Promise<void> }) {
+export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onForce: (id: string, expectedRevision: number) => Promise<void> }) {
     const { t } = useI18n();
     const [sending, setSending] = useState(false);
-    const [confirming, setConfirming] = useState<Attempt | null>(null);
+    const [confirming, setConfirming] = useState<(Pick<Attempt, "id" | "task_id"> & { revision: number }) | null>(null);
     const level = attempt.force_stop?.level;
     const active = level === "kill" || level === "restart" || level === "await";
+    const revision = attempt.force_stop?.revision ?? 0;
+    const eligible = needsForceStop(attempt) && level !== "confirmed" && !active;
+    const validConfirmation = confirming && confirming.id === attempt.id && confirming.revision === revision && eligible;
+    if (confirming && !validConfirmation) setConfirming(null);
     const progress = level === "restart" ? t("console.forceRestarting") : level === "await" ? t("console.forceAwaiting") : t("console.forceRunning");
     const reasons: Record<string, string> = {
         restart_required: t("console.forceRestartRequired"), upgrade_required: t("console.forceUpgradeRequired"),
@@ -26,13 +30,13 @@ export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onFor
         restart_upgrade_required: t("console.forceSafeUpgrade"), restart_stop_unsupported: t("console.forceSafeUnsupported"), restart_identity_unproven: t("console.forceSafeUnproven"),
     };
     async function force() {
-        if (sending || !confirming) return;
+        if (sending || !confirming || !validConfirmation) return;
         setSending(true);
-        try { await onForce(confirming.id); }
+        try { await onForce(confirming.id, confirming.revision); }
         finally { setSending(false); }
     }
     return <div className="flex flex-col items-start gap-1">
-        <Button size="sm" color="secondary" isDisabled={sending || active} onClick={() => setConfirming({ ...attempt })}>{t("console.forceStop")}</Button>
+        <Button size="sm" color="secondary" isDisabled={sending || !eligible} onClick={() => setConfirming({ id: attempt.id, task_id: attempt.task_id, revision })}>{t("console.forceStop")}</Button>
         <span role="status" className="text-xs text-tertiary">{sending ? t("console.forceSending") : active ? progress : attempt.force_stop?.level === "exhausted" ? reasons[attempt.force_stop.reason || ""] || t("console.forceUnproven") : t("console.forceHint")}</span>
         {confirming && <ConfirmDialog title={t("console.forceConfirmTitle", { task: confirming.task_id || "?" })}
             body={t("console.forceConfirmBody", { task: confirming.task_id || "?", attempt: confirming.id })}
@@ -40,7 +44,7 @@ export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onFor
     </div>;
 }
 
-export function ForceStopBanner({ attempts, onForce, retry, uncertain, error }: { attempts: Attempt[]; onForce: (id: string) => Promise<void>; retry: () => void; uncertain: boolean; error?: string }) {
+export function ForceStopBanner({ attempts, onForce, retry, uncertain, error }: { attempts: Attempt[]; onForce: (id: string, expectedRevision: number) => Promise<void>; retry: () => void; uncertain: boolean; error?: string }) {
     const { t } = useI18n();
     if (!attempts.length && !uncertain) return null;
     return <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
