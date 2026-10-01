@@ -290,3 +290,25 @@ func TestForceRestartTerminalOperationNeedsANewExplicitRequest(t *testing.T) {
 		t.Fatal("old result changed replacement")
 	}
 }
+
+func TestForceRestartExpiredUnobservedOperationDoesNotTrapANewRequest(t *testing.T) {
+	s, r := restartFixture(t)
+	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return op.RequestedAt.Add(8 * time.Minute) }
+	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordForceStopResult(t.Context(), r.ID, 2, true, "unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	next, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 2, "cluster", "holder")
+	if err != nil || !fresh || next.ID == op.ID {
+		t.Fatalf("explicit new request trapped behind expired operation: %+v %v %v", next, fresh, err)
+	}
+	if yes, err := s.ClaimForceRestart(t.Context(), op, "late", "restart", allowRestart); yes || err == nil {
+		t.Fatal("expired replaced operation was claimed")
+	}
+}
