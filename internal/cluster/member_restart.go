@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -25,7 +24,10 @@ type MemberRestarts interface {
 	Status(context.Context, attempt.ForceRestart) (sshconnect.MemberRestart, error)
 }
 
-type RestartTarget struct{ ClusterID, Holder string }
+type RestartTarget struct {
+	ClusterID, Holder string
+	Selection         attempt.ForceRestartSelection
+}
 type MemberRestartError struct{ Reason string }
 
 func (e MemberRestartError) Error() string { return e.Reason }
@@ -91,32 +93,11 @@ func (m memberRestarts) Find(ctx context.Context, node, by string) (RestartTarge
 	if err != nil {
 		return RestartTarget{}, err
 	}
-	if _, err := (peerSSHBackend{peer: m.peer}).RestartTarget(ctx, node); err == nil {
-		return RestartTarget{m.peer.Config.ClusterID, m.peer.Config.NodeID}, nil
+	candidates, err := m.discover(ctx, node, by, state, authority)
+	if err != nil {
+		return RestartTarget{}, err
 	}
-	ids := make([]string, 0, len(state.Members))
-	for id := range state.Members {
-		if id != m.peer.Config.NodeID && id != node && !state.Removing[id] {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	tried := make(map[string]bool, len(ids))
-	for range len(ids) {
-		if ctx.Err() != nil {
-			return RestartTarget{}, ctx.Err()
-		}
-		id := m.discovery.next(ids, tried)
-		query := restartQuery(node, "", "", "", by, authority)
-		var answer memberRestartResponse
-		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		err := m.peer.peerJSON(probeCtx, state.Members[id], http.MethodGet, clusterMemberRestartPath+"?"+query.Encode(), nil, &answer)
-		cancel()
-		if err == nil && answer.Restartable {
-			return RestartTarget{m.peer.Config.ClusterID, id}, nil
-		}
-	}
-	return RestartTarget{}, MemberRestartError{"restart_no_holder"}
+	return chooseRestartTarget(m.peer.Config.ClusterID, state.Revision, candidates)
 }
 
 func (m memberRestarts) Start(ctx context.Context, op attempt.ForceRestart) error {
@@ -126,6 +107,9 @@ func (m memberRestarts) Start(ctx context.Context, op attempt.ForceRestart) erro
 	}
 	if op.ClusterID != m.peer.Config.ClusterID {
 		return errors.New("restart belongs to another cluster")
+	}
+	if err := m.verifyRestartSelection(ctx, op, "", ""); err != nil {
+		return err
 	}
 	holder, ok := state.Members[op.Holder]
 	if !ok || state.Removing[op.Holder] {

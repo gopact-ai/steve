@@ -1,6 +1,9 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.forceRestartDiscovering": "Checking restart ownership",
+    "console.forceRestartAmbiguous": "Several members hold this node's SSH link. No new restart was started; resolve the link ownership before retrying.",
+    "console.forceRestartConflict": "Several members already have operations running on this node. No additional restart was started.",
     "console.forceRestarting": "Restarting the original node",
     "console.forceAwaiting": "Checking node return and original process exit",
     "console.forceRestartSelf": "The current coordinator is not restarted automatically. Restart Steve manually, or switch coordinators before retrying.",

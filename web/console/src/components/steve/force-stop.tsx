@@ -18,7 +18,7 @@ export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onFor
     const eligible = needsForceStop(attempt) && level !== "confirmed" && !active;
     const validConfirmation = confirming && confirming.id === attempt.id && confirming.revision === revision && eligible;
     if (confirming && !validConfirmation) setConfirming(null);
-    const progress = level === "restart" ? t("console.forceRestarting") : level === "await" ? t("console.forceAwaiting") : t("console.forceRunning");
+    const progress = level === "restart" ? t(attempt.force_stop?.restart_id ? "console.forceRestarting" : "console.forceRestartDiscovering") : level === "await" ? t("console.forceAwaiting") : t("console.forceRunning");
     const reasons: Record<string, string> = {
         restart_required: t("console.forceRestartRequired"), upgrade_required: t("console.forceUpgradeRequired"),
         stop_running: t("console.forceStillRunning"), stop_unproven: t("console.forceUnproven"),
@@ -26,6 +26,7 @@ export function ForceStopControl({ attempt, onForce }: { attempt: Attempt; onFor
         restart_self: t("console.forceRestartSelf"), restart_permission: t("console.forceRestartPermission"),
         restart_no_holder: t("console.forceRestartNoHolder"), restart_unavailable: t("console.forceRestartNoHolder"),
         restart_timeout: t("console.forceRestartTimeout"), restart_failed: t("console.forceRestartFailed"),
+        restart_ambiguous_holder: t("console.forceRestartAmbiguous"), restart_conflicting_plans: t("console.forceRestartConflict"),
         restart_status_lost: t("console.forceRestartLost"), await_timeout: t("console.forceAwaitTimeout"),
         restart_upgrade_required: t("console.forceSafeUpgrade"), restart_stop_unsupported: t("console.forceSafeUnsupported"), restart_identity_unproven: t("console.forceSafeUnproven"),
     };

@@ -67,6 +67,7 @@ type RestartRecord struct {
 // restart, running or finished, and whether automatic start ran it; and
 // how automatic start stands for the machine where this node watches it.
 type RestartState struct {
+	Activity    *MemberRestart  `json:"activity,omitempty"`
 	Restartable bool            `json:"restartable"`
 	Reason      string          `json:"reason,omitempty"`
 	Restart     *InstallResult  `json:"restart,omitempty"`
@@ -163,6 +164,11 @@ func (s *Service) RestartStatus(ctx context.Context, nodeID string) (RestartStat
 	if stored := s.plans[s.restarts[nodeID]]; stored != nil {
 		result := cloneResult(stored.result)
 		state.Restart, state.Automatic = &result, stored.automatic
+	}
+	if stored := s.plans[s.upgrades[nodeID]]; stored != nil && stored.running {
+		state.Activity = &MemberRestart{NodeID: nodeID, PlanID: stored.plan.ID, Kind: "upgrade", State: "running"}
+	} else if stored := s.plans[s.restarts[nodeID]]; stored != nil && stored.running {
+		state.Activity = &MemberRestart{NodeID: nodeID, PlanID: stored.plan.ID, Kind: "restart", State: "running"}
 	}
 	if watch := s.watches[nodeID]; watch != nil {
 		auto := watch.state

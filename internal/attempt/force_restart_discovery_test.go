@@ -13,7 +13,7 @@ func TestForceRestartReservationRetainsTheDiscoveryBudget(t *testing.T) {
 	start := r.ForceStop.LevelSince
 	clock := start.Add(6 * time.Minute)
 	s.now = func() time.Time { return clock }
-	op, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+	op, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil || !fresh {
 		t.Fatalf("reserve: fresh=%v err=%v", fresh, err)
 	}
@@ -36,7 +36,7 @@ func TestForceRestartReservationRetainsTheDiscoveryBudget(t *testing.T) {
 func TestForceRestartDiscoveryCannotReserveAfterItsDeadline(t *testing.T) {
 	s, r := restartFixture(t)
 	s.now = func() time.Time { return r.ForceStop.LevelSince.Add(7 * time.Minute) }
-	if _, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder"); err == nil || fresh {
+	if _, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1}); err == nil || fresh {
 		t.Fatalf("expired discovery reserved an operation: fresh=%v err=%v", fresh, err)
 	}
 	if _, found, err := s.ForceRestart(t.Context(), r.Node); err != nil || found {
@@ -69,7 +69,7 @@ func TestForceRestartDiscoveryDeadlineIsCheckedInsideReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	replica.advance = func() { clock = r.ForceStop.LevelSince.Add(7 * time.Minute) }
-	if _, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder"); err == nil || fresh {
+	if _, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1}); err == nil || fresh {
 		t.Fatalf("reservation prepared after the deadline: fresh=%v err=%v", fresh, err)
 	}
 	if _, found, err := s.ForceRestart(t.Context(), r.Node); err != nil || found {
@@ -79,7 +79,7 @@ func TestForceRestartDiscoveryDeadlineIsCheckedInsideReservation(t *testing.T) {
 
 func TestForceRestartJoiningKeepsTheEarlierDeadline(t *testing.T) {
 	s, r := restartFixture(t)
-	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder")
+	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestForceRestartJoiningKeepsTheEarlierDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock = clock.Add(time.Minute)
-	joined, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 2, "cluster", "another-holder")
+	joined, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 2, "cluster", "another-holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil || fresh || joined.ID != op.ID || !joined.RequestedAt.Equal(op.RequestedAt) {
 		t.Fatalf("join extended or replaced the operation: %+v %v %v", joined, fresh, err)
 	}
@@ -105,12 +105,12 @@ func TestForceRestartJoiningKeepsTheEarlierDeadline(t *testing.T) {
 func TestForceRestartEarlyDiscoveryDoesNotExtendWhenJoiningALaterOperation(t *testing.T) {
 	s, r := restartFixture(t)
 	start := r.ForceStop.LevelSince
-	op := ForceRestart{ID: "shared-operation", ClusterID: "cluster", NodeID: r.Node, Holder: "holder", By: "owner", RequestedAt: start.Add(time.Minute)}
+	op := ForceRestart{Selection: ForceRestartSelection{MembershipRevision: 1}, ID: "shared-operation", ClusterID: "cluster", NodeID: r.Node, Holder: "holder", By: "owner", RequestedAt: start.Add(time.Minute)}
 	s.now = func() time.Time { return start.Add(2 * time.Minute) }
 	if err := s.l.PutBinding(t.Context(), forceRestartKind, r.Node, op); err != nil {
 		t.Fatal(err)
 	}
-	joined, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "another-holder")
+	joined, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "another-holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil || fresh || joined != op {
 		t.Fatalf("join changed shared operation: %+v %v %v", joined, fresh, err)
 	}

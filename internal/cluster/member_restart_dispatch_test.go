@@ -82,7 +82,11 @@ func TestMemberRestartDispatchUsesHolderAndNeverReplaysAfterLostMemory(t *testin
 	holder.Config.Links = map[string]PeerLink{target.Config.NodeID: {Alias: "fixture-target"}}
 	holder.localSSH = fresh()
 	holder.Mu.Unlock()
-	op := attempt.ForceRestart{ID: "fixture-restart", ClusterID: hub.Config.ClusterID, NodeID: target.Config.NodeID, Holder: holder.Config.NodeID, By: "test-owner", RequestedAt: time.Now().UTC()}
+	selection, err := hub.MemberRestarts(active).Find(t.Context(), target.Config.NodeID, "test-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := attempt.ForceRestart{Selection: selection.Selection, ID: "fixture-restart", ClusterID: hub.Config.ClusterID, NodeID: target.Config.NodeID, Holder: holder.Config.NodeID, By: "test-owner", RequestedAt: time.Now().UTC()}
 	if err := active.Ledger.PutBinding(t.Context(), "force-stop-member-restart", op.NodeID, op); err != nil {
 		t.Fatal(err)
 	}

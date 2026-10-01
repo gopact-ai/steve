@@ -34,7 +34,7 @@ func (h *forceRestartHost) Find(_ context.Context, node, by string) (cluster.Res
 	if h.failure != nil {
 		return cluster.RestartTarget{}, h.failure
 	}
-	return cluster.RestartTarget{ClusterID: "cluster", Holder: h.holder}, nil
+	return cluster.RestartTarget{ClusterID: "cluster", Holder: h.holder, Selection: attempt.ForceRestartSelection{MembershipRevision: 1}}, nil
 }
 func (h *forceRestartHost) Start(ctx context.Context, op attempt.ForceRestart) error {
 	h.mu.Lock()
@@ -194,7 +194,7 @@ func TestForceRestartLostHolderAndPendingDispatchNeverRepeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.attempts.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "link-owner"); err != nil {
+	if _, _, err := s.attempts.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "link-owner", attempt.ForceRestartSelection{MembershipRevision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	sessions.failure = errors.New("no response")
@@ -275,5 +275,24 @@ func TestForceRestartSafeTargetFailuresAreNotBlindlyRetried(t *testing.T) {
 				t.Fatalf("unsafe target refusal=%+v starts=%d", got.ForceStop, len(host.starts))
 			}
 		})
+	}
+}
+
+func TestForceRestartExistingOperationDoesNotRediscoverAnotherHolder(t *testing.T) {
+	s, records, _, host := forceRestartFixture(t, 2)
+	if err := s.forceStop(t.Context(), records[0]); err != nil {
+		t.Fatal(err)
+	}
+	one, err := s.attempts.Get(t.Context(), records[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.failure = errors.New("discovery must not replace the recorded holder")
+	if err := s.forceStop(t.Context(), records[1]); err != nil {
+		t.Fatal(err)
+	}
+	two, err := s.attempts.Get(t.Context(), records[1].ID)
+	if err != nil || two.ForceStop.Level != "restart" || two.ForceStop.RestartID != one.ForceStop.RestartID || len(host.starts) != 1 {
+		t.Fatalf("existing node operation was rediscovered or dispatched twice: one=%+v two=%+v starts=%d err=%v", one.ForceStop, two.ForceStop, len(host.starts), err)
 	}
 }

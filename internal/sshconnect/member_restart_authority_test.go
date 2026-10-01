@@ -48,7 +48,7 @@ func TestMemberRestartRevalidatesAfterPreflightBeforeTheScript(t *testing.T) {
 					return errors.New(reason)
 				}
 				return nil
-			})
+			}, MemberRestartChoice{})
 			if err != nil {
 				close(probe.release)
 				t.Fatal(err)

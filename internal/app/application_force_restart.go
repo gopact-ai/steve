@@ -28,7 +28,7 @@ func (s *applicationStops) beginForceRestart(ctx context.Context, r attempt.Reco
 	if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
 		return s.exhaustForceStop(ctx, r, "restart_timeout")
 	}
-	target, err := s.restarts.Find(ctx, r.Node, r.ForceStop.By)
+	target, err := s.restartTarget(ctx, r)
 	if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
 		return s.exhaustForceStop(ctx, r, "restart_timeout")
 	}
@@ -36,9 +36,13 @@ func (s *applicationStops) beginForceRestart(ctx context.Context, r attempt.Reco
 		if ctx.Err() != nil {
 			return err
 		}
+		var incomplete cluster.MemberRestartError
+		if errors.As(err, &incomplete) && (incomplete.Reason == "restart_discovery_incomplete" || incomplete.Reason == "restart_discovery_changed") {
+			return nil
+		}
 		return s.exhaustForceStop(ctx, r, restartFailureReason(err, "restart_no_holder"))
 	}
-	op, fresh, err := s.attempts.BeginForceRestart(ctx, r.ID, r.ForceStop.Revision, target.ClusterID, target.Holder)
+	op, fresh, err := s.attempts.BeginForceRestart(ctx, r.ID, r.ForceStop.Revision, target.ClusterID, target.Holder, target.Selection)
 	if errors.Is(err, attempt.ErrForceRestartExpired) {
 		return s.exhaustForceStop(ctx, r, "restart_timeout")
 	}
@@ -54,6 +58,19 @@ func (s *applicationStops) beginForceRestart(ctx context.Context, r attempt.Reco
 	// The operation is already durable. Regardless of the response, every later
 	// pass only observes it; replaying a dispatch could restart a machine twice.
 	return s.restarts.Start(ctx, op)
+}
+
+// Joining an already recorded node operation must not choose another holder.
+// Only a new operation needs a complete current candidate discovery.
+func (s *applicationStops) restartTarget(ctx context.Context, r attempt.Record) (cluster.RestartTarget, error) {
+	op, found, err := s.attempts.ForceRestart(ctx, r.Node)
+	if err != nil {
+		return cluster.RestartTarget{}, err
+	}
+	if found && (op.FinishedAt.IsZero() && s.now().Sub(op.RequestedAt) < 7*time.Minute || !op.FinishedAt.IsZero() && !r.ForceStop.RequestedAt.After(op.FinishedAt)) {
+		return cluster.RestartTarget{ClusterID: op.ClusterID, Holder: op.Holder, Selection: op.Selection}, nil
+	}
+	return s.restarts.Find(ctx, r.Node, r.ForceStop.By)
 }
 
 func (s *applicationStops) pollForceRestart(ctx context.Context, r attempt.Record) error {

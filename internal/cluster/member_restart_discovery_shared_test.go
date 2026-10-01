@@ -28,55 +28,52 @@ func discoveryHolders(t *testing.T) (MemberRestarts, string, []*Peer) {
 	return hub.MemberRestarts(active), target.Config.NodeID, holders
 }
 
-func TestMemberRestartDiscoverySharesProgressAcrossCalls(t *testing.T) {
-	control, target, _ := discoveryHolders(t)
+func TestMemberRestartDiscoveryRefreshesLinkOwnershipAcrossCalls(t *testing.T) {
+	control, target, holders := discoveryHolders(t)
 	copy := control
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	first, err := control.Find(ctx, target, "test-owner")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := control.Find(ctx, target, "test-owner"); err == nil {
+		t.Fatal("multiple idle holders were called unique")
 	}
-	second, err := copy.Find(ctx, target, "test-owner")
-	if err != nil {
-		t.Fatal(err)
+	holders[0].Mu.Lock()
+	holders[0].Config.Links = nil
+	holders[0].Mu.Unlock()
+	chosen, err := copy.Find(ctx, target, "test-owner")
+	if err != nil || chosen.Holder != holders[1].Config.NodeID {
+		t.Fatalf("current unique holder not found: %+v %v", chosen, err)
 	}
-	if first.Holder == second.Holder {
-		t.Fatalf("successive discoveries restarted at the same member: %s", first.Holder)
-	}
-	third, err := control.Find(ctx, target, "test-owner")
-	if err != nil || third.Holder != first.Holder {
-		t.Fatalf("discovery did not wrap fairly: first=%+v third=%+v err=%v", first, third, err)
+	holders[1].Mu.Lock()
+	holders[1].Config.Links = nil
+	holders[1].Mu.Unlock()
+	holders[0].Mu.Lock()
+	holders[0].Config.Links = map[string]PeerLink{target: {Alias: "fixture-target"}}
+	holders[0].Mu.Unlock()
+	chosen, err = control.Find(ctx, target, "test-owner")
+	if err != nil || chosen.Holder != holders[0].Config.NodeID {
+		t.Fatalf("stale holder selection was reused: %+v %v", chosen, err)
 	}
 }
 
 func TestConcurrentMemberRestartDiscoverySharesProbeReservations(t *testing.T) {
-	control, target, _ := discoveryHolders(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
+	control, _, _ := discoveryHolders(t)
+	one := control.(memberRestarts)
+	two := one
 	ready := make(chan struct{})
-	results := make(chan RestartTarget, 2)
-	failures := make(chan error, 2)
+	results := make(chan string, 2)
 	var calls sync.WaitGroup
-	for range 2 {
+	for _, client := range []memberRestarts{one, two} {
 		calls.Add(1)
-		go func() {
+		go func(m memberRestarts) {
 			defer calls.Done()
 			<-ready
-			got, err := control.Find(ctx, target, "test-owner")
-			results <- got
-			failures <- err
-		}()
+			results <- m.discovery.next([]string{"first", "second"}, map[string]bool{})
+		}(client)
 	}
 	close(ready)
 	calls.Wait()
-	one, two := <-results, <-results
-	for range 2 {
-		if err := <-failures; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if one.Holder == two.Holder || one.Holder == "" || two.Holder == "" {
-		t.Fatalf("concurrent discoveries did not share progress: %+v %+v", one, two)
+	first, second := <-results, <-results
+	if first == second || first == "" || second == "" {
+		t.Fatalf("copies did not share probe reservations: %q %q", first, second)
 	}
 }

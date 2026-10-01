@@ -13,18 +13,25 @@ import (
 
 // ForceRestart is the latest durable restart of one machine. Its ID is never
 // reused: a delayed request for a replaced operation is refused.
+type ForceRestartSelection struct {
+	MembershipRevision uint64 `json:"membership_revision"`
+	JoinPlanID         string `json:"join_plan_id,omitempty"`
+	JoinKind           string `json:"join_kind,omitempty"`
+}
+
 type ForceRestart struct {
-	ID          string    `json:"id"`
-	ClusterID   string    `json:"cluster_id"`
-	NodeID      string    `json:"node_id"`
-	Holder      string    `json:"holder"`
-	By          string    `json:"by"`
-	RequestedAt time.Time `json:"requested_at"`
-	ClaimedAt   time.Time `json:"claimed_at,omitempty"`
-	PlanID      string    `json:"plan_id,omitempty"`
-	Kind        string    `json:"kind,omitempty"`
-	FinishedAt  time.Time `json:"finished_at,omitempty"`
-	Outcome     string    `json:"outcome,omitempty"`
+	Selection   ForceRestartSelection `json:"selection"`
+	ID          string                `json:"id"`
+	ClusterID   string                `json:"cluster_id"`
+	NodeID      string                `json:"node_id"`
+	Holder      string                `json:"holder"`
+	By          string                `json:"by"`
+	RequestedAt time.Time             `json:"requested_at"`
+	ClaimedAt   time.Time             `json:"claimed_at,omitempty"`
+	PlanID      string                `json:"plan_id,omitempty"`
+	Kind        string                `json:"kind,omitempty"`
+	FinishedAt  time.Time             `json:"finished_at,omitempty"`
+	Outcome     string                `json:"outcome,omitempty"`
 }
 
 var ErrForceRestartChanged = errors.New("member restart identity changed")
@@ -35,7 +42,7 @@ const forceRestartKind = "force-stop-member-restart"
 // BeginForceRestart joins an existing node operation or reserves one atomically
 // with the attempt's phase. A terminal operation is reused by older requests;
 // only a later explicit owner request can replace it.
-func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uint64, clusterID, holder string) (ForceRestart, bool, error) {
+func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uint64, clusterID, holder string, selection ForceRestartSelection) (ForceRestart, bool, error) {
 	var op ForceRestart
 	fresh := false
 	err := s.l.Update(ctx, func(tx *ledger.Tx) error {
@@ -53,7 +60,7 @@ func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uin
 			}
 			return err
 		}
-		if r.ForceStop.Level != "restart" || r.ForceStop.Reason != "restart_required" || clusterID == "" || holder == "" {
+		if r.ForceStop.Level != "restart" || r.ForceStop.Reason != "restart_required" || clusterID == "" || holder == "" || selection.MembershipRevision == 0 || (selection.JoinPlanID == "") != (selection.JoinKind == "") || selection.JoinKind != "" && selection.JoinKind != "restart" && selection.JoinKind != "upgrade" {
 			return ErrForceStopChanged
 		}
 		if s.now().Sub(r.ForceStop.LevelSince) >= 7*time.Minute {
@@ -77,7 +84,7 @@ func (s *Service) BeginForceRestart(ctx context.Context, id string, revision uin
 			}
 		}
 		if !found || !op.FinishedAt.IsZero() && r.ForceStop.RequestedAt.After(op.FinishedAt) {
-			op = ForceRestart{ID: fmt.Sprintf("%s/%d", id, revision), ClusterID: clusterID, NodeID: r.Node, Holder: holder, By: r.ForceStop.By, RequestedAt: r.ForceStop.LevelSince}
+			op = ForceRestart{ID: fmt.Sprintf("%s/%d", id, revision), ClusterID: clusterID, NodeID: r.Node, Holder: holder, By: r.ForceStop.By, RequestedAt: r.ForceStop.LevelSince, Selection: selection}
 			if err := tx.PutBinding(forceRestartKind, r.Node, op); err != nil {
 				return err
 			}
@@ -139,7 +146,7 @@ func (s *Service) ClaimForceRestart(ctx context.Context, request ForceRestart, p
 		if err != nil {
 			return err
 		}
-		if !found || !sameRestart(op, request) || plan == "" || kind != "restart" && kind != "upgrade" || authorize == nil {
+		if !found || !sameRestart(op, request) || plan == "" || kind != "restart" && kind != "upgrade" || authorize == nil || op.Selection.JoinPlanID != "" && (op.Selection.JoinPlanID != plan || op.Selection.JoinKind != kind) {
 			return ErrForceRestartChanged
 		}
 		if err := authorize(tx, op); err != nil {
@@ -162,7 +169,7 @@ func (s *Service) ClaimForceRestart(ctx context.Context, request ForceRestart, p
 }
 
 func sameRestart(a, b ForceRestart) bool {
-	return a.ID == b.ID && a.NodeID == b.NodeID && a.ClusterID == b.ClusterID && a.Holder == b.Holder && a.By == b.By && a.RequestedAt.Equal(b.RequestedAt)
+	return a.ID == b.ID && a.NodeID == b.NodeID && a.ClusterID == b.ClusterID && a.Holder == b.Holder && a.By == b.By && a.RequestedAt.Equal(b.RequestedAt) && a.Selection == b.Selection
 }
 
 func (s *Service) FinishForceRestart(ctx context.Context, request ForceRestart, outcome string) error {

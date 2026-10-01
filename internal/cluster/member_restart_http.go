@@ -27,8 +27,9 @@ type memberRestartRequest struct {
 	Kind      string                    `json:"kind,omitempty"`
 }
 type memberRestartResponse struct {
-	Restartable bool                     `json:"restartable"`
-	Operation   sshconnect.MemberRestart `json:"operation"`
+	MembershipRevision uint64                   `json:"membership_revision"`
+	Restartable        bool                     `json:"restartable"`
+	Operation          sshconnect.MemberRestart `json:"operation"`
 }
 
 func checkRestartTarget(state coordination.State, node string) error {
@@ -124,13 +125,16 @@ func (p *Peer) serveMemberRestart(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, err)
 		return
 	}
-	answer := memberRestartResponse{Restartable: status.Restartable}
+	answer := memberRestartResponse{Restartable: status.Restartable, MembershipRevision: state.Revision}
+	if status.Activity != nil {
+		answer.Operation = *status.Activity
+	}
 	if r.Method == http.MethodGet && req.Operation.ID == "" {
 		WriteJSON(w, answer)
 		return
 	}
 	if r.Method == http.MethodPost {
-		if req.Operation.Holder != p.Config.NodeID || req.Operation.ClusterID != p.Config.ClusterID || !status.Restartable {
+		if req.Operation.Holder != p.Config.NodeID || req.Operation.ClusterID != p.Config.ClusterID || req.Operation.Selection.MembershipRevision != state.Revision || req.Operation.Selection.MembershipRevision == 0 || !status.Restartable && req.Operation.Selection.JoinPlanID == "" {
 			http.Error(w, "restart does not belong to this link holder", http.StatusForbidden)
 			return
 		}
@@ -145,7 +149,7 @@ func (p *Peer) serveMemberRestart(w http.ResponseWriter, r *http.Request) {
 				return errors.New("restart validation was not accepted")
 			}
 			return err
-		})
+		}, sshconnect.MemberRestartChoice{PlanID: req.Operation.Selection.JoinPlanID, Kind: req.Operation.Selection.JoinKind})
 	} else {
 		answer.Operation, err = service.MemberRestartStatus(ctx, req.Operation.NodeID, req.Operation.ID, req.Operation.PlanID, req.Operation.Kind)
 	}
@@ -231,6 +235,10 @@ func (p *Peer) serveMemberRestartClaim(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "coordinator changed", http.StatusForbidden)
 		return
 	}
+	if req.Operation.Selection.MembershipRevision == 0 || state.Revision != req.Operation.Selection.MembershipRevision {
+		http.Error(w, "restart member view changed", http.StatusConflict)
+		return
+	}
 	if _, member := state.Members[caller.NodeID]; !member || state.Removing[caller.NodeID] {
 		http.Error(w, "restart holder is no longer a member", http.StatusForbidden)
 		return
@@ -253,6 +261,11 @@ func (p *Peer) serveMemberRestartClaim(w http.ResponseWriter, r *http.Request) {
 	service := attempt.New(active.Ledger)
 	if req.Verify {
 		if err := p.waitRestartReplica(ctx, state); err != nil {
+			HTTPError(w, err)
+			return
+		}
+		control := memberRestarts{peer: p, active: active, discovery: &restartDiscovery{}}
+		if err := control.verifyRestartSelection(ctx, req.Operation, req.PlanID, req.Kind); err != nil {
 			HTTPError(w, err)
 			return
 		}

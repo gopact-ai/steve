@@ -1,4 +1,7 @@
 export const consoleZh = {
+    "console.forceRestartDiscovering": "正在核对可安全重启的连接持有者",
+    "console.forceRestartAmbiguous": "多个成员持有原节点的 SSH 连接，未发起新的重启。请先明确连接归属后重试。",
+    "console.forceRestartConflict": "多个成员已在原节点运行操作，未额外发起重启。",
     "console.forceRestarting": "正在重启原节点",
     "console.forceAwaiting": "正在确认节点回归及原进程停止",
     "console.forceRestartSelf": "不会自动重启当前协调节点。请手动重启 Steve，或切换协调节点后重试。",

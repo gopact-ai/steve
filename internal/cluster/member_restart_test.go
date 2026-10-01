@@ -106,7 +106,11 @@ func TestMemberRestartClaimsFenceAuthorityAndOwnerChanges(t *testing.T) {
 	if _, err := platformconfig.New(active.Ledger).Bootstrap(t.Context(), cfg, platformconfig.LocalNode{ID: hub.Config.NodeID, Config: config.Node{Addr: hub.Worker().Address, Token: hub.Worker().Token}}); err != nil {
 		t.Fatal(err)
 	}
-	op := attempt.ForceRestart{ID: "op", ClusterID: hub.Config.ClusterID, NodeID: target.Config.NodeID, Holder: holder.Config.NodeID, By: "test-owner", RequestedAt: time.Now().UTC()}
+	state, err := hub.Runtime.Load().ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := attempt.ForceRestart{Selection: attempt.ForceRestartSelection{MembershipRevision: state.Revision}, ID: "op", ClusterID: hub.Config.ClusterID, NodeID: target.Config.NodeID, Holder: holder.Config.NodeID, By: "test-owner", RequestedAt: time.Now().UTC()}
 	if err := active.Ledger.PutBinding(t.Context(), "force-stop-member-restart", op.NodeID, op); err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +122,10 @@ func TestMemberRestartClaimsFenceAuthorityAndOwnerChanges(t *testing.T) {
 	}
 	verify := req
 	verify.Verify = true
-	if yes, err := holder.claimMemberRestart(t.Context(), verify); err != nil || !yes {
-		t.Fatalf("exact claim not verified: %v %v", yes, err)
+	// Verification cannot authorize a script from only a ledger claim: this
+	// fixture has no corresponding live holder plan or unique link proof.
+	if yes, err := holder.claimMemberRestart(t.Context(), verify); err == nil || yes {
+		t.Fatalf("a bare claim authorized a missing local operation: %v %v", yes, err)
 	}
 	verify.PlanID = "other-plan"
 	if yes, err := holder.claimMemberRestart(t.Context(), verify); yes || err == nil {

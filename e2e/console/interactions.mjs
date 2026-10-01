@@ -3210,7 +3210,7 @@ checks["force-stop-confirmation-retry"] = async (f) => {
 
 for (const [name, update, shown] of [
     ["kill", (current) => { current.force_stop = { revision: 1, level: "kill", by: "owner", requested_at: at, level_since: at }; }, "正在强制停止"],
-    ["restart", (current) => { current.force_stop = { revision: 1, level: "restart", by: "owner", requested_at: at, level_since: at }; }, "正在重启原节点"],
+    ["restart", (current) => { current.force_stop = { revision: 1, level: "restart", by: "owner", requested_at: at, level_since: at, restart_id: "original-restart" }; }, "正在重启原节点"],
     ["await", (current) => { current.force_stop = { revision: 1, level: "await", by: "owner", requested_at: at, level_since: at }; }, "正在确认节点回归及原进程停止"],
     ["revision", (current) => { current.force_stop = { revision: 2, level: "exhausted", reason: "restart_permission", by: "owner", requested_at: at, level_since: at }; }, "重启权限已失效，请由当前 owner 重新确认。"],
     ["confirmed", (current) => { current.unsettled = false; current.force_stop = { revision: 1, level: "confirmed", by: "owner", requested_at: at, level_since: at }; }, null],
