@@ -186,6 +186,7 @@ type Usage struct {
 type Record struct {
 	Spec
 	ForceStop *ForceStop `json:"force_stop,omitempty"`
+	Abandoned *Abandoned `json:"abandoned,omitempty"`
 	// NodeReceipt is authenticated original native evidence, recorded with the
 	// terminal result. Its pending retry index is separate from closed history.
 	NodeReceipt *nodewire.SessionReceipt `json:"node_receipt,omitempty"`

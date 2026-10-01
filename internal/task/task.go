@@ -171,7 +171,8 @@ type Attempt struct {
 	Model string `json:"model,omitempty"`
 	// UsageKnown is explicit for interrupted recovery attempts; false means
 	// their missing token report must not be presented as confirmed zero.
-	UsageKnown *bool `json:"usage_known,omitempty"`
+	UsageKnown         *bool     `json:"usage_known,omitempty"`
+	AccountingFrozenAt time.Time `json:"accounting_frozen_at,omitzero"`
 }
 
 // FromUsage converts a turn's reported usage into the store's shape.
