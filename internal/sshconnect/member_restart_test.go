@@ -80,6 +80,7 @@ func TestMemberRestartJoinsMachineUpgradeWithoutRestarting(t *testing.T) {
 	s.mu.Lock()
 	stored.running = false
 	stored.result.Status = "connected"
+	stored.result.Connected = true
 	s.mu.Unlock()
 	st, err = s.MemberRestartStatus(t.Context(), "node-1", "request", "upgrade-plan", "upgrade")
 	if err != nil || st.State != "connected" || claims.Load() != 1 || len(runner.restarts()) != 0 {

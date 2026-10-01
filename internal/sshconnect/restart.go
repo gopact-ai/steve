@@ -117,6 +117,10 @@ func (s *Service) Restart(ctx context.Context, nodeID string) (InstallResult, er
 	if failure != nil {
 		return InstallResult{}, failure
 	}
+	return s.runMemberRestart(ctx, backend, stored, nodeID)
+}
+
+func (s *Service) runMemberRestart(ctx context.Context, backend RestartBackend, stored *storedPlan, nodeID string) (InstallResult, error) {
 	result, outcome, err := s.restart(ctx, backend, stored.plan.ID, nodeID, nodebootstrap.RestartSpec{})
 	if err == nil {
 		s.mu.Lock()
