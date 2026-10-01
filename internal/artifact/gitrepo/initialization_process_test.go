@@ -52,6 +52,67 @@ func TestOpenFromAnotherProcess(t *testing.T) {
 	write(t, root, "result-"+id, sha)
 }
 
+func TestConfigurationLockOwnerProcess(t *testing.T) {
+	dir, control := os.Getenv("GITREPO_FOREIGN_LOCK"), os.Getenv("GITREPO_FOREIGN_CONTROL")
+	if dir == "" || control == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	file, err := os.OpenFile(filepath.Join(dir, "config.lock"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.WriteString("held by the other process\n"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, control, "ready", "ready")
+	waitInitializationFile(t, ctx, filepath.Join(control, "release"))
+}
+
+func TestOpenPreservesALockHeldByAnotherProcess(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "p.git")
+	if _, err := Open(t.Context(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, initializedMarker)); err != nil {
+		t.Fatal(err)
+	}
+	config, head := read(t, dir, "config"), read(t, dir, "HEAD")
+	control := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestConfigurationLockOwnerProcess$")
+	cmd.Env = append(os.Environ(), "GITREPO_FOREIGN_LOCK="+dir, "GITREPO_FOREIGN_CONTROL="+control)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait(); close(done) }()
+	defer func() { cancel(); <-done }()
+	waitInitializationFile(t, ctx, filepath.Join(control, "ready"))
+	if _, err := Open(ctx, dir); err == nil {
+		t.Fatal("accepted a repository held by another process")
+	}
+	if read(t, dir, "config") != config || read(t, dir, "HEAD") != head || read(t, dir, "config.lock") != "held by the other process\n" {
+		t.Fatal("changed the other process's repository or lock")
+	}
+	if _, err := os.Stat(filepath.Join(dir, initializedMarker)); !os.IsNotExist(err) {
+		t.Fatalf("marked another process's locked repository ready: %v", err)
+	}
+	write(t, control, "release", "release")
+	if err := <-done; err != nil {
+		t.Fatalf("lock-owning process: %v: %s", err, output.String())
+	}
+}
+
 func TestOpenPublishesOneRepositoryAcrossProcessesWithoutLosingArtifacts(t *testing.T) {
 	root := t.TempDir()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
