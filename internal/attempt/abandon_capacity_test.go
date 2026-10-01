@@ -77,6 +77,9 @@ func TestLateUsageNeverChangesTheAbandonmentSnapshot(t *testing.T) {
 	if got.Usage != nil {
 		t.Fatal("late usage converted frozen unknown usage into a report")
 	}
+	if _, err := s.FailWith(t.Context(), r.ID, "late-finish", "observer ended", &Usage{Input: 1000, Output: 2000, Reported: true}); err != nil {
+		t.Fatal(err)
+	}
 	proof.Session.ProcessStopped = true
 	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "physical-exit", proof); err != nil {
 		t.Fatal(err)
