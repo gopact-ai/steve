@@ -13,7 +13,14 @@ import (
 // exact lease after the verified filesystem operation has returned.
 func (s *Service) PrepareWorkspaceRecovery(parent context.Context, expected WorkspaceRecovery, prepare func(context.Context, WorkspaceRecovery) error) (WorkspaceRecovery, error) {
 	if expected.Phase == "ready" || expected.Phase == "working" {
-		return expected, nil
+		current, err := s.WorkspaceRecovery(parent, expected.ID)
+		if err != nil {
+			return current, err
+		}
+		if current.Workspace != expected.Workspace || current.Phase != "ready" && current.Phase != "working" {
+			return current, ErrWorkspaceRecovery
+		}
+		return current, nil
 	}
 	lease, err := s.l.Acquire(parent, "workspace-recovery-driver:"+expected.ID, NewID(), s.TTL)
 	if err != nil {
@@ -47,6 +54,9 @@ func (s *Service) PrepareWorkspaceRecovery(parent context.Context, expected Work
 	}
 	if current.Phase == "ready" || current.Phase == "working" {
 		return current, nil
+	}
+	if current.Phase != "materializing" {
+		return current, ErrWorkspaceRecovery
 	}
 	if prepare == nil {
 		return WorkspaceRecovery{}, errors.New("recovery preparation is not configured")

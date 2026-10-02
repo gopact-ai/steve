@@ -17,19 +17,20 @@ var ErrWorkspaceRecovery = errors.New("workspace recovery must finish before the
 // WorkspaceRecovery owns a continuation independently of its cancelled source.
 // The original directory stays held even after every native writer has exited.
 type WorkspaceRecovery struct {
-	ID          string            `json:"id"`
-	Revision    int64             `json:"revision"`
-	Phase       string            `json:"phase"`
-	CreatedAt   time.Time         `json:"created_at"`
-	RequestedBy string            `json:"requested_by"`
-	Project     string            `json:"project"`
-	Declaration string            `json:"declaration"`
-	Target      project.Home      `json:"target"`
-	Baseline    RecoveryBaseline  `json:"baseline"`
-	Sources     []RecoverySource  `json:"sources"`
-	Workspace   project.Workspace `json:"workspace"`
-	Head        RecoveryHead      `json:"head"`
-	Producer    *RecoveryProducer `json:"producer,omitempty"`
+	ID                string            `json:"id"`
+	Revision          int64             `json:"revision"`
+	Phase             string            `json:"phase"`
+	CreatedAt         time.Time         `json:"created_at"`
+	RequestedBy       string            `json:"requested_by"`
+	Project           string            `json:"project"`
+	Declaration       string            `json:"declaration"`
+	Target            project.Home      `json:"target"`
+	Baseline          RecoveryBaseline  `json:"baseline"`
+	Sources           []RecoverySource  `json:"sources"`
+	Workspace         project.Workspace `json:"workspace"`
+	Head              RecoveryHead      `json:"head"`
+	Producer          *RecoveryProducer `json:"producer,omitempty"`
+	NativeRetirements []RecoveryNative  `json:"native_retirements,omitempty"`
 }
 
 type RecoveryContent struct {

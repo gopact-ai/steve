@@ -53,7 +53,7 @@ func markRecoveryWritingTx(tx *ledger.Tx, r Record) error {
 	if err != nil {
 		return err
 	}
-	if episode.Phase != "working" || !sameRecoveryWorkspace(episode.Workspace, r.Workspace) || episode.Producer == nil || r.Execution == nil || episode.Producer.Attempt != r.ID || episode.Producer.Execution != *r.Execution || episode.Head.Artifact != r.Base || episode.Head.Version != r.WorkspaceRecovery.HeadVersion {
+	if episode.Phase != "working" && episode.Phase != "draining" || !sameRecoveryWorkspace(episode.Workspace, r.Workspace) || episode.Producer == nil || r.Execution == nil || episode.Producer.Attempt != r.ID || episode.Producer.Execution != *r.Execution || episode.Head.Artifact != r.Base || episode.Head.Version != r.WorkspaceRecovery.HeadVersion {
 		return ErrWorkspaceRecovery
 	}
 	if err := checkRecoveryDeclarationTx(tx, episode); err != nil {
@@ -87,6 +87,9 @@ func releaseUnpreparedRecoveryTx(tx *ledger.Tx, expected WorkspaceRecovery, reco
 	if err := checkRecoveryDeclarationTx(tx, current); err != nil {
 		return err
 	}
-	current.Producer, current.Phase = nil, "ready"
+	current.Producer = nil
+	if current.Phase != "draining" {
+		current.Phase = "ready"
+	}
 	return saveWorkspaceRecoveryTx(tx, &current, "recovery-unprepared")
 }

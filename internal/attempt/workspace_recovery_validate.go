@@ -51,7 +51,7 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 		}
 		seen[s.Attempt] = true
 	}
-	if r.Phase != "recorded" && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !path.IsAbs(r.Workspace.Path) || path.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
+	if r.Phase != "recorded" && !(r.Phase == "draining" && r.Workspace.ID == "") && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !path.IsAbs(r.Workspace.Path) || path.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
 		return errors.New("workspace recovery has no exact prepared location")
 	}
 	if (r.Phase == "recorded" || r.Phase == "materializing") && r.Head.Version != 1 {
@@ -86,8 +86,11 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 		}
 	}
 
-	if (r.Phase == "working") != (r.Producer != nil) {
+	if r.Phase == "working" && r.Producer == nil || r.Phase != "working" && r.Phase != "draining" && r.Producer != nil {
 		return errors.New("recovery writer obligation differs from phase")
+	}
+	if err := validateRecoveryNatives(r); err != nil {
+		return err
 	}
 	if r.Producer != nil && (r.Producer.NativeMayWrite == nil || r.Producer.Attempt == "" || r.Producer.Execution.TaskID == "" || r.Producer.Execution.Epoch == 0 || r.Producer.Base != r.Head.Artifact || r.Producer.HeadVersion != r.Head.Version) {
 		return errors.New("recovery writer obligation has no exact authority")

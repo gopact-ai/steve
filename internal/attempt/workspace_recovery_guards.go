@@ -65,6 +65,9 @@ func checkRecoveryTaskDeletionTx(tx ledger.Reader, ids []string) error {
 		if r.Producer != nil && slices.Contains(ids, r.Producer.Execution.TaskID) {
 			return fmt.Errorf("%w: unpublished recovery output %s", task.ErrRetirementPending, r.ID)
 		}
+		if err := recoveryNativeTasksTx(tx, r, ids); err != nil {
+			return err
+		}
 	}
 	return nil
 }
