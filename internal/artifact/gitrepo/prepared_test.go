@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,6 +65,57 @@ func TestPreparedWorkspaceVerificationChecksBytesWithoutReset(t *testing.T) {
 			}
 			if name == "ignored" && read(t, dir, "ignored") != "user data" {
 				t.Fatal("verification deleted ignored file")
+			}
+		})
+	}
+}
+
+func TestRecoveryPreparationNeverResetsAnEmptyWorkingOrUnknownDirectory(t *testing.T) {
+	repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "p.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := t.TempDir()
+	write(t, source, "tracked", "pinned base")
+	base, _, err := repo.Snapshot(t.Context(), source, "", "baseline", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"prepared", "empty working", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			work := filepath.Join(t.TempDir(), "copy", "work")
+			id := "workspace-recovery-" + strings.Repeat("a", 32)
+			if state == "unknown" {
+				if err := os.MkdirAll(work, 0700); err != nil {
+					t.Fatal(err)
+				}
+				write(t, work, "unowned", "must survive")
+			} else {
+				if err := repo.PrepareRecovery(t.Context(), base, work, id); err != nil {
+					t.Fatal(err)
+				}
+				if state == "empty working" {
+					if err := os.Remove(filepath.Join(work, "tracked")); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			err := repo.PrepareRecovery(t.Context(), base, work, id)
+			if state == "prepared" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(err, ErrPreparedWorkspaceChanged) {
+				t.Fatalf("late preparation accepted changed ownership or working bytes: %v", err)
+			}
+			if state == "empty working" {
+				entries, err := os.ReadDir(work)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("late preparation restored the old base into working data: %v %v", entries, err)
+				}
+			}
+			if state == "unknown" && read(t, work, "unowned") != "must survive" {
+				t.Fatal("preparation deleted unknown content")
 			}
 		})
 	}

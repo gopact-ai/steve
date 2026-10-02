@@ -4,9 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -190,5 +193,85 @@ func TestUnpublishedRecoveryOutputBlocksReplacementEvenAfterAttemptFailure(t *te
 	}
 	if raw, err := os.ReadFile(filepath.Join(ws.Path, "result")); err != nil || string(raw) != "must survive\n" {
 		t.Fatal("replaying metadata overwrote working content")
+	}
+}
+
+func TestRecoveryRetryUsesThePinnedArtifactRatherThanALaterCanonicalRef(t *testing.T) {
+	c, p, source, base := recoveryCopyFixture(t, true)
+	r, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+		ref, _, err := tx.Name(artifact.CanonicalRef(p.ID))
+		if err != nil {
+			return err
+		}
+		_, err = tx.CompareAndSetName(ref.Name, ref.Version, strings.Repeat("9", 40))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("unsettled current disk"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := c.workspaceFor(t.Context(), Request{ConversationID: "console:later", SenderOpenID: "owner"}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
+	if err != nil || ws.Base != base {
+		t.Fatalf("retry replaced the pinned artifact with a current name: %+v %v", ws, err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(ws.Path, "original")); err != nil || string(raw) != "named base\n" {
+		t.Fatalf("retry read a later name or unsettled disk: %q %v", raw, err)
+	}
+}
+
+func TestRecoveryPreparationReplaysAfterReadyCommitFailureAndSurvivesSweep(t *testing.T) {
+	c, _, source, _ := recoveryCopyFixture(t, true)
+	r, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	episode, err := c.attempts.WorkspaceRecovery(t.Context(), r.Abandoned.WorkspaceRecoveryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := c.artifacts.PlanRecoveryWorkspace(t.Context(), episode, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode, err = c.attempts.SelectRecoveryWorkspace(t.Context(), episode.ID, ws, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forceStopTrigger(t, c, `CREATE TRIGGER refuse_ready BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND NEW.state='ready' BEGIN SELECT RAISE(ABORT,'ready refused'); END`)
+	if _, err := c.attempts.PrepareWorkspaceRecovery(t.Context(), episode, c.artifacts.PrepareRecoveryWorkspace); err == nil {
+		t.Fatal("refused readiness was reported as accepted")
+	}
+	current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+	if err != nil || current.Phase != "materializing" || current.Workspace != ws {
+		t.Fatalf("failed ready commit lost materialization ownership: %+v %v", current, err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(ws.Path, "original")); err != nil || string(raw) != "named base\n" {
+		t.Fatalf("prepared fixed-base files missing: %q %v", raw, err)
+	}
+	container := filepath.Dir(ws.Path)
+	old := time.Now().Add(-2 * artifact.SweepAge)
+	if err := os.Chtimes(container, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := c.artifacts.SweepWorktrees(t.Context(), ws.Node, filepath.Dir(filepath.Dir(container)), nil); err != nil || len(removed) != 0 {
+		t.Fatalf("materialization obligation was swept: %v %v", removed, err)
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_ready"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	current, err = attempt.New(ledgerOf(t, c)).PrepareWorkspaceRecovery(t.Context(), current, c.artifacts.PrepareRecoveryWorkspace)
+	if err != nil || current.Phase != "ready" || current.Workspace != ws {
+		t.Fatalf("exact preparation did not replay after reopen: %+v %v", current, err)
 	}
 }

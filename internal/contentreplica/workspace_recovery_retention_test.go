@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 func recoveryRetentionFixture(t *testing.T) (retentionOwnerFixture, attempt.WorkspaceRecovery) {
@@ -78,5 +80,70 @@ func TestUnreadableOrForeignRecoveryContentClosesCollection(t *testing.T) {
 				t.Fatal("GC deleted recovery bytes before validating its owner")
 			}
 		})
+	}
+}
+
+func TestRecoveryRetentionKeepsBaselineIntermediateAndLatestAcceptedContent(t *testing.T) {
+	f, r := recoveryRetentionFixture(t)
+	parent := r.Baseline.Artifact
+	for n, artifact := range []string{strings.Repeat("2", 40), strings.Repeat("3", 40)} {
+		data := []byte("accepted output " + artifact)
+		m, err := f.client.PrepareBundle(t.Context(), "p", artifact, "", checkpoint.Reference(data), bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := contentreplica.Record(tx, m); return err }); err != nil {
+			t.Fatal(err)
+		}
+		mayWrite := true
+		r.Head.Sources = append(r.Head.Sources, attempt.RecoveryProducer{NativeMayWrite: &mayWrite, Artifact: artifact, ContentID: m.ID, Storage: "replicated", Attempt: "writer-" + artifact[:1], Execution: task.ExecutionToken{TaskID: artifact[:1], Epoch: 1}, Base: parent, HeadVersion: int64(n + 1)})
+		r.Head.Artifact, r.Head.ContentID, r.Head.Version = artifact, m.ID, int64(n+2)
+		parent = artifact
+	}
+	if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error {
+		raw, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE operations SET data=? WHERE id=?`, string(raw), r.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{r.Baseline.ContentID, r.Head.Sources[0].ContentID, r.Head.ContentID} {
+		if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error { return contentreplica.Retire(tx, id) }); !errors.Is(err, contentreplica.ErrReferenced) {
+			t.Fatalf("continuous recovery history was retired: %s %v", id, err)
+		}
+	}
+	for _, store := range []*contentreplica.Store{f.receiver} {
+		if result, err := store.GC(t.Context(), f.book); err != nil || result.Blobs != 0 {
+			t.Fatalf("recovery history collected: %+v %v", result, err)
+		}
+	}
+	if err := f.receiver.Get(t.Context(), f.content.Object, &bytes.Buffer{}); err != nil {
+		t.Fatalf("baseline bytes lost: %v", err)
+	}
+	for _, producer := range r.Head.Sources {
+		m, found, err := contentreplica.Lookup(t.Context(), f.book, producer.ContentID)
+		if err != nil || !found {
+			t.Fatalf("history manifest lost: %v %v", found, err)
+		}
+		if err := f.receiver.Get(t.Context(), m.Object, &bytes.Buffer{}); err != nil {
+			t.Fatalf("history bytes lost: %v", err)
+		}
+	}
+	r.Head.Sources[0].ContentID = strings.Repeat("f", 64)
+	if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error {
+		raw, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE operations SET data=? WHERE id=?`, string(raw), r.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.receiver.GC(t.Context(), f.book); !errors.Is(err, contentreplica.ErrIntegrity) {
+		t.Fatalf("missing historical content did not close collection: %v", err)
 	}
 }
