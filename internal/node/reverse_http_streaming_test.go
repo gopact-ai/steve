@@ -55,42 +55,34 @@ func unfinishedReverseUpload(t *testing.T, endpoint string, chunked bool) net.Co
 }
 
 func TestReverseMCPEarlyFinalStreamsItsWholeResponse(t *testing.T) {
-	for _, chunked := range []bool{false, true} {
-		t.Run(fmt.Sprint("chunked-upload-", chunked), func(t *testing.T) {
-			want := strings.Repeat("response-data\n", 100000)
-			var calls atomic.Int32
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				var first [1]byte
-				if _, err := io.ReadFull(r.Body, first[:]); err != nil {
-					return
+	for _, chunkedUpload := range []bool{false, true} {
+		for _, chunkedResponse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("chunked-upload-%v-response-%v", chunkedUpload, chunkedResponse), func(t *testing.T) {
+				want := strings.Repeat("response-data\n", 100000)
+				var calls atomic.Int32
+				address, continueResponse := completeEarlyResponse(t, want, chunkedResponse, &calls)
+				endpoint := reverseEndpoint(t, address)
+				connection := unfinishedReverseUpload(t, endpoint, chunkedUpload)
+				response, err := http.ReadResponse(bufio.NewReader(connection), &http.Request{Method: http.MethodPost})
+				if err != nil {
+					t.Fatal(err)
 				}
-				w.Header().Set("Content-Type", "text/plain")
-				w.WriteHeader(http.StatusConflict)
-				for offset := 0; offset < len(want); offset += 8192 {
-					end := min(offset+8192, len(want))
-					if _, err := io.WriteString(w, want[offset:end]); err != nil {
-						return
-					}
-					w.(http.Flusher).Flush()
+				first := make([]byte, 8192)
+				if _, err := io.ReadFull(response.Body, first); err != nil {
+					t.Fatal(err)
 				}
-			}))
-			t.Cleanup(upstream.Close)
-			endpoint := reverseEndpoint(t, strings.TrimPrefix(upstream.URL, "http://"))
-			connection := unfinishedReverseUpload(t, endpoint, chunked)
-			response, err := http.ReadResponse(bufio.NewReader(connection), &http.Request{Method: http.MethodPost})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := io.ReadAll(response.Body)
-			response.Body.Close()
-			if err != nil || response.StatusCode != http.StatusConflict || string(got) != want {
-				t.Fatalf("early response status=%d bytes=%d want=%d error=%v", response.StatusCode, len(got), len(want), err)
-			}
-			if calls.Load() != 1 {
-				t.Fatalf("one request ran %d times", calls.Load())
-			}
-		})
+				continueResponse()
+				rest, err := io.ReadAll(response.Body)
+				response.Body.Close()
+				got := append(first, rest...)
+				if err != nil || response.StatusCode != http.StatusConflict || string(got) != want {
+					t.Fatalf("early response status=%d bytes=%d want=%d error=%v", response.StatusCode, len(got), len(want), err)
+				}
+				if calls.Load() != 1 {
+					t.Fatalf("one request ran %d times", calls.Load())
+				}
+			})
+		}
 	}
 }
 
