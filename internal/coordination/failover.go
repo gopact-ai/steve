@@ -30,7 +30,7 @@ func (s *Service) run() {
 			return
 		case <-s.fsm.failed:
 			s.closed.Store(true)
-			s.raft.Shutdown()
+			s.shutdown.start(s.raft)
 			return
 		case <-ticker.C:
 		case <-s.fsm.membershipChanged:
