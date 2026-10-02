@@ -7,11 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 type residualCapturer interface {
@@ -243,5 +246,192 @@ func TestRecoveryCaptureRequiresExactDriverAndTheCurrentOwner(t *testing.T) {
 	current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
 	if err != nil || current.Residual != nil || current.Phase != "draining" {
 		t.Fatalf("refused owner/driver accepted R: %+v %v", current, err)
+	}
+}
+
+type recoveryLander interface {
+	LandRecoveryOnce(context.Context, string, ledger.Lease) (artifact.Landing, error)
+}
+
+func publishBoundRecoveryTurn(t *testing.T, c *Coordinator, p project.Project, ws project.Workspace, id string, files map[string]string) attempt.Record {
+	t.Helper()
+	r, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.tasks.BindAttempt(*r.Execution, r.ID, r.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	r, err = c.attempts.Advance(t.Context(), r.ID, attempt.Prepared, "fixture", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = c.attempts.RecordSession(t.Context(), r.ID, "fixture", "ns_"+id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = c.attempts.Advance(t.Context(), r.ID, attempt.Running, "fixture", func(r *attempt.Record) { r.NativeContext = "native-" + id })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		full := filepath.Join(ws.Path, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.attempts.MarkSessionSettled(t.Context(), r.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	r, err = c.attempts.Get(t.Context(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, _, err := c.completion(t.Context(), r, Result{Text: "accepted"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = c.attempts.FinishCompletion(t.Context(), r.ID, "fixture", completion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func captureBoundCopy(t *testing.T, c *Coordinator, source attempt.Record) attempt.WorkspaceRecovery {
+	t.Helper()
+	source = retireOriginalRecoverySource(t, c, source)
+	var result attempt.WorkspaceRecovery
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID, func(ctx context.Context, driver ledger.Lease) error {
+		enrollStoppedOriginals(t, ctx, c, source.Abandoned.WorkspaceRecoveryID, driver)
+		episode, err := c.attempts.BeginRecoveryDrain(ctx, source.Abandoned.WorkspaceRecoveryID, driver)
+		if err != nil {
+			return err
+		}
+		for _, n := range episode.NativeRetirements {
+			if !n.Copy {
+				continue
+			}
+			proof := attempt.RetainedEvidence{ObservedAt: time.Now().UTC(), Session: nodewire.SessionState{ID: n.Session, ContextID: n.Context, Harness: n.Harness, Binding: n.Binding, State: nodewire.SessionClosed, ProcessStopped: true, InputAccepted: 1, Command: &nodewire.SessionCommand{ID: n.Command, InputSequence: 1, State: nodewire.SessionCommandCompleted, Settled: true, ProcessStopped: true}}}
+			if err := c.attempts.AcceptRecoveryNativeStop(ctx, episode, n, driver, proof); err != nil {
+				return err
+			}
+			if err := c.store.RetireRecoverySession(ctx, n.Binding.NodeID, n.Harness, n.Session, n.Binding.AttemptID, time.Now().UTC().Format(time.RFC3339Nano), func(tx *ledger.Tx) error { return c.attempts.RetireRecoveryNativeTx(tx, episode.ID, n, driver) }); err != nil {
+				return err
+			}
+		}
+		result, err = c.artifacts.CaptureRecoveryResidual(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestRecoveryLandingUsesFixedBaselineAndTheActualCurrentOriginal(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	first := publishBoundRecoveryTurn(t, c, p, ws, "first-fixed", map[string]string{"original": "copy delta\n"})
+	publishBoundRecoveryTurn(t, c, p, ws, "second-fixed", map[string]string{"copy-only": "second delta\n"})
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+		ref, _, err := tx.Name(artifact.CanonicalRef(p.ID))
+		if err != nil {
+			return err
+		}
+		_, err = tx.CompareAndSetName(ref.Name, ref.Version, first.Result.Artifact)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	episode := captureBoundCopy(t, c, source)
+	if err := os.WriteFile(filepath.Join(p.Home.Path, "after-capture"), []byte("external later edit\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lander, ok := any(c.artifacts).(recoveryLander)
+	if !ok {
+		t.Fatal("recovery has no fixed-baseline all-source stable landing consumer")
+	}
+	var landed artifact.Landing
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		var err error
+		landed, err = lander.LandRecoveryOnce(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if landed.State != artifact.LandCommitted || landed.Base != episode.Baseline.Artifact {
+		t.Fatalf("landing drifted to a current canonical ancestor: %+v", landed)
+	}
+	for name, body := range map[string]string{"original": "copy delta\n", "copy-only": "second delta\n", "after-capture": "external later edit\n"} {
+		if raw, err := os.ReadFile(filepath.Join(p.Home.Path, name)); err != nil || string(raw) != body {
+			t.Fatalf("fixed B/R'/C lost %s: %q %v", name, raw, err)
+		}
+	}
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		replay, err := lander.LandRecoveryOnce(ctx, episode.ID, driver)
+		if replay.ID != landed.ID || replay.State != artifact.LandCommitted {
+			t.Fatalf("replay replaced stable landing: %+v", replay)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoveryLandingChecksEveryAcceptedProducerBeforeAdmission(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	first := publishBoundRecoveryTurn(t, c, p, ws, "first-authority", map[string]string{"first": "first\n"})
+	publishBoundRecoveryTurn(t, c, p, ws, "last-authority", map[string]string{"last": "last\n"})
+	episode := captureBoundCopy(t, c, source)
+	lander, ok := any(c.artifacts).(recoveryLander)
+	if !ok {
+		t.Fatal("recovery has no complete-source landing authorization consumer")
+	}
+	if _, err := c.tasks.SetAside(first.TaskID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := lander.LandRecoveryOnce(ctx, episode.ID, driver)
+		if !errors.Is(err, task.ErrExecutionStopped) {
+			t.Fatalf("last token replaced first producer authorization: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"first", "last"} {
+		if _, err := os.Stat(filepath.Join(p.Home.Path, name)); !os.IsNotExist(err) {
+			t.Fatalf("revoked source changed original path %s: %v", name, err)
+		}
+	}
+}
+
+func TestRecoveryLandingDoesNotOverwriteAnIgnoredIncomingPath(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	publishBoundRecoveryTurn(t, c, p, ws, "ignored-authority", map[string]string{"incoming": "copy data\n"})
+	for name, body := range map[string]string{".gitignore": "incoming\n", "incoming": "original ignored data\n"} {
+		if err := os.WriteFile(filepath.Join(p.Home.Path, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	episode := captureBoundCopy(t, c, source)
+	lander, ok := any(c.artifacts).(recoveryLander)
+	if !ok {
+		t.Fatal("recovery has no physical preapply protection consumer")
+	}
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		land, err := lander.LandRecoveryOnce(ctx, episode.ID, driver)
+		var conflict artifact.Conflict
+		if !errors.As(err, &conflict) || land.State != artifact.LandApplyConflicted {
+			t.Fatalf("uncaptured ignored entity was not conservatively refused: %+v %v", land, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "incoming")); err != nil || string(raw) != "original ignored data\n" {
+		t.Fatalf("landing overwrote ignored original bytes: %q %v", raw, err)
 	}
 }
