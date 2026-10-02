@@ -58,6 +58,7 @@ type Service struct {
 	transferring atomic.Int64
 	closeOnce    sync.Once
 	closeErr     error
+	shutdown     *raftShutdown
 	ctx          context.Context
 	cancel       context.CancelFunc
 	workers      sync.WaitGroup
@@ -67,7 +68,8 @@ type Service struct {
 // advertisement changes while retaining the same Raft node and log.
 type addressTransport struct {
 	*raft.NetworkTransport
-	nodeID raft.ServerID
+	nodeID     raft.ServerID
+	heartbeats *heartbeatGate
 }
 
 func (t addressTransport) EncodePeer(id raft.ServerID, address raft.ServerAddress) []byte {
@@ -168,21 +170,19 @@ func Open(config Config) (*Service, error) {
 		cfg.LogLevel = "WARN"
 	}
 	fsm := newMachine(config.ClusterID, config.Application)
-	node, err := raft.NewRaft(cfg, fsm, store, store, snapshots, addressTransport{NetworkTransport: transport, nodeID: cfg.LocalID})
+	shutdown := &raftShutdown{}
+	node, err := raft.NewRaft(cfg, fsm, store, store, snapshots, addressTransport{NetworkTransport: transport, nodeID: cfg.LocalID, heartbeats: &shutdown.heartbeats})
 	if err != nil {
 		store.Close()
 		transport.Close()
 		return nil, fmt.Errorf("open raft: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{config: config, raft: node, transport: transport, store: store, fsm: fsm, establishing: make(chan struct{}, 1), ctx: ctx, cancel: cancel}
+	s := &Service{config: config, raft: node, transport: transport, store: store, fsm: fsm, establishing: make(chan struct{}, 1), ctx: ctx, cancel: cancel, shutdown: shutdown}
 	if config.Bootstrap && !hasState {
 		future := node.BootstrapCluster(raft.Configuration{Servers: []raft.Server{{ID: cfg.LocalID, Address: transport.LocalAddr(), Suffrage: raft.Voter}}})
 		if err := future.Error(); err != nil {
-			node.Shutdown().Error()
-			transport.Close()
-			store.Close()
-			cancel()
+			s.Close()
 			return nil, fmt.Errorf("bootstrap cluster: %w", err)
 		}
 	}
@@ -456,7 +456,7 @@ func (s *Service) Close() error {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		s.cancel()
-		s.closeErr = s.raft.Shutdown().Error()
+		s.closeErr = s.shutdown.wait(s.raft)
 		s.transport.CloseStreams()
 		if err := s.transport.Close(); s.closeErr == nil {
 			s.closeErr = err
