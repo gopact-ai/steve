@@ -25,13 +25,13 @@ func (c *Coordinator) describeRecoveryWorkspace(ctx context.Context, p *project.
 		}
 		if r.Workspace.Path == "" {
 			choice.Place = nil
-			choice.Because = c.text.T(i18n.WorkspaceRecoveryPreparing, p.ID)
+			choice.Because = c.text.T(i18n.RecoveryCopyPreparing, p.ID)
 			continue
 		}
 		if choice.Node != nodewire.Place(r.Workspace.Node) {
 			choice.Place = nil
 			choice.Usable = false
-			choice.Because = c.text.T(i18n.WorkspaceRecoveryNode, p.ID, nodewire.Place(r.Workspace.Node))
+			choice.Because = c.text.T(i18n.RecoveryCopyNode, p.ID, nodewire.Place(r.Workspace.Node))
 			continue
 		}
 		choice.Place = &Placement{Workspace: r.Workspace.ID, Kind: string(project.KindWorktree), Node: nodewire.Place(r.Workspace.Node)}
