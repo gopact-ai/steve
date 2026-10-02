@@ -3087,6 +3087,27 @@ checks["project-remove-confirmed"] = async (f) => {
     assert.ok(await table.evaluate((el) => el.isConnected && el.contains(document.activeElement)) && where.row !== null, `A removed project leaves focus on ${where.tag} instead of the row beside it`);
 };
 
+checks["workspace-recovery-shows-fixed-node"] = async (f) => {
+    const recovery = { id: "recovery-original", project: "scratch", phase: "materializing", node: "test-node", path: "/isolated/shared/work", base: "1".repeat(40), head: "1".repeat(40), version: 1 };
+    const state = { ...usageState(), attempts: [], projects: [project("scratch"), project("home")] };
+    state.facts = { ...state.facts, recovery_workspaces: [recovery] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.reload();
+    await f.page.getByText("项目主目录仍处于恢复隔离", { exact: true }).waitFor();
+    const banner = f.page.getByRole("status").filter({ hasText: "项目主目录仍处于恢复隔离" });
+    assert.equal(await banner.count(), 1);
+    const preparing = await banner.innerText();
+    assert.ok(preparing.includes("test-node"), "The persistent notice omitted the fixed node");
+    assert.ok(!preparing.includes("下一回合会在合格节点"), "Materializing described the already fixed node as unselected");
+    assert.ok(preparing.includes("/isolated/shared/work"), "The fixed path was omitted");
+    recovery.phase = "recorded";
+    recovery.node = "";
+    recovery.path = "";
+    await f.page.reload();
+    await f.page.getByText("项目主目录仍处于恢复隔离", { exact: true }).waitFor();
+    assert.ok(!(await banner.innerText()).includes("test-node"), "An unselected recovery showed a fixed node");
+};
+
 checks["workspace-recovery-persists-without-live-attempt"] = async (f) => {
     const recovery = { id: "recovery-original", project: "scratch", phase: "ready", node: "test-node", path: "/isolated/shared/work", base: "1".repeat(40), head: "2".repeat(40), version: 2 };
     const state = { ...usageState(), attempts: [], projects: [project("scratch"), project("home")] };

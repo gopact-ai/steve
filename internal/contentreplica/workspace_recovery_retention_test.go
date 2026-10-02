@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -146,4 +148,64 @@ func TestRecoveryRetentionKeepsBaselineIntermediateAndLatestAcceptedContent(t *t
 	if _, err := f.receiver.GC(t.Context(), f.book); !errors.Is(err, contentreplica.ErrIntegrity) {
 		t.Fatalf("missing historical content did not close collection: %v", err)
 	}
+}
+
+func TestRecoveryBaselineRejectsMissingCurrentContentManifest(t *testing.T) {
+	f := newRetentionOwnerFixture(t, "artifact")
+	projects := project.Open(f.book)
+	p := project.Project{ID: "p", Level: datalevel.Internal, Repo: project.RepoInPlace, Home: project.Home{Path: t.TempDir()}, DurablePlaces: []string{"a"}}
+	if err := projects.Declare(t.Context(), []project.Project{p}); err != nil {
+		t.Fatal(err)
+	}
+	s := artifact.New(t.TempDir(), f.book, projects, nil)
+	s.SetReplication(f.client)
+	if _, err := s.Bind(t.Context(), artifact.CanonicalRef(p.ID), 0, f.content.Object.Key); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error {
+		_, err := tx.Exec("DELETE FROM bindings WHERE kind=? AND id=?", contentreplica.ManifestKind, f.content.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Manifest(t.Context(), f.content.Object.Key); !errors.Is(err, contentreplica.ErrIncomplete) {
+		t.Fatalf("fixture did not lose real content row: %v", err)
+	}
+	err := f.book.Update(t.Context(), func(tx *ledger.Tx) error {
+		base, err := s.RecoveryBaselineTx(tx, p)
+		if err == nil {
+			t.Errorf("accepted a recovery base with a missing current content manifest: %+v", base)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoveryRejectsReplicatedContentDisguisedAsStandalone(t *testing.T) {
+	f, r := recoveryRetentionFixture(t)
+	r.Baseline.ContentID, r.Head.ContentID = "", ""
+	r.Baseline.Storage, r.Head.Storage = "standalone", "standalone"
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error {
+		_, err := tx.Exec("UPDATE operations SET data=? WHERE id=?", string(raw), r.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = f.book.Update(t.Context(), func(tx *ledger.Tx) error { return contentreplica.Retire(tx, f.content.ID) })
+	if errors.Is(err, contentreplica.ErrIntegrity) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
+	result, err := f.receiver.GC(t.Context(), f.book)
+	var data bytes.Buffer
+	readErr := f.receiver.Get(t.Context(), f.content.Object, &data)
+	t.Fatalf("storage-mode corruption removed the recovery root: retire=nil GC=%+v GCerror=%v bytesError=%v", result, err, readErr)
 }
