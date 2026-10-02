@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +17,14 @@ import (
 )
 
 func TestReverseHTTPBodyCloseReleasesItsUploadAndStream(t *testing.T) {
+	for _, cancelRequest := range []bool{false, true} {
+		t.Run(fmt.Sprint("cancel-", cancelRequest), func(t *testing.T) {
+			checkReverseHTTPBodyClose(t, cancelRequest)
+		})
+	}
+}
+
+func checkReverseHTTPBodyClose(t *testing.T, cancelRequest bool) {
 	stop := make(chan struct{})
 	finished := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +77,9 @@ func TestReverseHTTPBodyCloseReleasesItsUploadAndStream(t *testing.T) {
 		for range 3 {
 			closes.Go(func() { response.Body.Close() })
 		}
-		cancel()
+		if cancelRequest {
+			cancel()
+		}
 		closes.Wait()
 		close(closed)
 	}()
