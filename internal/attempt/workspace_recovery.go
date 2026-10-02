@@ -61,12 +61,56 @@ type RecoveryProducer struct {
 }
 
 func (s *Service) WorkspaceRecovery(ctx context.Context, id string) (WorkspaceRecovery, error) {
-	return WorkspaceRecovery{}, ErrWorkspaceRecovery
+	var r WorkspaceRecovery
+	err := s.l.Read(ctx, func(tx *ledger.ReadTx) error { var err error; r, err = recoveryByIDTx(tx, id); return err })
+	return r, err
 }
 
 func (s *Service) RecoveryForProject(ctx context.Context, projectID string) (WorkspaceRecovery, bool, error) {
-	return WorkspaceRecovery{}, false, nil
+	var result WorkspaceRecovery
+	err := s.l.Read(ctx, func(tx *ledger.ReadTx) error {
+		all, err := workspaceRecoveriesTx(tx)
+		if err != nil {
+			return err
+		}
+		for _, r := range all {
+			if r.Project == projectID {
+				if result.ID != "" {
+					return errors.New("project has conflicting workspace recoveries")
+				}
+				result = r
+			}
+		}
+		return nil
+	})
+	return result, result.ID != "", err
+}
+
+// RecoveryProjectHoldTx protects the canonical name even during a historical
+// landing whose target declaration is no longer in the active project set.
+func RecoveryProjectHoldTx(tx ledger.Reader, projectID string) error {
+	all, err := workspaceRecoveriesTx(tx)
+	if err != nil {
+		return err
+	}
+	for _, r := range all {
+		if r.Project == projectID {
+			return ErrWorkspaceRecovery
+		}
+	}
+	return nil
 }
 
 // RecoveryHoldTx is also used by artifact writers in their acceptance transaction.
-func RecoveryHoldTx(tx ledger.Reader, node, directory string) error { return nil }
+func RecoveryHoldTx(tx ledger.Reader, node, directory string) error {
+	all, err := workspaceRecoveriesTx(tx)
+	if err != nil {
+		return err
+	}
+	for _, r := range all {
+		if r.Target.Node == node && samePhysicalPath(r.Target.Path, directory) {
+			return ErrWorkspaceRecovery
+		}
+	}
+	return nil
+}

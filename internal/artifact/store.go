@@ -588,6 +588,9 @@ func (s *Store) cutCanonicalUnder(ctx context.Context, p project.Project, held l
 // cutCanonical snapshots the canonical workspace, brings the snapshot to
 // the hub and records it, without moving the canonical name.
 func (s *Store) cutCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, []string, error) {
+	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
+		return Manifest{}, false, nil, err
+	}
 	repo, err := s.Repo(ctx, p.ID)
 	if err != nil {
 		return Manifest{}, false, nil, err
@@ -685,6 +688,9 @@ func (s *Store) setCanonical(ctx context.Context, projectID string, held ledger.
 			if err := tx.CheckLocalLease(held); err != nil {
 				return err
 			}
+		}
+		if err := attempt.RecoveryProjectHoldTx(tx, projectID); err != nil {
+			return err
 		}
 		current, _, err := tx.Name(CanonicalRef(projectID))
 		if err != nil {
@@ -1068,6 +1074,11 @@ func (s *Store) nameOf(ctx context.Context, name string) (string, error) {
 func (s *Store) Bind(ctx context.Context, name string, expectedVersion int64, artifact string) (int64, error) {
 	var version int64
 	err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		if strings.HasPrefix(name, "project/") && strings.HasSuffix(name, "/canonical") {
+			if err := attempt.RecoveryProjectHoldTx(tx, strings.TrimSuffix(strings.TrimPrefix(name, "project/"), "/canonical")); err != nil {
+				return err
+			}
+		}
 		v, err := tx.CompareAndSetName(name, expectedVersion, artifact)
 		version = v
 		return err

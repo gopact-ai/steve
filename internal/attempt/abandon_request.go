@@ -70,7 +70,11 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if err != nil {
 		return task.RecoveryUsage{}, err
 	}
-	r.Abandoned = &Abandoned{SlotState: source.State, SlotFingerprint: source.Fingerprint, ImportFingerprint: source.ImportFingerprint, At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: input, Session: r.Session}
+	recoveryID, err := s.startWorkspaceRecoveryTx(tx, r, source.RecoveryBaseline, at, owner)
+	if err != nil {
+		return task.RecoveryUsage{}, err
+	}
+	r.Abandoned = &Abandoned{WorkspaceRecoveryID: recoveryID, SlotState: source.State, SlotFingerprint: source.Fingerprint, ImportFingerprint: source.ImportFingerprint, At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: input, Session: r.Session}
 	if r.EndedAt.IsZero() {
 		r.EndedAt = at
 	}

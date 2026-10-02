@@ -682,6 +682,9 @@ func (s *Store) pendCommit(ctx context.Context, land *Landing, from string, caus
 // its lock and wrote relative to; the name must still be there. A name
 // found anywhere else is a conflict with the commit.
 func moveCanonical(tx *ledger.Tx, projectID, onto, merged string) error {
+	if err := attempt.RecoveryProjectHoldTx(tx, projectID); err != nil {
+		return err
+	}
 	current, found, err := tx.Name(CanonicalRef(projectID))
 	if err != nil {
 		return fmt.Errorf("read canonical of %s: %w", projectID, err)

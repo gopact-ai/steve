@@ -25,6 +25,7 @@ type Abandoned struct {
 
 // AbandonContext is the non-secret slot identity captured by the session owner.
 type AbandonContext struct {
+	RecoveryBaseline  *RecoveryBaseline
 	State             string
 	Fingerprint       string
 	ImportFingerprint string

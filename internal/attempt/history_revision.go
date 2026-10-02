@@ -16,6 +16,9 @@ import (
 const historyRevisionKind = "attempt-history-revision"
 
 func guardRecordOpenTx(tx *ledger.Tx, spec Spec) error {
+	if err := RecoveryHoldTx(tx, spec.Workspace.Node, spec.Workspace.Path); err != nil {
+		return err
+	}
 	if err := task.CheckExecutionTx(tx, spec.Execution); err != nil {
 		return err
 	}

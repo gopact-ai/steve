@@ -27,6 +27,15 @@ func (s *Service) ExportProject(ctx context.Context, project string) (ledger.Tra
 	return s.l.ExportOperations(ctx, ids)
 }
 func ReleaseProjectGuard(tx *ledger.Tx, project string) error {
+	recoveries, err := workspaceRecoveriesTx(tx)
+	if err != nil {
+		return err
+	}
+	for _, r := range recoveries {
+		if r.Project == project {
+			return ErrWorkspaceRecovery
+		}
+	}
 	ops, err := tx.Operations(kind, "")
 	if err != nil {
 		return err
