@@ -241,7 +241,11 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 	if err != nil {
 		return nodewire.SessionState{}, err
 	}
-	record, exists, err := store.read(req.ID, req.CommandID)
+	selected := req.CommandID
+	if req.Action == nodewire.SessionActionClose {
+		selected = ""
+	}
+	record, exists, err := store.read(req.ID, selected)
 	if err != nil {
 		return nodewire.SessionState{}, err
 	}
@@ -257,7 +261,11 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 	if record.State.Binding != req.Binding {
 		return nodewire.SessionState{}, sessionError("conflict", "archived session belongs to another execution")
 	}
-	if err := checkSessionReceipt(req, record); err != nil {
+	if req.Action == nodewire.SessionActionClose {
+		if err := checkCloseIdentity(req, record); err != nil {
+			return nodewire.SessionState{}, err
+		}
+	} else if err := checkSessionReceipt(req, record); err != nil {
 		return nodewire.SessionState{}, err
 	}
 	state := record.State
