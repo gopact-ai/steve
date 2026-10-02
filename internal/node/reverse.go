@@ -101,7 +101,7 @@ func (s *Server) awaitHub(ctx context.Context) (*nodewire.Mux, error) {
 	return mux, nil
 }
 
-func (s *Server) forwardMCP(listener net.Listener) {
+func (s *Server) reverseMCPHandler() http.Handler {
 	// Each request gets one stream and is never replayed. Tool calls may
 	// wait for work or input, so their caller owns the response lifetime.
 	transport := newReverseHTTP(func(ctx context.Context) (reverseHTTPConnection, error) {
@@ -142,7 +142,7 @@ func (s *Server) forwardMCP(listener net.Listener) {
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"hub unreachable, retry later"}}`))
 		},
 	}
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		done, err := s.beginWork()
 		if err != nil {
 			http.Error(w, "node is restarting", http.StatusServiceUnavailable)
@@ -155,7 +155,11 @@ func (s *Server) forwardMCP(listener net.Listener) {
 			return
 		}
 		proxy.ServeHTTP(w, r)
-	}), ReadHeaderTimeout: 10 * time.Second, ConnContext: reverseConnectionContext}
+	})
+}
+
+func (s *Server) forwardMCP(listener net.Listener) {
+	server := &http.Server{Handler: s.reverseMCPHandler(), ReadHeaderTimeout: 10 * time.Second, ConnContext: reverseConnectionContext}
 	defer server.Close()
 	// Serve returns once closeMCP closes the listener, reporting that
 	// close as net.ErrClosed. Any other end is the listener dying on its
