@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -421,6 +422,9 @@ func TestRecoveryLandingDoesNotOverwriteAnIgnoredIncomingPath(t *testing.T) {
 	if !ok {
 		t.Fatal("recovery has no physical preapply protection consumer")
 	}
+	nodes := &recoveryApplyFixture{Nodes: artifact.LocalNodes{Dir: t.TempDir()}}
+	c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
+	lander = c.artifacts
 	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		land, err := lander.LandRecoveryOnce(ctx, episode.ID, driver)
 		var conflict artifact.Conflict
@@ -431,7 +435,118 @@ func TestRecoveryLandingDoesNotOverwriteAnIgnoredIncomingPath(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if nodes.applies != 0 {
+		t.Fatalf("uncaptured entity reached applying before refusal: %d", nodes.applies)
+	}
 	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "incoming")); err != nil || string(raw) != "original ignored data\n" {
 		t.Fatalf("landing overwrote ignored original bytes: %q %v", raw, err)
+	}
+}
+
+type recoveryApplyFixture struct {
+	artifact.Nodes
+	before    func(ops.Request) error
+	failApply bool
+	applies   int
+}
+
+func (n *recoveryApplyFixture) Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
+	if n.before != nil {
+		if err := n.before(req); err != nil {
+			return ops.Result{}, err
+		}
+	}
+	if req.Op == ops.Apply {
+		n.applies++
+		if n.failApply {
+			_, err := n.Nodes.Artifact(ctx, node, ops.Request{Op: ops.WritePath, Repo: req.Repo, WorkTree: req.WorkTree, Commit: req.Commit, Path: "first-wal"})
+			if err != nil {
+				return ops.Result{}, err
+			}
+			if err := os.WriteFile(filepath.Join(req.WorkTree, "later-wal"), []byte("external after partial apply\n"), 0600); err != nil {
+				return ops.Result{}, err
+			}
+			return ops.Result{}, errors.New("fixture partial apply")
+		}
+	}
+	return n.Nodes.Artifact(ctx, node, req)
+}
+
+func TestRecoveryLandingReplaysAdmittedWALAndRecordsActualCanonical(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	producer := publishBoundRecoveryTurn(t, c, p, ws, "wal-authority", map[string]string{"first-wal": "first\n", "second-wal": "second\n"})
+	episode := captureBoundCopy(t, c, source)
+	local := artifact.LocalNodes{Dir: t.TempDir()}
+	// A fresh isolated typed node imports the real bundle prerequisites.
+	// Its transport operates only on this fixture's original directory.
+	nodes := &recoveryApplyFixture{Nodes: local}
+	c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
+	nodes.failApply = true
+	nodes.before = func(req ops.Request) error {
+		if req.Op == ops.Apply {
+			_, err := c.tasks.SetAside(producer.TaskID, task.StateCancelled)
+			return err
+		}
+		return nil
+	}
+	var land artifact.Landing
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		var err error
+		land, err = c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if land.State != artifact.LandCommitted || land.Committed == nil || land.Committed.Artifact == land.Merged {
+		t.Fatalf("WAL actual canonical receipt was guessed from Merged: %+v", land)
+	}
+	for name, body := range map[string]string{"first-wal": "first\n", "second-wal": "second\n", "later-wal": "external after partial apply\n"} {
+		if raw, err := os.ReadFile(filepath.Join(p.Home.Path, name)); err != nil || string(raw) != body {
+			t.Fatalf("WAL recovery lost %s: %q %v", name, raw, err)
+		}
+	}
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		again, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
+		if again.ID != land.ID || again.Committed == nil || *again.Committed != *land.Committed {
+			t.Fatalf("committed retry guessed a new result: %+v", again)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if nodes.applies != 1 {
+		t.Fatalf("committed WAL replay applied again: %d", nodes.applies)
+	}
+}
+
+func TestRecoveryLandingRechecksRevocationBetweenPreflightAndApplying(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	producer := publishBoundRecoveryTurn(t, c, p, ws, "revoked-at-admission", map[string]string{"incoming": "do not apply\n"})
+	episode := captureBoundCopy(t, c, source)
+	nodes := &recoveryApplyFixture{Nodes: artifact.LocalNodes{Dir: t.TempDir()}}
+	c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
+	once := false
+	nodes.before = func(req ops.Request) error {
+		if req.Op == ops.PathState && !once {
+			once = true
+			_, err := c.tasks.SetAside(producer.TaskID, task.StateCancelled)
+			return err
+		}
+		return nil
+	}
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
+		if !errors.Is(err, task.ErrExecutionStopped) {
+			t.Fatalf("revocation between preflight/applying was ignored: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !once || nodes.applies != 0 {
+		t.Fatalf("late revocation reached native apply: revoked=%v calls=%d", once, nodes.applies)
+	}
+	if _, err := os.Stat(filepath.Join(p.Home.Path, "incoming")); !os.IsNotExist(err) {
+		t.Fatalf("revoked new admission wrote original: %v", err)
 	}
 }

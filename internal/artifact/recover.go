@@ -46,6 +46,10 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 			continue
 		}
 		land.State = op.State
+		if land.Recovery != nil {
+			out = append(out, land)
+			continue
+		}
 		_, _, projectErr := s.projects.Get(ctx, land.Project)
 		if errors.Is(projectErr, project.ErrNotOwner) {
 			continue
@@ -147,6 +151,9 @@ func (s *Store) RetryRecoveries(ctx context.Context) ([]Landing, error) {
 	}
 	var out []Landing
 	for _, land := range pending {
+		if land.Recovery != nil {
+			continue
+		}
 		// Still being applied here: its lock is gone, but its writer is
 		// not. It stays awaiting recovery, holding new landings off, and
 		// is taken over once that apply has returned.
@@ -225,7 +232,14 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		s.conflictedRecovery(ctx, p, &land, land.Paths, fmt.Sprintf("the project directory moved from %s to %s while this landing was being written; nothing more was written to the old directory, where it may be partly written, and nothing to the new one. Land it again to write it into the project directory", placeOf(land.Target), placeOf(p.Home)))
 		return land, nil
 	}
-	if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return attempt.CheckWriterTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
+	if land.Recovery != nil {
+		if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+			_, err := checkRecoveryLandingPermitTx(ctx, tx, p, &land, nil, false)
+			return err
+		}); err != nil {
+			return land, err
+		}
+	} else if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return attempt.CheckWriterTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
 		return land, err
 	}
 	// Nothing may be written before the lock is held again.
@@ -351,6 +365,10 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	if err != nil {
 		return land, fmt.Errorf("landing %s: snapshot after recovery: %w", land.ID, err)
 	}
+	return s.commitRecovery(ctx, p, land, lease, onto.ID, target, stale)
+}
+
+func (s *Store) commitRecovery(ctx context.Context, p project.Project, land Landing, lease ledger.Lease, onto, target string, stale []string) (Landing, error) {
 	// The recovery wrote relative to its own snapshot, where the canonical
 	// name was left. A commit that does not go through — the name is not
 	// there, or cannot be read — leaves the landing recovery-pending: the
@@ -359,16 +377,20 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 	committed.State = LandCommitted
 	committed.Error = ""
 	committed.EndedAt = s.now().UTC()
-	_, err = s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", landingFence(ctx, []ledger.Lease{lease}),
+	_, err := s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", landingFence(ctx, []ledger.Lease{lease}),
 		map[string]any{"paths": land.Paths, "rewritten": stale, "round": land.Round},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
-			if err := moveCanonical(tx, p.ID, onto.ID, target); err != nil {
+			if land.Recovery != nil {
+				if err := s.recoveryCanonicalTx(ctx, tx, p, &committed, onto, target); err != nil {
+					return err
+				}
+			} else if err := moveCanonical(tx, p.ID, onto, target); err != nil {
 				return err
 			}
 			// The result has landed now. A queue entry for it — the pass
 			// that started this landing stopped at recovery-pending and
 			// left it queued — would only land it again, as nothing.
-			if _, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id = ?`, pendingKind, p.ID+"/"+land.Artifact); err != nil {
+			if _, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id = ? AND ?`, pendingKind, p.ID+"/"+land.Artifact, land.Recovery == nil); err != nil {
 				return err
 			}
 			return tx.SetData(op, committed)
@@ -378,6 +400,9 @@ func (s *Store) finishRecovery(ctx context.Context, p project.Project, land Land
 		return land, fmt.Errorf("landing %s: commit recovery: %w", land.ID, err)
 	}
 	land = committed
+	if land.Recovery != nil {
+		return land, s.ensureRecoveryLandingReceipt(ctx, p, land)
+	}
 	if _, err := s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact) + " (recovered)", Canonical: true}); err != nil {
 		return land, err
 	}

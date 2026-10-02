@@ -54,7 +54,20 @@ func (r *applicationWorkspaceRecovery) Reconcile(parent context.Context) error {
 }
 
 func (r *applicationWorkspaceRecovery) drain(ctx context.Context, id string, driver ledger.Lease) error {
-	episode, err := r.attempts.EnrollRecoveryNatives(ctx, id, false, driver)
+	episode, err := r.attempts.WorkspaceRecovery(ctx, id)
+	if err != nil {
+		return err
+	}
+	if episode.Phase == "capture" || episode.Phase == "landing" {
+		if episode.Residual == nil {
+			if _, err := r.artifacts.CaptureRecoveryResidual(ctx, id, driver); err != nil {
+				return err
+			}
+		}
+		_, err := r.artifacts.LandRecoveryOnce(ctx, id, driver)
+		return err
+	}
+	episode, err = r.attempts.EnrollRecoveryNatives(ctx, id, false, driver)
 	if err != nil {
 		return err
 	}
@@ -79,7 +92,10 @@ func (r *applicationWorkspaceRecovery) drain(ctx context.Context, id string, dri
 	if err := r.retire(ctx, episode, true, driver); err != nil {
 		return err
 	}
-	_, err = r.artifacts.CaptureRecoveryResidual(ctx, id, driver)
+	if _, err = r.artifacts.CaptureRecoveryResidual(ctx, id, driver); err != nil {
+		return err
+	}
+	_, err = r.artifacts.LandRecoveryOnce(ctx, id, driver)
 	return err
 }
 

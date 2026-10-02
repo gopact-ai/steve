@@ -135,6 +135,13 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		}
 	case ops.Unbundle:
 		err = r.Unbundle(ctx, req.Path)
+	case ops.MergeRecovery:
+		var conflicts []string
+		var marked string
+		result.Commit, marked, conflicts, err = r.MergeRecovery(ctx, req.Base, req.Ours, req.Theirs, req.Message)
+		if err == nil && len(conflicts) > 0 {
+			err = MergeConflict{Paths: conflicts, Marked: marked}
+		}
 	case ops.Merge:
 		var conflicts []string
 		var marked string
@@ -202,7 +209,7 @@ func validateOperation(req ops.Request) error {
 		}
 	case ops.Unbundle:
 		paths = []string{req.Repo, req.Path}
-	case ops.Merge:
+	case ops.Merge, ops.MergeRecovery:
 		paths, commits = []string{req.Repo}, []string{req.Base, req.Ours, req.Theirs}
 	case ops.Apply, ops.PathState:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.From, req.Commit}

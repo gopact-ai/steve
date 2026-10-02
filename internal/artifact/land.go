@@ -67,13 +67,15 @@ type Landing struct {
 	Target         project.Home `json:"target"`
 	writer         project.Home
 	borrowedHolder string
-	Source         *Source `json:"source,omitempty"`
-	ID             string  `json:"id"`
-	Project        string  `json:"project"`
-	Artifact       string  `json:"artifact"`
-	Base           string  `json:"base,omitempty"`
-	Now            string  `json:"now,omitempty"`
-	Merged         string  `json:"merged,omitempty"`
+	Source         *Source          `json:"source,omitempty"`
+	Recovery       *RecoveryLink    `json:"recovery,omitempty"`
+	Committed      *CanonicalCommit `json:"committed,omitempty"`
+	ID             string           `json:"id"`
+	Project        string           `json:"project"`
+	Artifact       string           `json:"artifact"`
+	Base           string           `json:"base,omitempty"`
+	Now            string           `json:"now,omitempty"`
+	Merged         string           `json:"merged,omitempty"`
 	// Conflict names the half-merged snapshot kept when the two sides
 	// disagreed: the canonical side and the incoming side with conflict
 	// markers in the files they both touched. It is what a person or an
@@ -161,7 +163,12 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	if err != nil {
 		return Landing{}, err
 	}
-	ctx, finish, err := s.admitLandingSource(ctx, artifactID, source)
+	var finish func()
+	if recoveryPermit(ctx) != nil {
+		ctx, finish, err = s.admitRecoveryLandingSources(ctx, p, artifactID)
+	} else {
+		ctx, finish, err = s.admitLandingSource(ctx, artifactID, source)
+	}
 	if err != nil {
 		return Landing{}, err
 	}
@@ -251,6 +258,13 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 // caller lends must be the project's and still held, and the home must
 // accept its holder as the writer — or, with no lock lent, be unheld.
 func (s *Store) checkLandingWriter(ctx context.Context, p project.Project, held *ledger.Lease) (borrowedHolder string, err error) {
+	if recoveryPermit(ctx) != nil {
+		err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+			_, err := checkRecoveryLandingPermitTx(ctx, tx, p, nil, held, false)
+			return err
+		})
+		return "", err
+	}
 	if held != nil {
 		if held.Key != canonicalLock(p.ID) {
 			return "", fmt.Errorf("landing lease %s does not own project %s", held.Key, p.ID)
@@ -310,11 +324,24 @@ func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactI
 	if !m.Durable(p) {
 		return Landing{}, fmt.Errorf("artifact %s is not durable yet; it cannot land", short(artifactID))
 	}
-	base, err := s.canonicalAncestor(ctx, m)
+	var base string
+	if recoveryPermit(ctx) != nil {
+		err = s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+			r, err := checkRecoveryLandingPermitTx(ctx, tx, p, nil, nil, true)
+			base = r.Baseline.Artifact
+			return err
+		})
+	} else {
+		base, err = s.canonicalAncestor(ctx, m)
+	}
 	if err != nil {
 		return Landing{}, err
 	}
 	land := Landing{borrowedHolder: borrowedHolder, writer: p.Home, Target: p.Home, Source: source, ID: "land-" + short(artifactID) + "-" + fmt.Sprint(s.now().UnixNano()), Project: p.ID, Artifact: artifactID, Base: base, By: by, State: LandProposed, StartedAt: s.now().UTC()}
+	if permit := recoveryPermit(ctx); permit != nil {
+		link := permit.link
+		land.Recovery = &link
+	}
 	if resume != nil {
 		land.ID, land.Recoverable = resume.ID, true
 		if !resume.StartedAt.IsZero() {
@@ -466,9 +493,17 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 	var merged, marked string
 	var conflicts []string
 	if metadataOnly(p) {
-		merged, marked, conflicts, err = s.mergeOnNode(ctx, p, land.Base, now.ID, land.Artifact)
+		if land.Recovery != nil {
+			merged, marked, conflicts, err = s.mergeRecoveryOnNode(ctx, p, land.Base, now.ID, land.Artifact)
+		} else {
+			merged, marked, conflicts, err = s.mergeOnNode(ctx, p, land.Base, now.ID, land.Artifact)
+		}
 	} else {
-		merged, marked, conflicts, err = repo.MergeMarking(ctx, land.Base, now.ID, land.Artifact, "land "+short(land.Artifact)+" into "+p.ID)
+		if land.Recovery != nil {
+			merged, marked, conflicts, err = repo.MergeRecovery(ctx, land.Base, now.ID, land.Artifact, "land "+short(land.Artifact)+" into "+p.ID)
+		} else {
+			merged, marked, conflicts, err = repo.MergeMarking(ctx, land.Base, now.ID, land.Artifact, "land "+short(land.Artifact)+" into "+p.ID)
+		}
 	}
 	if err != nil {
 		if !land.Recoverable {
@@ -503,6 +538,11 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 		return nil, Conflict{State: LandApplyConflicted, Paths: inside, Reason: reason}
 	}
 	land.Paths = paths
+	if land.Recovery != nil {
+		if err := s.recoveryPreapply(ctx, p, land); err != nil {
+			return nil, err
+		}
+	}
 	return repo, nil
 }
 
@@ -648,7 +688,11 @@ func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Land
 	committed.EndedAt = s.now().UTC()
 	_, err := s.ledger.Transition(ctx, land.ID, LandApplying, LandCommitted, land.By, landingFence(ctx, []ledger.Lease{*land.Lease}), map[string]any{"paths": land.Paths},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
-			if err := moveCanonical(tx, p.ID, land.Now, land.Merged); err != nil {
+			if land.Recovery != nil {
+				if err := s.recoveryCanonicalTx(ctx, tx, p, &committed, land.Now, land.Merged); err != nil {
+					return err
+				}
+			} else if err := moveCanonical(tx, p.ID, land.Now, land.Merged); err != nil {
 				return err
 			}
 			return tx.SetData(op, committed)
@@ -658,6 +702,9 @@ func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Land
 		return fmt.Errorf("%w: landing %s is written; its commit: %w", ErrRecoveryPending, land.ID, err)
 	}
 	*land = committed
+	if land.Recovery != nil {
+		return s.ensureRecoveryLandingReceipt(ctx, p, *land)
+	}
 	_, err = s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact), Canonical: true})
 	return err
 }
@@ -795,6 +842,22 @@ func (s *Store) move(ctx context.Context, land *Landing, from, to string, effect
 	}
 	_, err = s.ledger.Transition(ctx, land.ID, from, to, land.By, landingFence(ctx, fencings), effects,
 		func(tx *ledger.Tx, op *ledger.Operation) error {
+			if land.Recovery != nil {
+				p, err := project.ReadTx(tx, land.Project)
+				if err != nil {
+					return err
+				}
+				admission := to == LandApplying || to == LandCommitted && from != LandApplying && from != LandRecoveryPending
+				if _, err := checkRecoveryLandingPermitTx(ctx, tx, p, land, land.Lease, admission); err != nil {
+					return err
+				}
+				if to == LandCommitted && admission {
+					if err := s.recoveryCanonicalTx(ctx, tx, p, land, land.Now, land.Now); err != nil {
+						return err
+					}
+				}
+				return tx.SetData(op, *land)
+			}
 			if to == LandApplying || (to == LandCommitted && from != LandApplying && from != LandRecoveryPending) {
 				if err := project.CheckHomeTx(tx, land.Project, land.Target); err != nil {
 					return err

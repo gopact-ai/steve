@@ -18,6 +18,7 @@ const (
 	Bundle          Kind = "bundle"
 	Unbundle        Kind = "unbundle"
 	Merge           Kind = "merge"
+	MergeRecovery   Kind = "merge_recovery"
 	Apply           Kind = "apply"
 	Changed         Kind = "changed"
 	Remove          Kind = "remove"

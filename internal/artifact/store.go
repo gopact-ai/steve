@@ -601,7 +601,14 @@ func (s *Store) cutCanonicalUnder(ctx context.Context, p project.Project, held l
 // cutCanonical snapshots the canonical workspace, brings the snapshot to
 // the hub and records it, without moving the canonical name.
 func (s *Store) cutCanonical(ctx context.Context, p project.Project, parent, by, message string, held ledger.Lease, named bool) (Manifest, bool, []string, error) {
-	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
+	if recoveryPermit(ctx) != nil {
+		if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+			_, err := checkRecoveryLandingPermitTx(ctx, tx, p, nil, &held, false)
+			return err
+		}); err != nil {
+			return Manifest{}, false, nil, err
+		}
+	} else if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
 		return Manifest{}, false, nil, err
 	}
 	repo, err := s.Repo(ctx, p.ID)
@@ -622,11 +629,11 @@ func (s *Store) cutCanonical(ctx context.Context, p project.Project, parent, by,
 	if !changed {
 		m, ok, err := s.Manifest(ctx, sha)
 		if err == nil && ok {
-			m, err = s.receipt(ctx, p, m, s.canonicalAcceptance(p, held, sha, named, by))
+			m, err = s.receipt(ctx, p, m, s.canonicalAcceptance(ctx, p, held, sha, named, by))
 			return m, false, nested, err
 		}
 	}
-	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true}, s.canonicalAcceptance(p, held, sha, named, by))
+	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true}, s.canonicalAcceptance(ctx, p, held, sha, named, by))
 	return m, changed, nested, err
 }
 
