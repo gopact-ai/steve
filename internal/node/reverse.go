@@ -102,33 +102,26 @@ func (s *Server) awaitHub(ctx context.Context) (*nodewire.Mux, error) {
 }
 
 func (s *Server) forwardMCP(listener net.Listener) {
-	transport := &http.Transport{
-		// Each request gets one stream. In particular, failed writes are
-		// never retried on a reused HTTP connection: tools may have effects.
-		DisableKeepAlives: true,
-		// Tool calls may wait for delegated work or user input before
-		// writing headers. The caller owns their lifetime; a proxy header
-		// timeout would misreport a healthy hub and leave accepted work
-		// running after the caller sees a failure.
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			mux, err := s.awaitHub(ctx)
-			if err != nil {
-				return nil, err
-			}
-			select {
-			case <-mux.Done():
-				return nil, fmt.Errorf("hub unreachable")
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-			stream, err := mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamMCP})
-			if err != nil {
-				return nil, err
-			}
-			return streamConn{Stream: stream}, nil
-		},
-	}
+	// Each request gets one stream and is never replayed. Tool calls may
+	// wait for work or input, so their caller owns the response lifetime.
+	transport := newReverseHTTP(func(ctx context.Context) (reverseHTTPConnection, error) {
+		mux, err := s.awaitHub(ctx)
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case <-mux.Done():
+			return nil, fmt.Errorf("hub unreachable")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		stream, err := mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamMCP})
+		if err != nil {
+			return nil, err
+		}
+		return streamConn{Stream: stream}, nil
+	})
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(&url.URL{Scheme: "http", Host: "hub"})
