@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -40,6 +41,9 @@ func (c commands) historyCmd(req Request, selected agent.Agent, rest string) (Re
 	}
 	restored, err := c.store.RestoreSession(conversationID, selected.ID, index)
 	if err != nil {
+		if errors.Is(err, state.ErrAbandonedContext) {
+			return Result{}, UserError{Text: c.text.T(i18n.HistoryAbandoned)}
+		}
 		return Result{}, UserError{Text: c.text.T(i18n.HistoryUnknown, rest)}
 	}
 	return Result{AgentID: selected.ID, Text: c.text.T(

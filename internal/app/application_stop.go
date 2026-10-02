@@ -21,6 +21,10 @@ type applicationStopSessions interface {
 	AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error)
 }
 
+type applicationAbandonedStopper interface {
+	AbortRetainedSession(context.Context, harness.Placement, string, string) (nodewire.SessionState, error)
+}
+
 type applicationOpenRecovery interface {
 	ReconcileNodeOpen(context.Context, harness.Placement, string, bool) (nodewire.SessionState, error)
 }
@@ -89,7 +93,7 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	failures := make(chan error, len(selected))
 	for _, r := range selected {
 		go func() {
-			if r.ForceStop != nil && r.ForceStop.Level != "confirmed" {
+			if r.Abandoned == nil && r.ForceStop != nil && r.ForceStop.Level != "confirmed" {
 				failures <- s.forceStop(ctx, r)
 			} else {
 				failures <- s.stop(ctx, r)
@@ -111,7 +115,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 	if !errors.Is(s.tasks.CheckExecution(*r.Execution), task.ErrExecutionStopped) {
 		return nil
 	}
-	if r.StopEvidence == "task-stop/"+r.ID && r.SessionSettled != nil && *r.SessionSettled && !r.Unsettled {
+	if r.StopEvidence != "" && r.SessionSettled != nil && *r.SessionSettled && !r.Unsettled {
 		return s.projectStopped(ctx, r)
 	}
 	tracked, ok := s.tasks.Get(r.TaskID)
@@ -156,6 +160,13 @@ func (s *applicationStops) stopOnNode(ctx context.Context, r attempt.Record, tra
 		}
 		return recovery.ReconcileNodeOpen(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Workspace.Path, true)
 	}
+	if r.Abandoned != nil {
+		stopper, ok := s.sessions.(applicationAbandonedStopper)
+		if !ok {
+			return nodewire.SessionState{}, errors.New("original abandoned session cleanup is unavailable")
+		}
+		return stopper.AbortRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
+	}
 	runner, err := s.sessions.AttachRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
 	if err != nil {
 		return nodewire.SessionState{}, err
@@ -194,10 +205,15 @@ func (s *applicationStops) projectStopped(ctx context.Context, r attempt.Record)
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("task %s attempt %s: native stop confirmed; its accounting is left to the next pass: %w", r.TaskID, r.ID, err)
 	}
-	if err := s.tasks.SettleAttempt(ctx, r.TaskID, r.ID, r.TurnID, r.EndedAt, task.OutcomeCancelled, stoppedAccounting(r)); err != nil {
-		return fmt.Errorf("task %s attempt %s: native stop confirmed; original usage accounting remains pending: %w", r.TaskID, r.ID, err)
+	if r.Abandoned == nil {
+		if err := s.tasks.SettleAttempt(ctx, r.TaskID, r.ID, r.TurnID, r.EndedAt, task.OutcomeCancelled, stoppedAccounting(r)); err != nil {
+			return fmt.Errorf("task %s attempt %s: native stop confirmed; original usage accounting remains pending: %w", r.TaskID, r.ID, err)
+		}
 	}
 	s.resolveStopped(r)
+	if r.Abandoned != nil && !attempt.TaskStopConfirmed(r) {
+		return nil
+	}
 	_, err := s.attempts.MarkStopProjected(ctx, r.ID, "task-stop-recovery")
 	return err
 }
@@ -217,7 +233,7 @@ func (s *applicationStops) resolveJoined(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if attempt.TaskStopConfirmed(r) && !s.accountingPending(r) {
+		if (attempt.TaskStopConfirmed(r) || r.Abandoned != nil && !r.Unsettled && r.StopEvidence != "") && !s.accountingPending(r) {
 			s.resolveStopped(r)
 		}
 	}

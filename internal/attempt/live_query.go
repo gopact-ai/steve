@@ -9,10 +9,11 @@ import (
 	"modernc.org/sqlite"
 )
 
-// The partial index contains active, unconfirmed, and malformed attempts.
+// The partial index contains active, unconfirmed, unprojected abandonment,
+// and malformed attempts.
 // Settled history never participates in a live query; malformed data still
 // fails closed rather than making the workspace appear safe to write.
-const liveAttemptPredicate = `kind = 'attempt' AND steve_attempt_live_v2(state, data) != 0`
+const liveAttemptPredicate = `kind = 'attempt' AND steve_attempt_live_v3(state, data) != 0`
 const liveAttemptQuery = `SELECT id, state, revision, data FROM operations INDEXED BY operations_live_attempts WHERE ` + liveAttemptPredicate + ` ORDER BY updated_at DESC`
 
 func init() {
@@ -20,7 +21,7 @@ func init() {
 	// case-insensitive fields and nested type errors. Only the schema owner
 	// can classify a settled record. Invalid payloads must remain candidates
 	// so the normal reader reports them instead of hiding a possible writer.
-	sqlite.MustRegisterDeterministicScalarFunction("steve_attempt_live_v2", 2, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	sqlite.MustRegisterDeterministicScalarFunction("steve_attempt_live_v3", 2, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		state, ok := args[0].(string)
 		if !ok || !State(state).Terminal() {
 			return int64(1), nil
@@ -35,7 +36,7 @@ func init() {
 			return int64(1), nil
 		}
 		record, err := decode(ledger.Operation{State: state, Data: raw})
-		if err != nil || record.Unsettled {
+		if err != nil || record.Unsettled || record.Abandoned != nil && record.Abandoned.ProjectedAt.IsZero() {
 			return int64(1), nil
 		}
 		return int64(0), nil

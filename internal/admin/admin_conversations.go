@@ -40,6 +40,8 @@ func (a *Service) DeleteConversation(ctx context.Context, conversation string) e
 // deleteRefusal says in the owner's words why a delete did not happen.
 func deleteRefusal(text i18n.Catalog, err error) error {
 	switch {
+	case errors.Is(err, task.ErrRetirementPending):
+		return text.Errorf(i18n.AdminDeleteCleanupPending, err)
 	case errors.Is(err, task.ErrExecuting):
 		return text.Errorf(i18n.AdminDeleteTaskRunning, err)
 	case errors.Is(err, turn.ErrConversationBusy), errors.Is(err, consoleapi.ErrBusy):

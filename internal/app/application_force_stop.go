@@ -17,7 +17,7 @@ func (s *applicationStops) stopBatch(pending []attempt.Record) []attempt.Record 
 	var forced, ordinary []attempt.Record
 	for _, r := range pending {
 		switch {
-		case r.ForceStop == nil || r.ForceStop.Level == "confirmed":
+		case r.Abandoned != nil || r.ForceStop == nil || r.ForceStop.Level == "confirmed":
 			ordinary = append(ordinary, r)
 		case r.ForceStop.Level == "kill" || r.ForceStop.Level == "restart" || r.ForceStop.Level == "await":
 			forced = append(forced, r)

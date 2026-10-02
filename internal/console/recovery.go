@@ -162,7 +162,7 @@ func (s *Service) continueDetached(e *queuedExchange, err error) bool {
 	}
 	s.mu.Lock()
 	driver := s.recoveryDriver
-	enabled := s.recoveryLifetime != nil && !s.recoveryStoppedLocked()
+	enabled := s.recoveryLifetime != nil && !s.recoveryStoppedLocked() && !e.State.Terminal()
 	exchange := copyExchange(e.Exchange)
 	s.mu.Unlock()
 	if !enabled || driver == nil {
@@ -173,7 +173,7 @@ func (s *Service) continueDetached(e *queuedExchange, err error) bool {
 		return false
 	}
 	s.mu.Lock()
-	if s.recoveryStoppedLocked() {
+	if s.recoveryStoppedLocked() || e.State.Terminal() {
 		s.mu.Unlock()
 		return false
 	}
@@ -220,7 +220,7 @@ func (s *Service) findRetained(ctx context.Context, driver RetainedChatDriver, e
 			if ok {
 				return retainedExchange{}, false, errors.New("multiple chat or plan executions reference the same exchange")
 			}
-			found = retainedExchange{RetainedChat: turn.RetainedChat{ForceStopRevision: item.ForceStopRevision, AttemptID: item.AttemptID, TaskID: item.TaskID, Conversation: item.Conversation, MessageID: item.MessageID, AgentID: item.AgentID, NodeID: item.NodeID, ProjectID: item.ProjectID, Completed: item.Completed, TaskState: item.TaskState}, plan: &item}
+			found = retainedExchange{RetainedChat: turn.RetainedChat{Abandoned: item.Abandoned, AbandonProjected: item.AbandonProjected, ForceStopLevel: item.ForceStopLevel, ForceStopRevision: item.ForceStopRevision, AttemptID: item.AttemptID, TaskID: item.TaskID, Conversation: item.Conversation, MessageID: item.MessageID, AgentID: item.AgentID, NodeID: item.NodeID, ProjectID: item.ProjectID, Completed: item.Completed, TaskState: item.TaskState}, plan: &item}
 			ok = true
 		}
 	}
@@ -318,8 +318,8 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 // it; neither gets a worker.
 func (s *Service) openRecovery(e *queuedExchange) (Exchange, *process, bool) {
 	s.mu.Lock()
-	if e.RecoveryStop != nil {
-		reply := *e.RecoveryStop
+	if receipt := e.recoveryReply(); receipt != nil {
+		reply := *receipt
 		s.mu.Unlock()
 		s.finish(e, reply, nil)
 		return Exchange{}, nil, false
@@ -365,6 +365,13 @@ func (r *exchangeRecovery) observe() bool {
 	if requester == "" || requester != r.s.owner {
 		r.stream.Close()
 		r.s.finish(r.e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
+		return false
+	}
+	if found && lookupErr == nil && candidate.Abandoned && candidate.AbandonProjected {
+		r.stream.Close()
+		if err := r.s.recordAbandonment(r.e, candidate.AttemptID); err != nil {
+			r.detach(err)
+		}
 		return false
 	}
 	// A task the owner cancelled or paused cannot be resumed from here, so
@@ -804,8 +811,8 @@ func isRecoveryBlocked(err error) bool {
 
 func (s *Service) detachRecovery(e *queuedExchange, err error) {
 	s.mu.Lock()
-	if e.RecoveryStop != nil {
-		reply := *e.RecoveryStop
+	if receipt := e.recoveryReply(); receipt != nil {
+		reply := *receipt
 		s.mu.Unlock()
 		s.finish(e, reply, nil)
 		return

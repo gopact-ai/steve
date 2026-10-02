@@ -73,7 +73,7 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 			return errTaskStopRecorded
 		}
 		st := proof.Session
-		if next.ForceStop != nil && next.ForceStop.Level != "confirmed" && !st.ProcessStopped {
+		if (next.Abandoned != nil || next.ForceStop != nil && next.ForceStop.Level != "confirmed") && !st.ProcessStopped {
 			return ErrStopConfirmationRequired
 		}
 		if !matchesStoppedSession(next, tracked, st) {
@@ -106,7 +106,7 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 		if next.EndedAt.IsZero() {
 			next.EndedAt = s.now().UTC()
 		}
-		if spend := stoppedUsage(st); spend != nil {
+		if spend := stoppedUsage(st); spend != nil && next.Abandoned == nil {
 			next.Usage = spend
 		}
 		return setRecordDataTx(tx, op, next)

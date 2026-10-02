@@ -30,6 +30,7 @@ type DurableExchange struct {
 	QuoteAliases          map[string]string   `json:"quote_aliases,omitempty"`
 	Receipt               *consoleapi.Reply   `json:"receipt,omitempty"`
 	RecoveryStopTarget    *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
+	RecoveryAbandon       *consoleapi.Reply   `json:"recovery_abandon,omitempty"`
 	RecoveryStop          *consoleapi.Reply   `json:"recovery_stop,omitempty"`
 	RecoveryStopPending   string              `json:"recovery_stop_pending,omitempty"`
 	RecoveryCancelPending bool                `json:"recovery_cancel_pending,omitempty"`
@@ -49,13 +50,13 @@ type DurableState struct {
 
 func durableExchange(e *queuedExchange) DurableExchange {
 	return DurableExchange{Exchange: e.Exchange, PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases,
-		Receipt: e.Receipt, RecoveryStopTarget: e.RecoveryStopTarget, RecoveryStop: e.RecoveryStop,
+		Receipt: e.Receipt, RecoveryStopTarget: e.RecoveryStopTarget, RecoveryStop: e.RecoveryStop, RecoveryAbandon: e.RecoveryAbandon,
 		RecoveryStopPending: e.RecoveryStopPending, RecoveryStopTask: e.RecoveryStopTask, RecoveryCancelPending: e.RecoveryCancelPending, RecoveryPending: e.RecoveryPending, ContinuationRejected: e.ContinuationRejected}
 }
 
 func (e DurableExchange) queued() *queuedExchange {
 	return &queuedExchange{Exchange: e.Exchange, PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases,
-		Receipt: e.Receipt, RecoveryStopTarget: e.RecoveryStopTarget, RecoveryStop: e.RecoveryStop,
+		Receipt: e.Receipt, RecoveryStopTarget: e.RecoveryStopTarget, RecoveryStop: e.RecoveryStop, RecoveryAbandon: e.RecoveryAbandon,
 		RecoveryStopPending: e.RecoveryStopPending, RecoveryStopTask: e.RecoveryStopTask, RecoveryCancelPending: e.RecoveryCancelPending, RecoveryPending: e.RecoveryPending, ContinuationRejected: e.ContinuationRejected}
 }
 

@@ -33,7 +33,7 @@ func (s *Service) RequestForceStop(ctx context.Context, id, actor string) (Recor
 		return Record{}, errors.New("force stop requires an actor")
 	}
 	return s.writeForceStop(ctx, id, 0, actor, func(r *Record) error {
-		if !TaskStopOwed(*r) || TaskStopConfirmed(*r) {
+		if r.Abandoned != nil || !TaskStopOwed(*r) || TaskStopConfirmed(*r) {
 			return errors.New("execution does not owe a native stop")
 		}
 		r.ForceStop = newForceStop(r.ForceStop, actor, s.now().UTC())

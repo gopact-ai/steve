@@ -130,7 +130,7 @@ func TestTaskCursorVersionsForgetEmptyScopesWithoutReusingIdentity(t *testing.T)
 	}
 	query.Cursor = first.NextCursor
 	original := s.clone()
-	if _, err := s.DeleteChannel("past"); err != nil {
+	if _, err := s.DeleteChannel(t.Context(), "past", nil); err != nil {
 		t.Fatal(err)
 	}
 	for key := range s.readIndex.versions {

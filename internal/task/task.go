@@ -171,7 +171,8 @@ type Attempt struct {
 	Model string `json:"model,omitempty"`
 	// UsageKnown is explicit for interrupted recovery attempts; false means
 	// their missing token report must not be presented as confirmed zero.
-	UsageKnown *bool `json:"usage_known,omitempty"`
+	UsageKnown         *bool     `json:"usage_known,omitempty"`
+	AccountingFrozenAt time.Time `json:"accounting_frozen_at,omitzero"`
 }
 
 // FromUsage converts a turn's reported usage into the store's shape.
@@ -245,6 +246,8 @@ type Task struct {
 	// right conversation (and topic) after a gateway restart.
 	ChatID        string `json:"chat_id,omitempty"`
 	AnchorMessage string `json:"anchor_message,omitempty"`
+	// PlanMessageID is the immutable input that created a planning task.
+	PlanMessageID string `json:"plan_message_id,omitempty"`
 	ChatType      string `json:"chat_type,omitempty"`
 	// OpenCard is the platform's own card for the task's current turn, and
 	// Interim are the messages the agent sent during it. Both are recorded

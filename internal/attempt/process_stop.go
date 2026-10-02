@@ -70,7 +70,7 @@ func (s *Service) ConfirmProcessStopped(ctx context.Context, id, actor string, p
 		if next.EndedAt.IsZero() {
 			next.EndedAt = s.now().UTC()
 		}
-		if spend := stoppedUsage(st); spend != nil {
+		if spend := stoppedUsage(st); spend != nil && next.Abandoned == nil {
 			next.Usage = spend
 		}
 		return setRecordDataTx(tx, op, next)

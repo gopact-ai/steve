@@ -70,7 +70,8 @@ type Conversation struct {
 
 type Archived struct {
 	Session
-	ArchivedAt string `json:"archived_at"`
+	ArchivedAt       string `json:"archived_at"`
+	AbandonedAttempt string `json:"abandoned_attempt,omitempty"`
 }
 
 type PendingPair struct {
@@ -85,14 +86,16 @@ type pairingData struct {
 }
 
 type data struct {
-	Conversations map[string]Conversation `json:"conversations"`
-	Pairing       pairingData             `json:"pairing,omitempty"`
-	Onboarded     bool                    `json:"onboarded,omitempty"`
-	OwedCloses    []OwedClose             `json:"owed_closes,omitempty"`
+	Conversations   map[string]Conversation `json:"conversations"`
+	Pairing         pairingData             `json:"pairing,omitempty"`
+	Onboarded       bool                    `json:"onboarded,omitempty"`
+	OwedCloses      []OwedClose             `json:"owed_closes,omitempty"`
+	RetiredContexts map[string]string       `json:"retired_contexts,omitempty"`
 }
 
 type Store struct {
 	doc  *ledger.Document
+	book *ledger.Ledger
 	mu   sync.Mutex
 	data data
 }
@@ -100,7 +103,7 @@ type Store struct {
 // OpenLedger keeps the store in the ledger.
 func OpenLedger(l *ledger.Ledger) (*Store, error) {
 	doc := l.Document("state")
-	s := &Store{doc: doc, data: data{Conversations: map[string]Conversation{}}}
+	s := &Store{doc: doc, book: l, data: data{Conversations: map[string]Conversation{}}}
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read state: %w", err)
@@ -215,6 +218,9 @@ func (s *Store) SaveSession(session Session) error {
 	session.NativeImport = session.NativeImport.Clone()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if retiredContext(s.data, session) {
+		return ErrAbandonedContext
+	}
 	next := cloneData(s.data)
 	conversation := next.Conversations[session.ConversationID]
 	if conversation.Sessions == nil {
@@ -449,6 +455,9 @@ func (s *Store) RestoreSession(conversationID, agentID string, index int) (Sessi
 	}
 	at := matches[index-1]
 	restored := conversation.Archived[at].Session
+	if conversation.Archived[at].AbandonedAttempt != "" || retiredContext(next, restored) {
+		return Session{}, ErrAbandonedContext
+	}
 	// Whatever is live now takes the restored one's place in the history,
 	// so switching back and forth never loses either.
 	if current, ok := conversation.Sessions[agentID]; ok && current.UpstreamID != "" {
@@ -551,6 +560,12 @@ func cloneData(source data) data {
 		},
 		Onboarded:  source.Onboarded,
 		OwedCloses: append([]OwedClose(nil), source.OwedCloses...),
+	}
+	if source.RetiredContexts != nil {
+		clone.RetiredContexts = make(map[string]string, len(source.RetiredContexts))
+	}
+	for key, id := range source.RetiredContexts {
+		clone.RetiredContexts[key] = id
 	}
 	for id, conversation := range source.Conversations {
 		clone.Conversations[id] = cloneConversation(conversation)

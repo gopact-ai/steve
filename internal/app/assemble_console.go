@@ -83,8 +83,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	view.SetInteractions(cons)
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
-	cons.SetForceStops(turn.NewForceStopControl(coordinator))
-	dashboard.SetForceStops(cons)
+	wireExecutionControls(cons, dashboard, coordinator)
 	dashboard.SetChannelHistory(&channelConversations{
 		ChannelHistory: gateway.NewChannelHistory(book), contexts: coordinator, tasks: tasks, activity: work.Gateway(),
 	})
@@ -225,4 +224,11 @@ func pinDesktopAddress(store *adminsvc.ConfigStore, path, url string) error {
 		return fmt.Errorf("remember desktop address: %w", err)
 	}
 	return nil
+}
+
+func wireExecutionControls(cons *console.Service, dashboard *httpapi.Server, coordinator *turn.Coordinator) {
+	cons.SetForceStops(turn.NewForceStopControl(coordinator))
+	dashboard.SetForceStops(cons)
+	cons.SetAbandons(turn.NewAbandonControl(coordinator))
+	dashboard.SetAbandons(cons)
 }

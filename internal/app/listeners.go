@@ -42,6 +42,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile retained child executions", recoverRetainedDelegates) })
 	}
 	if environment != nil {
+		reconciliations.Go(func() { runReconciler(ctx, "project abandoned executions", cons.ReconcileAbandonments) })
 		stops := newApplicationStops(attempts, tasks, manager, work.CatalogText())
 		stops.executions = work.Executions()
 		stops.restarts = environment.MemberRestarts

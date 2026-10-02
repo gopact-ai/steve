@@ -92,6 +92,10 @@ func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) (
 				e.RecoveryStopTarget.Conversation = apply(conversation, e.RecoveryStopTarget.Conversation)
 				e.RecoveryStopTarget.TaskID = apply(taskID, e.RecoveryStopTarget.TaskID)
 			}
+			if e.RecoveryAbandon != nil {
+				r := reply(*e.RecoveryAbandon)
+				e.RecoveryAbandon = &r
+			}
 			if e.RecoveryStop != nil {
 				r := reply(*e.RecoveryStop)
 				e.RecoveryStop = &r

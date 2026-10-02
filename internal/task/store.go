@@ -63,6 +63,10 @@ func (s *Store) Create(t Task) (Task, error) {
 	t.ID = strconv.Itoa(s.data.NextID)
 	t.State = StateDraft
 	t.ExecutionEpoch = 1
+	t.PlanMessageID = ""
+	if t.Origin == "plan" {
+		t.PlanMessageID = t.AnchorMessage
+	}
 	if t.PreparedPlan != nil {
 		prepared := *t.PreparedPlan
 		prepared.Execution = ExecutionToken{TaskID: t.ID, Epoch: t.ExecutionEpoch}

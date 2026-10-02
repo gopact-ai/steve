@@ -26,7 +26,7 @@ func TestDeleteChannelTakesDelegationsWithIt(t *testing.T) {
 	}
 	other := mustCreate(t, store, "unrelated", "console:two")
 
-	deleted, err := store.DeleteChannel("console:one")
+	deleted, err := store.DeleteChannel(t.Context(), "console:one", nil)
 	if err != nil {
 		t.Fatalf("delete channel: %v", err)
 	}
@@ -51,10 +51,10 @@ func TestDeleteChannelRefusesWorkInFlight(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 
-	if err := store.ChannelIdle("console:one"); err == nil {
+	if err := store.ChannelIdle(t.Context(), "console:one", nil); err == nil {
 		t.Fatalf("called a conversation with an open attempt idle")
 	}
-	if _, err := store.DeleteChannel("console:one"); err == nil {
+	if _, err := store.DeleteChannel(t.Context(), "console:one", nil); err == nil {
 		t.Fatalf("deleted a conversation whose task is executing")
 	}
 	if _, ok := store.Get(created.ID); !ok {

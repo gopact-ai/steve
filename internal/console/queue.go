@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type queuedExchange struct {
 	QuoteAliases          map[string]string   `json:"quote_aliases,omitempty"`
 	Receipt               *consoleapi.Reply   `json:"receipt,omitempty"`
 	RecoveryStopTarget    *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
+	RecoveryAbandon       *consoleapi.Reply   `json:"recovery_abandon,omitempty"`
 	RecoveryStop          *consoleapi.Reply   `json:"recovery_stop,omitempty"`
 	RecoveryStopPending   string              `json:"recovery_stop_pending,omitempty"`
 	RecoveryCancelPending bool                `json:"recovery_cancel_pending,omitempty"`
@@ -594,13 +596,20 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 		s.mu.Unlock()
 		return
 	}
-	if e.RecoveryStop == nil && e.RecoveryStopPending != "" {
+	if e.RecoveryAbandon != nil {
+		if err := s.finishAbandonmentLocked(e, *e.RecoveryAbandon); err != nil {
+			slog.Warn("console: abandonment reply remains pending", "exchange", e.ID, "error", err)
+		}
+		s.mu.Unlock()
+		return
+	}
+	if e.recoveryReply() == nil && e.RecoveryStopPending != "" {
 		s.mu.Unlock()
 		s.waitRecoveryStop(e, false)
 		return
 	}
-	if e.RecoveryStop != nil {
-		reply, err = *e.RecoveryStop, nil
+	if receipt := e.recoveryReply(); receipt != nil {
+		reply, err = *receipt, nil
 	}
 	var interrupted []consoleapi.PendingQuestion
 	for id, q := range s.questions {
@@ -628,7 +637,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	}
 	reply = s.recordLocked(reply)
 	e.ReplyID, e.State = reply.ID, consoleapi.ExchangeDone
-	if e.RecoveryStop != nil {
+	if e.recoveryReply() != nil {
 		e.State = consoleapi.ExchangeCancelled
 	}
 	if err != nil {
