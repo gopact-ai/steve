@@ -1,4 +1,7 @@
 export const consoleZh = {
+    "console.recoveryWorkspaceNode": "固定副本机器：{node}",
+    "console.recoveryWorkspaceHub": "协调节点",
+    "console.recoveryWorkspaceMaterializing": "副本正在以下已固定机器和路径准备，仅使用已固定恢复产物；原目录仍保持隔离。",
     "console.recoveryWorkspaceTitle": "项目主目录仍处于恢复隔离",
     "console.recoveryWorkspaceReady": "后续工作在共享隔离副本中串行继续，尚未自动合回原目录。",
     "console.recoveryWorkspaceWorking": "副本正在执行或等待产物记录，下一位写者必须等待。",

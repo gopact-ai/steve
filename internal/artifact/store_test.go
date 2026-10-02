@@ -242,7 +242,7 @@ func TestRecoveryPreparationUsesTypedNodeOperationsAndRespectsDataPlacement(t *t
 			if err := store.ledger.Update(t.Context(), func(tx *ledger.Tx) error { var err error; baseline, err = store.RecoveryBaselineTx(tx, p); return err }); err != nil {
 				t.Fatal(err)
 			}
-			r := attempt.WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("b", 32), Revision: 1, Phase: "recorded", CreatedAt: time.Now().UTC(), RequestedBy: "owner", Project: p.ID, Declaration: project.RecoveryIdentity(p), Target: p.Home, Baseline: baseline, Sources: []attempt.RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: time.Now().UTC()}}, Head: attempt.RecoveryHead{Artifact: baseline.Artifact, ContentID: baseline.ContentID, Storage: baseline.Storage, Version: 1}}
+			r := attempt.WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("b", 32), Revision: 1, Phase: "recorded", CreatedAt: time.Now().UTC(), RequestedBy: "owner", Project: p.ID, Declaration: project.RecoveryIdentity(p), Target: p.Home, Baseline: baseline, Sources: []attempt.RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: time.Now().UTC()}}, Head: attempt.RecoveryHead{Artifact: baseline.Artifact, ContentID: baseline.ContentID, Storage: baseline.Storage, Evidence: baseline.Evidence, Version: 1}}
 			if level == datalevel.Sealed {
 				if _, err := store.PlanRecoveryWorkspace(t.Context(), r, "elsewhere"); err == nil {
 					t.Fatal("sealed recovery was placed away from its home")

@@ -28,7 +28,10 @@ func crashMidApplyAs(t *testing.T, store *Store, p project.Project, canonical st
 	write(t, canonical, "a", "a0")
 	write(t, canonical, "b", "b0")
 	write(t, canonical, "c", "c0")
-	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	ws, err := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	base := canonicalOf(t, store, "p")
 	write(t, ws.Path, "a", "a1")
 	write(t, ws.Path, "b", "b1")

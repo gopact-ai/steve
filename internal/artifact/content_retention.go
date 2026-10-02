@@ -6,6 +6,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 func init() {
@@ -13,7 +14,7 @@ func init() {
 	contentreplica.MustRegisterRetentionOwner(artifactContentKind, artifactIndexRetentionRoots)
 }
 
-func artifactRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup) ([]string, error) {
+func artifactRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup, _ ledger.Reader) ([]string, error) {
 	// Decode the whole real owner type, preserving encoding/json's casing,
 	// escaped field names and duplicate-field merge behavior.
 	var m *Manifest
@@ -41,7 +42,7 @@ func artifactRetentionRoots(key string, raw json.RawMessage, lookup contentrepli
 	return []string{m.Content.ID}, nil
 }
 
-func artifactIndexRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup) ([]string, error) {
+func artifactIndexRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup, _ ledger.Reader) ([]string, error) {
 	var id string
 	if err := json.Unmarshal(raw, &id); err != nil {
 		return nil, err

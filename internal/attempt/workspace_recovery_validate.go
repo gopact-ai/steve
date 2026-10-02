@@ -54,14 +54,38 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 	if r.Phase != "recorded" && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !path.IsAbs(r.Workspace.Path) || path.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
 		return errors.New("workspace recovery has no exact prepared location")
 	}
-	for _, producer := range r.Head.Sources {
-		if producer.Attempt == "" || producer.Execution.TaskID == "" || producer.Execution.Epoch == 0 || producer.HeadVersion < 1 {
-			return errors.New("recovery head has no producing authority")
+	if (r.Phase == "recorded" || r.Phase == "materializing") && r.Head.Version != 1 {
+		return errors.New("unprepared recovery has accepted producers")
+	}
+	if r.Head.Version != int64(len(r.Head.Sources))+1 {
+		return errors.New("recovery head producing chain is incomplete")
+	}
+	previous := r.Baseline.Artifact
+	producers := map[string]bool{}
+	for index, producer := range r.Head.Sources {
+		if producer.Attempt == "" || producers[producer.Attempt] || producer.Execution.TaskID == "" || producer.Execution.Epoch == 0 || producer.HeadVersion != int64(index)+1 || producer.Base != previous || producer.NativeMayWrite == nil || !*producer.NativeMayWrite {
+			return errors.New("recovery head producing chain is not exact and continuous")
 		}
 		if err := validateRecoveryContent(producer.Artifact, producer.ContentID, producer.Storage); err != nil {
 			return err
 		}
+		producers[producer.Attempt] = true
+		previous = producer.Artifact
 	}
+	if r.Head.Artifact != previous {
+		return errors.New("recovery head differs from its accepted producing chain")
+	}
+	if len(r.Head.Sources) == 0 {
+		if r.Head.ContentID != r.Baseline.ContentID || r.Head.Storage != r.Baseline.Storage || r.Head.Evidence != r.Baseline.Evidence {
+			return errors.New("initial recovery head differs from baseline content")
+		}
+	} else {
+		last := r.Head.Sources[len(r.Head.Sources)-1]
+		if r.Head.ContentID != last.ContentID || r.Head.Storage != last.Storage || r.Head.Evidence != last.Evidence {
+			return errors.New("recovery head content differs from its final producer")
+		}
+	}
+
 	if (r.Phase == "working") != (r.Producer != nil) {
 		return errors.New("recovery writer obligation differs from phase")
 	}

@@ -122,36 +122,34 @@ func manifestCount(t *testing.T, store *Store) int {
 	return len(all)
 }
 
-// Before anything named a canonical snapshot nothing can be landing, so an
-// in-place turn holding the lock before its first snapshot does not keep
-// an isolated step from starting: its base is cut as the first snapshot of
-// the lineage, and the canonical name is left to the holder of the lock.
-func TestIsolatedBaseBeforeAnyCanonicalSnapshotLeavesTheNameToTheLockHolder(t *testing.T) {
+// A headless writer has not supplied an accepted base. Another caller cannot
+// cut the directory merely because it knows the holder's lease key.
+func TestHeadlessIsolatedBaseWaitsForItsOwnSnapshotLease(t *testing.T) {
 	ctx := t.Context()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
-	if _, err := store.acquireCanonical(ctx, p, "att-turn"); err != nil {
-		t.Fatal(err)
-	}
-
-	ws, err := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-2"})
+	held, err := store.acquireCanonical(ctx, p, "att-turn")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ws.Base == "" || read(t, ws.Path, "a") != "a0" {
-		t.Fatalf("isolated base = %q with a=%s", ws.Base, read(t, ws.Path, "a"))
+	before := manifestCount(t, store)
+	if _, err := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-2"}); !errors.Is(err, ledger.ErrHeld) {
+		t.Fatalf("headless held base was not retryably busy: %v", err)
 	}
-	if head := canonicalOf(t, store, "p"); head != "" {
-		t.Fatalf("canonical = %s, want it left unnamed for the lock holder", head)
+	if manifestCount(t, store) != before || canonicalOf(t, store, "p") != "" {
+		t.Fatal("headless refusal recorded a snapshot or moved the name")
+	}
+	if err := store.ledger.ReleaseAny(ctx, held); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-2"})
+	if err != nil || ws.Base == "" || read(t, ws.Path, "a") != "a0" {
+		t.Fatalf("release did not allow an accepted initial base: %+v %v", ws, err)
 	}
 }
 
-// The holder may name its first snapshot, and write on, while that base
-// is being cut: once it has, its snapshot is the base, not the cut, which
-// may hold its writes half done and stands off the lineage the name
-// starts.
-func TestIsolatedBaseBeforeAnyCanonicalSnapshotTakesTheHoldersOnceNamed(t *testing.T) {
+func TestHeadlessIsolatedBaseRetriesAfterTheHolderNamesItsSnapshot(t *testing.T) {
 	ctx := t.Context()
 	local := &localNode{root: t.TempDir(), state: t.TempDir()}
 	canonical := filepath.Join(local.root, "proj")
@@ -163,22 +161,27 @@ func TestIsolatedBaseBeforeAnyCanonicalSnapshotTakesTheHoldersOnceNamed(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	var first string
-	node.before = onFirst(ops.Snapshot, func() {
-		m, _, err := store.SnapshotCanonicalUnder(ctx, p, held, "", "att-turn", "before turn")
-		if err != nil {
-			t.Error(err)
+	dispatched := 0
+	node.before = func(req ops.Request) {
+		if req.Op == ops.Snapshot {
+			dispatched++
 		}
-		first = m.ID
-		write(t, canonical, "a", "a-half")
-	})
-
-	ws, err := store.Materialize(ctx, project.Request{Project: "p", Node: "node-a", Isolated: true, Owner: "att-2"})
+	}
+	if _, err := store.Materialize(ctx, project.Request{Project: "p", Node: "node-a", Isolated: true, Owner: "att-2"}); !errors.Is(err, ledger.ErrHeld) {
+		t.Fatalf("headless request was not retryably refused: %v", err)
+	}
+	if dispatched != 0 || manifestCount(t, store) != 0 || canonicalOf(t, store, "p") != "" {
+		t.Fatalf("headless refusal dispatched Snapshot: calls=%d", dispatched)
+	}
+	first, _, err := store.SnapshotCanonicalUnder(ctx, p, held, "", "att-turn", "before turn")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first == "" || ws.Base != first || read(t, ws.Path, "a") != "a0" {
-		t.Fatalf("isolated base = %s with a=%s, want the holder's first snapshot %s", ws.Base, read(t, ws.Path, "a"), first)
+	write(t, canonical, "a", "a-half")
+	before := dispatched
+	ws, err := store.Materialize(ctx, project.Request{Project: "p", Node: "node-a", Isolated: true, Owner: "att-2"})
+	if err != nil || ws.Base != first.ID || read(t, ws.Path, "a") != "a0" || dispatched != before {
+		t.Fatalf("retry did not use the accepted named base: %+v %v snapshots=%d", ws, err, dispatched-before)
 	}
 }
 

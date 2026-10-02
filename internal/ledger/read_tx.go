@@ -78,3 +78,16 @@ func (t *ReadTx) LeaseOf(key string) (Lease, bool, error) {
 	}
 	return lease, true, nil
 }
+
+// ReadOnlyReader narrows a writer Tx for callbacks which consume owner facts.
+// QueryRow is not permission to execute a mutating statement through that port.
+func ReadOnlyReader(reader Reader) Reader { return readOnlyReader{reader: reader} }
+
+type readOnlyReader struct{ reader Reader }
+
+func (r readOnlyReader) QueryRow(query string, args ...any) *Row {
+	if !readOnlyQuery(query) {
+		return &Row{err: ErrReplicaWriteBypass}
+	}
+	return r.reader.QueryRow(query, args...)
+}

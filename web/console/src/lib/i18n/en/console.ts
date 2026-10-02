@@ -1,6 +1,9 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.recoveryWorkspaceNode": "Fixed copy node: {node}",
+    "console.recoveryWorkspaceHub": "the coordinator",
+    "console.recoveryWorkspaceMaterializing": "The copy is being prepared at the fixed node and path below from the pinned recovery artifact. The original directory remains isolated.",
     "console.recoveryWorkspaceTitle": "The original project directory remains isolated for recovery",
     "console.recoveryWorkspaceReady": "New work continues serially in the shared isolated copy. It has not been merged back automatically.",
     "console.recoveryWorkspaceWorking": "The copy has a writer or an output awaiting recording. The next writer must wait.",

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 	"sync"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // RetentionLookup reads the manifest catalog from the same ledger transaction
@@ -14,7 +16,7 @@ type RetentionLookup func(string) (Manifest, bool, error)
 // RetentionOwnerDecoder validates the complete binding using its owner's real
 // type and decoder semantics, then returns all referenced manifest IDs. An
 // unreadable owner must return an error, never an empty set of references.
-type RetentionOwnerDecoder func(key string, raw json.RawMessage, lookup RetentionLookup) ([]string, error)
+type RetentionOwnerDecoder func(key string, raw json.RawMessage, lookup RetentionLookup, reader ledger.Reader) ([]string, error)
 
 var retentionOwners = struct {
 	sync.Mutex
@@ -64,7 +66,7 @@ func (c retentionCatalog) protectOwners(decoders map[string]RetentionOwnerDecode
 		if decode == nil {
 			return fmt.Errorf("%w: retention owner %s/%s has no registered decoder", ErrIntegrity, row.kind, row.key)
 		}
-		roots, err := decode(row.key, row.raw, c.loadManifest)
+		roots, err := decode(row.key, row.raw, c.loadManifest, c.reader)
 		if err != nil {
 			return fmt.Errorf("%w: retention owner %s/%s: %w", ErrIntegrity, row.kind, row.key, err)
 		}

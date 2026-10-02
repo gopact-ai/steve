@@ -14,6 +14,7 @@ import (
 )
 
 type retentionCatalog struct {
+	reader    ledger.Reader
 	manifests map[string]Manifest
 	uploads   map[string]uploadRecord
 	receipts  map[string]receiptRecord
@@ -27,8 +28,11 @@ type retentionQuery func(string, ...any) retentionRow
 
 // Owner rows include historical records, not only current project heads.
 // Catalog corruption is checked before any destructive decision.
-func readRetentionCatalog(query retentionQuery) (retentionCatalog, error) {
+func readRetentionCatalog(reader ledger.Reader) (retentionCatalog, error) {
+	reader = ledger.ReadOnlyReader(reader)
+	query := func(q string, args ...any) retentionRow { return reader.QueryRow(q, args...) }
 	c := retentionCatalog{
+		reader:    reader,
 		manifests: map[string]Manifest{},
 		uploads:   map[string]uploadRecord{},
 		receipts:  map[string]receiptRecord{},
@@ -195,7 +199,7 @@ func Retire(tx *ledger.Tx, id string) error {
 	if !digest(id, 64) {
 		return ErrInvalid
 	}
-	c, err := readRetentionCatalog(func(q string, args ...any) retentionRow { return tx.QueryRow(q, args...) })
+	c, err := readRetentionCatalog(tx)
 	if err != nil {
 		return err
 	}
@@ -234,7 +238,7 @@ func Retire(tx *ledger.Tx, id string) error {
 // replacement has been published. It never infers object retirement from a
 // missing owner or a scan of currently active projects.
 func ReleaseSuperseded(tx *ledger.Tx) error {
-	c, err := readRetentionCatalog(func(q string, args ...any) retentionRow { return tx.QueryRow(q, args...) })
+	c, err := readRetentionCatalog(tx)
 	if err != nil {
 		return err
 	}
@@ -273,7 +277,7 @@ func (s *Store) GC(ctx context.Context, book *ledger.Ledger) (checkpoint.Retenti
 	var c retentionCatalog
 	err = book.Read(ctx, func(tx *ledger.ReadTx) error {
 		var err error
-		c, err = readRetentionCatalog(func(q string, args ...any) retentionRow { return tx.QueryRow(q, args...) })
+		c, err = readRetentionCatalog(tx)
 		return err
 	})
 	if err != nil {

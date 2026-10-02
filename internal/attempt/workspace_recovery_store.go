@@ -45,7 +45,11 @@ func recoveryByIDTx(tx ledger.Reader, id string) (WorkspaceRecovery, error) {
 	if err != nil {
 		return WorkspaceRecovery{}, err
 	}
-	return decodeWorkspaceRecovery(e)
+	r, err := decodeWorkspaceRecovery(e)
+	if err == nil {
+		err = validateWorkspaceRecoveryTx(tx, r)
+	}
+	return r, err
 }
 
 func workspaceRecoveriesTx(tx ledger.Reader) ([]WorkspaceRecovery, error) {
@@ -63,6 +67,9 @@ func workspaceRecoveriesTx(tx ledger.Reader) ([]WorkspaceRecovery, error) {
 		r, err := decodeWorkspaceRecovery(e)
 		if err != nil {
 			return nil, fmt.Errorf("workspace recovery %s: %w", e.ID, err)
+		}
+		if err := validateWorkspaceRecoveryTx(tx, r); err != nil {
+			return nil, err
 		}
 		out = append(out, r)
 	}
@@ -127,7 +134,7 @@ func (s *Service) startWorkspaceRecoveryTx(tx *ledger.Tx, r Record, base *Recove
 	}
 	sum := sha256.Sum256([]byte(r.ID + "\x00" + p.Home.Node + "\x00" + path.Clean(p.Home.Path)))
 	id := "workspace-recovery-" + hex.EncodeToString(sum[:16])
-	next := WorkspaceRecovery{ID: id, Revision: 1, Phase: "recorded", CreatedAt: at, RequestedBy: owner, Project: r.Project, Declaration: declaration, Target: p.Home, Baseline: *base, Sources: []RecoverySource{source}, Head: RecoveryHead{Artifact: base.Artifact, ContentID: base.ContentID, Storage: base.Storage, Version: 1}}
+	next := WorkspaceRecovery{ID: id, Revision: 1, Phase: "recorded", CreatedAt: at, RequestedBy: owner, Project: r.Project, Declaration: declaration, Target: p.Home, Baseline: *base, Sources: []RecoverySource{source}, Head: RecoveryHead{Artifact: base.Artifact, ContentID: base.ContentID, Storage: base.Storage, Evidence: base.Evidence, Version: 1}}
 	data, err := json.Marshal(next)
 	if err != nil {
 		return "", err

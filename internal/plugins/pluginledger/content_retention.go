@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plugins"
 )
 
@@ -12,7 +13,7 @@ func init() {
 	contentreplica.MustRegisterRetentionOwner(packageRecordKind, packageRetentionRoots)
 }
 
-func packageRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup) ([]string, error) {
+func packageRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup, _ ledger.Reader) ([]string, error) {
 	// Match Library.Record's whole-record decoder, including case-folded
 	// and duplicate fields; the public bundle parser has a different contract.
 	var record *PackageRecord

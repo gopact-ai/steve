@@ -33,11 +33,13 @@ type WorkspaceRecovery struct {
 }
 
 type RecoveryContent struct {
-	ID      string `json:"id,omitempty"`
-	Storage string `json:"storage"`
+	Evidence string `json:"evidence"`
+	ID       string `json:"id,omitempty"`
+	Storage  string `json:"storage"`
 }
 
 type RecoveryBaseline struct {
+	Evidence  string `json:"evidence"`
 	ContentID string `json:"content_id,omitempty"`
 	Storage   string `json:"storage"`
 	Name      string `json:"name"`
@@ -53,6 +55,7 @@ type RecoverySource struct {
 }
 
 type RecoveryHead struct {
+	Evidence  string             `json:"evidence"`
 	ContentID string             `json:"content_id,omitempty"`
 	Storage   string             `json:"storage"`
 	Artifact  string             `json:"artifact"`
@@ -74,6 +77,7 @@ type RecoveryOutput struct {
 }
 
 type RecoveryProducer struct {
+	Evidence       string              `json:"evidence,omitempty"`
 	NativeMayWrite *bool               `json:"native_may_write"`
 	Artifact       string              `json:"artifact,omitempty"`
 	ContentID      string              `json:"content_id,omitempty"`

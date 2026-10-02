@@ -148,10 +148,10 @@ func completeWorkspaceRecoveryTx(tx *ledger.Tx, record Record, binding *NameBind
 	}
 	if record.Result.Artifact != "" {
 		r.Head.Artifact = artifact
-		r.Head.ContentID, r.Head.Storage = content.ID, content.Storage
+		r.Head.ContentID, r.Head.Storage, r.Head.Evidence = content.ID, content.Storage, content.Evidence
 		r.Head.Version++
 		producer := *r.Producer
-		producer.Artifact, producer.ContentID, producer.Storage = artifact, content.ID, content.Storage
+		producer.Artifact, producer.ContentID, producer.Storage, producer.Evidence = artifact, content.ID, content.Storage, content.Evidence
 		r.Head.Sources = append(r.Head.Sources, producer)
 	}
 	r.Producer = nil

@@ -2,7 +2,9 @@ package turn
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -457,5 +459,170 @@ func TestRecoveryMissingAcceptedProducerChainRefusesDeletion(t *testing.T) {
 	deleted, deleteErr := c.tasks.DeleteChannel(t.Context(), "console:corrupt-chain-producer", attempt.CheckTaskDeletionTx)
 	if deleteErr == nil {
 		t.Fatalf("corrupt head version=%d with no producing chain decoded with err=%v and deleted accepted authority: tasks=%v producer=%s", decoded.Head.Version, decodeErr, deleted, first.TaskID)
+	}
+}
+
+func TestRecoveryAcceptedChainRejectsEveryMissingOrChangedAuthority(t *testing.T) {
+	for _, which := range []string{"middle", "base", "version", "head", "repeat", "token", "attempt", "may-write", "evidence"} {
+		t.Run(which, func(t *testing.T) {
+			c, p, source, ws := sharedCopy(t)
+			for index := range 2 {
+				r := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, fmt.Sprintf("chain-%d", index)))
+				if err := os.WriteFile(filepath.Join(ws.Path, "chain"), []byte(fmt.Sprintf("output %d", index)), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.attempts.MarkSessionSettled(t.Context(), r.ID, "fixture"); err != nil {
+					t.Fatal(err)
+				}
+				r, _ = c.attempts.Get(t.Context(), r.ID)
+				completion, _, err := c.completion(t.Context(), r, Result{Text: "done"}, nil, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.attempts.FinishCompletion(t.Context(), r.ID, "fixture", completion); err != nil {
+					t.Fatal(err)
+				}
+			}
+			episode, err := c.attempts.WorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch which {
+			case "middle":
+				episode.Head.Sources = episode.Head.Sources[1:]
+			case "base":
+				episode.Head.Sources[1].Base = episode.Baseline.Artifact
+			case "version":
+				episode.Head.Sources[1].HeadVersion = 1
+			case "head":
+				episode.Head.Artifact = episode.Baseline.Artifact
+			case "repeat":
+				episode.Head.Sources[1].Attempt = episode.Head.Sources[0].Attempt
+			case "token":
+				episode.Head.Sources[0].Execution.Epoch++
+			case "attempt":
+				episode.Head.Sources[0].Attempt = source.ID
+			case "may-write":
+				no := false
+				episode.Head.Sources[0].NativeMayWrite = &no
+			case "evidence":
+				episode.Head.Sources[0].Evidence = ""
+			}
+			raw, err := json.Marshal(episode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+				_, err := tx.Exec("UPDATE operations SET data=? WHERE id=?", string(raw), episode.ID)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID); err == nil {
+				t.Fatal("changed accepted authority decoded as trusted")
+			}
+			if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+				return attempt.CheckTaskDeletionTx(tx, []string{episode.Head.Sources[0].Execution.TaskID})
+			}); err == nil {
+				t.Fatal("changed authority allowed deletion")
+			}
+			if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { return attempt.ReleaseProjectGuard(tx, p.ID) }); err == nil {
+				t.Fatal("changed authority allowed transfer")
+			}
+		})
+	}
+}
+
+func TestRecoveryAcceptedHistoricalEvidenceNeverRestoresARevokedToken(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	r := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, "accepted-revoked"))
+	if err := os.WriteFile(filepath.Join(ws.Path, "result"), []byte("accepted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.attempts.MarkSessionSettled(t.Context(), r.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = c.attempts.Get(t.Context(), r.ID)
+	completion, _, err := c.completion(t.Context(), r, Result{Text: "done"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.FinishCompletion(t.Context(), r.ID, "fixture", completion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.tasks.SetAside(r.TaskID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.WorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID); err != nil {
+		t.Fatalf("revocation destroyed historical facts: %v", err)
+	}
+	if _, _, err := c.artifacts.PublishRecovery(t.Context(), ws, r.Base, r.ID, "revoked retry"); err == nil {
+		t.Fatal("historical evidence granted a revoked publisher")
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { return task.CheckExecutionTx(tx, r.Execution) }); !errors.Is(err, task.ErrExecutionStopped) {
+		t.Fatalf("history reauthorized revoked token: %v", err)
+	}
+}
+
+func TestRecoveryLateSameSHASnapshotPreservesItsEarlierAcceptedAuthority(t *testing.T) {
+	gate := &recoverySnapshotGate{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, entered: make(chan struct{}), release: make(chan struct{})}
+	c, p, source, base := recoveryCanonicalWriterFixture(t, gate, false)
+	before, found, err := c.artifacts.Manifest(t.Context(), base)
+	if err != nil || !found {
+		t.Fatal("fixture lacks its earlier accepted artifact")
+	}
+	held, _ := artifact.CanonicalLease(source.Leases, p.ID)
+	gate.enabled.Store(true)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	var joined sync.WaitGroup
+	joined.Add(1)
+	go func() {
+		defer joined.Done()
+		_, _, err := c.artifacts.SnapshotCanonicalUnder(ctx, p, held, base, source.ID, "same accepted bytes")
+		done <- err
+	}()
+	defer func() {
+		select {
+		case <-gate.release:
+		default:
+			close(gate.release)
+		}
+		joined.Wait()
+	}()
+	select {
+	case <-gate.entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := c.attempts.MarkUnsettled(ctx, source.ID, "fixture", errors.New("unreachable"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewForceStopControl(c).ForceStopAttempt(ctx, source.ID, "owner", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.RecordForceStopResult(ctx, source.ID, 1, true, "stop_unproven"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewAbandonControl(c).AbandonAttempt(ctx, source.ID, "owner", 1); err != nil {
+		t.Fatal(err)
+	}
+	close(gate.release)
+	if err := <-done; !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+		t.Fatalf("late same-SHA operation was not refused: %v", err)
+	}
+	after, found, err := c.artifacts.Manifest(ctx, base)
+	if err != nil || !found || !sameAbandonJSON(before, after) {
+		t.Fatal("refusing a late cut revoked or changed the earlier same-SHA artifact")
+	}
+	if err := ledgerOf(t, c).Read(ctx, func(tx *ledger.ReadTx) error {
+		_, err := c.artifacts.RecoveryOutputTx(tx, p.ID, base, base)
+		return err
+	}); err != nil {
+		t.Fatal("earlier accepted base lost its independent authority", err)
+	}
+	if _, err := c.artifacts.Materialize(ctx, project.Request{Project: p.ID, Isolated: true, Base: base, Owner: "accepted-earlier"}); err != nil {
+		t.Fatal("refusing a late candidate removed a legitimate explicit base", err)
 	}
 }

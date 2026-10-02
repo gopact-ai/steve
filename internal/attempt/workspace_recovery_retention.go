@@ -5,13 +5,14 @@ import (
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 func init() {
 	contentreplica.MustRegisterRetentionOwner(workspaceRecoveryKind, workspaceRecoveryContentRoots)
 }
 
-func workspaceRecoveryContentRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup) ([]string, error) {
+func workspaceRecoveryContentRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup, reader ledger.Reader) ([]string, error) {
 	var envelope recoveryEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, err
@@ -19,6 +20,9 @@ func workspaceRecoveryContentRoots(key string, raw json.RawMessage, lookup conte
 	r, err := decodeWorkspaceRecovery(envelope)
 	if err != nil || r.ID != key {
 		return nil, fmt.Errorf("%w: recovery identity %s: %v", contentreplica.ErrIntegrity, key, err)
+	}
+	if err := validateWorkspaceRecoveryTx(reader, r); err != nil {
+		return nil, fmt.Errorf("%w: recovery facts: %v", contentreplica.ErrIntegrity, err)
 	}
 	var roots []string
 	protect := func(artifact, content, storage string) error {

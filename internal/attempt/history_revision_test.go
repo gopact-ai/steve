@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -417,6 +418,11 @@ func TestRecoveryOperationSaveKeepsItsTypedKindRevisionAndEventBoundary(t *testi
 			s, clock := newService(t)
 			base := strings.Repeat("1", 40)
 			r := WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("a", 32), Revision: 1, Phase: "recorded", CreatedAt: clock.t.UTC(), RequestedBy: "owner", Project: "p", Declaration: "fixed", Target: project.Home{Path: "/canonical"}, Baseline: RecoveryBaseline{Name: "project/p/canonical", Version: 1, Artifact: base, Storage: "standalone"}, Head: RecoveryHead{Artifact: base, Version: 1, Storage: "standalone"}, Sources: []RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: clock.t.UTC()}}}
+			proof := contentreplica.GitStorageEvidence{Project: r.Project, Artifact: base, Storage: "standalone", Level: "internal"}
+			r.Baseline.Evidence, r.Head.Evidence = proof.ID(), proof.ID()
+			if err := s.l.PutBinding(t.Context(), contentreplica.GitStorageEvidenceKind, proof.ID(), proof); err != nil {
+				t.Fatal(err)
+			}
 			if ordinary {
 				historyOpen(t, s, r.ID, "ordinary-task")
 			} else if _, err := s.l.Begin(t.Context(), r.ID, workspaceRecoveryKind, r.Phase, "owner", r); err != nil {

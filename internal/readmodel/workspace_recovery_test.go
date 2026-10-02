@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -19,6 +20,11 @@ func TestWorkspaceRecoveryRemainsVisibleWithoutALiveExecution(t *testing.T) {
 	t.Cleanup(func() { book.Close() })
 	base := strings.Repeat("1", 40)
 	r := attempt.WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("a", 32), Revision: 1, Phase: "recorded", CreatedAt: time.Now().UTC(), RequestedBy: "owner", Project: "p", Declaration: "fixed", Target: project.Home{Node: "node", Path: "/original"}, Baseline: attempt.RecoveryBaseline{Name: "project/p/canonical", Version: 1, Artifact: base, Storage: "standalone"}, Head: attempt.RecoveryHead{Artifact: base, Version: 1, Storage: "standalone"}, Sources: []attempt.RecoverySource{{Attempt: "old", Task: "1", Revision: 1, At: time.Now().UTC()}}}
+	proof := contentreplica.GitStorageEvidence{Project: r.Project, Artifact: base, Storage: "standalone", Level: "internal", HomeNode: r.Target.Node}
+	r.Baseline.Evidence, r.Head.Evidence = proof.ID(), proof.ID()
+	if err := book.PutBinding(t.Context(), contentreplica.GitStorageEvidenceKind, proof.ID(), proof); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := book.Begin(t.Context(), r.ID, "workspace-recovery", r.Phase, "owner", r); err != nil {
 		t.Fatal(err)
 	}

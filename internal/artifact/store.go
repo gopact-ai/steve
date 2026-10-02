@@ -255,7 +255,7 @@ func (s *Store) Manifest(ctx context.Context, id string) (Manifest, bool, error)
 }
 
 // record writes a manifest, keeping receipts already there.
-func (s *Store) record(ctx context.Context, m Manifest) (Manifest, error) {
+func (s *Store) record(ctx context.Context, m Manifest, guards ...recordGuard) (Manifest, error) {
 	if existing, ok, err := s.Manifest(ctx, m.ID); err != nil {
 		return m, err
 	} else if ok {
@@ -287,7 +287,19 @@ func (s *Store) record(ctx context.Context, m Manifest) (Manifest, error) {
 			m.Protection = manifest.Protection
 		}
 	}
+	for _, guard := range guards {
+		if guard.lease != nil && guard.lease.Region != "" && guard.lease.Region != s.ledger.Region() {
+			if err := s.ledger.CheckAny(ctx, *guard.lease); err != nil {
+				return m, err
+			}
+		}
+	}
 	err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		for _, guard := range guards {
+			if err := guard.check(tx); err != nil {
+				return err
+			}
+		}
 		if m.Content != nil {
 			manifest, err := contentreplica.Record(tx, *m.Content)
 			if err != nil {
@@ -299,25 +311,33 @@ func (s *Store) record(ctx context.Context, m Manifest) (Manifest, error) {
 				return err
 			}
 		}
-		return tx.PutBinding(manifestKind, m.ID, m)
+		if err := tx.PutBinding(manifestKind, m.ID, m); err != nil {
+			return err
+		}
+		p, err := project.ReadHistoricalTx(tx, m.Project)
+		if err != nil {
+			return err
+		}
+		_, err = s.recordStorageEvidenceTx(tx, p, m)
+		return err
 	})
 	return m, err
 }
 
 // hubReceipt signs for an artifact now held in the hub's repository.
-func (s *Store) hubReceipt(ctx context.Context, m Manifest) (Manifest, error) {
+func (s *Store) hubReceipt(ctx context.Context, m Manifest, guards ...recordGuard) (Manifest, error) {
 	m.Receipts = []Receipt{{Place: "", At: s.now().UTC()}}
-	return s.record(ctx, m)
+	return s.record(ctx, m, guards...)
 }
 
 // receipt signs where the artifact is actually held: the hub, or — for a
 // sealed project — its home node, the only durable place it has.
-func (s *Store) receipt(ctx context.Context, p project.Project, m Manifest) (Manifest, error) {
+func (s *Store) receipt(ctx context.Context, p project.Project, m Manifest, guards ...recordGuard) (Manifest, error) {
 	if metadataOnly(p) {
 		m.Receipts = []Receipt{{Place: p.Home.Node, At: s.now().UTC()}}
-		return s.record(ctx, m)
+		return s.record(ctx, m, guards...)
 	}
-	return s.hubReceipt(ctx, m)
+	return s.hubReceipt(ctx, m, guards...)
 }
 
 // ---------------------------------------------------------------- canonical
@@ -377,9 +397,8 @@ func (s *Store) SnapshotCanonicalUnder(ctx context.Context, p project.Project, h
 // or the workspace half written by a landing waiting for recovery, what is
 // on disk is no base: it is the snapshot the canonical name is at, which
 // is left where it is. A landing names its snapshot before it writes, so
-// with no name yet the holder is not one: the base is then cut as the
-// lineage's first snapshot, and naming it is left to the holder — unless
-// the holder named one meanwhile, which is then the base.
+// with no accepted name yet, a caller that cannot take its own snapshot
+// permission must wait for the holder to establish one or release its lease.
 func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, message string) (string, error) {
 	var base string
 	err := s.underCanonical(ctx, p, by, func(ctx context.Context, held ledger.Lease) error {
@@ -400,18 +419,7 @@ func (s *Store) CanonicalBase(ctx context.Context, p project.Project, by, messag
 	if !errors.Is(err, ledger.ErrHeld) {
 		return "", fmt.Errorf("project %s has no canonical snapshot to start from yet: %w", p.ID, err)
 	}
-	m, _, _, err := s.cutCanonical(ctx, p, "", by, message)
-	if err != nil {
-		return "", err
-	}
-	// The holder may have named its first snapshot while the base was cut,
-	// and written on: the cut may hold those writes half done, and stands
-	// off the lineage the name now starts. The holder's snapshot is the
-	// base then.
-	if head, err = s.CanonicalOf(ctx, p.ID); err != nil || head != "" {
-		return head, err
-	}
-	return m.ID, nil
+	return "", fmt.Errorf("project %s has no accepted canonical base while its writer is held: %w", p.ID, err)
 }
 
 // CanonicalBaseUnder is CanonicalBase for a caller holding the canonical
@@ -561,12 +569,8 @@ func CanonicalLease(leases []ledger.Lease, projectID string) (ledger.Lease, bool
 // snapshotCanonical is SnapshotCanonicalUnder that also names the nested
 // git repositories the snapshot left out of the canonical workspace.
 func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string) (Manifest, bool, []string, error) {
-	m, changed, nested, err := s.cutCanonicalUnder(ctx, p, held, parent, by, message)
-	if err != nil {
-		return m, changed, nested, err
-	}
-	// The snapshot is now the project's last known canonical state.
-	return m, changed, nested, s.setCanonical(ctx, p.ID, held, m.ID)
+	m, changed, nested, err := s.cutCanonicalUnder(ctx, p, held, parent, by, message, true)
+	return m, changed, nested, err
 }
 
 // cutCanonicalUnder is cutCanonical under held, which must be the
@@ -575,19 +579,19 @@ func (s *Store) snapshotCanonical(ctx context.Context, p project.Project, held l
 // then. The check only spares a cut bound to be thrown away; whether the
 // lock still holds when the snapshot is named is decided there, by
 // setCanonical or by the commit of the recovery that cut it.
-func (s *Store) cutCanonicalUnder(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string) (Manifest, bool, []string, error) {
+func (s *Store) cutCanonicalUnder(ctx context.Context, p project.Project, held ledger.Lease, parent, by, message string, named ...bool) (Manifest, bool, []string, error) {
 	if held.Key != canonicalLock(p.ID) {
 		return Manifest{}, false, nil, fmt.Errorf("snapshot of %s under lock %q, not its canonical lock", p.ID, held.Key)
 	}
 	if err := s.ledger.CheckAny(ctx, held); err != nil {
 		return Manifest{}, false, nil, err
 	}
-	return s.cutCanonical(ctx, p, parent, by, message)
+	return s.cutCanonical(ctx, p, parent, by, message, held, len(named) > 0 && named[0])
 }
 
 // cutCanonical snapshots the canonical workspace, brings the snapshot to
 // the hub and records it, without moving the canonical name.
-func (s *Store) cutCanonical(ctx context.Context, p project.Project, parent, by, message string) (Manifest, bool, []string, error) {
+func (s *Store) cutCanonical(ctx context.Context, p project.Project, parent, by, message string, held ledger.Lease, named bool) (Manifest, bool, []string, error) {
 	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
 		return Manifest{}, false, nil, err
 	}
@@ -609,13 +613,11 @@ func (s *Store) cutCanonical(ctx context.Context, p project.Project, parent, by,
 	if !changed {
 		m, ok, err := s.Manifest(ctx, sha)
 		if err == nil && ok {
-			if s.replication != nil {
-				m, err = s.receipt(ctx, p, m)
-			}
+			m, err = s.receipt(ctx, p, m, s.canonicalAcceptance(p, held, sha, named, by))
 			return m, false, nested, err
 		}
 	}
-	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true})
+	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true}, s.canonicalAcceptance(p, held, sha, named, by))
 	return m, changed, nested, err
 }
 
@@ -925,6 +927,16 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 		if err != nil {
 			return project.Workspace{}, fmt.Errorf("base snapshot: %w", err)
 		}
+	}
+	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error {
+		for _, id := range append([]string{base}, inputArtifacts(req.Inputs)...) {
+			if err := acceptedWorkspaceArtifactTx(tx, p, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return project.Workspace{}, err
 	}
 	hub, err := s.Repo(ctx, p.ID)
 	if err != nil {
