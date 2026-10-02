@@ -275,3 +275,118 @@ func TestRecoveryPreparationReplaysAfterReadyCommitFailureAndSurvivesSweep(t *te
 		t.Fatalf("exact preparation did not replay after reopen: %+v %v", current, err)
 	}
 }
+
+func setRecoveryDraining(t *testing.T, c *Coordinator, id string) {
+	t.Helper()
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+		_, err := tx.Exec(`UPDATE operations SET state='draining',revision=revision+1,data=json_set(data,'$.phase','draining','$.revision',revision+1) WHERE kind='workspace-recovery' AND id=?`, id)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDrainingRecoveryKeepsItsReservedProducerAndNeverReopensTheCopy(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unchanged", true: "changed"}[changed], func(t *testing.T) {
+			c, p, source, ws := sharedCopy(t)
+			writer, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "draining-writer"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			setRecoveryDraining(t, c, source.Abandoned.WorkspaceRecoveryID)
+			if err := c.attempts.MarkRecoveryWriting(t.Context(), writer.ID); err != nil {
+				t.Fatalf("draining refused its exact reserved producer before native preparation: %v", err)
+			}
+			for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+				writer, err = c.attempts.Advance(t.Context(), writer.ID, phase, "fixture", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if changed {
+				if err := os.WriteFile(filepath.Join(ws.Path, "drained-output"), []byte("exact reserved output\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.attempts.MarkSessionSettled(t.Context(), writer.ID, "fixture"); err != nil {
+				t.Fatal(err)
+			}
+			writer, err = c.attempts.Get(t.Context(), writer.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			completion, _, err := c.completion(t.Context(), writer, Result{Text: "drained"}, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.attempts.FinishCompletion(t.Context(), writer.ID, "fixture", completion); err != nil {
+				t.Fatalf("draining lost the reserved producer's exact output: %v", err)
+			}
+			episode, err := c.attempts.WorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID)
+			if err != nil || episode.Phase != "draining" || episode.Producer != nil || episode.Head.Version != int64(1+len(episode.Head.Sources)) || changed && episode.Head.Artifact != completion.Result.Artifact {
+				t.Fatalf("completion reopened or lost the frozen copy: %+v %v", episode, err)
+			}
+			if _, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "new-after-drain")); !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+				t.Fatalf("a later input entered the draining copy: %v", err)
+			}
+		})
+	}
+}
+
+func TestDrainingRecoveryReplaysOnlyItsExactRejectedOutput(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	writer := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, "draining-replay"))
+	if err := os.WriteFile(filepath.Join(ws.Path, "drained-output"), []byte("accepted candidate\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.attempts.MarkSessionSettled(t.Context(), writer.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := c.attempts.Get(t.Context(), writer.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, _, err := c.completion(t.Context(), writer, Result{Text: "drained"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forceStopTrigger(t, c, `CREATE TRIGGER refuse_draining_head BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND json_extract(NEW.data,'$.head.version')>1 BEGIN SELECT RAISE(ABORT,'draining head refused'); END`)
+	_, cause := c.attempts.FinishCompletion(t.Context(), writer.ID, "fixture", completion)
+	if cause == nil {
+		t.Fatal("head refusal did not reject completion")
+	}
+	if err := c.attempts.RejectCompletion(t.Context(), writer.ID, "fixture", completion, cause); err == nil {
+		t.Fatal("rejected candidate lost its failure")
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_draining_head"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	setRecoveryDraining(t, c, source.Abandoned.WorkspaceRecoveryID)
+	if err := os.WriteFile(filepath.Join(ws.Path, "drained-output"), []byte("later unaccepted disk\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	episode, err := c.attempts.PublishRecoveryHead(t.Context(), source.Abandoned.WorkspaceRecoveryID, c.artifacts.RecoveryOutputTx)
+	if err != nil || episode.Phase != "draining" || episode.Producer != nil || episode.Head.Artifact != completion.Result.Artifact {
+		t.Fatalf("draining did not replay the exact candidate without reopening: %+v %v", episode, err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(ws.Path, "drained-output")); err != nil || string(raw) != "later unaccepted disk\n" {
+		t.Fatalf("replaying metadata replaced later disk content: %q %v", raw, err)
+	}
+}
+
+func TestDrainingRecoveryReleasesOnlyAnExactlyUnusedReservation(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	writer, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "draining-unused"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setRecoveryDraining(t, c, source.Abandoned.WorkspaceRecoveryID)
+	if _, err := c.attempts.FailWith(t.Context(), writer.ID, "fixture", "unused reservation", nil); err != nil {
+		t.Fatal(err)
+	}
+	episode, err := c.attempts.PublishRecoveryHead(t.Context(), source.Abandoned.WorkspaceRecoveryID, c.artifacts.RecoveryOutputTx)
+	if err != nil || episode.Phase != "draining" || episode.Producer != nil || episode.Head.Version != 1 {
+		t.Fatalf("unused reservation reopened the copy or changed its accepted head: %+v %v", episode, err)
+	}
+}
