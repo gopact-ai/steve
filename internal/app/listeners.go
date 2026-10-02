@@ -7,6 +7,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
 func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, work executionAssembly, page consoleAssembly, management administrationAssembly, delegates delegationAssembly, channels channelsAssembly) error {
@@ -51,7 +52,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 		// reached are closed once it can be.
 		owed := newApplicationOwedCloses(storage.Store(), attempts, tasks, manager)
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile owed session closes", owed.Reconcile) })
-		recovery := &applicationWorkspaceRecovery{attempts: attempts, artifacts: work.Artifacts(), state: storage.Store(), sessions: manager}
+		recovery := &applicationWorkspaceRecovery{attempts: attempts, artifacts: work.Artifacts(), state: storage.Store(), sessions: manager, control: turn.NewWorkspaceRecoveryControl(coordinator)}
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile workspace recovery", recovery.Reconcile) })
 	}
 	if err := services.Ready(); err != nil {

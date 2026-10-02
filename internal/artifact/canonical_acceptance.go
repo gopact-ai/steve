@@ -11,8 +11,9 @@ import (
 )
 
 type recordGuard struct {
-	check func(*ledger.Tx) error
-	lease *ledger.Lease
+	check    func(*ledger.Tx) error
+	accepted func(*ledger.Tx, Manifest) error
+	lease    *ledger.Lease
 }
 
 func (s *Store) canonicalAcceptance(expected project.Project, held ledger.Lease, artifact string, named bool, actor string) recordGuard {

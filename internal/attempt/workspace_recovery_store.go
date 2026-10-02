@@ -26,7 +26,7 @@ func decodeWorkspaceRecovery(e recoveryEnvelope) (WorkspaceRecovery, error) {
 		return r, errors.New("workspace recovery identity is incomplete or changed")
 	}
 	switch r.Phase {
-	case "recorded", "materializing", "ready", "working", "draining":
+	case "recorded", "materializing", "ready", "working", "draining", "capture", "landing":
 	default:
 		return r, errors.New("workspace recovery phase is invalid")
 	}

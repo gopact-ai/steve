@@ -29,7 +29,7 @@ type RecoveryNative struct {
 }
 
 func recoveryNativeTx(tx ledger.Reader, record Record, copy bool) (RecoveryNative, error) {
-	if record.Execution == nil || record.Execution.TaskID != record.TaskID || record.Session == "" {
+	if record.Execution == nil || record.Execution.TaskID != record.TaskID {
 		return RecoveryNative{}, ErrStopConfirmationRequired
 	}
 	tracked, found, err := task.GetTx(tx, record.TaskID)
@@ -43,9 +43,9 @@ func recoveryNativeTx(tx ledger.Reader, record Record, copy bool) (RecoveryNativ
 	return RecoveryNative{Copy: copy, Session: record.Session, Context: record.NativeContext, Harness: record.Harness, Binding: binding, Command: InputCommandID(record), Conversation: tracked.Channel, Agent: record.Agent}, nil
 }
 
-func recoveryNativeIndex(r WorkspaceRecovery, node, harness, session string) int {
+func recoveryNativeIndex(r WorkspaceRecovery, node, harness, session string, attemptIDs ...string) int {
 	for i, n := range r.NativeRetirements {
-		if n.Binding.NodeID == node && n.Harness == harness && n.Session == session {
+		if n.Binding.NodeID == node && n.Harness == harness && n.Session == session && (session != "" || len(attemptIDs) == 1 && n.Binding.AttemptID == attemptIDs[0]) {
 			return i
 		}
 	}
@@ -57,7 +57,13 @@ func putRecoveryNativeTx(tx *ledger.Tx, r *WorkspaceRecovery, record Record, cop
 	if err != nil {
 		return err
 	}
-	index := recoveryNativeIndex(*r, record.Node, record.Harness, record.Session)
+	index := recoveryNativeIndex(*r, record.Node, record.Harness, record.Session, record.ID)
+	if record.Session != "" {
+		if pending := recoveryNativeIndex(*r, record.Node, record.Harness, "", record.ID); pending >= 0 {
+			r.NativeRetirements = append(r.NativeRetirements[:pending], r.NativeRetirements[pending+1:]...)
+			index = recoveryNativeIndex(*r, record.Node, record.Harness, record.Session, record.ID)
+		}
+	}
 	if index >= 0 {
 		previous := r.NativeRetirements[index]
 		if previous.Binding == n.Binding && previous.Context == n.Context {
@@ -218,7 +224,10 @@ func validateRecoveryNatives(r WorkspaceRecovery) error {
 	seen := map[string]bool{}
 	for _, n := range r.NativeRetirements {
 		key := n.Binding.NodeID + "\x00" + n.Harness + "\x00" + n.Session
-		if seen[key] || n.Session == "" || n.Harness == "" || n.Agent == "" || n.Command == "" || n.Binding.ProjectID != r.Project || n.Binding.TaskID == "" || n.Binding.AttemptID == "" || n.Binding.TaskEpoch == 0 || n.Binding.ExecutionEpoch == 0 || n.Binding.SessionID == "" {
+		if n.Session == "" {
+			key += "\x00" + n.Binding.AttemptID
+		}
+		if seen[key] || n.Harness == "" || n.Agent == "" || n.Command == "" || n.Binding.ProjectID != r.Project || n.Binding.TaskID == "" || n.Binding.AttemptID == "" || n.Binding.TaskEpoch == 0 || n.Binding.ExecutionEpoch == 0 || n.Binding.SessionID == "" {
 			return errors.New("recovery native identity is incomplete or repeated")
 		}
 		seen[key] = true

@@ -19,22 +19,9 @@ func RecoveryContextsTx(tx ledger.Reader, node, directory string) ([]Session, er
 	if directory == "" {
 		return nil, nil
 	}
-	var raw []byte
-	err := tx.QueryRow(`SELECT data FROM bindings WHERE kind='document' AND id='state'`).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	snapshot, err := recoveryStateTx(tx)
 	if err != nil {
 		return nil, err
-	}
-	var snapshot storedData
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&snapshot); err != nil {
-		return nil, err
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, errors.New("session state is not one document")
 	}
 	var result []Session
 	add := func(session Session) {
@@ -102,5 +89,39 @@ func (s *Store) RetireRecoverySession(ctx context.Context, node, harness, sessio
 		return err
 	}
 	s.data = next
+	return nil
+}
+
+func recoveryStateTx(tx ledger.Reader) (storedData, error) {
+	var raw []byte
+	err := tx.QueryRow(`SELECT data FROM bindings WHERE kind='document' AND id='state'`).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedData{}, nil
+	}
+	if err != nil {
+		return storedData{}, err
+	}
+	var snapshot storedData
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&snapshot); err != nil {
+		return snapshot, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return snapshot, errors.New("session state is not one document")
+	}
+	return snapshot, nil
+}
+
+// CheckRecoveryRetiredTx reads the real tombstone, not an episode's projection
+// timestamp, in the exact capture or release acceptance transaction.
+func CheckRecoveryRetiredTx(tx ledger.Reader, node, harness, session, attemptID string) error {
+	snapshot, err := recoveryStateTx(tx)
+	if err != nil {
+		return err
+	}
+	if session == "" || snapshot.RetiredContexts[nativeContextKey(node, harness, session)] != attemptID {
+		return errors.New("recovery native context retirement is missing")
+	}
 	return nil
 }

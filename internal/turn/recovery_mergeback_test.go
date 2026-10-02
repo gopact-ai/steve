@@ -166,3 +166,82 @@ func TestRecoveryResidualAndNewArtifactAreAcceptedInOneTransaction(t *testing.T)
 		t.Fatal("retry did not accept precisely one captured artifact")
 	}
 }
+
+func TestRecoveryPreparedWithoutNativeIdentityCannotCaptureOrLoseItsObligation(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	writer, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "unbound-native"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.attempts.MarkRecoveryWriting(t.Context(), writer.ID); err != nil {
+		t.Fatal(err)
+	}
+	episode, err := c.attempts.WorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID)
+	if err != nil || len(episode.NativeRetirements) != 1 || episode.NativeRetirements[0].Session != "" || episode.NativeRetirements[0].Binding.AttemptID != writer.ID {
+		t.Fatalf("native preparation began before durable exact open obligation: %+v %v", episode, err)
+	}
+	for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+		if _, err := c.attempts.Advance(t.Context(), writer.ID, phase, "fixture", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.attempts.MarkSessionSettled(t.Context(), writer.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	writer, err = c.attempts.Get(t.Context(), writer.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, _, err := c.completion(t.Context(), writer, Result{Text: "unchanged but no native receipt"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.FinishCompletion(t.Context(), writer.ID, "fixture", completion); err != nil {
+		t.Fatal(err)
+	}
+	source = retireOriginalRecoverySource(t, c, source)
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		enrollStoppedOriginals(t, ctx, c, episode.ID, driver)
+		if _, err := c.attempts.BeginRecoveryDrain(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		if _, err := c.artifacts.CaptureRecoveryResidual(ctx, episode.ID, driver); !errors.Is(err, attempt.ErrStopConfirmationRequired) {
+			t.Fatalf("settled/empty native identity became process exit: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+	if err != nil || current.Phase != "draining" || current.Residual != nil || len(current.NativeRetirements) != 2 || current.NativeRetirements[0].Proof != nil {
+		t.Fatalf("unbound preparation was lost or captured: %+v %v", current, err)
+	}
+}
+
+func TestRecoveryCaptureRequiresExactDriverAndTheCurrentOwner(t *testing.T) {
+	c, p, episode := drainWithoutCopy(t)
+	if err := os.WriteFile(filepath.Join(p.Home.Path, "current"), []byte("preserve\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.artifacts.CaptureRecoveryResidual(t.Context(), episode.ID, ledger.Lease{Key: "workspace-recovery-driver:another"}); err == nil {
+		t.Fatal("arbitrary driver minted residual permission")
+	}
+	called := false
+	c.maintaining = true
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(context.Context, ledger.Lease) error { called = true; return nil }); err == nil || called {
+		t.Fatal("maintenance authorized recovery I/O")
+	}
+	c.maintaining = false
+	owners, err := newChannelOwners("different-owner", nil)
+	c.owners = owners
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(context.Context, ledger.Lease) error { called = true; return nil }); err == nil || called {
+		t.Fatal("historical requester became current owner permission")
+	}
+	current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+	if err != nil || current.Residual != nil || current.Phase != "draining" {
+		t.Fatalf("refused owner/driver accepted R: %+v %v", current, err)
+	}
+}

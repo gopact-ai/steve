@@ -69,7 +69,10 @@ func markRecoveryWritingTx(tx *ledger.Tx, r Record) error {
 	mayWrite := true
 	copy.NativeMayWrite = &mayWrite
 	episode.Producer = &copy
-	return saveWorkspaceRecoveryTx(tx, &episode, "recovery-writer")
+	if err := saveWorkspaceRecoveryTx(tx, &episode, "recovery-writer"); err != nil {
+		return err
+	}
+	return putRecoveryNativeTx(tx, &episode, r, true)
 }
 
 func releaseUnpreparedRecoveryTx(tx *ledger.Tx, expected WorkspaceRecovery, record Record) error {

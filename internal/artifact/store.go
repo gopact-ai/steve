@@ -318,8 +318,17 @@ func (s *Store) record(ctx context.Context, m Manifest, guards ...recordGuard) (
 		if err != nil {
 			return err
 		}
-		_, err = s.recordStorageEvidenceTx(tx, p, m)
-		return err
+		if _, err := s.recordStorageEvidenceTx(tx, p, m); err != nil {
+			return err
+		}
+		for _, guard := range guards {
+			if guard.accepted != nil {
+				if err := guard.accepted(tx, m); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
 	return m, err
 }

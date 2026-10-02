@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
 type recoverySessionCloser interface {
@@ -26,6 +27,7 @@ type applicationWorkspaceRecovery struct {
 	artifacts *artifact.Store
 	state     *state.Store
 	sessions  recoverySessionCloser
+	control   *turn.WorkspaceRecoveryControl
 }
 
 // Recovery work has its own bounded reconciler, not the stop batch's deadline.
@@ -42,7 +44,7 @@ func (r *applicationWorkspaceRecovery) Reconcile(parent context.Context) error {
 	var failures []error
 	for _, episode := range all {
 		ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
-		err := r.attempts.DriveWorkspaceRecovery(ctx, episode.ID, func(ctx context.Context, driver ledger.Lease) error { return r.drain(ctx, episode.ID, driver) })
+		err := r.control.Drive(ctx, episode.ID, func(ctx context.Context, driver ledger.Lease) error { return r.drain(ctx, episode.ID, driver) })
 		cancel()
 		if err != nil {
 			failures = append(failures, fmt.Errorf("workspace recovery %s: %w", episode.ID, err))
@@ -74,13 +76,20 @@ func (r *applicationWorkspaceRecovery) drain(ctx context.Context, id string, dri
 	if err != nil {
 		return err
 	}
-	return r.retire(ctx, episode, true, driver)
+	if err := r.retire(ctx, episode, true, driver); err != nil {
+		return err
+	}
+	_, err = r.artifacts.CaptureRecoveryResidual(ctx, id, driver)
+	return err
 }
 
 func (r *applicationWorkspaceRecovery) retire(ctx context.Context, episode attempt.WorkspaceRecovery, copy bool, driver ledger.Lease) error {
 	for _, native := range episode.NativeRetirements {
 		if native.Copy != copy {
 			continue
+		}
+		if native.Session == "" {
+			return errors.New("recovery native preparation has no confirmed open or process-stop identity")
 		}
 		current, err := r.attempts.Get(ctx, native.Binding.AttemptID)
 		if err != nil {

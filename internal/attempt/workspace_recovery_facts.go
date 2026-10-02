@@ -39,6 +39,11 @@ func validateWorkspaceRecoveryTx(tx ledger.Reader, r WorkspaceRecovery) error {
 	if err := check(r.Head.Artifact, r.Head.ContentID, r.Head.Storage, r.Head.Evidence); err != nil {
 		return err
 	}
+	if r.Residual != nil {
+		if err := check(r.Residual.Artifact, r.Residual.ID, r.Residual.Storage, r.Residual.Evidence); err != nil {
+			return err
+		}
+	}
 	for _, source := range r.Head.Sources {
 		if err := check(source.Artifact, source.ContentID, source.Storage, source.Evidence); err != nil {
 			return err

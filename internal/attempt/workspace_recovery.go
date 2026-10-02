@@ -31,6 +31,8 @@ type WorkspaceRecovery struct {
 	Head              RecoveryHead      `json:"head"`
 	Producer          *RecoveryProducer `json:"producer,omitempty"`
 	NativeRetirements []RecoveryNative  `json:"native_retirements,omitempty"`
+	FrozenHeadVersion int64             `json:"frozen_head_version,omitempty"`
+	Residual          *RecoveryResidual `json:"residual,omitempty"`
 }
 
 type RecoveryContent struct {

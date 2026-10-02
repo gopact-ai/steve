@@ -125,7 +125,7 @@ func (s *Service) EnrollRecoveryNatives(ctx context.Context, id string, copy boo
 		}
 		for _, record := range records {
 			if record.Session == "" {
-				if potentialWriter(record) || record.NativeContext != "" {
+				if potentialWriter(record) || record.NativeContext != "" || copy && record.Result != nil {
 					return ErrStopConfirmationRequired
 				}
 				continue
@@ -170,7 +170,7 @@ func checkRecoveryNativeConvergenceTx(tx *ledger.Tx, r WorkspaceRecovery, copy b
 			return writerRefusal(record)
 		}
 		if record.Session == "" {
-			if record.NativeContext != "" {
+			if record.NativeContext != "" || copy && record.Result != nil {
 				return ErrStopConfirmationRequired
 			}
 			continue
@@ -187,6 +187,20 @@ func checkRecoveryNativeConvergenceTx(tx *ledger.Tx, r WorkspaceRecovery, copy b
 			return err
 		}
 		if _, err := latestRecoveryNativeTx(tx, n); err != nil {
+			return err
+		}
+	}
+	for _, native := range r.NativeRetirements {
+		if native.Copy != copy {
+			continue
+		}
+		if native.Proof == nil || native.RetiredAt.IsZero() {
+			return ErrStopConfirmationRequired
+		}
+		if err := recoveryNativeProof(native, *native.Proof); err != nil {
+			return err
+		}
+		if err := state.CheckRecoveryRetiredTx(tx, native.Binding.NodeID, native.Harness, native.Session, native.Binding.AttemptID); err != nil {
 			return err
 		}
 	}
