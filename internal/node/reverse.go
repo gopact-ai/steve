@@ -101,41 +101,39 @@ func (s *Server) awaitHub(ctx context.Context) (*nodewire.Mux, error) {
 	return mux, nil
 }
 
-func (s *Server) forwardMCP(listener net.Listener) {
-	transport := &http.Transport{
-		// Each request gets one stream. In particular, failed writes are
-		// never retried on a reused HTTP connection: tools may have effects.
-		DisableKeepAlives: true,
-		// Tool calls may wait for delegated work or user input before
-		// writing headers. The caller owns their lifetime; a proxy header
-		// timeout would misreport a healthy hub and leave accepted work
-		// running after the caller sees a failure.
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			mux, err := s.awaitHub(ctx)
-			if err != nil {
-				return nil, err
-			}
-			select {
-			case <-mux.Done():
-				return nil, fmt.Errorf("hub unreachable")
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-			stream, err := mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamMCP})
-			if err != nil {
-				return nil, err
-			}
-			return streamConn{Stream: stream}, nil
-		},
-	}
+func (s *Server) reverseMCPHandler() http.Handler {
+	// Each request gets one stream and is never replayed. Tool calls may
+	// wait for work or input, so their caller owns the response lifetime.
+	transport := newReverseHTTP(func(ctx context.Context) (reverseHTTPConnection, error) {
+		mux, err := s.awaitHub(ctx)
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case <-mux.Done():
+			return nil, fmt.Errorf("hub unreachable")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		stream, err := mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamMCP})
+		if err != nil {
+			return nil, err
+		}
+		return streamConn{Stream: stream}, nil
+	})
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(&url.URL{Scheme: "http", Host: "hub"})
 		},
 		Transport:     transport,
 		FlushInterval: -1,
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, cause error) {
+			var tooLarge *http.MaxBytesError
+			if errors.As(cause, &tooLarge) {
+				http.Error(w, "MCP request exceeds the input limit", http.StatusRequestEntityTooLarge)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -144,17 +142,26 @@ func (s *Server) forwardMCP(listener net.Listener) {
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"hub unreachable, retry later"}}`))
 		},
 	}
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := prepareReverseHTTP(w, r); err != nil {
+			releaseReverseInput(r)
+			proxy.ErrorHandler(w, r, err)
+			return
+		}
 		done, err := s.beginWork()
 		if err != nil {
+			releaseReverseInput(r)
 			http.Error(w, "node is restarting", http.StatusServiceUnavailable)
 			return
 		}
 		defer done()
 		proxy.ServeHTTP(w, r)
-	}), ReadHeaderTimeout: 10 * time.Second}
+	})
+}
+
+func (s *Server) forwardMCP(listener net.Listener) {
+	server := &http.Server{Handler: s.reverseMCPHandler(), ReadHeaderTimeout: 10 * time.Second, ConnContext: reverseConnectionContext}
 	defer server.Close()
-	defer transport.CloseIdleConnections()
 	// Serve returns once closeMCP closes the listener, reporting that
 	// close as net.ErrClosed. Any other end is the listener dying on its
 	// own: agents would only see their MCP calls refused, so say so. The
