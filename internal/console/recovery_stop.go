@@ -197,6 +197,9 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 	if err != nil || !found {
 		return errors.Join(harness.ErrStopUnconfirmed, err)
 	}
+	if candidate.Abandoned && candidate.AbandonProjected {
+		return s.finishAbandonedRecovery(ctx, target, candidate.AttemptID, release)
+	}
 	stopper, ok := driver.(retainedStopDriver)
 	if !ok {
 		return errors.New("stopping the original recovery task is unavailable")
@@ -402,11 +405,12 @@ type recoveryStopWait struct {
 	// the owner last saw, so an unchanged answer rechecks quietly instead
 	// of posting the same card again. checks counts the passes made for
 	// them. The periodic pass writes all three, so they are held.
-	mu     sync.Mutex
-	reason string
-	asked  string
-	checks int
-	busy   bool
+	mu             sync.Mutex
+	reason         string
+	asked          string
+	checks         int
+	busy           bool
+	recheckPending bool
 }
 
 func (w *recoveryStopWait) run() {
@@ -421,6 +425,14 @@ func (w *recoveryStopWait) run() {
 		if !ok {
 			return
 		}
+		if choice == "abandon" {
+			if err := w.abandon(); err != nil {
+				w.mu.Lock()
+				w.reason = err.Error()
+				w.mu.Unlock()
+			}
+			continue
+		}
 		if choice == "force-stop" {
 			if err := w.forceStop(); err != nil {
 				w.mu.Lock()
@@ -430,7 +442,7 @@ func (w *recoveryStopWait) run() {
 			continue
 		}
 		if choice == "recheck" {
-			w.check()
+			w.recheckNow()
 			continue
 		}
 		if !w.quiet() {
@@ -461,14 +473,23 @@ func (w *recoveryStopWait) poll() func() {
 	return cancel
 }
 
-// check runs one stop pass unless one is already running. The pass runs
-// beside this wait because confirming a stop waits for the wait to release
-// the exchange.
+// check is a periodic observation; another active pass already serves it.
 func (w *recoveryStopWait) check() { w.checkIntent(false) }
 
-func (w *recoveryStopWait) checkIntent(cancel bool) {
+func (w *recoveryStopWait) checkIntent(cancel bool) { w.startCheck(cancel, false) }
+
+// An accepted user request means one new observation after the current pass,
+// not merely that a pass is already running with an older result.
+func (w *recoveryStopWait) recheckNow() { w.startCheck(false, true) }
+
+func (w *recoveryStopWait) startCheck(cancel, explicit bool) {
 	w.mu.Lock()
-	if w.busy || w.ctx.Err() != nil {
+	if w.ctx.Err() != nil {
+		w.mu.Unlock()
+		return
+	}
+	if w.busy {
+		w.recheckPending = w.recheckPending || explicit
 		w.mu.Unlock()
 		return
 	}
@@ -478,30 +499,47 @@ func (w *recoveryStopWait) checkIntent(cancel bool) {
 	w.s.workers.Add(1)
 	go func() {
 		defer w.s.workers.Done()
-		err := w.s.cancelRecovering(ctx, w.e, w.requester, cancel)
-		// The pass may have been what set the task aside, which lets the
-		// line move past this exchange.
-		w.s.mu.Lock()
-		if !w.e.State.Terminal() {
-			if startErr := w.s.startNextLocked(w.e.Conversation); startErr != nil {
-				slog.Error("console: start the line past a pending stop", "conversation", w.e.Conversation, "exchange", w.e.ID, "error", startErr)
+		for {
+			err := w.s.cancelRecovering(ctx, w.e, w.requester, cancel)
+			// A pass releases recoveryStopping before returning here. Queue
+			// progress and the next check cannot overlap its stop operation.
+			w.s.mu.Lock()
+			active := !w.e.State.Terminal()
+			if active {
+				if startErr := w.s.startNextLocked(w.e.Conversation); startErr != nil {
+					slog.Error("console: start the line past a pending stop", "conversation", w.e.Conversation, "exchange", w.e.ID, "error", startErr)
+				}
 			}
-		}
-		w.s.mu.Unlock()
-		w.mu.Lock()
-		w.busy = false
-		if err != nil {
-			w.reason = clipDetail(strings.TrimSpace(err.Error()))
-		}
-		fresh := w.reason != w.asked
-		w.mu.Unlock()
-		if fresh {
-			select {
-			case w.changed <- struct{}{}:
-			default:
+			w.s.mu.Unlock()
+			if !w.finishCheck(err, active) {
+				return
 			}
+			cancel = false
 		}
 	}()
+}
+
+func (w *recoveryStopWait) finishCheck(err error, active bool) bool {
+	w.mu.Lock()
+	if err != nil {
+		w.reason = clipDetail(strings.TrimSpace(err.Error()))
+	}
+	fresh := w.reason != w.asked
+	again := w.recheckPending && active && w.ctx.Err() == nil
+	w.recheckPending = false
+	if again {
+		w.checks++
+	} else {
+		w.busy = false
+	}
+	w.mu.Unlock()
+	if fresh {
+		select {
+		case w.changed <- struct{}{}:
+		default:
+		}
+	}
+	return again
 }
 
 // quiet holds until there is something new to say or the exchange's
@@ -543,6 +581,9 @@ func (w *recoveryStopWait) ask() (string, bool) {
 			{Value: "recheck", Label: text.T(i18n.ConsoleStopRecheckNow), Detail: text.T(i18n.ConsoleStopRecheckNowDetail)},
 			{Value: "wait", Label: text.T(i18n.ConsoleStopLetItCheck), Detail: text.T(i18n.ConsoleStopLetItCheckDetail)},
 		},
+	}
+	if w.canAbandon() {
+		question.Choices = append(question.Choices, view.Choice{Value: "abandon", Label: text.T(i18n.ConsoleAbandon)})
 	}
 	answer, err := w.s.askUser(w.ctx, w.base, question, false)
 	if err != nil {

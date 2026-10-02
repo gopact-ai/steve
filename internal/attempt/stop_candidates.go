@@ -10,15 +10,14 @@ import (
 
 // The partial index holds exactly the records TaskStopOwed accepts, plus
 // every payload the owner decoder refuses, so the reader reports a malformed
-// row instead of hiding a possible writer. v2 stopped accepting confirmed
-// stops whose accounting projection is recorded. Opening a ledger replaces
-// an index still built on v1: its stored definition no longer matches, so
-// the ledger drops and rebuilds it, and v1 itself is not registered.
-const stopCandidatePredicate = `kind = 'attempt' AND steve_attempt_stop_candidate_v2(id, state, data) != 0`
+// row instead of hiding a possible writer. The predicate also retains pending
+// abandonment projection after physical confirmation; a ledger rebuilds a read
+// index whose stored definition no longer matches the registered predicate.
+const stopCandidatePredicate = `kind = 'attempt' AND steve_attempt_stop_candidate_v3(id, state, data) != 0`
 const stopCandidateQuery = `SELECT id, state, revision, data FROM operations INDEXED BY operations_attempt_stop_candidates WHERE ` + stopCandidatePredicate + ` ORDER BY updated_at DESC`
 
 func init() {
-	sqlite.MustRegisterDeterministicScalarFunction("steve_attempt_stop_candidate_v2", 3, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	sqlite.MustRegisterDeterministicScalarFunction("steve_attempt_stop_candidate_v3", 3, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		id, _ := args[0].(string)
 		state, ok := args[1].(string)
 		if !ok {
@@ -46,9 +45,12 @@ func init() {
 // node-owned execution whose native stop is not yet settled, or a confirmed
 // task stop whose accounting projection is not yet recorded. Both the stop
 // pass and the candidate index use it. Changing what it accepts changes an
-// indexed expression: rename steve_attempt_stop_candidate_v2 to a new
+// indexed expression: rename steve_attempt_stop_candidate_v3 to a new
 // version when it does.
 func TaskStopOwed(r Record) bool {
+	if r.Abandoned != nil && r.Abandoned.ProjectedAt.IsZero() {
+		return true
+	}
 	if !nodeOwnedStop(r) {
 		return false
 	}

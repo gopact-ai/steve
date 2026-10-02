@@ -126,6 +126,9 @@ type Service struct {
 	recoveryLifetime    context.Context
 	recoveryDriver      RetainedChatDriver
 	forceStops          forceStopDriver
+	abandons            abandonDriver
+	abandonMu           sync.Mutex
+	abandonAfter        string
 	workers             sync.WaitGroup
 	drained             chan struct{}
 	materials           MaterialResolver

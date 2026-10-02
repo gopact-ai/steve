@@ -186,6 +186,7 @@ type Usage struct {
 type Record struct {
 	Spec
 	ForceStop *ForceStop `json:"force_stop,omitempty"`
+	Abandoned *Abandoned `json:"abandoned,omitempty"`
 	// NodeReceipt is authenticated original native evidence, recorded with the
 	// terminal result. Its pending retry index is separate from closed history.
 	NodeReceipt *nodewire.SessionReceipt `json:"node_receipt,omitempty"`
@@ -486,7 +487,12 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 			if err := recordNodeReceiptTx(tx, current, next); err != nil {
 				return err
 			}
-			return setRecordDataTx(tx, op, next)
+			if err := setRecordDataTx(tx, op, next); err != nil {
+				return err
+			}
+			// Return the owner's frozen accounting, not the proposed late usage.
+			next = Record{}
+			return json.Unmarshal(op.Data, &next)
 		})
 	if err != nil {
 		if errors.Is(err, ledger.ErrStale) {
@@ -1204,6 +1210,9 @@ func (s *Service) ConfirmStopped(ctx context.Context, id, actor, evidence string
 	_, err = s.l.Transition(ctx, id, string(current.State), string(to), actor, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
 		if err := json.Unmarshal(op.Data, &next); err != nil {
 			return err
+		}
+		if next.Abandoned != nil {
+			return ErrStopConfirmationRequired
 		}
 		if !next.Unsettled {
 			return errors.New("attempt is not quarantined")

@@ -14,6 +14,9 @@ func (s *Store) InstallNativeSession(session Session) error {
 	session.NativeImport = session.NativeImport.Clone()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if retiredContext(s.data, session) {
+		return ErrAbandonedContext
+	}
 	if previous, exists := s.data.Conversations[session.ConversationID]; exists {
 		old, ok := previous.Sessions[session.AgentID]
 		if ok && old.NativeImport != nil && *old.NativeImport == *session.NativeImport && old.NodeID == session.NodeID && old.ProjectID == session.ProjectID && old.ProjectVersion == session.ProjectVersion {

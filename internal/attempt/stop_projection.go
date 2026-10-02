@@ -36,6 +36,9 @@ func StoppedUsage(r Record) task.RecoveryUsage {
 // StopAccountingSettled reports that row, the accounting row of r's
 // execution and turn, is closed and carries the usage r confirmed.
 func StopAccountingSettled(r Record, row task.Attempt) bool {
+	if r.Abandoned != nil && !row.AccountingFrozenAt.IsZero() {
+		return !row.Open() && row.AccountingFrozenAt.Equal(r.Abandoned.At)
+	}
 	if row.Open() || row.UsageKnown == nil {
 		return false
 	}

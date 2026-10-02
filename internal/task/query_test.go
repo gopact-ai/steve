@@ -227,7 +227,7 @@ func TestTaskPlanPresenceIncludesHiddenDescendantsAndTracksDeletion(t *testing.T
 			t.Fatal("fixture must hide historical descendant outside recent")
 		}
 	}
-	if _, err := s.DeleteChannel("delete-me"); err != nil {
+	if _, err := s.DeleteChannel(t.Context(), "delete-me", nil); err != nil {
 		t.Fatal(err)
 	}
 	h, _ = s.Header("root")
@@ -296,7 +296,7 @@ func TestReadIndexIncrementalSummaryMembershipAndMutationRollback(t *testing.T) 
 		}
 		assertReadIndexMatchesStartup(t, s)
 	}
-	if _, err := s.DeleteChannel("past"); err != nil {
+	if _, err := s.DeleteChannel(t.Context(), "past", nil); err != nil {
 		t.Fatal(err)
 	}
 	assertReadIndexMatchesStartup(t, s)

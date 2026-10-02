@@ -22,7 +22,7 @@ func completedReceiptOfDeletedTask(t *testing.T) (*Service, Completion) {
 	if _, err := tasks.Finish(record.TaskID, task.OutcomeOK, task.Tokens{}, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tasks.DeleteChannel("console:main"); err != nil {
+	if _, err := tasks.DeleteChannel(t.Context(), "console:main", nil); err != nil {
 		t.Fatal(err)
 	}
 	return service, completion

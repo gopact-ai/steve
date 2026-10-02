@@ -15,6 +15,12 @@ func potentialWriter(r Record) bool {
 	return r.Unsettled || (!r.State.Terminal() && (r.SessionSettled == nil || !*r.SessionSettled))
 }
 
+// A completed native stop does not retire the old conversation binding. Until
+// that projection commits, replacement work must not reuse its stale context.
+func abandonProjectionPending(r Record) bool {
+	return r.Abandoned != nil && r.Abandoned.ProjectedAt.IsZero()
+}
+
 func samePhysicalPath(a, b string) bool {
 	return a != "" && b != "" && path.Clean(a) == path.Clean(b)
 }
@@ -61,16 +67,19 @@ func checkAdmissionTx(tx *ledger.Tx, spec Spec) error {
 		if err != nil {
 			return err
 		}
-		if r.ID == spec.ID || !potentialWriter(r) {
+		if r.ID == spec.ID || !potentialWriter(r) && !abandonProjectionPending(r) {
 			continue
 		}
 		sameWriter := samePhysicalPath(r.Workspace.Path, spec.Workspace.Path) && r.Workspace.Node == spec.Workspace.Node
+		if r.Abandoned != nil && !r.Abandoned.ProjectedAt.IsZero() && !sameWriter {
+			continue
+		}
 		sameTask := spec.TaskID != "" && spec.TaskID == r.TaskID
 		sameEndpoint := spec.Slots > 0 && spec.Node == r.Node && spec.Harness == r.Harness
 		if !sameWriter && !sameTask && !sameEndpoint {
 			continue
 		}
-		if r.Unsettled {
+		if r.Unsettled || abandonProjectionPending(r) {
 			return writerRefusal(r)
 		}
 		if sameWriter {
@@ -130,10 +139,10 @@ func CheckWriterTx(tx *ledger.Tx, node, path string, authorizedAttemptID ...stri
 		if err != nil {
 			return err
 		}
-		if !potentialWriter(r) || !samePhysicalPath(r.Workspace.Path, path) || r.Workspace.Node != node {
+		if !potentialWriter(r) && !abandonProjectionPending(r) || !samePhysicalPath(r.Workspace.Path, path) || r.Workspace.Node != node {
 			continue
 		}
-		if r.ID == allowed && !r.Unsettled {
+		if r.ID == allowed && !r.Unsettled && !abandonProjectionPending(r) {
 			lost, err := lostOwnLease(tx, r)
 			if err != nil {
 				return err
