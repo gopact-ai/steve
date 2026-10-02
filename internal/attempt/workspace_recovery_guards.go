@@ -66,6 +66,24 @@ func checkRecoveryTaskDeletionTx(tx ledger.Reader, ids []string) error {
 	return nil
 }
 
+// RecoveryCopyHoldTx prevents generic cleanup from deleting recovery-owned data.
+func RecoveryCopyHoldTx(tx ledger.Reader, node, directory string) error {
+	all, err := workspaceRecoveriesTx(tx)
+	if err != nil {
+		return err
+	}
+	for _, r := range all {
+		if r.Workspace.Path == "" || r.Workspace.Node != node {
+			continue
+		}
+		container := path.Dir(r.Workspace.Path)
+		if samePhysicalPath(container, directory) || samePhysicalPath(r.Workspace.Path, directory) {
+			return ErrWorkspaceRecovery
+		}
+	}
+	return nil
+}
+
 // RecoveryWorkspaces protects prepared and between-turn directories, even when
 // no task or execution is currently live. A read failure is not an empty set.
 func (s *Service) RecoveryWorkspaces(ctx context.Context) ([]project.Workspace, error) {

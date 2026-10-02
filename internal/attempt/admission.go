@@ -61,6 +61,9 @@ func checkAdmissionTx(tx *ledger.Tx, spec Spec) error {
 	if err := RecoveryHoldTx(tx, spec.Workspace.Node, spec.Workspace.Path); err != nil {
 		return err
 	}
+	if err := checkRecoveryWriterTx(tx, spec); err != nil {
+		return err
+	}
 	ops, err := tx.Operations(kind, "")
 	if err != nil {
 		return err

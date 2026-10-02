@@ -118,6 +118,8 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		err = r.Checkout(ctx, req.Commit, req.WorkTree)
 	case ops.VerifyCheckout:
 		err = r.VerifyCheckout(ctx, req.Commit, req.WorkTree)
+	case ops.PrepareRecovery:
+		err = r.PrepareRecovery(ctx, req.Commit, req.WorkTree, req.Recovery)
 	case ops.Has:
 		// Missing commits are a negative answer; process/start failures are errors.
 		_, err = r.Git(ctx, nil, "cat-file", "-e", req.Commit+"^{commit}")
@@ -187,7 +189,7 @@ func validateOperation(req ops.Request) error {
 		if req.Parent != "" {
 			commits = []string{req.Parent}
 		}
-	case ops.Checkout, ops.VerifyCheckout:
+	case ops.Checkout, ops.VerifyCheckout, ops.PrepareRecovery:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.Commit}
 	case ops.Has:
 		paths, commits = []string{req.Repo}, []string{req.Commit}

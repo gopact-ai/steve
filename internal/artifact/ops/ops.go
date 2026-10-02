@@ -9,20 +9,21 @@ import "time"
 type Kind string
 
 const (
-	Init           Kind = "init"
-	Snapshot       Kind = "snapshot"
-	Checkout       Kind = "checkout"
-	VerifyCheckout Kind = "verify_checkout"
-	Has            Kind = "has"
-	Bundle         Kind = "bundle"
-	Unbundle       Kind = "unbundle"
-	Merge          Kind = "merge"
-	Apply          Kind = "apply"
-	Changed        Kind = "changed"
-	Remove         Kind = "remove"
-	ListWorktrees  Kind = "list_worktrees"
-	PathState      Kind = "path_state"
-	WritePath      Kind = "write_path"
+	Init            Kind = "init"
+	Snapshot        Kind = "snapshot"
+	Checkout        Kind = "checkout"
+	VerifyCheckout  Kind = "verify_checkout"
+	PrepareRecovery Kind = "prepare_recovery"
+	Has             Kind = "has"
+	Bundle          Kind = "bundle"
+	Unbundle        Kind = "unbundle"
+	Merge           Kind = "merge"
+	Apply           Kind = "apply"
+	Changed         Kind = "changed"
+	Remove          Kind = "remove"
+	ListWorktrees   Kind = "list_worktrees"
+	PathState       Kind = "path_state"
+	WritePath       Kind = "write_path"
 )
 
 type Limits struct {
@@ -35,6 +36,7 @@ type Limits struct {
 // relative tree entry for recovery. Before is the
 // worktree sweep cutoff. LegacyMerge keeps the pre-2.38 merge fallback.
 type Request struct {
+	Recovery    string    `json:"recovery,omitempty"`
 	Op          Kind      `json:"op"`
 	Repo        string    `json:"repo,omitempty"`
 	WorkTree    string    `json:"work_tree,omitempty"`

@@ -45,6 +45,28 @@ func RecoveryBaselineTx(tx *ledger.Tx, p project.Project) (attempt.RecoveryBasel
 	return attempt.RecoveryBaseline{Name: name, Version: ref.Version, Artifact: ref.Artifact}, nil
 }
 
+// CheckRecoveryOutputTx keeps continuation history attached to its fixed parent.
+func CheckRecoveryOutputTx(tx ledger.Reader, p project.Project, parent, id string) error {
+	if err := CheckRecoveryArtifactTx(tx, p, id); err != nil {
+		return err
+	}
+	if id == parent {
+		return nil
+	}
+	var raw []byte
+	if err := tx.QueryRow("SELECT data FROM bindings WHERE kind=? AND id=?", manifestKind, id).Scan(&raw); err != nil {
+		return err
+	}
+	var m Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	if m.Parent != parent {
+		return errors.New("recovery output has another parent")
+	}
+	return nil
+}
+
 // CheckRecoveryArtifactTx accepts only an owner-decoded durable project artifact.
 func CheckRecoveryArtifactTx(tx ledger.Reader, p project.Project, id string) error {
 	var raw []byte

@@ -64,7 +64,15 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 			pending = &p
 		}
 	}
-	return attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, pending, nil
+	completion := attempt.Completion{Result: outcome, Usage: usage, Binding: binding}
+	if record.WorkspaceRecovery != nil {
+		completion.Result.RecoveryOutput = &attempt.RecoveryOutput{}
+		if binding != nil {
+			completion.Result.RecoveryOutput.Name, completion.Result.RecoveryOutput.ExpectedVersion = binding.Name, binding.ExpectedVersion
+		}
+		completion.RecoveryArtifact = validateRecoveryArtifact
+	}
+	return completion, pending, nil
 }
 
 // afterCompletion is what follows a committed completion: the recovery
@@ -142,6 +150,9 @@ func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Recor
 // canonical lock among the attempt's leases; a copy moves its own head. An
 // empty parent means "from the workspace's last snapshot".
 func (c *Coordinator) snapshot(ctx context.Context, p project.Project, ws project.Workspace, leases []ledger.Lease, parent, by, message string) (artifact.Manifest, bool, error) {
+	if ws.RecoveryID != "" {
+		return c.artifacts.PublishRecovery(ctx, ws, parent, by, message)
+	}
 	if ws.Kind == project.KindWorktree {
 		if parent == "" {
 			parent = ws.Base

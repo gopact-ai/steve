@@ -72,6 +72,9 @@ func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.
 	if workspace.Kind == project.KindWorktree {
 		spec.Scope = attempt.ScopePathSet
 		spec.Base = workspace.Base
+		if workspace.RecoveryID != "" {
+			spec.WorkspaceRecovery = &attempt.RecoveryExecution{ID: workspace.RecoveryID}
+		}
 	}
 	var cand roster.Candidate
 	if c.fleet != nil {
@@ -158,6 +161,10 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 	defer t.clock.mark("before")
 	if workspace.Kind == project.KindWorktree {
 		base := workspace.Base
+		if e.Record.WorkspaceRecovery != nil {
+			base = e.Record.Base
+			t.workspace = e.Record.Workspace
+		}
 		return func(r *attempt.Record) { r.Base = base }, nil
 	}
 	p, ok, perr := c.projects.Get(ctx, t.binding.ProjectID)

@@ -2,7 +2,11 @@ package artifact
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"path/filepath"
 	"time"
 
@@ -37,6 +41,13 @@ func (s *Store) SweepWorktrees(ctx context.Context, node, root string, keep func
 	for _, path := range result.Paths {
 		if keep != nil && keep(path) {
 			continue
+		}
+		err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return attempt.RecoveryCopyHoldTx(tx, node, path) })
+		if errors.Is(err, attempt.ErrWorkspaceRecovery) {
+			continue
+		}
+		if err != nil {
+			return removed, err
 		}
 		if _, err := s.operation(ctx, node, ops.Request{Op: ops.Remove, Path: path}); err != nil {
 			return removed, fmt.Errorf("remove %s on %s: %w", path, placeName(node), err)

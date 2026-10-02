@@ -120,6 +120,10 @@ func TestSharedRecoveryCopyPinsTheLatestHeadAfterTakingItsLease(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws.Path, "next"), []byte("first output\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.attempts.MarkSessionSettled(t.Context(), first.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	first, _ = c.attempts.Get(t.Context(), first.ID)
 	completion, _, err := c.completion(t.Context(), first, Result{Text: "done"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +154,10 @@ func TestUnpublishedRecoveryOutputBlocksReplacementEvenAfterAttemptFailure(t *te
 	if err := os.WriteFile(filepath.Join(ws.Path, "result"), []byte("must survive\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.attempts.MarkSessionSettled(t.Context(), first.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	first, _ = c.attempts.Get(t.Context(), first.ID)
 	completion, _, err := c.completion(t.Context(), first, Result{Text: "done"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)

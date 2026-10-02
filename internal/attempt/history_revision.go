@@ -27,6 +27,9 @@ func guardRecordOpenTx(tx *ledger.Tx, spec Spec) error {
 			return err
 		}
 	}
+	if err := reserveRecoveryProducerTx(tx, spec); err != nil {
+		return err
+	}
 	return touchHistoryRevisionTx(tx, spec.TaskID)
 }
 

@@ -990,6 +990,9 @@ func inputArtifacts(inputs []project.Input) []string {
 // hub, and records it with the hub's receipt. inputs/ is not part of the
 // result: it was given, not made.
 func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, message string) (Manifest, bool, error) {
+	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return attempt.RecoveryCopyHoldTx(tx, ws.Node, ws.Path) }); err != nil {
+		return Manifest{}, false, err
+	}
 	p, ok, err := s.projects.Get(ctx, ws.Project)
 	if err != nil {
 		return Manifest{}, false, err
@@ -1039,6 +1042,9 @@ func (s *Store) dropInputs(dir string) {
 
 // Discard removes a workspace once its attempt is over.
 func (s *Store) Discard(ctx context.Context, ws project.Workspace) error {
+	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return attempt.RecoveryCopyHoldTx(tx, ws.Node, ws.Path) }); err != nil {
+		return err
+	}
 	if ws.Kind != project.KindWorktree {
 		return errors.New("artifact: only worktrees are discarded")
 	}
