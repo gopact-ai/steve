@@ -77,8 +77,8 @@ func TestReverseMCPSealedAdmissionDoesNotReuseTheConnection(t *testing.T) {
 	if response.StatusCode != http.StatusServiceUnavailable || !response.Close {
 		t.Fatalf("sealed response status=%d close=%v", response.StatusCode, response.Close)
 	}
-	if _, err := http.ReadResponse(reader, &http.Request{Method: http.MethodPost}); err != io.EOF {
-		t.Fatalf("sealed connection served a second request: %v", err)
+	if _, err := reader.ReadByte(); err != io.EOF {
+		t.Fatalf("sealed connection produced data for a second request: %v", err)
 	}
 	assertReverseAdmissionIdle(t, s, dispatched)
 }

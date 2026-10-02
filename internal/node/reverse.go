@@ -143,17 +143,18 @@ func (s *Server) reverseMCPHandler() http.Handler {
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		done, err := s.beginWork()
-		if err != nil {
-			http.Error(w, "node is restarting", http.StatusServiceUnavailable)
-			return
-		}
-		defer done()
 		if err := prepareReverseHTTP(w, r); err != nil {
 			releaseReverseInput(r)
 			proxy.ErrorHandler(w, r, err)
 			return
 		}
+		done, err := s.beginWork()
+		if err != nil {
+			releaseReverseInput(r)
+			http.Error(w, "node is restarting", http.StatusServiceUnavailable)
+			return
+		}
+		defer done()
 		proxy.ServeHTTP(w, r)
 	})
 }
